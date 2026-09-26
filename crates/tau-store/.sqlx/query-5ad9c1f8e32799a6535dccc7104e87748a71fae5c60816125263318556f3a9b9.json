@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE runs SET input_tokens = input_tokens + ?2,\n                             output_tokens = output_tokens + ?3,\n                             cost_usd = cost_usd + ?4,\n                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\n             WHERE id = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "5ad9c1f8e32799a6535dccc7104e87748a71fae5c60816125263318556f3a9b9"
+}

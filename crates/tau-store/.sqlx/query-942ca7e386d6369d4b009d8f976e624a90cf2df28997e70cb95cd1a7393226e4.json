@@ -1,0 +1,36 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT agent AS \"agent!: String\", count(*) AS \"runs!: i64\",\n                      sum(cost_usd) AS \"usd!: f64\"\n               FROM runs WHERE workflow_id = ?1\n               GROUP BY agent ORDER BY agent",
+  "describe": {
+    "columns": [
+      {
+        "name": "agent!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "agent"
+          }
+        }
+      },
+      {
+        "name": "runs!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "usd!: f64",
+        "ordinal": 2,
+        "type_info": "Float",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [false, false, false]
+  },
+  "hash": "942ca7e386d6369d4b009d8f976e624a90cf2df28997e70cb95cd1a7393226e4"
+}

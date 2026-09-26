@@ -206,6 +206,12 @@ waits on a loopback socket under paused time can therefore fire idle
 timeouts and connection rotation at random. Network tests run in
 turmoil, whose network and clock are both simulated.
 
+The same holds for SQLite through sqlx: its driver waits on worker
+threads, which paused time treats as idle, so sqlx's own timeouts could
+fire. Store tests run on a normal current-thread runtime instead. They
+stay deterministic because they never read the clock and every
+timestamp is written by SQLite and never asserted on.
+
 ### Testing the WebSocket layer
 
 The WebSocket layer is split at its I/O boundary (see

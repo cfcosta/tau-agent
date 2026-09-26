@@ -10,6 +10,12 @@ repository = "https://github.com/cfcosta/tau-agent"
 [workspace.dependencies]
 hegeltest = "0.28"
 serde = { version = "1.0.229", features = ["derive"] }
+sqlx = { version = "0.9.0", default-features = false, features = [
+  "macros",
+  "migrate",
+  "runtime-tokio",
+  "sqlite",
+] }
 serde_json = { version = "1.0.151", features = [
   "float_roundtrip",
   "preserve_order",

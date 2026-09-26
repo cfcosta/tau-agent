@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO runs (id, workflow_id, agent, kind, parent_run_id, fork_seq,\n                               model, status, created_at, updated_at)\n             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running',\n                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),\n                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "fde88a654c4c04debba0f9b680f3b570c5813a975fb92c7c7a9e10544408a8da"
+}

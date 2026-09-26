@@ -1,0 +1,46 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE chain(run_id, cutoff, depth) AS (\n                   SELECT id, NULL, 0 FROM runs WHERE id = ?1\n                   UNION ALL\n                   SELECT r.parent_run_id, r.fork_seq, chain.depth + 1\n                   FROM chain JOIN runs r ON r.id = chain.run_id\n                   WHERE r.kind = 'fork'\n               )\n               SELECT m.kind AS \"kind!: String\", m.role AS \"role?: String\",\n                      m.body AS \"body!: String\"\n               FROM chain JOIN messages m ON m.run_id = chain.run_id\n               WHERE chain.cutoff IS NULL OR m.seq <= chain.cutoff\n               ORDER BY chain.depth DESC, m.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "kind!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "role?: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "name": "body!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "body"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [false, true, false]
+  },
+  "hash": "59cd1bd5b2b7bc07a22885388dfd5a0144e79aeff3481adcefdd6656a6b970f4"
+}

@@ -109,6 +109,7 @@
 
               curl
               jq
+              sqlx-cli
             ];
           };
         }

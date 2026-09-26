@@ -1,0 +1,19 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(MAX(seq), -1) + 1 AS \"next!: i64\"\n               FROM messages WHERE run_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "next!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [false]
+  },
+  "hash": "9fc276e22fd1e49140c2c3dbd54201e5e3e1ba50c1bdc1dc9d9b28dc3530220d"
+}
