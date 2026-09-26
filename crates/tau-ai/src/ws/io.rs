@@ -2,3 +2,4 @@
 //! the driver that runs the [`proto`](super::proto) state machines.
 
 pub mod connection;
+pub mod driver;

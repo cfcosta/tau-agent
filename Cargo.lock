@@ -1396,10 +1396,13 @@ dependencies = [
 name = "tau-testing"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "hegeltest",
  "serde_json",
  "tau-ai",
  "tokio",
+ "tokio-tungstenite",
+ "turmoil",
 ]
 
 [[package]]

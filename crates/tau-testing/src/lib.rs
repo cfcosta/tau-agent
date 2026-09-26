@@ -1,5 +1,6 @@
 //! Scripted model, generators and replay for testing tau agents.
 
+pub mod fake_openai;
 pub mod generators;
 pub mod openai;
 pub mod stream;
