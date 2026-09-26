@@ -174,11 +174,21 @@ impl Store {
 
     /// An in-memory database for tests: one connection serves both roles,
     /// because each connection to `sqlite::memory:` is its own database.
+    ///
+    /// That connection must never close, or the database goes with it, so
+    /// the pool keeps it with no idle timeout and no maximum lifetime.
+    /// Acquiring it never times out either: callers queue for the one
+    /// connection, and a timeout would only fire spuriously, for example
+    /// under tokio's paused clock.
     pub async fn memory() -> Result<Self> {
         let options = SqliteConnectOptions::from_str("sqlite::memory:")?
             .foreign_keys(true);
         let pool = SqlitePoolOptions::new()
+            .min_connections(1)
             .max_connections(1)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .acquire_timeout(Duration::from_secs(u64::MAX / 4))
             .connect_with(options)
             .await?;
         MIGRATOR.run(&pool).await?;
