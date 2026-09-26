@@ -3,6 +3,7 @@
 pub mod fake_openai;
 pub mod generators;
 pub mod openai;
+pub mod scripted;
 pub mod stream;
 
 use std::future::Future;
