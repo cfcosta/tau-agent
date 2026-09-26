@@ -268,6 +268,28 @@ fn sessions_from_the_same_model_share_one_script_queue() {
     });
 }
 
+/// A scripted cost is reported as the turn's output and total cost, on
+/// error turns too; a turn without one costs nothing.
+#[test]
+fn scripted_cost_is_reported_in_usage() {
+    tau_testing::block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.text("paid").cost(0.25))
+            .turn(|t| t.error("server_error", "boom").cost(0.5))
+            .turn(|t| t.text("free"));
+        let mut session = model.open(settings("gpt-test")).await.unwrap();
+        let mut costs = Vec::new();
+        for _ in 0..3 {
+            let message = accumulate(session.respond(&[], 0)).await.unwrap();
+            let cost = message.usage.cost;
+            assert_eq!(cost.output, cost.total);
+            assert_eq!(cost.input + cost.cache_read + cost.cache_write, 0.0);
+            costs.push(cost.total);
+        }
+        assert_eq!(costs, vec![0.25, 0.5, 0.0]);
+    });
+}
+
 // =============================================================================
 // Exhaustion
 // =============================================================================

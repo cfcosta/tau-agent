@@ -121,6 +121,8 @@ struct StaticTurn {
     /// and `cache_write` are always computed from the transcript, and
     /// layered on top of this (see the module docs' "Cache simulation").
     usage: Option<(u64, u64)>,
+    /// The turn's cost in USD, reported as `usage.cost`.
+    cost: f64,
     delay: Option<Duration>,
 }
 
@@ -237,6 +239,7 @@ struct ResolvedTurn {
     stop: StopReason,
     message: Option<String>,
     usage: Option<(u64, u64)>,
+    cost: f64,
     delay: Option<Duration>,
 }
 
@@ -248,6 +251,7 @@ impl ScriptedSession {
                 stop: StopReason::Error,
                 message: Some(EXHAUSTED_MESSAGE.to_owned()),
                 usage: None,
+                cost: 0.0,
                 delay: None,
             },
             Some(Turn::Dynamic(factory)) => {
@@ -257,6 +261,7 @@ impl ScriptedSession {
                     stop: response.stop_reason,
                     message: response.error_message,
                     usage: Some((response.usage.input, response.usage.output)),
+                    cost: response.usage.cost.total,
                     delay: None,
                 }
             }
@@ -265,6 +270,7 @@ impl ScriptedSession {
                 stop: turn.stop,
                 message: turn.message,
                 usage: turn.usage,
+                cost: turn.cost,
                 delay: turn.delay,
             },
         }
@@ -323,10 +329,16 @@ impl ScriptedSession {
             stop,
             message,
             usage,
+            cost,
             delay,
         } = resolved;
         let content_text = assistant_content_text(&blocks);
-        let usage = self.make_usage(transcript_text, &content_text, usage);
+        let mut usage = self.make_usage(transcript_text, &content_text, usage);
+        usage.cost = UsageCost {
+            output: cost,
+            total: cost,
+            ..UsageCost::default()
+        };
 
         let mut events = vec![AssistantEvent::Start {
             model: self.settings.model.clone(),
@@ -569,6 +581,7 @@ pub struct TurnBuilder {
     blocks: Vec<AssistantBlock>,
     stop: Option<StopReason>,
     usage: Option<(u64, u64)>,
+    cost: f64,
     delay: Option<Duration>,
     special: Option<Special>,
     tool_call_ids: Arc<AtomicU64>,
@@ -586,6 +599,7 @@ impl TurnBuilder {
             blocks: Vec::new(),
             stop: None,
             usage: None,
+            cost: 0.0,
             delay: None,
             special: None,
             tool_call_ids,
@@ -644,6 +658,13 @@ impl TurnBuilder {
         self
     }
 
+    /// Sets the turn's cost in USD, reported as `usage.cost.output` and
+    /// `usage.cost.total`. Without this, a turn costs nothing.
+    pub fn cost(mut self, usd: f64) -> Self {
+        self.cost = usd;
+        self
+    }
+
     /// Overrides the stop reason. Without this, a turn with at least one
     /// tool call stops with `ToolUse`, and any other turn stops with
     /// `Stop`.
@@ -692,6 +713,7 @@ impl TurnBuilder {
 
     fn build(self) -> StaticTurn {
         let usage = self.usage;
+        let cost = self.cost;
         let delay = self.delay;
         match self.special {
             Some(Special::Error(message)) => StaticTurn {
@@ -699,6 +721,7 @@ impl TurnBuilder {
                 stop: self.stop.unwrap_or(StopReason::Error),
                 message: Some(message),
                 usage,
+                cost,
                 delay,
             },
             Some(Special::Dropped) => StaticTurn {
@@ -706,6 +729,7 @@ impl TurnBuilder {
                 stop: self.stop.unwrap_or(StopReason::Error),
                 message: Some(DROPPED_MESSAGE.to_owned()),
                 usage,
+                cost,
                 delay,
             },
             Some(Special::FailsBeforeStart) => StaticTurn {
@@ -713,6 +737,7 @@ impl TurnBuilder {
                 stop: self.stop.unwrap_or(StopReason::Error),
                 message: Some(FAILS_BEFORE_START_MESSAGE.to_owned()),
                 usage,
+                cost,
                 delay,
             },
             None => {
@@ -730,6 +755,7 @@ impl TurnBuilder {
                     stop,
                     message: None,
                     usage,
+                    cost,
                     delay,
                 }
             }
