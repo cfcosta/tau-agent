@@ -63,7 +63,10 @@
 //!      does, the value is returned unchanged;
 //!    - objects and arrays recurse into their properties/items (and, for
 //!      objects, into extra keys when `additionalProperties` is itself a
-//!      schema).
+//!      schema). Tuples are read in both spellings, 2020-12's
+//!      `prefixItems` + `items` and draft 7's `items` array +
+//!      `additionalItems`; pi reads only the positional `items` array,
+//!      so `schemars` tuples were not coerced there.
 //! 4. Validate the result against the compiled schema. On failure, the
 //!    error text lists each violation's field path and message, in the
 //!    same shape pi's does (`formatValidationPath` plus
@@ -239,24 +242,44 @@ fn validator_accepts(schema: &Value, value: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// The schema for each element of an array, by position. Tuples are
+/// read in both spellings: JSON Schema 2020-12's `prefixItems` followed
+/// by `items` for the rest (which `schemars` emits for Rust tuples), and
+/// the older positional `items` array followed by `additionalItems`.
+/// pi reads only the older spelling, and never `additionalItems`.
+fn item_schema(schema: &Value, index: usize) -> Option<&Value> {
+    let (positional, rest) =
+        match (schema.get("prefixItems"), schema.get("items")) {
+            (Some(Value::Array(prefix)), items) => {
+                (prefix.as_slice(), object_schema(items))
+            }
+            (_, Some(Value::Array(items))) => (
+                items.as_slice(),
+                object_schema(schema.get("additionalItems")),
+            ),
+            (_, items) => (&[][..], object_schema(items)),
+        };
+    match positional.get(index) {
+        Some(item) => object_schema(Some(item)),
+        None => rest,
+    }
+}
+
+/// A schema this module can walk: an object, not a boolean schema.
+fn object_schema(schema: Option<&Value>) -> Option<&Value> {
+    schema.filter(|schema| schema.is_object())
+}
+
 /// pi's `normalizeOptionalNulls`.
 fn normalize_optional_nulls(value: &mut Value, schema: &Value) {
     match value {
-        Value::Array(items) => match schema.get("items") {
-            Some(Value::Array(item_schemas)) => {
-                for (index, item_schema) in item_schemas.iter().enumerate() {
-                    if let Some(item) = items.get_mut(index) {
-                        normalize_optional_nulls(item, item_schema);
-                    }
-                }
-            }
-            Some(item_schema) if item_schema.is_object() => {
-                for item in items.iter_mut() {
+        Value::Array(items) => {
+            for (index, item) in items.iter_mut().enumerate() {
+                if let Some(item_schema) = item_schema(schema, index) {
                     normalize_optional_nulls(item, item_schema);
                 }
             }
-            _ => {}
-        },
+        }
         Value::Object(map) => {
             let Some(properties) =
                 schema.get("properties").and_then(Value::as_object)
@@ -467,24 +490,14 @@ fn apply_schema_object_coercion(map: &mut Map<String, Value>, schema: &Value) {
     }
 }
 
-/// pi's `applySchemaArrayCoercion`.
+/// pi's `applySchemaArrayCoercion`, with tuples read as
+/// [`item_schema`] reads them.
 fn apply_schema_array_coercion(items: &mut [Value], schema: &Value) {
-    match schema.get("items") {
-        Some(Value::Array(item_schemas)) => {
-            for (index, item_schema) in item_schemas.iter().enumerate() {
-                if let Some(slot) = items.get_mut(index) {
-                    let existing = std::mem::replace(slot, Value::Null);
-                    *slot = coerce_with_json_schema(existing, item_schema);
-                }
-            }
+    for (index, slot) in items.iter_mut().enumerate() {
+        if let Some(item_schema) = item_schema(schema, index) {
+            let existing = std::mem::replace(slot, Value::Null);
+            *slot = coerce_with_json_schema(existing, item_schema);
         }
-        Some(item_schema) if item_schema.is_object() => {
-            for slot in items.iter_mut() {
-                let existing = std::mem::replace(slot, Value::Null);
-                *slot = coerce_with_json_schema(existing, item_schema);
-            }
-        }
-        _ => {}
     }
 }
 

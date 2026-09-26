@@ -765,3 +765,124 @@ fn tuple_items_are_coerced_positionally() {
         json!({"value": [42, "5"]})
     );
 }
+
+/// Tuples coerce position by position, differentially: coercing
+/// `[a, b, c]` under a tuple of `S1, S2` with `R` for the rest equals
+/// coercing `a` under `S1`, `b` under `S2` and `c` under `R` one at a
+/// time. It holds for both spellings: 2020-12's `prefixItems` + `items`
+/// (what `schemars` emits for tuples) and the positional `items` array
+/// + `additionalItems`. Each element is drawn loose (a number as a
+/// string, a scalar where an array is expected) or valid.
+#[hegel::test(test_cases = 200)]
+fn tuples_coerce_each_position_under_its_schema(tc: TestCase) {
+    let schemas: Vec<Value> =
+        (0..3).map(|_| tc.draw(generators::arg_schema(1))).collect();
+    let values: Vec<Value> = schemas
+        .iter()
+        .map(|schema| {
+            let value =
+                tc.draw(generators::arg_value_for_schema(schema.clone()));
+            match (tc.draw(gs::booleans()), &value) {
+                (true, Value::Number(n)) => Value::String(n.to_string()),
+                (true, Value::Array(items)) if items.len() == 1 => {
+                    items[0].clone()
+                }
+                _ => value,
+            }
+        })
+        .collect();
+    // The positional `items` array is draft 7; `$schema` only takes
+    // effect at the root.
+    let one = |value: &Value, schema: &Value| {
+        compile(&json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {"v": schema},
+            // Required, so a `null` element is coerced, not dropped as
+            // an omitted optional.
+            "required": ["v"],
+        }))
+        .coerce(&json!({"v": value}))["v"]
+            .clone()
+    };
+    let expected: Vec<Value> = values
+        .iter()
+        .zip(&schemas)
+        .map(|(v, s)| one(v, s))
+        .collect();
+    let spellings = [
+        json!({"type": "array", "prefixItems": [schemas[0], schemas[1]], "items": schemas[2]}),
+        json!({"type": "array", "items": [schemas[0], schemas[1]], "additionalItems": schemas[2]}),
+    ];
+    for tuple in spellings {
+        let coerced = one(&Value::Array(values.clone()), &tuple);
+        assert_eq!(coerced, Value::Array(expected.clone()), "under {tuple}");
+    }
+}
+
+/// A Rust tuple argument, as `schemars` describes it, is coerced item
+/// by item and then validates: `("3", "true", 5)` becomes `[3, true,
+/// "5"]`. pi does not coerce `prefixItems` at all.
+#[test]
+fn schemars_tuples_are_coerced_item_by_item() {
+    #[allow(dead_code)]
+    #[derive(schemars::JsonSchema)]
+    struct Args {
+        point: (u32, bool, String),
+    }
+    let schema = serde_json::to_value(schemars::schema_for!(Args)).unwrap();
+    assert!(schema.to_string().contains("prefixItems"), "{schema}");
+    let args = json!({"point": ["3", "true", 5]});
+    assert_eq!(
+        compile(&schema).validate(&args).unwrap(),
+        json!({"point": [3, true, "5"]})
+    );
+}
+
+/// Positions past a tuple with no schema for the rest, and positions
+/// whose schema is a boolean, are left alone.
+#[test]
+fn tuple_positions_without_a_schema_are_left_alone() {
+    let cases = [
+        json!({"type": "array", "prefixItems": [{"type": "number"}]}),
+        json!({"type": "array", "items": [{"type": "number"}]}),
+        json!({"type": "array", "prefixItems": [{"type": "number"}], "items": true}),
+    ];
+    for schema in cases {
+        let wrapped = json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {"v": schema},
+        });
+        assert_eq!(
+            compile(&wrapped).coerce(&json!({"v": ["1", "2"]})),
+            json!({"v": [1, "2"]}),
+            "under {schema}"
+        );
+    }
+    let boolean = json!({"type": "object", "properties": {"v": {"type": "array", "prefixItems": [true, {"type": "number"}]}}});
+    assert_eq!(
+        compile(&boolean).coerce(&json!({"v": ["1", "2"]})),
+        json!({"v": ["1", 2]})
+    );
+}
+
+/// Optional nulls inside tuple positions are dropped like anywhere
+/// else: the walk follows `prefixItems` too.
+#[test]
+fn optional_nulls_inside_tuple_positions_are_dropped() {
+    let schema = json!({
+        "type": "object",
+        "properties": {"v": {
+            "type": "array",
+            "prefixItems": [{
+                "type": "object",
+                "properties": {"a": {"type": "string"}},
+            }],
+        }},
+    });
+    assert_eq!(
+        compile(&schema).coerce(&json!({"v": [{"a": null}]})),
+        json!({"v": [{}]})
+    );
+}
