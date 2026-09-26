@@ -38,6 +38,10 @@ pub enum Reply {
     Error { code: String },
     /// Sends the first `after` of `frames`, then drops the connection.
     DropAfter { frames: Vec<Value>, after: usize },
+    /// Sends the first `after` of `frames`, then goes silent: it keeps
+    /// the connection open and ignores everything until the client
+    /// closes it.
+    StallAfter { frames: Vec<Value>, after: usize },
     /// Forgets every held response on this connection, then applies the
     /// next reply to the same request.
     Evict,
@@ -203,6 +207,18 @@ impl FakeOpenAi {
                             return;
                         }
                     }
+                    return;
+                }
+                Some(Reply::StallAfter { frames, after }) => {
+                    for frame in frames.into_iter().take(after) {
+                        if send(&mut socket, with_stream_id(frame, &stream_id))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    while let Some(Ok(_)) = socket.next().await {}
                     return;
                 }
                 Some(Reply::Evict) | None => {

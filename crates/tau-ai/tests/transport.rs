@@ -78,6 +78,28 @@ enum Fault {
     /// The connection drops after output started: the turn fails, and
     /// the caller retries it.
     DropMidStream,
+    /// The server goes silent before any frame: after the stall timeout
+    /// the pool presumes the connection dead and resends.
+    StallBeforeOutput,
+    /// The server goes silent after output started: after the stall
+    /// timeout the turn fails, as a drop mid-stream does.
+    StallMidStream,
+}
+
+impl Fault {
+    /// Whether the first attempt fails once output started.
+    fn cuts_mid_stream(self) -> bool {
+        matches!(self, Self::DropMidStream | Self::StallMidStream)
+    }
+}
+
+/// The transport's limits in these tests: OpenAI's, with a short stall
+/// timeout so a silent server is noticed within the simulation.
+fn limits() -> Limits {
+    Limits {
+        stall_timeout: std::time::Duration::from_secs(3),
+        ..Limits::default()
+    }
 }
 
 /// One scripted turn: the response the model gives, and the fault on
@@ -170,6 +192,8 @@ fn run_over_transport(tc: TestCase) {
                     Fault::ConnectionLimit,
                     Fault::DropBeforeOutput,
                     Fault::DropMidStream,
+                    Fault::StallBeforeOutput,
+                    Fault::StallMidStream,
                 ]))
             };
             Turn { message, fault }
@@ -203,12 +227,21 @@ fn run_over_transport(tc: TestCase) {
                 let after = frames.len() - 1;
                 replies.extend([Reply::DropAfter { frames, after }, respond])
             }
+            Fault::StallBeforeOutput => replies
+                .extend([Reply::StallAfter { frames, after: 0 }, respond]),
+            Fault::StallMidStream => {
+                let after = frames.len() - 1;
+                replies.extend([Reply::StallAfter { frames, after }, respond])
+            }
         }
     }
 
     let seed = tc.draw(gs::integers::<u64>());
     let fake = FakeOpenAi::new(replies);
-    let mut sim = turmoil::Builder::new().rng_seed(seed).build();
+    let mut sim = turmoil::Builder::new()
+        .rng_seed(seed)
+        .simulation_duration(std::time::Duration::from_secs(120))
+        .build();
     fake.install(&mut sim, "api");
 
     let settings = Settings {
@@ -221,14 +254,14 @@ fn run_over_transport(tc: TestCase) {
         let turns = turns.clone();
         let outcome = outcome.clone();
         sim.client("client", async move {
-            let transport = Transport::start(SimConnector, Limits::default());
+            let transport = Transport::start(SimConnector, limits());
             let lane = transport.open_lane().await.unwrap();
             let mut transcript = vec![user("start")];
             let mut inputs = Vec::new();
             let mut got = Vec::new();
             for (i, turn) in turns.iter().enumerate() {
                 inputs.push(transcript.clone());
-                if turn.fault == Fault::DropMidStream {
+                if turn.fault.cuts_mid_stream() {
                     // The first attempt fails after output started: one
                     // Start, then the Error, then nothing.
                     let full = body(&settings, to_input(&transcript), None);

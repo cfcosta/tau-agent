@@ -169,4 +169,12 @@ setup. It is optional and set per agent.
 - It requests `reasoning.encrypted_content`, so full resends can replay
   reasoning when `store` is `false`.
 - Tool-call ids are `call_id|item_id`.
-- The idle timer and the maximum age are tracked per connection.
+- The idle timer and the maximum age are tracked per connection:
+  - a connection with no lanes for 5 minutes is closed (pi's cache
+    lifetime); one that still has lanes stays, since it holds their
+    continuations, and rotation bounds its age;
+  - a connection with requests in flight that receives nothing for 5
+    minutes (pi's idle timeout) is presumed dead and handled as lost: a
+    request with no output yet is resent, pi's "idle before the first
+    event" case, and one with output fails.
+    Both are `pool::Limits` fields (`idle_timeout`, `stall_timeout`).

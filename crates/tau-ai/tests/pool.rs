@@ -94,6 +94,7 @@ enum Op {
     ConnectionLimit,
     Cancel,
     LoseConnection,
+    Frame,
     Tick,
 }
 
@@ -106,7 +107,17 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
         rotate_after: Duration::from_secs(
             tc.draw(gs::integers::<u64>().min_value(1).max_value(100)),
         ),
+        idle_timeout: Duration::from_secs(
+            tc.draw(gs::integers::<u64>().min_value(1).max_value(100)),
+        ),
+        stall_timeout: Duration::from_secs(
+            tc.draw(gs::integers::<u64>().min_value(1).max_value(100)),
+        ),
     };
+    // When each open connection last sent a request or received anything.
+    let mut last_activity: BTreeMap<ConnectionId, Duration> = BTreeMap::new();
+    // When each open connection lost its last lane.
+    let mut empty_since: BTreeMap<ConnectionId, Duration> = BTreeMap::new();
     let mut now = Duration::ZERO;
     let mut pool = Pool::new(limits);
     let mut model = Model::default();
@@ -124,6 +135,7 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
             Op::ConnectionLimit,
             Op::Cancel,
             Op::LoseConnection,
+            Op::Frame,
             Op::Tick,
         ]));
         let any_lane =
@@ -134,6 +146,8 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
         let flying: BTreeSet<LaneId> =
             model.in_flight.keys().copied().collect();
         tc.note(&format!("step {step}: {op:?}"));
+        let busy_before: BTreeSet<ConnectionId> =
+            model.in_flight.values().copied().collect();
         let actions = match op {
             Op::OpenLane => {
                 let (lane, actions) = pool.open_lane();
@@ -181,6 +195,8 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
                 let Some(lane) = any_lane(&tc, &flying) else {
                     continue;
                 };
+                // A frame for the lane is activity on its connection.
+                last_activity.insert(model.in_flight[&lane], now);
                 let event = match op {
                     Op::Output => {
                         model.started.insert(lane);
@@ -226,6 +242,14 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
                 model.now = now;
                 pool.tick(now)
             }
+            Op::Frame => {
+                let Some(connection) = any_lane(&tc, &model.open) else {
+                    continue;
+                };
+                last_activity.insert(connection, now);
+                pool.activity(connection);
+                Vec::new()
+            }
             Op::LoseConnection => {
                 let Some(connection) = any_lane(&tc, &model.open) else {
                     continue;
@@ -234,7 +258,78 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
                 pool.connection_lost(connection)
             }
         };
+        // Stalls: in a tick, a connection with requests in flight closes
+        // only after `stall_timeout` without activity (rotation never
+        // moves a busy lane; outside ticks, a lane sent elsewhere by the
+        // server can empty a busy connection).
+        for action in &actions {
+            if let PoolAction::Close(c) = action
+                && busy_before.contains(c)
+                && op == Op::Tick
+            {
+                assert!(
+                    now - last_activity[c] >= limits.stall_timeout,
+                    "busy {c} closed after {:?} quiet",
+                    now - last_activity[c]
+                );
+            }
+        }
         model.apply(&actions);
+        for action in &actions {
+            match action {
+                PoolAction::Open(c)
+                | PoolAction::Send { connection: c, .. } => {
+                    last_activity.insert(*c, now);
+                }
+                _ => {}
+            }
+        }
+        last_activity.retain(|c, _| model.open.contains(c));
+        if op == Op::Tick {
+            for &c in model.in_flight.values() {
+                assert!(
+                    now - last_activity[&c] < limits.stall_timeout,
+                    "{c} stalled since {:?}, still open at {now:?}",
+                    last_activity[&c]
+                );
+            }
+        }
+
+        // Idle connections: an open connection with no lanes that is not
+        // draining is only ever closed by a tick, once it has had no
+        // lanes for `idle_timeout`, or when it reaches `rotate_after`
+        // (draining connections close as soon as they are empty, so they
+        // never sit empty).
+        for action in &actions {
+            if let PoolAction::Close(c) = action
+                && let Some(&since) = empty_since.get(c)
+            {
+                assert_eq!(op, Op::Tick, "idle {c} closed outside a tick");
+                let aged = now.saturating_sub(model.opened_at[c])
+                    >= limits.rotate_after;
+                assert!(
+                    aged || now - since >= limits.idle_timeout,
+                    "{c} closed after {:?} idle",
+                    now - since
+                );
+            }
+        }
+        empty_since.retain(|c, _| model.open.contains(c));
+        for &c in &model.open {
+            if pool.lane_count(c) == 0 && !pool.is_draining(c) {
+                empty_since.entry(c).or_insert(now);
+            } else {
+                empty_since.remove(&c);
+            }
+        }
+        if op == Op::Tick {
+            for (&c, &since) in &empty_since {
+                assert!(
+                    now - since < limits.idle_timeout,
+                    "{c} idle since {since:?} still open at {now:?}"
+                );
+            }
+        }
 
         // Rotation: a connection past `rotate_after` drains, and a
         // draining connection only keeps lanes with a request in flight.
@@ -581,7 +676,12 @@ fn errors_display() {
 /// next request is a full resend.
 #[test]
 fn rotation_moves_lanes_and_closes() {
-    let mut pool = Pool::new(Limits::default());
+    // Hours pass with a request in flight and no frames; stalls are
+    // not what this test is about.
+    let mut pool = Pool::new(Limits {
+        stall_timeout: Duration::MAX,
+        ..Limits::default()
+    });
     let (busy, _) = pool.open_lane();
     let (idle, _) = pool.open_lane();
     pool.submit(idle, body(1)).unwrap();
@@ -673,6 +773,7 @@ fn connection_limit_keeps_other_in_flight_count() {
 #[test]
 fn rotation_moves_waiting_requests() {
     let mut pool = Pool::new(Limits {
+        stall_timeout: Duration::MAX,
         max_lanes: 4,
         max_in_flight: 1,
         ..Limits::default()

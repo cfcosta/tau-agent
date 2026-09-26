@@ -367,7 +367,14 @@ impl<C: Connector> Driver<C> {
                     self.apply(actions);
                 }
             }
-            ConnectionEvent::Frame { frame, .. } => self.frame(&frame),
+            ConnectionEvent::Frame { connection, frame } => {
+                // Frames still queued from a connection the pool closed
+                // (a stalled one) belong to requests resent elsewhere.
+                if self.connections.contains_key(&connection) {
+                    self.pool.activity(connection);
+                    self.frame(&frame);
+                }
+            }
         }
     }
 
