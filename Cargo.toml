@@ -28,6 +28,12 @@ serde_json = { version = "1.0.151", features = [
 ] }
 thiserror = "2.0.21"
 turmoil = "0.7.2"
+webpki-roots = "1.0.9"
+tokio-rustls = { version = "0.26.5", default-features = false, features = [
+  "logging",
+  "ring",
+  "tls12",
+] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
   "handshake",
 ] }
