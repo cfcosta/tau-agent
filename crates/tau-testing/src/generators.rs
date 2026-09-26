@@ -597,6 +597,10 @@ pub fn mutate_text(tc: TestCase, text: String) -> String {
     chars.into_iter().collect()
 }
 
+// =============================================================================
+// JSON schemas for `tau_agent::schema` (crates/tau-agent/tests/schema.rs)
+// =============================================================================
+
 /// Whether `schema` is one of the nullable shapes [`draw_schema_case`]
 /// produces (`{"type": "null"}` or an `anyOf` with such a branch). Used
 /// only to decide, at generation time, whether an optional property may
@@ -680,6 +684,9 @@ fn draw_value_for_schema_case(tc: &TestCase, schema: &Value) -> Value {
     }
 }
 
+// The recursion lives in a plain function for the same reason as
+// `draw_json_value`: a composite that draws itself would have an opaque
+// type that contains itself.
 fn draw_schema_case(tc: &TestCase, depth: u32) -> (Value, Value) {
     let kinds: u32 = if depth == 0 { 5 } else { 7 };
     match tc.draw(gs::integers::<u32>().max_value(kinds - 1)) {
@@ -890,6 +897,13 @@ pub fn unsupported_schema(tc: TestCase) -> Value {
     }
 }
 
+// =============================================================================
+// Tool-argument schemas for `tau_agent::validation`
+// =============================================================================
+
+// The recursion lives in a plain function for the same reason as
+// `draw_json_value`: a composite that draws itself would have an opaque
+// type that contains itself.
 fn draw_arg_schema(tc: &TestCase, depth: u32) -> Value {
     let kinds: u32 = if depth == 0 { 5 } else { 8 };
     match tc.draw(gs::integers::<u32>().max_value(kinds - 1)) {

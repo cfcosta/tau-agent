@@ -1,0 +1,23 @@
+error[E0277]: the trait bound `Search: AgentTool` is not satisfied
+  --> tests/ui/tool_must_be_a_tool.rs:35:51
+   |
+35 |     let _ = Agent::new(ScriptedModel::new()).tool(Search);
+   |                                              ---- ^^^^^^ unsatisfied trait bound
+   |                                              |
+   |                                              required by a bound introduced by this call
+   |
+help: the trait `AgentTool` is not implemented for `Search`
+  --> tests/ui/tool_must_be_a_tool.rs:17:1
+   |
+17 | struct Search;
+   | ^^^^^^^^^^^^^
+help: the trait `AgentTool` is implemented for `Typed<T>`
+  --> src/tool.rs
+   |
+   | impl<T: TypedTool> AgentTool for Typed<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `Agent::tool`
+  --> src/agent.rs
+   |
+   |     pub fn tool(self, tool: impl AgentTool) -> Self {
+   |                                  ^^^^^^^^^ required by this bound in `Agent::tool`

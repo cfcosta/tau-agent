@@ -31,6 +31,7 @@ serde_json = { version = "1.0.151", features = [
   "preserve_order",
 ] }
 thiserror = "2.0.21"
+trybuild = "1.0.121"
 turmoil = "0.7.2"
 uuid = { version = "1.26.1", features = ["v7"] }
 webpki-roots = "1.0.9"

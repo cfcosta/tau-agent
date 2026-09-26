@@ -1,0 +1,14 @@
+error[E0053]: method `before_tool` has an incompatible type for trait
+ --> tests/ui/hook_must_return_decision.rs:7:1
+  |
+7 | #[async_trait]
+  | ^^^^^^^^^^^^^^ expected `Result<Decision, anyhow::Error>`, found `()`
+  |
+  = note: expected signature `fn(&'life0 Quiet, &'life1 mut ToolCall, &'life2 HookCtx) -> Pin<Box<(dyn Future<Output = Result<Decision, anyhow::Error>> + Send + 'async_trait)>>`
+             found signature `fn(&'life0 Quiet, &'life1 mut ToolCall, &'life2 HookCtx) -> Pin<Box<(dyn Future<Output = ()> + Send + 'async_trait)>>`
+  = note: this error originates in the attribute macro `async_trait` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: change the output type to match the trait
+  |
+7 - #[async_trait]
+7 + Pin<Box<(dyn Future<Output = Result<Decision, anyhow::Error>> + Send + 'async_trait)>>
+  |

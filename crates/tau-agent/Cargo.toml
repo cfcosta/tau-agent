@@ -23,4 +23,5 @@ tau-store.workspace = true
 [dev-dependencies]
 hegeltest.workspace = true
 tau-testing.workspace = true
+trybuild.workspace = true
 tokio = { workspace = true, features = ["rt"] }

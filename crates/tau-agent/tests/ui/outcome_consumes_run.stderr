@@ -1,0 +1,15 @@
+error[E0382]: borrow of moved value: `run`
+ --> tests/ui/outcome_consumes_run.rs:6:5
+  |
+4 | async fn finish(run: Run) {
+  |                 --- move occurs because `run` has type `Run`, which does not implement the `Copy` trait
+5 |     let _ = run.outcome().await;
+  |                 --------- `run` moved due to this method call
+6 |     run.steer("too late");
+  |     ^^^ value borrowed here after move
+  |
+note: `Run::outcome` takes ownership of the receiver `self`, which moves `run`
+ --> src/agent.rs
+  |
+  |     pub async fn outcome(mut self) -> Result<Outcome, AgentError> {
+  |                              ^^^^

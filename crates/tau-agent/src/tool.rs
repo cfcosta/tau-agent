@@ -103,8 +103,6 @@ impl ToolUpdates {
     }
 
     /// Stops accepting updates; called when the tool's future resolves.
-    // The agent loop is the caller; until it lands only tests call this.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn close(&self) {
         self.open.store(false, Ordering::SeqCst);
     }

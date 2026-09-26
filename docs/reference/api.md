@@ -11,8 +11,9 @@ let store = tau_store::Store::open("runs.db").await?;
 let test_store = tau_store::Store::memory().await?;
 ```
 
-`Agent::new` accepts anything implementing `tau_ai::Llm`. Two types do:
-`OpenAi` and `tau_testing::ScriptedModel`.
+`Agent::new` accepts anything implementing `tau_ai::llm::Llm`, by value.
+Two types do: `OpenAi` and `tau_testing::ScriptedModel`; both are cheap to
+clone and share their state between clones.
 
 ## Agent
 
@@ -20,7 +21,7 @@ let test_store = tau_store::Store::memory().await?;
 pub struct Agent { /* Arc inside; Clone is cheap; immutable once built */ }
 
 impl Agent {
-    pub fn new(llm: &impl Llm) -> Self;
+    pub fn new(llm: impl Llm) -> Self;
     pub fn name(self, name: &str) -> Self;
     pub fn model(self, id: &str) -> Self;
     pub fn instructions(self, text: impl Into<String>) -> Self;
@@ -30,6 +31,7 @@ impl Agent {
     pub fn limits(self, l: Limits) -> Self;
     pub fn compaction(self, c: Compaction) -> Self;   // off by default
     pub fn warmup(self, on: bool) -> Self;            // generate:false on first use
+    pub fn clock(self, clock: Clock) -> Self;         // message timestamps; for deterministic tests
 
     pub fn start(&self, input: impl Into<Input>, store: &Store) -> Run;
     pub async fn run(&self, input: impl Into<Input>, store: &Store) -> Result<Outcome>;
@@ -93,7 +95,8 @@ pub struct ToolCtx { pub cancel: CancellationToken, pub updates: ToolUpdates, pu
 ```rust
 #[async_trait]
 pub trait RunHook: Send + Sync + 'static {
-    async fn before_tool(&self, call: &mut ToolCall, ctx: &HookCtx) -> Decision { Decision::Allow }
+    // An error blocks the call, as a Block does.
+    async fn before_tool(&self, call: &mut ToolCall, ctx: &HookCtx) -> anyhow::Result<Decision> { Ok(Decision::Allow) }
     async fn after_tool(&self, call: &ToolCall, out: &mut ToolOutput, ctx: &HookCtx) {}
     async fn on_event(&self, ev: &RunEvent) {}          // awaited in order
 }
@@ -152,7 +155,7 @@ for draft in [&terse, &detailed] {
 ### Supervisor with sub-agents
 
 ```rust
-let lead = Agent::new(&llm).name("lead").model("gpt-5.5")
+let lead = Agent::new(llm.clone()).name("lead").model("gpt-5.5")
     .instructions("Break the task down. Delegate. Verify before finishing.")
     .tool(researcher.as_tool("research", "Investigate a question and report findings."))
     .tool(coder.as_tool("implement", "Make a scoped code change and report what changed."))
@@ -185,10 +188,10 @@ let results = futures::future::join_all(attempts).await;
 struct NoProdWrites;
 #[async_trait]
 impl RunHook for NoProdWrites {
-    async fn before_tool(&self, call: &mut ToolCall, _: &HookCtx) -> Decision {
+    async fn before_tool(&self, call: &mut ToolCall, _: &HookCtx) -> anyhow::Result<Decision> {
         let prod = call.args["command"].as_str().is_some_and(|c| c.contains("--env prod"));
-        if call.name == "bash" && prod { return Decision::Block("no production commands".into()); }
-        Decision::Allow
+        if call.name == "bash" && prod { return Ok(Decision::Block("no production commands".into())); }
+        Ok(Decision::Allow)
     }
 }
 
@@ -198,7 +201,7 @@ async fn triage_opens_one_ticket() {
         .turn(|t| t.tool_call("create_ticket", json!({"title": "Crash on start", "body": "…"})))
         .turn(|t| t.text("Opened one ticket."));
     let tracker = FakeTracker::default();
-    let agent = Agent::new(&llm).tool(CreateTicket(tracker.clone())).hook(NoProdWrites);
+    let agent = Agent::new(llm).tool(typed(CreateTicket(tracker.clone()))).hook(NoProdWrites);
     agent.run("Triage: …", &Store::memory().await.unwrap()).await.unwrap();
     assert_eq!(tracker.created().len(), 1);
 }
