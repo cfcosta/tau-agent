@@ -10,6 +10,10 @@ repository = "https://github.com/cfcosta/tau-agent"
 publish = false
 
 [workspace.dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = [
+  "sink",
+  "std",
+] }
 hegeltest = "0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 sqlx = { version = "0.9.0", default-features = false, features = [
@@ -23,6 +27,10 @@ serde_json = { version = "1.0.151", features = [
   "preserve_order",
 ] }
 thiserror = "2.0.21"
+turmoil = "0.7.2"
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
+  "handshake",
+] }
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
 tau-agent = { path = "crates/tau-agent", version = "0.1.0" }
 tau-ai = { path = "crates/tau-ai", version = "0.1.0" }
