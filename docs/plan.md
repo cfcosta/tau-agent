@@ -125,29 +125,35 @@ The hardest part is the WebSocket layer. It has to:
 
 ### M2: Agent loop and tools (weeks 2–3)
 
-- [ ] `Agent` builder and `Run` handle (see [`reference/api.md`](reference/api.md)).
-- [ ] The loop, with the ordering from [`reference/agent-loop.md`](reference/agent-loop.md).
-- [ ] `AgentTool` and `TypedTool` traits. Schemas come from `schemars`.
-- [ ] Argument coercion before validation, matching typebox
+- [x] `Agent` builder and `Run` handle (see [`reference/api.md`](reference/api.md)).
+- [x] The loop, with the ordering from [`reference/agent-loop.md`](reference/agent-loop.md).
+- [x] `AgentTool` and `TypedTool` traits. Schemas come from `schemars`.
+- [x] Argument coercion before validation, matching typebox
       `Value.Convert`:
-  - [ ] a string number becomes a number;
-  - [ ] `null` on an optional field is treated as absent.
-- [ ] Strict-schema rewriting for OpenAI, ported from pi's
+  - [x] a string number becomes a number;
+  - [x] `null` on an optional field is treated as absent.
+- [x] Strict-schema rewriting for OpenAI, ported from pi's
       `constrained-sampling.ts`.
-- [ ] `RunHook`:
-  - [ ] `before_tool` can block the call or change its arguments;
-  - [ ] a hook that errors blocks the call;
-  - [ ] `after_tool`;
-  - [ ] `on_event`, awaited in order.
-- [ ] Steering: messages are injected after the current tool batch.
-- [ ] Cancellation through a `CancellationToken`. Every tool call gets a
+- [x] `RunHook`:
+  - [x] `before_tool` can block the call or change its arguments;
+  - [x] a hook that errors blocks the call;
+  - [x] `after_tool`;
+  - [x] `on_event`, awaited in order.
+- [x] Steering: messages are injected after the current tool batch.
+- [x] Cancellation through a `CancellationToken`. Every tool call gets a
       result, even when the batch is aborted mid-way.
-- [ ] `tau-testing::ScriptedModel`, ported from pi's `faux.ts`.
-- [ ] The `tau-agent` properties from the testing inventory, including
+- [x] `tau-testing::ScriptedModel`, ported from pi's `faux.ts`.
+- [x] The `tau-agent` properties from the testing inventory, including
       the loop model test over generated scripts, and the loop known
       cases.
-- [ ] `trybuild` compile-fail cases for `Agent`, `TypedTool` and
+- [x] `trybuild` compile-fail cases for `Agent`, `TypedTool` and
       `RunHook`.
+- [ ] Retries of retryable model errors inside the loop (agent-loop.md,
+      "Retries"). Needs the error code carried on the failed response;
+      the classification itself is done (M1).
+- [ ] Argument schemas that use JSON Schema 2020-12 `prefixItems` (which
+      `schemars` emits for tuples) are not coerced item by item; pi has
+      the same gap.
 
 ### M3: SQLite store (weeks 3–4)
 
