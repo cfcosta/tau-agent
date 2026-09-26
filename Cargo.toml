@@ -8,6 +8,7 @@ edition = "2024"
 repository = "https://github.com/cfcosta/tau-agent"
 
 [workspace.dependencies]
+hegeltest = "0.28"
 tau-agent = { path = "crates/tau-agent", version = "0.1.0" }
 tau-ai = { path = "crates/tau-ai", version = "0.1.0" }
 tau-store = { path = "crates/tau-store", version = "0.1.0" }

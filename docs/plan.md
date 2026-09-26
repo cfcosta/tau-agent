@@ -19,7 +19,7 @@ durations are estimates for one senior Rust engineer, and exclude tests.
 | `tau-agent`: typed results, sub-agents, limits, forks, hooks   |       0.9k |        3         | none                                        |
 | `tau-agent`: compaction                                        |       0.5k |        2         | none                                        |
 | `tau-store`: runs, messages, forks                             |       0.6k |        2         | `sqlx` (`sqlite`, `macros`, `migrate`)      |
-| `tau-testing`: scripted model, run replay                      |       0.4k |        1         | none                                        |
+| `tau-testing`: scripted model, generators, run replay          |       0.4k |        1         | `hegeltest`                                 |
 
 ### Optional crate (~2k lines)
 
@@ -82,9 +82,16 @@ The hardest part is the WebSocket layer. It has to:
       regexes over the error text.
 - [ ] Cost from usage: cached input pricing and service tiers. Backed by
       a hand-maintained OpenAI model table.
+- [ ] Test infrastructure (see [`reference/testing.md`](reference/testing.md)):
+  - [ ] `hegeltest` wired in; `tau_testing::block_on` on a paused
+        current-thread runtime;
+  - [ ] shared generators for messages, transcripts and `response.*`
+        event streams in `tau_testing::generators`;
+  - [ ] CI Check tier and nightly tier.
 - [ ] Tests:
+  - [ ] the `tau-ai` properties from the testing inventory;
   - [ ] replay recorded `response.*` streams;
-  - [ ] assert the delta rule across multi-turn tool conversations;
+  - [ ] delta-rule model test, including its extended variant;
   - [ ] measure the delta hit rate.
 
 ### M2: Agent loop and tools (weeks 2–3)
@@ -107,6 +114,8 @@ The hardest part is the WebSocket layer. It has to:
 - [ ] Cancellation through a `CancellationToken`. Every tool call gets a
       result, even when the batch is aborted mid-way.
 - [ ] `tau-testing::ScriptedModel`, ported from pi's `faux.ts`.
+- [ ] The `tau-agent` properties from the testing inventory, including
+      the loop model test over generated scripts.
 
 ### M3: SQLite store (weeks 3–4)
 
@@ -121,6 +130,8 @@ The hardest part is the WebSocket layer. It has to:
 - [ ] Offline metadata in `.sqlx/` is committed.
 - [ ] CI runs `cargo sqlx prepare --check`.
 - [ ] Metric: time spent waiting for the writer connection.
+- [ ] The `tau-store` properties from the testing inventory, including
+      the store model test.
 
 ### M4: Workflow primitives (weeks 4–5)
 
@@ -141,12 +152,15 @@ The hardest part is the WebSocket layer. It has to:
       overflow. The next turn starts a fresh WebSocket chain.
 - [ ] Three example workflows that double as integration tests: a typed
       pipeline, a supervisor with sub-agents, and a fork fan-out.
+- [ ] The remaining `tau-agent` properties: limits, forks, compaction.
+- [ ] `cargo mutants` clean on the modules listed in the testing doc.
 
 ### M5: `tau-tools` (weeks 6–7, optional)
 
 - [ ] The seven tools as specified in [`reference/tools.md`](reference/tools.md).
 - [ ] Search runs natively, with no `rg` or `fd` subprocesses and no
       binaries downloaded at runtime.
+- [ ] The `tau-tools` properties from the testing inventory.
 
 ## Risks
 

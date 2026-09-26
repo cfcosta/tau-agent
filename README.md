@@ -27,15 +27,15 @@ Planning. The workspace has empty crate skeletons and no implementation yet. See
 
 ## Documentation
 
-| Document                                                                   | What it covers                                                              |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [`docs/plan.md`](docs/plan.md)                                             | Scope, size estimates, milestones with task checklists, risks               |
-| [`docs/architecture.md`](docs/architecture.md)                             | Crates, data flow, concurrency model                                        |
-| [`docs/reference/api.md`](docs/reference/api.md)                           | Public Rust API: `Agent`, `Run`, tools, hooks, limits, typed results, forks |
-| [`docs/reference/agent-loop.md`](docs/reference/agent-loop.md)             | Loop semantics and ordering guarantees inherited from pi                    |
-| [`docs/reference/openai-websocket.md`](docs/reference/openai-websocket.md) | Responses WebSocket protocol, limits, continuation rule, recovery           |
-| [`docs/reference/storage.md`](docs/reference/storage.md)                   | SQLite schema, sqlx workflow, queries                                       |
-| [`docs/reference/compaction.md`](docs/reference/compaction.md)             | When and how long runs are summarized                                       |
-| [`docs/reference/tools.md`](docs/reference/tools.md)                       | Behaviour spec for the optional coding tools                                |
-| [`docs/reference/testing.md`](docs/reference/testing.md)                   | Scripted model, recorded streams, offline query metadata                    |
-| [`docs/reference/pi-audit.md`](docs/reference/pi-audit.md)                 | Audit of pi: what it is, what we take, bugs we avoid                        |
+| Document                                                                   | What it covers                                                                            |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [`docs/plan.md`](docs/plan.md)                                             | Scope, size estimates, milestones with task checklists, risks                             |
+| [`docs/architecture.md`](docs/architecture.md)                             | Crates, data flow, concurrency model                                                      |
+| [`docs/reference/api.md`](docs/reference/api.md)                           | Public Rust API: `Agent`, `Run`, tools, hooks, limits, typed results, forks               |
+| [`docs/reference/agent-loop.md`](docs/reference/agent-loop.md)             | Loop semantics and ordering guarantees inherited from pi                                  |
+| [`docs/reference/openai-websocket.md`](docs/reference/openai-websocket.md) | Responses WebSocket protocol, limits, continuation rule, recovery                         |
+| [`docs/reference/storage.md`](docs/reference/storage.md)                   | SQLite schema, sqlx workflow, queries                                                     |
+| [`docs/reference/compaction.md`](docs/reference/compaction.md)             | When and how long runs are summarized                                                     |
+| [`docs/reference/tools.md`](docs/reference/tools.md)                       | Behaviour spec for the optional coding tools                                              |
+| [`docs/reference/testing.md`](docs/reference/testing.md)                   | Testing strategy: property tests with Hegel, the property inventory, harness and CI tiers |
+| [`docs/reference/pi-audit.md`](docs/reference/pi-audit.md)                 | Audit of pi: what it is, what we take, bugs we avoid                                      |
