@@ -2,3 +2,4 @@
 //! machines that take events and return actions.
 
 pub mod continuation;
+pub mod lane;
