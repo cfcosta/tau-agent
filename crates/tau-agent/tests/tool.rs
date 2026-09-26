@@ -45,11 +45,11 @@ impl TypedTool for Search {
 
 fn ctx() -> ToolCtx {
     let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx {
-        cancel: Default::default(),
-        updates: ToolUpdates::for_tests("call_1", sender),
-        run: RunId("run_1".into()),
-    }
+    ToolCtx::new(
+        Default::default(),
+        ToolUpdates::for_tests("call_1", sender),
+        RunId("run_1".into()),
+    )
 }
 
 /// A typed tool exposes its name, description and a schema generated
@@ -91,4 +91,10 @@ fn text_output_has_one_text_block() {
         serde_json::to_value(&output.content).unwrap(),
         json!([{"type": "text", "text": "done"}])
     );
+}
+
+/// A run id displays as the id itself.
+#[test]
+fn run_ids_display_as_themselves() {
+    assert_eq!(RunId("run_1".into()).to_string(), "run_1");
 }

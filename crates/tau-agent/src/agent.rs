@@ -7,16 +7,17 @@
 
 use std::{collections::HashMap, fmt, sync::Arc};
 
+use async_trait::async_trait;
 use futures_util::{Stream, stream};
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tau_ai::{
     llm::{Llm, LlmError},
-    message::Usage,
+    message::{Message, Usage},
     responses::request::{ReasoningEffort, Settings, ToolDefinition},
 };
-use tau_store::{NewRun, RunKind, Store, StoreError};
+use tau_store::{Entry, NewRun, RunKind, Store, StoreError};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
@@ -24,9 +25,9 @@ use crate::{
     event::{RunEvent, StopReason},
     hook::RunHook,
     limits::Limits,
-    runner::{Clock, LoopTool, Runner, system_clock},
+    runner::{Clock, LoopTool, Runner, add_usage, system_clock},
     schema::to_strict,
-    tool::{AgentTool, RunId},
+    tool::{AgentTool, RunId, ToolCtx, ToolOutput},
     validation::ArgumentSchema,
 };
 
@@ -131,6 +132,37 @@ pub struct Outcome {
     pub stop: StopReason,
     /// The model's usage over the run, cost included.
     pub usage: Usage,
+    /// The `seq` of the run's last stored entry.
+    last_seq: i64,
+}
+
+impl Outcome {
+    /// The point the run ended at, to fork from.
+    pub fn checkpoint(&self) -> Checkpoint {
+        Checkpoint {
+            run: self.run.clone(),
+            seq: self.last_seq,
+        }
+    }
+}
+
+/// A point in a run's transcript: its entries up to `seq`. Forks start
+/// from one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Checkpoint {
+    run: RunId,
+    seq: i64,
+}
+
+impl Checkpoint {
+    pub fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    /// The `seq` of the last entry the checkpoint includes.
+    pub fn seq(&self) -> i64 {
+        self.seq
+    }
 }
 
 /// The result of a typed run: the final message as a value, and the run.
@@ -295,10 +327,52 @@ impl Agent {
         parse_output(outcome)
     }
 
+    /// Continues from `checkpoint` in a new run of this agent: a fork.
+    /// The fork sees the checkpoint's transcript, by reference, and its
+    /// input follows it; the forked-from run is left as it was.
+    pub fn fork(&self, checkpoint: &Checkpoint) -> Forked {
+        Forked {
+            agent: self.clone(),
+            from: checkpoint.clone(),
+        }
+    }
+
+    /// This agent as a tool: each call starts a sub-agent run on the
+    /// call's `input`, and its final text is the tool's result.
+    ///
+    /// The sub-agent run records the calling run as its parent and joins
+    /// its workflow. Cancelling the calling run cancels it; its usage
+    /// counts toward the calling run's limits and outcome; its events
+    /// go to the calling run's subscriber, carrying `parent`. A run that
+    /// ends other than by stopping (a limit, a cancel, an error) makes
+    /// the call fail.
+    pub fn as_tool(&self, name: &str, description: &str) -> SubAgent {
+        SubAgent {
+            agent: self.clone(),
+            name: name.to_owned(),
+            description: description.to_owned(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "The task, with everything needed to do it.",
+                    },
+                },
+                "required": ["input"],
+                "additionalProperties": false,
+            }),
+        }
+    }
+
     /// Starts a run as `launch` describes it.
     fn launch(&self, launch: Launch, input: String, store: &Store) -> Run {
         let id = RunId(uuid::Uuid::now_v7().to_string().into());
-        let (events_tx, events) = mpsc::channel(EVENT_BUFFER);
+        let (own_tx, own_rx) = mpsc::channel(EVENT_BUFFER);
+        let (events_tx, events) = match launch.events.clone() {
+            Events::Own => (Some(own_tx), Some(own_rx)),
+            Events::Forward(sender) => (sender, None),
+        };
         let (steer_tx, steering) = mpsc::unbounded_channel();
         let cancel = launch.cancel.clone();
         let task = tokio::spawn(run_task(
@@ -312,11 +386,138 @@ impl Agent {
         ));
         Run {
             id,
-            events: Some(events),
+            events,
             steer: steer_tx,
             cancel,
             task,
         }
+    }
+}
+
+/// An agent about to continue from a checkpoint. See [`Agent::fork`].
+#[derive(Debug, Clone)]
+pub struct Forked {
+    agent: Agent,
+    from: Checkpoint,
+}
+
+impl Forked {
+    /// Starts the fork on `input`. Unless the input names a workflow,
+    /// the fork joins the workflow of the run it forks from.
+    pub fn start(&self, input: impl Into<Input>, store: &Store) -> Run {
+        let input = input.into();
+        self.agent.launch(self.launch(&input), input.text, store)
+    }
+
+    pub async fn run(
+        &self,
+        input: impl Into<Input>,
+        store: &Store,
+    ) -> Result<Outcome, AgentError> {
+        self.start(input, store).outcome().await
+    }
+
+    pub async fn run_typed<T>(
+        &self,
+        input: impl Into<Input>,
+        store: &Store,
+    ) -> Result<Typed<T>, AgentError>
+    where
+        T: DeserializeOwned + JsonSchema,
+    {
+        let input = input.into();
+        let mut launch = self.launch(&input);
+        launch.text_format = Some(text_format::<T>()?);
+        let outcome = self
+            .agent
+            .launch(launch, input.text, store)
+            .outcome()
+            .await?;
+        parse_output(outcome)
+    }
+
+    fn launch(&self, input: &Input) -> Launch {
+        let mut launch = Launch::root(input.workflow.as_deref());
+        launch.kind = RunKind::Fork {
+            parent: self.from.run.0.to_string(),
+            fork_seq: self.from.seq,
+        };
+        launch.inherit_workflow = input.workflow.is_none();
+        launch
+    }
+}
+
+/// An agent as a tool. See [`Agent::as_tool`].
+pub struct SubAgent {
+    agent: Agent,
+    name: String,
+    description: String,
+    parameters: Value,
+}
+
+#[async_trait]
+impl AgentTool for SubAgent {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn parameters(&self) -> &Value {
+        &self.parameters
+    }
+
+    async fn call(
+        &self,
+        args: Value,
+        ctx: ToolCtx,
+    ) -> anyhow::Result<ToolOutput> {
+        let Some(scope) = ctx.scope else {
+            anyhow::bail!("a sub-agent can only be called from a run");
+        };
+        let input = args["input"].as_str().unwrap_or_default().to_owned();
+        let launch = Launch {
+            kind: RunKind::Subagent {
+                parent: ctx.run.0.to_string(),
+            },
+            parent: Some(ctx.run.clone()),
+            workflow: scope.workflow.clone(),
+            cancel: ctx.cancel.child_token(),
+            text_format: None,
+            inherit_workflow: false,
+            events: Events::Forward(scope.events.clone()),
+        };
+        let outcome = self
+            .agent
+            .launch(launch, input, &scope.store)
+            .outcome()
+            .await?;
+        add_usage(
+            &mut scope.children.lock().expect("not poisoned"),
+            &outcome.usage,
+        );
+        match &outcome.stop {
+            StopReason::Stop => Ok(ToolOutput {
+                details: Some(json!({ "run": outcome.run.0.as_ref() })),
+                ..ToolOutput::text(outcome.text)
+            }),
+            stop => anyhow::bail!(
+                "{} ended with {stop:?} before finishing; its last message: {}",
+                self.name,
+                outcome.text
+            ),
+        }
+    }
+}
+
+impl fmt::Debug for SubAgent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SubAgent")
+            .field("name", &self.name)
+            .field("agent", &self.agent)
+            .finish()
     }
 }
 
@@ -328,6 +529,18 @@ struct Launch {
     cancel: CancellationToken,
     /// The `text.format` of a typed run.
     text_format: Option<Value>,
+    /// Whether the run joins its parent run's workflow.
+    inherit_workflow: bool,
+    events: Events,
+}
+
+/// Where a run's events go.
+#[derive(Clone)]
+enum Events {
+    /// To its own subscriber, through [`Run::events`].
+    Own,
+    /// To its parent's subscriber, if the parent still has one.
+    Forward(Option<mpsc::Sender<RunEvent>>),
 }
 
 impl Launch {
@@ -338,6 +551,8 @@ impl Launch {
             workflow: workflow.map(Into::into),
             cancel: CancellationToken::new(),
             text_format: None,
+            inherit_workflow: false,
+            events: Events::Own,
         }
     }
 }
@@ -396,7 +611,7 @@ async fn run_task(
     input: String,
     store: Store,
     launch: Launch,
-    events: mpsc::Sender<RunEvent>,
+    events: Option<mpsc::Sender<RunEvent>>,
     steering: mpsc::UnboundedReceiver<String>,
 ) -> Result<Outcome, AgentError> {
     let mut tools = HashMap::new();
@@ -418,16 +633,40 @@ async fn run_task(
     }
     let settings = agent.settings(launch.text_format);
     let session = agent.0.llm.open(settings).await.map_err(AgentError::Llm)?;
+    let mut workflow = launch.workflow.as_deref().map(str::to_owned);
+    let parent_run = match &launch.kind {
+        RunKind::Root => None,
+        RunKind::Fork { parent, .. } | RunKind::Subagent { parent } => {
+            Some(parent.clone())
+        }
+    };
+    if launch.inherit_workflow
+        && let Some(parent) = &parent_run
+    {
+        let record = store.run(parent).await.map_err(AgentError::Store)?;
+        let record = record.ok_or_else(|| {
+            AgentError::Store(StoreError::UnknownRun(parent.clone()))
+        })?;
+        workflow = record.workflow_id;
+    }
+    let fork = matches!(launch.kind, RunKind::Fork { .. });
     store
         .create_run(&NewRun {
             id: &id.0,
-            workflow_id: launch.workflow.as_deref(),
+            workflow_id: workflow.as_deref(),
             agent: &agent.0.name,
             kind: launch.kind,
             model: &agent.0.model,
         })
         .await
         .map_err(AgentError::Store)?;
+    let history = if fork {
+        let entries =
+            store.transcript(&id.0).await.map_err(AgentError::Store)?;
+        messages(entries).map_err(AgentError::Store)?
+    } else {
+        Vec::new()
+    };
     let result = Runner {
         run: id.clone(),
         parent: launch.parent,
@@ -437,10 +676,14 @@ async fn run_task(
         limits: agent.0.limits,
         session,
         store,
-        events: Some(events),
+        events,
         steering,
         cancel: launch.cancel,
         clock: agent.0.clock.clone(),
+        history,
+        stored: 0,
+        workflow: workflow.map(Into::into),
+        children: Arc::default(),
     }
     .run(input)
     .await
@@ -450,7 +693,22 @@ async fn run_task(
         text: result.text,
         stop: result.stop,
         usage: result.usage,
+        last_seq: result.last_seq,
     })
+}
+
+/// The messages of a stored transcript.
+fn messages(entries: Vec<Entry>) -> Result<Vec<Message>, StoreError> {
+    entries
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Entry::Message { body, .. } => {
+                Some(serde_json::from_value(body).map_err(StoreError::from))
+            }
+            // Compaction is not written yet.
+            Entry::Compaction { .. } => None,
+        })
+        .collect()
 }
 
 /// One execution of an agent.

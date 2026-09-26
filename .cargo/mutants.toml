@@ -57,4 +57,9 @@ exclude_re = [
   # anyway produces the same value as skipping it. Either way the
   # mutant cannot change the result.
   'replace > with >= in coerce_with_json_schema',
+
+  # AgentTool::execution_mode: the default method returns
+  # `ExecutionMode::Parallel`, which is also `ExecutionMode::default()`
+  # (`crates/tau-agent/src/tool.rs`), so the mutant returns the same value.
+  'replace AgentTool::execution_mode -> ExecutionMode with Default::default\(\)',
 ]

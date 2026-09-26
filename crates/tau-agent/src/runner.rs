@@ -18,7 +18,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::SystemTime,
 };
 
@@ -48,7 +48,15 @@ use crate::{
     event::{RunEvent, StopReason},
     hook::{Decision, HookCtx, RunHook, ToolCall},
     limits::Limits,
-    tool::{AgentTool, ExecutionMode, RunId, ToolCtx, ToolOutput, ToolUpdates},
+    tool::{
+        AgentTool,
+        ExecutionMode,
+        RunId,
+        RunScope,
+        ToolCtx,
+        ToolOutput,
+        ToolUpdates,
+    },
     validation::ArgumentSchema,
 };
 
@@ -93,6 +101,13 @@ pub(crate) struct Runner {
     pub steering: mpsc::UnboundedReceiver<String>,
     pub cancel: CancellationToken,
     pub clock: Clock,
+    /// Messages the run inherits (a fork's), before its input.
+    pub history: Vec<Message>,
+    /// How many entries of its own the run has stored.
+    pub stored: i64,
+    pub workflow: Option<Arc<str>>,
+    /// The usage of the sub-agent runs this run's tools started.
+    pub children: Arc<Mutex<Usage>>,
 }
 
 /// How a run ended.
@@ -104,6 +119,8 @@ pub struct RunResult {
     pub usage: Usage,
     /// The text of the last assistant message.
     pub text: String,
+    /// The `seq` of the run's last stored entry.
+    pub last_seq: i64,
 }
 
 enum Prepared {
@@ -130,8 +147,9 @@ impl Runner {
         let first = self.user(input);
         self.persist(std::slice::from_ref(&first), &Usage::default())
             .await?;
-        let mut transcript = vec![first];
-        let mut total = Usage::default();
+        let mut transcript = std::mem::take(&mut self.history);
+        transcript.push(first);
+        let mut own = Usage::default();
         let mut turn = 0;
 
         let stop = loop {
@@ -143,7 +161,7 @@ impl Runner {
             .await;
 
             let message = self.respond(&transcript).await;
-            add_usage(&mut total, &message.usage);
+            add_usage(&mut own, &message.usage);
             let failed = matches!(
                 message.stop_reason,
                 MessageStop::Error | MessageStop::Aborted
@@ -178,7 +196,7 @@ impl Runner {
                 Some(StopReason::Cancelled)
             } else {
                 self.limits
-                    .reached(turn, &total, started.elapsed())
+                    .reached(turn, &self.total(&own), started.elapsed())
                     .map(StopReason::Limit)
             };
             self.emit(RunEvent::TurnEnd {
@@ -204,6 +222,7 @@ impl Runner {
             }
         };
 
+        let total = self.total(&own);
         self.emit(RunEvent::RunEnd {
             run: self.run.clone(),
             parent: self.parent.clone(),
@@ -228,6 +247,7 @@ impl Runner {
             stop,
             usage: total,
             text,
+            last_seq: self.stored - 1,
         })
     }
 
@@ -480,6 +500,12 @@ impl Runner {
                     updates.clone(),
                 ),
                 run: self.run.clone(),
+                scope: Some(RunScope {
+                    store: self.store.clone(),
+                    workflow: self.workflow.clone(),
+                    events: self.events.clone(),
+                    children: self.children.clone(),
+                }),
             };
             let args = call.args.clone();
             pending.push(Box::pin(async move {
@@ -490,6 +516,13 @@ impl Runner {
             }));
             started += 1;
         }
+    }
+
+    /// The run's own usage plus its children's.
+    fn total(&self, own: &Usage) -> Usage {
+        let mut total = own.clone();
+        add_usage(&mut total, &self.children.lock().expect("not poisoned"));
+        total
     }
 
     async fn emit_update(&mut self, call_id: Arc<str>, partial: ToolOutput) {
@@ -589,7 +622,9 @@ impl Runner {
             output_tokens: u32::try_from(usage.output).unwrap_or(u32::MAX),
             cost_usd: usage.cost.total,
         };
-        self.store.append_turn(&self.run.0, &entries, turn).await
+        self.store.append_turn(&self.run.0, &entries, turn).await?;
+        self.stored += entries.len() as i64;
+        Ok(())
     }
 }
 
@@ -627,7 +662,7 @@ fn finish(
         .expect("an error event always finishes the stream")
 }
 
-fn add_usage(total: &mut Usage, usage: &Usage) {
+pub(crate) fn add_usage(total: &mut Usage, usage: &Usage) {
     total.input += usage.input;
     total.output += usage.output;
     total.cache_read += usage.cache_read;

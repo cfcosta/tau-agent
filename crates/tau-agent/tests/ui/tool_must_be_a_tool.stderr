@@ -11,11 +11,16 @@ help: the trait `AgentTool` is not implemented for `Search`
    |
 17 | struct Search;
    | ^^^^^^^^^^^^^
-help: the trait `AgentTool` is implemented for `TypedAdapter<T>`
-  --> src/tool.rs
+help: the following other types implement trait `AgentTool`
+  --> src/agent.rs
+   |
+   | impl AgentTool for SubAgent {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SubAgent`
+   |
+  ::: src/tool.rs
    |
    | impl<T: TypedTool> AgentTool for TypedAdapter<T> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `TypedAdapter<T>`
 note: required by a bound in `Agent::tool`
   --> src/agent.rs
    |

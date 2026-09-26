@@ -13,6 +13,7 @@ use std::{
     fmt,
     sync::{
         Arc,
+        Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -21,9 +22,12 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tau_ai::message::{InputBlock, TextContent};
+use tau_ai::message::{InputBlock, TextContent, Usage};
+use tau_store::Store;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+use crate::event::RunEvent;
 
 /// What a tool returns.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -114,6 +118,36 @@ pub struct ToolCtx {
     pub cancel: CancellationToken,
     pub updates: ToolUpdates,
     pub run: RunId,
+    /// What a sub-agent started by the tool joins; set by the loop.
+    pub(crate) scope: Option<RunScope>,
+}
+
+impl ToolCtx {
+    /// A context for calling a tool outside a run, as tests do. A
+    /// sub-agent tool called with it fails: it has no run to join.
+    pub fn new(
+        cancel: CancellationToken,
+        updates: ToolUpdates,
+        run: RunId,
+    ) -> Self {
+        Self {
+            cancel,
+            updates,
+            run,
+            scope: None,
+        }
+    }
+}
+
+/// The part of a run that a sub-agent run started by one of its tools
+/// shares: the store, the workflow, the event subscriber, and the usage
+/// of its children, which counts toward the run's limits.
+#[derive(Debug, Clone)]
+pub(crate) struct RunScope {
+    pub store: Store,
+    pub workflow: Option<Arc<str>>,
+    pub events: Option<mpsc::Sender<RunEvent>>,
+    pub children: Arc<Mutex<Usage>>,
 }
 
 /// A tool, as the loop sees it.
