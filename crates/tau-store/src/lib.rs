@@ -8,11 +8,19 @@
 //! loop gives it and knows nothing about message shapes beyond the `role`
 //! column that queries may filter on.
 
-use std::{path::Path, str::FromStr, time::Duration};
+use std::{
+    path::Path,
+    str::FromStr,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use serde_json::Value;
 use sqlx::{
+    Connection,
+    Sqlite,
     SqlitePool,
+    pool::PoolConnection,
     sqlite::{
         SqliteConnectOptions,
         SqliteJournalMode,
@@ -143,10 +151,24 @@ pub struct AgentCost {
     pub usd: f64,
 }
 
+/// How long writes waited for the writer connection
+/// (`docs/reference/storage.md`, "Connections"). SQLite has one writer,
+/// so parallel runs queue on it; this is how much that queue costs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WriterStats {
+    /// Writes made through this store (and its clones).
+    pub writes: u64,
+    /// Time spent waiting for the writer, over every write.
+    pub waited: Duration,
+    /// The longest single wait.
+    pub longest: Duration,
+}
+
 #[derive(Debug, Clone)]
 pub struct Store {
     writer: SqlitePool,
     reader: SqlitePool,
+    stats: Arc<Mutex<WriterStats>>,
 }
 
 impl Store {
@@ -169,7 +191,11 @@ impl Store {
             .max_connections(8)
             .connect_with(options.read_only(true))
             .await?;
-        Ok(Self { writer, reader })
+        Ok(Self {
+            writer,
+            reader,
+            stats: Arc::default(),
+        })
     }
 
     /// An in-memory database for tests: one connection serves both roles,
@@ -195,7 +221,29 @@ impl Store {
         Ok(Self {
             writer: pool.clone(),
             reader: pool,
+            stats: Arc::default(),
         })
+    }
+
+    /// Totals of the time writes spent waiting for the writer, shared by
+    /// every clone of this store.
+    pub fn writer_stats(&self) -> WriterStats {
+        *self.stats.lock().expect("not poisoned")
+    }
+
+    /// The writer connection, with the wait for it recorded.
+    async fn writer(&self) -> Result<PoolConnection<Sqlite>> {
+        let started = Instant::now();
+        let connection = self.writer.acquire().await?;
+        self.record_wait(started.elapsed());
+        Ok(connection)
+    }
+
+    fn record_wait(&self, waited: Duration) {
+        let mut stats = self.stats.lock().expect("not poisoned");
+        stats.writes += 1;
+        stats.waited += waited;
+        stats.longest = stats.longest.max(waited);
     }
 
     /// Records a new run with status `running`.
@@ -223,7 +271,7 @@ impl Store {
             fork_seq,
             run.model,
         )
-        .execute(&self.writer)
+        .execute(&mut *self.writer().await?)
         .await?;
         Ok(())
     }
@@ -236,7 +284,12 @@ impl Store {
         entries: &[Entry],
         usage: TurnUsage,
     ) -> Result<()> {
-        let mut tx = self.writer.begin_with("BEGIN IMMEDIATE").await?;
+        // The wait covers the connection and the write lock, which
+        // another process can hold.
+        let started = Instant::now();
+        let mut connection = self.writer.acquire().await?;
+        let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+        self.record_wait(started.elapsed());
         let input_tokens = i64::from(usage.input_tokens);
         let output_tokens = i64::from(usage.output_tokens);
 
@@ -354,7 +407,7 @@ impl Store {
             result,
             error,
         )
-        .execute(&self.writer)
+        .execute(&mut *self.writer().await?)
         .await?;
         if updated.rows_affected() == 0 {
             return Err(StoreError::UnknownRun(run.to_owned()));

@@ -68,7 +68,11 @@ columns.
 - **One writer at a time.** SQLite allows only one writer, so parallel
   runs queue on the writer connection. A run makes one write
   transaction per turn, taking milliseconds, and turns take seconds.
-  Time spent waiting for the writer connection is a tracked metric.
+  Time spent waiting for the writer connection is a tracked metric:
+  `Store::writer_stats()` returns the number of writes, the total wait
+  and the longest single wait, shared by every clone of the store. For
+  an append the wait includes taking the write lock, which another
+  process can hold.
 - **Other processes can read.** WAL mode lets them read the file while
   workflows run: a dashboard, `sqlite3`, or another worker. This only
   works on a local disk, not on network filesystems.

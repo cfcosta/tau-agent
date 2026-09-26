@@ -18,6 +18,7 @@ use tau_store::{
     Store,
     StoreError,
     TurnUsage,
+    WriterStats,
 };
 
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
@@ -375,5 +376,84 @@ fn large_token_counts_add_exactly() {
         let run = store.run("r").await.unwrap().unwrap();
         assert_eq!(run.input_tokens, 3 * i64::from(u32::MAX));
         assert_eq!(run.output_tokens, 3 * i64::from(u32::MAX));
+    });
+}
+
+fn new_run(id: &str) -> NewRun<'_> {
+    NewRun {
+        id,
+        workflow_id: None,
+        agent: "a",
+        kind: RunKind::Root,
+        model: "m",
+    }
+}
+
+/// Every write counts toward the writer stats, and a clone of the store
+/// shares them: creating, appending and finishing are three writes. The
+/// longest wait is one of the waits, so it never exceeds their total.
+#[test]
+fn writes_are_counted_across_clones() {
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        assert_eq!(store.writer_stats(), WriterStats::default());
+        let clone = store.clone();
+        store.create_run(&new_run("r")).await.unwrap();
+        clone
+            .append_turn("r", &[], TurnUsage::default())
+            .await
+            .unwrap();
+        store
+            .finish_run("r", Status::Done, None, None)
+            .await
+            .unwrap();
+        // Reads are not writes.
+        store.transcript("r").await.unwrap();
+        let stats = clone.writer_stats();
+        assert_eq!(stats.writes, 3);
+        assert!(stats.longest <= stats.waited, "{stats:?}");
+    });
+}
+
+/// A write that finds the database's write lock held (here, by another
+/// connection, as another process would) waits for it, and that wait is
+/// what the stats report.
+#[test]
+fn waiting_for_the_write_lock_is_measured() {
+    use sqlx::Connection;
+    block_on(async {
+        let dir = std::env::temp_dir()
+            .join(format!("tau-store-wait-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("runs.db");
+        let _ = std::fs::remove_file(&path);
+        let store = Store::open(&path).await.unwrap();
+        store.create_run(&new_run("r")).await.unwrap();
+
+        let mut other = sqlx::SqliteConnection::connect(&format!(
+            "sqlite://{}",
+            path.display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut other)
+            .await
+            .unwrap();
+        let held = std::time::Duration::from_millis(150);
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(held).await;
+            sqlx::query("COMMIT").execute(&mut other).await.unwrap();
+        });
+        store
+            .append_turn("r", &[], TurnUsage::default())
+            .await
+            .unwrap();
+        release.await.unwrap();
+
+        let stats = store.writer_stats();
+        assert_eq!(stats.writes, 2);
+        assert!(stats.longest >= held / 2, "{stats:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
     });
 }
