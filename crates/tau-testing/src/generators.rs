@@ -889,3 +889,126 @@ pub fn unsupported_schema(tc: TestCase) -> Value {
         _ => Value::Bool(tc.draw(gs::booleans())),
     }
 }
+
+fn draw_arg_schema(tc: &TestCase, depth: u32) -> Value {
+    let kinds: u32 = if depth == 0 { 5 } else { 8 };
+    match tc.draw(gs::integers::<u32>().max_value(kinds - 1)) {
+        0 => serde_json::json!({"type": "string"}),
+        1 => serde_json::json!({"type": "number"}),
+        2 => serde_json::json!({"type": "integer"}),
+        3 => serde_json::json!({"type": "boolean"}),
+        4 => serde_json::json!({"type": "null"}),
+        5 => {
+            let items = draw_arg_schema(tc, depth - 1);
+            serde_json::json!({"type": "array", "items": items})
+        }
+        6 => draw_arg_object_schema(tc, depth - 1),
+        _ => {
+            // `anyOf` of two independently drawn schemas, e.g. a nullable
+            // union when one arm happens to be `{"type": "null"}`.
+            let a = draw_arg_schema(tc, depth - 1);
+            let b = draw_arg_schema(tc, depth - 1);
+            serde_json::json!({"anyOf": [a, b]})
+        }
+    }
+}
+
+fn draw_arg_object_schema(tc: &TestCase, depth: u32) -> Value {
+    let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
+    let mut properties = Map::new();
+    let mut required = Vec::new();
+    for i in 0..count {
+        let name = format!("p{i}");
+        let property_schema = draw_arg_schema(tc, depth);
+        if tc.draw(gs::booleans()) {
+            required.push(Value::String(name.clone()));
+        }
+        properties.insert(name, property_schema);
+    }
+    serde_json::json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+    })
+}
+
+/// A JSON Schema built only from the shapes `tau_agent::validation`'s
+/// coercion pass handles: `string`/`number`/`integer`/`boolean`/`null`
+/// leaves, `array` (a single `items` schema, never a tuple), `object`
+/// (required and optional properties, no `additionalProperties`) and
+/// `anyOf`. `depth` bounds how deep arrays, objects and unions may
+/// nest.
+#[hegel::composite]
+pub fn arg_schema(tc: TestCase, depth: u32) -> Value {
+    draw_arg_schema(&tc, depth)
+}
+
+fn draw_arg_value(tc: &TestCase, schema: &Value) -> Value {
+    if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
+        let index =
+            tc.draw(gs::integers::<usize>().max_value(any_of.len() - 1));
+        return draw_arg_value(tc, &any_of[index]);
+    }
+    match schema.get("type").and_then(Value::as_str) {
+        Some("string") => Value::String(tc.draw(text(8))),
+        Some("number") => Value::Number(tc.draw(json_number())),
+        Some("integer") => Value::Number(Number::from(
+            tc.draw(
+                gs::integers::<i64>()
+                    .min_value(-1_000_000)
+                    .max_value(1_000_000),
+            ),
+        )),
+        Some("boolean") => Value::Bool(tc.draw(gs::booleans())),
+        Some("null") => Value::Null,
+        Some("array") => {
+            let items_schema = schema
+                .get("items")
+                .cloned()
+                .unwrap_or(Value::Object(Map::new()));
+            let len = tc.draw(gs::integers::<usize>().max_value(3));
+            Value::Array(
+                (0..len)
+                    .map(|_| draw_arg_value(tc, &items_schema))
+                    .collect(),
+            )
+        }
+        Some("object") => {
+            let properties = schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let required: std::collections::HashSet<&str> = schema
+                .get("required")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let mut object = Map::new();
+            for (key, property_schema) in &properties {
+                let include =
+                    required.contains(key.as_str()) || tc.draw(gs::booleans());
+                if include {
+                    object.insert(
+                        key.clone(),
+                        draw_arg_value(tc, property_schema),
+                    );
+                }
+            }
+            Value::Object(object)
+        }
+        // draw_arg_schema never produces a schema with no recognized
+        // `type` and no `anyOf` (handled above).
+        _ => Value::Null,
+    }
+}
+
+/// A value that validates against `schema` (one of [`arg_schema`]'s
+/// shapes), built by construction: every required property gets a
+/// value, an optional one sometimes does, and `anyOf` picks one branch
+/// and satisfies it. Pairs with [`arg_schema`] for coercion properties
+/// that need a value already valid under the schema they drew.
+#[hegel::composite]
+pub fn arg_value_for_schema(tc: TestCase, schema: Value) -> Value {
+    draw_arg_value(&tc, &schema)
+}

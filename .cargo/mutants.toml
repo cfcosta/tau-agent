@@ -1,0 +1,60 @@
+# cargo-mutants configuration.
+#
+# `exclude_re` below lists mutants verified to be behaviorally
+# equivalent to the unmutated code, so no test can ever kill them
+# without a change to the code that would make it worse, not better.
+# Each entry names the function and the reasoning; see
+# `crates/tau-agent/src/validation.rs` for the code.
+
+exclude_re = [
+  # normalize_optional_nulls / apply_schema_array_coercion: the guard
+  # `item_schema.is_object()` on a tuple/array item's schema. Every
+  # schema this crate ever compiles is itself a JSON object (`{...}`);
+  # the only Value that fails `.is_object()` here is a boolean literal
+  # schema (`true`/`false`, valid JSON Schema shorthand for "anything"
+  # / "nothing"), which neither function's callee
+  # (`normalize_optional_nulls`, `coerce_with_json_schema`) can do
+  # anything with anyway: both look up keys like "properties"/"type" on
+  # the schema, and `Value::get` returns `None` for any non-object,
+  # non-array value, making the call a no-op regardless of whether the
+  # guard ran. So forcing the guard to `true` never changes behavior.
+  'replace match guard item_schema\.is_object\(\) with true in normalize_optional_nulls',
+  'replace match guard item_schema\.is_object\(\) with true in apply_schema_array_coercion',
+
+  # is_integer_number: `number.is_i64() || number.is_u64()` short-cuts
+  # the (equivalent, slower) fallback `as_f64().fract() == 0.0` check
+  # below it. For every integer-backed `serde_json::Number` the
+  # fallback independently agrees (a value small enough for `f64` to
+  # represent exactly converts losslessly, and one too large for `f64`
+  # to represent exactly is, at that magnitude, always an integral
+  # float — `f64` has no fractional precision left at either extreme).
+  # So the fallback always returns the same answer the `||` would have
+  # short-cut to, and replacing `||` with `&&` cannot change the
+  # function's return value for any input.
+  'replace \|\| with && in is_integer_number',
+
+  # matches_json_type: the "array" and "object" arms. This predicate is
+  # only read from one place, `coerce_with_json_schema`'s
+  # `matches_union_member` check, which decides whether to *skip* the
+  # primitive-coercion loop. `coerce_primitive_by_type` has no "object"
+  # case at all (falls through unchanged for every input) and its
+  # "array" case is a no-op on a value that is already an array — so
+  # for both types, running the loop or skipping it produces the exact
+  # same value. Deleting either arm can only change whether the loop
+  # runs, never what it produces.
+  'delete match arm "array" in matches_json_type',
+  'delete match arm "object" in matches_json_type',
+
+  # coerce_with_json_schema: `types.len() > 1` vs `>= 1`. For a
+  # single-type schema (`len == 1`), the mutated condition only adds
+  # the "does the value already match its one type" check as a second
+  # gate on whether to skip the primitive-coercion loop. When the value
+  # does not match, that check is false either way (nothing to skip).
+  # When it does match, `coerce_primitive_by_type` is a no-op for a
+  # value already of its target type (the invariant
+  # `coercion_leaves_a_valid_value_unchanged` in
+  # `tests/validation.rs` pins exactly this), so running the loop
+  # anyway produces the same value as skipping it. Either way the
+  # mutant cannot change the result.
+  'replace > with >= in coerce_with_json_schema',
+]
