@@ -42,6 +42,20 @@ impl Agent {
 }
 ```
 
+`Input` is the run's first user message, and optionally the workflow it
+belongs to. Strings convert into it.
+
+```rust
+pub struct Input { pub text: String, pub workflow: Option<String> }
+impl Input {
+    pub fn new(text: impl Into<String>) -> Self;
+    pub fn workflow(self, id: impl Into<String>) -> Self;  // groups runs for Store::workflow_cost
+}
+```
+
+Sub-agent runs inherit their parent's workflow. Forks do too, unless
+their input names another.
+
 ## Run and Outcome
 
 ```rust

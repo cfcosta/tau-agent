@@ -61,6 +61,48 @@ impl fmt::Display for AgentError {
 
 impl std::error::Error for AgentError {}
 
+/// What a run starts from: the user's message, and optionally the
+/// workflow the run belongs to. Runs started by a run (sub-agents)
+/// inherit its workflow; so do forks, unless their input names one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Input {
+    pub text: String,
+    pub workflow: Option<String>,
+}
+
+impl Input {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            workflow: None,
+        }
+    }
+
+    /// Groups the run under `id`, for [`Store::workflow_cost`].
+    pub fn workflow(mut self, id: impl Into<String>) -> Self {
+        self.workflow = Some(id.into());
+        self
+    }
+}
+
+impl From<String> for Input {
+    fn from(text: String) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<&str> for Input {
+    fn from(text: &str) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<&String> for Input {
+    fn from(text: &String) -> Self {
+        Self::new(text.clone())
+    }
+}
+
 /// The result of a finished run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Outcome {
@@ -187,19 +229,34 @@ impl Agent {
     }
 
     /// Starts a run on `input`. Must be called inside a tokio runtime.
-    pub fn start(&self, input: impl Into<String>, store: &Store) -> Run {
+    pub fn start(&self, input: impl Into<Input>, store: &Store) -> Run {
+        let input = input.into();
+        self.launch(Launch::root(input.workflow.as_deref()), input.text, store)
+    }
+
+    /// Runs `input` to the end and returns the outcome.
+    pub async fn run(
+        &self,
+        input: impl Into<Input>,
+        store: &Store,
+    ) -> Result<Outcome, AgentError> {
+        self.start(input, store).outcome().await
+    }
+
+    /// Starts a run as `launch` describes it.
+    fn launch(&self, launch: Launch, input: String, store: &Store) -> Run {
         let id = RunId(uuid::Uuid::now_v7().to_string().into());
         let (events_tx, events) = mpsc::channel(EVENT_BUFFER);
         let (steer_tx, steering) = mpsc::unbounded_channel();
-        let cancel = CancellationToken::new();
+        let cancel = launch.cancel.clone();
         let task = tokio::spawn(run_task(
             self.clone(),
             id.clone(),
-            input.into(),
+            input,
             store.clone(),
+            launch,
             events_tx,
             steering,
-            cancel.clone(),
         ));
         Run {
             id,
@@ -209,14 +266,24 @@ impl Agent {
             task,
         }
     }
+}
 
-    /// Runs `input` to the end and returns the outcome.
-    pub async fn run(
-        &self,
-        input: impl Into<String>,
-        store: &Store,
-    ) -> Result<Outcome, AgentError> {
-        self.start(input, store).outcome().await
+/// How a run relates to the rest of its workflow.
+struct Launch {
+    kind: RunKind,
+    parent: Option<RunId>,
+    workflow: Option<Arc<str>>,
+    cancel: CancellationToken,
+}
+
+impl Launch {
+    fn root(workflow: Option<&str>) -> Self {
+        Self {
+            kind: RunKind::Root,
+            parent: None,
+            workflow: workflow.map(Into::into),
+            cancel: CancellationToken::new(),
+        }
     }
 }
 
@@ -225,9 +292,9 @@ async fn run_task(
     id: RunId,
     input: String,
     store: Store,
+    launch: Launch,
     events: mpsc::Sender<RunEvent>,
     steering: mpsc::UnboundedReceiver<String>,
-    cancel: CancellationToken,
 ) -> Result<Outcome, AgentError> {
     let mut tools = HashMap::new();
     for tool in &agent.0.tools {
@@ -251,16 +318,16 @@ async fn run_task(
     store
         .create_run(&NewRun {
             id: &id.0,
-            workflow_id: None,
+            workflow_id: launch.workflow.as_deref(),
             agent: &agent.0.name,
-            kind: RunKind::Root,
+            kind: launch.kind,
             model: &agent.0.model,
         })
         .await
         .map_err(AgentError::Store)?;
     let result = Runner {
         run: id.clone(),
-        parent: None,
+        parent: launch.parent,
         agent: agent.0.name.clone(),
         tools,
         hooks: agent.0.hooks.clone(),
@@ -269,7 +336,7 @@ async fn run_task(
         store,
         events: Some(events),
         steering,
-        cancel,
+        cancel: launch.cancel,
         clock: agent.0.clock.clone(),
     }
     .run(input)
