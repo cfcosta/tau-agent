@@ -1,0 +1,205 @@
+# Public API
+
+This is the target API. Names may still change during M2–M4. The
+examples double as the acceptance tests for M4.
+
+## Clients and store
+
+```rust
+let llm = tau_ai::OpenAi::from_env()?;          // OPENAI_API_KEY; one WebSocket pool per process
+let store = tau_store::Store::open("runs.db").await?;
+let test_store = tau_store::Store::memory().await?;
+```
+
+`Agent::new` accepts anything implementing `tau_ai::Llm`. Two types do:
+`OpenAi` and `tau_testing::ScriptedModel`.
+
+## Agent
+
+```rust
+pub struct Agent { /* Arc inside; Clone is cheap; immutable once built */ }
+
+impl Agent {
+    pub fn new(llm: &impl Llm) -> Self;
+    pub fn name(self, name: &str) -> Self;
+    pub fn model(self, id: &str) -> Self;
+    pub fn instructions(self, text: impl Into<String>) -> Self;
+    pub fn reasoning(self, effort: ReasoningEffort) -> Self;
+    pub fn tool(self, t: impl AgentTool) -> Self;
+    pub fn hook(self, h: impl RunHook) -> Self;
+    pub fn limits(self, l: Limits) -> Self;
+    pub fn compaction(self, c: Compaction) -> Self;   // off by default
+    pub fn warmup(self, on: bool) -> Self;            // generate:false on first use
+
+    pub fn start(&self, input: impl Into<Input>, store: &Store) -> Run;
+    pub async fn run(&self, input: impl Into<Input>, store: &Store) -> Result<Outcome>;
+    pub async fn run_typed<T>(&self, input: impl Into<Input>, store: &Store) -> Result<Typed<T>>
+    where T: DeserializeOwned + JsonSchema;
+    pub fn as_tool(&self, name: &str, description: &str) -> impl AgentTool;
+    pub fn fork(&self, from: &Checkpoint) -> Forked;  // Forked::run / run_typed / start
+}
+```
+
+## Run and Outcome
+
+```rust
+impl Run {
+    pub fn id(&self) -> RunId;
+    pub fn events(&mut self) -> impl Stream<Item = RunEvent> + '_;
+    pub fn steer(&self, msg: impl Into<String>);
+    pub fn cancel(&self);
+    pub async fn outcome(self) -> Result<Outcome>;
+}
+
+pub struct Outcome {
+    pub run: RunId,
+    pub text: String,
+    pub stop: StopReason,        // Stop | Limit(LimitKind) | Cancelled | Error
+    pub usage: Usage,            // includes child runs
+    pub cost: Cost,
+}
+impl Outcome { pub fn checkpoint(&self) -> Checkpoint; }
+
+pub struct Typed<T> { pub value: T, pub outcome: Outcome }
+impl<T: Serialize> Typed<T> { pub fn json(&self) -> String; }
+```
+
+## Tools
+
+```rust
+#[async_trait]
+pub trait AgentTool: Send + Sync + 'static {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn parameters(&self) -> &serde_json::Value;           // rewritten to OpenAI strict form
+    fn execution_mode(&self) -> ExecutionMode { ExecutionMode::Parallel }
+    fn prepare_arguments(&self, raw: Value) -> Value { raw }
+    async fn call(&self, args: Value, ctx: ToolCtx) -> anyhow::Result<ToolOutput>;
+}
+
+#[async_trait]
+pub trait TypedTool: Send + Sync + 'static {
+    type Args: DeserializeOwned + JsonSchema + Send;
+    const NAME: &'static str;
+    const DESCRIPTION: &'static str;
+    async fn call(&self, args: Self::Args, ctx: ToolCtx) -> anyhow::Result<ToolOutput>;
+}
+
+pub struct ToolCtx { pub cancel: CancellationToken, pub updates: ToolUpdates, pub run: RunId }
+```
+
+## Hooks
+
+```rust
+#[async_trait]
+pub trait RunHook: Send + Sync + 'static {
+    async fn before_tool(&self, call: &mut ToolCall, ctx: &HookCtx) -> Decision { Decision::Allow }
+    async fn after_tool(&self, call: &ToolCall, out: &mut ToolOutput, ctx: &HookCtx) {}
+    async fn on_event(&self, ev: &RunEvent) {}          // awaited in order
+}
+```
+
+## Limits
+
+```rust
+Limits::default()
+    .max_turns(30)
+    .max_tokens(400_000)
+    .max_usd(2.0)
+    .timeout(Duration::from_secs(900))
+```
+
+Limits are checked after every turn against actual usage. Child runs
+started through `as_tool` count toward their parent's limits.
+
+## Typed results
+
+`run_typed::<T>` produces the model's answer as a value of type `T`:
+
+1. It derives the schema of `T` with `schemars`.
+2. It rewrites that schema into OpenAI's strict form: every property
+   required, `additionalProperties: false`, and optional fields as
+   nullable. The rewrite is ported from pi's `constrained-sampling.ts`.
+3. It sends the result as `text: { format: { type: "json_schema", name,
+schema, strict: true } }`.
+
+Tools stay available during a typed run. Only the final message must
+match `T`.
+
+## Examples
+
+### Typed pipeline with parallel steps
+
+```rust
+#[derive(Deserialize, JsonSchema)]
+struct Changes { features: Vec<String>, fixes: Vec<String>, breaking: Vec<String> }
+#[derive(Deserialize, JsonSchema)]
+struct Review { approved: bool, problems: Vec<String> }
+
+let changes = scanner.run_typed::<Changes>("v1.4.0..v1.5.0", &store).await?;
+let (terse, detailed) = tokio::try_join!(
+    writer.run(format!("Terse style.\n{}", changes.json()), &store),
+    writer.run(format!("Detailed style.\n{}", changes.json()), &store),
+)?;
+for draft in [&terse, &detailed] {
+    let review = reviewer
+        .run_typed::<Review>(format!("{}\n---\n{}", changes.json(), draft.text), &store)
+        .await?;
+    if review.value.approved { return Ok(draft.text.clone()); }
+}
+```
+
+### Supervisor with sub-agents
+
+```rust
+let lead = Agent::new(&llm).name("lead").model("gpt-5.5")
+    .instructions("Break the task down. Delegate. Verify before finishing.")
+    .tool(researcher.as_tool("research", "Investigate a question and report findings."))
+    .tool(coder.as_tool("implement", "Make a scoped code change and report what changed."))
+    .limits(Limits::default().max_usd(5.0).timeout(Duration::from_secs(1800)));
+
+let mut run = lead.start("Add retry with jitter to the HTTP client.", &store);
+while let Some(ev) = run.events().next().await {
+    match ev {
+        RunEvent::ToolStart { run, tool, .. } => eprintln!("[{run}] → {tool}"),
+        RunEvent::TextDelta { parent: None, delta, .. } => print!("{delta}"),
+        _ => {}
+    }
+}
+let outcome = run.outcome().await?;
+```
+
+### Fork fan-out
+
+```rust
+let investigation = debugger.run("Find the root cause. Don't fix it yet.", &store).await?;
+let base = investigation.checkpoint();
+let attempts = ["minimal fix", "fix plus regression test", "refactor clock injection"]
+    .map(|s| debugger.fork(&base).run(format!("Now implement: {s}"), &store));
+let results = futures::future::join_all(attempts).await;
+```
+
+### Guard hook and test
+
+```rust
+struct NoProdWrites;
+#[async_trait]
+impl RunHook for NoProdWrites {
+    async fn before_tool(&self, call: &mut ToolCall, _: &HookCtx) -> Decision {
+        let prod = call.args["command"].as_str().is_some_and(|c| c.contains("--env prod"));
+        if call.name == "bash" && prod { return Decision::Block("no production commands".into()); }
+        Decision::Allow
+    }
+}
+
+#[tokio::test]
+async fn triage_opens_one_ticket() {
+    let llm = tau_testing::ScriptedModel::new()
+        .turn(|t| t.tool_call("create_ticket", json!({"title": "Crash on start", "body": "…"})))
+        .turn(|t| t.text("Opened one ticket."));
+    let tracker = FakeTracker::default();
+    let agent = Agent::new(&llm).tool(CreateTicket(tracker.clone())).hook(NoProdWrites);
+    agent.run("Triage: …", &Store::memory().await.unwrap()).await.unwrap();
+    assert_eq!(tracker.created().len(), 1);
+}
+```

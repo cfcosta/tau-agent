@@ -1,0 +1,125 @@
+# Agent loop
+
+The loop is inherited from pi's `agentLoop`
+(`packages/agent/src/agent-loop.ts`). The ordering guarantees below are
+part of tau-agent's contract. Where tau-agent intentionally differs from
+pi, a note says so.
+
+## One run
+
+1. Emit `RunStart`. Append the input as a user message.
+2. **Turn loop:**
+   1. Emit `TurnStart`.
+   2. Build the request from the run's fixed instructions and tools, the
+      transcript, and `text.format` if the run is typed. Send it on the
+      run's lane.
+   3. Stream the response. Each `AssistantEvent` is wrapped as a
+      `RunEvent::Message*` and delivered to hooks and subscribers, in
+      order and awaited.
+   4. Stop reason `error` or `aborted`: emit `TurnEnd` and `RunEnd`,
+      then finish the run with that stop reason. Retryable errors are
+      retried first (see Retries).
+   5. Stop reason `length` while tool calls are pending: fail every
+      pending tool call with an error result asking the model to issue
+      it again with smaller arguments. Then continue.
+   6. Run the tool calls (see Tool execution).
+   7. Persist the turn's messages and usage in one transaction.
+   8. Check limits and cancellation.
+   9. Emit `TurnEnd`.
+   10. Drain the steering queue into the transcript.
+   11. Check the compaction threshold.
+   12. Loop while the model called tools or steering added messages.
+3. Emit `RunEnd`. Set the run's status and result.
+
+## Tool execution
+
+- **Preparation is sequential and follows source order.** For each call:
+  1. Look the tool up. An unknown tool yields an immediate error result.
+  2. Run `prepare_arguments`, if the tool defines it.
+  3. Run the coercion pass, then JSON-schema validation. A failure
+     yields an error result carrying the validation message.
+  4. Run the `before_tool` hooks in registration order:
+     - the first hook that blocks wins;
+     - a hook that returns an error also blocks the call;
+     - mutated arguments are validated again.
+- **Execution is parallel** across the prepared calls. A tool whose
+  `execution_mode()` is `Sequential` makes the whole batch sequential.
+- **Events:** `ToolStart` in source order; `ToolUpdate` while a tool
+  runs; `ToolEnd` in completion order.
+- **Result messages** are appended in source order.
+- **Errors:** a tool that returns `Err` produces a result with
+  `is_error = true`. Its text is the error message.
+- **After each tool:** `after_tool` hooks may patch the output field by
+  field.
+- **Updates after completion:** a tool that sends updates after its
+  future has resolved has those updates ignored.
+
+## Coercion before validation
+
+tau-agent reproduces pi's `validateToolArguments`
+(`packages/ai/src/utils/validation.ts:317`):
+
+1. Clone the arguments.
+2. `null` on an optional property counts as absent.
+3. Lenient conversion as typebox `Value.Convert` does it:
+   - a string that parses as a number becomes a number where the schema
+     says `number` or `integer`;
+   - `"true"` and `"false"` become booleans;
+   - a single value becomes a one-element array where the schema says
+     `array`.
+4. Validate against the compiled schema.
+
+Without the coercion pass, tau-agent would reject tool calls that pi
+accepts today.
+
+## Steering
+
+`Run::steer(msg)` queues a user message. The loop drains the queue after
+the current tool batch, or at once if no batch is running. The message
+is appended before the next request. pi's default is one message per
+drain, and tau-agent keeps that default.
+
+## Cancellation
+
+- Each run owns a `CancellationToken`. Children created through
+  `as_tool` get a child token.
+- The provider stream is dropped inside `select!`.
+- Tools receive the token and must observe it. The loop never drops
+  their futures.
+- **Deliberate difference from pi:** when a run is cancelled mid-batch,
+  every tool call that has no result yet gets a synthetic error result
+  ("cancelled"). The transcript never holds orphaned tool calls. pi
+  leaves those calls without results (`agent-loop.ts:572`) and repairs
+  them later.
+
+## Retries
+
+- **Retryable:** OpenAI error codes and HTTP statuses for overload, rate
+  limits, 5xx and timeouts, plus transport errors that happen before the
+  first event.
+- **Not retryable:** quota and billing errors. They fail at once.
+- **Backoff:** exponential with jitter. The defaults are 3 attempts and a
+  2 s base.
+- **Context overflow** (`context_length_exceeded`): compact once, then
+  retry once. See [`compaction.md`](compaction.md).
+
+## Events
+
+```rust
+pub enum RunEvent {
+    RunStart   { run: RunId, parent: Option<RunId>, agent: Arc<str> },
+    TurnStart  { run: RunId, turn: u32 },
+    TextDelta  { run: RunId, parent: Option<RunId>, delta: String },
+    ThinkingDelta { run: RunId, delta: String },
+    ToolCallDelta { run: RunId, call_id: String, json_fragment: String },
+    ToolStart  { run: RunId, call_id: String, tool: Arc<str>, args: Value },
+    ToolUpdate { run: RunId, call_id: String, partial: Arc<ToolOutput> },
+    ToolEnd    { run: RunId, call_id: String, output: Arc<ToolOutput>, is_error: bool },
+    TurnEnd    { run: RunId, turn: u32, usage: Usage },
+    Compacted  { run: RunId, tokens_before: u64 },
+    RunEnd     { run: RunId, parent: Option<RunId>, stop: StopReason, cost: f64 },
+}
+```
+
+Events from a child run carry `parent`, so one subscriber can follow a
+whole workflow tree.
