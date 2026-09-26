@@ -42,8 +42,9 @@
 //!   [`FileOperations`] uses a `BTreeSet`, which keeps the same
 //!   deduplicated, sorted result without a separate sort step.
 
-use std::{collections::BTreeSet, fmt};
+use std::{collections::BTreeSet, fmt, ops::Range};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ai::message::{
     AssistantBlock,
@@ -51,8 +52,10 @@ use tau_ai::message::{
     InputBlock,
     Message,
     StopReason,
+    Timestamp,
     Usage,
     UserContent,
+    UserMessage,
 };
 
 /// Characters an image contributes to the `chars / 4` estimate (pi's
@@ -82,6 +85,10 @@ pub struct Compaction {
     /// The minimum number of trailing tokens compaction tries to keep
     /// verbatim, uncompacted. Defaults to 20,000.
     pub keep_recent_tokens: u64,
+    /// Overrides the model's context window, for a model the registry
+    /// does not know or to compact earlier. `None` uses the registry;
+    /// without either, only a context overflow triggers compaction.
+    pub context_window: Option<u64>,
 }
 
 impl Default for Compaction {
@@ -89,6 +96,7 @@ impl Default for Compaction {
         Self {
             reserve_tokens: 16_384,
             keep_recent_tokens: 20_000,
+            context_window: None,
         }
     }
 }
@@ -101,6 +109,11 @@ impl Compaction {
 
     pub fn keep_recent_tokens(mut self, keep_recent_tokens: u64) -> Self {
         self.keep_recent_tokens = keep_recent_tokens;
+        self
+    }
+
+    pub fn context_window(mut self, tokens: u64) -> Self {
+        self.context_window = Some(tokens);
         self
     }
 }
@@ -811,4 +824,112 @@ pub fn check_summary(
         })
         .collect();
     Ok(text.join("\n"))
+}
+
+// ============================================================================
+// Records and plans
+// ============================================================================
+
+/// What wraps a summary when it goes to the model (pi's
+/// `COMPACTION_SUMMARY_PREFIX` and `COMPACTION_SUMMARY_SUFFIX`).
+pub const SUMMARY_PREFIX: &str = "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
+pub const SUMMARY_SUFFIX: &str = "\n</summary>";
+
+/// The body of a stored compaction record
+/// (`docs/reference/storage.md`): the summary (file lists included),
+/// the estimate before compaction, and the file lists to carry forward.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Record {
+    pub summary: String,
+    pub tokens_before: u64,
+    pub read_files: Vec<String>,
+    pub modified_files: Vec<String>,
+    /// When the compaction ran, as the summary message's timestamp.
+    pub timestamp: Timestamp,
+}
+
+impl Record {
+    /// The summary as the user message that stands for everything it
+    /// replaced (pi's `compactionSummary` conversion).
+    pub fn message(&self) -> Message {
+        Message::User(UserMessage {
+            content: UserContent::Text(format!(
+                "{SUMMARY_PREFIX}{}{SUMMARY_SUFFIX}",
+                self.summary
+            )),
+            timestamp: self.timestamp,
+        })
+    }
+
+    /// The file lists, to carry into the next compaction.
+    pub fn files(&self) -> FileOperations {
+        FileOperations {
+            read: self.read_files.iter().cloned().collect(),
+            written: self.modified_files.iter().cloned().collect(),
+            edited: BTreeSet::new(),
+        }
+    }
+}
+
+/// Whether a failed response failed because its input did not fit the
+/// model's context window (OpenAI's wordings, from pi's `overflow.ts`).
+pub fn is_context_overflow(message: &AssistantMessage) -> bool {
+    if message.stop_reason != StopReason::Error {
+        return false;
+    }
+    let Some(error) = &message.error_message else {
+        return false;
+    };
+    let error = error.to_lowercase();
+    [
+        "context_length_exceeded",
+        "exceeds the context window",
+        "maximum context length",
+    ]
+    .iter()
+    .any(|pattern| error.contains(pattern))
+}
+
+/// Which messages a compaction summarizes and which it keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plan {
+    /// Summarized with the main (or "update") prompt. May be empty when
+    /// the cut splits the first turn.
+    pub history: Range<usize>,
+    /// The start of a split turn, summarized with the turn-prefix
+    /// prompt.
+    pub turn_prefix: Option<Range<usize>>,
+    /// The first message kept verbatim.
+    pub kept_from: usize,
+}
+
+/// Plans a compaction of `messages`, whose first `summarized` messages
+/// are the summary of an earlier compaction (0 or 1) and are never
+/// summarized again. `None` when the cut keeps everything, so there is
+/// nothing to summarize.
+pub fn plan(
+    messages: &[Message],
+    summarized: usize,
+    keep_recent_tokens: u64,
+) -> Option<Plan> {
+    let rest = messages.get(summarized..)?;
+    let cut = find_cut_point(rest, keep_recent_tokens);
+    let kept_from = summarized + cut.first_kept_index;
+    let turn_start = cut
+        .turn_start_index
+        .filter(|_| cut.is_split_turn)
+        .map(|index| summarized + index);
+    let plan = match turn_start {
+        Some(start) => Plan {
+            history: summarized..start,
+            turn_prefix: Some(start..kept_from),
+            kept_from,
+        },
+        None => Plan {
+            history: summarized..kept_from,
+            turn_prefix: None,
+            kept_from,
+        },
+    };
+    (kept_from > summarized).then_some(plan)
 }

@@ -22,6 +22,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    compaction::{Compaction, Record},
     event::{RunEvent, StopReason},
     hook::RunHook,
     limits::Limits,
@@ -189,6 +190,7 @@ struct AgentInner {
     tools: Vec<Arc<dyn AgentTool>>,
     hooks: Vec<Arc<dyn RunHook>>,
     limits: Limits,
+    compaction: Option<Compaction>,
     clock: Clock,
 }
 
@@ -220,6 +222,7 @@ impl Agent {
             tools: Vec::new(),
             hooks: Vec::new(),
             limits: Limits::default(),
+            compaction: None,
             clock: system_clock(),
         }))
     }
@@ -257,6 +260,12 @@ impl Agent {
 
     pub fn limits(self, limits: Limits) -> Self {
         self.with(|a| a.limits = limits)
+    }
+
+    /// Turns compaction on (`docs/reference/compaction.md`). It is off
+    /// by default.
+    pub fn compaction(self, compaction: Compaction) -> Self {
+        self.with(|a| a.compaction = Some(compaction))
     }
 
     /// Replaces the clock that stamps messages, for deterministic tests.
@@ -660,12 +669,12 @@ async fn run_task(
         })
         .await
         .map_err(AgentError::Store)?;
-    let history = if fork {
+    let (history, compacted) = if fork {
         let entries =
             store.transcript(&id.0).await.map_err(AgentError::Store)?;
         messages(entries).map_err(AgentError::Store)?
     } else {
-        Vec::new()
+        (Vec::new(), None)
     };
     let result = Runner {
         run: id.clone(),
@@ -684,6 +693,9 @@ async fn run_task(
         stored: 0,
         workflow: workflow.map(Into::into),
         children: Arc::default(),
+        llm: agent.0.llm.clone(),
+        compaction: agent.0.compaction,
+        compacted,
     }
     .run(input)
     .await
@@ -697,18 +709,26 @@ async fn run_task(
     })
 }
 
-/// The messages of a stored transcript.
-fn messages(entries: Vec<Entry>) -> Result<Vec<Message>, StoreError> {
-    entries
-        .into_iter()
-        .filter_map(|entry| match entry {
+/// The messages of a stored transcript, and the compaction it starts
+/// with, if any: its summary stands in for everything before it.
+fn messages(
+    entries: Vec<Entry>,
+) -> Result<(Vec<Message>, Option<Record>), StoreError> {
+    let mut compacted = None;
+    let mut messages = Vec::with_capacity(entries.len());
+    for entry in entries {
+        match entry {
             Entry::Message { body, .. } => {
-                Some(serde_json::from_value(body).map_err(StoreError::from))
+                messages.push(serde_json::from_value(body)?);
             }
-            // Compaction is not written yet.
-            Entry::Compaction { .. } => None,
-        })
-        .collect()
+            Entry::Compaction { body } => {
+                let record: Record = serde_json::from_value(body)?;
+                messages.push(record.message());
+                compacted = Some(record);
+            }
+        }
+    }
+    Ok((messages, compacted))
 }
 
 /// One execution of an agent.

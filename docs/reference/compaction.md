@@ -16,6 +16,14 @@ for long-running agents with `Agent::compaction(Compaction::default())`.
   - It is checked at most once per turn.
 - **Overflow.** If the response fails with `context_length_exceeded`, the
   loop compacts once and retries once. A second overflow fails the run.
+  The failed response is not stored.
+- **Context window.** It comes from the model registry, or from
+  `Compaction::context_window` for a model the registry does not know.
+  Without either, only an overflow triggers compaction.
+- **Failures.** A rejected summary writes nothing. Past the threshold,
+  the run goes on uncompacted and compaction is off for the rest of it,
+  so a failing summary is not paid for every turn. On overflow, the run
+  fails with the overflow error and the compaction error.
 
 ## Token estimate
 
@@ -85,7 +93,14 @@ estimated with `chars / 4`.
 ## After compaction
 
 - A `messages` row is written with `kind = 'compaction'`. Its body holds
-  the summary, the token count before compaction, and the file lists.
+  the summary, the token count before compaction, the file lists and a
+  timestamp. The kept messages are written again after it, in the same
+  transaction, because loading a transcript drops everything before the
+  latest compaction row.
+- The summary goes to the model as a user message, wrapped as pi wraps
+  it ("The conversation history before this point was compacted into
+  the following summary: <summary>…</summary>"). A later compaction
+  passes it to the "update" prompt and never summarizes it again.
 - A `Compacted` event is emitted.
 - The next turn sends a full request, because the transcript changed. The
   WebSocket continuation chain restarts from there.

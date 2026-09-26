@@ -13,6 +13,7 @@ use tau_agent::compaction::{
     Compaction,
     CutPoint,
     FileOperations,
+    Plan,
     SUMMARIZATION_PROMPT,
     TURN_PREFIX_SUMMARIZATION_PROMPT,
     UPDATE_SUMMARIZATION_PROMPT,
@@ -23,7 +24,9 @@ use tau_agent::compaction::{
     estimate_message_tokens,
     find_cut_point,
     format_file_operations,
+    is_context_overflow,
     merge_split_turn_summary,
+    plan,
     serialize_conversation,
     should_compact,
     summary_max_output_tokens,
@@ -992,4 +995,65 @@ fn summary_max_output_tokens_exact_values() {
     assert_eq!(turn_prefix_max_output_tokens(100, 1000), 50);
     assert_eq!(turn_prefix_max_output_tokens(100, 0), 50);
     assert_eq!(turn_prefix_max_output_tokens(101, 40), 40);
+}
+
+/// `plan` is `find_cut_point` over the messages after an earlier
+/// summary, shifted back into place: a split turn's start is summarized
+/// with the prefix prompt and everything before it with the main one;
+/// otherwise everything before the cut is history. A cut that keeps
+/// every unsummarized message plans nothing.
+#[hegel::test(test_cases = 300)]
+fn plan_is_the_cut_point_after_the_summary(tc: TestCase) {
+    let mut messages = tc.draw(generators::transcript());
+    let summarized = usize::from(tc.draw(gs::booleans()));
+    if summarized == 1 {
+        messages.insert(0, user_text("summary"));
+    }
+    let keep = tc.draw(gs::integers::<u64>().max_value(2_000));
+    let cut = find_cut_point(&messages[summarized..], keep);
+    let kept_from = summarized + cut.first_kept_index;
+    let expected = (cut.first_kept_index > 0).then(|| {
+        if cut.is_split_turn {
+            let start = summarized + cut.turn_start_index.unwrap();
+            Plan {
+                history: summarized..start,
+                turn_prefix: Some(start..kept_from),
+                kept_from,
+            }
+        } else {
+            Plan {
+                history: summarized..kept_from,
+                turn_prefix: None,
+                kept_from,
+            }
+        }
+    });
+    assert_eq!(plan(&messages, summarized, keep), expected);
+}
+
+/// An overflow is a failed response that says so, in any of OpenAI's
+/// wordings; other failures and successful responses are not.
+#[test]
+fn context_overflow_is_recognized_by_its_wording() {
+    let failed = |message: &str| {
+        assistant_response(StopReason::Error, Some(message), vec![])
+    };
+    for message in [
+        "context_length_exceeded: too long",
+        "Your input exceeds the context window of this model",
+        "This model's Maximum Context Length is 1000 tokens",
+    ] {
+        assert!(is_context_overflow(&failed(message)), "{message}");
+    }
+    assert!(!is_context_overflow(&failed("server_error: boom")));
+    assert!(!is_context_overflow(&assistant_response(
+        StopReason::Error,
+        None,
+        vec![]
+    )));
+    assert!(!is_context_overflow(&assistant_response(
+        StopReason::Stop,
+        Some("context_length_exceeded"),
+        vec![]
+    )));
 }

@@ -26,7 +26,7 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use serde_json::Value;
 use tau_ai::{
     event::{Accumulator, AssistantEvent, ErrorReason},
-    llm::LlmSession,
+    llm::{Llm, LlmSession},
     message::{
         AssistantBlock,
         AssistantMessage,
@@ -39,12 +39,30 @@ use tau_ai::{
         UserContent,
         UserMessage,
     },
+    model,
+    responses::request::Settings,
 };
 use tau_store::{Entry, Status, Store, StoreError, TurnUsage};
 use tokio::{sync::mpsc, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    compaction::{
+        Compaction,
+        Record,
+        SUMMARIZATION_SYSTEM_PROMPT,
+        build_summary_request,
+        build_turn_prefix_summary_request,
+        check_summary,
+        estimate_context_tokens,
+        format_file_operations,
+        is_context_overflow,
+        merge_split_turn_summary,
+        plan,
+        should_compact,
+        summary_max_output_tokens,
+        turn_prefix_max_output_tokens,
+    },
     event::{RunEvent, StopReason},
     hook::{Decision, HookCtx, RunHook, ToolCall},
     limits::Limits,
@@ -108,6 +126,19 @@ pub(crate) struct Runner {
     pub workflow: Option<Arc<str>>,
     /// The usage of the sub-agent runs this run's tools started.
     pub children: Arc<Mutex<Usage>>,
+    /// Makes summary requests for compaction.
+    pub llm: Arc<dyn Llm>,
+    pub compaction: Option<Compaction>,
+    /// The latest compaction, whose summary opens the transcript.
+    pub compacted: Option<Record>,
+}
+
+/// How a compaction attempt went.
+enum Compacted {
+    Done,
+    /// The cut kept everything.
+    Nothing,
+    Failed(String),
 }
 
 /// How a run ended.
@@ -160,7 +191,24 @@ impl Runner {
             })
             .await;
 
-            let message = self.respond(&transcript).await;
+            let mut message = self.respond(&transcript).await;
+            if self.compaction.is_some() && is_context_overflow(&message) {
+                // Compact once and retry once; a second overflow fails
+                // the run.
+                match self.compact(&mut transcript, &mut own).await? {
+                    Compacted::Done => {
+                        message = self.respond(&transcript).await;
+                    }
+                    Compacted::Nothing => {}
+                    Compacted::Failed(error) => {
+                        let original =
+                            message.error_message.take().unwrap_or_default();
+                        message.error_message = Some(format!(
+                            "{original}; compaction failed: {error}"
+                        ));
+                    }
+                }
+            }
             add_usage(&mut own, &message.usage);
             let failed = matches!(
                 message.stop_reason,
@@ -220,6 +268,14 @@ impl Runner {
             if calls.is_empty() && steered.is_none() {
                 break StopReason::Stop;
             }
+            if self.over_threshold(&transcript) {
+                match self.compact(&mut transcript, &mut own).await? {
+                    Compacted::Done | Compacted::Nothing => {}
+                    // Not compacting only costs context; a real overflow
+                    // later compacts again or fails the run.
+                    Compacted::Failed(_) => self.compaction = None,
+                }
+            }
         };
 
         let total = self.total(&own);
@@ -249,6 +305,152 @@ impl Runner {
             text,
             last_seq: self.stored - 1,
         })
+    }
+
+    /// Whether the transcript has grown past the compaction threshold.
+    fn over_threshold(&self, transcript: &[Message]) -> bool {
+        let Some(settings) = &self.compaction else {
+            return false;
+        };
+        let window = settings.context_window.or_else(|| {
+            model::find(&self.session.settings().model)
+                .map(|model| model.context_window)
+        });
+        window.is_some_and(|window| {
+            should_compact(
+                estimate_context_tokens(transcript),
+                window,
+                settings,
+            )
+        })
+    }
+
+    /// Replaces the transcript's older messages with a summary, stored
+    /// as a compaction record followed by the kept messages, in one
+    /// write. On failure nothing is stored and the transcript stays.
+    async fn compact(
+        &mut self,
+        transcript: &mut Vec<Message>,
+        own: &mut Usage,
+    ) -> Result<Compacted, StoreError> {
+        let Some(settings) = self.compaction else {
+            return Ok(Compacted::Nothing);
+        };
+        let summarized = usize::from(self.compacted.is_some());
+        let Some(plan) =
+            plan(transcript, summarized, settings.keep_recent_tokens)
+        else {
+            return Ok(Compacted::Nothing);
+        };
+        let tokens_before = estimate_context_tokens(transcript);
+        let model = self.session.settings().model.clone();
+        let max_output =
+            model::find(&model).map_or(0, |model| model.max_output);
+        let previous = self.compacted.as_ref().map(|r| r.summary.as_str());
+
+        let mut files = self
+            .compacted
+            .as_ref()
+            .map(Record::files)
+            .unwrap_or_default();
+        let mut usage = Usage::default();
+        let history = &transcript[plan.history.clone()];
+        files.extract_from_messages(history);
+        let mut summary = if history.is_empty() {
+            previous.unwrap_or("No prior history.").to_owned()
+        } else {
+            let request = build_summary_request(history, previous, None);
+            let budget =
+                summary_max_output_tokens(settings.reserve_tokens, max_output);
+            match self.summarize(&model, request, budget, &mut usage).await {
+                Ok(text) => text,
+                Err(error) => return Ok(Compacted::Failed(error)),
+            }
+        };
+        if let Some(prefix) = plan.turn_prefix.clone() {
+            let prefix = &transcript[prefix];
+            files.extract_from_messages(prefix);
+            let request = build_turn_prefix_summary_request(prefix);
+            let budget = turn_prefix_max_output_tokens(
+                settings.reserve_tokens,
+                max_output,
+            );
+            match self.summarize(&model, request, budget, &mut usage).await {
+                Ok(text) => summary = merge_split_turn_summary(&summary, &text),
+                Err(error) => return Ok(Compacted::Failed(error)),
+            }
+        }
+        let (read_files, modified_files) = files.file_lists();
+        summary.push_str(&format_file_operations(&read_files, &modified_files));
+        let record = Record {
+            summary,
+            tokens_before,
+            read_files,
+            modified_files,
+            timestamp: (self.clock)(),
+        };
+
+        let kept = transcript.split_off(plan.kept_from);
+        let mut entries = vec![Entry::Compaction {
+            body: serde_json::to_value(&record).expect("records serialize"),
+        }];
+        entries.extend(kept.iter().map(entry));
+        self.store
+            .append_turn(&self.run.0, &entries, turn_usage(&usage))
+            .await?;
+        self.stored += entries.len() as i64;
+        add_usage(own, &usage);
+        *transcript = std::iter::once(record.message()).chain(kept).collect();
+        self.compacted = Some(record);
+        self.emit(RunEvent::Compacted {
+            run: self.run.clone(),
+            tokens_before,
+        })
+        .await;
+        Ok(Compacted::Done)
+    }
+
+    /// One summary request, on a session of its own, so the run's lane
+    /// and its continuation are untouched.
+    async fn summarize(
+        &mut self,
+        model: &str,
+        request: String,
+        max_output_tokens: u64,
+        usage: &mut Usage,
+    ) -> Result<String, String> {
+        let settings = Settings {
+            model: model.to_owned(),
+            instructions: Some(SUMMARIZATION_SYSTEM_PROMPT.to_owned()),
+            reasoning: self.session.settings().reasoning,
+            max_output_tokens: Some(max_output_tokens),
+            ..Settings::default()
+        };
+        let mut session =
+            self.llm.open(settings).await.map_err(|e| e.to_string())?;
+        let input = [self.user(request)];
+        let timestamp = (self.clock)();
+        let mut stream = session.respond(&input, timestamp);
+        let mut accumulator = Accumulator::new();
+        loop {
+            let event = tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => {
+                    return Err("Summarization aborted".to_owned());
+                }
+                event = stream.next() => event,
+            };
+            let Some(event) = event else { break };
+            if accumulator.push(event).is_err() {
+                return Err("Summarization failed: the response broke the event grammar".to_owned());
+            }
+        }
+        let message = accumulator.finish().map_err(|_| {
+            "Summarization failed: the response ended without a terminal event"
+                .to_owned()
+        })?;
+        add_usage(usage, &message.usage);
+        check_summary(&message).map_err(|error| error.to_string())
     }
 
     /// Streams one response, emitting its deltas. A cancel drops the
@@ -608,23 +810,28 @@ impl Runner {
         messages: &[Message],
         usage: &Usage,
     ) -> Result<(), StoreError> {
-        let entries: Vec<Entry> = messages
-            .iter()
-            .map(|message| Entry::Message {
-                role: message.role().to_owned(),
-                body: serde_json::to_value(message)
-                    .expect("messages serialize"),
-            })
-            .collect();
-        let input = usage.input + usage.cache_read + usage.cache_write;
-        let turn = TurnUsage {
-            input_tokens: u32::try_from(input).unwrap_or(u32::MAX),
-            output_tokens: u32::try_from(usage.output).unwrap_or(u32::MAX),
-            cost_usd: usage.cost.total,
-        };
-        self.store.append_turn(&self.run.0, &entries, turn).await?;
+        let entries: Vec<Entry> = messages.iter().map(entry).collect();
+        self.store
+            .append_turn(&self.run.0, &entries, turn_usage(usage))
+            .await?;
         self.stored += entries.len() as i64;
         Ok(())
+    }
+}
+
+fn entry(message: &Message) -> Entry {
+    Entry::Message {
+        role: message.role().to_owned(),
+        body: serde_json::to_value(message).expect("messages serialize"),
+    }
+}
+
+fn turn_usage(usage: &Usage) -> TurnUsage {
+    let input = usage.input + usage.cache_read + usage.cache_write;
+    TurnUsage {
+        input_tokens: u32::try_from(input).unwrap_or(u32::MAX),
+        output_tokens: u32::try_from(usage.output).unwrap_or(u32::MAX),
+        cost_usd: usage.cost.total,
     }
 }
 
