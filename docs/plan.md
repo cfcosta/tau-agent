@@ -174,28 +174,41 @@ The hardest part is the WebSocket layer. It has to:
 
 ### M4: Workflow primitives (weeks 4–5)
 
-- [ ] `run_typed::<T>`:
-  - [ ] schema from `T`, rewritten to strict form;
-  - [ ] sent as the Responses `text.format`;
-  - [ ] the final message is parsed as `T`.
-- [ ] `Agent::as_tool`:
-  - [ ] each call starts a child run on its own lane, with
-        `parent_run_id` set;
-  - [ ] cancelling the parent cancels the child;
-  - [ ] the child's usage counts toward the parent's limits.
-- [ ] `Limits`: turns, tokens, USD and wall clock. Checked after every
+- [x] `run_typed::<T>`:
+  - [x] schema from `T`, rewritten to strict form (local `$ref`s
+        inlined, nullable objects allowed: schemars emits both);
+  - [x] sent as the Responses `text.format`;
+  - [x] the final message is parsed as `T`; a message that does not
+        parse is `AgentError::Output`, which keeps the outcome.
+- [x] `Agent::as_tool`:
+  - [x] each call starts a child run on its own session (so its own
+        lane), with `parent_run_id` set and the parent's workflow;
+  - [x] cancelling the parent cancels the child;
+  - [x] the child's usage counts toward the parent's limits and
+        outcome; its events reach the parent's subscriber.
+- [x] `Limits`: turns, tokens, USD and wall clock. Checked after every
       turn. When a limit is hit the run ends with `StopReason::Limit`.
-- [ ] `Checkpoint` and `Agent::fork`.
-- [ ] `workflow_id` grouping, and a cost query per workflow.
-- [ ] Compaction: triggered by a threshold, and once on context
-      overflow. The next turn starts a fresh WebSocket chain.
-- [ ] Three example workflows that double as integration tests: a typed
-      pipeline, a supervisor with sub-agents, and a fork fan-out.
-- [ ] The remaining `tau-agent` properties: limits, forks, compaction,
+- [x] `Checkpoint` and `Agent::fork`.
+- [x] `workflow_id` grouping (`Input::workflow`), and a cost query per
+      workflow.
+- [x] Compaction: triggered by a threshold, and once on context
+      overflow. The next turn starts a fresh WebSocket chain: the
+      transcript no longer extends the lane's baseline, so the delta
+      rule sends it in full (covered by the `ws::proto` properties).
+- [x] Three example workflows that double as integration tests: a typed
+      pipeline, a supervisor with sub-agents, and a fork fan-out
+      (`crates/tau-agent/tests/examples.rs`).
+- [x] The remaining `tau-agent` properties: limits, forks, compaction,
       with the compaction known cases.
 - [ ] Live cases for damaged transcripts, forks, compaction and a real
-      context overflow.
-- [ ] `cargo mutants` clean on the modules listed in the testing doc.
+      context overflow. Waits for the live tier (M1 open item).
+- [x] `cargo mutants` clean on the modules listed in the testing doc
+      (the tau-agent modules now run nightly too).
+- Open:
+  - the summary request does not go through a retry policy yet: the
+    loop has none (see the M2 open item on retries);
+  - a threshold compaction that fails turns compaction off for the rest
+    of the run rather than retrying later.
 
 ### M5: `tau-tools` (weeks 6–7, optional)
 

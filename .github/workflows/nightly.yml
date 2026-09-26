@@ -44,6 +44,11 @@ jobs:
             --file crates/tau-ai/src/ws/proto/pool.rs \
             --file crates/tau-ai/src/responses/input.rs \
             --file crates/tau-ai/src/event.rs \
+            --file crates/tau-agent/src/runner.rs \
+            --file crates/tau-agent/src/agent.rs \
+            --file crates/tau-agent/src/validation.rs \
+            --file crates/tau-agent/src/schema.rs \
+            --file crates/tau-agent/src/compaction.rs \
             --file crates/tau-store/src/lib.rs
       - uses: actions/upload-artifact@v4
         if: always()

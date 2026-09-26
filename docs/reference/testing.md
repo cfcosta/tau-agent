@@ -577,7 +577,8 @@ the workflow code around it.
 `cargo mutants` runs on the modules where a silent bug costs the most:
 
 - `tau-ai`: the delta rule, the lane state and the event processor;
-- `tau-agent`: the loop, coercion and the strict schema rewrite;
+- `tau-agent`: the loop, runs (typed results, forks, sub-agents),
+  compaction, coercion and the strict schema rewrite;
 - `tau-store`: the append and transcript queries.
 
 A surviving mutant means a behaviour no test checks. Either add the
