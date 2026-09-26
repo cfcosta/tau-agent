@@ -109,8 +109,8 @@ fn entry(tc: TestCase) -> Entry {
 #[hegel::composite]
 fn usage(tc: TestCase) -> TurnUsage {
     TurnUsage {
-        input_tokens: tc.draw(gs::integers::<i64>().max_value(100_000)),
-        output_tokens: tc.draw(gs::integers::<i64>().max_value(100_000)),
+        input_tokens: tc.draw(gs::integers::<u32>()),
+        output_tokens: tc.draw(gs::integers::<u32>()),
         cost_usd: tc.draw(gs::integers::<u32>().max_value(4096)) as f64
             / 1024.0,
     }
@@ -208,8 +208,8 @@ fn store_matches_model(tc: TestCase) {
                     store.append_turn(&run, &entries, usage).await.unwrap();
                     let m = model.runs.get_mut(&run).unwrap();
                     m.own.extend(entries);
-                    m.input += usage.input_tokens;
-                    m.output += usage.output_tokens;
+                    m.input += i64::from(usage.input_tokens);
+                    m.output += i64::from(usage.output_tokens);
                     m.cost += usage.cost_usd;
                 }
                 Op::AppendUnknown => {
@@ -343,5 +343,37 @@ fn unknown_runs_are_errors() {
         ));
         assert_eq!(store.run("x").await.unwrap(), None);
         assert_eq!(store.transcript("x").await.unwrap(), Vec::<Entry>::new());
+    });
+}
+
+/// Regression from `store_matches_model`: token counts used to be `i64`,
+/// and a negative count drove the run total below `i64::MIN`, which
+/// SQLite then refused as a REAL. Counts are unsigned now; the largest
+/// ones still add up exactly.
+#[test]
+fn large_token_counts_add_exactly() {
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        store
+            .create_run(&NewRun {
+                id: "r",
+                workflow_id: None,
+                agent: "a",
+                kind: RunKind::Root,
+                model: "m",
+            })
+            .await
+            .unwrap();
+        let usage = TurnUsage {
+            input_tokens: u32::MAX,
+            output_tokens: u32::MAX,
+            cost_usd: 0.0,
+        };
+        for _ in 0..3 {
+            store.append_turn("r", &[], usage).await.unwrap();
+        }
+        let run = store.run("r").await.unwrap().unwrap();
+        assert_eq!(run.input_tokens, 3 * i64::from(u32::MAX));
+        assert_eq!(run.output_tokens, 3 * i64::from(u32::MAX));
     });
 }

@@ -108,10 +108,14 @@ pub enum Entry {
 }
 
 /// Token and cost totals added by one turn.
+///
+/// Token counts are unsigned and 32-bit: a turn never has negative or
+/// billions of tokens, and the run totals, stored as SQLite's 64-bit
+/// INTEGER, cannot overflow from any realistic number of turns.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TurnUsage {
-    pub input_tokens: i64,
-    pub output_tokens: i64,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
     pub cost_usd: f64,
 }
 
@@ -223,6 +227,8 @@ impl Store {
         usage: TurnUsage,
     ) -> Result<()> {
         let mut tx = self.writer.begin_with("BEGIN IMMEDIATE").await?;
+        let input_tokens = i64::from(usage.input_tokens);
+        let output_tokens = i64::from(usage.output_tokens);
 
         let updated = sqlx::query!(
             "UPDATE runs SET input_tokens = input_tokens + ?2,
@@ -231,8 +237,8 @@ impl Store {
                              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?1",
             run,
-            usage.input_tokens,
-            usage.output_tokens,
+            input_tokens,
+            output_tokens,
             usage.cost_usd,
         )
         .execute(&mut *tx)
