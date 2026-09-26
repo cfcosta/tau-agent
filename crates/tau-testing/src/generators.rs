@@ -831,13 +831,15 @@ pub fn strict_schema_with_value(tc: TestCase, depth: u32) -> (Value, Value) {
 }
 
 /// A JSON schema that `tau_agent::schema::to_strict` must reject, built
-/// from exactly one of pi's documented failure cases
-/// (`constrained-sampling.ts` / `constrained-sampling.test.ts`): an
-/// unsupported keyword, a tuple `items`, a schema-valued or `true`
-/// `additionalProperties`, an `anyOf` mixing a structured variant with
-/// something else (or an empty `anyOf`), a non-object root, `properties`
-/// without `type: "object"`, `required` naming an unknown property or
-/// holding a non-string, or a boolean (`true`/`false`) schema node.
+/// from exactly one failure case: pi's documented ones
+/// (`constrained-sampling.ts` / `constrained-sampling.test.ts`) minus
+/// object unions, which tau-agent accepts, plus a recursive `$ref`. That
+/// is an unsupported keyword (with `$defs` nested, since root ones are
+/// inlined), a tuple `items`, a schema-valued or `true`
+/// `additionalProperties`, a recursive `$ref`, an empty `anyOf`, a
+/// non-object root, `properties` without `type: "object"`, `required`
+/// naming an unknown property or holding a non-string, or a boolean
+/// (`true`/`false`) schema node.
 #[hegel::composite]
 pub fn unsupported_schema(tc: TestCase) -> Value {
     match tc.draw(gs::integers::<u8>().max_value(10)) {
@@ -864,7 +866,17 @@ pub fn unsupported_schema(tc: TestCase) -> Value {
             schema
                 .insert("type".to_owned(), Value::String("object".to_owned()));
             schema.insert(key.to_owned(), serde_json::json!({}));
-            Value::Object(schema)
+            if matches!(key, "$defs" | "definitions") {
+                // Root definitions are inlined away; only nested ones
+                // are unsupported.
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {"a": schema},
+                    "required": ["a"],
+                })
+            } else {
+                Value::Object(schema)
+            }
         }
         1 => {
             serde_json::json!({"type": "array", "items": [{"type": "string"}, {"type": "number"}]})
@@ -877,8 +889,12 @@ pub fn unsupported_schema(tc: TestCase) -> Value {
         }
         4 => serde_json::json!({
             "type": "object",
-            "properties": {"a": {"anyOf": [{"type": "object", "properties": {}, "required": []}, {"type": "null"}]}},
+            "properties": {"a": {"$ref": "#/$defs/Node"}},
             "required": ["a"],
+            "$defs": {"Node": {
+                "type": "object",
+                "properties": {"next": {"$ref": "#/$defs/Node"}},
+            }},
         }),
         5 => {
             serde_json::json!({"type": "object", "properties": {"a": {"anyOf": []}}, "required": ["a"]})

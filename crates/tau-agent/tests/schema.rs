@@ -12,7 +12,12 @@ use std::collections::HashSet;
 
 use hegel::TestCase;
 use serde_json::{Map, Value, json};
-use tau_agent::schema::{NotStrict, strip_nulls_for_optional, to_strict};
+use tau_agent::schema::{
+    NotStrict,
+    inline_refs,
+    strip_nulls_for_optional,
+    to_strict,
+};
 use tau_testing::generators;
 
 // =============================================================================
@@ -198,7 +203,7 @@ fn unsupported_schema_is_rejected_with_a_reason(tc: TestCase) {
         "then schemas are unsupported",
         "else schemas are unsupported",
         "anyOf must contain at least one schema",
-        "object and array unions are unsupported",
+        "recursive $ref schemas are unsupported",
         "tuple schemas are unsupported",
         "properties require type object",
         "schema-valued or true additionalProperties is unsupported",
@@ -239,54 +244,36 @@ fn not_strict_behaves_like_a_normal_error() {
 // need their own examples.
 // =============================================================================
 
-/// An `anyOf` variant is structured (and so rejected in a union) whether
-/// `type: "object"`/`"array"` is a bare string or a one-element array,
-/// and whether it is signaled by `type` at all or by `properties`/`items`
-/// alone — each of `is_structured_schema`'s four disjuncts, alone.
+/// Object and array variants of an `anyOf` are made strict like any
+/// other node (a deliberate difference from pi, which rejects them):
+/// every object variant comes out closed and fully required, and an
+/// array variant's items too.
 #[test]
-fn any_of_variant_is_structured_by_type_string_type_array_or_shape_alone() {
-    let structured_variants = [
-        json!({"type": "object"}), // type: "object", no properties/items
-        json!({"type": "array"}),  // type: "array", no items
-        json!({"type": ["object"]}), // type as an array, naming "object"
-        json!({"type": ["array"]}), // type as an array, naming "array"
-        json!({"properties": {"x": {"type": "string"}}}), // properties alone, no type
-        json!({"items": {"type": "string"}}), // items alone, no type
-    ];
-    for variant in structured_variants {
-        let schema = json!({
-            "type": "object",
-            "properties": {"a": {"anyOf": [variant.clone(), {"type": "null"}]}},
-            "required": ["a"],
-        });
-        match to_strict(&schema) {
-            Ok(strict) => {
-                panic!(
-                    "expected {variant} to be rejected as structured, got Ok: {strict}"
-                )
-            }
-            Err(error) => assert_eq!(
-                error.reason(),
-                "object and array unions are unsupported",
-                "for variant {variant}"
-            ),
-        }
-    }
-}
-
-/// The array form of `type` is checked element-by-element against the
-/// *specific* structured name (`"object"`/`"array"`), not just "is this
-/// array non-empty": a one-element type array naming neither, e.g.
-/// `["string"]`, is not structured and is accepted in a union.
-#[test]
-fn any_of_variant_with_non_structured_type_array_is_accepted() {
+fn structured_any_of_variants_are_made_strict() {
     let schema = json!({
         "type": "object",
-        "properties": {"a": {"anyOf": [{"type": ["string"]}, {"type": "null"}]}},
-        "required": ["a"],
+        "properties": {
+            "a": {"anyOf": [
+                {"type": "object", "properties": {"x": {"type": "string"}}},
+                {"type": "null"},
+            ]},
+            "b": {"anyOf": [
+                {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {"y": {"type": "integer"}},
+                    "required": ["y"],
+                }},
+                {"type": "string"},
+            ]},
+        },
+        "required": ["a", "b"],
     });
-    to_strict(&schema)
-        .expect("a type array naming only \"string\" is not structured");
+    let strict = to_strict(&schema).unwrap();
+    assert_every_object_is_closed_and_fully_required(&strict);
+    assert_eq!(
+        strict["properties"]["a"]["anyOf"][0]["properties"]["x"],
+        json!({"anyOf": [{"type": "string"}, {"type": "null"}]})
+    );
 }
 
 /// `schema_allows_null` recognizes `type` as an array containing
@@ -374,9 +361,9 @@ fn strict_rewrite_matches_pi_typebox_example() {
 }
 
 /// Port of "falls back or rejects schemas that cannot be safely
-/// converted" (`constrained-sampling.test.ts`): the four TypeBox cases
-/// there, written out as plain JSON Schema, each rejected for the same
-/// reason pi's test asserts (`toThrow` there is a substring match).
+/// converted" (`constrained-sampling.test.ts`): three of the four TypeBox
+/// cases there, written out as plain JSON Schema, each rejected for the
+/// same reason pi's test asserts (`toThrow` there is a substring match).
 #[test]
 fn known_unsupported_shapes_from_pi() {
     let cases: &[(Value, &str)] = &[
@@ -403,21 +390,8 @@ fn known_unsupported_shapes_from_pi() {
             }),
             "allOf schemas are unsupported",
         ),
-        (
-            json!({
-                "type": "object",
-                "properties": {
-                    "value": {
-                        "anyOf": [
-                            {"type": "object", "properties": {"nested": {"type": "string"}}, "required": ["nested"]},
-                            {"type": "null"},
-                        ],
-                    },
-                },
-                "required": ["value"],
-            }),
-            "object and array unions are unsupported",
-        ),
+        // pi's third case, a nullable object, is accepted on purpose:
+        // see `structured_any_of_variants_are_made_strict`.
         (
             json!({
                 "type": "object",
@@ -440,4 +414,161 @@ fn known_unsupported_shapes_from_pi() {
             ),
         }
     }
+}
+
+// =============================================================================
+// References
+// =============================================================================
+
+/// The metamorphic transform for references: moves drawn subschemas of
+/// `schema` (property schemas and array items, at any depth) into
+/// `defs` and points at them with `$ref`, as schemars does for named
+/// types. The moved schemas are themselves refactored first.
+fn factor_out(
+    tc: &TestCase,
+    schema: &Value,
+    defs: &mut Map<String, Value>,
+) -> Value {
+    let Value::Object(obj) = schema else {
+        return schema.clone();
+    };
+    let mut out = obj.clone();
+    if let Some(Value::Object(properties)) = obj.get("properties") {
+        let mut refactored = Map::new();
+        for (name, property) in properties {
+            refactored.insert(name.clone(), factor_child(tc, property, defs));
+        }
+        out.insert("properties".to_owned(), Value::Object(refactored));
+    }
+    if let Some(items) = obj.get("items") {
+        out.insert("items".to_owned(), factor_child(tc, items, defs));
+    }
+    if let Some(Value::Array(variants)) = obj.get("anyOf") {
+        let variants =
+            variants.iter().map(|v| factor_child(tc, v, defs)).collect();
+        out.insert("anyOf".to_owned(), Value::Array(variants));
+    }
+    Value::Object(out)
+}
+
+fn factor_child(
+    tc: &TestCase,
+    schema: &Value,
+    defs: &mut Map<String, Value>,
+) -> Value {
+    let inner = factor_out(tc, schema, defs);
+    if tc.draw(hegel::generators::booleans()) {
+        let name = format!("D{}", defs.len());
+        defs.insert(name.clone(), inner);
+        json!({"$ref": format!("#/$defs/{name}")})
+    } else {
+        inner
+    }
+}
+
+/// Inlining undoes factoring out: a schema with drawn subschemas moved
+/// into `$defs` behind `$ref`s inlines back to the original, and so has
+/// the same strict form.
+#[hegel::test(test_cases = 300)]
+fn inlining_references_undoes_factoring_them_out(tc: TestCase) {
+    let schema = tc.draw(generators::strict_schema(3));
+    let mut defs = Map::new();
+    let mut refactored = factor_out(&tc, &schema, &mut defs);
+    if !defs.is_empty() {
+        refactored["$defs"] = Value::Object(defs);
+    }
+    assert_eq!(inline_refs(&refactored).unwrap(), schema);
+    assert_eq!(to_strict(&refactored), to_strict(&schema));
+}
+
+/// Keywords next to a `$ref` are kept and win over the definition's;
+/// `const`, `enum`, `default` and `examples` hold data, so a `$ref`
+/// inside them is left alone; a property may be named like a keyword.
+#[test]
+fn inlining_keeps_siblings_and_leaves_data_alone() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "a": {"$ref": "#/definitions/A", "description": "outer"},
+            "const": {"const": {"$ref": "#/$defs/A"}},
+            "e": {"enum": [{"$ref": "x"}], "default": {"$ref": "y"}},
+        },
+        "definitions": {"A": {"type": "string", "description": "inner", "minLength": 1}},
+    });
+    assert_eq!(
+        inline_refs(&schema).unwrap(),
+        json!({
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "outer", "minLength": 1},
+                "const": {"const": {"$ref": "#/$defs/A"}},
+                "e": {"enum": [{"$ref": "x"}], "default": {"$ref": "y"}},
+            },
+        })
+    );
+}
+
+/// A reference that is not local, names no definition, leads back to
+/// itself, or names a boolean schema cannot be inlined.
+#[test]
+fn references_that_cannot_be_inlined_are_rejected() {
+    let cases = [
+        (
+            json!({"$ref": "https://example.com/a.json"}),
+            "$ref schemas are unsupported",
+        ),
+        (
+            json!({"$ref": "#/$defs/Missing"}),
+            "$ref schemas are unsupported",
+        ),
+        (
+            json!({"$ref": "#/$defs/A", "$defs": {"A": {"anyOf": [{"$ref": "#/$defs/B"}]}, "B": {"items": {"$ref": "#/$defs/A"}}}}),
+            "recursive $ref schemas are unsupported",
+        ),
+        (
+            json!({"$ref": "#/$defs/T", "$defs": {"T": true}}),
+            "boolean schemas are unsupported",
+        ),
+    ];
+    for (schema, reason) in cases {
+        let error = inline_refs(&schema).unwrap_err();
+        assert_eq!(error.reason(), reason, "for {schema}");
+    }
+}
+
+/// A definition used twice is inlined at both places: only a cycle is
+/// recursion, not reuse.
+#[test]
+fn a_definition_may_be_used_twice() {
+    let schema = json!({
+        "type": "object",
+        "properties": {"a": {"$ref": "#/$defs/S"}, "b": {"$ref": "#/$defs/S"}},
+        "$defs": {"S": {"type": "string"}},
+    });
+    let inlined = inline_refs(&schema).unwrap();
+    assert_eq!(inlined["properties"]["a"], json!({"type": "string"}));
+    assert_eq!(inlined["properties"]["b"], json!({"type": "string"}));
+}
+
+/// A schemars schema with a nested and an optional nested struct gets a
+/// strict form: references are inlined, and the optional one becomes a
+/// nullable object.
+#[test]
+fn schemars_nested_structs_have_a_strict_form() {
+    #[allow(dead_code)]
+    #[derive(schemars::JsonSchema)]
+    struct Outer {
+        inner: Inner,
+        maybe: Option<Inner>,
+    }
+    #[allow(dead_code)]
+    #[derive(schemars::JsonSchema)]
+    struct Inner {
+        name: String,
+    }
+    let schema = serde_json::to_value(schemars::schema_for!(Outer)).unwrap();
+    assert!(schema.get("$defs").is_some(), "{schema}");
+    let strict = to_strict(&schema).unwrap();
+    assert_every_object_is_closed_and_fully_required(&strict);
+    assert!(!strict.to_string().contains("$ref"), "{strict}");
 }

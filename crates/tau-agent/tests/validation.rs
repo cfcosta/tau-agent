@@ -308,9 +308,9 @@ fn pi_known_case_null_omission() {
 }
 
 /// pi's "preserves optional nulls whose referenced schema is nullable"
-/// (`validation.test.ts:126`): a `$ref` property is never stripped of
-/// its `null`, since (like pi) this crate does not resolve `$ref` just
-/// to decide whether to delete it.
+/// (`validation.test.ts:126`): the referenced schema allows `null`, so
+/// the `null` is kept. pi keeps it because it never follows `$ref`;
+/// tau-agent follows it and finds the `null` allowed.
 #[test]
 fn pi_known_case_ref_property_keeps_null() {
     let schema = json!({
@@ -321,6 +321,31 @@ fn pi_known_case_ref_property_keeps_null() {
     let compiled = compile(&schema);
     let args = json!({"value": Value::Null});
     assert_eq!(compiled.validate(&args).unwrap(), args);
+}
+
+/// Unlike pi, the coercion walk follows `$ref`: an optional property
+/// inside a referenced object, sent as `null` by a strict-mode model, is
+/// dropped as it would be inline. Rust schemas put every nested struct
+/// behind a `$ref`, so without this a strict tool with a nested struct
+/// could never omit an optional field.
+#[test]
+fn optional_nulls_inside_referenced_objects_are_dropped() {
+    let schema = json!({
+        "type": "object",
+        "properties": {"inner": {"$ref": "#/$defs/Inner"}},
+        "required": ["inner"],
+        "$defs": {"Inner": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}, "limit": {"type": "integer"}},
+            "required": ["name"],
+        }},
+    });
+    let compiled = compile(&schema);
+    let args = json!({"inner": {"name": "a", "limit": Value::Null}});
+    assert_eq!(
+        compiled.validate(&args).unwrap(),
+        json!({"inner": {"name": "a"}})
+    );
 }
 
 /// pi's "preserves a value that already matches a nullable union arm"

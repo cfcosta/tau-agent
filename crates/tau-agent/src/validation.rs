@@ -90,6 +90,8 @@ use std::{collections::HashSet, fmt};
 use jsonschema::{Validator, error::ValidationErrorKind};
 use serde_json::{Map, Value};
 
+use crate::schema::inline_refs;
+
 /// A compiled tool-argument schema: the raw JSON Schema alongside a
 /// [`jsonschema::Validator`] compiled from it.
 pub struct ArgumentSchema {
@@ -141,8 +143,11 @@ impl ArgumentSchema {
     pub fn new(schema: &Value) -> Result<Self, SchemaError> {
         let validator = jsonschema::validator_for(schema)
             .map_err(|error| SchemaError(error.to_string()))?;
+        // The coercion walks follow the schema's shape, so they get it
+        // with references inlined; a schema that cannot be inlined is
+        // walked as it is, and its references are not followed.
         Ok(Self {
-            schema: schema.clone(),
+            schema: inline_refs(schema).unwrap_or_else(|_| schema.clone()),
             validator,
         })
     }

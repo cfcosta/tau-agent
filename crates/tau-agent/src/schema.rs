@@ -18,11 +18,24 @@
 //! a model's strict-mode answer can be checked against the *original*
 //! schema.
 //!
+//! Rust schemas put every named type in the root's `$defs` and point at
+//! it with `$ref`, which pi's rewrite (built for TypeBox schemas, which
+//! inline everything) does not support. [`inline_refs`] replaces each
+//! local reference with its definition first, so a nested struct does
+//! not cost a tool its strict mode. A recursive type cannot be inlined
+//! and stays unsupported.
+//!
+//! **Deliberate difference from pi:** pi rejects an `anyOf` with an
+//! object or array variant, because some of the providers it serves
+//! cannot take one. OpenAI's strict mode can, and tau-agent talks to
+//! nothing else, so each variant is made strict like any other node.
+//! That is what gives `Option<SomeStruct>` a strict form.
+//!
 //! Not every schema can be rewritten this way. A schema that uses a
-//! keyword strict mode does not support (`$ref`, `allOf`, `oneOf`, a
-//! schema-valued `additionalProperties`, a tuple `items`, ...), or that
-//! unions an object or array with something else, is rejected with
-//! [`NotStrict`] rather than silently reinterpreted.
+//! keyword strict mode does not support (`allOf`, `oneOf`, a
+//! schema-valued `additionalProperties`, a tuple `items`, a `$ref` that
+//! cannot be inlined, ...) is rejected with [`NotStrict`] rather than
+//! silently reinterpreted.
 
 use std::fmt;
 
@@ -83,28 +96,6 @@ impl fmt::Display for NotStrict {
 
 impl std::error::Error for NotStrict {}
 
-/// `isStructuredSchema`: a schema whose instances are objects or arrays,
-/// by its declared `type`, or because it has `properties` or `items`.
-/// Used only to reject a union (`anyOf`) that mixes a structured variant
-/// with anything else, since strict mode cannot make an object or array
-/// variant nullable in place.
-fn is_structured_schema(schema: &Value) -> bool {
-    let Some(obj) = schema.as_object() else {
-        return false;
-    };
-    let is_type = |want: &str| match obj.get("type") {
-        Some(Value::String(s)) => s == want,
-        Some(Value::Array(types)) => {
-            types.iter().any(|t| t.as_str() == Some(want))
-        }
-        _ => false,
-    };
-    is_type("object")
-        || is_type("array")
-        || obj.contains_key("properties")
-        || obj.contains_key("items")
-}
-
 /// `schemaAllowsNull`: whether `null` is already a valid instance of
 /// `schema`, by `type`, `const`, `enum`, or (recursively) an `anyOf`
 /// branch. A property that already allows null is left as pi leaves it:
@@ -162,11 +153,6 @@ fn make_strict_node(schema: &Value) -> Result<Value, NotStrict> {
             })?;
         let mut strict_variants = Vec::with_capacity(variants.len());
         for variant in variants {
-            if is_structured_schema(variant) {
-                return Err(NotStrict::new(
-                    "object and array unions are unsupported",
-                ));
-            }
             strict_variants.push(make_strict_node(variant)?);
         }
         obj.insert("anyOf".to_owned(), Value::Array(strict_variants));
@@ -283,7 +269,7 @@ pub fn to_strict(schema: &Value) -> Result<Value, NotStrict> {
     if !schema.is_object() {
         return Err(NotStrict::new("root schema must have type object"));
     }
-    let strict = make_strict_node(schema)?;
+    let strict = make_strict_node(&inline_refs(schema)?)?;
     if !matches!(strict.get("type"), Some(Value::String(s)) if s == "object") {
         return Err(NotStrict::new("root schema must have type object"));
     }
@@ -367,4 +353,101 @@ pub fn strip_nulls_for_optional(
         );
     }
     Value::Object(result)
+}
+
+/// Keywords whose values are data, not schemas: references inside them
+/// are left alone.
+const DATA_KEYS: &[&str] = &["const", "enum", "default", "examples"];
+
+/// Replaces every local `$ref` (`#/$defs/<name>` or
+/// `#/definitions/<name>`) with the definition it names, and drops the
+/// root's definitions. Keywords next to a `$ref` (a `description`, say)
+/// are kept, and win over the definition's own.
+///
+/// A schema with no definitions and no references comes back unchanged.
+/// A reference that is not local, names no definition, or is recursive
+/// fails with `NotStrict`.
+pub fn inline_refs(schema: &Value) -> Result<Value, NotStrict> {
+    let mut root = schema.clone();
+    let mut defs = Map::new();
+    if let Value::Object(obj) = &mut root {
+        for key in ["definitions", "$defs"] {
+            match obj.remove(key) {
+                Some(Value::Object(found)) => defs.extend(found),
+                Some(other) => {
+                    obj.insert(key.to_owned(), other);
+                }
+                None => {}
+            }
+        }
+    }
+    inline_node(&root, &defs, &mut Vec::new())
+}
+
+fn inline_node(
+    node: &Value,
+    defs: &Map<String, Value>,
+    stack: &mut Vec<String>,
+) -> Result<Value, NotStrict> {
+    match node {
+        Value::Object(obj) => {
+            let mut out = match obj.get("$ref") {
+                Some(reference) => {
+                    let name = reference
+                        .as_str()
+                        .and_then(|r| {
+                            r.strip_prefix("#/$defs/")
+                                .or_else(|| r.strip_prefix("#/definitions/"))
+                        })
+                        .filter(|name| defs.contains_key(*name))
+                        .ok_or_else(|| {
+                            NotStrict::new("$ref schemas are unsupported")
+                        })?;
+                    if stack.iter().any(|seen| seen == name) {
+                        return Err(NotStrict::new(
+                            "recursive $ref schemas are unsupported",
+                        ));
+                    }
+                    stack.push(name.to_owned());
+                    let resolved = inline_node(&defs[name], defs, stack)?;
+                    stack.pop();
+                    let Value::Object(resolved) = resolved else {
+                        return Err(NotStrict::new(
+                            "boolean schemas are unsupported",
+                        ));
+                    };
+                    resolved
+                }
+                None => Map::new(),
+            };
+            for (key, value) in obj {
+                if key == "$ref" {
+                    continue;
+                }
+                let value = match (key.as_str(), value) {
+                    // Property names are names, not keywords.
+                    ("properties", Value::Object(properties)) => Value::Object(
+                        properties
+                            .iter()
+                            .map(|(name, schema)| {
+                                Ok((
+                                    name.clone(),
+                                    inline_node(schema, defs, stack)?,
+                                ))
+                            })
+                            .collect::<Result<_, NotStrict>>()?,
+                    ),
+                    (key, value) if DATA_KEYS.contains(&key) => value.clone(),
+                    (_, value) => inline_node(value, defs, stack)?,
+                };
+                out.insert(key.clone(), value);
+            }
+            Ok(Value::Object(out))
+        }
+        Value::Array(items) => items
+            .iter()
+            .map(|item| inline_node(item, defs, stack))
+            .collect(),
+        other => Ok(other.clone()),
+    }
 }
