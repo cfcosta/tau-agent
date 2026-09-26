@@ -125,6 +125,38 @@ Events that force a full resend:
 | Connection lost mid-stream                   | Emit an `error` event with `stopReason = error`. The agent's retry policy decides what happens next.                                            |
 | Cancel                                       | Close the lane's continuation. If the socket has other live lanes, keep it open; otherwise close it. The next turn on that run resends in full. |
 
+## Retries are invisible to the caller
+
+A recovery that resends on the same lane or a new connection does not
+start a new stream for the caller. The caller sees exactly one `start`
+event and no `error` event for the turn. An `error` event appears only
+when recovery gives up.
+
+## Usage on abort
+
+OpenAI reports usage only in the terminal event. A turn that is
+cancelled before its terminal event therefore records zero usage. Limits
+and cost undercount such turns. This is accepted, and it is documented
+in `Outcome::usage`.
+
+## Pool statistics
+
+The pool keeps counters, readable as a `PoolStats` snapshot per pool and
+per lane:
+
+| Counter              | Meaning                                              |
+| -------------------- | ---------------------------------------------------- |
+| `full_requests`      | requests sent with the full input                    |
+| `delta_requests`     | requests sent as a delta with `previous_response_id` |
+| `last_delta_items`   | number of input items in the last delta request      |
+| `connections_opened` | sockets opened, including reconnects and rotations   |
+| `connections_reused` | requests placed on an existing socket                |
+| `recoveries`         | recovery-ladder steps taken, by condition            |
+
+These counters are part of the API. Tests use them as an oracle, and
+users use them to measure the delta hit rate. pi keeps the same counters
+(`openai-codex-responses.ts:899`).
+
 ## Warm-up
 
 `generate: false` with the run's instructions and tools returns a

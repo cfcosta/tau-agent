@@ -62,6 +62,34 @@ Agent::start(input, &store)
   - reads use a read-only pool;
   - each turn costs one write transaction.
 
+## I/O boundary
+
+The protocol logic in `tau-ai` does no I/O. It is written as plain state
+machines that take events and return actions:
+
+- **`ws::proto`** holds the lane and pool state: the delta rule, the
+  continuation per lane, the in-flight and lane limits, connection age,
+  and the recovery ladder. Its inputs are events such as "request
+  submitted", "frame received", "connection closed", "timer fired" and
+  "cancel". Its outputs are actions such as "send this frame", "open a
+  connection", "close this connection", "emit this event" and "set this
+  timer". It never reads a clock; the current time is part of each
+  input.
+- **`responses`** turns transcripts into input items, and `response.*`
+  frames into `AssistantEvent`s. It is pure too.
+- **`ws::io`** is a thin driver. One tokio task per connection owns that
+  connection's state and runs the loop: read a frame or a command, feed
+  it to `ws::proto`, carry out the actions. Runs talk to it over
+  channels, so no lock is shared between lanes.
+- **`Connector`** is the trait the driver uses to open a socket. The
+  default opens TLS to `wss://api.openai.com`. Tests pass a connector
+  that opens a stream on a simulated network.
+
+This split is what makes the WebSocket layer testable: the rules that
+are hard to get right are checked without a network, and the part that
+touches a network is small enough to test in simulation. See
+[`reference/testing.md`](reference/testing.md).
+
 ## Why the WebSocket shapes the design
 
 The Responses WebSocket keeps the previous response in connection memory,

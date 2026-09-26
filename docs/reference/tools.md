@@ -2,7 +2,10 @@
 
 These specs follow pi's built-in tools
 (`packages/coding-agent/src/core/tools/`). Keep the limits and error
-strings as written here. Models are tuned to them, and evals carry over.
+strings as written here. Models have seen them in pi's transcripts. pi
+has no evals that measure tool behaviour, so a change to a string or a
+limit cannot be checked against evals. Treat any change as a behaviour
+change.
 
 The shared limits:
 
@@ -26,10 +29,13 @@ paths resolve against it.
 
 - `offset` counts lines from 1.
 - **Path resolution:**
-  - `~` expands to the home directory, and a leading `@` is stripped;
+  - `~` and a leading `~/` expand to the home directory; any other
+    leading `~` is literal, so `~draft.md` is a file named `~draft.md`;
+  - a leading `@` is stripped;
   - Unicode spaces are handled;
   - macOS screenshot filename variants are retried: NNBSP before AM/PM,
-    NFD normalization, and curly apostrophes.
+    NFD normalization, and curly apostrophes. AM/PM matches in either
+    case, because some locales (such as en_AU) write `am` and `pm`.
 - **Images** are detected by magic bytes, not by file extension.
   - Unsupported formats are converted to PNG.
   - EXIF orientation is applied.
@@ -86,6 +92,8 @@ paths resolve against it.
      lines keep their original bytes.
   7. If the file did not change, return `Err`. Otherwise restore the line
      endings and BOM, then write the file.
+  8. Any failure leaves the file unchanged. Edits are all applied, or
+     none are.
 - **Deliberate difference from pi:** uniqueness is checked in the same
   space the match was found in. pi checks it in normalized space even for
   exact matches (`edit-diff.ts:328`). That rejects a match that is unique
@@ -95,6 +103,9 @@ paths resolve against it.
 - **Serialization:** each read-modify-write holds a per-path async mutex,
   keyed by canonical path. Parallel edits to the same file are
   serialized.
+
+- **Diff consistency:** applying the returned diff to the original
+  content gives exactly the bytes written.
 
 ## write: `{ path, content }`
 
@@ -128,3 +139,31 @@ Creates parent directories, then writes the file. Returns
 - The default `limit` is 500.
 - Entries are sorted case-insensitively. Directories get a trailing `/`,
   and dotfiles are included.
+
+## Error strings
+
+These strings are part of the spec. `<path>` is the path as the model
+gave it. `N`, `M` and `K` are numbers.
+
+| Tool   | Condition                      | Message                                                                                                                                                             |
+| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| all    | cancelled                      | `Operation aborted`                                                                                                                                                 |
+| `read` | offset past the end            | `Offset N is beyond end of file (M lines total)`                                                                                                                    |
+| `edit` | file missing or not accessible | `Could not edit file: <path>. Error code: <CODE>.` (for example `ENOENT`, `EACCES`)                                                                                 |
+| `edit` | no edits                       | `Edit tool input is invalid. edits must contain at least one replacement.`                                                                                          |
+| `edit` | empty `oldText`, one edit      | `oldText must not be empty in <path>.`                                                                                                                              |
+| `edit` | empty `oldText`, several edits | `edits[K].oldText must not be empty in <path>.`                                                                                                                     |
+| `edit` | not found, one edit            | `Could not find the exact text in <path>. The old text must match exactly including all whitespace and newlines.`                                                   |
+| `edit` | not found, several edits       | `Could not find edits[K] in <path>. The oldText must match exactly including all whitespace and newlines.`                                                          |
+| `edit` | not unique, one edit           | `Found N occurrences of the text in <path>. The text must be unique. Please provide more context to make it unique.`                                                |
+| `edit` | not unique, several edits      | `Found N occurrences of edits[K] in <path>. Each oldText must be unique. Please provide more context to make it unique.`                                            |
+| `edit` | overlapping edits              | `edits[J] and edits[K] overlap in <path>. Merge them into one edit or target disjoint regions.`                                                                     |
+| `edit` | no change, one edit            | `No changes made to <path>. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.` |
+| `edit` | no change, several edits       | `No changes made to <path>. The replacements produced identical content.`                                                                                           |
+| `bash` | non-zero exit                  | output, then `Command exited with code N`                                                                                                                           |
+| `bash` | timeout                        | output, then `Command timed out after N seconds`                                                                                                                    |
+| `bash` | cancelled                      | output, then `Command aborted`                                                                                                                                      |
+| `bash` | bad `timeout` argument         | `Invalid timeout: must be a finite number of seconds`                                                                                                               |
+
+Taken from pi at `2b0a123`: `edit.ts:181`, `edit-diff.ts:253-347`,
+`bash.ts:28-372`, `read.ts:143`.

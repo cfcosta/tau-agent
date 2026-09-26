@@ -65,6 +65,11 @@ The hardest part is the WebSocket layer. It has to:
       terminal events.
 - [ ] Incremental partial-JSON parsing of tool arguments. pi re-parses
       the whole buffer on every delta; we don't.
+- [ ] I/O-free core (see [`architecture.md`](architecture.md#io-boundary)):
+  - [ ] `ws::proto` lane and pool state machines, with no I/O and no
+        clock;
+  - [ ] `ws::io` driver, one task per connection;
+  - [ ] a `Connector` trait, with TLS as the default.
 - [ ] Connection pool:
   - [ ] one socket carries many lanes, one `stream_id` per run;
   - [ ] a semaphore enforces the 16-in-flight limit;
@@ -82,16 +87,29 @@ The hardest part is the WebSocket layer. It has to:
       regexes over the error text.
 - [ ] Cost from usage: cached input pricing and service tiers. Backed by
       a hand-maintained OpenAI model table.
+- [ ] `PoolStats` counters (see
+      [`reference/openai-websocket.md`](reference/openai-websocket.md)).
 - [ ] Test infrastructure (see [`reference/testing.md`](reference/testing.md)):
   - [ ] `hegeltest` wired in; `tau_testing::block_on` on a paused
         current-thread runtime;
   - [ ] shared generators for messages, transcripts and `response.*`
         event streams in `tau_testing::generators`;
-  - [ ] CI Check tier and nightly tier.
+  - [ ] `tau_testing::FakeOpenAi`, a turmoil host that speaks the
+        Responses WebSocket protocol, with server-side continuation,
+        limits and fault injection;
+  - [ ] CI Check tier, nightly tier, and the nightly live job with a
+        budget cap.
 - [ ] Tests:
   - [ ] the `tau-ai` properties from the testing inventory;
   - [ ] replay recorded `response.*` streams;
   - [ ] delta-rule model test, including its extended variant;
+  - [ ] `ws::proto` properties over generated event orders;
+  - [ ] transport tests in turmoil against `FakeOpenAi`, with
+        Hegel-drawn fault schedules, asserting on `PoolStats`;
+  - [ ] the `tau-ai` known cases;
+  - [ ] model and pricing table checks;
+  - [ ] live cases for plain, reasoning and tool turns, plus the
+        continuation probe;
   - [ ] measure the delta hit rate.
 
 ### M2: Agent loop and tools (weeks 2–3)
@@ -115,7 +133,10 @@ The hardest part is the WebSocket layer. It has to:
       result, even when the batch is aborted mid-way.
 - [ ] `tau-testing::ScriptedModel`, ported from pi's `faux.ts`.
 - [ ] The `tau-agent` properties from the testing inventory, including
-      the loop model test over generated scripts.
+      the loop model test over generated scripts, and the loop known
+      cases.
+- [ ] `trybuild` compile-fail cases for `Agent`, `TypedTool` and
+      `RunHook`.
 
 ### M3: SQLite store (weeks 3–4)
 
@@ -131,7 +152,7 @@ The hardest part is the WebSocket layer. It has to:
 - [ ] CI runs `cargo sqlx prepare --check`.
 - [ ] Metric: time spent waiting for the writer connection.
 - [ ] The `tau-store` properties from the testing inventory, including
-      the store model test.
+      the store model test and the combined loop-and-store cancel test.
 
 ### M4: Workflow primitives (weeks 4–5)
 
@@ -152,7 +173,10 @@ The hardest part is the WebSocket layer. It has to:
       overflow. The next turn starts a fresh WebSocket chain.
 - [ ] Three example workflows that double as integration tests: a typed
       pipeline, a supervisor with sub-agents, and a fork fan-out.
-- [ ] The remaining `tau-agent` properties: limits, forks, compaction.
+- [ ] The remaining `tau-agent` properties: limits, forks, compaction,
+      with the compaction known cases.
+- [ ] Live cases for damaged transcripts, forks, compaction and a real
+      context overflow.
 - [ ] `cargo mutants` clean on the modules listed in the testing doc.
 
 ### M5: `tau-tools` (weeks 6–7, optional)
@@ -160,14 +184,16 @@ The hardest part is the WebSocket layer. It has to:
 - [ ] The seven tools as specified in [`reference/tools.md`](reference/tools.md).
 - [ ] Search runs natively, with no `rg` or `fd` subprocesses and no
       binaries downloaded at runtime.
-- [ ] The `tau-tools` properties from the testing inventory.
+- [ ] The `tau-tools` properties, example tests and known cases from
+      the testing doc, and an example test for every error string in
+      `tools.md`.
 
 ## Risks
 
-| Risk                                                                                                            | Mitigation                                                                                         |
-| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| WebSocket mode is recent, and networks that block WebSocket upgrades stop every agent.                          | Surface connection failures clearly. Document the network requirement.                             |
-| One vendor.                                                                                                     | Keep `tau-ai` behind an `Llm` trait, which `ScriptedModel` already implements.                     |
-| Continuation correctness across lanes: a cancel, a compaction or a reconnect must reset exactly the right lane. | Property tests on the delta rule. Track the delta hit rate and the number of full resends from M1. |
-| SQLite has a single writer.                                                                                     | Batch appends per turn. Measure writer wait time. It only matters at very wide fan-out.            |
-| No upstream to track. tau-agent reuses pi's ideas as of `2b0a123`; it does not follow pi's releases.            | Pull fixes from pi by hand when they are relevant.                                                 |
+| Risk                                                                                                            | Mitigation                                                                                                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WebSocket mode is recent, and networks that block WebSocket upgrades stop every agent.                          | Surface connection failures clearly. Document the network requirement.                                                                                                                                                                                                 |
+| One vendor.                                                                                                     | Keep `tau-ai` behind an `Llm` trait, which `ScriptedModel` already implements.                                                                                                                                                                                         |
+| Continuation correctness across lanes: a cancel, a compaction or a reconnect must reset exactly the right lane. | An I/O-free `ws::proto` tested with properties over generated event orders, and transport tests in turmoil against `FakeOpenAi`, which rebuilds the input server-side. `PoolStats` from M1. A nightly live probe asserts the delta hit rate against the real endpoint. |
+| SQLite has a single writer.                                                                                     | Batch appends per turn. Measure writer wait time. It only matters at very wide fan-out.                                                                                                                                                                                |
+| No upstream to track. tau-agent reuses pi's ideas as of `2b0a123`; it does not follow pi's releases.            | Pull fixes from pi by hand when they are relevant.                                                                                                                                                                                                                     |

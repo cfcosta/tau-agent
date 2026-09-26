@@ -6,7 +6,9 @@ every test must meet. It covers:
 - the rules that make a test worth keeping;
 - property-based testing with Hegel, which is the default for new tests;
 - the property inventory for each crate;
-- the test harness: `ScriptedModel`, recorded streams and sqlx;
+- the test harness: `ScriptedModel`, the fake OpenAI server, recorded
+  streams and sqlx;
+- the live tests against the real endpoint;
 - CI tiers, mutation testing and the review checklist.
 
 ## Principles
@@ -33,18 +35,29 @@ every test must meet. It covers:
    missing assertion.
 7. **Tests run offline.** Nothing in the default test run needs
    `OPENAI_API_KEY`, `DATABASE_URL` or network access.
+8. **Test against reality at the edges.** A model we wrote can share
+   our misunderstanding of the server. So the transport is tested
+   over a simulated network against a fake server that keeps
+   OpenAI's state rules (`FakeOpenAi` in turmoil), the tools against a
+   real filesystem (a tempdir), and the request shapes against the real
+   endpoint (the nightly live tier).
+9. **Known bad inputs are kept.** Inputs that broke pi, or that broke
+   us, stay in the suite as fixed cases, next to the property that
+   should have caught them. See [Known cases](#known-cases).
 
 ## Tools
 
-| Tool                           | Use                                                                    |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| `hegeltest` (lib name `hegel`) | Property-based tests: generators, shrinking, stateful model tests      |
-| `cargo nextest`                | Test runner, locally and in CI                                         |
-| `tau-testing`                  | `ScriptedModel`, shared generators, recorded-stream replay, async glue |
-| `tokio::time::pause`           | Deterministic time for retries, timeouts, idle timers and rotation     |
-| `tempfile`                     | Filesystem fixtures for `tau-tools`                                    |
-| `cargo mutants`                | Test strength on the core modules                                      |
-| `cargo sqlx prepare --check`   | The committed `.sqlx/` metadata matches the queries                    |
+| Tool                           | Use                                                                  |
+| ------------------------------ | -------------------------------------------------------------------- |
+| `hegeltest` (lib name `hegel`) | Property-based tests: generators, shrinking, stateful model tests    |
+| `cargo nextest`                | Test runner, locally and in CI                                       |
+| `tau-testing`                  | `ScriptedModel`, `FakeOpenAi`, shared generators, replay, async glue |
+| `tokio::time::pause`           | Deterministic time for retries, timeouts, idle timers and rotation   |
+| `turmoil`                      | Deterministic simulated network and clock for the transport tests    |
+| `tempfile`                     | Filesystem fixtures for `tau-tools`                                  |
+| `cargo mutants`                | Test strength on the core modules                                    |
+| `cargo sqlx prepare --check`   | The committed `.sqlx/` metadata matches the queries                  |
+| `trybuild`                     | Compile-fail tests for the public API                                |
 
 All of these are in the dev shell, except the crates, which come
 through Cargo. `hegeltest` is declared once in
@@ -59,14 +72,16 @@ stateful model testing built in.
 
 ## Layers
 
-| Layer         | What it covers                                                                        | Harness                                                          |
-| ------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Property      | Pure logic: delta rule, conversions, parsers, schema rewrites, truncation, cut points | Hegel; `tests/` for public APIs, `#[cfg(test)]` for private code |
-| Model         | Stateful components: WebSocket pool and lanes, the store, the agent loop              | `#[hegel::state_machine]` against a simple in-memory model       |
-| Replay        | `tau-ai` event processing against recorded `response.*` streams                       | fixtures under `crates/tau-ai/tests/fixtures/`                   |
-| Scripted      | Workflow behaviour: typed results, sub-agents, forks, limits, hooks                   | `ScriptedModel` + `Store::memory()`, generated scripts           |
-| Live (opt-in) | The real WebSocket endpoint                                                           | `OPENAI_API_KEY` and `--features live`; never in default CI      |
-| Mutation      | Strength of the tests on the delta rule, the loop and the store                       | `cargo mutants`                                                  |
+| Layer     | What it covers                                                                         | Harness                                                          |
+| --------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Property  | Pure logic: `ws::proto`, conversions, parsers, schema rewrites, truncation, cut points | Hegel; `tests/` for public APIs, `#[cfg(test)]` for private code |
+| Model     | Stateful components: WebSocket pool and lanes, the store, the agent loop               | `#[hegel::state_machine]` against a simple in-memory model       |
+| Transport | The `ws::io` driver: pool, lanes and recovery over a WebSocket                         | turmoil simulation with `FakeOpenAi`; Hegel draws the faults     |
+| Replay    | `tau-ai` event processing against recorded `response.*` streams                        | fixtures under `crates/tau-ai/tests/fixtures/`                   |
+| Scripted  | Workflow behaviour: typed results, sub-agents, forks, limits, hooks                    | `ScriptedModel` + `Store::memory()`, generated scripts           |
+| Live      | Request shapes and continuation against the real endpoint                              | `--features live`; nightly, never in the Check tier              |
+| API shape | Misuse of the public API does not compile                                              | `trybuild` compile-fail cases                                    |
+| Mutation  | Strength of the tests on the delta rule, the loop and the store                        | `cargo mutants`                                                  |
 
 ## Choosing a property
 
@@ -91,6 +106,11 @@ Pick the first kind of oracle that fits:
 
 A property that only restates the implementation is a tautology. Delete
 it.
+
+A differential oracle must not share the dependency it is checking. If
+`find` uses `ignore::WalkBuilder`, the reference walk must not. Use
+`std::fs::read_dir` and a hand-written `.gitignore` subset, and keep the
+tricky `.gitignore` layouts as [known cases](#known-cases).
 
 ## Writing Hegel tests
 
@@ -179,6 +199,40 @@ repeatable, so a failure replays exactly.
 Do not spawn threads that call `tc.draw`. Draw everything first, then run
 the async part.
 
+**Never combine paused time with real sockets.** When time is paused and
+the runtime has nothing to do, tokio moves the clock to the next timer.
+Waiting on a real socket counts as having nothing to do. A test that
+waits on a loopback socket under paused time can therefore fire idle
+timeouts and connection rotation at random. Network tests run in
+turmoil, whose network and clock are both simulated.
+
+### Testing the WebSocket layer
+
+The WebSocket layer is split at its I/O boundary (see
+[`architecture.md`](../architecture.md#io-boundary)), and each side is
+tested on its own terms:
+
+- **`ws::proto`, with properties.** Hegel generates sequences of
+  events for the pool and lane state machines: requests from several
+  runs, frames from interleaved lanes, cancels, closes, errors and timer
+  expiries with their timestamps. The properties compare the actions
+  against a model. Because the state machine does no I/O, every
+  ordering of concurrent events is just a different generated sequence,
+  and a failure shrinks to the shortest one.
+- **`ws::io`, in turmoil.** The real driver runs in a turmoil
+  simulation, connected through a `Connector` to `FakeOpenAi` on a
+  simulated host. These tests check what the state machine cannot: that
+  frames are really written and read, that the driver carries out every
+  action, and that timers, reconnects and cancels work with a real
+  WebSocket codec. Keep them few and focused; the rules belong in the
+  `ws::proto` properties.
+
+shuttle and loom are not used. With one task per connection and no locks
+shared between lanes, the orderings they would explore are covered by
+the generated event sequences. Revisit this if shared-state concurrency
+appears outside a single task: then add `shuttle-tokio` tests for that
+code.
+
 ### Stateful model tests
 
 Use `#[hegel::state_machine]` for the pool, the lanes, the store and the
@@ -211,14 +265,17 @@ loop:
 
 Example tests are allowed for:
 
-| Case                                      | Why                                                                |
-| ----------------------------------------- | ------------------------------------------------------------------ |
-| Exact strings from [`tools.md`](tools.md) | Models are tuned to them; the exact text is the spec               |
-| Wire shapes pinned by pi or OpenAI        | A golden JSON fixture is the clearest statement of the shape       |
-| Recorded streams                          | They are real server output, which a generator only approximates   |
-| Regressions from a shrunk counterexample  | They keep a found bug found                                        |
-| The API examples in [`api.md`](api.md)    | They are M4's acceptance tests and documentation                   |
-| Table-driven classification               | Retry codes and HTTP statuses: the table is finite; test all of it |
+| Case                                      | Why                                                                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Exact strings from [`tools.md`](tools.md) | Models are tuned to them; the exact text is the spec                                                                            |
+| Wire shapes pinned by pi or OpenAI        | A golden JSON fixture is the clearest statement of the shape                                                                    |
+| Recorded streams                          | They are real server output, which a generator only approximates                                                                |
+| Regressions from a shrunk counterexample  | They keep a found bug found                                                                                                     |
+| The API examples in [`api.md`](api.md)    | They are M4's acceptance tests and documentation                                                                                |
+| Table-driven classification               | Retry codes and HTTP statuses: the table is finite; test all of it                                                              |
+| Known cases                               | Inputs that broke pi or us; see [Known cases](#known-cases)                                                                     |
+| Compile-fail cases                        | `trybuild`: the API rejects misuse at compile time                                                                              |
+| Model and pricing table                   | Every model has a context window, an output limit and prices, and the prices match the values pinned from OpenAI's pricing page |
 
 Everything else starts as a property.
 
@@ -245,6 +302,15 @@ list is a floor, not a ceiling.
 | Cancel, compaction, reconnect and `previous_response_not_found` each make the lane's next request a full resend                                                                     | Model        |
 | Pool (state machine): never more than 32 named lanes or 16 in-flight responses per connection; requests on a lane stay FIFO; no new work goes to a connection older than 55 minutes | Model        |
 | Backoff delay for attempt `n` lies in `[0, base × 2ⁿ]`, and the number of attempts never exceeds the limit                                                                          | Invariant    |
+| Every strict prefix of a valid event stream ends in `error`, never in `done`                                                                                                        | Metamorphic  |
+| Unknown server event types anywhere in a stream are ignored and do not change the result                                                                                            | Metamorphic  |
+| Converted input never holds a `function_call` without its output, or a reasoning item without the output item it belongs to, including after an aborted or errored turn             | Invariant    |
+| Every generated `stream_id` matches `[A-Za-z0-9_.-]{1,256}`                                                                                                                         | Invariant    |
+| **Transport (turmoil, against `FakeOpenAi`):** the input the server rebuilds from its cache plus each delta equals the full input of that turn                                      | Differential |
+| Transport: after any recovery, the caller sees exactly one `start` and no `error` for the turn, unless recovery gives up                                                            | Model        |
+| Transport: `PoolStats` matches the model: `delta_requests` equals requests minus the forced full resends, and connections are reused while under the limits                         | Model        |
+| Transport: `websocket_connection_limit_reached` reconnects once, and only before any output was emitted; after output it becomes an `error` event                                   | Model        |
+| A turn cancelled before its terminal event records zero usage                                                                                                                       | Model        |
 | Cost is additive: `cost(a + b) == cost(a) + cost(b)` for usages of the same model and tier                                                                                          | Algebraic    |
 
 The delta rule is the riskiest code in the project. Its model test must
@@ -252,26 +318,36 @@ also run in the nightly extended tier and under `cargo mutants`.
 
 ### `tau-agent`
 
-| Property                                                                                                                    | Oracle      |
-| --------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| Strict schema rewrite: every object in the output has all properties required and `additionalProperties: false`             | Invariant   |
-| Strict schema rewrite is idempotent                                                                                         | Algebraic   |
-| A value valid under the original schema, with missing optional fields set to `null`, is valid under the strict schema       | Metamorphic |
-| Coercion leaves a value that already validates unchanged                                                                    | Invariant   |
-| Coercion is idempotent                                                                                                      | Algebraic   |
-| A number, a boolean or a one-element array gives the same result as its string or scalar form after coercion                | Metamorphic |
-| `before_tool` hooks: the result equals a left fold over the hooks in which the first `Block` or error wins                  | Model       |
-| **Loop, over generated scripts** (tool calls, tool results that succeed, fail or take time, steering, cancel at any point): | Model       |
-| · every tool call in the transcript has exactly one result, including after a cancel                                        |             |
-| · result messages are in source order; `ToolStart` is in source order; `ToolEnd` is in completion order                     |             |
-| · the event stream matches the grammar `RunStart (TurnStart … TurnEnd)* RunEnd`, and nothing follows `RunEnd`               |             |
-| · steered messages appear after the tool batch that was running, in the order they were sent                                |             |
-| · the persisted usage equals the sum of the turns' usage                                                                    |             |
-| Limits: a run ends with `StopReason::Limit` if and only if a limit was exceeded after some turn, and child usage counts     | Model       |
-| A fork's transcript equals the parent's transcript up to the checkpoint, followed by the fork's own messages                | Model       |
-| Compaction cut point never falls between a tool call and its result, and never on a tool result                             | Invariant   |
-| The kept suffix holds at least `keep_recent_tokens`, unless the whole transcript holds fewer                                | Invariant   |
-| The token estimate never decreases when a message is appended                                                               | Invariant   |
+| Property                                                                                                                                                               | Oracle       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| Strict schema rewrite: every object in the output has all properties required and `additionalProperties: false`                                                        | Invariant    |
+| Strict schema rewrite is idempotent                                                                                                                                    | Algebraic    |
+| A value valid under the original schema, with missing optional fields set to `null`, is valid under the strict schema                                                  | Metamorphic  |
+| Coercion leaves a value that already validates unchanged                                                                                                               | Invariant    |
+| Coercion is idempotent                                                                                                                                                 | Algebraic    |
+| A number, a boolean or a one-element array gives the same result as its string or scalar form after coercion                                                           | Metamorphic  |
+| `before_tool` hooks: the result equals a left fold over the hooks in which the first `Block` or error wins                                                             | Model        |
+| **Loop, over generated scripts** (tool calls, tool results that succeed, fail or take time, steering, cancel at any point):                                            | Model        |
+| · every tool call in the transcript has exactly one result, including after a cancel                                                                                   |              |
+| · result messages are in source order; `ToolStart` is in source order; `ToolEnd` is in completion order                                                                |              |
+| · the event stream matches the grammar `RunStart (TurnStart … TurnEnd)* RunEnd`, and nothing follows `RunEnd`                                                          |              |
+| · steered messages appear after the tool batch that was running, in the order they were sent                                                                           |              |
+| · the persisted usage equals the sum of the turns' usage                                                                                                               |              |
+| · in a parallel batch, tools whose virtual-time intervals could overlap do overlap; with any `Sequential` tool, no two intervals overlap                               |              |
+| · a tool call cut off by a `length` stop never runs                                                                                                                    |              |
+| · a `ToolUpdate` sent after the tool's future resolved produces no event and no panic                                                                                  |              |
+| Steering sent from inside `on_event` or `before_tool` is drained at the next drain point, exactly once                                                                 | Model        |
+| A slow `on_event` subscriber holds its run: the run does not finish until the subscriber returns, and other runs keep going                                            | Model        |
+| Arguments changed by `before_tool` are validated again; invalid ones yield an error result and the tool never runs                                                     | Model        |
+| Limits: a run ends with `StopReason::Limit` if and only if a limit was exceeded after some turn, and child usage counts                                                | Model        |
+| A fork's transcript equals the parent's transcript up to the checkpoint, followed by the fork's own messages                                                           | Model        |
+| Compaction cut point never falls between a tool call and its result, and never on a tool result                                                                        | Invariant    |
+| The kept suffix holds at least `keep_recent_tokens`, unless the whole transcript holds fewer                                                                           | Invariant    |
+| The token estimate never decreases when a message is appended                                                                                                          | Invariant    |
+| With no reported usage anywhere, the estimate is `chars / 4` over every message                                                                                        | Differential |
+| A summary that stops with `length` or `error`, or that calls a tool, fails compaction and writes nothing                                                               | Model        |
+| The summary request's output limit never exceeds the model's maximum output                                                                                            | Invariant    |
+| Repeated compactions: a second compaction runs only when the kept messages no longer fit, and summarizes messages the first one kept once they leave the recent window | Model        |
 
 ### `tau-store`
 
@@ -282,6 +358,7 @@ also run in the nightly extended tier and under `cargo mutants`.
 | The recursive-CTE transcript equals a Rust walk up the fork chain over the model                                      | Differential |
 | Loading a run drops everything before its latest compaction record                                                    | Model        |
 | A failed append leaves neither messages nor usage totals behind                                                       | Model        |
+| Loop and store together: a cancel or a write failure between tool completion and persistence leaves no partial turn   | Model        |
 | Message bodies round-trip through the `body` column unchanged                                                         | Round trip   |
 
 Store tests use `Store::memory()`. Each Hegel case opens a new store, so
@@ -289,24 +366,39 @@ cases do not share state.
 
 ### `tau-tools`
 
-| Property                                                                                                        | Oracle       |
-| --------------------------------------------------------------------------------------------------------------- | ------------ |
-| `truncate_head` output is a prefix of whole lines, within `MAX_LINES` and `MAX_BYTES`                           | Invariant    |
-| `truncate_tail` output is a suffix, within the limits, and valid UTF-8 at every cut                             | Invariant    |
-| Truncation is idempotent, and input already within the limits is returned unchanged                             | Algebraic    |
-| `edit` with exact, unique, non-overlapping edits equals a naive reference that applies them to the string       | Differential |
-| `edit` on a CRLF file, or a file with a BOM, equals the LF edit with the line ending and BOM restored           | Metamorphic  |
-| In fuzzy mode, lines that no edit touches keep their original bytes                                             | Invariant    |
-| `edit` rejects overlapping edits and edits that match more than once, in the space where they matched           | Invariant    |
-| `grep` over a generated tree equals a naive regex scan of each file's lines, including lines with U+2028/U+2029 | Differential |
-| `find` equals `globset` matching over a naive walk; "limit reached" appears only when more results existed      | Differential |
-| `ls` output is sorted case-insensitively, with a trailing `/` on directories and dotfiles included              | Invariant    |
-| `read` with `offset` and `limit` equals the same slice of the file's lines                                      | Differential |
+| Property                                                                                                                                                                               | Oracle       |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `truncate_head` output is a prefix of whole lines, within `MAX_LINES` and `MAX_BYTES`                                                                                                  | Invariant    |
+| `truncate_tail` output is a suffix, within the limits, and valid UTF-8 at every cut                                                                                                    | Invariant    |
+| Truncation is idempotent, and input already within the limits is returned unchanged                                                                                                    | Algebraic    |
+| `edit` with exact, unique, non-overlapping edits equals a naive reference that applies them to the string                                                                              | Differential |
+| `edit` on a CRLF file, or a file with a BOM, equals the LF edit with the line ending and BOM restored                                                                                  | Metamorphic  |
+| In fuzzy mode, lines that no edit touches keep their original bytes                                                                                                                    | Invariant    |
+| `edit` rejects overlapping edits and edits that match more than once, in the space where they matched                                                                                  | Invariant    |
+| `grep` over a generated tree equals a naive regex scan of each file's lines, including lines with U+2028/U+2029                                                                        | Differential |
+| `find` equals `globset` matching over a naive walk; "limit reached" appears only when more results existed                                                                             | Differential |
+| `ls` output is sorted case-insensitively, with a trailing `/` on directories and dotfiles included                                                                                     | Invariant    |
+| `read` with `offset` and `limit` equals the same slice of the file's lines                                                                                                             | Differential |
+| Applying the diff `edit` returns to the original content gives exactly the bytes written, in exact and fuzzy mode                                                                      | Round trip   |
+| A failed `edit` leaves the file byte-for-byte unchanged                                                                                                                                | Invariant    |
+| Per-path lock (state machine, paused time): overlapping `edit`/`write` calls on one file, or on a file and a symlink to it, never interleave their read-modify-write                   | Model        |
+| Path resolution: for a generated name, a file created under a macOS variant (NNBSP before AM/PM in either case, NFD, curly apostrophe) is found from the typed form                    | Differential |
+| Images: for a generated size, a PNG built in the test comes back within 2000×2000 and 4.5 MB, with its aspect ratio kept; the format is detected by magic bytes whatever the extension | Invariant    |
+| `bash` output re-chunked at any byte boundary, including inside a multi-byte character, gives the same result                                                                          | Metamorphic  |
+| `bash` keeps `truncate_tail` of the full output, and the spill file holds the full output, whether the limit hit was lines or bytes                                                    | Differential |
+| `bash` progress updates stay under a fixed bound however many chunks arrive                                                                                                            | Invariant    |
 
-`bash` is tested with example tests plus one property: for generated
-output sizes, the tail kept equals `truncate_tail` of the full output,
-and the spill file holds the full output. Process-group behaviour is
-checked by example tests that start a grandchild process.
+`bash` also has example tests:
+
+- the 100 ms idle window, at 99 ms and 100 ms, under paused time; each
+  new chunk restarts the window;
+- `kill -KILL $$` and `kill -TERM $$` report exit codes 137 and 143, and
+  keep the output printed before the kill;
+- a grandchild process is killed with its group on cancel and timeout.
+
+Every string in the error table of [`tools.md`](tools.md#error-strings)
+has an example test. Tests that rely on `chmod` skip themselves when
+running as root, because root ignores file modes.
 
 ## ScriptedModel
 
@@ -333,6 +425,107 @@ let llm = ScriptedModel::new()
   whole script: turn count, tool calls per turn, tool outcomes and
   delays, steering points and a cancel point. The loop's model tests are
   built on it.
+
+- **Cache simulation.** Like pi's faux provider, it reports
+  `cached_tokens` for the part of a request that repeats an earlier
+  request's prefix. Cost and compaction code then sees realistic cache
+  numbers.
+- **Early failure.** Besides error events, it can fail before the stream
+  starts, as a failed connection does.
+
+## Fake OpenAI server
+
+`tau_testing::FakeOpenAi` is a turmoil host that speaks the Responses
+WebSocket protocol, over plain `ws://` on the simulated network.
+`ScriptedModel` replaces the whole `Llm`; `FakeOpenAi` replaces only the
+far end of the socket, so the real pool, lanes, delta rule and recovery
+ladder run. TLS is not simulated; the live tier covers it.
+
+- **Recording.** It numbers connections and records every frame it
+  receives, with the connection number.
+- **Scripted replies.** Each request is answered from a script of
+  `response.*` events, or from a generated response.
+- **Server-side continuation.** It keeps the responses of each
+  connection in memory, as OpenAI does. A request with a
+  `previous_response_id` the connection does not hold gets
+  `previous_response_not_found`. The cache is dropped after an error and
+  when the connection closes.
+- **Oracle for the delta rule.** For each request it rebuilds the full
+  input from its cache plus the delta. Tests compare that with the full
+  input the turn would have sent without continuation.
+- **Limits.** It enforces 16 in-flight responses and 32 named lanes per
+  connection. On turmoil's clock it closes a connection at 60 minutes
+  with `websocket_connection_limit_reached`.
+- **Faults.** It can drop the connection before the first event or in
+  the middle of a stream, delay events, and insert event types the
+  client does not know. turmoil adds network faults: holding and
+  releasing messages, and partitioning and repairing hosts.
+- **Fault schedules come from Hegel.** A test draws a fault plan (which
+  fault, and at which simulation step) and applies it between calls to
+  `Sim::step`. turmoil's own random faults and latency are turned off,
+  and its seed is drawn by Hegel. So a failing run shrinks to the
+  smallest fault plan that still fails, and replays exactly.
+
+There is one `FakeOpenAi`, configured per test. Do not write ad-hoc fake
+sockets in individual tests.
+
+## Live tests
+
+Live tests run against `wss://api.openai.com/v1/responses` with the
+`live` feature and `OPENAI_API_KEY`. They check what no fake can: that
+the server accepts our requests and honours our continuation.
+
+- **Credentials** come only from `OPENAI_API_KEY`. Without it, live tests
+  fail with a clear message; they never read other files or tokens.
+- **Model and budget.** Use the cheapest model that supports the
+  feature under test, and cap each test with `Limits::max_usd`.
+- **No retries.** A live test is not retried. A failure prints the
+  recorded frames so it can become a fixture.
+- **Real assertions.** Each test asserts on responses and `PoolStats`.
+  Logging a result is not an assertion.
+
+Required cases:
+
+| Case                                                               | Asserts                                                                                            |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Plain text, reasoning, parallel tool calls, typed result           | the stream completes and parses                                                                    |
+| Resend after an aborted turn that holds only reasoning             | the server accepts the converted input (no 400)                                                    |
+| Resend after tool calls cancelled mid-batch                        | the server accepts the synthetic "cancelled" results                                               |
+| Continuation probe: a 20-turn tool loop with padding in every turn | every turn after the first is a delta; the cached share of input tokens stays above a pinned floor |
+| Fork and compaction                                                | the first turn after each is a full resend, and later turns are deltas again                       |
+| A real context overflow                                            | it is classified as `context_length_exceeded`, and compaction recovers                             |
+
+The probe is the only check that OpenAI still honours continuation as
+documented. If its floor fails, re-read the WebSocket guide before
+changing code.
+
+## Known cases
+
+A known case is a fixed input that broke pi or broke us. It lives next
+to the property that covers its rule, as
+`#[hegel::explicit_test_case(...)]` when the input fits on a few lines,
+or as a named example test otherwise. Each one has a comment with its
+source: a pi issue number, a pi test file, or our own regression.
+
+Seed the suite with these cases from pi at `2b0a123`:
+
+| Area       | Case                                                                                                               | pi source                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Transport  | `previous_response_not_found` after a tool turn: full resend on a new connection, one `start`, no `error`          | `openai-codex-stream.test.ts:2216`                                                  |
+| Transport  | an unknown event arriving before an error                                                                          | `openai-codex-stream.test.ts:2216`                                                  |
+| Transport  | idle timeout before the first event vs after the stream started                                                    | `openai-codex-stream.test.ts:1753`, `:1855`                                         |
+| Events     | a stream that ends with no terminal event; `incomplete` turning a provisional stop into `length`; `content_filter` | `openai-responses-terminal-event.test.ts`                                           |
+| Events     | the internal partial-JSON buffer never reaches a persisted or emitted tool call                                    | `openai-responses-partial-json-cleanup.test.ts`                                     |
+| Conversion | a turn aborted with only reasoning; tool calls with no result                                                      | `openai-responses-reasoning-replay-e2e.test.ts`, `tool-call-without-result.test.ts` |
+| Loop       | a length-truncated tool call is never run                                                                          | `agent-loop.test.ts:408`                                                            |
+| Compaction | a cut before an oversized trailing tool result                                                                     | #9740                                                                               |
+| Compaction | no reported usage anywhere                                                                                         | #8328                                                                               |
+| Compaction | the summary stream drops and is retried; cancel during the summary                                                 | #6647, #9340                                                                        |
+| Compaction | a length-stopped summary is rejected                                                                               | #7048                                                                               |
+| `bash`     | output still arriving at the end of the idle window; output after the result                                       | #5303, #5208                                                                        |
+| `find`     | a nested `.gitignore` applies only to its subtree; a glob with `/` matches the full path; search from `/`          | #3303, #3302, #6104                                                                 |
+| Paths      | lowercase `am`/`pm`; `~draft.md` and `@~draft.md` stay literal                                                     | `path-utils.test.ts:20`, `:159`                                                     |
+| Images     | a JPEG with EXIF orientation after an XMP segment; a 1×1 BMP; magic bytes against a wrong extension                | `image-processing.test.ts:75`, `tools.test.ts:49`, `:200`                           |
 
 ## Recorded streams
 
@@ -384,7 +577,7 @@ missing assertion, or record why the mutant is equivalent in
 | ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run`, `cargo sqlx prepare --check`, `cargo deny check` |
 | Nightly | once a day | everything in Check, plus `cargo nextest run --run-ignored only` (extended properties) and `cargo mutants` on the modules above  |
-| Live    | by hand    | `cargo nextest run --features live` with `OPENAI_API_KEY`; records new fixtures when the protocol changes                        |
+| Live    | nightly    | the [live tests](#live-tests) with a budget cap; also run by hand to record new fixtures when the protocol changes               |
 
 The Check tier must stay under five minutes. If it grows past that,
 move cases to extended variants rather than lowering the default counts.
@@ -398,9 +591,21 @@ move cases to extended variants rather than lowering the default counts.
   in an assertion.
 - Asserting on `Debug` output or on error text, except for the pinned
   strings in [`tools.md`](tools.md).
-- Mocking the component under test. Mock only the edges: the LLM
-  (`ScriptedModel`), the clock (paused tokio time), and the filesystem
-  (a tempdir).
+- Mocking the component under test. Replace only the edges: the LLM
+  (`ScriptedModel`), the network and the far end of the socket
+  (turmoil and `FakeOpenAi`), the clock (paused tokio time or turmoil's
+  clock), and the filesystem (a tempdir).
+- Real sockets under paused time. See [Async code](#async-code).
+- Testing a `ws::proto` rule through turmoil when a property over
+  generated events would check it more directly.
+- Retrying a failing test until it passes. A flaky test is a bug in the
+  test or in the code.
+- A live test that only checks "no error", or that logs a result
+  instead of asserting on it.
+- Fixtures generated at test time and never committed. A fixture that
+  is not in the repository cannot catch a regression.
+- Copying a fake or a helper into each test file. Shared fakes live in
+  `tau-testing`.
 - One test that checks many unrelated rules. When it fails, the name
   should say which rule broke.
 - Committing a `reproduce_failure` blob instead of a readable
@@ -416,6 +621,10 @@ move cases to extended variants rather than lowering the default counts.
 - [ ] The test is deterministic: paused time, injected ids, no network.
 - [ ] Case counts follow [Case counts](#case-counts); slow cases are in
       an extended variant.
-- [ ] Each fixed bug has a regression case.
+- [ ] Each fixed bug has a regression case, and relevant
+      [known cases](#known-cases) are wired in.
+- [ ] Protocol rules are tested on `ws::proto` directly; driver changes
+      are tested in turmoil against `FakeOpenAi`, and assert on
+      `PoolStats` as well as on output.
 - [ ] Example tests are limited to the cases in
       [When to write an example test](#when-to-write-an-example-test).

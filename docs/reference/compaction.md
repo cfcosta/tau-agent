@@ -24,6 +24,9 @@ for long-running agents with `Agent::compaction(Compaction::default())`.
 2. Add `chars / 4` for every message after it.
 3. Images count as 4,800 characters.
 
+If no assistant message has reported usage yet, every message is
+estimated with `chars / 4`.
+
 ## Cut point
 
 1. Walk backwards from the newest message, adding up estimated tokens,
@@ -38,10 +41,22 @@ for long-running agents with `Agent::compaction(Compaction::default())`.
 - **Model.** The summary is one request to the run's model. It is not
   sent on the run's lane; it uses a short-lived lane of its own.
 - **Input.** The messages being dropped are serialized into a single user
-  message inside `<conversation>…</conversation>`.
+  message inside `<conversation>…</conversation>`. Each tool result is
+  cut to its first 2,000 characters, followed by
+  `[... N more characters truncated]`.
 - **Prior summary.** If one exists, the request uses the "update" variant
   of the prompt and includes the prior summary.
-- **Output limit.** `max_output_tokens` is `0.8 × reserve_tokens`.
+- **Output limit.** `max_output_tokens` is the smaller of
+  `0.8 × reserve_tokens` and the model's maximum output tokens.
+- **Retries.** The request goes through the run's retry policy, so a
+  dropped connection is retried like any other turn.
+- **Rejected summaries.** Compaction fails, and writes nothing, when the
+  response:
+  - stops with `error`: `Summarization failed: <message>`;
+  - stops with `length`, because a cut-off summary must not become a
+    checkpoint:
+    `Summarization failed: generation hit the token cap and the summary is incomplete`;
+  - contains a tool call: `Summarization attempted to call a tool`.
 - **Structure.** The summary always has these headings:
 
 ```

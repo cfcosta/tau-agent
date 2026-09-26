@@ -41,7 +41,11 @@ pi, a note says so.
   4. Run the `before_tool` hooks in registration order:
      - the first hook that blocks wins;
      - a hook that returns an error also blocks the call;
-     - mutated arguments are validated again.
+     - mutated arguments are validated again. **Deliberate difference
+       from pi:** pi runs mutated arguments without validating them again,
+       and a test pins that (`agent-loop.test.ts:480`). tau-agent
+       validates them, so a hook cannot pass the tool arguments that
+       the tool's schema rejects.
 - **Execution is parallel** across the prepared calls. A tool whose
   `execution_mode()` is `Sequential` makes the whole batch sequential.
 - **Events:** `ToolStart` in source order; `ToolUpdate` while a tool
