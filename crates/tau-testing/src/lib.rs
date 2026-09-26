@@ -1,6 +1,7 @@
 //! Scripted model, generators and replay for testing tau agents.
 
 pub mod generators;
+pub mod stream;
 
 use std::future::Future;
 
