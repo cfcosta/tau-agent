@@ -16,15 +16,24 @@
 //!   [`lane`](super::lane)), it moves to another connection by the same
 //!   placement rule. A connection that answered
 //!   `websocket_connection_limit_reached` takes no new lanes.
+//! - From `rotate_after` (55 minutes, against OpenAI's 60-minute cap) a
+//!   connection drains: it takes no new lanes, its idle and waiting lanes
+//!   move at once, and a busy lane moves when its request finishes. An
+//!   empty draining connection is closed. A lane that moves loses its
+//!   continuation, so its next request is a full resend.
 //! - When a connection is lost, every lane on it moves. A request that
 //!   had produced no output is resent in full on the new connection; one
 //!   that had fails.
 //!
 //! Like [`lane`](super::lane), the pool does no I/O: it returns
 //! [`PoolAction`]s for the driver to carry out, in order. The driver may
-//! queue a `Send` for a connection it is still opening.
+//! queue a `Send` for a connection it is still opening. Time comes in
+//! through [`Pool::tick`]; the pool never reads a clock.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    time::Duration,
+};
 
 use super::{
     continuation::Body,
@@ -38,15 +47,19 @@ pub type LaneId = u64;
 pub struct Limits {
     pub max_lanes: usize,
     pub max_in_flight: usize,
+    /// Age at which a connection starts draining.
+    pub rotate_after: Duration,
 }
 
 impl Default for Limits {
     /// OpenAI's limits: 32 named lanes and 16 in-flight responses per
-    /// connection.
+    /// connection, and rotation 5 minutes before the 60-minute cap, the
+    /// margin pi uses.
     fn default() -> Self {
         Self {
             max_lanes: 32,
             max_in_flight: 16,
+            rotate_after: Duration::from_secs(55 * 60),
         }
     }
 }
@@ -56,6 +69,8 @@ impl Default for Limits {
 pub enum PoolAction {
     /// Open a new connection with this id.
     Open(ConnectionId),
+    /// Close this connection; no lane uses it any more.
+    Close(ConnectionId),
     /// Send a request for `lane` on `connection`.
     Send {
         connection: ConnectionId,
@@ -100,7 +115,9 @@ pub struct PoolStats {
 
 #[derive(Debug, Default)]
 struct Connection {
-    /// Takes no new lanes; set when the server reports its age limit.
+    opened_at: Duration,
+    /// Takes no new lanes: it reached `rotate_after`, or the server
+    /// reported its age limit.
     draining: bool,
     lanes: BTreeSet<LaneId>,
     in_flight: usize,
@@ -128,6 +145,7 @@ pub struct Pool {
     connections_opened: u64,
     connections_reused: u64,
     last_delta_items: u64,
+    now: Duration,
 }
 
 impl Pool {
@@ -167,6 +185,7 @@ impl Pool {
             connection.lanes.remove(&lane);
         }
         actions.extend(self.drain_waiting(slot.connection));
+        actions.extend(self.retire_if_empty(slot.connection));
         Ok(actions)
     }
 
@@ -272,6 +291,35 @@ impl Pool {
         actions
     }
 
+    /// Advances the pool's clock to `now`, the time since an arbitrary
+    /// origin, and rotates connections that reached `rotate_after`.
+    pub fn tick(&mut self, now: Duration) -> Vec<PoolAction> {
+        self.now = self.now.max(now);
+        let aged: Vec<ConnectionId> = self
+            .connections
+            .iter()
+            .filter(|(_, c)| {
+                self.now.saturating_sub(c.opened_at) >= self.limits.rotate_after
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        let mut actions = Vec::new();
+        for connection in aged {
+            if let Some(c) = self.connections.get_mut(&connection) {
+                c.draining = true;
+            }
+            actions.extend(self.evacuate(connection));
+        }
+        actions
+    }
+
+    /// Whether `connection` is open and draining.
+    pub fn is_draining(&self, connection: ConnectionId) -> bool {
+        self.connections
+            .get(&connection)
+            .is_some_and(|c| c.draining)
+    }
+
     /// Counters over every lane the pool has had.
     pub fn stats(&self) -> PoolStats {
         let mut lanes = self.closed_lane_stats.clone();
@@ -339,6 +387,9 @@ impl Pool {
                 .in_flight -= 1;
             actions.extend(self.follow(lane, action));
             actions.extend(self.drain_waiting(connection));
+            if self.is_draining(connection) {
+                actions.extend(self.evacuate(connection));
+            }
         } else {
             actions.extend(self.follow(lane, action));
         }
@@ -378,7 +429,7 @@ impl Pool {
                     old.draining = true;
                     old.lanes.remove(&lane);
                     old.in_flight -= 1;
-                    actions.extend(self.drain_waiting(connection));
+                    actions.extend(self.evacuate(connection));
                 }
                 let (moved_to, open) = self.place(lane);
                 actions.extend(open);
@@ -422,7 +473,13 @@ impl Pool {
             None => {
                 let id = self.next_connection;
                 self.next_connection += 1;
-                self.connections.insert(id, Connection::default());
+                self.connections.insert(
+                    id,
+                    Connection {
+                        opened_at: self.now,
+                        ..Connection::default()
+                    },
+                );
                 self.connections_opened += 1;
                 actions.push(PoolAction::Open(id));
                 id
@@ -434,6 +491,54 @@ impl Pool {
             .lanes
             .insert(lane);
         (connection, actions)
+    }
+
+    /// Moves every lane without a request in flight off a draining
+    /// `connection`, resubmitting waiting requests on the new connection,
+    /// and closes the connection once it is empty.
+    fn evacuate(&mut self, connection: ConnectionId) -> Vec<PoolAction> {
+        let movable: Vec<LaneId> = self
+            .connections
+            .get(&connection)
+            .map(|c| {
+                c.lanes
+                    .iter()
+                    .copied()
+                    .filter(|lane| !self.lanes[lane].lane.is_busy())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut actions = Vec::new();
+        for lane in movable {
+            if let Some(c) = self.connections.get_mut(&connection) {
+                c.lanes.remove(&lane);
+                c.waiting.retain(|&l| l != lane);
+            }
+            let (moved_to, open) = self.place(lane);
+            actions.extend(open);
+            let slot = self.lanes.get_mut(&lane).expect("a connection's lane");
+            slot.connection = moved_to;
+            // The new connection holds nothing for this lane.
+            slot.lane.handle(Event::Reconnected);
+            if let Some(body) = slot.queued.take() {
+                actions.extend(
+                    self.submit(lane, body).expect("a waiting lane is idle"),
+                );
+            }
+        }
+        actions.extend(self.retire_if_empty(connection));
+        actions
+    }
+
+    /// Closes a draining connection that no lane uses any more.
+    fn retire_if_empty(&mut self, connection: ConnectionId) -> Vec<PoolAction> {
+        match self.connections.get(&connection) {
+            Some(c) if c.draining && c.lanes.is_empty() => {
+                self.connections.remove(&connection);
+                vec![PoolAction::Close(connection)]
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Starts waiting requests on `connection` while it has free slots.

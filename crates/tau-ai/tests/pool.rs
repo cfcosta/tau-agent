@@ -2,7 +2,10 @@
 //! operation sequences under small limits and checked against a model
 //! built from the actions it returns.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    time::Duration,
+};
 
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
@@ -26,6 +29,8 @@ fn body(n: u64) -> Body {
 #[derive(Default, Debug)]
 struct Model {
     open: BTreeSet<ConnectionId>,
+    opened_at: BTreeMap<ConnectionId, Duration>,
+    now: Duration,
     /// Lanes whose request was sent and has not finished, by connection.
     in_flight: BTreeMap<LaneId, ConnectionId>,
     /// Lanes whose request was submitted but not yet sent, in order.
@@ -46,6 +51,10 @@ impl Model {
                         self.open.insert(*c),
                         "connection {c} opened twice"
                     );
+                    self.opened_at.insert(*c, self.now);
+                }
+                PoolAction::Close(c) => {
+                    assert!(self.open.remove(c), "closed unknown {c}");
                 }
                 PoolAction::Send {
                     connection,
@@ -85,6 +94,7 @@ enum Op {
     ConnectionLimit,
     Cancel,
     LoseConnection,
+    Tick,
 }
 
 #[hegel::test(test_cases = 300)]
@@ -93,7 +103,11 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
         max_lanes: tc.draw(gs::integers::<usize>().min_value(1).max_value(4)),
         max_in_flight: tc
             .draw(gs::integers::<usize>().min_value(1).max_value(3)),
+        rotate_after: Duration::from_secs(
+            tc.draw(gs::integers::<u64>().min_value(1).max_value(100)),
+        ),
     };
+    let mut now = Duration::ZERO;
     let mut pool = Pool::new(limits);
     let mut model = Model::default();
     let steps = tc.draw(gs::integers::<usize>().min_value(1).max_value(60));
@@ -110,6 +124,7 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
             Op::ConnectionLimit,
             Op::Cancel,
             Op::LoseConnection,
+            Op::Tick,
         ]));
         let any_lane =
             |tc: &TestCase, lanes: &BTreeSet<LaneId>| -> Option<LaneId> {
@@ -204,6 +219,13 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
                 model.waiting.retain(|&l| l != lane);
                 pool.cancel(lane).unwrap()
             }
+            Op::Tick => {
+                now += Duration::from_secs(
+                    tc.draw(gs::integers::<u64>().max_value(60)),
+                );
+                model.now = now;
+                pool.tick(now)
+            }
             Op::LoseConnection => {
                 let Some(connection) = any_lane(&tc, &model.open) else {
                     continue;
@@ -214,6 +236,28 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
         };
         model.apply(&actions);
 
+        // Rotation: a connection past `rotate_after` drains, and a
+        // draining connection only keeps lanes with a request in flight.
+        for &c in &model.open {
+            if now.saturating_sub(model.opened_at[&c]) >= limits.rotate_after
+                && op == Op::Tick
+            {
+                assert!(
+                    pool.is_draining(c),
+                    "aged connection {c} not draining"
+                );
+            }
+            if pool.is_draining(c) {
+                for &lane in &model.lanes {
+                    if pool.connection_of(lane) == Some(c) {
+                        assert!(
+                            model.in_flight.contains_key(&lane),
+                            "idle lane {lane} left on draining {c}"
+                        );
+                    }
+                }
+            }
+        }
         // Limits hold on every connection.
         for &c in &model.open {
             assert!(pool.lane_count(c) <= limits.max_lanes, "lanes on {c}");
@@ -290,6 +334,7 @@ fn waiting_requests_start_in_order() {
     let mut pool = Pool::new(Limits {
         max_lanes: 4,
         max_in_flight: 1,
+        ..Limits::default()
     });
     let lanes: Vec<LaneId> = (0..3).map(|_| pool.open_lane().0).collect();
     assert!(lanes.iter().all(|&l| pool.connection_of(l) == Some(0)));
@@ -325,6 +370,7 @@ fn new_connection_when_full() {
     let mut pool = Pool::new(Limits {
         max_lanes: 2,
         max_in_flight: 16,
+        ..Limits::default()
     });
     let (_, first) = pool.open_lane();
     let (_, second) = pool.open_lane();
@@ -355,8 +401,11 @@ fn connection_limit_moves_the_lane() {
     assert!(
         matches!(
             &actions[..],
-            [PoolAction::Open(1), PoolAction::Send { connection: 1, body, .. }]
-                if !body.contains_key("previous_response_id")
+            [
+                PoolAction::Close(0),
+                PoolAction::Open(1),
+                PoolAction::Send { connection: 1, body, .. },
+            ] if !body.contains_key("previous_response_id")
         ),
         "{actions:?}"
     );
@@ -416,6 +465,7 @@ fn cancel_waiting_keeps_the_others() {
     let mut pool = Pool::new(Limits {
         max_lanes: 4,
         max_in_flight: 1,
+        ..Limits::default()
     });
     let lanes: Vec<LaneId> = (0..3).map(|_| pool.open_lane().0).collect();
     pool.submit(lanes[0], body(0)).unwrap();
@@ -446,6 +496,7 @@ fn new_lane_skips_connection_with_full_in_flight() {
     let mut pool = Pool::new(Limits {
         max_lanes: 8,
         max_in_flight: 1,
+        ..Limits::default()
     });
     let (first, _) = pool.open_lane();
     pool.submit(first, body(1)).unwrap();
@@ -523,4 +574,128 @@ fn errors_display() {
         PoolError::Busy(4).to_string(),
         "lane 4 already has a request"
     );
+}
+
+/// At `rotate_after`, idle lanes move at once, a busy lane moves when its
+/// request finishes, and the empty connection closes. The moved lane's
+/// next request is a full resend.
+#[test]
+fn rotation_moves_lanes_and_closes() {
+    let mut pool = Pool::new(Limits::default());
+    let (busy, _) = pool.open_lane();
+    let (idle, _) = pool.open_lane();
+    pool.submit(idle, body(1)).unwrap();
+    pool.handle(
+        idle,
+        Event::Completed {
+            response_id: "resp_1".into(),
+            output_items: vec![],
+        },
+    )
+    .unwrap();
+    pool.submit(busy, body(2)).unwrap();
+
+    assert!(pool.tick(Duration::from_secs(54 * 60)).is_empty());
+    let actions = pool.tick(Duration::from_secs(55 * 60));
+    assert_eq!(actions, vec![PoolAction::Open(1)]);
+    assert_eq!(pool.connection_of(idle), Some(1));
+    assert_eq!(pool.connection_of(busy), Some(0));
+    assert!(pool.is_draining(0));
+
+    let (fresh, _) = pool.open_lane();
+    assert_eq!(
+        pool.connection_of(fresh),
+        Some(1),
+        "draining connection took a lane"
+    );
+
+    let actions = pool
+        .handle(
+            busy,
+            Event::Completed {
+                response_id: "resp_2".into(),
+                output_items: vec![],
+            },
+        )
+        .unwrap();
+    assert_eq!(actions, vec![PoolAction::Close(0)]);
+    assert_eq!(pool.connection_of(busy), Some(1));
+
+    let mut next = body(1);
+    next.insert("input".into(), json!([{"type": "message", "text": "1"}, {"type": "message", "text": "more"}]));
+    let sent = pool.submit(idle, next).unwrap();
+    assert!(
+        matches!(&sent[..], [PoolAction::Send { connection: 1, body, .. }]
+        if !body.contains_key("previous_response_id")),
+        "{sent:?}"
+    );
+}
+
+/// Time never runs backwards inside the pool, and a connection's age
+/// counts from when it opened.
+#[test]
+fn tick_ignores_earlier_times() {
+    let mut pool = Pool::new(Limits::default());
+    let (lane, _) = pool.open_lane();
+    // The idle lane moves to connection 1, opened at 55 minutes.
+    let actions = pool.tick(Duration::from_secs(55 * 60));
+    assert_eq!(actions, vec![PoolAction::Open(1), PoolAction::Close(0)]);
+    assert!(pool.tick(Duration::ZERO).is_empty());
+    assert!(pool.tick(Duration::from_secs(109 * 60)).is_empty());
+    assert_eq!(pool.connection_of(lane), Some(1));
+    let actions = pool.tick(Duration::from_secs(110 * 60));
+    assert_eq!(actions, vec![PoolAction::Open(2), PoolAction::Close(1)]);
+}
+
+/// When one lane leaves for the age limit, the requests still in flight
+/// on the old connection keep their count.
+#[test]
+fn connection_limit_keeps_other_in_flight_count() {
+    let mut pool = Pool::new(Limits::default());
+    let (leaving, _) = pool.open_lane();
+    let (staying, _) = pool.open_lane();
+    pool.submit(leaving, body(1)).unwrap();
+    pool.submit(staying, body(2)).unwrap();
+    pool.handle(
+        leaving,
+        Event::ServerError {
+            code: Some(CONNECTION_LIMIT_REACHED.into()),
+        },
+    )
+    .unwrap();
+    assert_eq!(pool.connection_of(staying), Some(0));
+    assert_eq!(pool.in_flight(0), 1);
+    assert_eq!(pool.in_flight(1), 1);
+}
+
+/// A request waiting on a connection that starts draining moves with its
+/// lane, and the old connection never starts it.
+#[test]
+fn rotation_moves_waiting_requests() {
+    let mut pool = Pool::new(Limits {
+        max_lanes: 4,
+        max_in_flight: 1,
+        ..Limits::default()
+    });
+    let (busy, _) = pool.open_lane();
+    let (waiting, _) = pool.open_lane();
+    pool.submit(busy, body(1)).unwrap();
+    assert!(pool.submit(waiting, body(2)).unwrap().is_empty());
+    let actions = pool.tick(Duration::from_secs(55 * 60));
+    assert!(
+        matches!(&actions[..], [PoolAction::Open(1), PoolAction::Send { connection: 1, lane, .. }] if *lane == waiting),
+        "{actions:?}"
+    );
+    let actions = pool
+        .handle(
+            busy,
+            Event::Completed {
+                response_id: "resp_1".into(),
+                output_items: vec![],
+            },
+        )
+        .unwrap();
+    // Connection 1's only in-flight slot is taken, so by the placement
+    // rule the finished lane opens connection 2.
+    assert_eq!(actions, vec![PoolAction::Open(2), PoolAction::Close(0)]);
 }
