@@ -596,3 +596,296 @@ pub fn mutate_text(tc: TestCase, text: String) -> String {
     }
     chars.into_iter().collect()
 }
+
+/// Whether `schema` is one of the nullable shapes [`draw_schema_case`]
+/// produces (`{"type": "null"}` or an `anyOf` with such a branch). Used
+/// only to decide, at generation time, whether an optional property may
+/// be omitted from a generated value: omitting one that is already
+/// nullable would make the round trip through
+/// `tau_agent::schema::strip_nulls_for_optional` ambiguous (pi keeps a
+/// legitimately-nullable field's `null` rather than stripping it), so
+/// such properties are always given a value instead.
+fn schema_case_is_nullable(schema: &Value) -> bool {
+    if matches!(schema.get("type"), Some(Value::String(s)) if s == "null") {
+        return true;
+    }
+    match schema.get("anyOf").and_then(Value::as_array) {
+        Some(variants) => variants.iter().any(schema_case_is_nullable),
+        None => false,
+    }
+}
+
+/// Draws a value matching `schema`, which must be one of the shapes
+/// [`draw_schema_case`] produces. Used to fill array items and to give
+/// several properties independent values under one schema.
+fn draw_value_for_schema_case(tc: &TestCase, schema: &Value) -> Value {
+    match schema.get("type").and_then(Value::as_str) {
+        Some("string") => match schema.get("enum").and_then(Value::as_array) {
+            Some(values) => tc.draw(gs::sampled_from(values.clone())),
+            None => Value::String(tc.draw(text(10))),
+        },
+        Some("number") => Value::Number(tc.draw(json_number())),
+        Some("boolean") => Value::Bool(tc.draw(gs::booleans())),
+        Some("null") => Value::Null,
+        Some("array") => {
+            let items_schema = schema.get("items").expect(
+                "draw_schema_case always sets items on an array schema",
+            );
+            let len = tc.draw(gs::integers::<usize>().max_value(3));
+            Value::Array(
+                (0..len)
+                    .map(|_| draw_value_for_schema_case(tc, items_schema))
+                    .collect(),
+            )
+        }
+        Some("object") => {
+            let properties = schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let required: std::collections::HashSet<&str> = schema
+                .get("required")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let mut object = Map::new();
+            for (key, property_schema) in &properties {
+                let must_include = required.contains(key.as_str())
+                    || schema_case_is_nullable(property_schema)
+                    || tc.draw(gs::booleans());
+                if must_include {
+                    object.insert(
+                        key.clone(),
+                        draw_value_for_schema_case(tc, property_schema),
+                    );
+                }
+            }
+            Value::Object(object)
+        }
+        None => {
+            // The only schema shape with no "type" that draw_schema_case
+            // produces is a nullable `anyOf`.
+            let variants = schema
+                .get("anyOf")
+                .and_then(Value::as_array)
+                .expect("a typeless draw_schema_case shape is an anyOf");
+            let idx =
+                tc.draw(gs::integers::<usize>().max_value(variants.len() - 1));
+            draw_value_for_schema_case(tc, &variants[idx])
+        }
+        Some(other) => {
+            unreachable!("draw_schema_case never produces type {other:?}")
+        }
+    }
+}
+
+fn draw_schema_case(tc: &TestCase, depth: u32) -> (Value, Value) {
+    let kinds: u32 = if depth == 0 { 5 } else { 7 };
+    match tc.draw(gs::integers::<u32>().max_value(kinds - 1)) {
+        0 => {
+            let value = tc.draw(text(10));
+            (serde_json::json!({"type": "string"}), Value::String(value))
+        }
+        1 => {
+            let value = tc.draw(json_number());
+            (serde_json::json!({"type": "number"}), Value::Number(value))
+        }
+        2 => {
+            let value = tc.draw(gs::booleans());
+            (serde_json::json!({"type": "boolean"}), Value::Bool(value))
+        }
+        3 => {
+            // A closed string enum.
+            let variants: Vec<String> = (0..tc
+                .draw(gs::integers::<usize>().min_value(1).max_value(3)))
+                .map(|i| format!("v{i}"))
+                .collect();
+            let chosen = tc.draw(gs::sampled_from(variants.clone()));
+            (
+                serde_json::json!({"type": "string", "enum": variants}),
+                Value::String(chosen),
+            )
+        }
+        4 => {
+            // A nullable scalar, expressed the way pi's `schemaAllowsNull`
+            // recognizes: `anyOf` with a `{"type": "null"}` branch.
+            let (inner_schema, inner_value) =
+                match tc.draw(gs::integers::<u8>().max_value(2)) {
+                    0 => (
+                        serde_json::json!({"type": "string"}),
+                        Value::String(tc.draw(text(8))),
+                    ),
+                    1 => (
+                        serde_json::json!({"type": "number"}),
+                        Value::Number(tc.draw(json_number())),
+                    ),
+                    _ => (
+                        serde_json::json!({"type": "boolean"}),
+                        Value::Bool(tc.draw(gs::booleans())),
+                    ),
+                };
+            let use_null = tc.draw(gs::booleans());
+            (
+                serde_json::json!({"anyOf": [inner_schema, {"type": "null"}]}),
+                if use_null { Value::Null } else { inner_value },
+            )
+        }
+        5 => {
+            let (item_schema, _) = draw_schema_case(tc, depth - 1);
+            let len = tc.draw(gs::integers::<usize>().max_value(3));
+            let values: Vec<Value> = (0..len)
+                .map(|_| draw_value_for_schema_case(tc, &item_schema))
+                .collect();
+            (
+                serde_json::json!({"type": "array", "items": item_schema}),
+                Value::Array(values),
+            )
+        }
+        _ => draw_object_schema_case(tc, depth),
+    }
+}
+
+/// The object-schema case of [`draw_schema_case`], factored out so the
+/// public generators can draw a root schema that is always an object:
+/// `to_strict` rejects any other root type outright, so a top-level
+/// [`draw_schema_case`] call (which can pick a scalar, an array, or an
+/// object) is not by itself a valid *root* schema generator.
+fn draw_object_schema_case(tc: &TestCase, depth: u32) -> (Value, Value) {
+    let property_count = tc.draw(gs::integers::<usize>().max_value(3));
+    let mut properties = Map::new();
+    let mut required = Vec::new();
+    let mut value = Map::new();
+    for i in 0..property_count {
+        let key = format!("p{i}");
+        let (property_schema, property_value) =
+            draw_schema_case(tc, depth.saturating_sub(1));
+        // An optional property that `to_strict` cannot already see
+        // as nullable gets wrapped in a synthetic `anyOf: [prop,
+        // null]`. Re-running `to_strict` on that wrapper rejects it
+        // if `prop` is itself an object or array (pi's own
+        // `isStructuredSchema` gate on `anyOf` variants), so a
+        // structured property must stay required for `to_strict` to
+        // be idempotent; pi's algorithm has the same limitation.
+        let is_structured = matches!(
+            property_schema.get("type").and_then(Value::as_str),
+            Some("object") | Some("array")
+        );
+        let is_required = is_structured || tc.draw(gs::booleans());
+        let nullable = schema_case_is_nullable(&property_schema);
+        if is_required {
+            required.push(Value::String(key.clone()));
+            value.insert(key.clone(), property_value);
+        } else if nullable || tc.draw(gs::booleans()) {
+            // Nullable-and-optional properties are always given a
+            // value (see `schema_case_is_nullable`); other optional
+            // properties are sometimes omitted.
+            value.insert(key.clone(), property_value);
+        }
+        properties.insert(key, property_schema);
+    }
+    let additional_properties_false = tc.draw(gs::booleans());
+    let mut schema = Map::new();
+    schema.insert("type".to_owned(), Value::String("object".to_owned()));
+    schema.insert("properties".to_owned(), Value::Object(properties));
+    schema.insert("required".to_owned(), Value::Array(required));
+    if additional_properties_false {
+        schema.insert("additionalProperties".to_owned(), Value::Bool(false));
+    }
+    (Value::Object(schema), Value::Object(value))
+}
+
+/// A JSON schema that `tau_agent::schema::to_strict` accepts, by
+/// construction: nested objects with required and optional properties,
+/// arrays, a closed string enum, and nullable fields and `anyOf` unions
+/// of the shapes pi's strict rewrite supports. `depth` bounds how deep
+/// nested objects and arrays may go. The root is always an object, since
+/// `to_strict` requires that.
+///
+/// pi's strict rewrite never supports `$ref`/`$defs`/`definitions` (they
+/// are in `UNSUPPORTED_STRICT_SCHEMA_KEYS`), so this generator never
+/// produces them; see [`unsupported_schema`] for schemas built from
+/// exactly those keywords.
+#[hegel::composite]
+pub fn strict_schema(tc: TestCase, depth: u32) -> Value {
+    draw_object_schema_case(&tc, depth).0
+}
+
+/// A [`strict_schema`] paired with a value that validates against it.
+/// Optional properties without their own nullable shape are sometimes
+/// omitted from the value (built by construction, not filtered after
+/// the fact); a nullable-and-optional property is always given a value,
+/// so the pairing stays useful for the round trip through
+/// `tau_agent::schema::strip_nulls_for_optional` (see
+/// [`schema_case_is_nullable`]).
+#[hegel::composite]
+pub fn strict_schema_with_value(tc: TestCase, depth: u32) -> (Value, Value) {
+    draw_object_schema_case(&tc, depth)
+}
+
+/// A JSON schema that `tau_agent::schema::to_strict` must reject, built
+/// from exactly one of pi's documented failure cases
+/// (`constrained-sampling.ts` / `constrained-sampling.test.ts`): an
+/// unsupported keyword, a tuple `items`, a schema-valued or `true`
+/// `additionalProperties`, an `anyOf` mixing a structured variant with
+/// something else (or an empty `anyOf`), a non-object root, `properties`
+/// without `type: "object"`, `required` naming an unknown property or
+/// holding a non-string, or a boolean (`true`/`false`) schema node.
+#[hegel::composite]
+pub fn unsupported_schema(tc: TestCase) -> Value {
+    match tc.draw(gs::integers::<u8>().max_value(10)) {
+        0 => {
+            let key = tc.draw(gs::sampled_from(vec![
+                "$ref",
+                "$defs",
+                "definitions",
+                "allOf",
+                "oneOf",
+                "patternProperties",
+                "dependentSchemas",
+                "dependencies",
+                "unevaluatedProperties",
+                "propertyNames",
+                "contains",
+                "prefixItems",
+                "not",
+                "if",
+                "then",
+                "else",
+            ]));
+            let mut schema = Map::new();
+            schema
+                .insert("type".to_owned(), Value::String("object".to_owned()));
+            schema.insert(key.to_owned(), serde_json::json!({}));
+            Value::Object(schema)
+        }
+        1 => {
+            serde_json::json!({"type": "array", "items": [{"type": "string"}, {"type": "number"}]})
+        }
+        2 => {
+            serde_json::json!({"type": "object", "additionalProperties": true})
+        }
+        3 => {
+            serde_json::json!({"type": "object", "additionalProperties": {"type": "string"}})
+        }
+        4 => serde_json::json!({
+            "type": "object",
+            "properties": {"a": {"anyOf": [{"type": "object", "properties": {}, "required": []}, {"type": "null"}]}},
+            "required": ["a"],
+        }),
+        5 => {
+            serde_json::json!({"type": "object", "properties": {"a": {"anyOf": []}}, "required": ["a"]})
+        }
+        6 => serde_json::json!({"type": "string"}),
+        7 => {
+            serde_json::json!({"type": "string", "properties": {"a": {"type": "string"}}})
+        }
+        8 => {
+            serde_json::json!({"type": "object", "required": ["missing"], "properties": {}})
+        }
+        9 => {
+            serde_json::json!({"type": "object", "required": [1], "properties": {}})
+        }
+        _ => Value::Bool(tc.draw(gs::booleans())),
+    }
+}

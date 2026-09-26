@@ -16,6 +16,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+uuid.workspace = true
 tau-ai.workspace = true
 tau-store.workspace = true
 
