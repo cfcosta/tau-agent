@@ -3,6 +3,8 @@
 //! Every generator builds valid values directly and stays small, so a
 //! shrunk counterexample is short enough to read.
 
+use std::time::Duration;
+
 use hegel::{
     TestCase,
     generators::{self as gs, Generator},
@@ -265,4 +267,19 @@ pub fn message(tc: TestCase) -> Message {
 /// Milliseconds since the Unix epoch, within the next few centuries.
 pub fn timestamp() -> impl Generator<u64> {
     gs::integers::<u64>().max_value(10_000_000_000_000)
+}
+
+/// A [`tau_ai::retry::RetryPolicy`] with small, valid bounds: `base` in
+/// `1ms..=10s`, `max_delay >= base` (also within a few seconds of it, so
+/// shrunk failures stay short), and `max_attempts` in `0..=10`.
+#[hegel::composite]
+pub fn retry_policy(tc: TestCase) -> tau_ai::retry::RetryPolicy {
+    let base_ms = tc.draw(gs::integers::<u64>().min_value(1).max_value(10_000));
+    let extra_ms =
+        tc.draw(gs::integers::<u64>().min_value(0).max_value(10_000));
+    tau_ai::retry::RetryPolicy {
+        max_attempts: tc.draw(gs::integers::<u32>().max_value(10)),
+        base: Duration::from_millis(base_ms),
+        max_delay: Duration::from_millis(base_ms + extra_ms),
+    }
 }
