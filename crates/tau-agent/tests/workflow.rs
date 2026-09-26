@@ -732,3 +732,109 @@ fn a_sub_agent_tool_outside_a_run_fails() {
         );
     });
 }
+
+/// Limits over drawn scripts, against a model: the lead's turns call a
+/// sub-agent a drawn number of times and cost drawn amounts, and so do
+/// the sub-agent's. The model adds up, after each lead turn, the usage
+/// the lead's and every finished child's `TurnEnd` events report. The
+/// run ends with `StopReason::Limit` if and only if some turn's total
+/// reaches a limit, at the first such turn, with the kind
+/// `Limits::reached` names; otherwise it stops normally after its last
+/// turn.
+#[hegel::test(test_cases = 60)]
+fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
+    let costs = || gs::sampled_from(vec![0.0, 0.25, 0.5]);
+    let turns: Vec<(usize, f64, u64)> = tc.draw(
+        gs::vecs(hegel::tuples!(
+            gs::integers::<usize>().max_value(2),
+            costs(),
+            gs::integers::<u64>().max_value(1_000),
+        ))
+        .min_size(1)
+        .max_size(4),
+    );
+    let children: usize = turns.iter().map(|(calls, _, _)| calls).sum();
+    let child_costs: Vec<f64> =
+        tc.draw(gs::vecs(costs()).min_size(children).max_size(children));
+    let limits = Limits {
+        max_turns: tc.draw(gs::optional(
+            gs::integers::<u32>().min_value(1).max_value(5),
+        )),
+        max_tokens: tc
+            .draw(gs::optional(gs::integers::<u64>().max_value(20_000))),
+        max_usd: tc
+            .draw(gs::optional(gs::sampled_from(vec![0.25, 0.5, 1.0, 2.0]))),
+        timeout: None,
+    };
+
+    let mut lead_llm = ScriptedModel::new();
+    for (i, &(calls, cost, tokens)) in turns.iter().enumerate() {
+        let last = i + 1 == turns.len();
+        lead_llm = lead_llm.turn(|mut t| {
+            if last {
+                t = t.text("done");
+            } else {
+                t = t.text("working");
+                for c in 0..calls {
+                    t = t.tool_call(
+                        "helper",
+                        json!({"input": format!("{i}.{c}")}),
+                    );
+                }
+                if calls == 0 {
+                    t = t.tool_call("echo", json!({"text": "x"}));
+                }
+            }
+            t.cost(cost).usage(tokens, 10)
+        });
+    }
+    let mut child_llm = ScriptedModel::new();
+    for &cost in &child_costs {
+        child_llm = child_llm.turn(|t| t.text("helped").cost(cost));
+    }
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let lead = Agent::new(lead_llm)
+            .tool(typed(Echo))
+            .tool(Agent::new(child_llm).as_tool("helper", "Helps."))
+            .limits(limits);
+        let mut run = lead.start("go", &store);
+        let lead_id = run.id();
+        let events: Vec<RunEvent> = run.events().collect().await;
+        let outcome = run.outcome().await.unwrap();
+
+        let mut total = tau_ai::message::Usage::default();
+        let mut expected = None;
+        let mut lead_turns = 0;
+        for event in &events {
+            let RunEvent::TurnEnd { run, turn, usage } = event else {
+                continue;
+            };
+            total.input += usage.input;
+            total.output += usage.output;
+            total.cache_read += usage.cache_read;
+            total.cache_write += usage.cache_write;
+            total.cost.total += usage.cost.total;
+            if *run == lead_id {
+                lead_turns = *turn;
+                if expected.is_none() {
+                    expected = limits
+                        .reached(*turn, &total, Duration::ZERO)
+                        .map(|kind| (StopReason::Limit(kind), *turn));
+                }
+            }
+        }
+        match expected {
+            Some((stop, turn)) => {
+                assert_eq!(outcome.stop, stop, "{limits:?}");
+                assert_eq!(lead_turns, turn, "no turn after the limit");
+                tc.note(&format!("stopped by {stop:?} at turn {turn}"));
+            }
+            None => {
+                assert_eq!(outcome.stop, StopReason::Stop, "{limits:?}");
+                assert_eq!(lead_turns as usize, turns.len());
+            }
+        }
+        assert_eq!(outcome.usage.cost.total, total.cost.total);
+    });
+}
