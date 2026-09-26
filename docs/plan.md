@@ -52,62 +52,73 @@ The hardest part is the WebSocket layer. It has to:
 
 ### M1: OpenAI over WebSocket (weeks 1–2)
 
-- [ ] Message, content, usage and stop-reason types. The serde shape
+- [x] Message, content, usage and stop-reason types. The serde shape
       mirrors pi's JSON (camelCase, tagged by `role` / `type`).
-- [ ] `AssistantEvent`: owned deltas, 12 variants. Add an `Accumulator`
+- [x] `AssistantEvent`: owned deltas, 12 variants. Add an `Accumulator`
       that rebuilds the final `AssistantMessage`.
-- [ ] Conversion from transcript to Responses input items. It covers:
+- [x] Conversion from transcript to Responses input items. It covers:
   - the `call_id|item_id` tool-call ids;
   - tool outputs;
   - reasoning items carrying `encrypted_content`.
-- [ ] Processing of `response.*` events: text, reasoning, function-call
+- [x] Processing of `response.*` events: text, reasoning, function-call
       argument deltas, and the `completed`/`failed`/`incomplete`
       terminal events.
-- [ ] Incremental partial-JSON parsing of tool arguments. pi re-parses
+- [x] Incremental partial-JSON parsing of tool arguments. pi re-parses
       the whole buffer on every delta; we don't.
-- [ ] I/O-free core (see [`architecture.md`](architecture.md#io-boundary)):
-  - [ ] `ws::proto` lane and pool state machines, with no I/O and no
+- [x] `response.create` bodies: WebSocket rules, clamped limits,
+      encrypted reasoning for every reasoning model.
+- [x] I/O-free core (see [`architecture.md`](architecture.md#io-boundary)):
+  - [x] `ws::proto` lane and pool state machines, with no I/O and no
         clock;
-  - [ ] `ws::io` driver, one task per connection;
-  - [ ] a `Connector` trait, with TLS as the default.
-- [ ] Connection pool:
-  - [ ] one socket carries many lanes, one `stream_id` per run;
-  - [ ] a semaphore enforces the 16-in-flight limit;
-  - [ ] connections rotate at 55 minutes;
-  - [ ] a 33rd lane, or a 17th concurrent run, opens a new connection.
-- [ ] Per-lane continuation and the delta rule (see
+  - [x] `ws::io` connection tasks and a driver that runs the pool;
+  - [x] a `Connector` trait, with TLS (rustls, ring, webpki-roots) as
+        the default.
+- [x] Connection pool:
+  - [x] one socket carries many lanes, one `stream_id` per run;
+  - [x] at most 16 requests in flight per connection; a request past
+        that waits, in order, on its lane's connection;
+  - [x] connections rotate at 55 minutes;
+  - [x] a 33rd lane, or a lane with no free in-flight slot, opens a new
+        connection.
+- [x] Per-lane continuation and the delta rule (see
       [`reference/openai-websocket.md`](reference/openai-websocket.md)).
-- [ ] Recovery ladder:
-  - [ ] `previous_response_not_found` → full resend;
-  - [ ] `websocket_connection_limit_reached` → reconnect, then full
+- [x] Recovery ladder:
+  - [x] `previous_response_not_found` → full resend;
+  - [x] `websocket_connection_limit_reached` → reconnect, then full
         resend;
-  - [ ] any other error → an `error` event.
+  - [x] any other error → an `error` event.
+  - [x] recoveries are invisible to the caller; a cancelled response's
+        tail is skipped.
+- [ ] Idle timeout per connection.
 - [ ] Optional warm-up with `generate: false`.
-- [ ] Retry classification on OpenAI error codes and HTTP status, not
+- [x] Retry classification on OpenAI error codes and HTTP status, not
       regexes over the error text.
-- [ ] Cost from usage: cached input pricing and service tiers. Backed by
-      a hand-maintained OpenAI model table.
-- [ ] `PoolStats` counters (see
+- [x] Cost from usage: cached input pricing and service tiers. Backed by
+      the vendored models.dev table plus pi's OpenAI corrections.
+- [x] `PoolStats` counters (see
       [`reference/openai-websocket.md`](reference/openai-websocket.md)).
+- [x] `OpenAi` client with one `Session` per run.
 - [ ] Test infrastructure (see [`reference/testing.md`](reference/testing.md)):
-  - [ ] `hegeltest` wired in; `tau_testing::block_on` on a paused
+  - [x] `hegeltest` wired in; `tau_testing::block_on` on a paused
         current-thread runtime;
-  - [ ] shared generators for messages, transcripts and `response.*`
+  - [x] shared generators for messages, transcripts and `response.*`
         event streams in `tau_testing::generators`;
   - [ ] `tau_testing::FakeOpenAi`, a turmoil host that speaks the
         Responses WebSocket protocol, with server-side continuation,
-        limits and fault injection;
+        limits and fault injection. Done except the 16 in-flight and
+        32-lane limits and the 60-minute close;
   - [ ] CI Check tier, nightly tier, and the nightly live job with a
-        budget cap.
+        budget cap. The live job waits for the live tests.
 - [ ] Tests:
-  - [ ] the `tau-ai` properties from the testing inventory;
-  - [ ] replay recorded `response.*` streams;
-  - [ ] delta-rule model test, including its extended variant;
-  - [ ] `ws::proto` properties over generated event orders;
-  - [ ] transport tests in turmoil against `FakeOpenAi`, with
+  - [x] the `tau-ai` properties from the testing inventory;
+  - [ ] replay recorded `response.*` streams (needs live recordings);
+  - [ ] delta-rule model test, including its extended variant (the
+        extended variants are not written yet);
+  - [x] `ws::proto` properties over generated event orders;
+  - [x] transport tests in turmoil against `FakeOpenAi`, with
         Hegel-drawn fault schedules, asserting on `PoolStats`;
-  - [ ] the `tau-ai` known cases;
-  - [ ] model and pricing table checks;
+  - [x] the `tau-ai` known cases;
+  - [x] model and pricing table checks;
   - [ ] live cases for plain, reasoning and tool turns, plus the
         continuation probe;
   - [ ] measure the delta hit rate.
@@ -140,19 +151,20 @@ The hardest part is the WebSocket layer. It has to:
 
 ### M3: SQLite store (weeks 3–4)
 
-- [ ] Migrations `0001_runs.sql` (see [`reference/storage.md`](reference/storage.md)).
-- [ ] Writer pool with one connection and `BEGIN IMMEDIATE`, plus a
+- [x] Migrations `0001_runs.sql` (see [`reference/storage.md`](reference/storage.md)).
+- [x] Writer pool with one connection and `BEGIN IMMEDIATE`, plus a
       read-only reader pool. WAL mode and `synchronous = NORMAL`.
-- [ ] Atomic per-turn append: the turn's messages and the run totals
+- [x] Atomic per-turn append: the turn's messages and the run totals
       commit together.
-- [ ] Fork transcript as one `WITH RECURSIVE` query.
-- [ ] Compaction records. Loading a run trims everything before the
+- [x] Fork transcript as one `WITH RECURSIVE` query.
+- [x] Compaction records. Loading a run trims everything before the
       latest compaction record.
-- [ ] Offline metadata in `.sqlx/` is committed.
-- [ ] CI runs `cargo sqlx prepare --check`.
+- [x] Offline metadata in `.sqlx/` is committed.
+- [x] CI runs `cargo sqlx prepare --check`.
 - [ ] Metric: time spent waiting for the writer connection.
 - [ ] The `tau-store` properties from the testing inventory, including
-      the store model test and the combined loop-and-store cancel test.
+      the store model test (done) and the combined loop-and-store cancel
+      test (needs the M2 loop).
 
 ### M4: Workflow primitives (weeks 4–5)
 
