@@ -3,3 +3,4 @@
 pub mod event;
 pub mod message;
 pub mod retry;
+pub mod ws;

@@ -283,3 +283,5 @@ pub fn retry_policy(tc: TestCase) -> tau_ai::retry::RetryPolicy {
         max_delay: Duration::from_millis(base_ms + extra_ms),
     }
 }
+
+pub mod lane;
