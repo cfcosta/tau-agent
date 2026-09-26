@@ -6,6 +6,8 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/cfcosta/tau-agent"
+# Not published until a license is chosen.
+publish = false
 
 [workspace.dependencies]
 hegeltest = "0.28"

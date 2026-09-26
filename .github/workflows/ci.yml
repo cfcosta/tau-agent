@@ -1,0 +1,44 @@
+# The Check tier from docs/reference/testing.md: every push and pull
+# request. Everything runs in the flake's dev shell, so CI uses the
+# same toolchain and tools as a developer machine.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/determinate-nix-action@main
+      - uses: DeterminateSystems/flakehub-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: nix fmt -- --ci
+
+      - name: Clippy
+        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: nix develop -c cargo nextest run --workspace
+
+      - name: sqlx offline metadata is current
+        working-directory: crates/tau-store
+        run: |
+          export DATABASE_URL="sqlite://$RUNNER_TEMP/tau-store-ci.db"
+          nix develop -c sqlx database setup
+          nix develop -c cargo sqlx prepare --check -- -p tau-store
+
+      - name: Dependencies (advisories, bans, licenses, sources)
+        run: nix develop -c cargo deny check

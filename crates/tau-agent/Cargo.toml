@@ -4,6 +4,7 @@ description = "Agents, runs, the agent loop, tools, hooks, limits, sub-agents, f
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+publish.workspace = true
 
 [dependencies]
 tau-ai.workspace = true

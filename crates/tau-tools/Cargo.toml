@@ -4,6 +4,7 @@ description = "Optional coding tools for tau agents: read, bash, edit, write, gr
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+publish.workspace = true
 
 [dependencies]
 tau-agent.workspace = true

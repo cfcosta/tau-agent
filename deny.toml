@@ -70,6 +70,9 @@ feature-depth = 1
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
+  # paste is unmaintained but only a proc-macro of hegeltest, a
+  # test-only dependency; it never ships in a tau-agent build.
+  { id = "RUSTSEC-2024-0436", reason = "test-only, via hegeltest" },
   #"RUSTSEC-0000-0000",
   #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
   #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
@@ -159,7 +162,7 @@ exceptions = [
 # published to private registries.
 # To see how to mark a crate as unpublished (to the official registry),
 # visit https://doc.rust-lang.org/cargo/reference/manifest.html#the-publish-field.
-ignore = false
+ignore = true
 # One or more private registries that you might publish crates to, if a crate
 # is only published to private registries, and ignore is true, the crate will
 # not have its license(s) checked

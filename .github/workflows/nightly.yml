@@ -1,0 +1,52 @@
+# The Nightly tier from docs/reference/testing.md: the extended
+# property variants and mutation testing on the modules where a silent
+# bug costs the most.
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  extended:
+    name: Extended properties
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/determinate-nix-action@main
+      - uses: DeterminateSystems/flakehub-cache-action@main
+      - uses: Swatinem/rust-cache@v2
+      - run: nix develop -c cargo nextest run --workspace --run-ignored only
+
+  mutants:
+    name: Mutation testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/determinate-nix-action@main
+      - uses: DeterminateSystems/flakehub-cache-action@main
+      - name: cargo mutants
+        run: |
+          nix develop -c cargo mutants --workspace --test-tool nextest \
+            --file crates/tau-ai/src/ws/proto/continuation.rs \
+            --file crates/tau-ai/src/ws/proto/lane.rs \
+            --file crates/tau-ai/src/ws/proto/pool.rs \
+            --file crates/tau-ai/src/responses/input.rs \
+            --file crates/tau-ai/src/event.rs \
+            --file crates/tau-store/src/lib.rs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants
+          path: mutants.out
