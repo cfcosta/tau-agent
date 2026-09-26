@@ -1,0 +1,74 @@
+{
+  "source": "Ported from pi's packages/ai/scripts/generate-models.ts at commit 2b0a123. Where a standard cost is given, it is pinned from https://developers.openai.com/api/docs/pricing (see generate-models.ts:428-431, the comment above OPENAI_STANDARD_COSTS).",
+  "excludedIds": {
+    "_comment": "generate-models.ts:356, MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS. models.dev lists this alias, but it is not accepted by OpenAI APIs (generate-models.ts:1794).",
+    "ids": ["gpt-5.6"]
+  },
+  "longContextInputThreshold": {
+    "_comment": "generate-models.ts:379, OPENAI_LONG_CONTEXT_INPUT_THRESHOLD.",
+    "tokens": 272000
+  },
+  "shortContextCappedIds": {
+    "_comment": "generate-models.ts:380-388, OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS. Applied at generate-models.ts:2807-2810: keeps direct OpenAI requests in the short-context pricing tier by default, so contextWindow is capped to the long-context threshold and maxTokens to 128000.",
+    "ids": [
+      "gpt-5.4",
+      "gpt-5.5",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna"
+    ],
+    "contextWindow": 272000,
+    "maxOutput": 128000
+  },
+  "longContextPricingIds": {
+    "_comment": "generate-models.ts:390-401, OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS. Applied at generate-models.ts:2811-2814: cost = withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id] ?? modelsDevCost) -- note this REPLACES the base rate with the standard cost when one is pinned, not just the tier. withOpenAiLongContextPricing (generate-models.ts:413-425) then adds one tier, active above longContextInputThreshold input tokens: input x2, output x1.5, cacheRead x2, cacheWrite x2, each rounded to 6 decimal places (roundCost, generate-models.ts:1228-1230).",
+    "ids": [
+      "gpt-5.4",
+      "gpt-5.4-pro",
+      "gpt-5.5",
+      "gpt-5.5-pro",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna"
+    ],
+    "tierInputMultiplier": 2.0,
+    "tierOutputMultiplier": 1.5,
+    "tierCacheReadMultiplier": 2.0,
+    "tierCacheWriteMultiplier": 2.0
+  },
+  "standardCosts": {
+    "_comment": "generate-models.ts:428-438, OPENAI_STANDARD_COSTS. Keeps current OpenAI prices authoritative over models.dev until it catches up; USD per million tokens. Only ever consulted from within longContextPricingIds (every key here is also in longContextPricingIds.ids); ids in longContextPricingIds but absent here (gpt-5.4, gpt-5.4-pro, gpt-5.5, gpt-5.5-pro) keep the models.dev base rate instead.",
+    "costs": {
+      "gpt-5.6-luna": { "input": 0.2, "output": 1.2, "cacheRead": 0.02, "cacheWrite": 0.25 },
+      "gpt-5.6-sol": { "input": 4, "output": 20, "cacheRead": 0.4, "cacheWrite": 5 },
+      "gpt-5.6-terra": { "input": 2, "output": 12, "cacheRead": 0.2, "cacheWrite": 2.5 },
+      "gpt-6-astra": { "input": 10, "output": 50, "cacheRead": 1, "cacheWrite": 12.5 },
+      "gpt-6-luna": { "input": 0.1, "output": 0.5, "cacheRead": 0.01, "cacheWrite": 0.125 },
+      "gpt-6-sol": { "input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5 }
+    }
+  },
+  "maxOutputFixes": {
+    "_comment": "generate-models.ts:2820-2824. models.dev reports gpt-5-pro output as 272000, a duplicate of the input sub-limit; the actual max output is 128000.",
+    "fixes": {
+      "gpt-5-pro": 128000
+    }
+  },
+  "serviceTierMultipliers": {
+    "_comment": "Not part of the vendored model table: pi applies these to a computed UsageCost, per request, based on the OpenAI Responses `service_tier` the response used (getServiceTierCostMultiplier / applyServiceTierPricing, packages/ai/src/api/openai-responses.ts:367-393). tau_ai::cost exposes this as a separate ServiceTier argument to `cost()`, since pi's own Usage type carries no service-tier field either (packages/ai/src/types.ts:420-439).",
+    "default": 1.0,
+    "flex": 0.5,
+    "priorityOrFast": 2.0,
+    "priorityOrFastOverrides": {
+      "_comment": "openai-responses.ts:376: model.id === \"gpt-5.5\" ? 2.5 : 2.",
+      "byId": {
+        "gpt-5.5": 2.5
+      }
+    }
+  }
+}

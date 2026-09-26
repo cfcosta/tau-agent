@@ -285,3 +285,23 @@ pub fn retry_policy(tc: TestCase) -> tau_ai::retry::RetryPolicy {
 }
 
 pub mod lane;
+
+/// A [`Usage`] whose token counts are each drawn independently up to
+/// `max_tokens`, with `cost` left at its default (callers that exercise
+/// `tau_ai::cost` compute it themselves). Useful for properties that
+/// need to keep a request's total input tokens
+/// (`input + cache_read + cache_write`) under a known bound, such as a
+/// model's pricing-tier threshold.
+#[hegel::composite]
+pub fn usage_with_max_tokens(tc: TestCase, max_tokens: u64) -> Usage {
+    let tokens = || gs::integers::<u64>().max_value(max_tokens);
+    Usage {
+        input: tc.draw(tokens()),
+        output: tc.draw(tokens()),
+        cache_read: tc.draw(tokens()),
+        cache_write: tc.draw(tokens()),
+        reasoning: tc.draw(gs::optional(tokens())),
+        total_tokens: tc.draw(tokens()),
+        cost: UsageCost::default(),
+    }
+}

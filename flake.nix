@@ -106,6 +106,9 @@
               cargo-deny
               cargo-mutants
               cargo-nextest
+
+              curl
+              jq
             ];
           };
         }
