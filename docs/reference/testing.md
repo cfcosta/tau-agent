@@ -249,8 +249,8 @@ loop:
 
 ### Failures and regressions
 
-- The local example database is `.hegel/` in the workspace root. It is
-  gitignored. Hegel replays saved failures first on the next run.
+- The local example database is `.hegel/` in each crate's directory,
+  because tests run from there. It is gitignored. Hegel replays saved failures first on the next run.
 - CI disables the database and derandomizes seeds. Hegel does this by
   itself when it detects CI.
 - When a property fails, keep the shrunk input as a regression before

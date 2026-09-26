@@ -4,3 +4,11 @@ description = "OpenAI Responses over WebSocket: types, events, connection pool, 
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+hegeltest.workspace = true
+tau-testing.workspace = true

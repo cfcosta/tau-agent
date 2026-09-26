@@ -9,6 +9,13 @@ repository = "https://github.com/cfcosta/tau-agent"
 
 [workspace.dependencies]
 hegeltest = "0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = [
+  "float_roundtrip",
+  "preserve_order",
+] }
+thiserror = "2.0.21"
+tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
 tau-agent = { path = "crates/tau-agent", version = "0.1.0" }
 tau-ai = { path = "crates/tau-ai", version = "0.1.0" }
 tau-store = { path = "crates/tau-store", version = "0.1.0" }
