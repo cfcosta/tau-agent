@@ -512,3 +512,79 @@ pub fn damaged_transcript(tc: TestCase) -> Vec<Message> {
 
     messages
 }
+
+/// Splits `text` into a random sequence of chunks at character
+/// boundaries, for feeding an incremental parser one arbitrary piece at
+/// a time. Concatenating the result always reproduces `text` exactly:
+/// the chunking can be a single chunk, one chunk per character, or
+/// anything in between, since each internal character boundary is cut
+/// or not independently.
+#[hegel::composite]
+pub fn char_chunks(tc: TestCase, text: String) -> Vec<String> {
+    let boundaries: Vec<usize> = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .collect();
+    let cut_candidates: &[usize] = if boundaries.len() >= 2 {
+        &boundaries[1..boundaries.len() - 1]
+    } else {
+        &[]
+    };
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    for &boundary in cut_candidates {
+        if tc.draw(gs::booleans()) {
+            chunks.push(text[start..boundary].to_owned());
+            start = boundary;
+        }
+    }
+    chunks.push(text[start..].to_owned());
+    chunks
+}
+
+/// Applies 1-3 small, independent edits to `text`: deleting a
+/// character, duplicating one that is already there next to itself, or
+/// inserting one drawn from a JSON-syntax-heavy alphabet (plus
+/// [`SPECIAL_CHARS`]). Meant to turn mostly-valid JSON text into text
+/// that is *almost* valid JSON, for differential fuzzing against a
+/// tolerant reference parser.
+#[hegel::composite]
+pub fn mutate_text(tc: TestCase, text: String) -> String {
+    const EDIT_ALPHABET: &str = "{}[]:,\"\\ 0123456789.eE+-truefalsn/x";
+    let mut chars: Vec<char> = text.chars().collect();
+    let edits = tc.draw(gs::integers::<u32>().min_value(1).max_value(3));
+    for _ in 0..edits {
+        let len = chars.len();
+        let action = if len == 0 {
+            1
+        } else {
+            tc.draw(gs::integers::<u8>().max_value(2))
+        };
+        match action {
+            0 => {
+                let pos = tc.draw(gs::integers::<usize>().max_value(len - 1));
+                chars.remove(pos);
+            }
+            2 => {
+                let src = tc.draw(gs::integers::<usize>().max_value(len - 1));
+                let pos = tc.draw(gs::integers::<usize>().max_value(len));
+                chars.insert(pos, chars[src]);
+            }
+            _ => {
+                let pos =
+                    tc.draw(gs::integers::<usize>().max_value(chars.len()));
+                let c: char = tc.draw(hegel::one_of!(
+                    gs::characters()
+                        .categories(&[])
+                        .include_characters(EDIT_ALPHABET),
+                    gs::characters()
+                        .categories(&[])
+                        .include_characters(SPECIAL_CHARS),
+                ));
+                chars.insert(pos, c);
+            }
+        }
+    }
+    chars.into_iter().collect()
+}
