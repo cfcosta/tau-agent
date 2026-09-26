@@ -136,12 +136,17 @@ started through `as_tool` count toward their parent's limits.
 1. It derives the schema of `T` with `schemars`.
 2. It rewrites that schema into OpenAI's strict form: every property
    required, `additionalProperties: false`, and optional fields as
-   nullable. The rewrite is ported from pi's `constrained-sampling.ts`.
+   nullable. The rewrite is ported from pi's `constrained-sampling.ts`,
+   with two additions for Rust types: references to `$defs` are
+   inlined first, and nullable objects (`Option<Struct>`) are allowed.
+   A recursive type has no strict form and fails with
+   `AgentError::OutputSchema` before the model is asked anything.
 3. It sends the result as `text: { format: { type: "json_schema", name,
 schema, strict: true } }`.
 
 Tools stay available during a typed run. Only the final message must
-match `T`.
+match `T`. A final message that does not parse fails the run with
+`AgentError::Output`, which keeps the `Outcome`.
 
 ## Examples
 

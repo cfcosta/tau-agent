@@ -8,6 +8,9 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
 use futures_util::{Stream, stream};
+use schemars::JsonSchema;
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use tau_ai::{
     llm::{Llm, LlmError},
     message::Usage,
@@ -42,6 +45,14 @@ pub enum AgentError {
         tool: String,
         message: String,
     },
+    /// The schema of a typed run's output type has no strict form.
+    OutputSchema(String),
+    /// A typed run's final message is not a value of the output type.
+    Output {
+        /// The run as it ended; its text is the message that failed.
+        outcome: Box<Outcome>,
+        message: String,
+    },
     /// The run's task panicked.
     Panicked,
 }
@@ -54,6 +65,14 @@ impl fmt::Display for AgentError {
             Self::Schema { tool, message } => {
                 write!(f, "tool {tool} has an invalid schema: {message}")
             }
+            Self::OutputSchema(message) => {
+                write!(f, "the output type has no strict schema: {message}")
+            }
+            Self::Output { outcome, message } => write!(
+                f,
+                "the final message is not a valid output ({message}); the run stopped with {:?}",
+                outcome.stop
+            ),
             Self::Panicked => f.write_str("the run's task panicked"),
         }
     }
@@ -112,6 +131,20 @@ pub struct Outcome {
     pub stop: StopReason,
     /// The model's usage over the run, cost included.
     pub usage: Usage,
+}
+
+/// The result of a typed run: the final message as a value, and the run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Typed<T> {
+    pub value: T,
+    pub outcome: Outcome,
+}
+
+impl<T: Serialize> Typed<T> {
+    /// The value as JSON, for passing on to another agent.
+    pub fn json(&self) -> String {
+        serde_json::to_string(&self.value).expect("the value serializes")
+    }
 }
 
 #[derive(Clone)]
@@ -201,7 +234,7 @@ impl Agent {
 
     /// The settings a run of this agent sends. Tool schemas go in strict
     /// form when they convert; otherwise as they are, with `strict: false`.
-    fn settings(&self) -> Settings {
+    fn settings(&self, text_format: Option<Value>) -> Settings {
         let tools = self
             .0
             .tools
@@ -224,6 +257,7 @@ impl Agent {
             instructions: self.0.instructions.clone(),
             tools,
             reasoning: self.0.reasoning,
+            text_format,
             ..Settings::default()
         }
     }
@@ -241,6 +275,24 @@ impl Agent {
         store: &Store,
     ) -> Result<Outcome, AgentError> {
         self.start(input, store).outcome().await
+    }
+
+    /// Runs `input` to the end with the final message constrained to the
+    /// JSON schema of `T`, and parses it. Tools stay available; only the
+    /// final message must be a `T`.
+    pub async fn run_typed<T>(
+        &self,
+        input: impl Into<Input>,
+        store: &Store,
+    ) -> Result<Typed<T>, AgentError>
+    where
+        T: DeserializeOwned + JsonSchema,
+    {
+        let input = input.into();
+        let mut launch = Launch::root(input.workflow.as_deref());
+        launch.text_format = Some(text_format::<T>()?);
+        let outcome = self.launch(launch, input.text, store).outcome().await?;
+        parse_output(outcome)
     }
 
     /// Starts a run as `launch` describes it.
@@ -274,6 +326,8 @@ struct Launch {
     parent: Option<RunId>,
     workflow: Option<Arc<str>>,
     cancel: CancellationToken,
+    /// The `text.format` of a typed run.
+    text_format: Option<Value>,
 }
 
 impl Launch {
@@ -283,7 +337,56 @@ impl Launch {
             parent: None,
             workflow: workflow.map(Into::into),
             cancel: CancellationToken::new(),
+            text_format: None,
         }
+    }
+}
+
+/// The Responses `text.format` that constrains the final message to
+/// `T`: its schema in strict form, named after the type.
+fn text_format<T: JsonSchema>() -> Result<Value, AgentError> {
+    let schema = serde_json::to_value(schemars::schema_for!(T))
+        .expect("a generated schema is valid JSON");
+    let strict = to_strict(&schema)
+        .map_err(|error| AgentError::OutputSchema(error.to_string()))?;
+    Ok(json!({
+        "type": "json_schema",
+        "name": format_name(&T::schema_name()),
+        "schema": strict,
+        "strict": true,
+    }))
+}
+
+/// A `text.format` name: 1–64 characters from `[A-Za-z0-9_-]`.
+fn format_name(name: &str) -> String {
+    let name: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(64)
+        .collect();
+    if name.is_empty() {
+        "output".to_owned()
+    } else {
+        name
+    }
+}
+
+/// Parses a typed run's final message.
+fn parse_output<T: DeserializeOwned>(
+    outcome: Outcome,
+) -> Result<Typed<T>, AgentError> {
+    match serde_json::from_str(&outcome.text) {
+        Ok(value) => Ok(Typed { value, outcome }),
+        Err(error) => Err(AgentError::Output {
+            outcome: Box::new(outcome),
+            message: error.to_string(),
+        }),
     }
 }
 
@@ -313,7 +416,7 @@ async fn run_task(
             },
         );
     }
-    let settings = agent.settings();
+    let settings = agent.settings(launch.text_format);
     let session = agent.0.llm.open(settings).await.map_err(AgentError::Llm)?;
     store
         .create_run(&NewRun {
@@ -399,5 +502,21 @@ impl fmt::Debug for Run {
         f.debug_struct("Run")
             .field("id", &self.id)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Characters OpenAI does not allow in a format name become `_`,
+    /// `-` and `_` stay, the name is cut to 64 characters, and an empty
+    /// name falls back to `output`.
+    #[test]
+    fn format_names_are_valid() {
+        assert_eq!(format_name("Page_for_bool"), "Page_for_bool");
+        assert_eq!(format_name("a-b<c>.d"), "a-b_c__d");
+        assert_eq!(format_name(&"x".repeat(70)), "x".repeat(64));
+        assert_eq!(format_name(""), "output");
     }
 }

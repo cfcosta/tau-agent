@@ -151,21 +151,21 @@ pub trait TypedTool: Send + Sync + 'static {
 }
 
 /// An [`AgentTool`] made from a [`TypedTool`].
-pub struct Typed<T: TypedTool> {
+pub struct TypedAdapter<T: TypedTool> {
     tool: T,
     parameters: Value,
 }
 
 /// Turns a [`TypedTool`] into an [`AgentTool`], with its argument schema
 /// generated from `T::Args`.
-pub fn typed<T: TypedTool>(tool: T) -> Typed<T> {
+pub fn typed<T: TypedTool>(tool: T) -> TypedAdapter<T> {
     let parameters = serde_json::to_value(schemars::schema_for!(T::Args))
         .expect("a generated schema is valid JSON");
-    Typed { tool, parameters }
+    TypedAdapter { tool, parameters }
 }
 
 #[async_trait]
-impl<T: TypedTool> AgentTool for Typed<T> {
+impl<T: TypedTool> AgentTool for TypedAdapter<T> {
     fn name(&self) -> &str {
         T::NAME
     }
