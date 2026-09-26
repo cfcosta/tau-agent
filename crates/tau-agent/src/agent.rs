@@ -418,8 +418,10 @@ impl Forked {
         self.agent.launch(self.launch(&input), input.text, store)
     }
 
+    /// Runs the fork to the end. Takes the fork by value, so
+    /// `agent.fork(&cp).run(..)` can be collected and awaited later.
     pub async fn run(
-        &self,
+        self,
         input: impl Into<Input>,
         store: &Store,
     ) -> Result<Outcome, AgentError> {
@@ -427,7 +429,7 @@ impl Forked {
     }
 
     pub async fn run_typed<T>(
-        &self,
+        self,
         input: impl Into<Input>,
         store: &Store,
     ) -> Result<Typed<T>, AgentError>

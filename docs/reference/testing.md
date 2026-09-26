@@ -212,6 +212,13 @@ fire. Store tests run on a normal current-thread runtime instead. They
 stay deterministic because they never read the clock and every
 timestamp is written by SQLite and never asserted on.
 
+Loop tests do run a store under paused time, and `Store::memory()`
+sets no timeouts so nothing fires spuriously. The clock still jumps
+while a write waits: the pool's acquire deadline is a pending timer, so
+an idle runtime moves time to it. A run's elapsed time is therefore
+meaningless under paused time, and a test with a `timeout` limit runs on
+the real clock (its scripted turns have no delays, so it stays fast).
+
 ### Testing the WebSocket layer
 
 The WebSocket layer is split at its I/O boundary (see
