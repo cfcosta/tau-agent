@@ -1853,6 +1853,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sqlx",
  "tau-ai",
  "tau-store",
  "tau-testing",
