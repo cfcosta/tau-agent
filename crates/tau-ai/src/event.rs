@@ -13,17 +13,20 @@
 
 use std::fmt;
 
-use crate::message::{
-    API,
-    AssistantBlock,
-    AssistantMessage,
-    PROVIDER,
-    StopReason,
-    TextContent,
-    ThinkingContent,
-    Timestamp,
-    ToolCall,
-    Usage,
+use crate::{
+    message::{
+        API,
+        AssistantBlock,
+        AssistantMessage,
+        PROVIDER,
+        StopReason,
+        TextContent,
+        ThinkingContent,
+        Timestamp,
+        ToolCall,
+        Usage,
+    },
+    retry::Class,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +84,9 @@ pub enum AssistantEvent {
         reason: ErrorReason,
         message: String,
         usage: Usage,
+        /// Whether the turn may be retried, decided where the failure's
+        /// code and timing are known (see [`crate::retry::classify`]).
+        class: Class,
     },
 }
 
@@ -342,6 +348,7 @@ impl Accumulator {
                 reason,
                 message: error,
                 usage,
+                ..
             } => {
                 // An error may cut a block off mid-stream; the partial block
                 // stays in the message, as it does in pi.

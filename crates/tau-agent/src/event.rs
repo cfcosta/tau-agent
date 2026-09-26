@@ -6,7 +6,7 @@
 //! `RunEnd`. Events from a child run carry `parent`, so one subscriber can
 //! follow a whole workflow tree.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use serde_json::Value;
 use tau_ai::message::{StopReason as MessageStop, Usage};
@@ -96,6 +96,15 @@ pub enum RunEvent {
     Compacted {
         run: RunId,
         tokens_before: u64,
+    },
+    /// A response failed in a way worth retrying; attempt `attempt`
+    /// starts after `delay`. Comes inside the turn it retries.
+    Retry {
+        run: RunId,
+        turn: u32,
+        attempt: u32,
+        delay: Duration,
+        error: String,
     },
     RunEnd {
         run: RunId,

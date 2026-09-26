@@ -101,6 +101,7 @@ pub fn draw_stream(
                 ErrorReason::Aborted
             },
             message: message.error_message.clone().unwrap_or_default(),
+            class: tau_ai::retry::Class::Fatal,
             usage,
         },
         reason => AssistantEvent::Done {

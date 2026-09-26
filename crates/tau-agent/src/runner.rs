@@ -18,6 +18,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    hash::BuildHasher,
     sync::{Arc, Mutex},
     time::SystemTime,
 };
@@ -41,6 +42,7 @@ use tau_ai::{
     },
     model,
     responses::request::Settings,
+    retry::{Class, RetryPolicy},
 };
 use tau_store::{Entry, Status, Store, StoreError, TurnUsage};
 use tokio::{sync::mpsc, time::Instant};
@@ -131,6 +133,7 @@ pub(crate) struct Runner {
     pub compaction: Option<Compaction>,
     /// The latest compaction, whose summary opens the transcript.
     pub compacted: Option<Record>,
+    pub retry: RetryPolicy,
 }
 
 /// How a compaction attempt went.
@@ -191,13 +194,15 @@ impl Runner {
             })
             .await;
 
-            let mut message = self.respond(&transcript).await;
-            if self.compaction.is_some() && is_context_overflow(&message) {
+            let (mut message, class) = self.respond(&transcript, turn).await;
+            let overflow = class == Class::ContextOverflow
+                || is_context_overflow(&message);
+            if self.compaction.is_some() && overflow {
                 // Compact once and retry once; a second overflow fails
                 // the run.
                 match self.compact(&mut transcript, &mut own).await? {
                     Compacted::Done => {
-                        message = self.respond(&transcript).await;
+                        message = self.respond(&transcript, turn).await.0;
                     }
                     Compacted::Nothing => {}
                     Compacted::Failed(error) => {
@@ -429,49 +434,117 @@ impl Runner {
         let mut session =
             self.llm.open(settings).await.map_err(|e| e.to_string())?;
         let input = [self.user(request)];
-        let timestamp = (self.clock)();
-        let mut stream = session.respond(&input, timestamp);
-        let mut accumulator = Accumulator::new();
-        loop {
-            let event = tokio::select! {
+        let mut attempts = 1;
+        let message = loop {
+            let timestamp = (self.clock)();
+            let mut stream = session.respond(&input, timestamp);
+            let mut accumulator = Accumulator::new();
+            let mut class = Class::Fatal;
+            loop {
+                let event = tokio::select! {
+                    biased;
+                    _ = self.cancel.cancelled() => {
+                        return Err("Summarization aborted".to_owned());
+                    }
+                    event = stream.next() => event,
+                };
+                let Some(event) = event else { break };
+                if let AssistantEvent::Error { class: failed, .. } = &event {
+                    class = *failed;
+                }
+                if accumulator.push(event).is_err() {
+                    return Err("Summarization failed: the response broke the event grammar".to_owned());
+                }
+            }
+            let message = accumulator.finish().map_err(|_| {
+                "Summarization failed: the response ended without a terminal event"
+                    .to_owned()
+            })?;
+            // The summary request goes through the run's retry policy.
+            if class != Class::Retryable || !self.retry.allows(attempts) {
+                break message;
+            }
+            add_usage(usage, &message.usage);
+            let delay = self.retry.delay(attempts, jitter());
+            attempts += 1;
+            tokio::select! {
                 biased;
                 _ = self.cancel.cancelled() => {
                     return Err("Summarization aborted".to_owned());
                 }
-                event = stream.next() => event,
-            };
-            let Some(event) = event else { break };
-            if accumulator.push(event).is_err() {
-                return Err("Summarization failed: the response broke the event grammar".to_owned());
+                _ = tokio::time::sleep(delay) => {}
             }
-        }
-        let message = accumulator.finish().map_err(|_| {
-            "Summarization failed: the response ended without a terminal event"
-                .to_owned()
-        })?;
+        };
         add_usage(usage, &message.usage);
         check_summary(&message).map_err(|error| error.to_string())
     }
 
+    /// Asks for a response, retrying failures classified as retryable
+    /// with the run's policy. Returns the last response and its class.
+    async fn respond(
+        &mut self,
+        transcript: &[Message],
+        turn: u32,
+    ) -> (AssistantMessage, Class) {
+        let mut attempts = 1;
+        loop {
+            let (message, class) = self.respond_once(transcript).await;
+            if class != Class::Retryable || !self.retry.allows(attempts) {
+                return (message, class);
+            }
+            let delay = self.retry.delay(attempts, jitter());
+            attempts += 1;
+            self.emit(RunEvent::Retry {
+                run: self.run.clone(),
+                turn,
+                attempt: attempts,
+                delay,
+                error: message.error_message.clone().unwrap_or_default(),
+            })
+            .await;
+            tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => {
+                    let model = self.session.settings().model.clone();
+                    let aborted = finish(
+                        Accumulator::new(),
+                        &model,
+                        (self.clock)(),
+                        ErrorReason::Aborted,
+                        CANCELLED,
+                    );
+                    return (aborted, Class::Fatal);
+                }
+                _ = tokio::time::sleep(delay) => {}
+            }
+        }
+    }
+
     /// Streams one response, emitting its deltas. A cancel drops the
     /// stream and ends the message as aborted.
-    async fn respond(&mut self, transcript: &[Message]) -> AssistantMessage {
+    async fn respond_once(
+        &mut self,
+        transcript: &[Message],
+    ) -> (AssistantMessage, Class) {
         let timestamp = (self.clock)();
         let mut stream = self.session.respond(transcript, timestamp);
         let mut accumulator = Accumulator::new();
         let mut call_id = String::new();
+        let mut class = Class::Fatal;
         let model = self.session.settings().model.clone();
         loop {
             let event = tokio::select! {
                 biased;
                 _ = self.cancel.cancelled() => {
                     drop(stream);
-                    return finish(accumulator, &model, timestamp, ErrorReason::Aborted, CANCELLED);
+                    let message = finish(accumulator, &model, timestamp, ErrorReason::Aborted, CANCELLED);
+                    return (message, Class::Fatal);
                 }
                 event = stream.next() => event,
             };
             let Some(event) = event else { break };
             match &event {
+                AssistantEvent::Error { class: failed, .. } => class = *failed,
                 AssistantEvent::TextDelta { delta, .. } => {
                     self.emit(RunEvent::TextDelta {
                         run: self.run.clone(),
@@ -501,25 +574,27 @@ impl Runner {
                 _ => {}
             }
             if accumulator.push(event).is_err() {
-                return finish(
+                let message = finish(
                     accumulator,
                     &model,
                     timestamp,
                     ErrorReason::Error,
                     "the model's response broke the event grammar",
                 );
+                return (message, Class::Fatal);
             }
         }
         if accumulator.is_finished() {
-            accumulator.finish().expect("finished")
+            (accumulator.finish().expect("finished"), class)
         } else {
-            finish(
+            let message = finish(
                 accumulator,
                 &model,
                 timestamp,
                 ErrorReason::Error,
                 "the model's response ended without a terminal event",
-            )
+            );
+            (message, Class::Fatal)
         }
     }
 
@@ -819,6 +894,13 @@ impl Runner {
     }
 }
 
+/// A uniform sample in `[0, 1)` for backoff jitter. Each `RandomState`
+/// is seeded afresh, so runs retrying together spread out.
+fn jitter() -> f64 {
+    let bits = std::collections::hash_map::RandomState::new().hash_one(0u8);
+    (bits >> 11) as f64 / (1u64 << 53) as f64
+}
+
 fn entry(message: &Message) -> Entry {
     Entry::Message {
         role: message.role().to_owned(),
@@ -863,6 +945,7 @@ fn finish(
         reason,
         message: message.to_owned(),
         usage: Usage::default(),
+        class: Class::Fatal,
     });
     accumulator
         .finish()
@@ -907,6 +990,20 @@ mod tests {
     use tau_ai::message::UsageCost;
 
     use super::*;
+
+    /// Jitter samples are uniform-looking draws from `[0, 1)`: every one
+    /// in range, and not all the same.
+    #[test]
+    fn jitter_samples_the_unit_interval() {
+        let samples: Vec<f64> = (0..200).map(|_| jitter()).collect();
+        assert!(
+            samples.iter().all(|x| (0.0..1.0).contains(x)),
+            "{samples:?}"
+        );
+        assert!(samples.iter().any(|x| *x != samples[0]));
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        assert!((0.3..0.7).contains(&mean), "{mean}");
+    }
 
     /// Usage adds up field by field, cost included.
     #[test]

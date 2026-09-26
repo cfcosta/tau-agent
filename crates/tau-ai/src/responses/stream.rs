@@ -152,6 +152,7 @@ use crate::{
         UsageCost,
     },
     partial_json::PartialJson,
+    retry::{Class, Failure, classify},
 };
 
 /// Turns one lane's `response.*` server frames into [`AssistantEvent`]s.
@@ -280,11 +281,16 @@ impl StreamProcessor {
         }
         self.ensure_start(&mut events);
         self.finished = true;
+        // Nothing but `Start` went out: the turn can be sent again.
+        let class = classify(&Failure::Transport {
+            before_first_event: self.next_index == 0,
+        });
         events.push(AssistantEvent::Error {
             reason: ErrorReason::Error,
             message: "WebSocket stream closed before response.completed"
                 .to_owned(),
             usage: Usage::default(),
+            class,
         });
         events
     }
@@ -670,6 +676,7 @@ impl StreamProcessor {
                     reason: ErrorReason::Error,
                     message,
                     usage,
+                    class: Class::Fatal,
                 });
             }
         }
@@ -706,10 +713,16 @@ impl StreamProcessor {
             "Unknown error (no error details in response)".to_owned()
         };
         self.finished = true;
+        let class = classify(&Failure::Api {
+            code: self.error_code.as_deref(),
+            kind: error.and_then(|e| e.get("type")).and_then(Value::as_str),
+            status: None,
+        });
         events.push(AssistantEvent::Error {
             reason: ErrorReason::Error,
             message,
             usage: Usage::default(),
+            class,
         });
     }
 
@@ -724,10 +737,19 @@ impl StreamProcessor {
             frame.get("message").and_then(Value::as_str).unwrap_or("");
         let code_text = code.unwrap_or("unknown");
         self.finished = true;
+        let class = classify(&Failure::Api {
+            code,
+            kind: None,
+            status: frame
+                .get("status")
+                .and_then(Value::as_u64)
+                .and_then(|status| u16::try_from(status).ok()),
+        });
         events.push(AssistantEvent::Error {
             reason: ErrorReason::Error,
             message: format!("Error Code {code_text}: {message}"),
             usage: Usage::default(),
+            class,
         });
     }
 }

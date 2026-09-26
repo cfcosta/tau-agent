@@ -638,7 +638,8 @@ fn unknown_tool_is_an_error_result() {
 /// A failed model response ends the run with its error.
 #[test]
 fn model_error_ends_the_run() {
-    let llm = ScriptedModel::new().turn(|t| t.error("server_error", "boom"));
+    let llm =
+        ScriptedModel::new().turn(|t| t.error("insufficient_quota", "boom"));
     block_on(async {
         let store = Store::memory().await.unwrap();
         let outcome = Agent::new(llm).run("go", &store).await.unwrap();

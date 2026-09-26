@@ -16,6 +16,7 @@ use tau_ai::{
     llm::{Llm, LlmError},
     message::{Message, Usage},
     responses::request::{ReasoningEffort, Settings, ToolDefinition},
+    retry::RetryPolicy,
 };
 use tau_store::{Entry, NewRun, RunKind, Store, StoreError};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -191,6 +192,7 @@ struct AgentInner {
     hooks: Vec<Arc<dyn RunHook>>,
     limits: Limits,
     compaction: Option<Compaction>,
+    retry: RetryPolicy,
     clock: Clock,
 }
 
@@ -223,6 +225,7 @@ impl Agent {
             hooks: Vec::new(),
             limits: Limits::default(),
             compaction: None,
+            retry: RetryPolicy::default(),
             clock: system_clock(),
         }))
     }
@@ -266,6 +269,12 @@ impl Agent {
     /// by default.
     pub fn compaction(self, compaction: Compaction) -> Self {
         self.with(|a| a.compaction = Some(compaction))
+    }
+
+    /// How failed responses are retried (`docs/reference/agent-loop.md`,
+    /// "Retries"). Defaults to 3 attempts with a 2 s base.
+    pub fn retry(self, policy: RetryPolicy) -> Self {
+        self.with(|a| a.retry = policy)
     }
 
     /// Replaces the clock that stamps messages, for deterministic tests.
@@ -698,6 +707,7 @@ async fn run_task(
         llm: agent.0.llm.clone(),
         compaction: agent.0.compaction,
         compacted,
+        retry: agent.0.retry,
     }
     .run(input)
     .await

@@ -110,6 +110,7 @@ fn error_mid_block_keeps_partial_content(tc: TestCase) {
         reason: tau_ai::event::ErrorReason::Error,
         message: error.clone(),
         usage: Usage::default(),
+        class: tau_ai::retry::Class::Fatal,
     })
     .unwrap();
     let result = acc.finish().unwrap();

@@ -30,6 +30,7 @@ impl Agent {
     pub fn hook(self, h: impl RunHook) -> Self;
     pub fn limits(self, l: Limits) -> Self;
     pub fn compaction(self, c: Compaction) -> Self;   // off by default
+    pub fn retry(self, p: RetryPolicy) -> Self;       // 3 attempts, 2 s base
     pub fn warmup(self, on: bool) -> Self;            // generate:false on first use
     pub fn clock(self, clock: Clock) -> Self;         // message timestamps; for deterministic tests
 

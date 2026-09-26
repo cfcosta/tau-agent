@@ -80,6 +80,7 @@ use tau_ai::{
         UserContent,
     },
     responses::request::Settings,
+    retry::{Class, Failure, classify},
 };
 
 /// The message on the terminal `Error` event of a [`TurnBuilder::dropped`]
@@ -123,6 +124,8 @@ struct StaticTurn {
     usage: Option<(u64, u64)>,
     /// The turn's cost in USD, reported as `usage.cost`.
     cost: f64,
+    /// How a failed turn classifies for retries.
+    class: Class,
     delay: Option<Duration>,
 }
 
@@ -240,6 +243,7 @@ struct ResolvedTurn {
     message: Option<String>,
     usage: Option<(u64, u64)>,
     cost: f64,
+    class: Class,
     delay: Option<Duration>,
 }
 
@@ -252,6 +256,7 @@ impl ScriptedSession {
                 message: Some(EXHAUSTED_MESSAGE.to_owned()),
                 usage: None,
                 cost: 0.0,
+                class: Class::Fatal,
                 delay: None,
             },
             Some(Turn::Dynamic(factory)) => {
@@ -262,6 +267,7 @@ impl ScriptedSession {
                     message: response.error_message,
                     usage: Some((response.usage.input, response.usage.output)),
                     cost: response.usage.cost.total,
+                    class: Class::Fatal,
                     delay: None,
                 }
             }
@@ -271,6 +277,7 @@ impl ScriptedSession {
                 message: turn.message,
                 usage: turn.usage,
                 cost: turn.cost,
+                class: turn.class,
                 delay: turn.delay,
             },
         }
@@ -330,6 +337,7 @@ impl ScriptedSession {
             message,
             usage,
             cost,
+            class,
             delay,
         } = resolved;
         let content_text = assistant_content_text(&blocks);
@@ -412,6 +420,7 @@ impl ScriptedSession {
                     reason,
                     message: message.unwrap_or_default(),
                     usage,
+                    class,
                 });
             }
             other => {
@@ -588,7 +597,7 @@ pub struct TurnBuilder {
 }
 
 enum Special {
-    Error(String),
+    Error(String, Class),
     Dropped,
     FailsBeforeStart,
 }
@@ -681,22 +690,29 @@ impl TurnBuilder {
     }
 
     /// Scripts a failed response: `Start`, then `Error` with message
-    /// `"{code}: {message}"`. Any content already added is discarded.
+    /// `"{code}: {message}"`, classified for retries by `code` as
+    /// `tau_ai::retry::classify` does. Any content already added is
+    /// discarded.
     pub fn error(
         mut self,
         code: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
-        self.special = Some(Special::Error(format!(
-            "{}: {}",
-            code.into(),
-            message.into()
-        )));
+        let code = code.into();
+        let class = classify(&Failure::Api {
+            code: Some(&code),
+            kind: None,
+            status: None,
+        });
+        self.special =
+            Some(Special::Error(format!("{code}: {}", message.into()), class));
         self
     }
 
     /// Scripts a connection dropped mid-stream: `Start`, then `Error` with
     /// message [`DROPPED_MESSAGE`]. Any content already added is discarded.
+    /// It classifies as a transport failure after output began, which is
+    /// not retried.
     pub fn dropped(mut self) -> Self {
         self.special = Some(Special::Dropped);
         self
@@ -705,7 +721,8 @@ impl TurnBuilder {
     /// Scripts a connection that never got going: `Start`, then `Error`
     /// with message [`FAILS_BEFORE_START_MESSAGE`], with no content in
     /// between. This still opens with `Start`, so the stream keeps the
-    /// grammar in `tau_ai::event`.
+    /// grammar in `tau_ai::event`. It classifies as a transport failure
+    /// before any output, which is retried.
     pub fn fails_before_start(mut self) -> Self {
         self.special = Some(Special::FailsBeforeStart);
         self
@@ -716,12 +733,13 @@ impl TurnBuilder {
         let cost = self.cost;
         let delay = self.delay;
         match self.special {
-            Some(Special::Error(message)) => StaticTurn {
+            Some(Special::Error(message, class)) => StaticTurn {
                 blocks: Vec::new(),
                 stop: self.stop.unwrap_or(StopReason::Error),
                 message: Some(message),
                 usage,
                 cost,
+                class,
                 delay,
             },
             Some(Special::Dropped) => StaticTurn {
@@ -730,6 +748,7 @@ impl TurnBuilder {
                 message: Some(DROPPED_MESSAGE.to_owned()),
                 usage,
                 cost,
+                class: Class::Fatal,
                 delay,
             },
             Some(Special::FailsBeforeStart) => StaticTurn {
@@ -738,6 +757,7 @@ impl TurnBuilder {
                 message: Some(FAILS_BEFORE_START_MESSAGE.to_owned()),
                 usage,
                 cost,
+                class: Class::Retryable,
                 delay,
             },
             None => {
@@ -756,6 +776,7 @@ impl TurnBuilder {
                     message: None,
                     usage,
                     cost,
+                    class: Class::Fatal,
                     delay,
                 }
             }

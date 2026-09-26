@@ -102,8 +102,19 @@ drain, and tau-agent keeps that default.
   limits, 5xx and timeouts, plus transport errors that happen before the
   first event.
 - **Not retryable:** quota and billing errors. They fail at once.
-- **Backoff:** exponential with jitter. The defaults are 3 attempts and a
-  2 s base.
+- **Backoff:** exponential with full jitter, capped at 60 s. The
+  defaults are 3 attempts and a 2 s base; `Agent::retry(RetryPolicy)`
+  changes them.
+- **Where the class comes from:** every failed response's `Error` event
+  carries a `retry::Class`, set where the failure is known (the stream
+  processor classifies an OpenAI error by its code, type and status; a
+  socket that closes before any output is retryable, one that closes
+  after is not). The loop never reads the message text to decide.
+- **What the loop does:** a failed response that is retried is neither
+  stored nor counted as a turn. Each new attempt is announced with a
+  `RunEvent::Retry { turn, attempt, delay, error }` inside the turn. A
+  cancel during the backoff ends the run as cancelled. The compaction
+  summary request uses the same policy.
 - **Context overflow** (`context_length_exceeded`): compact once, then
   retry once. See [`compaction.md`](compaction.md).
 
@@ -121,6 +132,7 @@ pub enum RunEvent {
     ToolEnd    { run: RunId, call_id: String, output: Arc<ToolOutput>, is_error: bool },
     TurnEnd    { run: RunId, turn: u32, usage: Usage },
     Compacted  { run: RunId, tokens_before: u64 },
+    Retry      { run: RunId, turn: u32, attempt: u32, delay: Duration, error: String },
     RunEnd     { run: RunId, parent: Option<RunId>, stop: StopReason, cost: f64 },
 }
 ```

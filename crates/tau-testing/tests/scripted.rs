@@ -290,6 +290,45 @@ fn scripted_cost_is_reported_in_usage() {
     });
 }
 
+/// Scripted failures carry the retry class the loop acts on: an error
+/// is classified by its code, a failure before start is retryable, and
+/// a drop mid-stream or an exhausted script is not.
+#[test]
+fn scripted_failures_carry_their_retry_class() {
+    use tau_ai::retry::Class;
+    tau_testing::block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.error("rate_limit_exceeded", "slow down"))
+            .turn(|t| t.error("insufficient_quota", "pay up"))
+            .turn(|t| t.error("context_length_exceeded", "too long"))
+            .turn(|t| t.fails_before_start())
+            .turn(|t| t.dropped());
+        let mut session = model.open(settings("gpt-test")).await.unwrap();
+        let mut classes = Vec::new();
+        for _ in 0..6 {
+            let events: Vec<AssistantEvent> =
+                session.respond(&[], 0).collect().await;
+            match events.last() {
+                Some(AssistantEvent::Error { class, .. }) => {
+                    classes.push(*class)
+                }
+                other => panic!("expected an error, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            classes,
+            vec![
+                Class::Retryable,
+                Class::Fatal,
+                Class::ContextOverflow,
+                Class::Retryable,
+                Class::Fatal,
+                Class::Fatal,
+            ]
+        );
+    });
+}
+
 // =============================================================================
 // Exhaustion
 // =============================================================================

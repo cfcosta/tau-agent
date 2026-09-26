@@ -454,6 +454,7 @@ fn run_of(event: &RunEvent) -> &RunId {
         | RunEvent::ToolEnd { run, .. }
         | RunEvent::TurnEnd { run, .. }
         | RunEvent::Compacted { run, .. }
+        | RunEvent::Retry { run, .. }
         | RunEvent::RunEnd { run, .. } => run,
     }
 }
@@ -687,7 +688,7 @@ fn a_failed_sub_agent_is_an_error_result() {
         .turn(|t| t.tool_call("research", json!({"input": "a"})))
         .turn(|t| t.text("recovered"));
     let child_llm =
-        ScriptedModel::new().turn(|t| t.error("server_error", "boom"));
+        ScriptedModel::new().turn(|t| t.error("insufficient_quota", "boom"));
     block_on(async {
         let store = Store::memory().await.unwrap();
         let outcome = Agent::new(lead_llm.clone())
