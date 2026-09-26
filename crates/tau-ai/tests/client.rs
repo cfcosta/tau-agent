@@ -212,3 +212,67 @@ fn from_env_without_key() {
     unsafe { std::env::set_var(API_KEY_VAR, "sk-test") };
     assert!(OpenAi::from_env().is_ok());
 }
+
+/// Through the `Llm` trait, `OpenAi` opens sessions with the settings
+/// the provider will send, and streams the same response as a session
+/// used directly.
+#[hegel::test(test_cases = 10)]
+fn llm_trait_streams_the_response(tc: TestCase) {
+    use futures_util::StreamExt;
+    use tau_ai::llm::Llm;
+
+    let mut message = tc.draw(openai::wire_assistant_message());
+    message.stop_reason = StopReason::Stop;
+    message.error_message = None;
+    message
+        .content
+        .retain(|b| !matches!(b, tau_ai::message::AssistantBlock::ToolCall(_)));
+    message.response_id = Some("resp_1".into());
+    let fake = FakeOpenAi::new(vec![Reply::Respond {
+        frames: openai::draw_response_frames(&tc, &message),
+        response_id: "resp_1".into(),
+        output_items: response_items(&message),
+    }]);
+    let mut sim = turmoil::Builder::new().build();
+    fake.install(&mut sim, "api");
+    let got: Rc<RefCell<Option<tau_ai::message::AssistantMessage>>> =
+        Rc::default();
+    let seen = got.clone();
+    let label = (message.model.clone(), message.timestamp);
+    let model_name = message.model.clone();
+    sim.client("client", async move {
+        let llm: Box<dyn Llm> =
+            Box::new(OpenAi::with_connector(SimConnector, Limits::default()));
+        let mut session = llm
+            .open(Settings {
+                model: label.0,
+                ..Settings::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(session.settings().model, model_name);
+        let reasons =
+            find(&session.settings().model).is_some_and(|m| m.reasoning);
+        assert_eq!(session.settings().reasoning_model, reasons);
+        let mut events = session.respond(&hello(), label.1);
+        let mut accumulator = tau_ai::event::Accumulator::new();
+        while let Some(event) = events.next().await {
+            accumulator.push(event).unwrap();
+        }
+        *seen.borrow_mut() = Some(accumulator.finish().unwrap());
+        Ok(())
+    });
+    sim.run().unwrap();
+    let have = got.borrow_mut().take().unwrap();
+    let mut want = message;
+    want.usage.cost = have.usage.cost.clone();
+    assert_eq!(have, want);
+}
+
+#[test]
+fn llm_error_displays_its_message() {
+    let error = tau_ai::llm::LlmError {
+        message: "transport stopped".into(),
+    };
+    assert_eq!(error.to_string(), "transport stopped");
+}

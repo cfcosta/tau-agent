@@ -3,6 +3,7 @@
 pub mod client;
 pub mod cost;
 pub mod event;
+pub mod llm;
 pub mod message;
 pub mod model;
 pub mod partial_json;
