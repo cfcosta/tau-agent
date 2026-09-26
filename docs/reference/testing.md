@@ -348,7 +348,7 @@ also run in the nightly extended tier and under `cargo mutants`.
 | Limits: a run ends with `StopReason::Limit` if and only if a limit was exceeded after some turn, and child usage counts                                                | Model        |
 | A fork's transcript equals the parent's transcript up to the checkpoint, followed by the fork's own messages                                                           | Model        |
 | Compaction cut point never falls between a tool call and its result, and never on a tool result                                                                        | Invariant    |
-| The kept suffix holds at least `keep_recent_tokens`, unless the whole transcript holds fewer                                                                           | Invariant    |
+| The kept suffix holds at least `keep_recent_tokens`, unless the whole transcript holds fewer or snapping past an oversized tool result moved the cut                   | Invariant    |
 | The token estimate never decreases when a message is appended                                                                                                          | Invariant    |
 | With no reported usage anywhere, the estimate is `chars / 4` over every message                                                                                        | Differential |
 | A summary that stops with `length` or `error`, or that calls a tool, fails compaction and writes nothing                                                               | Model        |

@@ -19,8 +19,9 @@ for long-running agents with `Agent::compaction(Compaction::default())`.
 
 ## Token estimate
 
-1. Start from `usage.input + usage.output` of the last successful
-   assistant message.
+1. Start from the context size the last successful assistant message
+   reports: its `total_tokens`, or, when that is zero, input, output
+   and cached tokens together (pi's `calculateContextTokens`).
 2. Add `chars / 4` for every message after it.
 3. Images count as 4,800 characters.
 
@@ -33,6 +34,10 @@ estimated with `chars / 4`.
    until `keep_recent_tokens` (default 20,000) is reached.
 2. Snap to a valid cut point: never between a tool call and its result,
    and never on a tool result.
+   Snapping moves the cut to the next valid point, so an oversized
+   tool result can leave less than `keep_recent_tokens` after the cut
+   (and a trailing one, with no valid point after it, pulls the cut
+   back to the last valid point instead: pi #9740).
 3. If the cut falls inside a single oversized turn, summarize that
    turn's prefix separately and merge the two summaries.
 
@@ -47,7 +52,9 @@ estimated with `chars / 4`.
 - **Prior summary.** If one exists, the request uses the "update" variant
   of the prompt and includes the prior summary.
 - **Output limit.** `max_output_tokens` is the smaller of
-  `0.8 × reserve_tokens` and the model's maximum output tokens.
+  `0.8 × reserve_tokens` and the model's maximum output tokens. A
+  split turn's prefix summary gets `0.5 × reserve_tokens`, capped the
+  same way.
 - **Retries.** The request goes through the run's retry policy, so a
   dropped connection is retried like any other turn.
 - **Rejected summaries.** Compaction fails, and writes nothing, when the
