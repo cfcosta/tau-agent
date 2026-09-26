@@ -1,0 +1,6 @@
+[package]
+name = "tau-store"
+description = "SQLite storage for runs, messages and fork transcripts, through sqlx."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true

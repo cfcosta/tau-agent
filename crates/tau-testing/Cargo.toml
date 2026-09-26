@@ -1,0 +1,9 @@
+[package]
+name = "tau-testing"
+description = "Scripted model and recorded-stream replay for testing tau agents."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+tau-ai.workspace = true

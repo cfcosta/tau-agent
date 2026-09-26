@@ -1,0 +1,15 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/cfcosta/tau-agent"
+
+[workspace.dependencies]
+tau-agent = { path = "crates/tau-agent", version = "0.1.0" }
+tau-ai = { path = "crates/tau-ai", version = "0.1.0" }
+tau-store = { path = "crates/tau-store", version = "0.1.0" }
+tau-testing = { path = "crates/tau-testing", version = "0.1.0" }
+tau-tools = { path = "crates/tau-tools", version = "0.1.0" }

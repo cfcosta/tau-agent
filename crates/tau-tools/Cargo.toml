@@ -1,0 +1,9 @@
+[package]
+name = "tau-tools"
+description = "Optional coding tools for tau agents: read, bash, edit, write, grep, find and ls."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+tau-agent.workspace = true

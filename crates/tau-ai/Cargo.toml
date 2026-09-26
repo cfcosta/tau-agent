@@ -1,0 +1,6 @@
+[package]
+name = "tau-ai"
+description = "OpenAI Responses over WebSocket: types, events, connection pool, retry and cost."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
