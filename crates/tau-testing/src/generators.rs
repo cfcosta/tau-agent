@@ -284,8 +284,6 @@ pub fn retry_policy(tc: TestCase) -> tau_ai::retry::RetryPolicy {
     }
 }
 
-pub mod lane;
-
 /// A [`Usage`] whose token counts are each drawn independently up to
 /// `max_tokens`, with `cost` left at its default (callers that exercise
 /// `tau_ai::cost` compute it themselves). Useful for properties that
@@ -305,6 +303,42 @@ pub fn usage_with_max_tokens(tc: TestCase, max_tokens: u64) -> Usage {
         cost: UsageCost::default(),
     }
 }
+
+/// Splits `text` into a random sequence of chunks at character
+/// boundaries, for feeding an incremental parser one arbitrary piece at
+/// a time. Concatenating the result always reproduces `text` exactly:
+/// the chunking can be a single chunk, one chunk per character, or
+/// anything in between, since each internal character boundary is cut
+/// or not independently.
+#[hegel::composite]
+pub fn char_chunks(tc: TestCase, text: String) -> Vec<String> {
+    let boundaries: Vec<usize> = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .collect();
+    let cut_candidates: &[usize] = if boundaries.len() >= 2 {
+        &boundaries[1..boundaries.len() - 1]
+    } else {
+        &[]
+    };
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    for &boundary in cut_candidates {
+        if tc.draw(gs::booleans()) {
+            chunks.push(text[start..boundary].to_owned());
+            start = boundary;
+        }
+    }
+    chunks.push(text[start..].to_owned());
+    chunks
+}
+
+pub mod lane;
+
+// =============================================================================
+// Transcripts for `tau_ai::responses::input` (crates/tau-ai/tests/responses_input.rs)
+// =============================================================================
 
 /// A JSON string shaped like an OpenAI reasoning item: `{"id", "type":
 /// "reasoning", "summary": [], "encrypted_content"?}`. This is what a
@@ -513,35 +547,9 @@ pub fn damaged_transcript(tc: TestCase) -> Vec<Message> {
     messages
 }
 
-/// Splits `text` into a random sequence of chunks at character
-/// boundaries, for feeding an incremental parser one arbitrary piece at
-/// a time. Concatenating the result always reproduces `text` exactly:
-/// the chunking can be a single chunk, one chunk per character, or
-/// anything in between, since each internal character boundary is cut
-/// or not independently.
-#[hegel::composite]
-pub fn char_chunks(tc: TestCase, text: String) -> Vec<String> {
-    let boundaries: Vec<usize> = text
-        .char_indices()
-        .map(|(i, _)| i)
-        .chain(std::iter::once(text.len()))
-        .collect();
-    let cut_candidates: &[usize] = if boundaries.len() >= 2 {
-        &boundaries[1..boundaries.len() - 1]
-    } else {
-        &[]
-    };
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    for &boundary in cut_candidates {
-        if tc.draw(gs::booleans()) {
-            chunks.push(text[start..boundary].to_owned());
-            start = boundary;
-        }
-    }
-    chunks.push(text[start..].to_owned());
-    chunks
-}
+// =============================================================================
+// Fuzzing `tau_ai::partial_json` (crates/tau-ai/tests/partial_json.rs)
+// =============================================================================
 
 /// Applies 1-3 small, independent edits to `text`: deleting a
 /// character, duplicating one that is already there next to itself, or
