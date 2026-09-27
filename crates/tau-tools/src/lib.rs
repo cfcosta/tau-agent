@@ -5,8 +5,11 @@
 //! is given resolves against it. A tool that fails returns `Err`, which
 //! the loop turns into an error result.
 
+pub mod errno;
+pub mod image;
 pub mod lock;
 pub mod path;
+pub mod read;
 pub mod truncate;
 
 /// What every tool returns when the run is cancelled while it works.

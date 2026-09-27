@@ -54,4 +54,32 @@ exclude_re = [
   # keeps every entry, dead ones included: the same locks are handed
   # out, the table just grows. No behaviour but memory changes.
   'replace > with >= in lock',
+
+  # tau_tools::read::read_text: `kept.len() < keep_lines && kept_bytes
+  # <= keep_bytes` only bounds how much of the file is held in memory.
+  # It keeps one line or byte past what truncation can show, so keeping
+  # more (`<=`, or a byte count that never grows) changes no output:
+  # truncate_head cuts the same prefix either way.
+  'replace < with <= in read_text',
+  'replace \+= with \*= in read_text',
+  'replace \+ with \* in read_text',
+
+  # tau_tools::find::effective_pattern: whether a pattern that already
+  # starts with `/` or `**/` gets a `**/` prefix anyway. For `**/x` the
+  # prefix gives `**/**/x`, which globset matches exactly as `**/x`; a
+  # pattern starting with `/` never matches a relative path, prefixed or
+  # not. So `||` and `&&` there give the same matches.
+  'replace \|\| with && in effective_pattern',
+
+  # tau_tools::image::fit: `w > max` against `w >= max`. At exactly
+  # 2000 the scaling branch computes `h * 2000 / 2000 = h` and sets the
+  # side to 2000, which it already is: the same size either way.
+  'replace > with >= in fit',
+
+  # tau_tools::edit::apply_replacements_preserving_unchanged_lines:
+  # whether replacements whose line ranges touch without overlapping
+  # (`start_line < last.end_line` against `<=`) share a group. A group
+  # rewrites exactly its lines, so two adjacent groups and one merged
+  # group produce the same text.
+  'replace < with <= in apply_replacements_preserving_unchanged_lines',
 ]

@@ -28,8 +28,10 @@ tokio-util.workspace = true
 unicode-normalization.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 hegeltest.workspace = true
+image.workspace = true
 unicode-normalization.workspace = true
 tau-testing.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "test-util"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "test-util"] }
