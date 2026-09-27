@@ -27,6 +27,7 @@ impl Agent {
     pub fn instructions(self, text: impl Into<String>) -> Self;
     pub fn reasoning(self, effort: ReasoningEffort) -> Self;
     pub fn tool(self, t: impl AgentTool) -> Self;
+    pub fn tools(self, ts: impl IntoIterator<Item = Arc<dyn AgentTool>>) -> Self;  // e.g. tau_tools::coding_tools(&root)
     pub fn hook(self, h: impl RunHook) -> Self;
     pub fn limits(self, l: Limits) -> Self;
     pub fn compaction(self, c: Compaction) -> Self;   // off by default

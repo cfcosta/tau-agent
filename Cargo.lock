@@ -2223,6 +2223,7 @@ dependencies = [
  "similar",
  "tau-agent",
  "tau-ai",
+ "tau-store",
  "tau-testing",
  "tempfile",
  "tokio",

@@ -910,3 +910,31 @@ fn warm_up_runs_once_per_run_when_on() {
         assert_eq!(warm_ups[0], llm.requests()[1].settings);
     });
 }
+
+/// `tools` adds several tools at once, after any added one by one, in
+/// order.
+#[test]
+fn tools_adds_several_in_order() {
+    let llm = ScriptedModel::new().turn(|t| t.text("ok"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let kit: Vec<Arc<dyn AgentTool>> = vec![
+            Arc::new(Probe::new("a", ExecutionMode::Parallel, log.clone())),
+            Arc::new(Probe::new("b", ExecutionMode::Parallel, log.clone())),
+        ];
+        Agent::new(llm.clone())
+            .tool(Probe::new("first", ExecutionMode::Parallel, log))
+            .tools(kit)
+            .run("go", &store)
+            .await
+            .unwrap();
+        let names: Vec<String> = llm.requests()[0]
+            .settings
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        assert_eq!(names, ["first", "a", "b"]);
+    });
+}

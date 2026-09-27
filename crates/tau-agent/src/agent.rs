@@ -259,6 +259,14 @@ impl Agent {
         self.with(|a| a.tools.push(Arc::new(tool)))
     }
 
+    /// Adds several tools at once, such as a toolkit's.
+    pub fn tools(
+        self,
+        tools: impl IntoIterator<Item = Arc<dyn AgentTool>>,
+    ) -> Self {
+        self.with(|a| a.tools.extend(tools))
+    }
+
     pub fn hook(self, hook: impl RunHook) -> Self {
         self.with(|a| a.hooks.push(Arc::new(hook)))
     }

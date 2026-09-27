@@ -22,8 +22,10 @@ The truncation helpers:
   last line, but always cuts at a UTF-8 boundary.
 
 A tool that fails returns `Err`, and the loop marks the result
-`is_error`. Every tool takes a root directory at construction, and all
-paths resolve against it.
+`is_error`. Every tool takes a root directory (`tau_tools::path::Root`)
+at construction, and all paths resolve against it.
+`tau_tools::coding_tools(&root)` returns all seven, for
+`Agent::tools`. `bash`, and so `coding_tools`, is unix-only.
 
 ## read: `{ path, offset?, limit? }`
 

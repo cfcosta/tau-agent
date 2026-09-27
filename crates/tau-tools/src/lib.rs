@@ -22,3 +22,20 @@ pub mod write;
 
 /// What every tool returns when the run is cancelled while it works.
 pub const ABORTED: &str = "Operation aborted";
+
+/// All seven tools on `root`, in pi's order, for `Agent::tools`.
+#[cfg(unix)]
+pub fn coding_tools(
+    root: &path::Root,
+) -> Vec<std::sync::Arc<dyn tau_agent::tool::AgentTool>> {
+    use std::sync::Arc;
+    vec![
+        Arc::new(read::Read::new(root.clone())),
+        Arc::new(bash::Bash::new(root.clone())),
+        Arc::new(edit::Edit::new(root.clone())),
+        Arc::new(write::Write::new(root.clone())),
+        Arc::new(grep::Grep::new(root.clone())),
+        Arc::new(find::Find::new(root.clone())),
+        Arc::new(ls::Ls::new(root.clone())),
+    ]
+}
