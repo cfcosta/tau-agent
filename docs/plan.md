@@ -89,8 +89,10 @@ The hardest part is the WebSocket layer. It has to:
   - [x] any other error → an `error` event.
   - [x] recoveries are invisible to the caller; a cancelled response's
         tail is skipped.
-- [ ] Idle timeout per connection.
-- [ ] Optional warm-up with `generate: false`.
+- [x] Idle timeout per connection: an empty connection closes after 5
+      minutes, and one with requests in flight that hears nothing for 5
+      minutes is handled as lost.
+- [x] Optional warm-up with `generate: false` (`Agent::warmup`).
 - [x] Retry classification on OpenAI error codes and HTTP status, not
       regexes over the error text.
 - [x] Cost from usage: cached input pricing and service tiers. Backed by
@@ -103,17 +105,16 @@ The hardest part is the WebSocket layer. It has to:
         current-thread runtime;
   - [x] shared generators for messages, transcripts and `response.*`
         event streams in `tau_testing::generators`;
-  - [ ] `tau_testing::FakeOpenAi`, a turmoil host that speaks the
+  - [x] `tau_testing::FakeOpenAi`, a turmoil host that speaks the
         Responses WebSocket protocol, with server-side continuation,
-        limits and fault injection. Done except the 16 in-flight and
-        32-lane limits and the 60-minute close;
+        limits (16 in flight, 32 stream ids, 60-minute close), delayed
+        and overlapping replies, and fault injection (drops, stalls);
   - [ ] CI Check tier, nightly tier, and the nightly live job with a
         budget cap. The live job waits for the live tests.
 - [ ] Tests:
   - [x] the `tau-ai` properties from the testing inventory;
   - [ ] replay recorded `response.*` streams (needs live recordings);
-  - [ ] delta-rule model test, including its extended variant (the
-        extended variants are not written yet);
+  - [x] delta-rule model test, including its extended variant;
   - [x] `ws::proto` properties over generated event orders;
   - [x] transport tests in turmoil against `FakeOpenAi`, with
         Hegel-drawn fault schedules, asserting on `PoolStats`;
@@ -148,12 +149,10 @@ The hardest part is the WebSocket layer. It has to:
       cases.
 - [x] `trybuild` compile-fail cases for `Agent`, `TypedTool` and
       `RunHook`.
-- [ ] Retries of retryable model errors inside the loop (agent-loop.md,
-      "Retries"). Needs the error code carried on the failed response;
-      the classification itself is done (M1).
-- [ ] Argument schemas that use JSON Schema 2020-12 `prefixItems` (which
-      `schemars` emits for tuples) are not coerced item by item; pi has
-      the same gap.
+- [x] Retries of retryable model errors inside the loop (agent-loop.md,
+      "Retries"): every failed response carries its `retry::Class`.
+- [x] Tuple arguments are coerced item by item, in both spellings
+      (`prefixItems` and the positional `items` array); pi has the gap.
 
 ### M3: SQLite store (weeks 3–4)
 
@@ -167,10 +166,11 @@ The hardest part is the WebSocket layer. It has to:
       latest compaction record.
 - [x] Offline metadata in `.sqlx/` is committed.
 - [x] CI runs `cargo sqlx prepare --check`.
-- [ ] Metric: time spent waiting for the writer connection.
-- [ ] The `tau-store` properties from the testing inventory, including
-      the store model test (done) and the combined loop-and-store cancel
-      test (needs the M2 loop).
+- [x] Metric: time spent waiting for the writer connection
+      (`Store::writer_stats`).
+- [x] The `tau-store` properties from the testing inventory, including
+      the store model test and the combined loop-and-store test (a
+      cancel or a failed write leaves no partial turn).
 
 ### M4: Workflow primitives (weeks 4–5)
 
@@ -205,8 +205,6 @@ The hardest part is the WebSocket layer. It has to:
 - [x] `cargo mutants` clean on the modules listed in the testing doc
       (the tau-agent modules now run nightly too).
 - Open:
-  - the summary request does not go through a retry policy yet: the
-    loop has none (see the M2 open item on retries);
   - a threshold compaction that fails turns compaction off for the rest
     of the run rather than retrying later.
 
