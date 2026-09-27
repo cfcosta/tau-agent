@@ -48,4 +48,10 @@ exclude_re = [
   # `ExecutionMode::Parallel`, which is also `ExecutionMode::default()`
   # (`crates/tau-agent/src/tool.rs`), so the mutant returns the same value.
   'replace AgentTool::execution_mode -> ExecutionMode with Default::default\(\)',
+
+  # tau_tools::lock::lock: `retain(|_, weak| weak.strong_count() > 0)`
+  # only forgets locks nobody holds, to keep the table small. `>= 0`
+  # keeps every entry, dead ones included: the same locks are handed
+  # out, the table just grows. No behaviour but memory changes.
+  'replace > with >= in lock',
 ]
