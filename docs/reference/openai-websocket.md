@@ -66,12 +66,12 @@ lane omit it. Errors look like this:
 
 ## Limits and lanes
 
-| Limit                              | Value                                              | tau-agent behaviour                                                                               |
-| ---------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| In-flight responses per connection | 16, across all lanes                               | The pool holds a semaphore per connection. A 17th concurrent run is placed on another connection. |
-| Named `stream_id`s per connection  | 32 (the default lane doesn't count)                | Past 32 the pool opens another connection. The error is `websocket_stream_limit_reached`.         |
-| Ordering                           | FIFO within one `stream_id`; lanes run in parallel | One run = one lane. Parallel runs never queue behind each other.                                  |
-| Connection age                     | 60 min                                             | The pool rotates at 55 min. The error is `websocket_connection_limit_reached`.                    |
+| Limit                              | Value                                              | tau-agent behaviour                                                                                                                                                                                                                                  |
+| ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| In-flight responses per connection | 16, across all lanes                               | The pool holds a semaphore per connection. A 17th concurrent run is placed on another connection.                                                                                                                                                    |
+| Named `stream_id`s per connection  | 32 (the default lane doesn't count)                | Past 32 the pool opens another connection. The error is `websocket_stream_limit_reached`; a lane that gets it moves to another connection and resends, as for the age limit, since the server may count every id it has seen, not only those in use. |
+| Ordering                           | FIFO within one `stream_id`; lanes run in parallel | One run = one lane. Parallel runs never queue behind each other.                                                                                                                                                                                     |
+| Connection age                     | 60 min                                             | The pool rotates at 55 min. The error is `websocket_connection_limit_reached`.                                                                                                                                                                       |
 
 ## Continuation state
 

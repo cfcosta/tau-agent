@@ -750,3 +750,113 @@ fn lost_connection_ends_the_skip(tc: TestCase) {
     want.usage.cost = have.usage.cost.clone();
     assert_eq!(have, want);
 }
+
+/// Many runs at once against a server that enforces OpenAI's limits:
+/// a drawn number of lanes (up to 40) each send one request, and the
+/// server answers each after a drawn delay, so responses overlap. The
+/// pool never has more than 16 requests in flight on a connection (the
+/// fake records any excess as a violation), every request completes
+/// without an error, and the pool opens as many connections as the
+/// lane limit calls for.
+#[hegel::test(test_cases = 15)]
+fn concurrent_runs_stay_within_the_server_limits(tc: TestCase) {
+    let lanes = tc.draw(gs::integers::<usize>().min_value(1).max_value(40));
+    let mut replies = Vec::new();
+    for i in 0..lanes {
+        let (_, reply) = respond(&tc, &format!("resp_{i}"));
+        let delay = tc.draw(gs::integers::<u64>().max_value(500));
+        replies.push(Reply::Delay(
+            std::time::Duration::from_millis(delay),
+            Box::new(reply),
+        ));
+    }
+    let stats: Rc<RefCell<Option<PoolStats>>> = Rc::default();
+    let seen = stats.clone();
+    let fake = simulate(replies, async move {
+        let transport = Transport::start(SimConnector, Limits::default());
+        let mut handles = Vec::new();
+        for _ in 0..lanes {
+            handles.push(transport.open_lane().await.unwrap());
+        }
+        let settings = Settings {
+            model: "gpt-5.5".into(),
+            ..Settings::default()
+        };
+        let requests = handles.iter().map(|lane| {
+            let response = lane.request(
+                body(&settings, to_input(&[user("hi")]), None),
+                "gpt-5.5".into(),
+                0,
+            );
+            async move {
+                let mut response = response;
+                let mut events = Vec::new();
+                while let Some(event) = response.next().await {
+                    events.push(event);
+                }
+                events
+            }
+        });
+        for events in futures_util::future::join_all(requests).await {
+            assert!(
+                matches!(events.last(), Some(AssistantEvent::Done { .. })),
+                "{events:?}"
+            );
+        }
+        *seen.borrow_mut() = Some(transport.stats().await.unwrap());
+        Ok(())
+    });
+    assert_eq!(fake.violations(), Vec::<String>::new());
+    let stats = stats.borrow_mut().take().unwrap();
+    assert_eq!(stats.connections_opened as usize, lanes.div_ceil(32));
+    assert_eq!(fake.stream_limit_errors(), 0);
+}
+
+/// Lane churn on one connection: runs start and end one after another,
+/// each on a new lane, so the connection sees more than 32 stream ids
+/// over its life though never more than one at a time. If the server
+/// counts every id it has seen, it refuses the 33rd with
+/// `websocket_stream_limit_reached`; the lane then moves to another
+/// connection and resends, and the caller never sees the refusal.
+#[hegel::test(test_cases = 5)]
+fn lane_churn_past_the_stream_limit_is_invisible(tc: TestCase) {
+    let runs = tc.draw(gs::integers::<usize>().min_value(33).max_value(40));
+    let mut replies = Vec::new();
+    for i in 0..runs {
+        replies.push(respond(&tc, &format!("resp_{i}")).1);
+    }
+    let stats: Rc<RefCell<Option<PoolStats>>> = Rc::default();
+    let seen = stats.clone();
+    let fake = simulate(replies, async move {
+        let transport = Transport::start(SimConnector, Limits::default());
+        let settings = Settings {
+            model: "gpt-5.5".into(),
+            ..Settings::default()
+        };
+        for _ in 0..runs {
+            let lane = transport.open_lane().await.unwrap();
+            let mut response = lane.request(
+                body(&settings, to_input(&[user("hi")]), None),
+                "gpt-5.5".into(),
+                0,
+            );
+            let mut last = None;
+            while let Some(event) = response.next().await {
+                assert!(
+                    !matches!(event, AssistantEvent::Error { .. }),
+                    "{event:?}"
+                );
+                last = Some(event);
+            }
+            assert!(matches!(last, Some(AssistantEvent::Done { .. })));
+            drop(lane);
+        }
+        *seen.borrow_mut() = Some(transport.stats().await.unwrap());
+        Ok(())
+    });
+    let stats = stats.borrow_mut().take().unwrap();
+    assert!(fake.stream_limit_errors() >= 1);
+    assert_eq!(stats.lanes.stream_limit_reached, fake.stream_limit_errors());
+    assert_eq!(stats.connections_opened, 2);
+    assert_eq!(fake.violations(), Vec::<String>::new());
+}

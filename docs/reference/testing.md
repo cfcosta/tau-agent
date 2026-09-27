@@ -466,9 +466,14 @@ ladder run. TLS is not simulated; the live tier covers it.
 - **Oracle for the delta rule.** For each request it rebuilds the full
   input from its cache plus the delta. Tests compare that with the full
   input the turn would have sent without continuation.
-- **Limits.** It enforces 16 in-flight responses and 32 named lanes per
-  connection. On turmoil's clock it closes a connection at 60 minutes
-  with `websocket_connection_limit_reached`.
+- **Limits.** It enforces 16 in-flight responses per connection (a
+  request past that is refused and recorded as a violation, which a
+  correct client never causes) and 32 named stream ids per connection,
+  counting every id it has seen (the 33rd gets
+  `websocket_stream_limit_reached`). On turmoil's clock it closes a
+  connection at 60 minutes. `Reply::Delay` holds a reply back while
+  the connection keeps reading, so responses overlap and the in-flight
+  limit means something.
 - **Faults.** It can drop the connection before the first event or in
   the middle of a stream, delay events, and insert event types the
   client does not know. turmoil adds network faults: holding and

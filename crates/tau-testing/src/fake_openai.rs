@@ -16,12 +16,14 @@
 
 use std::{
     cell::RefCell,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     rc::Rc,
+    time::Duration,
 };
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+use tokio::time::{Instant, sleep_until};
 use tokio_tungstenite::tungstenite::Message;
 
 /// What the server does with one request.
@@ -45,7 +47,17 @@ pub enum Reply {
     /// Forgets every held response on this connection, then applies the
     /// next reply to the same request.
     Evict,
+    /// Answers with the inner reply after `delay`, meanwhile reading and
+    /// answering other requests, so responses overlap as they do on a
+    /// real connection. The request counts as in flight until then.
+    Delay(Duration, Box<Reply>),
 }
+
+/// OpenAI's limits per connection (`docs/reference/openai-websocket.md`,
+/// "Limits and lanes"), which the fake enforces.
+pub const MAX_IN_FLIGHT: usize = 16;
+pub const MAX_STREAMS: usize = 32;
+pub const MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 /// One request the server received.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +75,10 @@ struct State {
     replies: VecDeque<Reply>,
     received: Vec<Received>,
     connections: u32,
+    /// Limits the client broke, which OpenAI would have refused.
+    violations: Vec<String>,
+    /// Requests refused for a new stream id past `MAX_STREAMS`.
+    stream_limit_errors: u64,
 }
 
 /// A fake OpenAI endpoint. Clones share state.
@@ -114,6 +130,18 @@ impl FakeOpenAi {
         self.state.borrow().received.clone()
     }
 
+    /// Limits the client broke: more than [`MAX_IN_FLIGHT`] requests in
+    /// flight on one connection. A correct client never does.
+    pub fn violations(&self) -> Vec<String> {
+        self.state.borrow().violations.clone()
+    }
+
+    /// Requests refused with `websocket_stream_limit_reached`, for a new
+    /// stream id on a connection that had seen [`MAX_STREAMS`] of them.
+    pub fn stream_limit_errors(&self) -> u64 {
+        self.state.borrow().stream_limit_errors
+    }
+
     /// Connections accepted so far.
     pub fn connections(&self) -> u32 {
         self.state.borrow().connections
@@ -124,9 +152,33 @@ impl FakeOpenAi {
         connection: u32,
         mut socket: tokio_tungstenite::WebSocketStream<turmoil::net::TcpStream>,
     ) {
+        let accepted = Instant::now();
         // Responses held by this connection: id -> full item list.
         let mut held: HashMap<String, Vec<Value>> = HashMap::new();
-        while let Some(Ok(message)) = socket.next().await {
+        // Named stream ids this connection has seen.
+        let mut streams: HashSet<Value> = HashSet::new();
+        // Delayed replies, still in flight: when each is due.
+        let mut pending: Vec<Pending> = Vec::new();
+        loop {
+            let due = pending.iter().map(|p| p.due).min();
+            let message = tokio::select! {
+                message = socket.next() => message,
+                _ = sleep_until(due.unwrap_or(accepted)), if due.is_some() => {
+                    let now = Instant::now();
+                    let (ready, later): (Vec<_>, Vec<_>) =
+                        pending.drain(..).partition(|p| p.due <= now);
+                    pending = later;
+                    for p in ready {
+                        if !answer(&mut socket, &mut held, &p.stream_id, p.reply, p.rebuilt).await {
+                            return;
+                        }
+                    }
+                    continue;
+                }
+                // OpenAI closes a connection at 60 minutes.
+                _ = sleep_until(accepted + MAX_AGE) => return,
+            };
+            let Some(Ok(message)) = message else { return };
             let Message::Text(text) = message else {
                 continue;
             };
@@ -138,6 +190,34 @@ impl FakeOpenAi {
             }
             let stream_id = body.get("stream_id").cloned();
             let input = body["input"].as_array().cloned().unwrap_or_default();
+
+            if pending.len() >= MAX_IN_FLIGHT {
+                self.state.borrow_mut().violations.push(format!(
+                    "connection {connection}: a request beyond {MAX_IN_FLIGHT} in flight"
+                ));
+                let frame =
+                    error_frame(&stream_id, "fake_in_flight_limit_exceeded");
+                if send(&mut socket, frame).await.is_err() {
+                    return;
+                }
+                continue;
+            }
+            if let Some(id) = &stream_id
+                && !streams.contains(id)
+            {
+                if streams.len() >= MAX_STREAMS {
+                    self.state.borrow_mut().stream_limit_errors += 1;
+                    let frame = error_frame(
+                        &stream_id,
+                        "websocket_stream_limit_reached",
+                    );
+                    if send(&mut socket, frame).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                streams.insert(id.clone());
+            }
 
             let mut reply = self.state.borrow_mut().replies.pop_front();
             if matches!(reply, Some(Reply::Evict)) {
@@ -174,63 +254,104 @@ impl FakeOpenAi {
             };
 
             match reply {
-                Some(Reply::Respond {
-                    frames,
-                    response_id,
-                    output_items,
-                }) => {
-                    for frame in frames {
-                        if send(&mut socket, with_stream_id(frame, &stream_id))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    let mut items = rebuilt;
-                    items.extend(output_items);
-                    held.insert(response_id, items);
-                }
-                Some(Reply::Error { code }) => {
-                    held.clear();
-                    let frame = error_frame(&stream_id, &code);
-                    if send(&mut socket, frame).await.is_err() {
-                        return;
-                    }
-                }
-                Some(Reply::DropAfter { frames, after }) => {
-                    for frame in frames.into_iter().take(after) {
-                        if send(&mut socket, with_stream_id(frame, &stream_id))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    return;
-                }
-                Some(Reply::StallAfter { frames, after }) => {
-                    for frame in frames.into_iter().take(after) {
-                        if send(&mut socket, with_stream_id(frame, &stream_id))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    while let Some(Ok(_)) = socket.next().await {}
-                    return;
-                }
-                Some(Reply::Evict) | None => {
-                    // Out of script: fail loudly in the test's assertions
-                    // rather than hang.
-                    let frame =
-                        error_frame(&stream_id, "fake_script_exhausted");
-                    if send(&mut socket, frame).await.is_err() {
+                Some(Reply::Delay(delay, reply)) => pending.push(Pending {
+                    due: Instant::now() + delay,
+                    stream_id,
+                    reply: Some(*reply),
+                    rebuilt,
+                }),
+                reply => {
+                    if !answer(
+                        &mut socket,
+                        &mut held,
+                        &stream_id,
+                        reply,
+                        rebuilt,
+                    )
+                    .await
+                    {
                         return;
                     }
                 }
             }
+        }
+    }
+}
+
+/// A reply held back by [`Reply::Delay`].
+struct Pending {
+    due: Instant,
+    stream_id: Option<Value>,
+    reply: Option<Reply>,
+    rebuilt: Vec<Value>,
+}
+
+/// Sends `reply` to a request whose rebuilt input is `rebuilt`. Returns
+/// false once the connection is done.
+async fn answer(
+    socket: &mut tokio_tungstenite::WebSocketStream<turmoil::net::TcpStream>,
+    held: &mut HashMap<String, Vec<Value>>,
+    stream_id: &Option<Value>,
+    reply: Option<Reply>,
+    rebuilt: Vec<Value>,
+) -> bool {
+    match reply {
+        Some(Reply::Respond {
+            frames,
+            response_id,
+            output_items,
+        }) => {
+            for frame in frames {
+                if send(socket, with_stream_id(frame, stream_id))
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            let mut items = rebuilt;
+            items.extend(output_items);
+            held.insert(response_id, items);
+            true
+        }
+        Some(Reply::Error { code }) => {
+            held.clear();
+            send(socket, error_frame(stream_id, &code)).await.is_ok()
+        }
+        Some(Reply::DropAfter { frames, after }) => {
+            for frame in frames.into_iter().take(after) {
+                if send(socket, with_stream_id(frame, stream_id))
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            false
+        }
+        Some(Reply::StallAfter { frames, after }) => {
+            for frame in frames.into_iter().take(after) {
+                if send(socket, with_stream_id(frame, stream_id))
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            while let Some(Ok(_)) = socket.next().await {}
+            false
+        }
+        Some(Reply::Delay(_, reply)) => {
+            // A delay inside a delay: the outer one already waited.
+            Box::pin(answer(socket, held, stream_id, Some(*reply), rebuilt))
+                .await
+        }
+        Some(Reply::Evict) | None => {
+            // Out of script: fail loudly in the test's assertions rather
+            // than hang.
+            send(socket, error_frame(stream_id, "fake_script_exhausted"))
+                .await
+                .is_ok()
         }
     }
 }

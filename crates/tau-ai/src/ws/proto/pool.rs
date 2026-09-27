@@ -496,7 +496,7 @@ impl Pool {
                 let mut actions = Vec::new();
                 if let Some(old) = self.connections.get_mut(&connection) {
                     // A live connection only sends a lane away when the
-                    // server reported its age limit.
+                    // server reported its age or stream limit.
                     old.draining = true;
                     old.lanes.remove(&lane);
                     old.in_flight -= 1;
@@ -634,5 +634,6 @@ fn add_stats(total: &mut LaneStats, stats: &LaneStats) {
     total.delta_requests += stats.delta_requests;
     total.previous_response_not_found += stats.previous_response_not_found;
     total.connection_limit_reached += stats.connection_limit_reached;
+    total.stream_limit_reached += stats.stream_limit_reached;
     total.connection_lost += stats.connection_lost;
 }
