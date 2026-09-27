@@ -193,6 +193,7 @@ struct AgentInner {
     limits: Limits,
     compaction: Option<Compaction>,
     retry: RetryPolicy,
+    warmup: bool,
     clock: Clock,
 }
 
@@ -226,6 +227,7 @@ impl Agent {
             limits: Limits::default(),
             compaction: None,
             retry: RetryPolicy::default(),
+            warmup: false,
             clock: system_clock(),
         }))
     }
@@ -275,6 +277,14 @@ impl Agent {
     /// "Retries"). Defaults to 3 attempts with a 2 s base.
     pub fn retry(self, policy: RetryPolicy) -> Self {
         self.with(|a| a.retry = policy)
+    }
+
+    /// Warms each run's session up before its first turn
+    /// (`docs/reference/openai-websocket.md`, "Warm-up"): OpenAI prepares
+    /// the instructions and tools, and the first turn continues from
+    /// that. Off by default.
+    pub fn warmup(self, on: bool) -> Self {
+        self.with(|a| a.warmup = on)
     }
 
     /// Replaces the clock that stamps messages, for deterministic tests.
@@ -708,6 +718,7 @@ async fn run_task(
         compaction: agent.0.compaction,
         compacted,
         retry: agent.0.retry,
+        warmup: agent.0.warmup,
     }
     .run(input)
     .await

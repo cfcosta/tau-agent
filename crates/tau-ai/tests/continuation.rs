@@ -186,3 +186,29 @@ fn key_order_does_not_matter() {
     next.insert("input".into(), serde_json::from_str(r#"[{"text": "a", "type": "message"}, {"type": "message", "text": "c"}]"#).unwrap());
     assert_eq!(prepare(Some(&continuation), next).kind, RequestKind::Delta);
 }
+
+/// A warm-up (`generate: false`, no input) is a continuation the first
+/// real turn picks up: the turn goes as a delta carrying its whole
+/// input, the server rebuilds exactly that input, and `generate` itself
+/// never decides whether bodies match.
+#[hegel::test(test_cases = 200)]
+fn a_real_turn_continues_from_a_warm_up(tc: TestCase) {
+    let history = tc.draw(generators::lane::lane_history());
+    let first = history.full_body(0);
+    let mut warm_up = first.clone();
+    warm_up.insert("input".into(), json!([]));
+    warm_up.insert("generate".into(), json!(false));
+    let mut server = Server::default();
+    server.responses.insert("resp_warm".into(), Vec::new());
+    let continuation =
+        Continuation::record(&warm_up, Vec::new(), "resp_warm".into());
+    let prepared = prepare(Some(&continuation), first.clone());
+    assert_eq!(prepared.kind, RequestKind::Delta);
+    assert_eq!(prepared.body["previous_response_id"], json!("resp_warm"));
+    assert_eq!(prepared.body["input"], first["input"]);
+    assert_eq!(
+        server.rebuild(&prepared.body),
+        first["input"].as_array().unwrap().clone()
+    );
+    assert!(prepared.body.get("generate").is_none());
+}

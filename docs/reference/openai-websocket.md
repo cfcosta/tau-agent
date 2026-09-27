@@ -164,6 +164,14 @@ response id and produces no output. The first real turn then continues
 from that id. This pays off for agents that run many times with the same
 setup. It is optional and set per agent.
 
+- `Agent::warmup(true)` warms each run's session before its first turn.
+  The warm-up is the run's body with no input and `generate: false`.
+- The delta rule ignores `generate` when it compares bodies, so the first
+  turn goes as a delta carrying its whole input, continuing from the
+  warm-up's id.
+- A warm-up's usage counts toward the run. A failed warm-up is ignored,
+  and the first turn goes in full.
+
 ## Things pi does that tau-agent keeps
 
 - It requests `reasoning.encrypted_content`, so full resends can replay

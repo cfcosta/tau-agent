@@ -329,6 +329,21 @@ fn scripted_failures_carry_their_retry_class() {
     });
 }
 
+/// A warm-up records the session's settings, draws no scripted turn and
+/// costs nothing.
+#[test]
+fn warm_ups_are_recorded_and_free() {
+    tau_testing::block_on(async {
+        let model = ScriptedModel::new().turn(|t| t.text("hi"));
+        let mut session = model.open(settings("gpt-warm")).await.unwrap();
+        let usage = session.warm_up(0).await.unwrap();
+        assert_eq!(usage, Usage::default());
+        assert_eq!(model.warm_ups(), vec![settings("gpt-warm")]);
+        assert_eq!(model.remaining(), 1);
+        assert!(model.requests().is_empty());
+    });
+}
+
 // =============================================================================
 // Exhaustion
 // =============================================================================

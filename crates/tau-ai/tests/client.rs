@@ -177,6 +177,104 @@ fn reasoning_follows_the_table(tc: TestCase) {
     assert_eq!(request["include"], json!(["reasoning.encrypted_content"]));
 }
 
+/// A warm-up sends the session's settings with no input and
+/// `generate: false`; the first real turn then continues from it, as a
+/// delta carrying the whole transcript, and the server rebuilds that
+/// transcript. The warm-up's usage comes back with its cost.
+#[hegel::test(test_cases = 10)]
+fn the_first_turn_continues_from_the_warm_up(tc: TestCase) {
+    let mut message = tc.draw(openai::wire_assistant_message());
+    message.stop_reason = StopReason::Stop;
+    message.error_message = None;
+    message
+        .content
+        .retain(|b| !matches!(b, tau_ai::message::AssistantBlock::ToolCall(_)));
+    message.response_id = Some("resp_1".into());
+    let mut warm = tc.draw(openai::wire_assistant_message());
+    warm.content.clear();
+    warm.stop_reason = StopReason::Stop;
+    warm.error_message = None;
+    warm.response_id = Some("resp_warm".into());
+    warm.usage = Usage {
+        input: 1_000,
+        ..Usage::default()
+    };
+    let fake = FakeOpenAi::new(vec![
+        Reply::Respond {
+            frames: openai::draw_response_frames(&tc, &warm),
+            response_id: "resp_warm".into(),
+            output_items: Vec::new(),
+        },
+        Reply::Respond {
+            frames: openai::draw_response_frames(&tc, &message),
+            response_id: "resp_1".into(),
+            output_items: response_items(&message),
+        },
+    ]);
+    let mut sim = turmoil::Builder::new().build();
+    fake.install(&mut sim, "api");
+    sim.client("client", async move {
+        let client = OpenAi::with_connector(SimConnector, Limits::default());
+        let settings = Settings {
+            model: "gpt-5.5".into(),
+            instructions: Some("Be brief.".into()),
+            ..Settings::default()
+        };
+        let mut session = client.session(settings).await.unwrap();
+        let usage = tau_ai::llm::LlmSession::warm_up(&mut session, 0)
+            .await
+            .unwrap();
+        assert_eq!(usage.input, 1_000);
+        assert!(usage.cost.total > 0.0);
+        let mut response = session.respond(&hello(), 0);
+        while response.next().await.is_some() {}
+        let stats = client.stats().await.unwrap();
+        assert_eq!(stats.lanes.full_requests, 1);
+        assert_eq!(stats.lanes.delta_requests, 1);
+        Ok(())
+    });
+    sim.run().unwrap();
+    let received = fake.received();
+    assert_eq!(received.len(), 2);
+    let warm_up = &received[0].body;
+    assert_eq!(warm_up["generate"], json!(false));
+    assert_eq!(warm_up["input"], json!([]));
+    assert_eq!(warm_up["instructions"], json!("Be brief."));
+    let turn = &received[1].body;
+    assert_eq!(turn["previous_response_id"], json!("resp_warm"));
+    assert!(turn.get("generate").is_none());
+    assert_eq!(
+        received[1].rebuilt_input.as_ref().unwrap(),
+        turn["input"].as_array().unwrap()
+    );
+}
+
+/// A warm-up the server rejects is an error, not a hang.
+#[test]
+fn a_failed_warm_up_is_an_error() {
+    let fake = FakeOpenAi::new(vec![Reply::Error {
+        code: "server_error".into(),
+    }]);
+    let mut sim = turmoil::Builder::new().build();
+    fake.install(&mut sim, "api");
+    sim.client("client", async move {
+        let client = OpenAi::with_connector(SimConnector, Limits::default());
+        let mut session = client
+            .session(Settings {
+                model: "gpt-5.5".into(),
+                ..Settings::default()
+            })
+            .await
+            .unwrap();
+        let error = tau_ai::llm::LlmSession::warm_up(&mut session, 0)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("server_error"), "{error}");
+        Ok(())
+    });
+    sim.run().unwrap();
+}
+
 /// The TLS connector's upgrade request goes to OpenAI with a bearer
 /// token that is marked sensitive and never printed.
 #[test]

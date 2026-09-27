@@ -120,6 +120,24 @@ impl Session {
         }
     }
 
+    /// A warm-up (`docs/reference/openai-websocket.md`, "Warm-up"): the
+    /// session's instructions and tools with no input and `generate:
+    /// false`. It produces no output; the lane's next request continues
+    /// from it.
+    pub fn warm_up(&self, timestamp: Timestamp) -> SessionResponse {
+        let mut request = body(&self.settings, Vec::new(), None);
+        request.insert("generate".into(), false.into());
+        SessionResponse {
+            response: self.lane.request(
+                request,
+                self.settings.model.clone(),
+                timestamp,
+            ),
+            model: self.model,
+            tier: service_tier(self.settings.service_tier.as_deref()),
+        }
+    }
+
     pub fn settings(&self) -> &Settings {
         &self.settings
     }

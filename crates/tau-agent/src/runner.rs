@@ -134,6 +134,8 @@ pub(crate) struct Runner {
     /// The latest compaction, whose summary opens the transcript.
     pub compacted: Option<Record>,
     pub retry: RetryPolicy,
+    /// Warm the session up before the first turn.
+    pub warmup: bool,
 }
 
 /// How a compaction attempt went.
@@ -178,12 +180,25 @@ impl Runner {
             agent: self.agent.clone(),
         })
         .await;
+        let mut own = Usage::default();
+        if self.warmup {
+            // A failed warm-up costs only its request: the first turn
+            // then goes in full.
+            let warm_up = self.session.warm_up((self.clock)());
+            tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => {}
+                result = warm_up => {
+                    if let Ok(usage) = result {
+                        add_usage(&mut own, &usage);
+                    }
+                }
+            }
+        }
         let first = self.user(input);
-        self.persist(std::slice::from_ref(&first), &Usage::default())
-            .await?;
+        self.persist(std::slice::from_ref(&first), &own).await?;
         let mut transcript = std::mem::take(&mut self.history);
         transcript.push(first);
-        let mut own = Usage::default();
         let mut turn = 0;
 
         let stop = loop {

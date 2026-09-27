@@ -133,6 +133,8 @@ struct StaticTurn {
 struct Inner {
     turns: VecDeque<Turn>,
     requests: Vec<Request>,
+    /// The settings of every session that warmed up, in order.
+    warm_ups: Vec<Settings>,
 }
 
 /// A deterministic [`Llm`], scripted turn by turn. See the module docs.
@@ -175,6 +177,12 @@ impl ScriptedModel {
     /// Every request received so far, in order.
     pub fn requests(&self) -> Vec<Request> {
         self.lock().requests.clone()
+    }
+
+    /// The settings of every session that warmed up, in order. A warm-up
+    /// draws no scripted turn and costs nothing.
+    pub fn warm_ups(&self) -> Vec<Settings> {
+        self.lock().warm_ups.clone()
     }
 
     /// How many scripted turns have not been drawn yet.
@@ -464,6 +472,14 @@ impl LlmSession for ScriptedSession {
             response_id,
         );
         to_stream(events, delay)
+    }
+
+    fn warm_up(
+        &mut self,
+        _timestamp: Timestamp,
+    ) -> futures_util::future::BoxFuture<'static, Result<Usage, LlmError>> {
+        self.model.lock().warm_ups.push(self.settings.clone());
+        future::ready(Ok(Usage::default())).boxed()
     }
 }
 

@@ -6,7 +6,7 @@
 //! specified in `docs/reference/openai-websocket.md` ("The delta rule").
 //!
 //! After a response completes, its lane records the request body without
-//! `input` and `previous_response_id`, a *baseline* (the request's input
+//! `input`, `previous_response_id` and `generate`, a *baseline* (the request's input
 //! followed by the response's output items, tool outputs excluded), and
 //! the response id. The next request may send only the items after the
 //! baseline, with `previous_response_id`, if its body is otherwise
@@ -23,6 +23,9 @@ pub type Body = Map<String, Value>;
 
 const INPUT: &str = "input";
 const PREVIOUS_RESPONSE_ID: &str = "previous_response_id";
+/// A warm-up's `generate: false` switches one request off, not a setting
+/// of the lane, so a real turn may continue from a warm-up.
+const GENERATE: &str = "generate";
 
 /// What a lane remembers about its last completed response.
 #[derive(Debug, Clone, PartialEq)]
@@ -128,5 +131,6 @@ fn without_input(body: &Body) -> Body {
     let mut rest = body.clone();
     rest.remove(INPUT);
     rest.remove(PREVIOUS_RESPONSE_ID);
+    rest.remove(GENERATE);
     rest
 }

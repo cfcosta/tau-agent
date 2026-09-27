@@ -21,7 +21,7 @@ use futures_util::{
 use crate::{
     client::{OpenAi, Session},
     event::AssistantEvent,
-    message::{Message, Timestamp},
+    message::{Message, Timestamp, Usage},
     responses::request::Settings,
 };
 
@@ -63,6 +63,17 @@ pub trait LlmSession: Send + 'static {
         transcript: &[Message],
         timestamp: Timestamp,
     ) -> EventStream;
+
+    /// Prepares the session before its first turn, if the provider can:
+    /// OpenAI's `generate: false`. Returns what it cost. A provider that
+    /// cannot warm up does nothing.
+    fn warm_up(
+        &mut self,
+        timestamp: Timestamp,
+    ) -> BoxFuture<'static, Result<Usage, LlmError>> {
+        let _ = timestamp;
+        async { Ok(Usage::default()) }.boxed()
+    }
 }
 
 impl Llm for OpenAi {
@@ -99,5 +110,58 @@ impl LlmSession for Session {
             response.next().await.map(|event| (event, response))
         })
         .boxed()
+    }
+
+    fn warm_up(
+        &mut self,
+        timestamp: Timestamp,
+    ) -> BoxFuture<'static, Result<Usage, LlmError>> {
+        let mut response = Session::warm_up(self, timestamp);
+        async move {
+            let mut failure = None;
+            while let Some(event) = response.next().await {
+                match event {
+                    AssistantEvent::Done { usage, .. } => return Ok(usage),
+                    AssistantEvent::Error { message, .. } => {
+                        failure = Some(message)
+                    }
+                    _ => {}
+                }
+            }
+            Err(LlmError {
+                message: failure
+                    .unwrap_or_else(|| "the warm-up did not finish".into()),
+            })
+        }
+        .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures_util::stream;
+
+    use super::*;
+
+    struct Plain(Settings);
+
+    impl LlmSession for Plain {
+        fn settings(&self) -> &Settings {
+            &self.0
+        }
+
+        fn respond(&mut self, _: &[Message], _: Timestamp) -> EventStream {
+            stream::empty().boxed()
+        }
+    }
+
+    /// A provider that cannot warm up does nothing, and it costs nothing.
+    #[test]
+    fn the_default_warm_up_does_nothing() {
+        let mut session = Plain(Settings::default());
+        let usage = futures_util::FutureExt::now_or_never(session.warm_up(0))
+            .expect("ready at once")
+            .unwrap();
+        assert_eq!(usage, Usage::default());
     }
 }

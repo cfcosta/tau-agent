@@ -877,3 +877,25 @@ fn errors_and_debug_output() {
         run.outcome().await.unwrap();
     });
 }
+
+/// With warm-up on, each run warms its session up once, with the run's
+/// settings, before its first turn; with it off (the default), never.
+#[test]
+fn warm_up_runs_once_per_run_when_on() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("one"))
+        .turn(|t| t.text("two"))
+        .turn(|t| t.text("three"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm.clone()).instructions("Be brief.");
+        agent.run("cold", &store).await.unwrap();
+        assert!(llm.warm_ups().is_empty());
+        let warm = agent.warmup(true);
+        warm.run("warm", &store).await.unwrap();
+        warm.run("warm again", &store).await.unwrap();
+        let warm_ups = llm.warm_ups();
+        assert_eq!(warm_ups.len(), 2);
+        assert_eq!(warm_ups[0], llm.requests()[1].settings);
+    });
+}

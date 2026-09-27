@@ -452,3 +452,39 @@ fn no_compaction_below_the_threshold() {
         );
     });
 }
+
+/// An overflow is recognized by its wording too, when the failure has
+/// no code that says so: here a failed response from a factory turn.
+#[test]
+fn an_overflow_is_recognized_by_its_wording() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("read", json!({"path": "a.rs"})))
+        .turn_with(|_| tau_ai::message::AssistantMessage {
+            content: Vec::new(),
+            api: tau_ai::message::API.into(),
+            provider: tau_ai::message::PROVIDER.into(),
+            model: "gpt-5.5".into(),
+            response_id: None,
+            usage: Default::default(),
+            stop_reason: MessageStop::Error,
+            error_message: Some(
+                "Your input exceeds the context window of this model".into(),
+            ),
+            timestamp: 0,
+        })
+        .turn(|t| t.text("summary"))
+        .turn(|t| t.text("done"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm.clone())
+            .tool(typed(Read))
+            .compaction(settings().context_window(u64::MAX));
+        let (events, outcome) = run(&agent, &store, "go", "then this").await;
+        assert_eq!(outcome.text, "done");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, RunEvent::Compacted { .. }))
+        );
+    });
+}
