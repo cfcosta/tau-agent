@@ -124,6 +124,12 @@ Creates parent directories, then writes the file. Returns
   - each line is capped at 500 characters, and the total at 50 KiB.
 - **Deliberate difference from pi:** there is no `rg --json` subprocess.
   pi drops matches on lines that contain U+2028 or U+2029 (`grep.ts:169`).
+- The "limit reached" notice appears only when there actually were more
+  matches, as for `find` below. pi shows it when the count equals the
+  limit.
+- Only the tree's own `.gitignore` files apply, whether or not it is a
+  git repository: the user's global gitignore and `.git/info/exclude`
+  do not. The same holds for `find`.
 
 ## find: `{ pattern, path?, limit? }`
 
@@ -139,6 +145,8 @@ Creates parent directories, then writes the file. Returns
 - The default `limit` is 500.
 - Entries are sorted case-insensitively. Directories get a trailing `/`,
   and dotfiles are included.
+- The "limit reached" notice appears only when there actually were more
+  entries, as for `find`.
 
 ## Error strings
 

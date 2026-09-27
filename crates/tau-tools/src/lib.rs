@@ -7,8 +7,11 @@
 
 pub mod edit;
 pub mod errno;
+pub mod find;
+pub mod grep;
 pub mod image;
 pub mod lock;
+pub mod ls;
 pub mod path;
 pub mod read;
 pub mod truncate;
