@@ -584,7 +584,8 @@ the workflow code around it.
 - `tau-ai`: the delta rule, the lane state and the event processor;
 - `tau-agent`: the loop, runs (typed results, forks, sub-agents),
   compaction, coercion and the strict schema rewrite;
-- `tau-store`: the append and transcript queries.
+- `tau-store`: the append and transcript queries;
+- `tau-tools`: `edit`, which rewrites files, and truncation.
 
 A surviving mutant means a behaviour no test checks. Either add the
 missing assertion, or record why the mutant is equivalent in

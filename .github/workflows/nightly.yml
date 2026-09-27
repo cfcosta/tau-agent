@@ -49,6 +49,8 @@ jobs:
             --file crates/tau-agent/src/validation.rs \
             --file crates/tau-agent/src/schema.rs \
             --file crates/tau-agent/src/compaction.rs \
+            --file crates/tau-tools/src/edit.rs \
+            --file crates/tau-tools/src/truncate.rs \
             --file crates/tau-store/src/lib.rs
       - uses: actions/upload-artifact@v4
         if: always()

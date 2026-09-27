@@ -210,10 +210,11 @@ The hardest part is the WebSocket layer. It has to:
 
 ### M5: `tau-tools` (weeks 6–7, optional)
 
-- [ ] The seven tools as specified in [`reference/tools.md`](reference/tools.md).
-- [ ] Search runs natively, with no `rg` or `fd` subprocesses and no
+- [x] The seven tools as specified in [`reference/tools.md`](reference/tools.md),
+      plus `coding_tools(&root)` and `Agent::tools` to add them at once.
+- [x] Search runs natively, with no `rg` or `fd` subprocesses and no
       binaries downloaded at runtime.
-- [ ] The `tau-tools` properties, example tests and known cases from
+- [x] The `tau-tools` properties, example tests and known cases from
       the testing doc, and an example test for every error string in
       `tools.md`.
 
