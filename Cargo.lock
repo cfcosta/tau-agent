@@ -2215,6 +2215,7 @@ dependencies = [
  "hegeltest",
  "ignore",
  "image",
+ "libc",
  "regex",
  "schemars",
  "serde",

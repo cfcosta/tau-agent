@@ -16,6 +16,7 @@ grep-regex.workspace = true
 grep-searcher.workspace = true
 ignore.workspace = true
 image.workspace = true
+libc.workspace = true
 regex.workspace = true
 schemars.workspace = true
 serde.workspace = true

@@ -5,6 +5,9 @@
 //! is given resolves against it. A tool that fails returns `Err`, which
 //! the loop turns into an error result.
 
+/// Unix only: it runs commands in their own process group.
+#[cfg(unix)]
+pub mod bash;
 pub mod edit;
 pub mod errno;
 pub mod find;

@@ -82,4 +82,78 @@ exclude_re = [
   # rewrites exactly its lines, so two adjacent groups and one merged
   # group produce the same text.
   'replace < with <= in apply_replacements_preserving_unchanged_lines',
+
+  # Accumulator::push_decoded: `self.tail.len() > self.max_rolling_bytes
+  # * 2` decides only whether to *call* `trim_tail()`, whose own guard
+  # (`trim_tail`, unaffected by this mutant) is `self.tail.len() <=
+  # self.max_rolling_bytes`. Replacing `* 2` with `/ 2` lowers the outer
+  # threshold to half of `max_rolling_bytes`, so `trim_tail()` gets
+  # called earlier and more often — but every one of those extra calls
+  # sees `tail.len() <= max_rolling_bytes` (it has not reached the real
+  # `* 2` threshold yet) and returns without trimming. Trimming still
+  # happens at exactly the same size, `max_rolling_bytes`, only decided
+  # by `trim_tail`'s own check. The mutant adds redundant no-op calls,
+  # never a different tail.
+  'replace \* with / in Accumulator::push_decoded',
+
+  # Accumulator::append: `self.total_raw_bytes += chunk.len()`.
+  # `total_raw_bytes` is read only in `should_spill`'s first clause,
+  # `self.total_raw_bytes > self.max_bytes`. Decoding never shrinks: a
+  # valid byte copies through 1:1, and the shortest possible invalid
+  # subsequence Rust's decoder ever reports (down to 1 raw byte) becomes
+  # one 3-byte replacement character, so `total_decoded_bytes >=
+  # total_raw_bytes` always. Whenever the raw-bytes clause would be
+  # true, `should_spill`'s second clause (`total_decoded_bytes >
+  # max_bytes`) already is too. Freezing `total_raw_bytes` at 0 (`*=`
+  # never grows past `0 * n == 0`) can therefore never change
+  # `should_spill`'s result.
+  'replace \+= with \*= in Accumulator::append',
+
+  # spill_filename: the exact formula mixing the nanosecond clock, the
+  # pid and the atomic counter into one number is not part of the
+  # documented contract (`docs/reference/tools.md`, "bash", "Output":
+  # `tau-bash-<hex>.log`) -- only that the name matches that shape and
+  # is unique enough in practice, which
+  # `spill_filename_has_the_documented_shape_and_is_unique` checks.
+  # Swapping `^` for `|` or `&`, or `<<` for `>>`, still combines two
+  # values that change on every call (the clock and the counter) into
+  # one that does too, so it cannot make the name collide any more than
+  # the original formula could.
+  'replace \^ with . in spill_filename',
+  'replace << with >> in spill_filename',
+
+  # Accumulator::trim_tail, `if start > 0` (bash.rs:546; not the `==`
+  # and `<` mutants there, which `trim_tail_lands_on_the_next_char_
+  # boundary` catches by asserting the flag on a cut that is *not*
+  # after a newline). `trim_tail` only ever runs from `push_decoded`'s
+  # `if self.tail.len() > self.max_rolling_bytes * 2`, past its own
+  # first line's early return unless `self.tail.len() >
+  # self.max_rolling_bytes`. Both hold only when `max_rolling_bytes >=
+  # 1` (always true: built as `(max_bytes * 2).max(1)`), so at this
+  # line `start = self.tail.len() - self.max_rolling_bytes` is always
+  # strictly greater than `self.max_rolling_bytes`, i.e. at least 1,
+  # before the boundary-search loop above it (which can only grow
+  # `start` further) even runs. `start` is a `usize`, so `start >= 0`
+  # is therefore true on every reachable input exactly when `start > 0`
+  # is — the only way they could disagree, `start == 0`, never happens.
+  'bash\.rs:546:.*replace > with >= in Accumulator::trim_tail',
+
+  # Accumulator::snapshot, the `by` fallback's `self.total_decoded_bytes
+  # > self.max_bytes` (bash.rs:419; not the outer `truncated` check at
+  # :422, nor the `==` and `<` mutants of this same line, all of which
+  # `truncated_is_strict_not_inclusive_of_the_limits` and
+  # `snapshot_falls_back_to_bytes_when_the_window_looks_whole` catch):
+  # this line only runs once `truncated` (:421-422) is already true and
+  # `tail.by` (from running `truncate_tail` on the rolling *window*) is
+  # `None`. If `truncated` became true through the lines clause alone
+  # (`total_decoded_bytes <= max_bytes`), the window cannot have been
+  # trimmed -- trimming needs `tail.len() > max_rolling_bytes * 2 >= 4 *
+  # max_bytes`, impossible while total decoded bytes are still within
+  # `max_bytes` -- so the window equals the full tail and
+  # `truncate_tail` sees the same over-the-line-limit content the outer
+  # check did, setting `tail.by` to `Some(Lines)`, never `None`. So
+  # whenever this line actually runs, `total_decoded_bytes > max_bytes`
+  # is already true from the outer check, and `>=` cannot disagree with
+  # `>` on any reachable input.
+  'bash\.rs:419:.*replace > with >= in Accumulator::snapshot',
 ]
