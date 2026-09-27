@@ -129,6 +129,17 @@ enum Op {
 
 #[hegel::test(test_cases = 60)]
 fn store_matches_model(tc: TestCase) {
+    store_matches_model_body(tc)
+}
+
+/// [`store_matches_model`] with more cases, for the nightly tier.
+#[hegel::test(test_cases = 1000)]
+#[ignore = "extended"]
+fn store_matches_model_extended(tc: TestCase) {
+    store_matches_model_body(tc)
+}
+
+fn store_matches_model_body(tc: TestCase) {
     block_on(async {
         let store = Store::memory().await.unwrap();
         let mut model = Model::default();

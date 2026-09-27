@@ -100,6 +100,17 @@ enum Op {
 
 #[hegel::test(test_cases = 300)]
 fn pool_keeps_limits_and_order(tc: TestCase) {
+    pool_keeps_limits_and_order_body(tc)
+}
+
+/// [`pool_keeps_limits_and_order`] with more cases, for the nightly tier.
+#[hegel::test(test_cases = 5000)]
+#[ignore = "extended"]
+fn pool_keeps_limits_and_order_extended(tc: TestCase) {
+    pool_keeps_limits_and_order_body(tc)
+}
+
+fn pool_keeps_limits_and_order_body(tc: TestCase) {
     let limits = Limits {
         max_lanes: tc.draw(gs::integers::<usize>().min_value(1).max_value(4)),
         max_in_flight: tc

@@ -55,6 +55,17 @@ struct Log {
 
 #[hegel::test(test_cases = 300)]
 fn lane_against_simulated_server(tc: TestCase) {
+    lane_against_simulated_server_body(tc)
+}
+
+/// [`lane_against_simulated_server`] with more cases, for the nightly tier.
+#[hegel::test(test_cases = 5000)]
+#[ignore = "extended"]
+fn lane_against_simulated_server_extended(tc: TestCase) {
+    lane_against_simulated_server_body(tc)
+}
+
+fn lane_against_simulated_server_body(tc: TestCase) {
     let history: LaneHistory = tc.draw(lane_history());
     let mut lane = Lane::new();
     let mut server = Server::default();

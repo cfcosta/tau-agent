@@ -181,6 +181,17 @@ fn scripted_call(tc: TestCase, sequential_allowed: bool) -> ScriptedCall {
 /// virtual time.
 #[hegel::test(test_cases = 60)]
 fn loop_over_generated_scripts(tc: TestCase) {
+    loop_over_generated_scripts_body(tc)
+}
+
+/// [`loop_over_generated_scripts`] with more cases, for the nightly tier.
+#[hegel::test(test_cases = 1000)]
+#[ignore = "extended"]
+fn loop_over_generated_scripts_extended(tc: TestCase) {
+    loop_over_generated_scripts_body(tc)
+}
+
+fn loop_over_generated_scripts_body(tc: TestCase) {
     let turns: Vec<Vec<ScriptedCall>> = tc
         // A turn without tool calls ends the run, so every turn before the
         // final text turn calls at least one tool.

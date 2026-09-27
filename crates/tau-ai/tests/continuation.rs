@@ -64,6 +64,17 @@ fn run_lane(
 /// input of that turn.
 #[hegel::test(test_cases = 500)]
 fn delta_reconstructs_full_input(tc: TestCase) {
+    delta_reconstructs_full_input_body(tc)
+}
+
+/// [`delta_reconstructs_full_input`] with more cases, for the nightly tier.
+#[hegel::test(test_cases = 10000)]
+#[ignore = "extended"]
+fn delta_reconstructs_full_input_extended(tc: TestCase) {
+    delta_reconstructs_full_input_body(tc)
+}
+
+fn delta_reconstructs_full_input_body(tc: TestCase) {
     let history = tc.draw(generators::lane::lane_history());
     let kinds = run_lane(&history, |_, _| {});
     assert_eq!(kinds[0], RequestKind::Full);
@@ -77,6 +88,17 @@ fn delta_reconstructs_full_input(tc: TestCase) {
 /// turn to a full resend; the server still sees the full input.
 #[hegel::test(test_cases = 500)]
 fn settings_change_forces_full_resend(tc: TestCase) {
+    settings_change_forces_full_resend_body(tc)
+}
+
+/// [`settings_change_forces_full_resend`] with more cases, for the nightly tier.
+#[hegel::test(test_cases = 10000)]
+#[ignore = "extended"]
+fn settings_change_forces_full_resend_extended(tc: TestCase) {
+    settings_change_forces_full_resend_body(tc)
+}
+
+fn settings_change_forces_full_resend_body(tc: TestCase) {
     let history = tc.draw(generators::lane::lane_history());
     let at =
         tc.draw(gs::integers::<usize>().max_value(history.turns.len() - 1));
@@ -107,6 +129,17 @@ fn settings_change_forces_full_resend(tc: TestCase) {
 /// full resend; the server still sees the full input.
 #[hegel::test(test_cases = 500)]
 fn baseline_change_forces_full_resend(tc: TestCase) {
+    baseline_change_forces_full_resend_body(tc)
+}
+
+/// [`baseline_change_forces_full_resend`] with more cases, for the nightly tier.
+#[hegel::test(test_cases = 10000)]
+#[ignore = "extended"]
+fn baseline_change_forces_full_resend_extended(tc: TestCase) {
+    baseline_change_forces_full_resend_body(tc)
+}
+
+fn baseline_change_forces_full_resend_body(tc: TestCase) {
     let history = tc.draw(generators::lane::lane_history());
     tc.assume(history.turns.len() > 1); // one turn in six-sized histories
     let at = tc.draw(
