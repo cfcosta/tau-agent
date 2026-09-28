@@ -7742,6 +7742,7 @@ dependencies = [
  "tau-ai",
  "tau-compaction",
  "tau-constitution",
+ "tau-fast-compaction",
  "tau-jev",
  "tau-reasoning",
  "tau-store",

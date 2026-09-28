@@ -135,6 +135,27 @@ fn a_stale_result_is_cut() {
         assert_eq!(rewritten.len(), 1, "{rewritten:?}");
         assert_eq!(rewritten[0].0, NAME);
 
+        // The ledger is reported, before the rewrite it explains.
+        let report = events
+            .iter()
+            .position(|event| {
+                matches!(event, RunEvent::PluginReport { body, .. }
+                if body["kind"] == "ledger")
+            })
+            .expect("a ledger report");
+        let rewrite = events
+            .iter()
+            .position(|event| {
+                matches!(event, RunEvent::ContextRewritten { .. })
+            })
+            .unwrap();
+        assert!(report < rewrite);
+        let RunEvent::PluginReport { body, .. } = &events[report] else {
+            unreachable!()
+        };
+        let reported: Details = serde_json::from_value(body.clone()).unwrap();
+        assert_eq!(reported.stats.results_dropped, 1);
+
         let next = &model.requests()[2].transcript;
         let first = result_text(&next[2]);
         assert!(first.starts_with("CONTENTS OF a.rs: "), "{first}");

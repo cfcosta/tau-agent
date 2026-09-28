@@ -56,6 +56,9 @@ pub struct RunView {
     pub cost_before: f64,
     /// What tau-constitution checked and decided in the run.
     pub constitution: ConstitutionStats,
+    /// What the pruning plugin said about its pass, for the rewrite it
+    /// explains, which comes right after.
+    pending_rewrite: Option<String>,
 }
 
 /// tau-constitution's work in one run, from its reports.
@@ -241,6 +244,8 @@ pub struct ToolCard {
     pub checks: Vec<String>,
     /// What context pruning did to this call, if anything.
     pub pruned: Option<Pruned>,
+    /// Characters the call's arguments and result take in the context.
+    pub size: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -531,6 +536,7 @@ impl RunView {
             log: Vec::new(),
             cost_before: 0.0,
             constitution: ConstitutionStats::default(),
+            pending_rewrite: None,
         }
     }
 
@@ -595,6 +601,7 @@ impl RunView {
                                     from_plugin: None,
                                     checks: Vec::new(),
                                     pruned: None,
+                                    size: 0,
                                 }))
                             }
                         }
@@ -866,6 +873,7 @@ impl RunView {
                 from_plugin: None,
                 checks: Vec::new(),
                 pruned: None,
+                size: 0,
             })),
             RunEvent::ToolUpdate {
                 call_id, partial, ..
@@ -910,7 +918,7 @@ impl RunView {
                     plugin: plugin.to_string(),
                     tokens_before: *tokens_before,
                     tokens_after: *tokens_after,
-                    detail: None,
+                    detail: self.pending_rewrite.take(),
                 });
             }
             RunEvent::Retry {
@@ -1178,6 +1186,10 @@ impl RunView {
             self.reasoning_report(body);
             return;
         }
+        if plugin == tau_fast_compaction::NAME {
+            self.ledger_report(body);
+            return;
+        }
         if plugin != tau_constitution::NAME {
             return;
         }
@@ -1369,6 +1381,75 @@ impl RunView {
         }
     }
 
+    /// The pruning plugin's ledger: each tool call in the run, with what
+    /// it decided (recent calls it never judged are pinned).
+    fn ledger_report(&mut self, body: &Value) {
+        use tau_fast_compaction::{Action, Details};
+        let Ok(details) = serde_json::from_value::<Details>(body.clone())
+        else {
+            return;
+        };
+        let mut turn = 1;
+        let mut entries = Vec::new();
+        for item in &self.items {
+            match item {
+                Item::TurnEnd { turn: ended } => turn = ended + 1,
+                Item::Tool(card) => {
+                    let decided = details
+                        .decisions
+                        .iter()
+                        .find(|decision| decision.call_id == card.call_id);
+                    entries.push(LedgerEntry {
+                        call_id: card.call_id.clone(),
+                        turn,
+                        tool: card.tool.clone(),
+                        input: card.summary.clone(),
+                        tokens: (card.size / 4) as u64,
+                        matters: decided.map(|d| d.keep_call as f32),
+                        verbatim: decided.map(|d| d.keep_result as f32),
+                        decision: match decided.map(|d| d.action) {
+                            None => Decision::Pinned,
+                            Some(Action::Keep) => Decision::Keep,
+                            Some(Action::DropResult) => Decision::DropResult,
+                            Some(Action::DropCall) => Decision::DropCall,
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+        let stats = &details.stats;
+        let count = |n: usize, one: &str, many: &str| {
+            format!("{n} {}", if n == 1 { one } else { many })
+        };
+        self.pending_rewrite = Some(format!(
+            "{} judged in {} · {} cut, {} dropped · −{:.0}%",
+            count(stats.calls - stats.pinned, "call", "calls"),
+            count(stats.requests, "Jev request", "Jev requests"),
+            count(stats.results_dropped, "result", "results"),
+            count(stats.calls_dropped, "call", "calls"),
+            stats.reduction_ratio * 100.0
+        ));
+        let state = format!(
+            "{} pruned · −{:.0}%",
+            stats.results_dropped + stats.calls_dropped,
+            stats.reduction_ratio * 100.0
+        );
+        match self
+            .plugins
+            .iter_mut()
+            .find(|status| status.name == tau_fast_compaction::NAME)
+        {
+            Some(status) => status.state = state,
+            None => self.plugins.push(PluginStatus {
+                name: tau_fast_compaction::NAME.into(),
+                state,
+                tone: Tone::Quiet,
+            }),
+        }
+        self.update(RunUpdate::Ledger(entries));
+    }
+
     /// The run's plugin list says what the constitution did so far.
     fn sync_constitution_status(&mut self) {
         let state = self.constitution.summary();
@@ -1397,6 +1478,7 @@ impl RunView {
 
 fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
     let text = text_of(output);
+    card.size = card.args.to_string().len() + text.len();
     if is_error {
         card.state = ToolState::Failed(first_line(&text));
         return;
@@ -1534,6 +1616,84 @@ mod tests {
 
     fn view() -> RunView {
         RunView::new(run(), "retry-after", "coder", "gpt-5.5")
+    }
+
+    #[test]
+    fn a_pruning_ledger_fills_the_ledger_and_marks_its_calls() {
+        let mut view = view();
+        for (call, turn) in [("c1", 1), ("c2", 2)] {
+            view.apply(&RunEvent::ToolStart {
+                run: run(),
+                call_id: call.into(),
+                tool: "read".into(),
+                args: json!({"path": format!("{call}.rs")}),
+            });
+            view.apply(&RunEvent::ToolEnd {
+                run: run(),
+                call_id: call.into(),
+                output: Arc::new(ToolOutput::text("x".repeat(4000))),
+                is_error: false,
+            });
+            view.apply(&RunEvent::TurnEnd {
+                run: run(),
+                turn,
+                usage: Usage::default(),
+            });
+        }
+        view.apply(&RunEvent::PluginReport {
+            run: run(),
+            plugin: tau_fast_compaction::NAME.into(),
+            body: json!({
+                "kind": "ledger",
+                "decisions": [{
+                    "call_id": "c1", "tool": "read", "action": "drop_result",
+                    "keep_call": 0.9, "keep_result": 0.1
+                }],
+                "stats": {
+                    "calls": 2, "pinned": 1, "kept": 0, "results_dropped": 1,
+                    "calls_dropped": 0, "requests": 1, "state_tokens": 900,
+                    "state_stage": "full", "chars_before": 8100,
+                    "chars_after": 4400, "reduction_ratio": 0.46
+                }
+            }),
+        });
+        view.apply(&RunEvent::ContextRewritten {
+            run: run(),
+            plugin: tau_fast_compaction::NAME.into(),
+            tokens_before: 2000,
+            tokens_after: 1100,
+        });
+        assert_eq!(view.ledger.len(), 2);
+        let first = &view.ledger[0];
+        assert_eq!((first.turn, first.decision), (1, Decision::DropResult));
+        assert!(first.tokens > 900, "{}", first.tokens);
+        assert_eq!(first.matters, Some(0.9));
+        assert_eq!(view.ledger[1].decision, Decision::Pinned);
+        assert_eq!(view.ledger[1].turn, 2);
+        let cards: Vec<Option<Pruned>> = view
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Tool(card) => Some(card.pruned),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cards, [Some(Pruned::ResultDropped), Some(Pruned::Kept)]);
+        let Some(Item::Rewrite { detail, .. }) = view.items.last() else {
+            panic!("a rewrite")
+        };
+        assert!(
+            detail
+                .as_deref()
+                .unwrap()
+                .contains("1 result cut, 0 calls dropped"),
+            "{detail:?}"
+        );
+        assert!(
+            view.plugins
+                .iter()
+                .any(|status| status.state == "1 pruned · −46%")
+        );
     }
 
     #[test]

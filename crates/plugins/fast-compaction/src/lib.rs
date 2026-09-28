@@ -125,6 +125,14 @@ impl FastCompaction {
         }
     }
 
+    /// Prunes with a Jev shared with other plugins.
+    pub fn shared(jev: Arc<dyn Jev>) -> Self {
+        Self {
+            jev,
+            settings: Settings::default(),
+        }
+    }
+
     pub fn settings(mut self, settings: Settings) -> Self {
         self.settings = settings;
         self
@@ -305,6 +313,11 @@ impl FastCompactionRun {
             decisions: self.ledger.decisions().cloned().collect(),
             stats,
         };
+        // Interfaces show the ledger; the rewrite stores it for forks.
+        let mut report =
+            serde_json::to_value(&details).expect("details serialize");
+        report["kind"] = "ledger".into();
+        ctx.report(report);
         Ok(Some(Rewrite {
             messages,
             details: serde_json::to_value(details).expect("details serialize"),

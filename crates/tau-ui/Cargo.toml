@@ -23,6 +23,7 @@ tau-compaction.workspace = true
 tau-constitution.workspace = true
 tau-jev.workspace = true
 tau-reasoning.workspace = true
+tau-fast-compaction.workspace = true
 tau-store.workspace = true
 tau-tools.workspace = true
 tau-vcs.workspace = true

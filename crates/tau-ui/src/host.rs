@@ -833,13 +833,22 @@ impl Host {
                 },
             ]);
         }
+        if self.jev().is_some() {
+            plugins.push(PluginInfo {
+                name: tau_fast_compaction::NAME.into(),
+                description: "Prunes stale tool history with Jev".into(),
+                seams: vec![Seam::Start, Seam::Rewrite],
+                spend: 0.0,
+                screen: Some(PluginScreen::Ledger),
+            });
+        }
         plugins.push(PluginInfo {
             name: "tau-compaction".into(),
             description: "Summarizes the context when it nears the window"
                 .into(),
             seams: vec![Seam::Start, Seam::Rewrite],
             spend: 0.0,
-            screen: Some(PluginScreen::Ledger),
+            screen: None,
         });
         let source = match &state {
             ProjectState::Ready(project) => format!(
@@ -975,6 +984,19 @@ impl Host {
         let mut compaction = Compaction::default();
         if let Some(model) = find(&choice.model) {
             compaction = compaction.context_window(model.context_window);
+        }
+        // Pruning with Jev first, when there is a key: it is cheaper than
+        // a summary, and summarizing follows when pruning cannot help.
+        if let Some(jev) = &jev {
+            let settings = tau_fast_compaction::Settings {
+                context_window: find(&choice.model)
+                    .map(|model| model.context_window),
+                ..tau_fast_compaction::Settings::default()
+            };
+            agent = agent.plugin(
+                tau_fast_compaction::FastCompaction::shared(jev.clone())
+                    .settings(settings),
+            );
         }
         let agent = agent.plugin(compaction).plugin(RepoTag(repo.name.clone()));
         // The repository's rules, checked with Jev when there is a key.
@@ -1466,6 +1488,13 @@ impl Host {
             view.plugins.push(PluginStatus {
                 name: "workspace".into(),
                 state: "a commit per turn".into(),
+                tone: Tone::Quiet,
+            });
+        }
+        if self.jev().is_some() {
+            view.plugins.push(PluginStatus {
+                name: tau_fast_compaction::NAME.into(),
+                state: "watching the window".into(),
                 tone: Tone::Quiet,
             });
         }
