@@ -1028,7 +1028,7 @@ pub fn catalog() -> Catalog {
             input_tokens: 1_940_000,
             spent: 0.081,
             latency_p50_ms: 180,
-            retried: 3,
+            failed: 3,
         }),
         repos: vec![
             Repo {

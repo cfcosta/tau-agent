@@ -685,6 +685,8 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert_eq!(rules.rules[0].applies_to, ["write.content"]);
     assert!(rules.error.is_none());
     assert!(catalog.plugins.iter().any(|p| p.name == "tau-constitution"));
+    let stats = catalog.jev.clone().expect("Jev is set up");
+    assert_eq!((stats.requests, stats.failed), (0, 0));
 
     let mut view = host
         .start("write a.txt", &ModelChoice::default(), "")
@@ -703,6 +705,11 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert!(blocked(&view), "the card shows the block live");
     assert_eq!(view.constitution.calls, 1);
     assert_eq!(view.constitution.blocked, ["R1"]);
+    // The Plugins screen counts the check Jev answered.
+    let stats = host.catalog().jev.expect("Jev is set up");
+    assert!(stats.requests >= 1, "{stats:?}");
+    assert!(stats.input_tokens > 0 && stats.spent > 0.0);
+    assert_eq!((stats.model.as_str(), stats.failed), ("jev-fake", 0));
     // And in history, from what the plugin recorded.
     let history = host.history().unwrap();
     assert!(blocked(&history[0]));

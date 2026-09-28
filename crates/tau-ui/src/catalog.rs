@@ -154,13 +154,15 @@ pub struct PluginInfo {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct JevStats {
     pub model: String,
+    /// Where the key comes from.
     pub key_env: String,
     pub price: String,
     pub requests: u64,
     pub input_tokens: u64,
     pub spent: f64,
     pub latency_p50_ms: u32,
-    pub retried: u32,
+    /// Requests that got no answer.
+    pub failed: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

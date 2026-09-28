@@ -47,6 +47,7 @@ pub mod demo;
 pub mod github;
 pub mod host;
 pub mod input;
+pub mod metered;
 pub mod models;
 pub mod picker;
 pub mod pull_request;

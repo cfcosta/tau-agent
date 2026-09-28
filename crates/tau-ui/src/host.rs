@@ -388,6 +388,8 @@ pub struct Host {
     /// Jev for tau-constitution, in place of TypeSafe's with the saved
     /// key: for tests.
     jev: Option<Arc<dyn tau_jev::Jev>>,
+    /// What every plugin's Jev requests did this session.
+    jev_meter: Arc<Mutex<crate::metered::Meter>>,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -544,6 +546,7 @@ impl Host {
             access: Mutex::new(Some(config.access.clone())),
             github: github::Api::default(),
             jev: None,
+            jev_meter: Arc::default(),
             store,
             choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
@@ -920,7 +923,7 @@ impl Host {
             agent: "coder".into(),
             agent_source: Some(source),
             plugins,
-            jev: None,
+            jev: self.jev_stats(),
             repos,
             open_repos: list.open,
             closed_runs: list
@@ -1019,10 +1022,33 @@ impl Host {
 
     /// Jev, when there is a TypeSafe key (or one given for tests).
     fn jev(&self) -> Option<Arc<dyn tau_jev::Jev>> {
-        self.jev.clone().or_else(|| {
+        let inner = self.jev.clone().or_else(|| {
             self.config.credentials.jev_key().map(|key| {
                 Arc::new(TypeSafe::new(key)) as Arc<dyn tau_jev::Jev>
             })
+        })?;
+        Some(Arc::new(crate::metered::Metered::new(
+            inner,
+            self.jev_meter.clone(),
+        )))
+    }
+
+    /// What Jev did this session, for the Plugins screen, when there is
+    /// a key.
+    fn jev_stats(&self) -> Option<crate::catalog::JevStats> {
+        if self.jev.is_none() && self.config.credentials.jev_key().is_none() {
+            return None;
+        }
+        let meter = self.jev_meter.lock().expect("not poisoned").clone();
+        Some(crate::catalog::JevStats {
+            latency_p50_ms: meter.latency_p50_ms(),
+            model: meter.model.unwrap_or_else(|| tau_jev::DEFAULT_MODEL.into()),
+            key_env: "typesafe-key, set on Models".into(),
+            price: format!("${} / M input", tau_jev::PRICE_PER_MILLION_INPUT),
+            requests: meter.requests,
+            input_tokens: meter.input_tokens,
+            spent: meter.spent,
+            failed: meter.failed,
         })
     }
 
@@ -1924,6 +1950,13 @@ impl Host {
         let workspace = workspace.downgrade();
         cx.spawn(async move |cx| {
             while let Some(event) = events.recv().await {
+                // The run may have asked Jev: the Plugins screen's count
+                // follows.
+                if matches!(event, RunEvent::RunEnd { .. }) {
+                    let catalog = host.catalog();
+                    let _ = workspace
+                        .update(cx, |ws, cx| ws.set_catalog(catalog, cx));
+                }
                 // A pull request that keeps pushing takes the turn.
                 if let RunEvent::TurnEnd { run, .. } = &event
                     && host.keeps_pushing(run)

@@ -235,12 +235,8 @@ pub fn render(
                             ),
                         ),
                         (
-                            "retried".into(),
-                            mono(
-                                jev.retried.to_string(),
-                                Type::CAPTION,
-                                t.text,
-                            ),
+                            "failed".into(),
+                            mono(jev.failed.to_string(), Type::CAPTION, t.text),
                         ),
                     ],
                     t,
