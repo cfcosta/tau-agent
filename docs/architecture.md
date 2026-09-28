@@ -6,11 +6,12 @@
 tau-agent/
 ├── crates/
 │   ├── tau-ai/       # types, events, Responses conversion, WebSocket pool, retry, cost
-│   ├── tau-agent/    # Agent, Run, loop, AgentTool + RunHook, typed results, limits,
-│   │                 # sub-agents, forks, compaction
+│   ├── tau-agent/    # Agent, Run, loop, AgentTool + RunHook, plugins, typed results,
+│   │                 # limits, sub-agents, forks, context estimate
 │   ├── tau-store/    # SQLite via sqlx: runs, messages, fork transcripts, migrations
 │   ├── tau-testing/  # ScriptedModel, recorded-stream replay
-│   └── tau-tools/    # optional: read, bash, edit, write, grep, find, ls
+│   └── plugins/
+│       └── tools/    # tau-tools: read, bash, edit, write, grep, find, ls
 └── docs/
 ```
 
@@ -18,7 +19,9 @@ Dependency direction:
 
 - `tau-agent` depends on `tau-ai` and `tau-store`.
 - `tau-testing` depends on `tau-ai`.
-- `tau-tools` depends only on the tool trait from `tau-agent`.
+- Plugins, under `crates/plugins/`, depend on `tau-agent` (and
+  `tau-ai` for message types). Core crates never depend on a plugin
+  ([0006](decisions/0006-plugin-crates.md)).
 
 ## Data flow for one turn
 
