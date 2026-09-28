@@ -1176,24 +1176,15 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
     let done = tau_agent::tool::RunId("plugin-docs".into());
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(done.clone()), cx);
-        // Suggestions: goals set on other conversations.
-        let suggested: Vec<String> = ws
-            .goal_suggestions("")
-            .into_iter()
-            .map(|pick| pick.condition)
-            .collect();
-        assert_eq!(
-            suggested,
-            [
-                "Every mutant in retry.rs is caught",
-                "Every lane has an owner in lanes.toml"
-            ]
-        );
-        assert_eq!(ws.goal_suggestions("lane").len(), 1);
-        // Enter on an empty /goal takes the selected suggestion.
+        // /goal alone is not a goal yet: it stays, to be written.
         ws.set_composer("/goal ", cx);
-        ws.slash_move(1, cx);
         ws.submit_prompt("/goal".into(), cx);
+        assert_eq!(ws.composer_text(cx), "/goal ");
+        ws.set_composer("", cx);
+        ws.submit_prompt(
+            "/goal Every lane has an owner in lanes.toml".into(),
+            cx,
+        );
     });
     workspace.update(&mut cx, |ws, cx| {
         let view = ws.run(&done).unwrap();

@@ -1,7 +1,7 @@
 //! Slash commands in the composer. Typing `/` lists what the app can do
 //! from there, filtered as the user types: ↑↓ move, Tab completes, Enter
 //! runs, Esc closes. `/goal` opens its own popover, with the goal's
-//! limits and suggestions for the condition.
+//! limits.
 
 use gpui::{
     AnyElement,
@@ -20,7 +20,6 @@ use crate::{
     route::Route,
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
     ui,
-    view::{Item, ToolState},
     workspace::{PickerTarget, Workspace, WorkspaceEvent},
 };
 
@@ -92,16 +91,11 @@ pub enum Slash {
     Goal(String),
 }
 
-/// A condition the `/goal` popover suggests.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Suggestion {
-    pub condition: String,
-    /// Where it comes from: `last command`, `mutants-triage · met`.
-    pub from: String,
+impl Slash {
+    pub fn is_goal(&self) -> bool {
+        matches!(self, Self::Goal(_))
+    }
 }
-
-/// How many suggestions the `/goal` popover lists.
-const SUGGESTIONS: usize = 5;
 
 impl Workspace {
     /// The commands that work here: the ones about a conversation only
@@ -142,80 +136,12 @@ impl Workspace {
         self.slash(text)
     }
 
-    /// Conditions for a goal on the open conversation: what its last
-    /// command proves, the repository's checks, the pull request's
-    /// checks, and goals set elsewhere. Only those matching `typed`.
-    pub fn goal_suggestions(&self, typed: &str) -> Vec<Suggestion> {
-        let mut found = Vec::new();
-        let run = self.current().filter(|_| self.route != Route::NewRun);
-        if let Some(run) = run {
-            let commands: Vec<&str> = run
-                .items
-                .iter()
-                .filter_map(|item| match item {
-                    Item::Tool(card)
-                        if card.tool == "bash"
-                            && matches!(card.state, ToolState::Done { .. }) =>
-                    {
-                        Some(card.summary.as_str())
-                    }
-                    _ => None,
-                })
-                .collect();
-            if let Some(last) = commands.last() {
-                found.push(Suggestion {
-                    condition: format!("{last} passes"),
-                    from: "last command".into(),
-                });
-            }
-            if commands.iter().any(|command| command.starts_with("cargo")) {
-                found.push(Suggestion {
-                    condition: "cargo clippy --all-targets has no warnings"
-                        .into(),
-                    from: "repository check".into(),
-                });
-            }
-            if self.pull_request(&run.id).is_some() {
-                found.push(Suggestion {
-                    condition: "The pull request's checks are green".into(),
-                    from: "GitHub".into(),
-                });
-            }
-        }
-        for other in &self.runs {
-            let Some(goal) = &other.goal else { continue };
-            if run.is_some_and(|run| run.id == other.id)
-                || found.iter().any(|seen| seen.condition == goal.condition)
-            {
-                continue;
-            }
-            let state = match goal.status {
-                tau_goal::Status::Met => "met",
-                tau_goal::Status::Stopped(_) => "stopped",
-                tau_goal::Status::Paused => "paused",
-                tau_goal::Status::Active => "working",
-            };
-            found.push(Suggestion {
-                condition: goal.condition.clone(),
-                from: format!("{} · {state}", other.title),
-            });
-        }
-        let typed = typed.trim().to_lowercase();
-        found.retain(|suggestion| {
-            typed
-                .split_whitespace()
-                .all(|word| suggestion.condition.to_lowercase().contains(word))
-        });
-        found.truncate(SUGGESTIONS);
-        found
-    }
-
     /// How many entries the open popover lists.
     fn slash_len(&self, cx: &gpui::App) -> usize {
         match self.composer_slash(cx) {
             Slash::None => 0,
             Slash::Menu(commands) => commands.len(),
-            Slash::Goal(typed) => self.goal_suggestions(&typed).len(),
+            Slash::Goal(_) => 0,
         }
     }
 
@@ -232,8 +158,7 @@ impl Workspace {
         true
     }
 
-    /// Tab in the composer: complete the selected command, or take the
-    /// selected suggestion as the goal.
+    /// Tab in the composer: complete the selected command.
     pub fn slash_complete(&mut self, cx: &mut Context<Self>) -> bool {
         let text = match self.composer_slash(cx) {
             Slash::None => return false,
@@ -247,13 +172,7 @@ impl Workspace {
                     format!("{} ", command.name)
                 }
             }
-            Slash::Goal(typed) => {
-                let suggestions = self.goal_suggestions(&typed);
-                let Some(pick) = suggestions.get(self.slash_selected) else {
-                    return false;
-                };
-                format!("/goal {}", pick.condition)
-            }
+            Slash::Goal(_) => return false,
         };
         self.slash_selected = 0;
         self.composer
@@ -294,32 +213,10 @@ impl Workspace {
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) -> bool {
-        // `/goal ` with nothing after it takes the selected suggestion
-        // (the composer trims what it sends, so look at what it showed).
-        let shown = self.slash_seen.clone();
-        if let Slash::Goal(typed) = self.slash(&shown)
-            && typed.trim().is_empty()
-            && text.trim() == "/goal"
-        {
-            let picked = self
-                .goal_suggestions("")
-                .get(self.slash_selected)
-                .map(|pick| pick.condition.clone());
-            self.slash_selected = 0;
-            match picked {
-                Some(condition) => self.set_goal(
-                    tau_goal::Command::Set {
-                        condition,
-                        continuations: tau_goal::DEFAULT_CONTINUATIONS,
-                        budget: tau_goal::DEFAULT_BUDGET,
-                    },
-                    false,
-                    cx,
-                ),
-                None => self
-                    .composer
-                    .update(cx, |input, cx| input.set_text("/goal ", cx)),
-            }
+        // `/goal` alone is not a goal yet: it stays, to be written.
+        if text.trim() == "/goal" && self.slash(&self.slash_seen).is_goal() {
+            self.composer
+                .update(cx, |input, cx| input.set_text("/goal ", cx));
             return true;
         }
         // A command still being typed runs the one selected.
@@ -478,7 +375,7 @@ impl Workspace {
             Slash::Menu(commands) => {
                 self.command_menu(&commands, compact, t, cx)
             }
-            Slash::Goal(typed) => self.goal_popover(&typed, compact, t, cx),
+            Slash::Goal(_) => self.goal_popover(compact, t),
         };
         let popover = div()
             .flex()
@@ -599,51 +496,8 @@ impl Workspace {
             })
     }
 
-    fn goal_popover(
-        &self,
-        typed: &str,
-        compact: bool,
-        t: &Theme,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let suggestions = self.goal_suggestions(typed);
+    fn goal_popover(&self, compact: bool, t: &Theme) -> Div {
         let jev = self.catalog.models.access.jev;
-        let rows = suggestions.into_iter().enumerate().map(|(n, pick)| {
-            let selected = n == self.slash_selected;
-            let condition = pick.condition.clone();
-            div()
-                .id(("goal-suggestion", n))
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .min_h(px(if compact { 44. } else { 34. }))
-                .px(sp(2.5))
-                .rounded(radius::CONTROL)
-                .cursor_pointer()
-                .when(selected, |row| row.bg(t.selected))
-                .hover(|style| style.bg(t.selected))
-                .child(ui::icon(
-                    Icon::Target,
-                    IconSize::COMPACT,
-                    if selected { t.accent } else { t.dim },
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(if selected { t.text } else { t.text_soft })
-                        .child(pick.condition),
-                )
-                .when(!compact, |row| {
-                    row.child(ui::mono(pick.from, Type::MICRO, t.dim))
-                })
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    let text = format!("/goal {condition}");
-                    ws.composer
-                        .update(cx, |input, cx| input.set_text(text, cx));
-                }))
-        });
         let limit = |label: &'static str,
                      input: &gpui::Entity<crate::input::TextInput>,
                      unit: &'static str| {
@@ -731,23 +585,9 @@ impl Workspace {
                     ))
                     .child(limit("Budget $", &self.goal_budget, "")),
             )
-            .when(rows.len() > 0, |popover| {
-                popover
-                    .child(
-                        div()
-                            .px(sp(2.5))
-                            .pt(sp(2.))
-                            .pb(sp(1.))
-                            .child(ui::heading("Suggestions", t)),
-                    )
-                    .children(rows)
-            })
             .when(!compact, |popover| {
                 popover.child(hints(
-                    &[
-                        ("Tab", "use suggestion"),
-                        ("Enter", "set the goal and start"),
-                    ],
+                    &[("Enter", "set the goal and start"), ("Esc", "close")],
                     t,
                 ))
             })
