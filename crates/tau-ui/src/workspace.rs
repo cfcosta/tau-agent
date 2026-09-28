@@ -499,6 +499,12 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Submits `text` as if typed into the composer: it steers the open
+    /// run if one is live, or starts a new run.
+    pub fn submit_prompt(&mut self, text: String, cx: &mut Context<Self>) {
+        self.submit(text, cx);
+    }
+
     fn submit(&mut self, text: String, cx: &mut Context<Self>) {
         match self.current().filter(|_| self.route != Route::NewRun) {
             Some(run) if run.status.is_live() => {

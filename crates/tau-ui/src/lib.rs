@@ -28,12 +28,16 @@
 //! .detach();
 //! ```
 //!
-//! [`demo`] replays a scripted session, so the interface runs without an
-//! agent: `cargo run -p tau-ui`.
+//! [`host::Host`] is that wiring for a real coding agent: a tokio runtime
+//! beside GPUI, `tau-tools` and `tau-compaction` as plugins, a ChatGPT
+//! (Codex) sign-in or an API key, and the run store. `cargo run -p
+//! tau-ui` uses it when a model is configured; otherwise, or with
+//! `--demo`, [`demo`] replays a scripted session.
 
 pub mod assets;
 pub mod catalog;
 pub mod demo;
+pub mod host;
 pub mod input;
 pub mod route;
 pub mod theme;

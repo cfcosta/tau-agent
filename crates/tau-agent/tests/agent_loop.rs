@@ -553,6 +553,54 @@ fn steering_lands_after_the_batch() {
     });
 }
 
+/// A `RunControl` steers and cancels while another task reads events.
+#[test]
+fn control_steers_and_cancels_while_events_are_read() {
+    use futures_util::StreamExt;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("probe", json!({"ms": 100})))
+        .turn(|t| t.tool_call("probe", json!({"ms": 5_000})))
+        .turn(|t| t.text("never reached"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm.clone()).tool(Probe::new(
+            "probe",
+            ExecutionMode::Parallel,
+            log,
+        ));
+        let mut run = agent.start("go", &store);
+        let control = run.control();
+        assert_eq!(control.id(), run.id());
+        let reader = tokio::spawn(async move {
+            let mut ends = Vec::new();
+            {
+                let mut events = run.events();
+                while let Some(event) = events.next().await {
+                    if let RunEvent::RunEnd { stop, .. } = event {
+                        ends.push(stop);
+                    }
+                }
+            }
+            (ends, run.outcome().await)
+        });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        control.steer("also check the tests");
+        // Cancel once the second request, which carries the steered
+        // message, is out and its 5 s tool call is running.
+        while llm.requests().len() < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        control.cancel();
+        let (ends, outcome) = reader.await.unwrap();
+        assert_eq!(ends, [StopReason::Cancelled]);
+        assert_eq!(outcome.unwrap().stop, StopReason::Cancelled);
+        let second = &llm.requests()[1];
+        assert_eq!(second.transcript.len(), 4, "the steered message");
+        assert_eq!(llm.requests().len(), 2, "no request after the cancel");
+    });
+}
+
 /// Hooks run in order; the first that blocks wins and later hooks do not
 /// run; an erroring hook blocks; changed arguments are validated again.
 #[test]

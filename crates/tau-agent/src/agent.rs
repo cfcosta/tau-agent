@@ -935,6 +935,16 @@ impl Run {
         self.cancel.cancel();
     }
 
+    /// A handle that steers and cancels the run from elsewhere, such as a
+    /// UI, while a task reads its events.
+    pub fn control(&self) -> RunControl {
+        RunControl {
+            id: self.id.clone(),
+            steer: self.steer.clone(),
+            cancel: self.cancel.clone(),
+        }
+    }
+
     /// Waits for the run to end. Events not yet read are dropped, so a
     /// run nobody listens to never waits for a subscriber.
     pub async fn outcome(mut self) -> Result<Outcome, AgentError> {
@@ -943,6 +953,39 @@ impl Run {
             Ok(result) => result,
             Err(_) => Err(AgentError::Panicked),
         }
+    }
+}
+
+/// Steers and cancels a run without owning it; see [`Run::control`].
+/// Cheap to clone. Does nothing once the run has ended.
+#[derive(Clone)]
+pub struct RunControl {
+    id: RunId,
+    steer: mpsc::UnboundedSender<String>,
+    cancel: CancellationToken,
+}
+
+impl RunControl {
+    pub fn id(&self) -> RunId {
+        self.id.clone()
+    }
+
+    /// Like [`Run::steer`].
+    pub fn steer(&self, message: impl Into<String>) {
+        let _ = self.steer.send(message.into());
+    }
+
+    /// Like [`Run::cancel`].
+    pub fn cancel(&self) {
+        self.cancel.cancel();
+    }
+}
+
+impl fmt::Debug for RunControl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunControl")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
     }
 }
 

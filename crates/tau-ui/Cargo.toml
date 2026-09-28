@@ -6,10 +6,18 @@ edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dev-dependencies]
+tau-testing.workspace = true
+
 [dependencies]
 gpui = "0.2.2"
 serde_json.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
+tau-compaction.workspace = true
+tau-store.workspace = true
+tau-tools.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 anyhow.workspace = true
 unicode-segmentation = "1.12.0"

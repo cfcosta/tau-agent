@@ -6272,10 +6272,16 @@ name = "tau-ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures-util",
  "gpui",
  "serde_json",
  "tau-agent",
  "tau-ai",
+ "tau-compaction",
+ "tau-store",
+ "tau-testing",
+ "tau-tools",
+ "tokio",
  "unicode-segmentation",
 ]
 
