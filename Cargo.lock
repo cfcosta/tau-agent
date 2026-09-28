@@ -6144,15 +6144,20 @@ dependencies = [
 name = "tau-ai"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "futures-util",
+ "getrandom 0.3.4",
  "hegeltest",
+ "httparse",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tau-testing",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
  "turmoil",
+ "url",
  "webpki-roots",
 ]
 

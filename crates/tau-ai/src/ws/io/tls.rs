@@ -48,21 +48,26 @@ impl fmt::Debug for OpenAiConnector {
 
 impl OpenAiConnector {
     pub fn new(api_key: impl Into<String>) -> Self {
-        let roots = RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-        };
-        let config = ClientConfig::builder_with_provider(Arc::new(
-            ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect("ring supports the default protocol versions")
-        .with_root_certificates(roots)
-        .with_no_client_auth();
         Self {
             api_key: api_key.into(),
-            tls: TlsConnector::from(Arc::new(config)),
+            tls: tls_connector(),
         }
     }
+}
+
+/// TLS with rustls, the `ring` provider and Mozilla's roots, shared by
+/// every endpoint.
+pub(crate) fn tls_connector() -> TlsConnector {
+    let roots = RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    let config =
+        ClientConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .expect("ring supports the default protocol versions")
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+    TlsConnector::from(Arc::new(config))
 }
 
 impl Connector for OpenAiConnector {

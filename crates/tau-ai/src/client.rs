@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use crate::{
+    codex::{CodexAuth, CodexConnector, DEFAULT_INSTRUCTIONS},
     cost::apply,
     event::AssistantEvent,
     message::{Message, Timestamp},
@@ -50,6 +51,16 @@ impl std::error::Error for MissingApiKey {}
 #[derive(Debug, Clone)]
 pub struct OpenAi {
     transport: Transport,
+    endpoint: Endpoint,
+}
+
+/// Which Responses endpoint a client talks to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Endpoint {
+    /// `api.openai.com`, with an API key.
+    Api,
+    /// ChatGPT's Codex endpoint, with a ChatGPT sign-in.
+    Codex,
 }
 
 impl OpenAi {
@@ -67,11 +78,26 @@ impl OpenAi {
         Ok(Self::new(key))
     }
 
+    /// A client for OpenAI Codex, signed in with a ChatGPT account (see
+    /// [`crate::codex`]). The sign-in is refreshed as it nears expiry.
+    pub fn codex(auth: CodexAuth) -> Self {
+        Self::with_connector(CodexConnector::new(auth), Limits::default())
+            .endpoint(Endpoint::Codex)
+    }
+
     /// A client over any connector, such as a simulated network in tests.
     pub fn with_connector<C: Connector>(connector: C, limits: Limits) -> Self {
         Self {
             transport: Transport::start(connector, limits),
+            endpoint: Endpoint::Api,
         }
+    }
+
+    /// Adapts sessions to `endpoint`'s requirements. [`Self::codex`] sets
+    /// it; a test connector to a Codex double needs it too.
+    pub fn endpoint(mut self, endpoint: Endpoint) -> Self {
+        self.endpoint = endpoint;
+        self
     }
 
     /// Opens a session for one run. If the model is in the model table,
@@ -83,6 +109,9 @@ impl OpenAi {
         let model = find(&settings.model);
         if let Some(model) = model {
             settings.reasoning_model = model.reasoning;
+        }
+        if self.endpoint == Endpoint::Codex {
+            codex_settings(&mut settings);
         }
         Ok(Session {
             lane: self.transport.open_lane().await?,
@@ -97,6 +126,15 @@ impl OpenAi {
     pub async fn stats(&self) -> Result<PoolStats, Stopped> {
         self.transport.stats().await
     }
+}
+
+/// What Codex expects of every request, as pi builds it: instructions
+/// always, and no `max_output_tokens`, which pi never sends there.
+fn codex_settings(settings: &mut Settings) {
+    if settings.instructions.as_deref().is_none_or(str::is_empty) {
+        settings.instructions = Some(DEFAULT_INSTRUCTIONS.to_owned());
+    }
+    settings.max_output_tokens = None;
 }
 
 /// One run's conversation with the model.
