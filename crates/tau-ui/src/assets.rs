@@ -40,6 +40,9 @@ pub enum Icon {
     Info,
     Down,
     Close,
+    Target,
+    Pause,
+    Pencil,
 }
 
 impl Icon {
@@ -75,6 +78,9 @@ impl Icon {
             Self::Info => "icons/info.svg",
             Self::Down => "icons/down.svg",
             Self::Close => "icons/close.svg",
+            Self::Target => "icons/target.svg",
+            Self::Pause => "icons/pause.svg",
+            Self::Pencil => "icons/pencil.svg",
         }
     }
 
@@ -145,13 +151,18 @@ impl Icon {
             Self::Arrow => r#"<path d="M5 12h14M13 6l6 6-6 6"/>"#,
             Self::Down => r#"<path d="M6 9l6 6 6-6"/>"#,
             Self::Close => r#"<path d="M6 6l12 12M18 6L6 18"/>"#,
+            Self::Target => {
+                r#"<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>"#
+            }
+            Self::Pause => r#"<path d="M9 5v14M15 5v14"/>"#,
+            Self::Pencil => r#"<path d="M4 20h4L19 9l-4-4L4 16z"/>"#,
             Self::Info => {
                 r#"<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>"#
             }
         }
     }
 
-    const ALL: [Self; 30] = [
+    const ALL: [Self; 33] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -182,6 +193,9 @@ impl Icon {
         Self::Info,
         Self::Down,
         Self::Close,
+        Self::Target,
+        Self::Pause,
+        Self::Pencil,
     ];
 
     fn svg(self) -> String {

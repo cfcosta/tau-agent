@@ -56,6 +56,8 @@ pub struct RunView {
     pub cost_before: f64,
     /// What tau-constitution checked and decided in the run.
     pub constitution: ConstitutionStats,
+    /// The conversation's goal, from tau-goal's reports and records.
+    pub goal: Option<tau_goal::Goal>,
     /// What the pruning plugin said about its pass, for the rewrite it
     /// explains, which comes right after.
     pending_rewrite: Option<String>,
@@ -196,6 +198,8 @@ impl RunStatus {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     User(String),
+    /// The person set a goal (`/goal`).
+    Goal(String),
     /// Assistant text; deltas append to the last one.
     Text(String),
     Thinking(String),
@@ -536,6 +540,7 @@ impl RunView {
             log: Vec::new(),
             cost_before: 0.0,
             constitution: ConstitutionStats::default(),
+            goal: None,
             pending_rewrite: None,
         }
     }
@@ -676,7 +681,9 @@ impl RunView {
     pub fn start_notes(&self) -> impl Iterator<Item = &PluginNote> {
         self.items
             .iter()
-            .take_while(|item| matches!(item, Item::User(_) | Item::Plugin(_)))
+            .take_while(|item| {
+                matches!(item, Item::User(_) | Item::Goal(_) | Item::Plugin(_))
+            })
             .filter_map(|item| match item {
                 Item::Plugin(note) => Some(note),
                 _ => None,
@@ -783,8 +790,27 @@ impl RunView {
     }
 
     /// Adds the user's message. The run's own events never carry it.
+    /// A person's message. A `/goal` shows as the goal it set; tau-goal
+    /// sending the model back, which history stores as a user message,
+    /// shows as tau-goal's note.
     pub fn push_user(&mut self, text: impl Into<String>) {
-        self.items.push(Item::User(text.into()));
+        let text = text.into();
+        if let Some(condition) = tau_goal::set_message(&text) {
+            self.items.push(Item::Goal(condition));
+        } else if let Some(said) =
+            text.strip_prefix(tau_goal::CONTINUATION_PREFIX)
+        {
+            let first = said.lines().next().unwrap_or_default();
+            self.push_note(PluginNote {
+                plugin: tau_goal::NAME.into(),
+                text: first.trim_end_matches('.').to_owned(),
+                detail: Some("before_stop".into()),
+                tone: Tone::Warn,
+                body: NoteBody::None,
+            });
+        } else {
+            self.items.push(Item::User(text));
+        }
     }
 
     pub fn push_note(&mut self, note: PluginNote) {
@@ -933,7 +959,8 @@ impl RunView {
             }),
             // The constitution's report of the hold already says it.
             RunEvent::Continued { plugin, .. }
-                if &**plugin == tau_constitution::NAME => {}
+                if &**plugin == tau_constitution::NAME
+                    || &**plugin == tau_goal::NAME => {}
             RunEvent::PluginReport { plugin, body, .. } => {
                 self.report(plugin, body)
             }
@@ -1188,6 +1215,10 @@ impl RunView {
         }
         if plugin == tau_fast_compaction::NAME {
             self.ledger_report(body);
+            return;
+        }
+        if plugin == tau_goal::NAME {
+            self.goal_report(body);
             return;
         }
         if plugin != tau_constitution::NAME {
@@ -1450,6 +1481,119 @@ impl RunView {
         self.update(RunUpdate::Ledger(entries));
     }
 
+    /// The goal as `records` leave it, from history: its checks show in
+    /// the Goal tab, and the continuations in the transcript already.
+    pub fn set_goal_records(&mut self, records: &[Value]) {
+        self.goal = tau_goal::Goal::fold(records);
+        for check in self.goal.iter().flat_map(|goal| &goal.checks) {
+            self.usage.plugin_cost += check.cost;
+        }
+        self.sync_goal_status();
+    }
+
+    /// What tau-goal did: the goal changes, and checks and stops show in
+    /// the transcript.
+    pub fn goal_report(&mut self, body: &Value) {
+        use tau_goal::{Exhausted, Goal, Record};
+        let Some(record) = Record::parse(body) else {
+            return;
+        };
+        Goal::apply(&mut self.goal, &record);
+        let plugin = tau_goal::NAME.to_owned();
+        let note = |text: String, detail: String, tone| PluginNote {
+            plugin: plugin.clone(),
+            text,
+            detail: Some(detail),
+            tone,
+            body: NoteBody::None,
+        };
+        match &record {
+            Record::Check(check) => {
+                self.usage.plugin_cost += check.cost;
+                let max = self.goal.as_ref().map_or(0, |g| g.max_continuations);
+                let (text, detail, tone) = if check.met {
+                    (
+                        "the goal is met".to_owned(),
+                        format!(
+                            "check {} · p {:.2} · the run stops",
+                            check.n, check.p
+                        ),
+                        Tone::Good,
+                    )
+                } else {
+                    let next = match check.continuation {
+                        Some(n) => format!("continuing {n} of {max}"),
+                        None => "not continuing".to_owned(),
+                    };
+                    (
+                        "the goal is not met yet".to_owned(),
+                        format!(
+                            "check {} · p {:.2} · {next}",
+                            check.n, check.p
+                        ),
+                        Tone::Warn,
+                    )
+                };
+                self.push_note(note(text, detail, tone));
+            }
+            Record::Stopped { why } => {
+                let why = match why {
+                    Exhausted::Continuations => "out of continuations",
+                    Exhausted::Budget => "out of budget",
+                };
+                self.push_note(note(
+                    format!("stopped the goal: {why}, and it is not met"),
+                    "before_stop".into(),
+                    Tone::Danger,
+                ));
+            }
+            Record::Error { message } => self.push_note(note(
+                message.clone(),
+                "not checked".into(),
+                Tone::Danger,
+            )),
+            _ => {}
+        }
+        self.sync_goal_status();
+    }
+
+    /// A change to the goal made here (pause, extend, clear), before
+    /// tau-goal stores and reports it.
+    pub fn apply_goal(&mut self, record: &tau_goal::Record) {
+        tau_goal::Goal::apply(&mut self.goal, record);
+        self.sync_goal_status();
+    }
+
+    /// The run's plugin list says where the goal stands.
+    fn sync_goal_status(&mut self) {
+        use tau_goal::Status;
+        let state = self.goal.as_ref().map(|goal| match goal.status {
+            Status::Active => format!(
+                "{} of {} continuations",
+                goal.continuations, goal.max_continuations
+            ),
+            Status::Paused => "paused".to_owned(),
+            Status::Met => format!("met at check {}", goal.checks.len()),
+            Status::Stopped(_) => "stopped, not met".to_owned(),
+        });
+        let found = self
+            .plugins
+            .iter()
+            .position(|status| status.name == tau_goal::NAME);
+        match (state, found) {
+            (Some(state), Some(at)) => self.plugins[at].state = state,
+            (Some(state), None) => self.plugins.push(PluginStatus {
+                name: tau_goal::NAME.into(),
+                state,
+                tone: Tone::Quiet,
+            }),
+            (None, Some(at)) => {
+                self.plugins.remove(at);
+            }
+            (None, None) => {}
+        }
+    }
+
     /// The run's plugin list says what the constitution did so far.
     fn sync_constitution_status(&mut self) {
         let state = self.constitution.summary();
@@ -1616,6 +1760,95 @@ mod tests {
 
     fn view() -> RunView {
         RunView::new(run(), "retry-after", "coder", "gpt-5.5")
+    }
+
+    #[test]
+    fn goals_show_as_their_card_notes_and_state() {
+        use tau_goal::{Check, Record, Status};
+        let mut view = view();
+        // As typed, and as history stores what the model got.
+        view.push_user("/goal --continuations 3 tests pass");
+        view.push_user(tau_goal::set_input("tests pass"));
+        assert_eq!(
+            view.items[..2],
+            [
+                Item::Goal("tests pass".into()),
+                Item::Goal("tests pass".into())
+            ]
+        );
+        let report = |view: &mut RunView, record: Record| {
+            view.apply(&RunEvent::PluginReport {
+                run: run(),
+                plugin: tau_goal::NAME.into(),
+                body: record.to_value(),
+            })
+        };
+        report(
+            &mut view,
+            Record::Set {
+                goal: "tests pass".into(),
+                continuations: 3,
+                budget: 2.0,
+            },
+        );
+        let check = |n, met, continuation| {
+            Record::Check(Check {
+                n,
+                met,
+                p: if met { 0.9 } else { 0.1 },
+                turn: n,
+                continuation,
+                cost: 0.001,
+                spent: 0.1,
+            })
+        };
+        report(&mut view, check(1, false, Some(1)));
+        // The continuation's event says nothing more than the check.
+        view.apply(&RunEvent::Continued {
+            run: run(),
+            plugin: tau_goal::NAME.into(),
+            message: "tau-goal: the goal is not met yet".into(),
+        });
+        report(&mut view, check(2, true, None));
+        let notes: Vec<(&str, Tone)> = view
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Plugin(note) => Some((note.text.as_str(), note.tone)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                ("the goal is not met yet", Tone::Warn),
+                ("the goal is met", Tone::Good)
+            ]
+        );
+        let goal = view.goal.clone().unwrap();
+        assert_eq!(goal.status, Status::Met);
+        assert_eq!(goal.continuations, 1);
+        assert!((view.usage.plugin_cost - 0.002).abs() < 1e-9);
+        let status = view
+            .plugins
+            .iter()
+            .find(|status| status.name == tau_goal::NAME)
+            .unwrap();
+        assert_eq!(status.state, "met at check 2");
+
+        // History: the continuation is tau-goal's note, not the person's.
+        let mut stored = self::view();
+        stored.push_user(format!(
+            "{}the goal is not met yet (check 1, probability 0.10).\nGoal: x",
+            tau_goal::CONTINUATION_PREFIX
+        ));
+        assert!(matches!(&stored.items[0], Item::Plugin(note)
+            if note.plugin == tau_goal::NAME
+                && note.text == "the goal is not met yet (check 1, probability 0.10)"));
+        // Clearing takes the goal and its plugin line away.
+        view.apply_goal(&Record::Cleared);
+        assert!(view.goal.is_none());
+        assert!(view.plugins.iter().all(|s| s.name != tau_goal::NAME));
     }
 
     #[test]

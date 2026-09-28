@@ -275,6 +275,40 @@ fn open_demo_screen(
             workspace.toggle_repo_menu("homelab.nix", cx);
             return;
         }
+        // /goal: the command menu, writing a goal, and a goal's states.
+        Some("slash") => {
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            workspace.set_composer("/", cx);
+            return;
+        }
+        Some("goal-args") => {
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            workspace.set_composer("/goal ", cx);
+            return;
+        }
+        Some(open @ ("goal" | "goal-met" | "goal-stopped" | "goal-sheet")) => {
+            let state = match open {
+                "goal-met" => "met",
+                "goal-stopped" => "stopped",
+                _ => "working",
+            };
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            for body in demo::goal_records(demo::GOAL, state) {
+                workspace.apply_event(
+                    &tau_agent::event::RunEvent::PluginReport {
+                        run: demo::run_id(),
+                        plugin: tau_goal::NAME.into(),
+                        body,
+                    },
+                    cx,
+                );
+            }
+            workspace.set_tab(tau_ui::ui::inspector::Tab::Goal, cx);
+            if open == "goal-sheet" {
+                workspace.toggle_sheet(cx);
+            }
+            return;
+        }
         Some("run-plugins") => {
             workspace.navigate(Route::Run(demo::run_id()), cx);
             workspace.set_tab(tau_ui::ui::inspector::Tab::Plugins, cx);

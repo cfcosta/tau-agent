@@ -440,7 +440,13 @@ fn coder(
         .name("coder")
         .model(model)
         .instructions(INSTRUCTIONS)
-        .limits(Limits::default().max_turns(MAX_TURNS)))
+        // Plugins that hold a stop cap themselves: the constitution by
+        // its holds, a goal by its continuations.
+        .limits(
+            Limits::default()
+                .max_turns(MAX_TURNS)
+                .max_continuations(u32::MAX),
+        ))
 }
 
 const INSTRUCTIONS: &str = "You are tau, a coding agent working in the \
@@ -779,6 +785,25 @@ impl Host {
         list.save(&self.config.repo_list)
     }
 
+    /// Stores a change to `run`'s goal for tau-goal, which reads it at
+    /// its next check, or when the run starts again.
+    pub fn goal_record(
+        &self,
+        run: &RunId,
+        record: &tau_goal::Record,
+    ) -> anyhow::Result<()> {
+        let entry = Entry::Plugin {
+            plugin: tau_goal::NAME.into(),
+            body: record.to_value().to_string(),
+        };
+        self.runtime.block_on(self.store.append_turn(
+            &run.0,
+            &[entry],
+            tau_store::TurnUsage::default(),
+        ))?;
+        Ok(())
+    }
+
     /// Remembers which repositories the sidebar shows open.
     pub fn set_open_repos(&self, open: Vec<String>) -> anyhow::Result<()> {
         let mut list = self.list.lock().expect("not poisoned");
@@ -919,6 +944,21 @@ impl Host {
             spend: 0.0,
             screen: Some(PluginScreen::Constitution),
         });
+        plugins.push(PluginInfo {
+            name: tau_goal::NAME.into(),
+            description: if jev {
+                "Keeps a conversation going until its /goal holds, checked \
+                 with Jev"
+                    .into()
+            } else {
+                "Keeps a conversation going until its /goal holds: needs a \
+                 TypeSafe key (Models)"
+                    .into()
+            },
+            seams: vec![Seam::Start, Seam::AfterTool, Seam::BeforeStop],
+            spend: 0.0,
+            screen: None,
+        });
         Catalog {
             agent: "coder".into(),
             agent_source: Some(source),
@@ -1006,10 +1046,14 @@ impl Host {
         let constitution = jev.map(|jev| {
             ConstitutionPlugin::from_file(jev, self.constitution_path(repo))
         });
+        // The conversation's goal, checked with Jev too; after the
+        // constitution, whose hold of a stop wins.
+        let goal = self.jev().map(tau_goal::GoalPlugin::new);
         let Some(project) = repo.project.wait() else {
             let tools = CodingTools::new(Root::new(repo.path.clone()));
             let agent = agent.plugin(tools);
-            return Ok((with_plugin(agent, constitution), None));
+            let agent = with_plugin(with_plugin(agent, constitution), goal);
+            return Ok((agent, None));
         };
         let name = workspace.unwrap_or_else(workspace_name);
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
@@ -1017,7 +1061,8 @@ impl Host {
             .plugin(CodingTools::new(Root::new(workspace.dir())))
             .plugin(VcsPlugin::new(workspace.vcs().clone()))
             .plugin(workspace);
-        Ok((with_plugin(agent, constitution), Some(name)))
+        let agent = with_plugin(with_plugin(agent, constitution), goal);
+        Ok((agent, Some(name)))
     }
 
     /// Jev, when there is a TypeSafe key (or one given for tests).
@@ -1824,6 +1869,11 @@ impl Host {
                         }
                     });
                 }
+                WorkspaceEvent::Goal { run, record } => {
+                    if let Err(error) = handler.goal_record(run, record) {
+                        eprintln!("tau-ui: cannot save the goal: {error:#}");
+                    }
+                }
                 WorkspaceEvent::Reviewed { run, call_id } => {
                     if let Err(error) = handler.set_reviewed(run, call_id) {
                         eprintln!("tau-ui: cannot save the review: {error:#}");
@@ -2445,7 +2495,10 @@ fn tests_passed(answer: &str) -> Option<String> {
 }
 
 /// `agent` with `plugin`, if there is one.
-fn with_plugin(agent: Agent, plugin: Option<ConstitutionPlugin>) -> Agent {
+fn with_plugin(
+    agent: Agent,
+    plugin: Option<impl tau_agent::plugin::Plugin>,
+) -> Agent {
     match plugin {
         Some(plugin) => agent.plugin(plugin),
         None => agent,
@@ -2692,6 +2745,13 @@ pub async fn history(
                 }
             }
         }
+        let goal: Vec<serde_json::Value> = store
+            .records(&record.id, tau_goal::NAME)
+            .await?
+            .iter()
+            .filter_map(|body| serde_json::from_str(body).ok())
+            .collect();
+        view.set_goal_records(&goal);
         if let RunKind::Fork { parent, fork_seq } = &record.kind {
             let turn = store
                 .plugin_entries(parent, WORKSPACE_PLUGIN)
@@ -2838,8 +2898,10 @@ fn clone_into_tau(
     .detach();
 }
 
-/// A short run title from the prompt: its first words.
+/// A short run title from the prompt: its first words, or its goal's.
 pub fn title(prompt: &str) -> String {
+    let goal = tau_goal::set_message(prompt);
+    let prompt = goal.as_deref().unwrap_or(prompt);
     let words: Vec<&str> = prompt
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
@@ -2860,5 +2922,9 @@ mod tests {
     fn titles_come_from_the_first_words() {
         assert_eq!(title("Fix the retry loop, please!"), "fix-the-retry-loop");
         assert_eq!(title("  ?! "), "untitled");
+        assert_eq!(
+            title("/goal --continuations 3 all tests pass"),
+            "all-tests-pass"
+        );
     }
 }

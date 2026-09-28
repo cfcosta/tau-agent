@@ -93,7 +93,10 @@ actions!(
         ShowMemory,
         ShowHistory,
         ShowPlugins,
-        Search
+        Search,
+        SlashUp,
+        SlashDown,
+        SlashComplete
     ]
 );
 
@@ -110,12 +113,23 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-3", ShowHistory, Some(CONTEXT)),
         KeyBinding::new("ctrl-4", ShowPlugins, Some(CONTEXT)),
         KeyBinding::new("ctrl-k", Search, Some(CONTEXT)),
+        // The composer's popover; elsewhere the keys go on.
+        KeyBinding::new("up", SlashUp, Some(CONTEXT)),
+        KeyBinding::new("down", SlashDown, Some(CONTEXT)),
+        KeyBinding::new("tab", SlashComplete, Some(CONTEXT)),
     ]);
 }
 
 /// What the user asked for. The host subscribes and acts on these.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorkspaceEvent {
+    /// Change a conversation's goal: pause, resume, extend or clear it.
+    /// The host stores the record for tau-goal, which reads it at its
+    /// next check.
+    Goal {
+        run: RunId,
+        record: tau_goal::Record,
+    },
     /// Start a new run with this prompt, on this model, in this
     /// repository.
     NewRun {
@@ -326,7 +340,7 @@ pub struct Workspace {
     pub(crate) back_stack: Vec<Route>,
     /// The run the composer and the inspector act on.
     current: Option<RunId>,
-    composer: Entity<TextInput>,
+    pub(crate) composer: Entity<TextInput>,
     pub(crate) history_filter: Entity<TextInput>,
     /// History's query box, and what the last query returned.
     pub(crate) query: Entity<TextInput>,
@@ -409,6 +423,14 @@ pub struct Workspace {
     /// The dialog that asks for the TypeSafe key, with its field.
     pub(crate) adding_jev_key: bool,
     pub(crate) jev_key: Entity<TextInput>,
+    /// The composer popover's selected row, the text it was dismissed
+    /// for (Esc), and the text it last saw.
+    pub(crate) slash_selected: usize,
+    pub(crate) slash_dismissed: Option<String>,
+    pub(crate) slash_seen: String,
+    /// The `/goal` popover's limits.
+    pub(crate) goal_continuations: Entity<TextInput>,
+    pub(crate) goal_budget: Entity<TextInput>,
     scroll: ScrollHandle,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
     /// turns it off; scrolling back down turns it on.
@@ -492,14 +514,34 @@ impl Workspace {
             .keep_on_submit()
         });
         let jev_key = cx.new(|cx| TextInput::new("ts-…", cx).masked());
+        let limit = |text: String, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                let mut input = TextInput::new("", cx).keep_on_submit();
+                input.set_text(text, cx);
+                input
+            })
+        };
+        let goal_continuations =
+            limit(tau_goal::DEFAULT_CONTINUATIONS.to_string(), cx);
+        let goal_budget = limit(format!("{:.2}", tau_goal::DEFAULT_BUDGET), cx);
         let subscriptions = vec![
             cx.subscribe_in(
                 &composer,
                 window,
-                |ws, _, event: &InputEvent, _, cx| match event {
-                    InputEvent::Submit(text) => ws.submit(text.clone(), cx),
+                |ws, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::Submit(text) => {
+                        ws.submit_in(text.clone(), Some(window), cx)
+                    }
                 },
             ),
+            // Its popover follows what is typed.
+            cx.observe(&composer, |ws, _, cx| ws.composer_changed(cx)),
+            cx.subscribe(&goal_continuations, |ws, _, _: &InputEvent, cx| {
+                ws.submit_from_button(cx)
+            }),
+            cx.subscribe(&goal_budget, |ws, _, _: &InputEvent, cx| {
+                ws.submit_from_button(cx)
+            }),
             // Filters apply as you type.
             cx.observe(&history_filter, |_, _, cx| cx.notify()),
             cx.observe(&memory_search, |_, _, cx| cx.notify()),
@@ -599,6 +641,11 @@ impl Workspace {
             rule_on,
             adding_jev_key: false,
             jev_key,
+            slash_selected: 0,
+            slash_dismissed: None,
+            slash_seen: String::new(),
+            goal_continuations,
+            goal_budget,
             scroll: ScrollHandle::new(),
             follow: true,
             focus: cx.focus_handle(),
@@ -1134,6 +1181,10 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn sheet_is_open(&self) -> bool {
+        self.sheet_open
+    }
+
     pub fn toggle_sheet(&mut self, cx: &mut Context<Self>) {
         self.sheet_open = !self.sheet_open;
         cx.notify();
@@ -1146,11 +1197,41 @@ impl Workspace {
 
     /// Submits `text` as if typed into the composer: it steers the open
     /// run if one is live, or starts a new run.
+    /// What the composer holds.
+    pub fn composer_text<'a>(&self, cx: &'a gpui::App) -> &'a str {
+        self.composer.read(cx).text()
+    }
+
+    /// Puts `text` in the composer, as if typed.
+    pub fn set_composer(&mut self, text: &str, cx: &mut Context<Self>) {
+        let text = text.to_owned();
+        self.composer
+            .update(cx, |input, cx| input.set_text(text, cx));
+        self.composer_changed(cx);
+    }
+
     pub fn submit_prompt(&mut self, text: String, cx: &mut Context<Self>) {
         self.submit(text, cx);
     }
 
     fn submit(&mut self, text: String, cx: &mut Context<Self>) {
+        self.submit_in(text, None, cx);
+    }
+
+    /// Sends the composer's `text`, or runs it when it is a command.
+    fn submit_in(
+        &mut self,
+        text: String,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.run_slash(&text, window, cx) {
+            return;
+        }
+        self.send(text, cx);
+    }
+
+    pub(crate) fn send(&mut self, text: String, cx: &mut Context<Self>) {
         let text = self.with_attachments(text);
         if let Some((run, turn)) = self.forking.take() {
             cx.emit(WorkspaceEvent::Fork {
@@ -1172,7 +1253,7 @@ impl Workspace {
             // A finished chat goes on.
             Some(run) => {
                 let run = run.id.clone();
-                self.resume(&run, text, cx);
+                self.resume_run(&run, text, cx);
             }
             _ => cx.emit(WorkspaceEvent::NewRun {
                 prompt: text,
@@ -1185,7 +1266,12 @@ impl Workspace {
 
     /// Sends `text` to a finished run: it shows at once, the run moves to
     /// the top of the list, and the host starts it again.
-    fn resume(&mut self, run: &RunId, text: String, cx: &mut Context<Self>) {
+    pub(crate) fn resume_run(
+        &mut self,
+        run: &RunId,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
         let Some(at) = self.runs.iter().position(|view| &view.id == run) else {
             return;
         };
@@ -1213,7 +1299,10 @@ impl Workspace {
         };
         if let Some(view) = self.runs.iter_mut().find(|view| &view.id == run) {
             view.status = status;
-            if matches!(view.items.last(), Some(crate::view::Item::User(_))) {
+            if matches!(
+                view.items.last(),
+                Some(crate::view::Item::User(_) | crate::view::Item::Goal(_))
+            ) {
                 view.items.pop();
             }
         }
@@ -1761,7 +1850,8 @@ impl Workspace {
 
     /// Esc: closes a dialog if one is open, else goes back.
     pub fn escape(&mut self, cx: &mut Context<Self>) {
-        if self.dialog.is_some() {
+        if self.slash_dismiss(cx) {
+        } else if self.dialog.is_some() {
             self.dismiss_alert(cx);
         } else if self.searching {
             self.close_search(cx);
@@ -2128,10 +2218,12 @@ impl Workspace {
         };
 
         div()
+            .relative()
             .flex_shrink_0()
             .flex()
             .flex_col()
             .gap(sp(2.))
+            .children(self.slash_popover(compact, t, cx))
             .px(sp(if compact { 3. } else { 6. }))
             .pt(sp(if compact { 2.5 } else { 0. }))
             .pb(sp(if compact { 4.5 } else { 4. }))
@@ -2345,7 +2437,7 @@ impl Workspace {
     }
 
     fn inspector(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let tabs = Tab::ALL.into_iter().map(|tab| {
+        let tabs = Tab::of(self.current()).into_iter().map(|tab| {
             div()
                 .id(tab.label())
                 .child(inspector::tab_label(tab, tab == self.tab, t))
@@ -2398,6 +2490,11 @@ impl Workspace {
             .flex()
             .flex_col()
             .when(!compact, |screen| screen.child(self.run_header(t, cx)))
+            .when(!compact && self.route != Route::NewRun, |screen| {
+                screen.children(
+                    self.current().and_then(|run| self.goal_banner(run, t, cx)),
+                )
+            })
             .child(self.transcript(compact, t, cx))
             .child(self.composer(compact, t, cx))
     }
@@ -2523,6 +2620,7 @@ impl Workspace {
         match (&self.route, self.current()) {
             (Route::Run(_), Some(run)) => screen
                 .child(chrome::phone_run_bar(run, t, cx))
+                .children(self.phone_goal_bar(run, t, cx))
                 .child(self.run_screen(true, t, cx))
                 .when(self.sheet_open, |screen| {
                     screen.child(self.sheet(run, t, cx))
@@ -2556,7 +2654,9 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let segments = Tab::ALL.into_iter().map(|tab| {
+        let tabs = Tab::of(Some(run));
+        let count = tabs.len();
+        let segments = tabs.into_iter().map(|tab| {
             let active = tab == self.tab;
             div()
                 .id(("sheet-tab", tab as usize))
@@ -2613,7 +2713,7 @@ impl Workspace {
                     .child(
                         div()
                             .grid()
-                            .grid_cols(Tab::ALL.len() as u16)
+                            .grid_cols(count as u16)
                             .gap(sp(1.))
                             .p(sp(1.))
                             .rounded(radius::LARGE)
@@ -2767,6 +2867,21 @@ impl Render for Workspace {
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|ws, _: &GoBack, _, cx| ws.escape(cx)))
+            .on_action(cx.listener(|ws, _: &SlashUp, _, cx| {
+                if !ws.slash_move(-1, cx) {
+                    cx.propagate();
+                }
+            }))
+            .on_action(cx.listener(|ws, _: &SlashDown, _, cx| {
+                if !ws.slash_move(1, cx) {
+                    cx.propagate();
+                }
+            }))
+            .on_action(cx.listener(|ws, _: &SlashComplete, _, cx| {
+                if !ws.slash_complete(cx) {
+                    cx.propagate();
+                }
+            }))
             .on_action(cx.listener(|ws, _: &NewRun, window, cx| {
                 ws.start_new_run(window, cx)
             }))

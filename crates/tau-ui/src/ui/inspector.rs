@@ -26,18 +26,35 @@ use crate::{
 pub enum Tab {
     #[default]
     Run,
+    /// Only while the conversation has a goal.
+    Goal,
     Context,
     Plugins,
     Events,
 }
 
 impl Tab {
-    pub const ALL: [Self; 4] =
-        [Self::Run, Self::Context, Self::Plugins, Self::Events];
+    pub const ALL: [Self; 5] = [
+        Self::Run,
+        Self::Goal,
+        Self::Context,
+        Self::Plugins,
+        Self::Events,
+    ];
+
+    /// The tabs `run` has: Goal only with a goal.
+    pub fn of(run: Option<&RunView>) -> Vec<Self> {
+        let goal = run.is_some_and(|run| run.goal.is_some());
+        Self::ALL
+            .into_iter()
+            .filter(|tab| *tab != Self::Goal || goal)
+            .collect()
+    }
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Run => "Run",
+            Self::Goal => "Goal",
             Self::Context => "Context",
             Self::Plugins => "Plugins",
             Self::Events => "Events",
@@ -62,6 +79,12 @@ pub fn content(
                 body.child(heading("Plugins", t))
                     .child(plugin_states(ws, run, t, cx))
             }
+        }
+        Tab::Goal if run.goal.is_some() => crate::goal::tab(run, body, t),
+        Tab::Goal => {
+            let body = run_tab(ws, run, body, t, cx);
+            body.child(heading("Plugins", t))
+                .child(plugin_states(ws, run, t, cx))
         }
         Tab::Context => context_tab(run, body, t, cx),
         Tab::Plugins => plugins_tab(ws, run, body, t, cx),

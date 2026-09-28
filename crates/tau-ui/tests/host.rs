@@ -970,3 +970,116 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
     until_end(&mut events);
     wait_until_done(&host, &run.id);
 }
+
+#[test]
+fn a_goal_keeps_the_chat_going_until_it_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("tried"))
+        .turn(|t| t.text("tests pass now"))
+        .turn(|t| t.text("paused, so it stops"))
+        .turn(|t| t.text("done for real"));
+    let (host, mut events) = host_on(llm.clone(), dir.path());
+    // Not met, then met; then not met on every later check.
+    let answers =
+        std::sync::Arc::new(std::sync::Mutex::new(vec![0.1, 0.95, 0.2]));
+    // Only the goal's question: tau-reasoning asks too, for "auto".
+    let jev = tau_jev::fake::FakeJev::new(move |request| {
+        if !request.questions.contains_key("met") {
+            return Err(tau_jev::JevError::Status(400));
+        }
+        let mut answers = answers.lock().unwrap();
+        let p = if answers.len() > 1 {
+            answers.remove(0)
+        } else {
+            answers[0]
+        };
+        let answers = request
+            .questions
+            .keys()
+            .map(|id| (id.clone(), tau_jev::Answer::Noul { noul: p }))
+            .collect();
+        Ok(tau_jev::fake::response(answers, request))
+    });
+    let host = host.with_jev(std::sync::Arc::new(jev.clone()));
+    assert!(
+        host.catalog()
+            .plugins
+            .iter()
+            .any(|p| p.name == tau_goal::NAME)
+    );
+
+    let prompt = "/goal --continuations 3 the tests pass";
+    let mut view = host.start(prompt, &ModelChoice::default(), "").unwrap();
+    assert_eq!(view.title, "the-tests-pass");
+    for event in until_end(&mut events) {
+        view.apply(&event);
+    }
+    wait_until_done(&host, &view.id);
+    assert_eq!(llm.requests().len(), 2, "sent back once");
+    let goal = view.goal.clone().expect("the goal shows live");
+    assert_eq!(goal.condition, "the tests pass");
+    assert_eq!(goal.status, tau_goal::Status::Met);
+    assert_eq!((goal.continuations, goal.max_continuations), (1, 3));
+    let notes: Vec<String> = view
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Plugin(note) if note.plugin == tau_goal::NAME => {
+                Some(note.text.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notes, ["the goal is not met yet", "the goal is met"]);
+
+    // History has the goal: the card, the continuation as tau-goal's
+    // note, and the state from the records.
+    let history = host.history().unwrap();
+    let stored = &history[0];
+    assert_eq!(stored.goal, view.goal);
+    assert!(matches!(&stored.items[0], Item::Goal(c) if c == "the tests pass"));
+    assert!(stored.items.iter().any(|item| matches!(item,
+        Item::Plugin(note) if note.plugin == tau_goal::NAME)));
+    assert!(
+        !stored
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::User(text)
+            if text.starts_with(tau_goal::CONTINUATION_PREFIX))),
+        "no continuation shows as the person's message"
+    );
+
+    // A met goal is not checked again; a new one is, until paused. This
+    // one runs out at once, then gets one more continuation, paused.
+    let goal_checks = || {
+        jev.requests()
+            .iter()
+            .filter(|request| request.questions.contains_key("met"))
+            .count()
+    };
+    let asked = goal_checks();
+    host.resume(
+        &view.id,
+        "/goal --continuations 0 it is released",
+        &ModelChoice::default(),
+    )
+    .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &view.id);
+    assert_eq!(goal_checks(), asked + 1);
+    host.goal_record(&view.id, &tau_goal::Record::Extended { by: 1 })
+        .unwrap();
+    host.goal_record(&view.id, &tau_goal::Record::Paused)
+        .unwrap();
+    host.resume(&view.id, "one more thing", &ModelChoice::default())
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &view.id);
+    assert_eq!(goal_checks(), asked + 1, "paused: not checked");
+    let goal = host.history().unwrap()[0].goal.clone().unwrap();
+    assert_eq!(goal.condition, "it is released");
+    assert_eq!(goal.status, tau_goal::Status::Paused);
+    assert_eq!(goal.max_continuations, 1);
+    llm.assert_exhausted();
+}

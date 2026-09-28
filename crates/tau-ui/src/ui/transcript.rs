@@ -70,6 +70,9 @@ fn item_view(
 ) -> AnyElement {
     match item {
         Item::User(text) => user(text, t, compact).into_any_element(),
+        Item::Goal(condition) => {
+            goal_set(run, condition, t, compact).into_any_element()
+        }
         Item::Text(text) => div()
             .max_w(px(760.))
             .text_color(t.text_soft)
@@ -195,6 +198,51 @@ fn user(text: &str, t: &Theme, compact: bool) -> Div {
                                 t.muted,
                             ))
                             .child(name.to_owned())
+                    }),
+                ))
+            }),
+    )
+}
+
+/// The person setting a goal: the condition, and the goal's limits
+/// while it is the conversation's goal.
+fn goal_set(run: &RunView, condition: &str, t: &Theme, compact: bool) -> Div {
+    let limits = run
+        .goal
+        .as_ref()
+        .filter(|goal| goal.condition == condition)
+        .map(|goal| {
+            [
+                format!("up to {} continuations", goal.max_continuations),
+                format!("{} budget", usd(goal.budget)),
+                "checked by Jev".to_owned(),
+            ]
+        });
+    div().flex().justify_end().child(
+        super::bubble(t)
+            .border_color(t.accent_border)
+            .max_w(px(if compact { 300. } else { 620. }))
+            .flex()
+            .flex_col()
+            .gap(sp(2.))
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(sp(2.))
+                    .child(icon(Icon::Target, IconSize::BASE, t.accent))
+                    .child(mono("/goal", Type::CAPTION, t.accent))
+                    .child(div().flex_1().child(rich(condition, t.text, t))),
+            )
+            .when_some(limits, |bubble, limits| {
+                bubble.child(div().flex().flex_wrap().gap(sp(1.5)).children(
+                    limits.into_iter().map(|limit| {
+                        mono(limit, Type::MICRO, t.muted)
+                            .px(sp(2.))
+                            .py(sp(0.5))
+                            .border_1()
+                            .border_color(t.border)
+                            .rounded(radius::LARGE)
                     }),
                 ))
             }),
@@ -700,7 +748,11 @@ fn plugin_note(
                 .justify_center()
                 .rounded(radius::TAG)
                 .bg(t.info_surface)
-                .child(icon(Icon::Plug, IconSize::COMPACT, t.blue)),
+                .child(if note.plugin == tau_goal::NAME {
+                    icon(Icon::Target, IconSize::COMPACT, t.tone(note.tone))
+                } else {
+                    icon(Icon::Plug, IconSize::COMPACT, t.blue)
+                }),
         )
         .child(
             mono(note.plugin.clone(), Type::CAPTION, t.tone(note.tone))

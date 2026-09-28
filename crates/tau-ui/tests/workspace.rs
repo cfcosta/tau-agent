@@ -1095,3 +1095,206 @@ fn attached_files_go_with_the_next_message(cx: &mut TestAppContext) {
         "{prompt}"
     );
 }
+
+fn composer_slash(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+    text: &str,
+) -> tau_ui::slash::Slash {
+    workspace.update(cx, |ws, cx| {
+        ws.set_composer(text, cx);
+        ws.composer_slash(cx)
+    })
+}
+
+fn names(slash: tau_ui::slash::Slash) -> Vec<&'static str> {
+    match slash {
+        tau_ui::slash::Slash::Menu(commands) => {
+            commands.iter().map(|command| command.name).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[gpui::test]
+fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let done = tau_agent::tool::RunId("plugin-docs".into());
+    workspace.update(&mut cx, |ws, cx| ws.navigate(Route::NewRun, cx));
+    // A new run has no conversation to fork, close or open a PR from.
+    assert_eq!(
+        names(composer_slash(&workspace, &mut cx, "/")),
+        ["/goal", "/model", "/attach"]
+    );
+    workspace
+        .update(&mut cx, |ws, cx| ws.navigate(Route::Run(done.clone()), cx));
+    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 6);
+    assert_eq!(names(composer_slash(&workspace, &mut cx, "/fo")), ["/fork"]);
+    // Not a command: a message.
+    assert_eq!(
+        composer_slash(&workspace, &mut cx, "/usr/bin is slow"),
+        tau_ui::slash::Slash::None
+    );
+    assert_eq!(
+        composer_slash(&workspace, &mut cx, "/nope"),
+        tau_ui::slash::Slash::None
+    );
+    workspace.update(&mut cx, |ws, cx| {
+        // ↑↓ wrap around; Tab completes the one selected.
+        ws.set_composer("/", cx);
+        assert!(ws.slash_move(-1, cx));
+        assert!(ws.slash_complete(cx));
+        assert_eq!(ws.composer_text(cx), "/close");
+        // Esc closes the menu until the text changes.
+        ws.set_composer("/", cx);
+        assert!(ws.slash_dismiss(cx));
+        assert_eq!(ws.composer_slash(cx), tau_ui::slash::Slash::None);
+        ws.set_composer("/g", cx);
+        assert_ne!(ws.composer_slash(cx), tau_ui::slash::Slash::None);
+        // Enter on a command being typed runs it.
+        ws.submit_prompt("/cl".into(), cx);
+        assert!(ws.is_closed(&done));
+        // Enter on /go puts /goal in the composer, to write the goal.
+        ws.navigate(Route::Run(done.clone()), cx);
+        ws.submit_prompt("/go".into(), cx);
+        assert_eq!(ws.composer_text(cx), "/goal ");
+    });
+    let events = events.borrow();
+    assert!(events.contains(&WorkspaceEvent::CloseRun { run: done }));
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            WorkspaceEvent::Resume { .. } | WorkspaceEvent::NewRun { .. }
+        )),
+        "no command was sent as a message: {events:?}"
+    );
+}
+
+#[gpui::test]
+fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let done = tau_agent::tool::RunId("plugin-docs".into());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(done.clone()), cx);
+        // Suggestions: goals set on other conversations.
+        let suggested: Vec<String> = ws
+            .goal_suggestions("")
+            .into_iter()
+            .map(|pick| pick.condition)
+            .collect();
+        assert_eq!(
+            suggested,
+            [
+                "Every mutant in retry.rs is caught",
+                "Every lane has an owner in lanes.toml"
+            ]
+        );
+        assert_eq!(ws.goal_suggestions("lane").len(), 1);
+        // Enter on an empty /goal takes the selected suggestion.
+        ws.set_composer("/goal ", cx);
+        ws.slash_move(1, cx);
+        ws.submit_prompt("/goal".into(), cx);
+    });
+    workspace.update(&mut cx, |ws, cx| {
+        let view = ws.run(&done).unwrap();
+        assert!(matches!(view.items.last(),
+            Some(Item::Goal(c)) if c == "Every lane has an owner in lanes.toml"));
+        // Going on now: a new goal is stored for its next stop, and the
+        // model is told. Typed limits win over the popover's.
+        ws.set_composer("", cx);
+        ws.submit_prompt("/goal --continuations 3 it ships".into(), cx);
+    });
+    {
+        let events = events.borrow();
+        let prompts: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                WorkspaceEvent::Resume { prompt, .. } => Some(prompt.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            prompts,
+            ["/goal --continuations 10 --budget 2.00 Every lane has an \
+              owner in lanes.toml"]
+        );
+        assert!(events.contains(&WorkspaceEvent::Goal {
+            run: done.clone(),
+            record: tau_goal::Record::Set {
+                goal: "it ships".into(),
+                continuations: 3,
+                budget: 2.0,
+            },
+        }));
+        assert!(events.contains(&WorkspaceEvent::Steer {
+            run: done.clone(),
+            text: tau_goal::set_input("it ships"),
+        }));
+    }
+    events.borrow_mut().clear();
+
+    // Without a TypeSafe key, the goal is not sent: nothing would check it.
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = demo::catalog();
+        catalog.models.access.jev = false;
+        ws.set_catalog(catalog, cx);
+        ws.navigate(Route::NewRun, cx);
+        ws.submit_prompt("/goal it ships".into(), cx);
+        assert!(ws.alert().is_some());
+        assert_eq!(ws.composer_text(cx), "/goal it ships");
+    });
+    assert!(events.borrow().is_empty());
+}
+
+#[gpui::test]
+fn goal_buttons_store_changes_and_keep_going(cx: &mut TestAppContext) {
+    use tau_goal::{Record, Status};
+    let (workspace, mut cx, events) = open_demo(cx);
+    let stopped = tau_agent::tool::RunId("lane-audit".into());
+    let met = tau_agent::tool::RunId("mutants-triage".into());
+    workspace.update(&mut cx, |ws, cx| {
+        use tau_ui::ui::inspector::Tab;
+        assert!(Tab::of(ws.run(&stopped)).contains(&Tab::Goal));
+        let done = tau_agent::tool::RunId("plugin-docs".into());
+        assert!(!Tab::of(ws.run(&done)).contains(&Tab::Goal));
+
+        // Keep going: more continuations, and the conversation goes on.
+        ws.navigate(Route::Run(stopped.clone()), cx);
+        ws.keep_going(&stopped, cx);
+        let goal = ws.run(&stopped).unwrap().goal.clone().unwrap();
+        assert_eq!(goal.status, Status::Active);
+        assert_eq!(goal.max_continuations, 12);
+        // Edit puts the goal back in the composer.
+        ws.edit_goal(&stopped, cx);
+        assert_eq!(
+            ws.composer_text(cx),
+            "/goal Every lane has an owner in lanes.toml"
+        );
+        ws.pause_goal(&stopped, cx);
+        assert_eq!(
+            ws.run(&stopped).unwrap().goal.as_ref().unwrap().status,
+            Status::Paused
+        );
+        ws.clear_goal(&met, cx);
+        assert!(ws.run(&met).unwrap().goal.is_none());
+    });
+    let events = events.borrow();
+    let records: Vec<(&str, &Record)> = events
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::Goal { run, record } => Some((&*run.0, record)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        records,
+        [
+            ("lane-audit", &Record::Extended { by: 10 }),
+            ("lane-audit", &Record::Paused),
+            ("mutants-triage", &Record::Cleared),
+        ]
+    );
+    assert!(events.iter().any(|event| matches!(event,
+        WorkspaceEvent::Resume { run, prompt, .. }
+            if run == &stopped && prompt == tau_ui::goal::KEEP_GOING)));
+}

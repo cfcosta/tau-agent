@@ -610,13 +610,33 @@ fn run_row(
     let hovered = ws.hovered_run.as_ref() == Some(&run.id);
     let unread = ws.unread(run);
     let (hover_id, close_id) = (run.id.clone(), run.id.clone());
+    // A goal adds its line under the title, and its count at the end.
+    let goal = run.goal.as_ref().map(|goal| {
+        let tone = crate::goal::tone(goal, t);
+        let line = match goal.status {
+            tau_goal::Status::Met => format!("goal met · {}", goal.condition),
+            tau_goal::Status::Stopped(_) => {
+                format!("goal not met · {}", goal.condition)
+            }
+            _ => format!("goal · {}", goal.condition),
+        };
+        (tone, line, crate::goal::badge(goal))
+    });
+    let title = div()
+        .truncate()
+        .text_color(if active { t.text } else { t.text_soft })
+        .when(active || unread > 0, |title| {
+            title.font_weight(weight::EMPHASIS)
+        })
+        .child(run.title.clone());
     div()
         .id(SharedString::from(format!("run-{}", run.id)))
         .flex()
         .flex_shrink_0()
         .items_center()
         .gap(sp(2.5))
-        .h(px(34.))
+        .min_h(px(34.))
+        .py(sp(goal.as_ref().map_or(0., |_| 1.5)))
         .pl(sp(if nested { 7. } else { 2.5 }))
         .pr(sp(2.))
         .rounded(radius::CONTROL)
@@ -636,12 +656,23 @@ fn run_row(
             div()
                 .flex_1()
                 .min_w(px(0.))
-                .truncate()
-                .text_color(if active { t.text } else { t.text_soft })
-                .when(active || unread > 0, |title| {
-                    title.font_weight(weight::EMPHASIS)
-                })
-                .child(run.title.clone()),
+                .flex()
+                .flex_col()
+                .gap(sp(0.25))
+                .child(title)
+                .when_some(goal.clone(), |column, (tone, line, _)| {
+                    column.child(
+                        div()
+                            .truncate()
+                            .typeset(Type::MICRO)
+                            .text_color(if tone == t.accent {
+                                t.dim
+                            } else {
+                                tone
+                            })
+                            .child(line),
+                    )
+                }),
         )
         .map(|row| {
             if hovered {
@@ -662,6 +693,15 @@ fn run_row(
                 )
             } else if unread > 0 {
                 row.child(super::count_pill(unread, t))
+            } else if let Some((tone, _, badge)) = goal {
+                row.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(sp(1.))
+                        .child(icon(Icon::Target, IconSize::SMALL, tone))
+                        .child(mono(badge, Type::MICRO, tone)),
+                )
             } else if nested && run.status.is_live() {
                 row.child(dot(t.accent, 6.))
             } else {
@@ -1161,6 +1201,18 @@ fn phone_run_row(
     } else {
         label.to_string()
     };
+    // With a goal, the line under the title is where the goal stands.
+    let (meta, color) = match &run.goal {
+        Some(goal) => (
+            format!("goal · {}", crate::goal::status_line(goal)),
+            crate::goal::tone(goal, t),
+        ),
+        None => (meta, color),
+    };
+    let badge = run
+        .goal
+        .as_ref()
+        .map(|goal| (crate::goal::badge(goal), crate::goal::tone(goal, t)));
     div()
         .id(SharedString::from(format!("phone-run-{}", run.id)))
         .flex()
@@ -1187,9 +1239,12 @@ fn phone_run_row(
                         })
                         .child(run.title.clone()),
                 )
-                .child(mono(meta, Type::MICRO, color)),
+                .child(mono(meta, Type::MICRO, color).truncate()),
         )
         .when(unread > 0, |row| row.child(super::count_pill(unread, t)))
+        .when_some(badge.filter(|_| unread == 0), |row, (badge, tone)| {
+            row.child(mono(badge, Type::CAPTION, tone))
+        })
         .on_click(
             cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
         )

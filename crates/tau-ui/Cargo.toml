@@ -21,6 +21,7 @@ tau-agent.workspace = true
 tau-ai.workspace = true
 tau-compaction.workspace = true
 tau-constitution.workspace = true
+tau-goal.workspace = true
 tau-jev.workspace = true
 tau-reasoning.workspace = true
 tau-fast-compaction.workspace = true
