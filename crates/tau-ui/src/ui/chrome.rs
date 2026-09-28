@@ -110,6 +110,7 @@ pub fn title_bar(
         .child(div().flex_1())
         .child(
             div()
+                .id("open-search")
                 .flex()
                 .items_center()
                 .gap(sp(2.))
@@ -120,9 +121,16 @@ pub fn title_bar(
                 .border_color(t.border)
                 .rounded(radius::CONTROL)
                 .text_color(t.dim)
+                .cursor_pointer()
+                .hover(|style| style.border_color(t.border_strong))
                 .child(icon(Icon::Search, IconSize::BASE, t.dim))
-                .child(div().flex_1().child("Search runs, agents, commands"))
-                .child(mono("Ctrl K", Type::MICRO, t.dim)),
+                .child(
+                    div().flex_1().child("Search runs, repositories, actions"),
+                )
+                .child(mono("Ctrl K", Type::MICRO, t.dim))
+                .on_click(
+                    cx.listener(|ws, _, window, cx| ws.open_search(window, cx)),
+                ),
         )
         .child(div().flex_1())
         .child(

@@ -51,6 +51,7 @@ pub mod picker;
 pub mod pull_request;
 pub mod repos;
 pub mod route;
+pub mod search;
 pub mod setup;
 pub mod theme;
 pub mod ui;

@@ -1004,3 +1004,42 @@ fn a_reviewed_call_leaves_the_queue_for_good(cx: &mut TestAppContext) {
         })
     );
 }
+
+#[gpui::test]
+fn search_finds_runs_repositories_and_actions(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.read_with(&cx, |ws, _| {
+        use tau_ui::search::Pick;
+        let hits = ws.search_hits("rerank");
+        assert_eq!(hits[0].label, "rerank-latency");
+        assert_eq!(hits[0].detail, "run in docbert");
+        // Every word must match.
+        assert!(ws.search_hits("rerank homelab").is_empty());
+        let hits = ws.search_hits("homelab");
+        assert!(
+            hits.iter()
+                .any(|hit| hit.pick == Pick::Repo("homelab.nix".into()))
+        );
+        assert!(
+            hits.iter()
+                .any(|hit| hit.pick == Pick::NewRunIn("homelab.nix".into()))
+        );
+        let hits = ws.search_hits("history");
+        assert_eq!(hits[0].pick, Pick::Screen(Route::History));
+        // Nothing typed: repositories and things to do.
+        assert!(!ws.search_hits("").is_empty());
+    });
+    // Ctrl K, a query, Enter: the conversation opens.
+    cx.simulate_keystrokes("ctrl-k");
+    workspace.read_with(&cx, |ws, _| assert!(ws.is_searching()));
+    cx.simulate_input("backup");
+    cx.simulate_keystrokes("enter");
+    workspace.read_with(&cx, |ws, _| {
+        assert!(!ws.is_searching());
+        assert_eq!(
+            ws.route(),
+            &Route::Run(tau_agent::tool::RunId("backup-timer".into()))
+        );
+        assert_eq!(ws.selected_repo(), Some("homelab.nix"));
+    });
+}

@@ -92,7 +92,8 @@ actions!(
         ShowRuns,
         ShowMemory,
         ShowHistory,
-        ShowPlugins
+        ShowPlugins,
+        Search
     ]
 );
 
@@ -108,6 +109,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-2", ShowMemory, Some(CONTEXT)),
         KeyBinding::new("ctrl-3", ShowHistory, Some(CONTEXT)),
         KeyBinding::new("ctrl-4", ShowPlugins, Some(CONTEXT)),
+        KeyBinding::new("ctrl-k", Search, Some(CONTEXT)),
     ]);
 }
 
@@ -329,6 +331,9 @@ pub struct Workspace {
     /// History's query box, and what the last query returned.
     pub(crate) query: Entity<TextInput>,
     pub(crate) query_result: Option<Result<tau_store::Table, String>>,
+    /// The search palette, and what is typed in it.
+    pub(crate) searching: bool,
+    pub(crate) search: Entity<TextInput>,
     pub(crate) memory_search: Entity<TextInput>,
     tab: Tab,
     sheet_open: bool,
@@ -438,6 +443,10 @@ impl Workspace {
             TextInput::new("Filter by run, repository, model or stop", cx)
         });
         let memory_search = cx.new(|cx| TextInput::new("Search notes", cx));
+        let search = cx.new(|cx| {
+            TextInput::new("Search runs, repositories, actions", cx)
+                .keep_on_submit()
+        });
         let query = cx.new(|cx| {
             let mut input =
                 TextInput::new("select … from runs", cx).keep_on_submit();
@@ -499,6 +508,15 @@ impl Workspace {
                 let InputEvent::Submit(path) = event;
                 ws.submit_repo_path(path.clone(), cx);
             }),
+            cx.subscribe_in(
+                &search,
+                window,
+                |ws, _, event: &InputEvent, window, cx| {
+                    let InputEvent::Submit(_) = event;
+                    ws.pick_first(window, cx);
+                },
+            ),
+            cx.observe(&search, |_, _, cx| cx.notify()),
             cx.subscribe(&query, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(_) = event;
                 ws.run_query(cx);
@@ -534,6 +552,8 @@ impl Workspace {
             history_filter,
             query,
             query_result: None,
+            searching: false,
+            search,
             memory_search,
             tab: Tab::Run,
             sheet_open: false,
@@ -1729,6 +1749,8 @@ impl Workspace {
     pub fn escape(&mut self, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
             self.dismiss_alert(cx);
+        } else if self.searching {
+            self.close_search(cx);
         } else if self.adding_repo {
             self.cancel_add_repo(cx);
         } else if self.adding_jev_key {
@@ -2646,6 +2668,7 @@ impl Render for Workspace {
             .when(self.adding_repo, |body| {
                 body.child(self.add_repo_view(&t, cx))
             })
+            .when(self.searching, |body| body.child(self.search_view(&t, cx)))
             .when(self.adding_jev_key, |body| {
                 body.child(self.jev_key_view(&t, cx))
             })
@@ -2696,6 +2719,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|ws, _: &GoBack, _, cx| ws.escape(cx)))
             .on_action(cx.listener(|ws, _: &NewRun, window, cx| {
                 ws.start_new_run(window, cx)
+            }))
+            .on_action(cx.listener(|ws, _: &Search, window, cx| {
+                ws.open_search(window, cx)
             }))
             .on_action(cx.listener(|ws, _: &ShowRuns, _, cx| {
                 ws.switch_tab(route::Tab::Runs, cx)
