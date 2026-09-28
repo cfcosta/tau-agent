@@ -338,6 +338,7 @@ pub fn fork_run(
     from: &RunView,
     turn: u32,
     prompt: &str,
+    model: &crate::models::ModelChoice,
     id: RunId,
 ) -> (RunView, Vec<Step>) {
     let mut s = Script::for_run(id.clone());
@@ -377,12 +378,17 @@ pub fn fork_run(
         },
     );
     let mut view =
-        RunView::new(id, crate::host::title(prompt), "coder", "gpt-5.5")
+        RunView::new(id, crate::host::title(prompt), "coder", &model.model)
             .started("just now")
             .with_origin(Origin::Fork {
                 from: from.id.clone(),
                 turn,
             });
+    view.plan = vec![PlanField {
+        name: "reasoning".into(),
+        value: model.effort.label().into(),
+        set_by: None,
+    }];
     view.push_user(prompt);
     (view, s.steps)
 }
@@ -409,6 +415,7 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
         "repos" => Route::Setup(SetupStep::Repos),
         "ready" => Route::Setup(SetupStep::Ready),
         "pr" | "pr-opened" => Route::PullRequest(run_id()),
+        "models" => Route::Models,
         _ => return None,
     })
 }
@@ -648,19 +655,25 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
             WorkspaceEvent::CreatePullRequest { run, .. } => {
                 later(vec![(1200, Answer::Pr(run.clone(), opened()))], cx)
             }
-            WorkspaceEvent::Fork { run, turn, prompt } => {
+            WorkspaceEvent::Fork {
+                run,
+                turn,
+                prompt,
+                model,
+            } => {
                 use std::sync::atomic::{AtomicU32, Ordering};
                 static FORKS: AtomicU32 = AtomicU32::new(0);
                 let n = FORKS.fetch_add(1, Ordering::Relaxed) + 1;
                 let id = RunId(Arc::from(format!("{}/fork-{n}", run.0)));
-                let (run, turn, prompt) = (run.clone(), *turn, prompt.clone());
+                let (run, turn, prompt, model) =
+                    (run.clone(), *turn, prompt.clone(), model.clone());
                 workspace.update(cx, |ws, cx| {
                     let Some(from) = ws.run(&run).cloned() else {
                         return;
                     };
                     let turn = turn.unwrap_or(from.turn);
                     let (view, steps) =
-                        fork_run(&from, turn, &prompt, id.clone());
+                        fork_run(&from, turn, &prompt, &model, id.clone());
                     ws.push_run(view, cx);
                     ws.replay(id, steps, cx);
                 });
@@ -871,6 +884,49 @@ pub fn catalog() -> Catalog {
         },
         pull_requests: true,
         project: Default::default(),
+        models: models(),
+    }
+}
+
+/// The models the demo offers: tau-ai's, as a ChatGPT Pro sign-in sees
+/// them, with defaults for each of the demo's agents.
+pub fn models() -> crate::models::Models {
+    use crate::models::{
+        AccessInfo,
+        Effort,
+        ModelChoice,
+        ModelSettings,
+        Models,
+        coding_models,
+    };
+    let mut settings = ModelSettings::default();
+    settings.set_default(
+        "reviewer",
+        ModelChoice::new("gpt-6-luna", Effort::Medium),
+    );
+    settings.set_default(
+        "tau-memory",
+        ModelChoice::new("gpt-5.6-luna", Effort::Low),
+    );
+    Models {
+        options: coding_models(|id| tau_ai::codex::MODELS.contains(&id)),
+        settings,
+        access: AccessInfo {
+            label: "ChatGPT Pro".into(),
+            chatgpt: true,
+            api_key: false,
+        },
+        agents: vec![
+            ("coder".into(), "Runs you start from the composer.".into()),
+            (
+                "reviewer".into(),
+                "The sub-agent coder asks to review its changes.".into(),
+            ),
+            (
+                "tau-memory".into(),
+                "Distills notes at the end of a run.".into(),
+            ),
+        ],
     }
 }
 

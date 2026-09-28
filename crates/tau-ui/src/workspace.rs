@@ -39,6 +39,7 @@ use crate::{
     assets::Icon,
     catalog::{Catalog, PluginInfo, PluginScreen},
     input::{InputEvent, TextInput},
+    models::{ModelChoice, ModelSettings},
     pull_request::{PrState, PullRequest},
     route::{self, Route},
     setup::{
@@ -111,11 +112,12 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 /// What the user asked for. The host subscribes and acts on these.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum WorkspaceEvent {
-    /// Start a new run with this prompt.
+    /// Start a new run with this prompt, on this model.
     NewRun {
         prompt: String,
+        model: ModelChoice,
     },
     /// Queue a message for a running run (`Run::steer`).
     Steer {
@@ -131,7 +133,11 @@ pub enum WorkspaceEvent {
         run: RunId,
         turn: Option<u32>,
         prompt: String,
+        model: ModelChoice,
     },
+    /// Keep the user's model choices: defaults, hidden models, and the
+    /// price to ask above.
+    SaveModelSettings(ModelSettings),
     /// Keep this branch of a fork and drop the others.
     KeepBranch {
         run: RunId,
@@ -195,6 +201,33 @@ pub enum WorkspaceEvent {
     },
 }
 
+/// A dialog over the app.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dialog {
+    pub title: String,
+    pub message: String,
+    /// What confirming does; `None` for a plain alert with OK.
+    pub confirm: Option<Confirm>,
+}
+
+/// A choice a dialog asks to confirm.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Confirm {
+    /// Use this model, which costs more than the user's threshold.
+    Model(PickerTarget, ModelChoice),
+}
+
+/// Where a model picker's choice goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickerTarget {
+    /// The next run the composer starts.
+    Next,
+    /// The fork being written.
+    Fork,
+    /// An agent's default.
+    Default(String),
+}
+
 pub struct Workspace {
     pub(crate) name: String,
     pub(crate) runs: Vec<RunView>,
@@ -212,8 +245,22 @@ pub struct Workspace {
     queued: HashMap<RunId, String>,
     /// The composer is writing a fork of this run, after this turn.
     forking: Option<(RunId, u32)>,
-    /// Something went wrong that the user must read: a title and why.
-    alert: Option<(String, String)>,
+    /// A dialog over the app: something failed, or a choice to confirm.
+    pub(crate) dialog: Option<Dialog>,
+    /// The model the next run starts on, and whether the user picked it
+    /// (else it follows coder's default).
+    pub(crate) next_model: ModelChoice,
+    pub(crate) next_model_picked: bool,
+    /// The model the fork being written runs on.
+    pub(crate) fork_model: ModelChoice,
+    /// Where the open model picker writes its choice.
+    pub(crate) picker: Option<PickerTarget>,
+    pub(crate) model_search: Entity<TextInput>,
+    /// Whether the title bar explains the open run's fixed model.
+    pub(crate) model_info: bool,
+    /// Whether the last layout showed the inspector, for placing the
+    /// model picker beside it.
+    inspector_shown: bool,
     /// Notes kept, per run, by title.
     pub(crate) kept: HashMap<RunId, HashSet<String>>,
     /// Flagged calls someone looked at, as `(run, call id)`.
@@ -265,6 +312,7 @@ impl Workspace {
             TextInput::new("Filter by run, agent, model or stop", cx)
         });
         let memory_search = cx.new(|cx| TextInput::new("Search notes", cx));
+        let model_search = cx.new(|cx| TextInput::new("Search models", cx));
         let github_token =
             cx.new(|cx| TextInput::new("github_pat_…", cx).masked());
         let api_key = cx.new(|cx| TextInput::new("sk-…", cx).masked());
@@ -292,6 +340,7 @@ impl Workspace {
             // Filters apply as you type.
             cx.observe(&history_filter, |_, _, cx| cx.notify()),
             cx.observe(&memory_search, |_, _, cx| cx.notify()),
+            cx.observe(&model_search, |_, _, cx| cx.notify()),
             cx.observe(&repo_filter, |_, _, cx| cx.notify()),
             cx.subscribe(&github_token, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(token) = event;
@@ -308,6 +357,7 @@ impl Workspace {
         ];
         composer.read(cx).focus_handle(cx).focus(window);
         let current = runs.first().map(|run| run.id.clone());
+        let next_model = catalog.models.settings.default_for("coder");
         let mut workspace = Self {
             name: name.into(),
             runs,
@@ -322,7 +372,14 @@ impl Workspace {
             sheet_open: false,
             queued: HashMap::new(),
             forking: None,
-            alert: None,
+            dialog: None,
+            next_model,
+            next_model_picked: false,
+            fork_model: ModelChoice::default(),
+            picker: None,
+            model_search,
+            model_info: false,
+            inspector_shown: false,
             kept: HashMap::new(),
             dismissed: HashSet::new(),
             kept_branch: None,
@@ -370,6 +427,9 @@ impl Workspace {
 
     pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
         self.catalog = catalog;
+        if !self.next_model_picked {
+            self.next_model = self.catalog.models.settings.default_for("coder");
+        }
         cx.notify();
     }
 
@@ -688,6 +748,14 @@ impl Workspace {
         }
     }
 
+    pub(crate) fn last_fork_turn_of(run: &RunView) -> u32 {
+        Self::last_fork_turn(run)
+    }
+
+    pub(crate) fn shows_inspector(&self) -> bool {
+        self.inspector_shown
+    }
+
     /// Whether a fork can start after `turn` of `run`: the turn has
     /// ended.
     pub fn can_fork_at(run: &RunView, turn: u32) -> bool {
@@ -711,22 +779,40 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(run) = self.run(run) else { return };
+        if self.start_fork_at(run, turn, cx) {
+            self.composer.read(cx).focus_handle(cx).focus(window);
+        }
+    }
+
+    /// Fork mode for `run` after `turn`, on the run's model, without
+    /// moving the keyboard focus. Returns whether it started.
+    pub fn start_fork_at(
+        &mut self,
+        run: &RunId,
+        turn: u32,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(run) = self.run(run) else {
+            return false;
+        };
         let (id, turn) = (
             run.id.clone(),
             turn.clamp(1, Self::last_fork_turn(run).max(1)),
         );
+        let model = Self::model_of(run);
         if !matches!(self.route, Route::Run(_) | Route::Home) {
             self.navigate(Route::Run(id.clone()), cx);
         }
+        self.fork_model = model;
         self.forking = Some((id, turn));
         self.sheet_open = false;
+        self.model_info = false;
         self.composer.update(cx, |input, cx| {
             input.clear(cx);
             input.set_placeholder("What should the fork try instead?");
         });
-        self.composer.read(cx).focus_handle(cx).focus(window);
         cx.notify();
+        true
     }
 
     /// Moves the fork point one turn back or forward.
@@ -768,6 +854,7 @@ impl Workspace {
                 run,
                 turn: Some(turn),
                 prompt: text,
+                model: self.fork_model.clone(),
             });
             self.sync_placeholder(cx);
             cx.notify();
@@ -779,7 +866,10 @@ impl Workspace {
                 self.queued.insert(run.clone(), text.clone());
                 cx.emit(WorkspaceEvent::Steer { run, text });
             }
-            _ => cx.emit(WorkspaceEvent::NewRun { prompt: text }),
+            _ => cx.emit(WorkspaceEvent::NewRun {
+                prompt: text,
+                model: self.next_model.clone(),
+            }),
         }
         cx.notify();
     }
@@ -975,7 +1065,10 @@ impl Workspace {
         }
         self.first_task.update(cx, |input, cx| input.clear(cx));
         self.finish_setup(cx);
-        cx.emit(WorkspaceEvent::NewRun { prompt: task });
+        cx.emit(WorkspaceEvent::NewRun {
+            prompt: task,
+            model: self.next_model.clone(),
+        });
     }
 
     pub(crate) fn start_first_run_from_button(
@@ -993,25 +1086,35 @@ impl Workspace {
         message: impl Into<String>,
         cx: &mut Context<Self>,
     ) {
-        self.alert = Some((title.into(), message.into()));
+        self.dialog = Some(Dialog {
+            title: title.into(),
+            message: message.into(),
+            confirm: None,
+        });
         cx.notify();
     }
 
+    /// The open dialog's title and message.
     pub fn alert(&self) -> Option<(&str, &str)> {
-        self.alert
+        self.dialog
             .as_ref()
-            .map(|(title, message)| (title.as_str(), message.as_str()))
+            .map(|dialog| (dialog.title.as_str(), dialog.message.as_str()))
     }
 
     pub fn dismiss_alert(&mut self, cx: &mut Context<Self>) {
-        self.alert = None;
+        self.dialog = None;
         cx.notify();
     }
 
     /// Esc: closes a dialog if one is open, else goes back.
     pub fn escape(&mut self, cx: &mut Context<Self>) {
-        if self.alert.is_some() {
+        if self.dialog.is_some() {
             self.dismiss_alert(cx);
+        } else if self.picker.is_some() {
+            self.close_picker(cx);
+        } else if self.model_info {
+            self.model_info = false;
+            cx.notify();
         } else {
             self.back(cx);
         }
@@ -1319,6 +1422,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let live = self.is_live();
+        // What the composer's message would do: start a run on the next
+        // model (not steer a live one, not fork).
+        let starts_run =
+            self.forking.is_none() && !(live && self.route != Route::NewRun);
         let queued = self
             .current()
             .and_then(|run| self.queued.get(&run.id))
@@ -1357,6 +1464,13 @@ impl Workspace {
             .pt(sp(if compact { 2.5 } else { 0. }))
             .pb(sp(if compact { 4.5 } else { 4. }))
             .when(compact, |bar| bar.border_t_1().border_color(t.border))
+            .when(compact && starts_run, |bar| {
+                bar.child(
+                    div()
+                        .flex()
+                        .child(self.model_chip(PickerTarget::Next, t, cx)),
+                )
+            })
             .when_some(self.fork_banner(t, cx), |bar, banner| bar.child(banner))
             .when_some(queued, |bar, text| {
                 bar.child(
@@ -1423,6 +1537,9 @@ impl Workspace {
                                     Type::MICRO,
                                     t.dim,
                                 ))
+                            })
+                            .when(!compact && starts_run, |field| {
+                                field.child(self.model_chip(PickerTarget::Next, t, cx))
                             }),
                     )
                     .child(send),
@@ -1487,10 +1604,17 @@ impl Workspace {
                     t.text,
                 ))
                 .child(step("fork-later", Icon::Chevron, 1, *turn < last))
+                .child(div().text_color(t.text_soft).child("on"))
+                .child(self.model_chip(PickerTarget::Fork, t, cx))
                 .child(
-                    div().flex_1().text_color(t.muted).child(
-                        "The fork gets this turn's conversation and code.",
-                    ),
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_color(t.muted)
+                        .child(
+                            "The fork gets this turn's conversation and code.",
+                        ),
                 )
                 .child(
                     div()
@@ -1599,6 +1723,7 @@ impl Workspace {
             Route::Setup(_) | Route::PullRequest(_) => {
                 self.focused(compact, t, cx)
             }
+            Route::Models => screens::models::render(self, compact, t, cx),
         }
     }
 
@@ -1852,6 +1977,9 @@ impl Render for Workspace {
             None => window.viewport_size().width,
         };
         let phone = self.phone_preview || width < PHONE_MAX;
+        self.inspector_shown = !phone
+            && width >= NARROW_MAX
+            && matches!(self.route, Route::Home | Route::Run(_));
         let body = if phone {
             self.phone(&t, cx)
         } else {
@@ -1862,18 +1990,11 @@ impl Render for Workspace {
             .relative()
             .size_full()
             .child(body)
-            .when_some(self.alert.clone(), |body, (title, message)| {
-                body.child(ui::dialog(
-                    title,
-                    message,
-                    div()
-                        .id("alert-ok")
-                        .child(ui::button("OK", ButtonKind::Primary, &t))
-                        .on_click(
-                            cx.listener(|ws, _, _, cx| ws.dismiss_alert(cx)),
-                        ),
-                    &t,
-                ))
+            .when_some(self.model_overlay(phone, &t, cx), |body, overlay| {
+                body.child(overlay)
+            })
+            .when_some(self.dialog.clone(), |body, dialog| {
+                body.child(self.dialog_view(dialog, &t, cx))
             })
             .into_any_element();
         let body = if self.phone_preview {

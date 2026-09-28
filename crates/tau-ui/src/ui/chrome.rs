@@ -39,12 +39,14 @@ pub fn title_bar(
     cx: &mut Context<Workspace>,
 ) -> Div {
     let run = ws.current();
-    let reasoning = run
-        .and_then(|run| run.plan.iter().find(|f| f.name == "reasoning"))
-        .map_or("reasoning auto".to_owned(), |field| {
-            format!("reasoning {}", field.value)
-        });
-    let model = run.map_or("gpt-5.5".to_owned(), |run| run.model.clone());
+    // An open run's model, fixed for it; else the next run's.
+    let fixed = ws.shows_run_model();
+    let choice = match run.filter(|_| fixed) {
+        Some(run) => Workspace::model_of(run),
+        None => ws.next_model().clone(),
+    };
+    let reasoning = format!("reasoning {}", choice.effort.label());
+    let model = choice.model.clone();
     let total: f64 = ws.runs.iter().map(|run| run.usage.cost).sum();
     let mut crumbs = vec![ws.name.clone()];
     match &ws.route {
@@ -111,6 +113,7 @@ pub fn title_bar(
         .child(div().flex_1())
         .child(
             div()
+                .id("title-model")
                 .flex()
                 .items_center()
                 .gap(sp(1.5))
@@ -118,9 +121,17 @@ pub fn title_bar(
                 .py(sp(1.25))
                 .bg(t.raised)
                 .rounded(radius::CONTROL)
+                .cursor_pointer()
+                .hover(|style| style.bg(t.selected))
+                .when(fixed, |chip| {
+                    chip.child(icon(Icon::Lock, IconSize::SMALL, t.dim))
+                })
                 .child(mono(model, Type::CAPTION, t.text))
                 .child(mono("·", Type::CAPTION, t.dim))
-                .child(mono(reasoning, Type::CAPTION, t.blue)),
+                .child(mono(reasoning, Type::CAPTION, t.blue))
+                .on_click(cx.listener(|ws, _, window, cx| {
+                    ws.title_model_clicked(window, cx)
+                })),
         )
         .child(
             mono(format!("today {}", usd(total)), Type::CAPTION, t.accent)
@@ -153,6 +164,7 @@ pub fn sidebar(
             "Constitution",
             "",
         ),
+        (Route::Models, Icon::Settings, "Models", ""),
     ];
     let active_section = |route: &Route| match (route, &ws.route) {
         (Route::Memory { .. }, Route::Memory { .. }) => true,

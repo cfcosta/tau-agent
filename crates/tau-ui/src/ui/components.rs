@@ -569,6 +569,26 @@ pub fn field(input: &Entity<TextInput>, mono: bool, t: &Theme) -> Div {
         .child(input.clone())
 }
 
+/// An on/off switch; callers add the id and the click.
+pub fn switch(on: bool, t: &Theme) -> Div {
+    div()
+        .w(px(36.))
+        .h(px(20.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .p(sp(0.5))
+        .rounded(radius::FULL)
+        .bg(if on { t.accent } else { t.border_strong })
+        .when(on, |track| track.justify_end())
+        .cursor_pointer()
+        .child(div().size(px(16.)).rounded(radius::FULL).bg(if on {
+            t.bg
+        } else {
+            t.muted
+        }))
+}
+
 /// A checkbox: 18 px, or 20 px for a phone's touch rows.
 pub fn checkbox(checked: bool, large: bool, t: &Theme) -> Div {
     let size = if large { 20. } else { 18. };

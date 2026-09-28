@@ -12,6 +12,7 @@ use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_ui::{
     host::{Access, Host, HostConfig},
+    models::{Effort, ModelChoice},
     view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
 };
 use tau_vcs::{Identity, Project};
@@ -37,6 +38,7 @@ fn host_on(
         root: root.to_owned(),
         store: std::env::temp_dir().join("unused.db"),
         repos: std::env::temp_dir().join("unused-repos"),
+        settings: std::env::temp_dir().join("unused-models.json"),
     };
     Host::with_agent(runtime, agent, store, config)
 }
@@ -64,7 +66,9 @@ fn until_end(events: &mut UnboundedReceiver<RunEvent>) -> Vec<RunEvent> {
 fn a_run_streams_into_its_view() {
     let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
     let (host, mut events) = host(llm);
-    let mut view = host.start("Say hello, please").unwrap();
+    let mut view = host
+        .start("Say hello, please", &ModelChoice::default())
+        .unwrap();
     assert_eq!(view.title, "say-hello-please");
     assert!(
         matches!(view.items.first(), Some(Item::User(text)) if text == "Say hello, please")
@@ -88,7 +92,7 @@ fn a_run_can_be_cancelled_from_the_ui() {
     let llm = ScriptedModel::new()
         .turn(|t| t.delay(Duration::from_secs(30)).text("too late"));
     let (host, mut events) = host(llm);
-    let view = host.start("wait").unwrap();
+    let view = host.start("wait", &ModelChoice::default()).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     assert!(host.is_running(&view.id));
     host.cancel(&view.id);
@@ -144,10 +148,12 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         .turn(|t| t.tool_call("write", write("two\n")))
         .turn(|t| t.text("done"))
         .turn(|t| t.text("forked"));
-    let (host, mut events) = host_on(llm, src.path());
+    let (host, mut events) = host_on(llm.clone(), src.path());
     let host = host.with_project(project);
 
-    let main = host.start("write a.txt twice").unwrap();
+    let main = host
+        .start("write a.txt twice", &ModelChoice::default())
+        .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main.id);
     let main_dir = host.workspace(&main.id).unwrap();
@@ -158,7 +164,11 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     // The user's checkout is untouched.
     assert!(!src.path().join("a.txt").exists());
 
-    let fork = host.fork(&main.id, Some(1), "try it another way").unwrap();
+    let other = ModelChoice::new("gpt-6-sol", Effort::High);
+    let fork = host
+        .fork(&main.id, Some(1), "try it another way", &other)
+        .unwrap();
+    assert_eq!(fork.model, "gpt-6-sol");
     assert_eq!(
         fork.origin,
         Origin::Fork {
@@ -169,6 +179,15 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     until_end(&mut events);
     wait_until_done(&host, &fork.id);
     let fork_dir = host.workspace(&fork.id).unwrap();
+    // The fork asked its own model, at its own effort.
+    let asked = llm.requests();
+    let last = &asked.last().unwrap().settings;
+    assert_eq!(last.model, "gpt-6-sol");
+    assert_eq!(
+        last.reasoning,
+        Some(tau_ai::responses::request::ReasoningEffort::High)
+    );
+    assert_eq!(asked[0].settings.model, "gpt-5.5");
     assert_eq!(
         std::fs::read_to_string(fork_dir.join("a.txt")).unwrap(),
         "one\n"
@@ -228,6 +247,7 @@ fn config_on(root: &Path, data: &Path) -> HostConfig {
         root: root.to_owned(),
         store: data.join("runs.db"),
         repos: data.join("repos"),
+        settings: data.join("models.json"),
     }
 }
 
@@ -269,4 +289,51 @@ fn a_plain_directory_means_runs_work_in_it() {
         host.catalog().project,
         tau_ui::catalog::ProjectStatus::Checkout(_)
     ));
+}
+
+#[test]
+fn models_follow_the_sign_in_and_settings_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+
+    // An API key runs every model.
+    let (host, _events) =
+        Host::new(config_on(dir.path(), data.path())).unwrap();
+    let models = host.models();
+    assert!(models.options.iter().all(|option| option.available));
+    // No settings yet: coder runs on the model the host was given.
+    assert_eq!(models.settings.default_for("coder").model, "gpt-5.5");
+    let mut settings = models.settings.clone();
+    settings.set_default("coder", ModelChoice::new("gpt-6-sol", Effort::Low));
+    settings.ask_above = None;
+    host.save_settings(settings.clone()).unwrap();
+    drop(host);
+
+    // A ChatGPT sign-in runs only what Codex serves; the saved choices
+    // come back.
+    let credentials = data.path().join("codex.json");
+    std::fs::write(
+        &credentials,
+        serde_json::json!({
+            "access": "a", "refresh": "r", "expires": 0, "accountId": "x"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let config = HostConfig {
+        access: Access::Codex(credentials),
+        ..config_on(dir.path(), data.path())
+    };
+    let (host, _events) = Host::new(config).unwrap();
+    let models = host.models();
+    assert_eq!(models.settings, settings);
+    for option in &models.options {
+        assert_eq!(
+            option.available,
+            tau_ai::codex::MODELS.contains(&option.id.as_str()),
+            "{}",
+            option.id
+        );
+    }
+    assert!(models.access.chatgpt);
 }

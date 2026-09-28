@@ -379,6 +379,10 @@ fn branch(
         .is_some_and(|(passed, total)| Some(passed) != total.as_ref());
     let id = run.id.clone();
     let keep_id = run.id.clone();
+    // A branch on another model than coder's default can make it one.
+    let make_default = Some(Workspace::model_of(run)).filter(|choice| {
+        ws.catalog.models.settings.default_for("coder").model != choice.model
+    });
     let diff = run.last_diff().map(|(card, lines)| {
         ui::card(t)
             .bg(t.card)
@@ -427,6 +431,27 @@ fn branch(
                     t.raised,
                 )),
         )
+        .child({
+            // Which model the branch ran on: what a comparison is about.
+            let choice = Workspace::model_of(run);
+            div()
+                .flex()
+                .gap(sp(2.))
+                .child(ui::chip(
+                    None,
+                    choice.model.clone(),
+                    Type::CAPTION,
+                    t.text,
+                    t,
+                ))
+                .child(ui::chip(
+                    None,
+                    format!("reasoning {}", choice.effort.label()),
+                    Type::CAPTION,
+                    t.blue,
+                    t,
+                ))
+        })
         .child(
             div()
                 .grid()
@@ -477,7 +502,26 @@ fn branch(
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             ws.navigate(Route::Run(id.clone()), cx)
                         })),
-                ),
+                )
+                .when_some(make_default, |row, choice| {
+                    let label =
+                        format!("Make {} coder's default", choice.model);
+                    row.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "default-{}",
+                                run.id
+                            )))
+                            .child(ui::button(label, ButtonKind::Secondary, t))
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                ws.set_default_model(
+                                    "coder",
+                                    choice.clone(),
+                                    cx,
+                                )
+                            })),
+                    )
+                }),
         )
         .when(ws.kept_branch.as_ref() == Some(&run.id), |column| {
             column.child(

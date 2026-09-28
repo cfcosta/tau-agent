@@ -44,6 +44,8 @@ pub mod catalog;
 pub mod demo;
 pub mod host;
 pub mod input;
+pub mod models;
+pub mod picker;
 pub mod pull_request;
 pub mod route;
 pub mod setup;

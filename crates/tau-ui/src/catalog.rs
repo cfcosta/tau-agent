@@ -20,6 +20,8 @@ pub struct Catalog {
     pub pull_requests: bool,
     /// Where runs work.
     pub project: ProjectStatus,
+    /// The models the picker offers, and the user's choices about them.
+    pub models: crate::models::Models,
 }
 
 /// Where the host's runs work, for the status bar.

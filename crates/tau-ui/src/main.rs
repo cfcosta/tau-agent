@@ -11,8 +11,8 @@
 //! - `--demo`: the scripted session; `--finished` opens it done.
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
 //!   compare, plan or ledger; onboarding's welcome, github, token,
-//!   model, repos or ready; pr and pr-opened; or alert, a sample
-//!   dialog (demo screens).
+//!   model, repos or ready; pr and pr-opened; alert, a sample dialog;
+//!   models, picker, model-info or fork-picker (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
 //! - `--frame <w>x<h>`: lay out at exactly that size in the top-left
 //!   corner, to compare with the designs.
@@ -91,6 +91,7 @@ fn main() {
         root: root.clone(),
         store: HostConfig::default_store(),
         repos: HostConfig::default_repos(),
+        settings: HostConfig::default_settings(),
     };
     let host = access.and_then(|access| match Host::new(config(access)) {
         Ok(host) => Some(host),
@@ -227,6 +228,26 @@ fn open_demo_screen(
     args: &Args,
     cx: &mut gpui::Context<Workspace>,
 ) {
+    // The model picker's states, for looking at them.
+    match args.open.as_deref() {
+        Some("picker") => {
+            workspace.navigate(Route::NewRun, cx);
+            workspace.show_picker(tau_ui::workspace::PickerTarget::Next, cx);
+            return;
+        }
+        Some("model-info") => {
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            workspace.show_model_info(cx);
+            return;
+        }
+        Some("fork-picker") => {
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            workspace.start_fork_at(&demo::run_id(), 2, cx);
+            workspace.show_picker(tau_ui::workspace::PickerTarget::Fork, cx);
+            return;
+        }
+        _ => {}
+    }
     if args.open.as_deref() == Some("alert") {
         workspace.show_alert(
             "Could not fork the run",

@@ -38,6 +38,7 @@ pub enum Icon {
     Copy,
     Arrow,
     Info,
+    Down,
 }
 
 impl Icon {
@@ -71,6 +72,7 @@ impl Icon {
             Self::Copy => "icons/copy.svg",
             Self::Arrow => "icons/arrow.svg",
             Self::Info => "icons/info.svg",
+            Self::Down => "icons/down.svg",
         }
     }
 
@@ -139,13 +141,14 @@ impl Icon {
                 r#"<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/>"#
             }
             Self::Arrow => r#"<path d="M5 12h14M13 6l6 6-6 6"/>"#,
+            Self::Down => r#"<path d="M6 9l6 6 6-6"/>"#,
             Self::Info => {
                 r#"<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>"#
             }
         }
     }
 
-    const ALL: [Self; 28] = [
+    const ALL: [Self; 29] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -174,6 +177,7 @@ impl Icon {
         Self::Copy,
         Self::Arrow,
         Self::Info,
+        Self::Down,
     ];
 
     fn svg(self) -> String {

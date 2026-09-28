@@ -63,6 +63,14 @@ use crate::{
         Seam,
         StoreInfo,
     },
+    models::{
+        AccessInfo,
+        Effort,
+        ModelChoice,
+        ModelSettings,
+        Models,
+        coding_models,
+    },
     setup::{DeviceCode, GitHub, ModelAccess, SetupUpdate},
     view::{
         BranchCode,
@@ -175,6 +183,8 @@ pub struct HostConfig {
     pub store: PathBuf,
     /// Where projects live, usually `$XDG_DATA_HOME/tau/repos`.
     pub repos: PathBuf,
+    /// The user's model choices, usually `$XDG_CONFIG_HOME/tau/models.json`.
+    pub settings: PathBuf,
 }
 
 impl HostConfig {
@@ -197,6 +207,13 @@ impl HostConfig {
 
     pub fn default_repos() -> PathBuf {
         Self::data_dir().join("repos")
+    }
+
+    /// `models.json` beside the sign-in, in tau's config directory.
+    pub fn default_settings() -> PathBuf {
+        CodexCredentials::default_path()
+            .and_then(|path| path.parent().map(|dir| dir.join("models.json")))
+            .unwrap_or_else(|| PathBuf::from("models.json"))
     }
 
     /// The project directory for `root`: its name and a hash of its full
@@ -276,6 +293,10 @@ pub struct Host {
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
     /// The workspace each run of this session works in.
     workspaces: Arc<Mutex<HashMap<RunId, String>>>,
+    /// The model each run of this session runs on.
+    choices: Arc<Mutex<HashMap<RunId, ModelChoice>>>,
+    /// The user's model choices, as loaded and last saved.
+    settings: Arc<Mutex<ModelSettings>>,
     events: mpsc::UnboundedSender<RunEvent>,
 }
 
@@ -320,16 +341,11 @@ impl Host {
                 Access::ApiKey(key) => OpenAi::new(key.clone()),
             }
         };
-        let mut compaction = Compaction::default();
-        if let Some(model) = find(&config.model) {
-            compaction = compaction.context_window(model.context_window);
-        }
         let agent = Agent::new(client)
             .name("coder")
             .model(&config.model)
             .instructions(INSTRUCTIONS)
-            .limits(Limits::default().max_turns(MAX_TURNS))
-            .plugin(compaction);
+            .limits(Limits::default().max_turns(MAX_TURNS));
         let (mut host, events) =
             Self::with_agent(runtime, agent, store, config);
         // Copying the checkout can take a while; the window opens first.
@@ -365,10 +381,13 @@ impl Host {
         config: HostConfig,
     ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
+        let settings = load_settings(&config.settings, &config.model);
         let host = Self {
             runtime,
             base: agent,
             store,
+            choices: Arc::default(),
+            settings: Arc::new(Mutex::new(settings)),
             config,
             project: ProjectSlot::new(ProjectState::Checkout(
                 "no project was given".into(),
@@ -497,34 +516,84 @@ impl Host {
             },
             pull_requests: false,
             project,
+            models: self.models(),
         }
     }
 
     /// The agent for one run, with its tools on the run's workspace, and
     /// the workspace's name.
-    fn agent_for_run(&self) -> anyhow::Result<(Agent, Option<String>)> {
+    fn agent_for_run(
+        &self,
+        choice: &ModelChoice,
+    ) -> anyhow::Result<(Agent, Option<String>)> {
+        let mut agent = self.base.clone().model(&choice.model);
+        if let Some(effort) = choice.effort.reasoning() {
+            agent = agent.reasoning(effort);
+        }
+        // Compaction steps in by the run's own model's window.
+        let mut compaction = Compaction::default();
+        if let Some(model) = find(&choice.model) {
+            compaction = compaction.context_window(model.context_window);
+        }
+        let agent = agent.plugin(compaction);
         let Some(project) = self.project() else {
             let tools = CodingTools::new(Root::new(self.config.root.clone()));
-            return Ok((self.base.clone().plugin(tools), None));
+            return Ok((agent.plugin(tools), None));
         };
         let name = workspace_name();
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
-        let agent = self
-            .base
-            .clone()
+        let agent = agent
             .plugin(CodingTools::new(Root::new(workspace.dir())))
             .plugin(VcsPlugin::new(workspace.vcs().clone()))
             .plugin(workspace);
         Ok((agent, Some(name)))
     }
 
+    /// The models the picker offers, with what this sign-in can run, and
+    /// the user's choices.
+    pub fn models(&self) -> Models {
+        let codex = matches!(self.config.access, Access::Codex(_));
+        Models {
+            options: coding_models(|id| {
+                !codex || tau_ai::codex::MODELS.contains(&id)
+            }),
+            settings: self.settings.lock().expect("not poisoned").clone(),
+            access: AccessInfo {
+                label: self.config.access.label().into(),
+                chatgpt: codex,
+                api_key: !codex,
+            },
+            agents: vec![(
+                "coder".into(),
+                "Runs you start from the composer.".into(),
+            )],
+        }
+    }
+
+    /// Keeps and saves the user's model choices.
+    pub fn save_settings(&self, settings: ModelSettings) -> anyhow::Result<()> {
+        *self.settings.lock().expect("not poisoned") = settings.clone();
+        if let Some(dir) = self.config.settings.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(
+            &self.config.settings,
+            serde_json::to_string_pretty(&settings)?,
+        )?;
+        Ok(())
+    }
+
     /// Starts a run and returns its view, ready to be pushed into the
     /// workspace before its first event arrives.
-    pub fn start(&self, prompt: &str) -> anyhow::Result<RunView> {
-        let (agent, workspace) = self.agent_for_run()?;
+    pub fn start(
+        &self,
+        prompt: &str,
+        choice: &ModelChoice,
+    ) -> anyhow::Result<RunView> {
+        let (agent, workspace) = self.agent_for_run(choice)?;
         let _guard = self.runtime.enter();
         let run = agent.start(prompt, &self.store);
-        let id = self.track(run, workspace);
+        let id = self.track(run, workspace, choice);
         Ok(self.view(id, prompt))
     }
 
@@ -536,6 +605,7 @@ impl Host {
         run: &RunId,
         turn: Option<u32>,
         prompt: &str,
+        choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
         if self.project().is_none() {
             anyhow::bail!(
@@ -551,12 +621,12 @@ impl Host {
                 anyhow::anyhow!("The run has no finished turn to fork from yet")
             }
         })?;
-        let (agent, workspace) = self.agent_for_run()?;
+        let (agent, workspace) = self.agent_for_run(choice)?;
         let _guard = self.runtime.enter();
         let forked = agent
             .fork(&Checkpoint::at(run.clone(), seq))
             .start(prompt, &self.store);
-        let id = self.track(forked, workspace);
+        let id = self.track(forked, workspace, choice);
         Ok(self.view(id, prompt).with_origin(Origin::Fork {
             from: run.clone(),
             turn: link.turn,
@@ -668,8 +738,13 @@ impl Host {
         &self,
         mut run: tau_agent::agent::Run,
         workspace: Option<String>,
+        choice: &ModelChoice,
     ) -> RunId {
         let id = run.id();
+        self.choices
+            .lock()
+            .expect("not poisoned")
+            .insert(id.clone(), choice.clone());
         self.runs
             .lock()
             .expect("not poisoned")
@@ -700,16 +775,24 @@ impl Host {
     }
 
     fn view(&self, id: RunId, prompt: &str) -> RunView {
-        let mut view =
-            RunView::new(id, title(prompt), "coder", &self.config.model)
-                .started("just now");
+        let choice = self
+            .choices
+            .lock()
+            .expect("not poisoned")
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| {
+                ModelChoice::new(self.config.model.clone(), Effort::Auto)
+            });
+        let mut view = RunView::new(id, title(prompt), "coder", &choice.model)
+            .started("just now");
         view.push_user(prompt);
         view.limits = ViewLimits {
             max_turns: Some(MAX_TURNS),
             ..ViewLimits::default()
         };
         view.context = ContextWindow {
-            window: find(&self.config.model).map(|model| model.context_window),
+            window: find(&choice.model).map(|model| model.context_window),
             ..ContextWindow::default()
         };
         let workspace = self
@@ -721,7 +804,12 @@ impl Host {
         view.plan = vec![
             PlanField {
                 name: "model".into(),
-                value: self.config.model.clone(),
+                value: choice.model.clone(),
+                set_by: None,
+            },
+            PlanField {
+                name: "reasoning".into(),
+                value: choice.effort.label().into(),
                 set_by: None,
             },
             PlanField {
@@ -806,8 +894,8 @@ impl Host {
         cx.subscribe(
             workspace,
             move |workspace, event: &WorkspaceEvent, cx| match event {
-                WorkspaceEvent::NewRun { prompt } => {
-                    match handler.start(prompt) {
+                WorkspaceEvent::NewRun { prompt, model } => {
+                    match handler.start(prompt, model) {
                         Ok(view) => {
                             workspace.update(cx, |ws, cx| ws.push_run(view, cx))
                         }
@@ -820,20 +908,23 @@ impl Host {
                         }),
                     }
                 }
-                WorkspaceEvent::Fork { run, turn, prompt } => {
-                    match handler.fork(run, *turn, prompt) {
-                        Ok(view) => {
-                            workspace.update(cx, |ws, cx| ws.push_run(view, cx))
-                        }
-                        Err(error) => workspace.update(cx, |ws, cx| {
-                            ws.show_alert(
-                                "Could not fork the run",
-                                format!("{error:#}"),
-                                cx,
-                            )
-                        }),
+                WorkspaceEvent::Fork {
+                    run,
+                    turn,
+                    prompt,
+                    model,
+                } => match handler.fork(run, *turn, prompt, model) {
+                    Ok(view) => {
+                        workspace.update(cx, |ws, cx| ws.push_run(view, cx))
                     }
-                }
+                    Err(error) => workspace.update(cx, |ws, cx| {
+                        ws.show_alert(
+                            "Could not fork the run",
+                            format!("{error:#}"),
+                            cx,
+                        )
+                    }),
+                },
                 WorkspaceEvent::CompareCode { main, fork } => {
                     let job =
                         handler.runtime.spawn(handler.branch_code(main, fork));
@@ -854,6 +945,18 @@ impl Host {
                         });
                     })
                     .detach();
+                }
+                WorkspaceEvent::SaveModelSettings(settings) => {
+                    if let Err(error) = handler.save_settings(settings.clone())
+                    {
+                        workspace.update(cx, |ws, cx| {
+                            ws.show_alert(
+                                "Could not save the model settings",
+                                format!("{error:#}"),
+                                cx,
+                            )
+                        });
+                    }
                 }
                 WorkspaceEvent::KeepBranch { run } => {
                     if let Err(error) = handler.keep_branch(run) {
@@ -965,6 +1068,20 @@ fn file_stat(file: &FileDiff) -> FileStat {
         added: file.added,
         removed: file.removed,
     }
+}
+
+/// The saved model choices at `path`, or the defaults with `model` for
+/// coder when there are none (or the file does not read).
+fn load_settings(path: &std::path::Path, model: &str) -> ModelSettings {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| {
+            let mut settings = ModelSettings::default();
+            settings
+                .set_default("coder", ModelChoice::new(model, Effort::Auto));
+            settings
+        })
 }
 
 /// A new workspace's name: unique, and sorting by when it was made.

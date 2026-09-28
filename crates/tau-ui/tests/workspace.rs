@@ -7,10 +7,12 @@ use tau_ui::{
     WorkspaceEvent,
     catalog::Catalog,
     demo,
+    models::{Effort, ModelChoice, ModelSettings},
     pull_request::PrState,
     route::Route,
     setup::{GitHub, ModelAccess, Setup, SetupStep, SetupUpdate},
     view::{BranchCode, CodeState},
+    workspace::PickerTarget,
 };
 
 fn open(
@@ -151,6 +153,8 @@ fn fork_mode_sends_the_chosen_turn(cx: &mut TestAppContext) {
             run: run.clone(),
             turn: Some(last),
             prompt: "try a longer backoff".into(),
+            // A fork starts on its run's model and effort.
+            model: ModelChoice::new("gpt-5.5", Effort::High),
         })
     );
     // The next message is an ordinary one again.
@@ -216,6 +220,7 @@ fn forking_from_a_turn_sends_that_turn(cx: &mut TestAppContext) {
             run: run.clone(),
             turn: Some(2),
             prompt: "go another way".into(),
+            model: ModelChoice::new("gpt-5.5", Effort::High),
         })
     );
     workspace.read_with(&cx, |ws, _| {
@@ -253,6 +258,8 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
             }
         );
         assert_eq!(fork.title, "double-the-delay-instead");
+        // It runs on its run's model, which the fork kept.
+        assert_eq!(fork.model, "gpt-5.5");
         assert!(!fork.status.is_live(), "the fork played to its end");
         assert!(fork.items.iter().any(|item| matches!(
             item,
@@ -297,6 +304,7 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         root: std::env::temp_dir(),
         store: std::env::temp_dir().join("unused.db"),
         repos: std::env::temp_dir().join("unused-repos"),
+        settings: std::env::temp_dir().join("unused-models.json"),
     };
     // No project: runs work in the checkout, and forking cannot work.
     let (host, events) = Host::with_agent(runtime, agent, store, config);
@@ -317,4 +325,119 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         assert_eq!(title, "Could not fork the run");
         assert!(message.starts_with("Forking needs a project"), "{message}");
     });
+}
+
+fn open_with_models(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Workspace>,
+    VisualTestContext,
+    std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>,
+) {
+    let (workspace, mut cx, events) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.models = demo::models();
+        ws.set_catalog(catalog, cx);
+    });
+    (workspace, cx, events)
+}
+
+#[gpui::test]
+fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_with_models(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::NewRun, cx);
+        assert_eq!(ws.next_model(), &ModelChoice::new("gpt-5.5", Effort::Auto));
+        ws.show_picker(PickerTarget::Next, cx);
+        ws.pick_effort(Effort::Low, cx);
+        ws.pick_model("gpt-6-sol", cx);
+        assert!(ws.picker().is_none(), "picking a model closes the picker");
+        ws.submit_prompt("fix it".into(), cx);
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::NewRun {
+            prompt: "fix it".into(),
+            model: ModelChoice::new("gpt-6-sol", Effort::Low),
+        })
+    );
+}
+
+#[gpui::test]
+fn a_pricey_model_asks_first_and_a_locked_one_is_not_picked(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, _) = open_with_models(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.show_picker(PickerTarget::Next, cx);
+        // Locked: the ChatGPT sign-in cannot run it.
+        ws.pick_model("gpt-5.5-pro", cx);
+        assert_eq!(ws.next_model().model, "gpt-5.5");
+        assert!(ws.alert().is_none());
+        // $50 per M out is above the $20 to ask about.
+        ws.pick_model("gpt-6-astra", cx);
+        let (title, _) = ws.alert().expect("a price check");
+        assert_eq!(title, "Use gpt-6-astra?");
+        assert_eq!(ws.next_model().model, "gpt-5.5", "not until confirmed");
+        ws.dismiss_alert(cx);
+        assert_eq!(ws.next_model().model, "gpt-5.5", "cancel keeps the model");
+        ws.pick_model("gpt-6-astra", cx);
+        ws.confirm_dialog(cx);
+        assert_eq!(ws.next_model().model, "gpt-6-astra");
+        assert!(ws.picker().is_none());
+    });
+}
+
+#[gpui::test]
+fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_with_models(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.show_picker(PickerTarget::Default("coder".into()), cx);
+        ws.pick_model("gpt-6-sol", cx);
+        // The next run follows coder's new default until one is picked.
+        assert_eq!(ws.next_model().model, "gpt-6-sol");
+        ws.toggle_model_hidden("gpt-6-luna", cx);
+        ws.step_ask_above(1, cx);
+    });
+    let saved: Vec<ModelSettings> = events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::SaveModelSettings(settings) => {
+                Some(settings.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(saved.len(), 3);
+    let last = saved.last().unwrap();
+    assert_eq!(last.default_for("coder").model, "gpt-6-sol");
+    assert!(last.is_hidden("gpt-6-luna"));
+    assert_eq!(last.ask_above, Some(50.));
+}
+
+#[gpui::test]
+fn a_fork_can_run_on_another_model(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_with_models(cx);
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        for (_, update) in demo::script() {
+            ws.update_run(&run, update, cx);
+        }
+        ws.navigate(Route::Run(run.clone()), cx);
+        // On an open run, the title bar's model is the run's, fixed.
+        assert!(ws.shows_run_model());
+        ws.start_fork_at(&run, 3, cx);
+        ws.show_picker(PickerTarget::Fork, cx);
+        ws.pick_model("gpt-6-sol", cx);
+        ws.submit_prompt("same task, other model".into(), cx);
+    });
+    match events.borrow().last() {
+        Some(WorkspaceEvent::Fork { turn, model, .. }) => {
+            assert_eq!(*turn, Some(3));
+            assert_eq!(model, &ModelChoice::new("gpt-6-sol", Effort::High));
+        }
+        other => panic!("expected a fork, got {other:?}"),
+    }
 }

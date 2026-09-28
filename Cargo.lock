@@ -7628,6 +7628,7 @@ dependencies = [
  "anyhow",
  "futures-util",
  "gpui",
+ "serde",
  "serde_json",
  "tau-agent",
  "tau-ai",

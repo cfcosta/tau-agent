@@ -32,6 +32,8 @@ pub enum Route {
     Setup(SetupStep),
     /// A pull request from a run: the draft, then the opened one.
     PullRequest(RunId),
+    /// Model settings: defaults, what the picker shows, what to ask about.
+    Models,
 }
 
 /// The phone's bottom tabs.
@@ -84,7 +86,9 @@ impl Route {
         match self {
             Self::Memory { .. } => Tab::Memory,
             Self::History => Tab::History,
-            Self::Plugins | Self::Constitution { .. } => Tab::Plugins,
+            Self::Plugins | Self::Constitution { .. } | Self::Models => {
+                Tab::Plugins
+            }
             _ => Tab::Runs,
         }
     }
@@ -103,6 +107,7 @@ impl Route {
             Self::Ledger(_) => "Context ledger",
             Self::Setup(step) => step.title(),
             Self::PullRequest(_) => "Pull request",
+            Self::Models => "Models",
         }
     }
 
