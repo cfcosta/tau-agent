@@ -234,14 +234,18 @@ the user's checkout.
 
 | Path           | What it is                                                             |
 | -------------- | ---------------------------------------------------------------------- |
-| `git/`         | A bare `git clone` of the source; jj's Git store.                      |
+| `git/`         | A bare copy of the source's Git store; jj's Git store.                 |
 | `main/`        | The jj repository (`main/.jj/repo`). Its own working copy stays empty. |
 | `runs/<name>/` | One jj workspace per run, named by the host.                           |
 
 - `Project::open_or_import(source, root, identity)` opens the project at
-  `root`, or clones `source` (a path or any URL `git clone` takes) and
-  imports every branch as a bookmark. Cloning needs `git` on the
-  `PATH`; jj-lib's own fetch shells out to `git` too.
+  `root`, or makes it from the local repository at `source` (a checkout,
+  a linked worktree or a bare repository) and imports every branch as a
+  bookmark. No `git` is needed: the object files are hard-linked (they
+  never change once written), and the refs, `HEAD` and config copied.
+  Cloning from a URL is not supported yet. jj-lib's fetch and push run
+  `git` as a subprocess, so the GitHub side will need it, or a fetch
+  through gix and a push of our own.
 - `trunk()` is the commit new runs start from: the branch the clone's
   `HEAD` names, else `main`, `master` or `trunk`, else the root commit.
 - `add_workspace(name, base)` makes `runs/<name>` on a new empty commit

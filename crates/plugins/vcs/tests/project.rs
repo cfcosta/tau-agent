@@ -83,7 +83,7 @@ fn a_bad_source_fails_to_import() {
         Identity::default(),
     )
     .unwrap_err();
-    assert!(err.to_string().starts_with("git clone"), "{err}");
+    assert!(err.to_string().contains("is not a Git repository"), "{err}");
 }
 
 fn write(path: &str, content: &str) -> serde_json::Value {

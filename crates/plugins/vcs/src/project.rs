@@ -4,7 +4,7 @@
 //! A project lives in a directory of its own, usually under
 //! `$XDG_DATA_HOME/tau/repos/`:
 //!
-//! - `git/`: a bare Git clone of the source, the store jj writes to;
+//! - `git/`: a bare copy of the source's Git store, which jj writes to;
 //! - `main/`: the jj repository, whose own working copy stays empty;
 //! - `runs/<name>/`: one jj workspace per run, each on its own commit.
 //!
@@ -14,7 +14,6 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    process::Command,
     sync::Arc,
 };
 
@@ -63,9 +62,8 @@ impl std::fmt::Debug for Project {
 }
 
 impl Project {
-    /// Opens the project at `root`, or makes it there by cloning
-    /// `source` (a path or a URL `git clone` accepts) when there is none.
-    /// Needs `git` on the `PATH` to clone.
+    /// Opens the project at `root`, or makes it there from the local
+    /// repository at `source` when there is none.
     pub fn open_or_import(
         source: &str,
         root: impl Into<PathBuf>,
@@ -90,8 +88,10 @@ impl Project {
         Self::new(root, identity)
     }
 
-    /// Makes a project at `root` (which must not hold one) from a clone
-    /// of `source`, with every branch imported as a bookmark.
+    /// Makes a project at `root` (which must not hold one) from a copy of
+    /// the local repository at `source`, with every branch imported as a
+    /// bookmark. Needs no `git`: the object files are shared, not
+    /// cloned. Cloning from a URL is not supported yet.
     pub fn import(
         source: &str,
         root: impl Into<PathBuf>,
@@ -102,7 +102,7 @@ impl Project {
             .with_context(|| format!("Cannot create {}", root.display()))?;
         let git_dir = root.join(GIT);
         if !git_dir.is_dir() {
-            clone_bare(source, &git_dir)?;
+            copy_git_store(Path::new(source), &git_dir)?;
         }
         let project = Self::new(root, identity)?;
         let main = project.inner.root.join(MAIN);
@@ -267,18 +267,122 @@ fn commit(repo: &Arc<ReadonlyRepo>, hex: &str) -> anyhow::Result<Commit> {
         .with_context(|| format!("No commit {hex}"))
 }
 
-fn clone_bare(source: &str, into: &Path) -> anyhow::Result<()> {
-    let output = Command::new("git")
-        .args(["clone", "--bare", "--quiet", source])
-        .arg(into)
-        .output()
-        .context("Cannot run git to clone; is it installed?")?;
-    if !output.status.success() {
+/// Makes `into` a bare copy of the Git repository at `source`, without
+/// `git`: the object files are hard-linked (copied across file systems),
+/// the refs, `HEAD` and config copied, and the config marked bare.
+/// Objects never change once written, so sharing them is safe.
+fn copy_git_store(source: &Path, into: &Path) -> anyhow::Result<()> {
+    let git_dir = git_dir(source).ok_or_else(|| {
+        anyhow!(
+            "{} is not a Git repository. Only local repositories can be \
+             imported for now",
+            source.display()
+        )
+    })?;
+    let copied = (|| -> anyhow::Result<()> {
+        std::fs::create_dir_all(into)?;
+        copy_tree(&git_dir.join("objects"), &into.join("objects"), true)?;
+        copy_tree(&git_dir.join("refs"), &into.join("refs"), false)?;
+        for file in ["packed-refs", "HEAD"] {
+            let from = git_dir.join(file);
+            if from.is_file() {
+                std::fs::copy(&from, into.join(file))?;
+            }
+        }
+        let config =
+            std::fs::read_to_string(git_dir.join("config")).unwrap_or_default();
+        std::fs::write(into.join("config"), bare_config(&config))?;
+        Ok(())
+    })();
+    if copied.is_err() {
         let _ = std::fs::remove_dir_all(into);
-        bail!(
-            "git clone {source} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+    }
+    copied.with_context(|| {
+        format!("Cannot copy the Git store of {}", source.display())
+    })
+}
+
+/// The directory holding a repository's objects and refs: `.git` of a
+/// checkout, the common directory of a linked worktree, or the
+/// repository itself when it is bare.
+fn git_dir(source: &Path) -> Option<PathBuf> {
+    let dot_git = source.join(".git");
+    let dir = if dot_git.is_dir() {
+        dot_git
+    } else if dot_git.is_file() {
+        // A linked worktree: `gitdir: <path>`, whose `commondir` names
+        // the repository the worktree belongs to.
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        let pointed =
+            PathBuf::from(text.trim().strip_prefix("gitdir:")?.trim());
+        let pointed = if pointed.is_absolute() {
+            pointed
+        } else {
+            source.join(pointed)
+        };
+        match std::fs::read_to_string(pointed.join("commondir")) {
+            Ok(common) => pointed.join(common.trim()),
+            Err(_) => pointed,
+        }
+    } else {
+        source.to_owned()
+    };
+    (dir.join("objects").is_dir() && dir.join("HEAD").is_file()).then_some(dir)
+}
+
+/// `config` for a bare copy: `bare = true`, and no worktree of its own.
+fn bare_config(config: &str) -> String {
+    let mut lines: Vec<String> = config
+        .lines()
+        .filter(|line| {
+            let key = line.trim().split('=').next().unwrap_or("").trim();
+            !key.eq_ignore_ascii_case("bare")
+                && !key.eq_ignore_ascii_case("worktree")
+        })
+        .map(str::to_owned)
+        .collect();
+    match lines
+        .iter()
+        .position(|line| line.trim().eq_ignore_ascii_case("[core]"))
+    {
+        Some(core) => lines.insert(core + 1, "\tbare = true".to_owned()),
+        None => lines
+            .splice(0..0, ["[core]".to_owned(), "\tbare = true".to_owned()])
+            .for_each(drop),
+    }
+    lines.join("\n") + "\n"
+}
+
+/// Copies the files under `from` to `into`, hard-linking them when
+/// `link` is set and the file system allows it.
+fn copy_tree(from: &Path, into: &Path, link: bool) -> std::io::Result<()> {
+    if !from.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(into)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = into.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target, link)?;
+        } else if !link || std::fs::hard_link(entry.path(), &target).is_err() {
+            std::fs::copy(entry.path(), &target)?;
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_config_sets_bare_and_drops_the_worktree() {
+        let config = "[core]\n\tbare = false\n\tworktree = ../x\n\tfilemode = true\n[remote \"origin\"]\n\turl = u\n";
+        assert_eq!(
+            bare_config(config),
+            "[core]\n\tbare = true\n\tfilemode = true\n[remote \"origin\"]\n\turl = u\n"
+        );
+        assert_eq!(bare_config(""), "[core]\n\tbare = true\n");
+    }
 }
