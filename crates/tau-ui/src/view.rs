@@ -54,6 +54,54 @@ pub struct RunView {
     /// What the chat cost before its latest message: each start of a
     /// resumed run reports only its own cost.
     pub cost_before: f64,
+    /// What tau-constitution checked and decided in the run.
+    pub constitution: ConstitutionStats,
+}
+
+/// tau-constitution's work in one run, from its reports.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConstitutionStats {
+    /// Tool calls checked, and final answers checked.
+    pub calls: u32,
+    pub answers: u32,
+    /// Questions asked of Jev: one per rule per check.
+    pub questions: u32,
+    /// What Jev cost, in US dollars.
+    pub cost: f64,
+    /// The rules behind each block, flag and hold, in order.
+    pub blocked: Vec<String>,
+    pub flagged: Vec<String>,
+    pub held: Vec<String>,
+    /// How many holds a run may have.
+    pub max_holds: Option<u32>,
+}
+
+impl ConstitutionStats {
+    pub fn is_empty(&self) -> bool {
+        self.calls == 0 && self.answers == 0
+    }
+
+    /// The plugin's state in a line: `1 blocked · 1 flagged`.
+    pub fn summary(&self) -> String {
+        let parts: Vec<String> = [
+            (self.blocked.len(), "blocked"),
+            (self.flagged.len(), "flagged"),
+            (self.held.len(), "held"),
+        ]
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, what)| format!("{count} {what}"))
+        .collect();
+        if parts.is_empty() {
+            let checks = self.calls + self.answers;
+            format!(
+                "{checks} {}, all clear",
+                if checks == 1 { "check" } else { "checks" }
+            )
+        } else {
+            parts.join(" · ")
+        }
+    }
 }
 
 /// One run event, as the Events tab lists it.
@@ -482,6 +530,7 @@ impl RunView {
             ledger: Vec::new(),
             log: Vec::new(),
             cost_before: 0.0,
+            constitution: ConstitutionStats::default(),
         }
     }
 
@@ -1138,9 +1187,40 @@ impl RunView {
             });
             return;
         }
+        if let Some(check) = tau_constitution::Check::parse(body) {
+            let stats = &mut self.constitution;
+            match check.call_id {
+                Some(_) => stats.calls += 1,
+                None => stats.answers += 1,
+            }
+            stats.questions += check.scores.len() as u32;
+            stats.cost += check.cost;
+            // Every score shows on the call's card, passed or not.
+            if let Some(call_id) = &check.call_id
+                && let Some(card) = self.tool_mut(call_id)
+            {
+                card.checks = check
+                    .scores
+                    .iter()
+                    .map(|score| format!("{} {:.2}", score.rule, score.score))
+                    .collect();
+            }
+            self.sync_constitution_status();
+            return;
+        }
         let Some(verdict) = Verdict::parse(body) else {
             return;
         };
+        let stats = &mut self.constitution;
+        match verdict.kind {
+            VerdictKind::Blocked => stats.blocked.push(verdict.rule.clone()),
+            VerdictKind::Flagged => stats.flagged.push(verdict.rule.clone()),
+            VerdictKind::Held => {
+                stats.held.push(verdict.rule.clone());
+                stats.max_holds = verdict.max_holds.or(stats.max_holds);
+            }
+        }
+        self.sync_constitution_status();
         let score = format!("{:.2}", verdict.score);
         if let Some(call_id) = &verdict.call_id {
             if let Some(card) = self.tool_mut(call_id) {
@@ -1163,9 +1243,8 @@ impl RunView {
         let (text, tone) = match verdict.kind {
             VerdictKind::Held => (
                 format!(
-                    "held the stop: {} wants {}",
-                    verdict.rule,
-                    lowercase_first(&verdict.text)
+                    "held the stop: the answer breaks {} (\"{}\")",
+                    verdict.rule, verdict.text
                 ),
                 Tone::Warn,
             ),
@@ -1177,21 +1256,44 @@ impl RunView {
                 Tone::Warn,
             ),
         };
+        let detail = match (verdict.hold, verdict.max_holds) {
+            (Some(hold), Some(max)) => {
+                format!("before_stop · continuation {hold} / {max}")
+            }
+            _ => format!("before_stop · {score}"),
+        };
         self.push_note(PluginNote {
             plugin: plugin.to_owned(),
             text,
-            detail: Some(format!("before_stop · {score}")),
+            detail: Some(detail),
             tone,
             body: NoteBody::None,
         });
     }
-}
 
-fn lowercase_first(text: &str) -> String {
-    let mut chars = text.chars();
-    match chars.next() {
-        Some(first) => first.to_lowercase().chain(chars).collect(),
-        None => String::new(),
+    /// The run's plugin list says what the constitution did so far.
+    fn sync_constitution_status(&mut self) {
+        let state = self.constitution.summary();
+        let tone = if self.constitution.blocked.is_empty() {
+            Tone::Quiet
+        } else {
+            Tone::Danger
+        };
+        match self
+            .plugins
+            .iter_mut()
+            .find(|status| status.name == tau_constitution::NAME)
+        {
+            Some(status) => {
+                status.state = state;
+                status.tone = tone;
+            }
+            None => self.plugins.push(PluginStatus {
+                name: tau_constitution::NAME.into(),
+                state,
+                tone,
+            }),
+        }
     }
 }
 
@@ -1388,6 +1490,33 @@ mod tests {
             .filter(|item| matches!(item, Item::Plugin(_)))
             .count();
         assert_eq!(notes, 1);
+        // Every check counts; passing scores show on their call's card.
+        view.apply(&report(serde_json::json!({
+            "kind": "checked", "call_id": "c1", "tool": "write",
+            "scores": [{"rule": "R2", "score": 0.55}, {"rule": "R4", "score": 0.02}],
+            "cost": 0.00003
+        })));
+        view.apply(&report(serde_json::json!({
+            "kind": "checked", "scores": [{"rule": "R6", "score": 0.9}], "cost": 0.00001
+        })));
+        let Some(Item::Tool(card)) =
+            view.items.iter().find(|item| matches!(item, Item::Tool(_)))
+        else {
+            panic!("a card")
+        };
+        assert_eq!(card.checks, ["R2 0.55", "R4 0.02"]);
+        let stats = &view.constitution;
+        assert_eq!((stats.calls, stats.answers, stats.questions), (1, 1, 3));
+        assert_eq!(stats.flagged, ["R2"]);
+        assert_eq!(stats.held, ["R6"]);
+        assert!((stats.cost - 0.00004).abs() < 1e-12);
+        // The run's plugin list says so.
+        let status = view
+            .plugins
+            .iter()
+            .find(|status| status.name == tau_constitution::NAME)
+            .unwrap();
+        assert_eq!(status.state, "1 flagged · 1 held");
         // Other plugins' reports only reach the log.
         let before = view.items.len();
         view.apply(&RunEvent::PluginReport {

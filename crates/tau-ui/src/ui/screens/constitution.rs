@@ -45,11 +45,29 @@ pub fn render(
         })
         .collect();
 
+    // How often this repository's runs had their answer sent back.
+    let repo_runs =
+        ws.runs.iter().filter(|run| ws.repo_of(run) == repo).count();
+    let held_answers = ws
+        .runs
+        .iter()
+        .filter(|run| {
+            ws.repo_of(run) == repo && !run.constitution.held.is_empty()
+        })
+        .count();
     let queue_view = div()
         .flex()
         .flex_col()
         .gap(sp(2.5))
-        .child(heading(&format!("Review queue · {}", queue.len()), t))
+        .child(heading(
+            &format!(
+                "Review queue · {} · {} of {} runs held an answer",
+                queue.len(),
+                held_answers,
+                repo_runs
+            ),
+            t,
+        ))
         .child(
             div()
                 .typeset(Type::CAPTION)
@@ -121,7 +139,16 @@ pub fn render(
                     t,
                 ))
                 .child(div().flex_1())
-                .child(mono(file_name(&constitution.path), Type::CAPTION, t.dim)),
+                .child(mono(file_name(&constitution.path), Type::CAPTION, t.dim))
+                .child({
+                    let repo = repo.to_owned();
+                    div()
+                        .id("edit-constitution")
+                        .child(ui::text_link("Edit", Type::CAPTION, t))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.edit_constitution(&repo, cx)
+                        }))
+                }),
         )
         .when(constitution.rules.is_empty() && constitution.error.is_none(), |list| {
             list.child(ui::empty(

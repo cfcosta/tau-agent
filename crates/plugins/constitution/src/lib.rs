@@ -56,6 +56,41 @@ pub struct Verdict {
     /// What the model was told, for a block or a hold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// For a hold: which one this is, and how many the run may have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_holds: Option<u32>,
+}
+
+/// One check: every applicable rule's score, whatever it decided, as
+/// the plugin reports and records it (`"kind": "checked"`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Check {
+    /// The call checked; `None` for the final answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    /// Each rule asked about, and its violation probability.
+    pub scores: Vec<Score>,
+    /// What Jev charged, in US dollars.
+    pub cost: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Score {
+    pub rule: String,
+    pub score: f64,
+}
+
+impl Check {
+    /// Reads a check back from a report or record body.
+    pub fn parse(body: &Value) -> Option<Self> {
+        (body["kind"] == "checked")
+            .then(|| serde_json::from_value(body.clone()).ok())
+            .flatten()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,10 +180,12 @@ struct Checks {
 impl Checks {
     /// Asks Jev about `rules` on `state`, one yes/no question each, and
     /// returns each rule's violation probability, in order.
+    /// Reports and records the check, with every score.
     async fn ask(
         &self,
         state: Value,
         rules: &[(&Rule, String)],
+        about: (Option<&str>, Option<&str>),
         ctx: &PluginCtx,
     ) -> Result<Vec<f64>, String> {
         let mut request = Request::new(state);
@@ -177,10 +214,29 @@ impl Checks {
         }
         let response =
             self.jev.ask(&request).await.map_err(|e| e.to_string())?;
-        ctx.charge(&response.usage());
-        (0..rules.len())
+        let usage = response.usage();
+        ctx.charge(&usage);
+        let scores = (0..rules.len())
             .map(|n| response.noul(&question_id(n)).map_err(|e| e.to_string()))
-            .collect()
+            .collect::<Result<Vec<f64>, String>>()?;
+        let check = Check {
+            call_id: about.0.map(str::to_owned),
+            tool: about.1.map(str::to_owned),
+            scores: rules
+                .iter()
+                .zip(&scores)
+                .map(|((rule, _), score)| Score {
+                    rule: rule.id.clone(),
+                    score: *score,
+                })
+                .collect(),
+            cost: usage.cost.total,
+        };
+        let mut body = serde_json::to_value(&check).unwrap_or_default();
+        body["kind"] = "checked".into();
+        ctx.report(body.clone());
+        let _ = ctx.record(&body).await;
+        Ok(scores)
     }
 
     async fn tell(&self, verdict: &Verdict, ctx: &PluginCtx) {
@@ -227,7 +283,8 @@ impl PluginRun for Checks {
             fields.extend(found.clone());
         }
         let state = json!({ "tool": call.name, "arguments": fields });
-        let scores = match self.ask(state, &rules, ctx).await {
+        let about = (Some(call.id.as_str()), Some(call.name.as_str()));
+        let scores = match self.ask(state, &rules, about, ctx).await {
             Ok(scores) => scores,
             Err(error) => {
                 let message = format!("Jev could not check the call: {error}");
@@ -286,6 +343,8 @@ impl PluginRun for Checks {
                 reason: (kind == VerdictKind::Blocked)
                     .then(|| reason.clone())
                     .flatten(),
+                hold: None,
+                max_holds: None,
             };
             self.tell(&verdict, ctx).await;
         }
@@ -319,7 +378,7 @@ impl PluginRun for Checks {
             .collect::<Vec<_>>()
             .join("\n");
         let scores = self
-            .ask(json!({ "final_answer": answer }), &rules, ctx)
+            .ask(json!({ "final_answer": answer }), &rules, (None, None), ctx)
             .await
             .map_err(|error| {
                 anyhow::anyhow!("Jev could not check the final answer: {error}")
@@ -343,6 +402,7 @@ impl PluginRun for Checks {
                 )
             });
             held.extend(reason.clone());
+            let held = kind == VerdictKind::Held;
             let verdict = Verdict {
                 kind,
                 rule: rule.id.clone(),
@@ -351,6 +411,8 @@ impl PluginRun for Checks {
                 call_id: None,
                 tool: None,
                 reason,
+                hold: held.then_some(self.holds + 1),
+                max_holds: held.then_some(self.constitution.max_holds),
             };
             self.tell(&verdict, ctx).await;
         }

@@ -989,6 +989,19 @@ impl Host {
         }
     }
 
+    /// A repository's constitution file, made with no rules if there is
+    /// none, for editing by hand.
+    pub fn constitution_file(&self, repo: &str) -> anyhow::Result<PathBuf> {
+        let slot = self
+            .slot(repo)
+            .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
+        let path = self.constitution_path(&slot);
+        if !path.exists() {
+            Constitution::default().save(&path)?;
+        }
+        Ok(path)
+    }
+
     /// Adds a rule to a repository's constitution (review and block at
     /// their defaults), or removes one, and saves it.
     pub fn edit_rules(
@@ -1571,6 +1584,18 @@ impl Host {
                             );
                         }
                     });
+                }
+                WorkspaceEvent::EditConstitution { repo } => {
+                    match handler.constitution_file(repo) {
+                        Ok(path) => cx.open_with_system(&path),
+                        Err(error) => workspace.update(cx, |ws, cx| {
+                            ws.show_alert(
+                                "Could not open the constitution",
+                                format!("{error:#}"),
+                                cx,
+                            )
+                        }),
+                    }
                 }
                 WorkspaceEvent::RemoveRule { repo, id } => {
                     let removed = handler.edit_rules(repo, |rules| {

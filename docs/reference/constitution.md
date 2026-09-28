@@ -50,8 +50,12 @@ one call go in one request; its cost is charged to the run.
 
 ## Reports
 
-Every decision is a `Verdict` (`kind`: `blocked`, `flagged`, `held`;
-the rule, its text, the score, the call and tool, the reason given).
+Every check is a `Check` (`kind`: `checked`): the call and tool (none
+for the final answer), each rule asked about with its score, whatever
+it decided, and what Jev cost. Every decision is then a `Verdict`
+(`kind`: `blocked`, `flagged`, `held`; the rule, its text, the score,
+the call and tool, the reason given, and for a hold which one it is
+out of `max_holds`).
 The plugin reports it (`RunEvent::PluginReport`, before the event it
 explains, such as the refused call's `ToolEnd`) and records it with
 the run, so history can show it again. A failed check is reported as
@@ -67,4 +71,12 @@ the run, so history can show it again. A failed check is reported as
   tau's config directory (`typesafe-key`), readable only by the user.
   Without one, runs are not checked and the screen says so.
 - Blocked and flagged calls show on their cards in the transcript, live
-  and in history; a held answer shows as a note.
+  and in history, and every call checked shows each rule's score; a
+  held answer shows as a note with its count (`continuation 1 / 3`).
+- The inspector's plugin list says what the plugin did in the run
+  (`1 blocked · 1 flagged`), its Plugins tab adds the run's checks
+  (calls and answers checked, questions asked, blocks, flags and holds
+  with their rules, Jev's cost), and a finished run's outcome lists its
+  continuations and offers to review a flagged call.
+- The Constitution screen's Edit link opens the file in the user's
+  editor, making it first if there is none.

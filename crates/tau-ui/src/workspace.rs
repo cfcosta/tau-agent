@@ -148,6 +148,11 @@ pub enum WorkspaceEvent {
         repo: String,
         id: String,
     },
+    /// Open the repository's constitution file in the user's editor,
+    /// making it first if there is none.
+    EditConstitution {
+        repo: String,
+    },
     /// Save the TypeSafe key tau-constitution checks with, or forget it.
     JevKey {
         key: Option<String>,
@@ -1431,6 +1436,12 @@ impl Workspace {
     pub fn rule_on_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
         self.rule_on
             .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
+    }
+
+    pub fn edit_constitution(&mut self, repo: &str, cx: &mut Context<Self>) {
+        cx.emit(WorkspaceEvent::EditConstitution {
+            repo: repo.to_owned(),
+        });
     }
 
     pub fn remove_rule(

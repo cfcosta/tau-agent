@@ -275,6 +275,22 @@ fn open_demo_screen(
             workspace.toggle_repo_menu("homelab.nix", cx);
             return;
         }
+        Some("run-plugins") => {
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            workspace.set_tab(tau_ui::ui::inspector::Tab::Plugins, cx);
+            return;
+        }
+        Some("sheet-plugins") => {
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            workspace.set_tab(tau_ui::ui::inspector::Tab::Plugins, cx);
+            workspace.toggle_sheet(cx);
+            return;
+        }
+        Some("sheet-run") => {
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            workspace.toggle_sheet(cx);
+            return;
+        }
         Some("repo-open") => {
             workspace.toggle_repo_open("docbert", cx);
             return;

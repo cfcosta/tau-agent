@@ -60,7 +60,6 @@ use crate::{
         RunUpdate,
         RunView,
         Tone,
-        ToolState,
     },
 };
 
@@ -1397,6 +1396,36 @@ impl Script {
         );
     }
 
+    /// tau-constitution's check of a call (or, with `None`, the final
+    /// answer), with each rule's score, as the plugin reports it.
+    fn checked(&mut self, call: Option<(&str, &str)>, scores: &[(&str, f64)]) {
+        let mut body = json!({
+            "kind": "checked",
+            "scores": scores
+                .iter()
+                .map(|(rule, score)| json!({ "rule": rule, "score": score }))
+                .collect::<Vec<_>>(),
+            "cost": 0.00002,
+        });
+        if let Some((id, tool)) = call {
+            body["call_id"] = id.into();
+            body["tool"] = tool.into();
+        }
+        self.verdict(body);
+    }
+
+    /// A report from tau-constitution.
+    fn verdict(&mut self, body: Value) {
+        self.event(
+            60,
+            RunEvent::PluginReport {
+                run: self.run.clone(),
+                plugin: Arc::from("tau-constitution"),
+                body,
+            },
+        );
+    }
+
     fn start_tool(&mut self, id: &str, tool: &str, args: Value) {
         self.event(
             350,
@@ -1634,21 +1663,17 @@ pub fn script() -> Vec<Step> {
             }]
         }),
     );
-    let reason = "R2: \"Library code returns errors. No unwrap or expect \
-                  outside tests.\"";
+    let reason = "Blocked by tau-constitution: this call breaks rule R2 \
+                  (\"Library code returns errors. No unwrap or expect outside \
+                  tests.\"), violation probability 0.95. Change the call so it \
+                  follows the rule, then try again.";
+    s.checked(Some(("c4", "edit")), &[("R2", 0.95), ("R4", 0.08)]);
+    s.verdict(json!({
+        "kind": "blocked", "rule": "R2", "score": 0.95,
+        "text": "Library code returns errors. No unwrap or expect outside tests.",
+        "call_id": "c4", "tool": "edit", "reason": reason,
+    }));
     s.end_tool(500, "c4", ToolOutput::text(reason));
-    s.at(
-        0,
-        RunUpdate::Tool {
-            call_id: "c4".into(),
-            state: ToolState::Blocked {
-                plugin: "tau-constitution".into(),
-                rule: "R2".into(),
-                reason: reason.into(),
-                score: "p 0.95 ≥ 0.80".into(),
-            },
-        },
-    );
     s.at(0, RunUpdate::PluginCost(0.00007));
     s.end_turn(21_400, 610, 0.027);
 
@@ -1667,32 +1692,21 @@ pub fn script() -> Vec<Step> {
          -    todo!()\n\
          \x20}\n",
     );
-    s.tool(450, "c5", "edit", args, output);
-    s.at(
-        0,
-        RunUpdate::Checks {
-            call_id: "c5".into(),
-            checks: vec!["R2 0.02".into(), "R4 0.06".into()],
-        },
-    );
-    s.tool(
-        600,
+    s.start_tool("c5", "edit", args);
+    s.checked(Some(("c5", "edit")), &[("R2", 0.02), ("R4", 0.06)]);
+    s.end_tool(450, "c5", output);
+    s.start_tool(
         "c6",
         "bash",
         json!({ "command": "rm -rf target/debug/incremental" }),
-        ToolOutput::text(""),
     );
-    s.at(
-        0,
-        RunUpdate::Tool {
-            call_id: "c6".into(),
-            state: ToolState::Flagged {
-                plugin: "tau-constitution".into(),
-                rule: "R1".into(),
-                score: "0.41".into(),
-            },
-        },
-    );
+    s.checked(Some(("c6", "bash")), &[("R1", 0.41)]);
+    s.verdict(json!({
+        "kind": "flagged", "rule": "R1", "score": 0.41,
+        "text": "Never delete outside target/ or rewrite published history.",
+        "call_id": "c6", "tool": "bash",
+    }));
+    s.end_tool(600, "c6", ToolOutput::text(""));
     s.at(
         0,
         RunUpdate::Plugins(plugins([
@@ -1925,13 +1939,21 @@ pub fn script() -> Vec<Step> {
     );
     s.end_turn(82_000, 700, 0.024);
     // tau-constitution holds the stop in `before_stop`.
+    s.checked(None, &[("R6", 0.91)]);
+    let held = "Your answer breaks rule R6 (\"The final answer names the \
+                tests that ran and their result.\"). Revise it so it follows \
+                the rule, then answer again.";
+    s.verdict(json!({
+        "kind": "held", "rule": "R6", "score": 0.91,
+        "text": "The final answer names the tests that ran and their result.",
+        "reason": held, "hold": 1, "max_holds": 3,
+    }));
     s.event(
         500,
         RunEvent::Continued {
             run: run.clone(),
             plugin: Arc::from("tau-constitution"),
-            message: "R6 wants the final answer to name the tests that ran."
-                .into(),
+            message: held.into(),
         },
     );
 
@@ -1942,6 +1964,7 @@ pub fn script() -> Vec<Step> {
          `ignores_malformed_header`.",
     );
     s.end_turn(82_600, 300, 0.012);
+    s.checked(None, &[("R6", 0.04)]);
     s.at(0, RunUpdate::PluginCost(0.012));
     s.event(
         400,

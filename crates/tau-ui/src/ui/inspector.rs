@@ -55,7 +55,7 @@ pub fn content(
     let body = div().flex().flex_col().gap(sp(5.));
     match tab {
         Tab::Run => {
-            let body = run_tab(run, body, t, cx);
+            let body = run_tab(ws, run, body, t, cx);
             if run.plugins.is_empty() {
                 body
             } else {
@@ -70,37 +70,84 @@ pub fn content(
 }
 
 fn run_tab(
+    ws: &Workspace,
     run: &RunView,
     body: Div,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
     let plan_route = Route::Plan(run.id.clone());
+    let rules = &run.constitution;
     let body = match &run.status {
         RunStatus::Finished(stop) => {
             let (color, label) = stop_look(stop, t);
-            body.child(heading("Outcome", t)).child(key_values(
-                [
-                    ("stop".into(), mono(label, Type::CAPTION, color)),
-                    (
-                        "turns".into(),
-                        mono(run.turn.to_string(), Type::CAPTION, t.text),
+            let continuations = (!rules.held.is_empty()).then(|| {
+                (
+                    SharedString::from("continuations"),
+                    mono(
+                        format!(
+                            "{} ({})",
+                            rules.held.len(),
+                            rules.held.join(", ")
+                        ),
+                        Type::CAPTION,
+                        t.accent,
                     ),
-                    (
-                        "tokens".into(),
-                        mono(tokens(run.usage.tokens), Type::CAPTION, t.text),
-                    ),
-                    (
-                        "cost".into(),
-                        mono(usd(run.usage.cost), Type::CAPTION, t.text),
-                    ),
-                    (
-                        "plugins".into(),
-                        mono(usd(run.usage.plugin_cost), Type::CAPTION, t.text),
-                    ),
-                ],
-                t,
-            ))
+                )
+            });
+            let flagged = rules.flagged.first().cloned();
+            let repo = ws.repo_of(run).to_owned();
+            body.child(heading("Outcome", t))
+                .child(key_values(
+                    [
+                        ("stop".into(), mono(label, Type::CAPTION, color)),
+                        (
+                            "turns".into(),
+                            mono(run.turn.to_string(), Type::CAPTION, t.text),
+                        ),
+                        (
+                            "tokens".into(),
+                            mono(
+                                tokens(run.usage.tokens),
+                                Type::CAPTION,
+                                t.text,
+                            ),
+                        ),
+                        (
+                            "cost".into(),
+                            mono(usd(run.usage.cost), Type::CAPTION, t.text),
+                        ),
+                        (
+                            "plugins".into(),
+                            mono(
+                                usd(run.usage.plugin_cost),
+                                Type::CAPTION,
+                                t.text,
+                            ),
+                        ),
+                    ]
+                    .into_iter()
+                    .chain(continuations),
+                    t,
+                ))
+                .when_some(flagged, |body, rule| {
+                    let route = Route::Constitution {
+                        repo,
+                        rule: Some(rule),
+                    };
+                    body.child(
+                        div()
+                            .id("review-flagged")
+                            .child(crate::ui::button(
+                                "Review the flagged call",
+                                crate::ui::ButtonKind::Secondary,
+                                t,
+                            ))
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                ws.navigate(route.clone(), cx)
+                            })),
+                    )
+                })
         }
         _ => body,
     };
@@ -338,6 +385,14 @@ fn plugins_tab(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
+    let rules = &run.constitution;
+    let with_rules = |count: usize, list: &[String]| {
+        if count == 0 {
+            "0".to_owned()
+        } else {
+            format!("{count} ({})", list.join(", "))
+        }
+    };
     body.child(heading("Plugins this run", t))
         .child(plugin_states(ws, run, t, cx))
         .child(
@@ -350,6 +405,67 @@ fn plugins_tab(
                     usd(run.usage.plugin_cost)
                 )),
         )
+        .when(!rules.is_empty(), |body| {
+            let value = |text: String, color| mono(text, Type::CAPTION, color);
+            body.child(heading("Constitution checks", t))
+                .child(key_values(
+                    [
+                        (
+                            "calls checked".into(),
+                            value(rules.calls.to_string(), t.text),
+                        ),
+                        (
+                            "answers checked".into(),
+                            value(rules.answers.to_string(), t.text),
+                        ),
+                        (
+                            "questions asked".into(),
+                            value(rules.questions.to_string(), t.text),
+                        ),
+                        (
+                            "blocked".into(),
+                            value(
+                                with_rules(rules.blocked.len(), &rules.blocked),
+                                if rules.blocked.is_empty() { t.text } else { t.red },
+                            ),
+                        ),
+                        (
+                            "flagged".into(),
+                            value(
+                                with_rules(rules.flagged.len(), &rules.flagged),
+                                if rules.flagged.is_empty() { t.text } else { t.accent },
+                            ),
+                        ),
+                        (
+                            "held".into(),
+                            value(
+                                match (rules.max_holds, rules.held.is_empty()) {
+                                    (Some(max), false) => format!(
+                                        "{} of {max} ({})",
+                                        rules.held.len(),
+                                        rules.held.join(", ")
+                                    ),
+                                    _ => with_rules(rules.held.len(), &rules.held),
+                                },
+                                t.text,
+                            ),
+                        ),
+                        ("Jev cost".into(), value(usd(rules.cost), t.text)),
+                    ],
+                    t,
+                ))
+                .child(
+                    div()
+                        .typeset(Type::CAPTION)
+                        .text_color(t.dim)
+                        .line_height(relative(1.5))
+                        .child(
+                            "Only the fields the model wrote are checked, such as \
+                             edit.newText or bash.command. Tool output never goes \
+                             to Jev.",
+                        ),
+                )
+        })
 }
 
 /// Each plugin's state in the run; a row opens the plugin's screen.

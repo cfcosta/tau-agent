@@ -20,6 +20,7 @@ use tau_agent::{
 };
 use tau_ai::message::{InputBlock, Message};
 use tau_constitution::{
+    Check,
     Constitution,
     ConstitutionPlugin,
     NAME,
@@ -203,8 +204,22 @@ fn a_call_that_breaks_a_rule_is_refused_with_the_rule() {
     assert!(found[0].reason.is_some());
 
     // It is recorded with the run, for history.
-    assert_eq!(records.len(), 1);
-    assert_eq!(Verdict::parse(&records[0]).unwrap(), found[0]);
+    // The call's check with every score, its verdict, then the check
+    // of the final answer, which passed.
+    assert_eq!(records.len(), 3);
+    let answer = Check::parse(&records[2]).unwrap();
+    assert_eq!(
+        (answer.call_id, answer.scores[0].rule.as_str()),
+        (None, "R6")
+    );
+    let check = Check::parse(&records[0]).unwrap();
+    assert_eq!(
+        check.call_id.as_deref(),
+        Some(found[0].call_id.as_deref().unwrap())
+    );
+    assert_eq!(check.scores[0].rule, "R2");
+    assert!(check.cost > 0.0, "Jev's cost is counted");
+    assert_eq!(Verdict::parse(&records[1]).unwrap(), found[0]);
 }
 
 #[test]
@@ -259,7 +274,9 @@ fn a_final_answer_that_breaks_a_rule_goes_back_until_the_cap() {
     };
     assert_eq!(&**plugin, NAME);
     assert!(message.contains("rule R6"), "{message}");
-    assert_eq!(verdicts(&events)[0].kind, VerdictKind::Held);
+    let held = &verdicts(&events)[0];
+    assert_eq!(held.kind, VerdictKind::Held);
+    assert_eq!((held.hold, held.max_holds), (Some(1), Some(3)));
     assert!(matches!(
         events.last(),
         Some(RunEvent::RunEnd {

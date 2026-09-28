@@ -693,9 +693,12 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
         })
     };
     assert!(blocked(&view), "the card shows the block live");
+    assert_eq!(view.constitution.calls, 1);
+    assert_eq!(view.constitution.blocked, ["R1"]);
     // And in history, from what the plugin recorded.
     let history = host.history().unwrap();
     assert!(blocked(&history[0]));
+    assert_eq!(history[0].constitution, view.constitution);
 
     // Removing a rule saves it.
     host.edit_rules(host.home(), |rules| {
@@ -705,6 +708,10 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     .unwrap();
     let constitution = host.catalog().repos[0].constitution.clone();
     assert!(constitution.rules.is_empty());
+    // Editing by hand opens the file, which exists once asked for.
+    let file = host.constitution_file(host.home()).unwrap();
+    assert!(file.exists());
+    assert_eq!(file.display().to_string(), constitution.path);
     // A broken file says why, on the Constitution screen.
     std::fs::write(&constitution.path, "[[rule]]\nid = 'A'\n").unwrap();
     let error = host.catalog().repos[0].constitution.error.clone();
