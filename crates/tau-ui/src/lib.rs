@@ -32,8 +32,10 @@
 //! agent: `cargo run -p tau-ui`.
 
 pub mod assets;
+pub mod catalog;
 pub mod demo;
 pub mod input;
+pub mod route;
 pub mod theme;
 pub mod ui;
 pub mod view;
@@ -50,4 +52,5 @@ pub fn init(cx: &mut App) {
     }
     cx.set_global(theme::Theme::graphite());
     input::bind_keys(cx);
+    workspace::bind_keys(cx);
 }

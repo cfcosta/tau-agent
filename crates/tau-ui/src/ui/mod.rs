@@ -4,6 +4,7 @@
 
 pub mod chrome;
 pub mod inspector;
+pub mod screens;
 pub mod transcript;
 
 use gpui::{
@@ -207,4 +208,101 @@ pub fn status_icon(run: &RunView, t: &Theme, size: f32) -> gpui::AnyElement {
             icon(Icon::Warning, size, t.red).into_any_element()
         }
     }
+}
+
+/// Text that navigates somewhere; callers add the id and the click.
+pub fn link(label: impl Into<SharedString>, t: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .flex_shrink_0()
+        .text_size(px(12.))
+        .text_color(t.blue)
+        .cursor_pointer()
+        .hover(|style| style.underline())
+        .child(label.into())
+        .child(icon(Icon::Chevron, 11., t.blue))
+}
+
+/// A bordered box.
+pub fn card(t: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .border_1()
+        .border_color(t.border)
+        .rounded(px(8.))
+        .overflow_hidden()
+}
+
+/// A small labelled number.
+pub fn stat(label: &str, value: impl Into<SharedString>, t: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .px(px(12.))
+        .py(px(10.))
+        .rounded(px(6.))
+        .bg(t.panel)
+        .child(mono(label.to_owned(), 12., t.dim))
+        .child(mono(value, 15., t.text))
+}
+
+/// A screen's title and the sentence under it.
+pub fn screen_title(
+    title: impl Into<SharedString>,
+    subtitle: impl Into<SharedString>,
+    t: &Theme,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .child(
+            div()
+                .text_size(px(20.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .max_w(px(760.))
+                .text_color(t.muted)
+                .line_height(gpui::relative(1.5))
+                .child(subtitle.into()),
+        )
+}
+
+/// A scrolling screen body with the layout's padding.
+pub fn screen(
+    id: &'static str,
+    compact: bool,
+    content: impl IntoElement,
+) -> gpui::Stateful<Div> {
+    div()
+        .id(id)
+        .flex_1()
+        .min_h(px(0.))
+        .overflow_y_scroll()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(18.))
+                .px(px(if compact { 16. } else { 32. }))
+                .py(px(if compact { 16. } else { 24. }))
+                .child(content),
+        )
+}
+
+/// An empty state.
+pub fn empty(text: impl Into<SharedString>, t: &Theme) -> Div {
+    div()
+        .flex()
+        .justify_center()
+        .py(px(48.))
+        .text_color(t.muted)
+        .child(text.into())
 }

@@ -1,5 +1,5 @@
-//! Everything around the transcript: title bar, run list, status bar,
-//! and their phone versions.
+//! Everything around the screens: title bar, sidebar, status bar, and
+//! their phone versions.
 
 use gpui::{
     AnyElement,
@@ -16,8 +16,9 @@ use gpui::{
 use super::{dot, icon, mono, status_icon, status_look};
 use crate::{
     assets::Icon,
+    route::{Route, Tab},
     theme::{MONO, Theme},
-    view::{ChildKind, RunView, tokens, usd},
+    view::{ChildKind, Origin, RunView, tokens, usd},
     workspace::Workspace,
 };
 
@@ -56,42 +57,81 @@ pub fn icon_button(
         .child(icon(glyph, 18., t.text_soft))
 }
 
+fn tab_icon(tab: Tab) -> Icon {
+    match tab {
+        Tab::Runs => Icon::Runs,
+        Tab::Memory => Icon::Memory,
+        Tab::History => Icon::History,
+        Tab::Plugins => Icon::Plug,
+    }
+}
+
+/// The desktop title bar: where you are, and the way back.
 pub fn title_bar(
-    workspace_name: &str,
-    run: Option<&RunView>,
-    total_cost: f64,
+    ws: &Workspace,
     t: &Theme,
+    cx: &mut Context<Workspace>,
 ) -> Div {
+    let run = ws.current();
     let reasoning = run
         .and_then(|run| run.plan.iter().find(|f| f.name == "reasoning"))
         .map_or("reasoning auto".to_owned(), |field| {
             format!("reasoning {}", field.value)
         });
     let model = run.map_or("gpt-5.5".to_owned(), |run| run.model.clone());
+    let total: f64 = ws.runs.iter().map(|run| run.usage.cost).sum();
+    let mut crumbs = vec![ws.name.clone()];
+    match &ws.route {
+        Route::Home | Route::Run(_) => {
+            crumbs.extend(run.map(|run| run.title.clone()));
+        }
+        route => {
+            crumbs.extend(
+                route
+                    .run()
+                    .and_then(|id| ws.run(id))
+                    .map(|run| run.title.clone()),
+            );
+            crumbs.push(route.title().to_owned());
+        }
+    }
+    let last = crumbs.len() - 1;
+
     div()
         .h(px(44.))
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap(px(12.))
-        .pl(px(16.))
+        .gap(px(10.))
+        .pl(px(12.))
         .pr(px(12.))
         .bg(t.panel)
         .border_b_1()
         .border_color(t.border)
         .child(logo(t, 26.))
-        .child(
-            div()
-                .font_weight(FontWeight::MEDIUM)
-                .child(workspace_name.to_owned()),
-        )
+        .when(ws.can_go_back(), |bar| {
+            bar.child(
+                icon_button("back", Icon::Back, 30., t)
+                    .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
+            )
+        })
+        .children(crumbs.into_iter().enumerate().flat_map(|(n, crumb)| {
+            let text = div()
+                .when(n == last, |crumb| crumb.font_weight(FontWeight::MEDIUM))
+                .text_color(if n == last { t.text } else { t.muted })
+                .child(crumb)
+                .into_any_element();
+            let slash = (n > 0)
+                .then(|| div().text_color(t.dim).child("/").into_any_element());
+            slash.into_iter().chain([text])
+        }))
         .child(div().flex_1())
         .child(
             div()
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .w(px(380.))
+                .w(px(340.))
                 .px(px(10.))
                 .py(px(5.))
                 .border_1()
@@ -117,7 +157,7 @@ pub fn title_bar(
                 .child(mono(reasoning, 12., t.blue)),
         )
         .child(
-            mono(format!("today {}", usd(total_cost)), 12., t.accent)
+            mono(format!("today {}", usd(total)), 12., t.accent)
                 .px(px(10.))
                 .py(px(5.))
                 .rounded(px(6.))
@@ -125,24 +165,111 @@ pub fn title_bar(
         )
 }
 
-/// The run list on the left of the desktop layout.
+/// The desktop sidebar: sections, then runs with their forks and
+/// sub-agents, then agents.
 pub fn sidebar(
-    runs: &[RunView],
-    selected: usize,
+    ws: &Workspace,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Div {
+) -> gpui::Stateful<Div> {
+    let nav = [
+        (Route::History, Icon::History, "History", "Ctrl 3"),
+        (
+            Route::Memory { note: None },
+            Icon::Memory,
+            "Memory",
+            "Ctrl 2",
+        ),
+        (Route::Plugins, Icon::Plug, "Plugins", "Ctrl 4"),
+        (
+            Route::Constitution { rule: None },
+            Icon::Blocked,
+            "Constitution",
+            "",
+        ),
+    ];
+    let active_section = |route: &Route| match (route, &ws.route) {
+        (Route::Memory { .. }, Route::Memory { .. }) => true,
+        (Route::Constitution { .. }, Route::Constitution { .. }) => true,
+        (a, b) => a == b,
+    };
+    let reviews: usize = ws
+        .runs
+        .iter()
+        .flat_map(|run| run.reviews().map(move |card| (run, card)))
+        .filter(|(run, card)| {
+            matches!(card.state, crate::view::ToolState::Flagged { .. })
+                && !ws
+                    .dismissed
+                    .contains(&(run.id.clone(), card.call_id.clone()))
+        })
+        .count();
+
+    let nav =
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .children(nav.into_iter().map(|(route, glyph, label, keys)| {
+                let active = active_section(&route);
+                let badge =
+                    (label == "Constitution" && reviews > 0).then(|| {
+                        mono(reviews.to_string(), 11., t.bg)
+                            .px(px(6.))
+                            .rounded(px(8.))
+                            .bg(t.accent)
+                    });
+                div()
+                    .id(label)
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .px(px(10.))
+                    .py(px(7.))
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .when(active, |row| row.bg(t.selected))
+                    .when(!active, |row| {
+                        row.hover(|style| style.bg(gpui::white().opacity(0.03)))
+                    })
+                    .child(icon(
+                        glyph,
+                        14.,
+                        if active { t.text } else { t.muted },
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(if active {
+                                t.text
+                            } else {
+                                t.text_soft
+                            })
+                            .child(label),
+                    )
+                    .children(badge)
+                    .when(!keys.is_empty(), |row| {
+                        row.child(mono(keys, 11., t.dim))
+                    })
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(route.clone(), cx)
+                    }))
+            }));
+
+    let current = ws.current().map(|run| run.id.clone());
     let mut list = div().flex().flex_col().gap(px(2.)).child(
         div()
             .px(px(10.))
             .pb(px(6.))
             .child(super::heading("Runs", t)),
     );
-    for (index, run) in runs.iter().enumerate() {
-        let active = index == selected;
+    for run in ws.runs.iter().filter(|run| run.origin == Origin::Root) {
+        let active = current.as_ref() == Some(&run.id)
+            && matches!(ws.route, Route::Run(_) | Route::Home);
+        let route = Route::Run(run.id.clone());
         list = list.child(
             div()
-                .id(SharedString::from(format!("run-{index}")))
+                .id(SharedString::from(format!("run-{}", run.id)))
                 .flex()
                 .items_center()
                 .gap(px(8.))
@@ -166,20 +293,33 @@ pub fn sidebar(
                         .child(run.title.clone()),
                 )
                 .child(mono(usd(run.usage.cost), 11., t.muted))
-                .on_click(
-                    cx.listener(move |ws, _, _, cx| ws.select_index(index, cx)),
-                ),
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.navigate(route.clone(), cx)
+                })),
         );
         list = list.children(run.children.iter().map(|child| {
             let (color, label) = status_look(&child.status, t);
+            let route = match child.kind {
+                ChildKind::Fork => Some(Route::Compare {
+                    main: run.id.clone(),
+                    fork: child.id.clone(),
+                }),
+                ChildKind::SubAgent => {
+                    ws.run(&child.id).map(|_| Route::Run(child.id.clone()))
+                }
+            };
+            let active = route.as_ref() == Some(&ws.route);
             div()
+                .id(SharedString::from(format!("child-{}", child.id)))
                 .flex()
                 .items_center()
                 .gap(px(8.))
                 .pl(px(28.))
                 .pr(px(10.))
                 .py(px(6.))
+                .rounded(px(6.))
                 .text_color(t.text_soft)
+                .when(active, |row| row.bg(t.selected))
                 .child(icon(
                     match child.kind {
                         ChildKind::SubAgent => Icon::SubAgent,
@@ -190,15 +330,23 @@ pub fn sidebar(
                 ))
                 .child(div().flex_1().truncate().child(child.title.clone()))
                 .child(div().text_size(px(11.)).text_color(color).child(label))
+                .when_some(route, |row, route| {
+                    row.cursor_pointer()
+                        .hover(|style| style.bg(gpui::white().opacity(0.03)))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.navigate(route.clone(), cx)
+                        }))
+                })
         }));
     }
 
     let mut agents: Vec<&str> =
-        runs.iter().map(|run| run.agent.as_str()).collect();
+        ws.runs.iter().map(|run| run.agent.as_str()).collect();
     agents.sort_unstable();
     agents.dedup();
 
     div()
+        .id("sidebar")
         .flex()
         .flex_col()
         .gap(px(18.))
@@ -207,7 +355,7 @@ pub fn sidebar(
         .bg(t.panel)
         .border_r_1()
         .border_color(t.border)
-        .overflow_hidden()
+        .overflow_y_scroll()
         .child(
             div()
                 .id("new-run")
@@ -228,6 +376,7 @@ pub fn sidebar(
                     ws.start_new_run(window, cx)
                 })),
         )
+        .child(nav)
         .child(list)
         .child(
             div()
@@ -242,11 +391,15 @@ pub fn sidebar(
                 )
                 .children(agents.into_iter().map(|agent| {
                     div()
+                        .id(SharedString::from(format!("agent-{agent}")))
                         .flex()
                         .items_center()
                         .gap(px(8.))
                         .px(px(10.))
                         .py(px(6.))
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(gpui::white().opacity(0.03)))
                         .child(
                             mono(
                                 agent.chars().next().unwrap_or('?').to_string(),
@@ -260,13 +413,17 @@ pub fn sidebar(
                             .rounded(px(4.))
                             .bg(gpui::rgb(0x2c3a52)),
                         )
-                        .child(agent.to_owned())
+                        .child(div().flex_1().child(agent.to_owned()))
+                        .child(mono("plugins", 11., t.dim))
+                        .on_click(cx.listener(|ws, _, _, cx| {
+                            ws.navigate(Route::Plugins, cx)
+                        }))
                 })),
         )
 }
 
-pub fn status_bar(run: Option<&RunView>, runs: usize, t: &Theme) -> Div {
-    let context = run.map(|run| {
+pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
+    let context = ws.current().map(|run| {
         let window = run
             .context
             .window
@@ -296,7 +453,12 @@ pub fn status_bar(run: Option<&RunView>, runs: usize, t: &Theme) -> Div {
         )
         .children(context)
         .child(div().flex_1())
-        .child(format!("{runs} runs"))
+        .child("Esc back")
+        .child(format!(
+            "{} · {} runs",
+            ws.catalog.store.path,
+            ws.runs.len()
+        ))
 }
 
 /// The phone's header above a run: back, title and status, details.
@@ -318,7 +480,7 @@ pub fn phone_run_bar(
         .border_color(t.border)
         .child(
             icon_button("phone-back", Icon::Back, 44., t)
-                .on_click(cx.listener(|ws, _, _, cx| ws.show_run_list(cx))),
+                .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
         )
         .child(
             div()
@@ -360,117 +522,145 @@ pub fn phone_run_bar(
         )
 }
 
-/// The phone's home: live runs as cards, then the rest.
-pub fn phone_run_list(
-    workspace_name: &str,
-    runs: &[RunView],
+/// The phone's header on every other screen.
+pub fn phone_header(
+    ws: &Workspace,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let live: Vec<AnyElement> = runs
-        .iter()
-        .enumerate()
-        .filter(|(_, run)| run.status.is_live())
-        .map(|(index, run)| live_card(index, run, t, cx).into_any_element())
-        .collect();
-    let earlier = runs
-        .iter()
-        .enumerate()
-        .filter(|(_, run)| !run.status.is_live())
-        .map(|(index, run)| {
-            let (color, label) = status_look(&run.status, t);
+    let title = match &ws.route {
+        Route::Memory { note: Some(id) } => ws
+            .catalog
+            .memory
+            .note(id)
+            .map_or("Memory".to_owned(), |note| note.title.clone()),
+        route => route.title().to_owned(),
+    };
+    div()
+        .h(px(56.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .px(px(6.))
+        .bg(t.panel)
+        .border_b_1()
+        .border_color(t.border)
+        .when(!ws.route.is_top_level(), |bar| {
+            bar.child(
+                icon_button("phone-back", Icon::Back, 44., t)
+                    .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
+            )
+        })
+        .when(ws.route.is_top_level(), |bar| {
+            bar.pl(px(16.)).child(logo(t, 28.)).child(div().w(px(6.)))
+        })
+        .child(
             div()
-                .id(SharedString::from(format!("phone-run-{index}")))
-                .flex()
-                .items_center()
-                .gap(px(12.))
-                .min_h(px(56.))
-                .px(px(16.))
-                .border_b_1()
-                .border_color(t.border)
-                .cursor_pointer()
-                .child(status_icon(run, t, 14.))
-                .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.))
-                        .child(
-                            div()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(run.title.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(color)
-                                .child(format!("{label} · {} turns", run.turn)),
-                        ),
-                )
-                .child(mono(usd(run.usage.cost), 12., t.muted))
-                .on_click(
-                    cx.listener(move |ws, _, _, cx| ws.select_index(index, cx)),
-                )
-        });
+                .flex_1()
+                .min_w(px(0.))
+                .truncate()
+                .text_size(px(17.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        )
+        .when(matches!(ws.route, Route::Home), |bar| {
+            bar.child(icon_button("phone-new", Icon::Plus, 44., t).on_click(
+                cx.listener(|ws, _, window, cx| ws.start_new_run(window, cx)),
+            ))
+        })
+}
+
+/// The phone's home: live runs as cards, then the rest.
+pub fn phone_run_list(
+    ws: &Workspace,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let live: Vec<AnyElement> = ws
+        .runs
+        .iter()
+        .filter(|run| run.status.is_live())
+        .map(|run| live_card(run, t, cx).into_any_element())
+        .collect();
+    let earlier =
+        ws.runs
+            .iter()
+            .filter(|run| !run.status.is_live())
+            .map(|run| {
+                let (color, label) = status_look(&run.status, t);
+                let route = match &run.origin {
+                    Origin::Fork { from, .. } => Route::Compare {
+                        main: from.clone(),
+                        fork: run.id.clone(),
+                    },
+                    _ => Route::Run(run.id.clone()),
+                };
+                div()
+                    .id(SharedString::from(format!("phone-run-{}", run.id)))
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .min_h(px(56.))
+                    .px(px(16.))
+                    .border_b_1()
+                    .border_color(t.border)
+                    .cursor_pointer()
+                    .child(status_icon(run, t, 14.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(run.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(color)
+                                    .child(format!(
+                                        "{label} · {} turns",
+                                        run.turn
+                                    )),
+                            ),
+                    )
+                    .child(mono(usd(run.usage.cost), 12., t.muted))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(route.clone(), cx)
+                    }))
+            });
 
     div()
-        .size_full()
+        .id("phone-runs")
+        .flex_1()
+        .min_h(px(0.))
+        .overflow_y_scroll()
         .flex()
         .flex_col()
         .child(
             div()
-                .h(px(56.))
-                .flex_shrink_0()
                 .flex()
-                .items_center()
-                .gap(px(10.))
-                .pl(px(16.))
-                .pr(px(8.))
-                .child(logo(t, 28.))
-                .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(17.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(workspace_name.to_owned()),
-                )
-                .child(icon_button("phone-new", Icon::Plus, 44., t).on_click(
-                    cx.listener(|ws, _, window, cx| {
-                        ws.start_new_run(window, cx)
-                    }),
-                )),
+                .flex_col()
+                .gap(px(12.))
+                .p(px(16.))
+                .children(live),
         )
         .child(
             div()
-                .id("phone-runs")
-                .flex_1()
-                .min_h(px(0.))
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(12.))
-                        .px(px(16.))
-                        .pb(px(16.))
-                        .children(live),
-                )
-                .child(
-                    div()
-                        .px(px(16.))
-                        .pb(px(6.))
-                        .child(super::heading("Earlier", t)),
-                )
-                .children(earlier),
+                .px(px(16.))
+                .pb(px(6.))
+                .child(super::heading("Earlier", t)),
         )
-        .child(phone_tab_bar(t))
+        .children(earlier)
 }
 
 fn live_card(
-    index: usize,
     run: &RunView,
     t: &Theme,
     cx: &mut Context<Workspace>,
@@ -480,6 +670,7 @@ fn live_card(
         .plugins
         .iter()
         .find(|plugin| plugin.state.contains("blocked"));
+    let route = Route::Run(run.id.clone());
     div()
         .flex()
         .flex_col()
@@ -544,46 +735,49 @@ fn live_card(
         })
         .child(
             div()
-                .id(SharedString::from(format!("open-run-{index}")))
+                .id(SharedString::from(format!("open-{}", run.id)))
                 .child(
                     super::primary_button("Open", t)
                         .h(px(44.))
                         .rounded(px(10.)),
                 )
-                .on_click(
-                    cx.listener(move |ws, _, _, cx| ws.select_index(index, cx)),
-                ),
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.navigate(route.clone(), cx)
+                })),
         )
 }
 
-fn phone_tab_bar(t: &Theme) -> Div {
+pub fn phone_tab_bar(
+    ws: &Workspace,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let current = ws.route.tab();
     div()
         .h(px(64.))
         .flex_shrink_0()
         .grid()
-        .grid_cols(3)
+        .grid_cols(4)
         .bg(t.panel)
         .border_t_1()
         .border_color(t.border)
-        .children(
-            [
-                (Icon::Runs, "Runs", true),
-                (Icon::Memory, "Memory", false),
-                (Icon::History, "History", false),
-            ]
-            .into_iter()
-            .map(|(glyph, label, active)| {
-                let color = if active { t.text } else { t.muted };
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(4.))
-                    .text_size(px(11.))
-                    .text_color(color)
-                    .child(icon(glyph, 20., color))
-                    .child(label)
-            }),
-        )
+        .children(Tab::ALL.into_iter().map(|tab| {
+            let active = tab == current;
+            let color = if active { t.text } else { t.muted };
+            div()
+                .id(tab.label())
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(4.))
+                .text_size(px(11.))
+                .text_color(color)
+                .cursor_pointer()
+                .child(icon(tab_icon(tab), 20., color))
+                .child(tab.label())
+                .on_click(
+                    cx.listener(move |ws, _, _, cx| ws.switch_tab(tab, cx)),
+                )
+        }))
 }

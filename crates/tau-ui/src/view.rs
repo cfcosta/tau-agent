@@ -35,6 +35,72 @@ pub struct RunView {
     pub plugins: Vec<PluginStatus>,
     /// Sub-agents and forks started from this run.
     pub children: Vec<ChildRun>,
+    /// Where the run came from.
+    pub origin: Origin,
+    /// When it started, as the run list shows it.
+    pub started: String,
+    /// The latest context pruning's decision for each tool call.
+    pub ledger: Vec<LedgerEntry>,
+}
+
+/// Where a run came from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Origin {
+    #[default]
+    Root,
+    /// Forked from `from` at the checkpoint after `turn`.
+    Fork {
+        from: RunId,
+        turn: u32,
+    },
+    SubAgent {
+        parent: RunId,
+    },
+}
+
+impl Origin {
+    pub fn parent(&self) -> Option<&RunId> {
+        match self {
+            Self::Root => None,
+            Self::Fork { from, .. } => Some(from),
+            Self::SubAgent { parent } => Some(parent),
+        }
+    }
+}
+
+/// One tool call as context pruning judged it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LedgerEntry {
+    pub call_id: String,
+    pub turn: u32,
+    pub tool: String,
+    pub input: String,
+    /// Tokens the call and its result take.
+    pub tokens: u64,
+    /// The probability that knowing the call still matters.
+    pub matters: Option<f32>,
+    /// The probability that its full output must stay verbatim.
+    pub verbatim: Option<f32>,
+    pub decision: Decision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Pinned,
+    Keep,
+    DropResult,
+    DropCall,
+}
+
+impl Decision {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pinned => "pinned",
+            Self::Keep => "keep",
+            Self::DropResult => "drop result",
+            Self::DropCall => "drop call",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -292,6 +358,8 @@ pub enum RunUpdate {
     /// Extra detail on the last context rewrite.
     RewriteDetail(String),
     PluginCost(f64),
+    /// The pruning plugin's decisions, replacing the last ledger.
+    Ledger(Vec<LedgerEntry>),
 }
 
 impl From<RunEvent> for RunUpdate {
@@ -321,7 +389,98 @@ impl RunView {
             context: ContextWindow::default(),
             plugins: Vec::new(),
             children: Vec::new(),
+            origin: Origin::Root,
+            started: String::new(),
+            ledger: Vec::new(),
         }
+    }
+
+    pub fn with_origin(mut self, origin: Origin) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    pub fn started(mut self, started: impl Into<String>) -> Self {
+        self.started = started.into();
+        self
+    }
+
+    /// The last thing the model said, if anything.
+    pub fn last_text(&self) -> Option<&str> {
+        self.items.iter().rev().find_map(|item| match item {
+            Item::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+    }
+
+    /// The last edit that changed a file, with its diff.
+    pub fn last_diff(&self) -> Option<(&ToolCard, &[DiffLine])> {
+        self.items.iter().rev().find_map(|item| match item {
+            Item::Tool(card) => match &card.body {
+                ToolBody::Diff(lines) => Some((card, lines.as_slice())),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    /// Plugin notes from before the model's first turn: what each
+    /// plugin's `start` decided.
+    pub fn start_notes(&self) -> impl Iterator<Item = &PluginNote> {
+        self.items
+            .iter()
+            .take_while(|item| matches!(item, Item::User(_) | Item::Plugin(_)))
+            .filter_map(|item| match item {
+                Item::Plugin(note) => Some(note),
+                _ => None,
+            })
+    }
+
+    /// The latest context rewrite, as `(plugin, before, after, detail)`.
+    pub fn last_rewrite(&self) -> Option<(&str, u64, u64, Option<&str>)> {
+        self.items.iter().rev().find_map(|item| match item {
+            Item::Rewrite {
+                plugin,
+                tokens_before,
+                tokens_after,
+                detail,
+            } => Some((
+                plugin.as_str(),
+                *tokens_before,
+                *tokens_after,
+                detail.as_deref(),
+            )),
+            _ => None,
+        })
+    }
+
+    /// Tool calls a plugin blocked or flagged.
+    pub fn reviews(&self) -> impl Iterator<Item = &ToolCard> {
+        self.items.iter().filter_map(|item| match item {
+            Item::Tool(card)
+                if matches!(
+                    card.state,
+                    ToolState::Blocked { .. } | ToolState::Flagged { .. }
+                ) =>
+            {
+                Some(card)
+            }
+            _ => None,
+        })
+    }
+
+    /// Notes a plugin suggested keeping.
+    pub fn proposals(&self) -> impl Iterator<Item = &Proposal> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Plugin(PluginNote {
+                    body: NoteBody::Proposals(proposals),
+                    ..
+                }) => Some(proposals.iter()),
+                _ => None,
+            })
+            .flatten()
     }
 
     /// Applies any update. Unknown call ids are ignored: the card may
@@ -362,6 +521,17 @@ impl RunView {
                 }
             }
             RunUpdate::PluginCost(cost) => self.usage.plugin_cost += cost,
+            RunUpdate::Ledger(ledger) => {
+                for entry in &ledger {
+                    let pruned = match entry.decision {
+                        Decision::Pinned | Decision::Keep => Pruned::Kept,
+                        Decision::DropResult => Pruned::ResultDropped,
+                        Decision::DropCall => Pruned::CallDropped,
+                    };
+                    self.mark_pruned(&entry.call_id, pruned);
+                }
+                self.ledger = ledger;
+            }
         }
     }
 

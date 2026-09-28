@@ -1,9 +1,10 @@
-//! The window's root view: the runs, which one is open, and the layout
-//! for the window's width.
+//! The window's root view: the runs, the screen on show and the way
+//! back, and the layout for the window's width.
 //!
 //! The workspace never talks to an agent. Runs come in through
-//! [`Workspace::apply_event`] and [`Workspace::update_run`]; what the user
-//! asks for goes out as a [`WorkspaceEvent`], for the host to carry out.
+//! [`Workspace::apply_event`] and [`Workspace::update_run`], the rest of
+//! what it shows through [`Catalog`]; what the user asks for goes out as a
+//! [`WorkspaceEvent`], for the host to carry out.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -18,11 +19,13 @@ use gpui::{
     EventEmitter,
     FocusHandle,
     Focusable,
+    KeyBinding,
     ScrollHandle,
     ScrollWheelEvent,
     Subscription,
     Task,
     Window,
+    actions,
     div,
     prelude::*,
     px,
@@ -31,16 +34,46 @@ use tau_agent::{event::RunEvent, tool::RunId};
 
 use crate::{
     assets::Icon,
+    catalog::{Catalog, PluginInfo, PluginScreen},
     input::{InputEvent, TextInput},
+    route::{self, Route},
     theme::{NARROW_MAX, PHONE_MAX, Theme, theme},
     ui::{
         self,
         chrome,
         inspector::{self, Tab},
+        screens,
         transcript,
     },
-    view::{RunStatus, RunUpdate, RunView},
+    view::{ChildKind, Proposal, RunStatus, RunUpdate, RunView, ToolState},
 };
+
+actions!(
+    workspace,
+    [
+        GoBack,
+        NewRun,
+        ShowRuns,
+        ShowMemory,
+        ShowHistory,
+        ShowPlugins
+    ]
+);
+
+const CONTEXT: &str = "Workspace";
+
+/// Binds the workspace's keys. [`crate::init`] calls it.
+pub fn bind_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("escape", GoBack, Some(CONTEXT)),
+        KeyBinding::new("alt-left", GoBack, Some(CONTEXT)),
+        KeyBinding::new("ctrl-n", NewRun, Some(CONTEXT)),
+        KeyBinding::new("ctrl-1", ShowRuns, Some(CONTEXT)),
+        KeyBinding::new("ctrl-2", ShowMemory, Some(CONTEXT)),
+        KeyBinding::new("ctrl-3", ShowHistory, Some(CONTEXT)),
+        KeyBinding::new("ctrl-4", ShowPlugins, Some(CONTEXT)),
+    ]);
+}
 
 /// What the user asked for. The host subscribes and acts on these.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +94,10 @@ pub enum WorkspaceEvent {
     Fork {
         run: RunId,
     },
+    /// Keep this branch of a fork and drop the others.
+    KeepBranch {
+        run: RunId,
+    },
     /// Keep a note a memory plugin suggested.
     KeepNote {
         run: RunId,
@@ -71,27 +108,32 @@ pub enum WorkspaceEvent {
         run: RunId,
         call_id: String,
     },
-}
-
-/// Which screen the phone layout shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PhoneScreen {
-    Runs,
-    Chat,
+    /// Run a query against the store.
+    Query {
+        sql: String,
+    },
 }
 
 pub struct Workspace {
-    name: String,
-    runs: Vec<RunView>,
-    selected: usize,
+    pub(crate) name: String,
+    pub(crate) runs: Vec<RunView>,
+    pub(crate) catalog: Catalog,
+    pub(crate) route: Route,
+    back_stack: Vec<Route>,
+    /// The run the composer and the inspector act on.
+    current: Option<RunId>,
     composer: Entity<TextInput>,
+    pub(crate) history_filter: Entity<TextInput>,
+    pub(crate) memory_search: Entity<TextInput>,
     tab: Tab,
     sheet_open: bool,
-    phone_screen: PhoneScreen,
     /// Steering messages sent but not yet seen by the run, per run.
     queued: HashMap<RunId, String>,
     /// Notes kept, per run, by title.
-    kept: HashMap<RunId, HashSet<String>>,
+    pub(crate) kept: HashMap<RunId, HashSet<String>>,
+    /// Flagged calls someone looked at, as `(run, call id)`.
+    pub(crate) dismissed: HashSet<(RunId, String)>,
+    pub(crate) kept_branch: Option<RunId>,
     scroll: ScrollHandle,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
     /// turns it off; scrolling back down turns it on.
@@ -115,34 +157,51 @@ impl Workspace {
     pub fn new(
         name: impl Into<String>,
         runs: Vec<RunView>,
+        catalog: Catalog,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let composer = cx.new(|cx| TextInput::new("Start a new run", cx));
-        let subscription = cx.subscribe_in(
-            &composer,
-            window,
-            |ws, _, event: &InputEvent, _, cx| match event {
-                InputEvent::Submit(text) => ws.submit(text.clone(), cx),
-            },
-        );
+        let history_filter = cx.new(|cx| {
+            TextInput::new("Filter by run, agent, model or stop", cx)
+        });
+        let memory_search = cx.new(|cx| TextInput::new("Search notes", cx));
+        let subscriptions = vec![
+            cx.subscribe_in(
+                &composer,
+                window,
+                |ws, _, event: &InputEvent, _, cx| match event {
+                    InputEvent::Submit(text) => ws.submit(text.clone(), cx),
+                },
+            ),
+            // Filters apply as you type.
+            cx.observe(&history_filter, |_, _, cx| cx.notify()),
+            cx.observe(&memory_search, |_, _, cx| cx.notify()),
+        ];
         composer.read(cx).focus_handle(cx).focus(window);
+        let current = runs.first().map(|run| run.id.clone());
         let mut workspace = Self {
             name: name.into(),
             runs,
-            selected: 0,
+            catalog,
+            route: Route::Home,
+            back_stack: Vec::new(),
+            current,
             composer,
+            history_filter,
+            memory_search,
             tab: Tab::Run,
             sheet_open: false,
-            phone_screen: PhoneScreen::Chat,
             queued: HashMap::new(),
             kept: HashMap::new(),
+            dismissed: HashSet::new(),
+            kept_branch: None,
             scroll: ScrollHandle::new(),
             follow: true,
             focus: cx.focus_handle(),
             replay: None,
             phone_preview: false,
-            _subscriptions: vec![subscription],
+            _subscriptions: subscriptions,
         };
         workspace.sync_placeholder(cx);
         workspace
@@ -152,17 +211,33 @@ impl Workspace {
         &self.runs
     }
 
-    pub fn selected(&self) -> Option<&RunView> {
-        self.runs.get(self.selected)
+    pub fn run(&self, id: &RunId) -> Option<&RunView> {
+        self.runs.iter().find(|run| &run.id == id)
+    }
+
+    /// The run the composer and inspector act on.
+    pub fn current(&self) -> Option<&RunView> {
+        self.current.as_ref().and_then(|id| self.run(id))
+    }
+
+    pub fn route(&self) -> &Route {
+        &self.route
+    }
+
+    pub fn catalog(&self) -> &Catalog {
+        &self.catalog
+    }
+
+    pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
+        self.catalog = catalog;
+        cx.notify();
     }
 
     /// Adds a run at the top of the list and opens it.
     pub fn push_run(&mut self, run: RunView, cx: &mut Context<Self>) {
+        let id = run.id.clone();
         self.runs.insert(0, run);
-        self.selected = 0;
-        self.phone_screen = PhoneScreen::Chat;
-        self.sync_placeholder(cx);
-        cx.notify();
+        self.navigate(Route::Run(id), cx);
     }
 
     /// Feeds a run event to every run it belongs to: its own run, and
@@ -221,17 +296,6 @@ impl Workspace {
         }));
     }
 
-    pub fn select_index(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.runs.len() {
-            self.selected = index;
-            self.phone_screen = PhoneScreen::Chat;
-            self.sheet_open = false;
-            self.sync_placeholder(cx);
-            self.follow = true;
-            cx.notify();
-        }
-    }
-
     /// Shows the phone layout in a 390×844 frame, for previewing it on a
     /// desktop.
     pub fn set_phone_preview(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -239,10 +303,190 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn show_run_list(&mut self, cx: &mut Context<Self>) {
-        self.phone_screen = PhoneScreen::Runs;
+    // Navigation.
+
+    /// Opens a screen, remembering the current one for [`Self::back`].
+    pub fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
+        if route == self.route {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.route, route);
+        self.back_stack.push(previous);
+        if self.back_stack.len() > 64 {
+            self.back_stack.remove(0);
+        }
+        self.entered(cx);
+    }
+
+    /// Returns to the previous screen, or to the run list.
+    pub fn back(&mut self, cx: &mut Context<Self>) {
+        self.route = self.back_stack.pop().unwrap_or(Route::Home);
+        self.entered(cx);
+    }
+
+    pub fn can_go_back(&self) -> bool {
+        !self.back_stack.is_empty()
+    }
+
+    /// A phone tab starts its own history.
+    pub fn switch_tab(&mut self, tab: route::Tab, cx: &mut Context<Self>) {
+        self.back_stack.clear();
+        self.route = tab.route();
+        self.entered(cx);
+    }
+
+    fn entered(&mut self, cx: &mut Context<Self>) {
+        if let Some(run) = self.route.run().cloned() {
+            if matches!(self.route, Route::Run(_))
+                && self.current.as_ref() != Some(&run)
+            {
+                self.follow = true;
+            }
+            self.current = Some(run);
+        }
         self.sheet_open = false;
+        self.sync_placeholder(cx);
         cx.notify();
+    }
+
+    /// The screen that explains a plugin's work, for the current run.
+    pub fn plugin_route(&self, plugin: &PluginInfo) -> Option<Route> {
+        let run = self.current.clone();
+        match plugin.screen? {
+            PluginScreen::Plan => run.map(Route::Plan),
+            PluginScreen::Memory => Some(Route::Memory { note: None }),
+            PluginScreen::Constitution => {
+                Some(Route::Constitution { rule: None })
+            }
+            PluginScreen::Ledger => {
+                // The current run's ledger, or the latest run that has one.
+                let has = |run: &RunView| run.last_rewrite().is_some();
+                self.current()
+                    .filter(|run| has(run))
+                    .or_else(|| self.runs.iter().find(|run| has(run)))
+                    .map(|run| Route::Ledger(run.id.clone()))
+            }
+        }
+    }
+
+    /// The screen for a plugin by name, about one run.
+    pub fn plugin_route_named(&self, name: &str, run: &RunId) -> Option<Route> {
+        let plugin = self.catalog.plugins.iter().find(|p| p.name == name)?;
+        match plugin.screen? {
+            PluginScreen::Plan => Some(Route::Plan(run.clone())),
+            PluginScreen::Ledger => self
+                .run(run)
+                .filter(|run| run.last_rewrite().is_some())
+                .map(|run| Route::Ledger(run.id.clone())),
+            _ => self.plugin_route(plugin),
+        }
+    }
+
+    /// Suggested notes nobody kept yet, with their run.
+    pub fn pending_proposals(
+        &self,
+    ) -> impl Iterator<Item = (&RunId, &Proposal)> {
+        self.runs.iter().flat_map(move |run| {
+            run.proposals()
+                .filter(move |proposal| {
+                    !self
+                        .kept
+                        .get(&run.id)
+                        .is_some_and(|kept| kept.contains(&proposal.title))
+                })
+                .map(move |proposal| (&run.id, proposal))
+        })
+    }
+
+    // What the user asks for.
+
+    /// Clears the composer and focuses it for a new prompt.
+    pub fn start_new_run(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate(Route::NewRun, cx);
+        self.composer.update(cx, |input, cx| {
+            input.clear(cx);
+            input.set_placeholder("Describe the task for a new run");
+        });
+        self.composer.read(cx).focus_handle(cx).focus(window);
+    }
+
+    pub fn keep_note(
+        &mut self,
+        run: &RunId,
+        title: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let proposal = self.run(run).and_then(|view| {
+            view.proposals().find(|p| p.title == title).cloned()
+        });
+        let from = self
+            .run(run)
+            .map_or(String::new(), |view| view.title.clone());
+        if let Some(proposal) = proposal {
+            self.catalog.memory.keep(&proposal, &from);
+        }
+        self.kept
+            .entry(run.clone())
+            .or_default()
+            .insert(title.to_owned());
+        cx.emit(WorkspaceEvent::KeepNote {
+            run: run.clone(),
+            title: title.to_owned(),
+        });
+        cx.notify();
+    }
+
+    /// Opens the rule that flagged a call, and tells the host.
+    pub fn review_call(
+        &mut self,
+        run: &RunId,
+        call_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let rule = self.run(run).and_then(|view| view.tool(call_id)).and_then(
+            |card| match &card.state {
+                ToolState::Flagged { rule, .. }
+                | ToolState::Blocked { rule, .. } => Some(rule.clone()),
+                _ => None,
+            },
+        );
+        cx.emit(WorkspaceEvent::ReviewCall {
+            run: run.clone(),
+            call_id: call_id.to_owned(),
+        });
+        self.navigate(Route::Constitution { rule }, cx);
+    }
+
+    pub fn keep_branch(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        self.kept_branch = Some(run.clone());
+        cx.emit(WorkspaceEvent::KeepBranch { run: run.clone() });
+        cx.notify();
+    }
+
+    pub fn run_query(&mut self, cx: &mut Context<Self>) {
+        cx.emit(WorkspaceEvent::Query {
+            sql: self.catalog.store.sample_query.clone(),
+        });
+    }
+
+    fn cancel(&mut self, cx: &mut Context<Self>) {
+        if let Some(run) = self.current() {
+            cx.emit(WorkspaceEvent::Cancel {
+                run: run.id.clone(),
+            });
+        }
+    }
+
+    fn fork(&mut self, cx: &mut Context<Self>) {
+        if let Some(run) = self.current() {
+            cx.emit(WorkspaceEvent::Fork {
+                run: run.id.clone(),
+            });
+        }
     }
 
     pub fn toggle_sheet(&mut self, cx: &mut Context<Self>) {
@@ -255,69 +499,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Clears the composer and focuses it for a new prompt.
-    pub fn start_new_run(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selected = usize::MAX;
-        self.phone_screen = PhoneScreen::Chat;
-        self.composer.update(cx, |input, cx| {
-            input.clear(cx);
-            input.set_placeholder("Describe the task for a new run");
-        });
-        self.composer.read(cx).focus_handle(cx).focus(window);
-        cx.notify();
-    }
-
-    pub fn keep_note(
-        &mut self,
-        run: &RunId,
-        title: &str,
-        cx: &mut Context<Self>,
-    ) {
-        self.kept
-            .entry(run.clone())
-            .or_default()
-            .insert(title.to_owned());
-        cx.emit(WorkspaceEvent::KeepNote {
-            run: run.clone(),
-            title: title.to_owned(),
-        });
-        cx.notify();
-    }
-
-    pub fn review_call(
-        &mut self,
-        run: &RunId,
-        call_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(WorkspaceEvent::ReviewCall {
-            run: run.clone(),
-            call_id: call_id.to_owned(),
-        });
-    }
-
-    fn cancel(&mut self, cx: &mut Context<Self>) {
-        if let Some(run) = self.selected() {
-            cx.emit(WorkspaceEvent::Cancel {
-                run: run.id.clone(),
-            });
-        }
-    }
-
-    fn fork(&mut self, cx: &mut Context<Self>) {
-        if let Some(run) = self.selected() {
-            cx.emit(WorkspaceEvent::Fork {
-                run: run.id.clone(),
-            });
-        }
-    }
-
     fn submit(&mut self, text: String, cx: &mut Context<Self>) {
-        match self.selected() {
+        match self.current().filter(|_| self.route != Route::NewRun) {
             Some(run) if run.status.is_live() => {
                 let run = run.id.clone();
                 self.queued.insert(run.clone(), text.clone());
@@ -342,7 +525,7 @@ impl Workspace {
     }
 
     fn sync_placeholder(&mut self, cx: &mut Context<Self>) {
-        let live = self.selected().is_some_and(|run| run.status.is_live());
+        let live = self.route != Route::NewRun && self.is_live();
         self.composer.update(cx, |input, _| {
             input.set_placeholder(if live {
                 "Steer the run, or @ a file, agent or checkpoint"
@@ -353,7 +536,7 @@ impl Workspace {
     }
 
     fn is_live(&self) -> bool {
-        self.selected().is_some_and(|run| run.status.is_live())
+        self.current().is_some_and(|run| run.status.is_live())
     }
 
     // Layouts.
@@ -364,15 +547,9 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let empty = HashSet::new();
-        let items = match self.selected() {
-            Some(run) => transcript::items(
-                run,
-                self.kept.get(&run.id).unwrap_or(&empty),
-                t,
-                compact,
-                cx,
-            ),
+        let run = self.current().filter(|_| self.route != Route::NewRun);
+        let items = match run {
+            Some(run) => transcript::items(self, run, t, compact, cx),
             None => vec![
                 div()
                     .flex()
@@ -419,7 +596,8 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let Some(run) = self.selected() else {
+        let Some(run) = self.current().filter(|_| self.route != Route::NewRun)
+        else {
             return div()
                 .h(px(48.))
                 .flex_shrink_0()
@@ -468,6 +646,23 @@ impl Workspace {
                 t.dim,
             ))
             .child(div().flex_1())
+            .children(
+                run.children
+                    .iter()
+                    .find(|child| child.kind == ChildKind::Fork)
+                    .map(|fork| {
+                        let route = Route::Compare {
+                            main: run.id.clone(),
+                            fork: fork.id.clone(),
+                        };
+                        div()
+                            .id("compare")
+                            .child(ui::button("Compare forks", t))
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                ws.navigate(route.clone(), cx)
+                            }))
+                    }),
+            )
             .child(
                 div()
                     .id("fork")
@@ -500,7 +695,7 @@ impl Workspace {
     ) -> impl IntoElement {
         let live = self.is_live();
         let queued = self
-            .selected()
+            .current()
             .and_then(|run| self.queued.get(&run.id))
             .cloned();
         let send = div()
@@ -642,11 +837,63 @@ impl Workspace {
                     .min_h(px(0.))
                     .overflow_y_scroll()
                     .p(px(16.))
-                    .children(
-                        self.selected()
-                            .map(|run| inspector::content(run, self.tab, t)),
-                    ),
+                    .children(self.current().map(|run| {
+                        inspector::content(self, run, self.tab, t, cx)
+                    })),
             )
+    }
+
+    /// The run screen: its header, transcript and composer.
+    fn run_screen(
+        &self,
+        compact: bool,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        div()
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .flex()
+            .flex_col()
+            .when(!compact, |screen| screen.child(self.run_header(t, cx)))
+            .child(self.transcript(compact, t, cx))
+            .child(self.composer(compact, t, cx))
+    }
+
+    /// Any screen but a run's.
+    fn screen(
+        &self,
+        compact: bool,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match &self.route {
+            Route::Home | Route::Run(_) | Route::NewRun => {
+                self.run_screen(compact, t, cx).into_any_element()
+            }
+            Route::History => screens::history::render(self, compact, t, cx),
+            Route::Compare { main, fork } => {
+                screens::compare::render(self, main, fork, compact, t, cx)
+            }
+            Route::Plugins => screens::plugins::render(self, compact, t, cx),
+            Route::Plan(run) => {
+                screens::plan::render(self, run, compact, t, cx)
+            }
+            Route::Memory { note } => {
+                screens::memory::render(self, note.as_deref(), compact, t, cx)
+            }
+            Route::Constitution { rule } => screens::constitution::render(
+                self,
+                rule.as_deref(),
+                compact,
+                t,
+                cx,
+            ),
+            Route::Ledger(run) => {
+                screens::ledger::render(self, run, compact, t, cx)
+            }
+        }
     }
 
     fn desktop(
@@ -655,19 +902,19 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let total: f64 = self.runs.iter().map(|run| run.usage.cost).sum();
+        let on_run = matches!(self.route, Route::Home | Route::Run(_));
         div()
             .size_full()
             .flex()
             .flex_col()
-            .child(chrome::title_bar(&self.name, self.selected(), total, t))
+            .child(chrome::title_bar(self, t, cx))
             .child(
                 div()
                     .flex_1()
                     .min_h(px(0.))
                     .flex()
                     .child(
-                        chrome::sidebar(&self.runs, self.selected, t, cx)
+                        chrome::sidebar(self, t, cx)
                             .w(px(if wide { 264. } else { 232. }))
                             .flex_shrink_0(),
                     )
@@ -677,11 +924,9 @@ impl Workspace {
                             .min_w(px(0.))
                             .flex()
                             .flex_col()
-                            .child(self.run_header(t, cx))
-                            .child(self.transcript(false, t, cx))
-                            .child(self.composer(false, t, cx)),
+                            .child(self.screen(false, t, cx)),
                     )
-                    .when(wide, |row| {
+                    .when(wide && on_run, |row| {
                         row.child(
                             div()
                                 .w(px(328.))
@@ -692,41 +937,40 @@ impl Workspace {
                         )
                     }),
             )
-            .child(chrome::status_bar(self.selected(), self.runs.len(), t))
+            .child(chrome::status_bar(self, t))
             .into_any_element()
     }
 
     fn phone(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let chat = match (self.phone_screen, self.selected()) {
-            (PhoneScreen::Chat, Some(run)) => Some(run),
-            _ => None,
-        };
-        let Some(run) = chat else {
-            if self.phone_screen == PhoneScreen::Chat {
-                // A new run on the phone: just the composer.
-                return div()
-                    .size_full()
-                    .flex()
-                    .flex_col()
-                    .child(self.transcript(true, t, cx))
-                    .child(self.composer(true, t, cx))
-                    .into_any_element();
-            }
-            return chrome::phone_run_list(&self.name, &self.runs, t, cx)
-                .into_any_element();
-        };
-        div()
-            .size_full()
-            .relative()
-            .flex()
-            .flex_col()
-            .child(chrome::phone_run_bar(run, t, cx))
-            .child(self.transcript(true, t, cx))
-            .child(self.composer(true, t, cx))
-            .when(self.sheet_open, |screen| {
-                screen.child(self.sheet(run, t, cx))
-            })
-            .into_any_element()
+        let screen = div().size_full().relative().flex().flex_col();
+        match (&self.route, self.current()) {
+            (Route::Run(_), Some(run)) => screen
+                .child(chrome::phone_run_bar(run, t, cx))
+                .child(self.run_screen(true, t, cx))
+                .when(self.sheet_open, |screen| {
+                    screen.child(self.sheet(run, t, cx))
+                })
+                .into_any_element(),
+            (Route::Home, _) => screen
+                .child(chrome::phone_header(self, t, cx))
+                .child(chrome::phone_run_list(self, t, cx))
+                .child(chrome::phone_tab_bar(self, t, cx))
+                .into_any_element(),
+            _ => screen
+                .child(chrome::phone_header(self, t, cx))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .flex()
+                        .flex_col()
+                        .child(self.screen(true, t, cx)),
+                )
+                .when(self.route.is_top_level(), |screen| {
+                    screen.child(chrome::phone_tab_bar(self, t, cx))
+                })
+                .into_any_element(),
+        }
     }
 
     fn sheet(
@@ -802,7 +1046,9 @@ impl Workspace {
                             .flex_1()
                             .min_h(px(0.))
                             .overflow_y_scroll()
-                            .child(inspector::content(run, self.tab, t)),
+                            .child(inspector::content(
+                                self, run, self.tab, t, cx,
+                            )),
                     )
                     .child(
                         div()
@@ -881,7 +1127,24 @@ impl Render for Workspace {
             body
         };
         div()
+            .key_context(CONTEXT)
             .track_focus(&self.focus)
+            .on_action(cx.listener(|ws, _: &GoBack, _, cx| ws.back(cx)))
+            .on_action(cx.listener(|ws, _: &NewRun, window, cx| {
+                ws.start_new_run(window, cx)
+            }))
+            .on_action(cx.listener(|ws, _: &ShowRuns, _, cx| {
+                ws.switch_tab(route::Tab::Runs, cx)
+            }))
+            .on_action(cx.listener(|ws, _: &ShowMemory, _, cx| {
+                ws.switch_tab(route::Tab::Memory, cx)
+            }))
+            .on_action(cx.listener(|ws, _: &ShowHistory, _, cx| {
+                ws.switch_tab(route::Tab::History, cx)
+            }))
+            .on_action(cx.listener(|ws, _: &ShowPlugins, _, cx| {
+                ws.switch_tab(route::Tab::Plugins, cx)
+            }))
             .size_full()
             .bg(t.bg)
             .text_color(t.text)

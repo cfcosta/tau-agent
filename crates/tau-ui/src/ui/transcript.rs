@@ -16,9 +16,10 @@ use gpui::{
     rgb,
 };
 
-use super::{dot, icon, mono, primary_button, rich, stop_look};
+use super::{dot, icon, link, mono, primary_button, rich, stop_look};
 use crate::{
     assets::Icon,
+    route::Route,
     theme::Theme,
     view::{
         DiffKind,
@@ -39,22 +40,27 @@ use crate::{
 };
 
 /// Every item of the run, top to bottom. `compact` is the phone layout.
-/// `kept` holds the titles of notes the user already kept.
 pub fn items(
+    ws: &Workspace,
     run: &RunView,
-    kept: &HashSet<String>,
     t: &Theme,
     compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Vec<AnyElement> {
+    let empty = HashSet::new();
+    let kept = ws.kept.get(&run.id).unwrap_or(&empty);
     run.items
         .iter()
         .enumerate()
-        .map(|(index, item)| item_view(run, kept, index, item, t, compact, cx))
+        .map(|(index, item)| {
+            item_view(ws, run, kept, index, item, t, compact, cx)
+        })
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn item_view(
+    ws: &Workspace,
     run: &RunView,
     kept: &HashSet<String>,
     index: usize,
@@ -74,7 +80,7 @@ fn item_view(
         Item::Thinking(text) => thinking(text, t).into_any_element(),
         Item::Tool(card) => tool(run, card, t, compact, cx).into_any_element(),
         Item::Plugin(note) => {
-            plugin_note(run, kept, index, note, t, compact, cx)
+            plugin_note(ws, run, kept, index, note, t, compact, cx)
                 .into_any_element()
         }
         Item::Rewrite {
@@ -83,12 +89,14 @@ fn item_view(
             tokens_after,
             detail,
         } => rewrite(
+            run,
             plugin,
             *tokens_before,
             *tokens_after,
             detail.as_deref(),
             t,
             compact,
+            cx,
         )
         .into_any_element(),
         Item::Retry {
@@ -265,13 +273,14 @@ fn tool(
         (
             ToolState::Blocked {
                 plugin,
+                rule,
                 reason,
                 score,
-                ..
             },
             _,
         ) => Some(
-            blocked_body(card, plugin, reason, score, t).into_any_element(),
+            blocked_body(card, plugin, rule, reason, score, t, cx)
+                .into_any_element(),
         ),
         (ToolState::Flagged { .. }, _) => None,
         _ if dropped => None,
@@ -350,10 +359,15 @@ fn state_label(card: &ToolCard, t: &Theme) -> Div {
 fn blocked_body(
     card: &ToolCard,
     plugin: &str,
+    rule: &str,
     reason: &str,
     score: &str,
     t: &Theme,
+    cx: &mut Context<Workspace>,
 ) -> Div {
+    let route = Route::Constitution {
+        rule: Some(rule.to_owned()),
+    };
     let proposed: Vec<DiffLine> = proposed_text(&card.args)
         .into_iter()
         .map(|text| DiffLine {
@@ -387,11 +401,22 @@ fn blocked_body(
                             "{reason} The model got this reason back."
                         )),
                 )
-                .child(mono(score.to_owned(), 12., t.red)),
+                .child(mono(score.to_owned(), 12., t.red))
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "rule-{}",
+                            card.call_id
+                        )))
+                        .child(link(format!("Rule {rule}"), t))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.navigate(route.clone(), cx)
+                        })),
+                ),
         )
 }
 
-fn diff(lines: &[DiffLine], t: &Theme) -> Div {
+pub fn diff(lines: &[DiffLine], t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -419,7 +444,7 @@ fn diff(lines: &[DiffLine], t: &Theme) -> Div {
         }))
 }
 
-fn output(lines: &[String], t: &Theme) -> Div {
+pub fn output(lines: &[String], t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -439,7 +464,9 @@ fn output(lines: &[String], t: &Theme) -> Div {
         }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plugin_note(
+    ws: &Workspace,
     run: &RunView,
     kept: &HashSet<String>,
     index: usize,
@@ -470,36 +497,35 @@ fn plugin_note(
             row.child(div().text_color(t.text_soft).child(note.text.clone()))
         })
         .child(div().flex_1())
-        .when_some(note.detail.clone(), |row, detail| {
+        .when_some(note.detail.clone().filter(|_| !compact), |row, detail| {
             row.child(mono(detail, 11., t.dim).flex_shrink_0())
-        });
+        })
+        .when_some(
+            ws.plugin_route_named(&note.plugin, &run.id),
+            |row, route| {
+                row.child(
+                    div()
+                        .id(SharedString::from(format!("details-{index}")))
+                        .child(link("Details", t))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.navigate(route.clone(), cx)
+                        })),
+                )
+            },
+        );
 
     let body: Option<AnyElement> = match &note.body {
         NoteBody::None => None,
-        NoteBody::Chips(chips) => Some(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(px(6.))
-                .children(chips.iter().map(|chip| {
-                    div()
-                        .px(px(9.))
-                        .py(px(3.))
-                        .rounded(px(12.))
-                        .border_1()
-                        .border_color(t.border)
-                        .text_size(px(12.))
-                        .text_color(t.text_soft)
-                        .child(chip.clone())
-                }))
-                .into_any_element(),
-        ),
+        NoteBody::Chips(chips) => {
+            Some(chips_view(ws, chips, index, t, cx).into_any_element())
+        }
         NoteBody::Distribution {
             levels,
             chosen,
             note,
         } => Some(
-            distribution(levels, *chosen, note, t, compact).into_any_element(),
+            distribution(levels, *chosen, note, t, compact, 44.)
+                .into_any_element(),
         ),
         NoteBody::Proposals(proposals) => Some(
             div()
@@ -591,12 +617,52 @@ fn plugin_note(
         })
 }
 
-fn distribution(
+/// Memory note titles; the ones memory holds open the note.
+pub fn chips_view(
+    ws: &Workspace,
+    chips: &[String],
+    index: usize,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .gap(px(6.))
+        .children(chips.iter().enumerate().map(|(n, chip)| {
+            let route =
+                ws.catalog.memory.by_title(chip).map(|note| Route::Memory {
+                    note: Some(note.id.clone()),
+                });
+            div()
+                .id(SharedString::from(format!("chip-{index}-{n}")))
+                .px(px(9.))
+                .py(px(3.))
+                .rounded(px(12.))
+                .border_1()
+                .border_color(t.border)
+                .text_size(px(12.))
+                .text_color(t.text_soft)
+                .child(chip.clone())
+                .when_some(route, |chip, route| {
+                    chip.cursor_pointer()
+                        .hover(|style| style.border_color(t.blue))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.navigate(route.clone(), cx)
+                        }))
+                })
+        }))
+}
+
+/// A probability per level, the chosen one highlighted. `height` is
+/// the tallest bar.
+pub fn distribution(
     levels: &[(String, f32)],
     chosen: usize,
     note: &str,
     t: &Theme,
     compact: bool,
+    height: f32,
 ) -> Div {
     let columns = levels.iter().enumerate().map(|(index, (name, p))| {
         let pick = index == chosen;
@@ -612,7 +678,7 @@ fn distribution(
             .child(
                 div()
                     .w(px(22.))
-                    .h(px((p * 44.).max(3.)))
+                    .h(px((p * height).max(3.)))
                     .rounded_t(px(3.))
                     .bg(if pick { t.blue } else { rgb(0x3d4452).into() }),
             )
@@ -636,7 +702,7 @@ fn distribution(
                 .flex()
                 .items_end()
                 .gap(px(4.))
-                .h(px(80.))
+                .h(px(height + 36.))
                 .children(columns),
         )
         .child(
@@ -649,14 +715,18 @@ fn distribution(
         )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite(
+    run: &RunView,
     plugin: &str,
     before: u64,
     after: u64,
     detail: Option<&str>,
     t: &Theme,
     compact: bool,
+    cx: &mut Context<Workspace>,
 ) -> Div {
+    let route = Route::Ledger(run.id.clone());
     let saved = before.saturating_sub(after);
     let line = || div().flex_1().h(px(1.)).bg(t.blue_border);
     div()
@@ -698,6 +768,14 @@ fn rewrite(
                             |pill, detail| {
                                 pill.child(mono(detail.to_owned(), 11., t.dim))
                             },
+                        )
+                        .child(
+                            div()
+                                .id("open-ledger")
+                                .child(link("Ledger", t))
+                                .on_click(cx.listener(move |ws, _, _, cx| {
+                                    ws.navigate(route.clone(), cx)
+                                })),
                         ),
                 )
                 .child(line()),

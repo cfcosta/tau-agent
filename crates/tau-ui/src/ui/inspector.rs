@@ -2,13 +2,24 @@
 //! what each plugin is doing. The phone layout shows the same tabs in a
 //! bottom sheet.
 
-use gpui::{Div, IntoElement, SharedString, div, prelude::*, px, relative};
+use gpui::{
+    Context,
+    Div,
+    IntoElement,
+    SharedString,
+    div,
+    prelude::*,
+    px,
+    relative,
+};
 
-use super::{bar, heading, icon, key_values, mono, stop_look};
+use super::{bar, heading, icon, key_values, link, mono, stop_look};
 use crate::{
     assets::Icon,
+    route::Route,
     theme::Theme,
     view::{ChildKind, Item, Pruned, RunStatus, RunView, tokens, usd},
+    workspace::Workspace,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -31,16 +42,28 @@ impl Tab {
     }
 }
 
-pub fn content(run: &RunView, tab: Tab, t: &Theme) -> Div {
+pub fn content(
+    ws: &Workspace,
+    run: &RunView,
+    tab: Tab,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
     let body = div().flex().flex_col().gap(px(20.));
     match tab {
-        Tab::Run => run_tab(run, body, t),
-        Tab::Context => context_tab(run, body, t),
-        Tab::Plugins => plugins_tab(run, body, t),
+        Tab::Run => run_tab(run, body, t, cx),
+        Tab::Context => context_tab(run, body, t, cx),
+        Tab::Plugins => plugins_tab(ws, run, body, t, cx),
     }
 }
 
-fn run_tab(run: &RunView, body: Div, t: &Theme) -> Div {
+fn run_tab(
+    run: &RunView,
+    body: Div,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let plan_route = Route::Plan(run.id.clone());
     let body = match &run.status {
         RunStatus::Finished(stop) => {
             let (color, label) = stop_look(stop, t);
@@ -85,8 +108,21 @@ fn run_tab(run: &RunView, body: Div, t: &Theme) -> Div {
     });
     let meters = run.meters();
     body.when(!run.plan.is_empty(), |body| {
-        body.child(heading("This run's plan", t))
-            .child(key_values(plan, t))
+        body.child(
+            div()
+                .flex()
+                .items_center()
+                .child(heading("This run's plan", t).flex_1())
+                .child(
+                    div()
+                        .id("open-plan")
+                        .child(link("How it was set", t))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.navigate(plan_route.clone(), cx)
+                        })),
+                ),
+        )
+        .child(key_values(plan, t))
     })
     .when(!meters.is_empty(), |body| {
         body.child(heading("Limits", t))
@@ -114,7 +150,19 @@ fn run_tab(run: &RunView, body: Div, t: &Theme) -> Div {
         body.child(heading("Sub-agents and forks", t)).children(
             run.children.iter().map(|child| {
                 let (color, label) = super::status_look(&child.status, t);
+                let route = match child.kind {
+                    ChildKind::Fork => Route::Compare {
+                        main: run.id.clone(),
+                        fork: child.id.clone(),
+                    },
+                    ChildKind::SubAgent => Route::Run(child.id.clone()),
+                };
                 div()
+                    .id(SharedString::from(format!("child-{}", child.id)))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(route.clone(), cx)
+                    }))
                     .flex()
                     .items_center()
                     .gap(px(8.))
@@ -135,7 +183,14 @@ fn run_tab(run: &RunView, body: Div, t: &Theme) -> Div {
     })
 }
 
-fn context_tab(run: &RunView, body: Div, t: &Theme) -> Div {
+fn context_tab(
+    run: &RunView,
+    body: Div,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let ledger_route = Route::Ledger(run.id.clone());
+    let has_rewrite = run.last_rewrite().is_some();
     let context = &run.context;
     let Some(window) = context.window else {
         return body.child(
@@ -192,56 +247,74 @@ fn context_tab(run: &RunView, body: Div, t: &Theme) -> Div {
             }
         }
     }
-    body.child(heading("Context window", t))
-        .when_some(context.before, |body, before| {
-            body.child(row("Before", before, rgb_slate()))
-        })
-        .child(row(
-            if context.before.is_some() {
-                "After"
-            } else {
-                "Now"
-            },
-            context.used,
-            t.blue,
+    body.child(
+        div()
+            .flex()
+            .items_center()
+            .child(heading("Context window", t).flex_1())
+            .when(has_rewrite, |row| {
+                row.child(
+                    div()
+                        .id("open-ledger-panel")
+                        .child(link("Ledger", t))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.navigate(ledger_route.clone(), cx)
+                        })),
+                )
+            }),
+    )
+    .when_some(context.before, |body, before| {
+        body.child(row("Before", before, rgb_slate()))
+    })
+    .child(row(
+        if context.before.is_some() {
+            "After"
+        } else {
+            "Now"
+        },
+        context.used,
+        t.blue,
+    ))
+    .child(
+        div()
+            .text_size(px(12.))
+            .text_color(t.dim)
+            .line_height(relative(1.5))
+            .child(format!(
+                "{} window.{}",
+                tokens(window),
+                context.trigger.map_or(String::new(), |trigger| format!(
+                    " Pruning starts at {:.0}%.",
+                    trigger * 100.
+                ))
+            )),
+    )
+    .when(kept + results + calls > 0, |body| {
+        body.child(heading("Ledger", t)).child(key_values(
+            [
+                ("kept".into(), mono(kept.to_string(), 12., t.text)),
+                (
+                    "result dropped".into(),
+                    mono(results.to_string(), 12., t.text),
+                ),
+                ("call dropped".into(), mono(calls.to_string(), 12., t.text)),
+            ],
+            t,
         ))
-        .child(
-            div()
-                .text_size(px(12.))
-                .text_color(t.dim)
-                .line_height(relative(1.5))
-                .child(format!(
-                    "{} window.{}",
-                    tokens(window),
-                    context.trigger.map_or(String::new(), |trigger| format!(
-                        " Pruning starts at {:.0}%.",
-                        trigger * 100.
-                    ))
-                )),
-        )
-        .when(kept + results + calls > 0, |body| {
-            body.child(heading("Ledger", t)).child(key_values(
-                [
-                    ("kept".into(), mono(kept.to_string(), 12., t.text)),
-                    (
-                        "result dropped".into(),
-                        mono(results.to_string(), 12., t.text),
-                    ),
-                    (
-                        "call dropped".into(),
-                        mono(calls.to_string(), 12., t.text),
-                    ),
-                ],
-                t,
-            ))
-        })
+    })
 }
 
 fn rgb_slate() -> gpui::Hsla {
     gpui::rgb(0x5c6b88).into()
 }
 
-fn plugins_tab(run: &RunView, body: Div, t: &Theme) -> Div {
+fn plugins_tab(
+    ws: &Workspace,
+    run: &RunView,
+    body: Div,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
     body.child(heading("Plugins", t))
         .child(
             div()
@@ -252,7 +325,21 @@ fn plugins_tab(run: &RunView, body: Div, t: &Theme) -> Div {
                 .rounded(px(8.))
                 .overflow_hidden()
                 .children(run.plugins.iter().map(|plugin| {
+                    let route = ws.plugin_route_named(&plugin.name, &run.id);
                     div()
+                        .id(SharedString::from(format!(
+                            "status-{}",
+                            plugin.name
+                        )))
+                        .when_some(route, |row, route| {
+                            row.cursor_pointer()
+                                .hover(|style| {
+                                    style.bg(gpui::white().opacity(0.03))
+                                })
+                                .on_click(cx.listener(move |ws, _, _, cx| {
+                                    ws.navigate(route.clone(), cx)
+                                }))
+                        })
                         .flex()
                         .items_center()
                         .gap(px(10.))
