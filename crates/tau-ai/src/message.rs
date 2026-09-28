@@ -160,6 +160,23 @@ pub struct Usage {
     pub cost: UsageCost,
 }
 
+/// Adds another usage, field by field, cost included. `reasoning`, a
+/// subset of `output` some responses report, is left alone.
+impl std::ops::AddAssign<&Usage> for Usage {
+    fn add_assign(&mut self, other: &Usage) {
+        self.input += other.input;
+        self.output += other.output;
+        self.cache_read += other.cache_read;
+        self.cache_write += other.cache_write;
+        self.total_tokens += other.total_tokens;
+        self.cost.input += other.cost.input;
+        self.cost.output += other.cost.output;
+        self.cost.cache_read += other.cost.cache_read;
+        self.cost.cache_write += other.cost.cache_write;
+        self.cost.total += other.cost.total;
+    }
+}
+
 /// Cost in US dollars, split the way pi splits it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,4 +194,49 @@ fn present<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Value>, D::Error> {
     Value::deserialize(deserializer).map(Some)
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    /// Usage adds up field by field, cost included.
+    #[test]
+    fn usage_adds_field_by_field() {
+        let part = |n: u64| Usage {
+            input: n,
+            output: n + 1,
+            cache_read: n + 2,
+            cache_write: n + 3,
+            reasoning: None,
+            total_tokens: n + 4,
+            cost: UsageCost {
+                input: n as f64,
+                output: n as f64 + 0.5,
+                cache_read: n as f64 + 0.25,
+                cache_write: n as f64 + 0.125,
+                total: n as f64 + 1.0,
+            },
+        };
+        let mut total = part(1);
+        total += &part(10);
+        assert_eq!(
+            total,
+            Usage {
+                input: 11,
+                output: 13,
+                cache_read: 15,
+                cache_write: 17,
+                reasoning: None,
+                total_tokens: 19,
+                cost: UsageCost {
+                    input: 11.0,
+                    output: 12.0,
+                    cache_read: 11.5,
+                    cache_write: 11.25,
+                    total: 13.0,
+                },
+            }
+        );
+    }
 }

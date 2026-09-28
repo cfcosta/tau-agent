@@ -6,13 +6,10 @@
 //! the first chance.
 
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use tau_ai::{
-    event::{Accumulator, AssistantEvent},
-    message::{Message, Usage, UserContent, UserMessage},
+    message::{Message, UserContent, UserMessage},
     model,
     responses::request::{ReasoningEffort, Settings},
-    retry::Class,
 };
 
 use super::{
@@ -29,17 +26,14 @@ use super::{
     summary_max_output_tokens,
     turn_prefix_max_output_tokens,
 };
-use crate::{
-    plugin::{
-        ContextView,
-        Plugin,
-        PluginCtx,
-        PluginRun,
-        Rewrite,
-        RunPlan,
-        Trigger,
-    },
-    runner::{add_usage, jitter},
+use crate::plugin::{
+    ContextView,
+    Plugin,
+    PluginCtx,
+    PluginRun,
+    Rewrite,
+    RunPlan,
+    Trigger,
 };
 
 /// The name compaction goes by in events and stored rewrites.
@@ -188,9 +182,8 @@ impl CompactionRun {
         Ok(Some(Rewrite { messages, details }))
     }
 
-    /// One summary request, on a session of its own so the run's lane
-    /// and its continuation are untouched, retried under the run's
-    /// policy. Its usage is charged to the run.
+    /// One summary request through [`PluginCtx::ask`]: its own session,
+    /// the run's retry policy, its usage charged to the run.
     async fn summarize(
         &self,
         request: String,
@@ -204,65 +197,13 @@ impl CompactionRun {
             max_output_tokens: Some(max_output_tokens),
             ..Settings::default()
         };
-        let mut session = ctx
-            .llm
-            .open(settings)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let input = [Message::User(UserMessage {
             content: UserContent::Text(request),
             timestamp: ctx.now(),
         })];
-        let retry = ctx.retry_policy();
-        let mut usage = Usage::default();
-        let mut attempts = 1;
-        let message = loop {
-            let mut stream = session.respond(&input, ctx.now());
-            let mut accumulator = Accumulator::new();
-            let mut class = Class::Fatal;
-            loop {
-                let event = tokio::select! {
-                    biased;
-                    _ = ctx.cancel.cancelled() => {
-                        ctx.charge(&usage);
-                        anyhow::bail!("Summarization aborted");
-                    }
-                    event = stream.next() => event,
-                };
-                let Some(event) = event else { break };
-                if let AssistantEvent::Error { class: failed, .. } = &event {
-                    class = *failed;
-                }
-                if accumulator.push(event).is_err() {
-                    ctx.charge(&usage);
-                    anyhow::bail!(
-                        "Summarization failed: the response broke the event grammar"
-                    );
-                }
-            }
-            let Ok(message) = accumulator.finish() else {
-                ctx.charge(&usage);
-                anyhow::bail!(
-                    "Summarization failed: the response ended without a terminal event"
-                );
-            };
-            if class != Class::Retryable || !retry.allows(attempts) {
-                break message;
-            }
-            add_usage(&mut usage, &message.usage);
-            let delay = retry.delay(attempts, jitter());
-            attempts += 1;
-            tokio::select! {
-                biased;
-                _ = ctx.cancel.cancelled() => {
-                    ctx.charge(&usage);
-                    anyhow::bail!("Summarization aborted");
-                }
-                _ = tokio::time::sleep(delay) => {}
-            }
-        };
-        add_usage(&mut usage, &message.usage);
-        ctx.charge(&usage);
+        let message = ctx.ask(settings, &input).await.map_err(|error| {
+            anyhow::anyhow!("Summarization failed: {error}")
+        })?;
         Ok(check_summary(&message)?)
     }
 }

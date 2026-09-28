@@ -155,6 +155,15 @@ fn classify_status(status: u16) -> Class {
     }
 }
 
+/// A uniform sample in `[0, 1)` for [`RetryPolicy::delay`]'s jitter.
+/// Each call seeds a fresh `RandomState`, so callers retrying together
+/// spread out.
+pub fn jitter() -> f64 {
+    use std::hash::BuildHasher;
+    let bits = std::collections::hash_map::RandomState::new().hash_one(0u8);
+    (bits >> 11) as f64 / (1u64 << 53) as f64
+}
+
 /// Bounded exponential backoff with jitter.
 ///
 /// `max_attempts` is the total number of attempts allowed (the initial
@@ -258,4 +267,23 @@ pub fn parse_retry_after(header_name: &str, value: &str) -> Option<Duration> {
         return trimmed.parse::<u64>().ok().map(Duration::from_secs);
     }
     None
+}
+
+#[cfg(test)]
+mod jitter_tests {
+    use super::*;
+
+    /// Jitter samples are uniform-looking draws from `[0, 1)`: every one
+    /// in range, and not all the same.
+    #[test]
+    fn jitter_samples_the_unit_interval() {
+        let samples: Vec<f64> = (0..200).map(|_| jitter()).collect();
+        assert!(
+            samples.iter().all(|x| (0.0..1.0).contains(x)),
+            "{samples:?}"
+        );
+        assert!(samples.iter().any(|x| *x != samples[0]));
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        assert!((0.3..0.7).contains(&mean), "{mean}");
+    }
 }

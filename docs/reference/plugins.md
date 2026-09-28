@@ -170,6 +170,12 @@ impl PluginCtx {
     pub fn now(&self) -> Timestamp;
     /// The run's retry policy, for a plugin's own model requests.
     pub fn retry_policy(&self) -> RetryPolicy;
+    /// Asks the model once outside the run's conversation: its own
+    /// session and lane, the run's retry policy and cancellation, every
+    /// attempt's usage charged to the run. Compaction's summaries go
+    /// through it.
+    pub async fn ask(&self, settings: Settings, input: &[Message])
+        -> anyhow::Result<AssistantMessage>;
     /// Adds usage (cost included) to the run's total, which limits
     /// check.
     pub fn charge(&self, usage: &Usage);
@@ -289,6 +295,10 @@ times.
   as if it were sure.
 
 ## The first four plugins
+
+Token estimates and overflow detection, which the loop uses for
+`ContextView` and plugins use to decide when to rewrite, are in
+`tau_agent::context`.
 
 ### `tau-reasoning`: reasoning effort per job
 

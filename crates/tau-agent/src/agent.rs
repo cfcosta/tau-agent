@@ -32,7 +32,7 @@ use crate::{
     hook::RunHook,
     limits::Limits,
     plugin::{Hooked, Plugin, RunPlan, RunShared},
-    runner::{ActivePlugin, Clock, LoopTool, Runner, add_usage, system_clock},
+    runner::{ActivePlugin, Clock, LoopTool, Runner, system_clock},
     schema::to_strict,
     tool::{AgentTool, RunId, ToolCtx, ToolOutput},
     validation::ArgumentSchema,
@@ -564,10 +564,7 @@ impl AgentTool for SubAgent {
             .launch(launch, input, &scope.store)
             .outcome()
             .await?;
-        add_usage(
-            &mut scope.children.lock().expect("not poisoned"),
-            &outcome.usage,
-        );
+        *scope.children.lock().expect("not poisoned") += &outcome.usage;
         match &outcome.stop {
             StopReason::Stop => Ok(ToolOutput {
                 details: Some(json!({ "run": outcome.run.0.as_ref() })),

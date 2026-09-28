@@ -18,7 +18,6 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    hash::BuildHasher,
     sync::{
         Arc,
         Mutex,
@@ -52,7 +51,7 @@ use tokio::{sync::mpsc, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    compaction::{estimate_context_tokens, is_context_overflow},
+    context::{estimate_context_tokens, is_context_overflow},
     event::{RunEvent, StopReason},
     hook::{Decision, ToolCall},
     limits::Limits,
@@ -185,7 +184,7 @@ impl Runner {
                 _ = self.cancel.cancelled() => {}
                 result = warm_up => {
                     if let Ok(usage) = result {
-                        add_usage(&mut own, &usage);
+                        own += &usage;
                     }
                 }
             }
@@ -239,7 +238,7 @@ impl Runner {
                     }
                 }
             }
-            add_usage(&mut own, &message.usage);
+            own += &message.usage;
             let failed = matches!(
                 message.stop_reason,
                 MessageStop::Error | MessageStop::Aborted
@@ -490,7 +489,7 @@ impl Runner {
             if class != Class::Retryable || !self.retry.allows(attempts) {
                 return (message, class);
             }
-            let delay = self.retry.delay(attempts, jitter());
+            let delay = self.retry.delay(attempts, tau_ai::retry::jitter());
             attempts += 1;
             self.emit(RunEvent::Retry {
                 run: self.run.clone(),
@@ -795,11 +794,8 @@ impl Runner {
     /// charged.
     fn total(&self, own: &Usage) -> Usage {
         let mut total = own.clone();
-        add_usage(&mut total, &self.children.lock().expect("not poisoned"));
-        add_usage(
-            &mut total,
-            &self.charged.lock().expect("not poisoned").total,
-        );
+        total += &self.children.lock().expect("not poisoned");
+        total += &self.charged.lock().expect("not poisoned").total;
         total
     }
 
@@ -895,7 +891,7 @@ impl Runner {
         let unsaved = std::mem::take(
             &mut self.charged.lock().expect("not poisoned").unsaved,
         );
-        add_usage(&mut usage, &unsaved);
+        usage += &unsaved;
         let last = match self
             .store
             .append_turn(&self.run.0, &entries, turn_usage(&usage))
@@ -904,23 +900,13 @@ impl Runner {
             Ok(last) => last,
             Err(error) => {
                 // Not stored: charge it again with the next write.
-                add_usage(
-                    &mut self.charged.lock().expect("not poisoned").unsaved,
-                    &unsaved,
-                );
+                self.charged.lock().expect("not poisoned").unsaved += &unsaved;
                 return Err(error);
             }
         };
         self.last_seq.fetch_max(last, Ordering::SeqCst);
         Ok(())
     }
-}
-
-/// A uniform sample in `[0, 1)` for backoff jitter. Each `RandomState`
-/// is seeded afresh, so runs retrying together spread out.
-pub(crate) fn jitter() -> f64 {
-    let bits = std::collections::hash_map::RandomState::new().hash_one(0u8);
-    (bits >> 11) as f64 / (1u64 << 53) as f64
 }
 
 /// Why a rewrite cannot replace `transcript`, if it cannot: it must not
@@ -1038,19 +1024,6 @@ fn finish(
         .expect("an error event always finishes the stream")
 }
 
-pub(crate) fn add_usage(total: &mut Usage, usage: &Usage) {
-    total.input += usage.input;
-    total.output += usage.output;
-    total.cache_read += usage.cache_read;
-    total.cache_write += usage.cache_write;
-    total.total_tokens += usage.total_tokens;
-    total.cost.input += usage.cost.input;
-    total.cost.output += usage.cost.output;
-    total.cost.cache_read += usage.cost.cache_read;
-    total.cost.cache_write += usage.cost.cache_write;
-    total.cost.total += usage.cost.total;
-}
-
 fn last_text(transcript: &[Message]) -> String {
     transcript
         .iter()
@@ -1073,7 +1046,6 @@ fn last_text(transcript: &[Message]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use tau_ai::message::UsageCost;
 
     use super::*;
 
@@ -1190,60 +1162,6 @@ mod tests {
                 }
             ),
             Err("tool call a has no result".into())
-        );
-    }
-
-    /// Jitter samples are uniform-looking draws from `[0, 1)`: every one
-    /// in range, and not all the same.
-    #[test]
-    fn jitter_samples_the_unit_interval() {
-        let samples: Vec<f64> = (0..200).map(|_| jitter()).collect();
-        assert!(
-            samples.iter().all(|x| (0.0..1.0).contains(x)),
-            "{samples:?}"
-        );
-        assert!(samples.iter().any(|x| *x != samples[0]));
-        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
-        assert!((0.3..0.7).contains(&mean), "{mean}");
-    }
-
-    /// Usage adds up field by field, cost included.
-    #[test]
-    fn usage_adds_field_by_field() {
-        let part = |n: u64| Usage {
-            input: n,
-            output: n + 1,
-            cache_read: n + 2,
-            cache_write: n + 3,
-            reasoning: None,
-            total_tokens: n + 4,
-            cost: UsageCost {
-                input: n as f64,
-                output: n as f64 + 0.5,
-                cache_read: n as f64 + 0.25,
-                cache_write: n as f64 + 0.125,
-                total: n as f64 + 1.0,
-            },
-        };
-        let mut total = part(1);
-        add_usage(&mut total, &part(10));
-        assert_eq!(
-            total,
-            Usage {
-                input: 11,
-                output: 13,
-                cache_read: 15,
-                cache_write: 17,
-                reasoning: None,
-                total_tokens: 19,
-                cost: UsageCost {
-                    input: 11.0,
-                    output: 12.0,
-                    cache_read: 11.5,
-                    cache_write: 11.25,
-                    total: 13.0,
-                },
-            }
         );
     }
 }

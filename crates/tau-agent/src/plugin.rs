@@ -17,12 +17,14 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde_json::Value;
 use tau_ai::{
+    event::{Accumulator, AssistantEvent},
     llm::Llm,
     message::{AssistantMessage, Message, Timestamp, Usage},
-    responses::request::ReasoningEffort,
-    retry::RetryPolicy,
+    responses::request::{ReasoningEffort, Settings},
+    retry::{Class, RetryPolicy, jitter},
 };
 use tau_store::{Entry, RunKind, Store, StoreError, TurnUsage};
 use tokio_util::sync::CancellationToken;
@@ -30,7 +32,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     event::{RunEvent, StopReason},
     hook::{Decision, HookCtx, RunHook, ToolCall},
-    runner::{Clock, add_usage},
+    runner::Clock,
     tool::{AgentTool, RunId, ToolOutput},
 };
 
@@ -357,12 +359,71 @@ impl PluginCtx {
         self.retry
     }
 
+    /// Asks the model once, outside the run's conversation: a session of
+    /// its own (so its own lane, and the run's continuation untouched),
+    /// with the run's retry policy, observing the run's cancellation.
+    /// Every attempt's usage is charged to the run.
+    ///
+    /// Returns the final response, which can still be a failed one (a
+    /// fatal error, or a retryable one past the policy): check its
+    /// `stop_reason`. An error means no response at all: the session did
+    /// not open, the run was cancelled, or the stream broke.
+    pub async fn ask(
+        &self,
+        settings: Settings,
+        input: &[Message],
+    ) -> anyhow::Result<AssistantMessage> {
+        let mut session = self
+            .llm
+            .open(settings)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        let mut attempts = 1;
+        loop {
+            let mut stream = session.respond(input, self.now());
+            let mut accumulator = Accumulator::new();
+            let mut class = Class::Fatal;
+            loop {
+                let event = tokio::select! {
+                    biased;
+                    _ = self.cancel.cancelled() => {
+                        anyhow::bail!("the request was cancelled");
+                    }
+                    event = stream.next() => event,
+                };
+                let Some(event) = event else { break };
+                if let AssistantEvent::Error { class: failed, .. } = &event {
+                    class = *failed;
+                }
+                if accumulator.push(event).is_err() {
+                    anyhow::bail!("the response broke the event grammar");
+                }
+            }
+            let Ok(message) = accumulator.finish() else {
+                anyhow::bail!("the response ended without a terminal event");
+            };
+            self.charge(&message.usage);
+            if class != Class::Retryable || !self.retry.allows(attempts) {
+                return Ok(message);
+            }
+            let delay = self.retry.delay(attempts, jitter());
+            attempts += 1;
+            tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => {
+                    anyhow::bail!("the request was cancelled");
+                }
+                _ = tokio::time::sleep(delay) => {}
+            }
+        }
+    }
+
     /// Charges usage, cost included, to the run: it counts toward the
     /// run's limits and outcome, and is stored with the run's totals.
     pub fn charge(&self, usage: &Usage) {
         let mut charged = self.charged.lock().expect("not poisoned");
-        add_usage(&mut charged.total, usage);
-        add_usage(&mut charged.unsaved, usage);
+        charged.total += usage;
+        charged.unsaved += usage;
     }
 
     /// Stores a record for this plugin with the run. The model never sees

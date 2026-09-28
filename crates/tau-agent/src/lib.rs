@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod compaction;
+pub mod context;
 pub mod event;
 pub mod hook;
 pub mod limits;
