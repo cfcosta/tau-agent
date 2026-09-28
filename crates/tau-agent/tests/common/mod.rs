@@ -14,9 +14,7 @@ pub async fn stored(store: &Store, run: &str) -> Vec<Message> {
         .unwrap()
         .into_iter()
         .map(|entry| match entry {
-            Entry::Message { body, .. } => {
-                serde_json::from_value(body).unwrap()
-            }
+            Entry::Message { body, .. } => serde_json::from_str(&body).unwrap(),
             Entry::Compaction { .. } => panic!("no compaction in these runs"),
         })
         .collect()

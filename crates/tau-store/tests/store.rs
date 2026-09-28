@@ -90,7 +90,7 @@ fn entry(tc: TestCase) -> Entry {
     let text: String = tc.draw(gs::text().max_size(12));
     if tc.draw(gs::integers::<u8>().max_value(4)) == 0 {
         Entry::Compaction {
-            body: json!({ "summary": text, "tokensBefore": 1000 }),
+            body: json!({ "summary": text, "tokensBefore": 1000 }).to_string(),
         }
     } else {
         let role = tc.draw(gs::sampled_from(vec![
@@ -99,7 +99,8 @@ fn entry(tc: TestCase) -> Entry {
             "toolResult".to_owned(),
         ]));
         Entry::Message {
-            body: json!({ "role": role.clone(), "text": text, "n": 1.5 }),
+            body: json!({ "role": role.clone(), "text": text, "n": 1.5 })
+                .to_string(),
             role,
         }
     }
@@ -325,7 +326,7 @@ fn file_store_survives_reopen() {
                     "r",
                     &[Entry::Message {
                         role: "user".into(),
-                        body: json!({"text": "hi"}),
+                        body: json!({"text": "hi"}).to_string(),
                     }],
                     TurnUsage::default(),
                 )
@@ -337,7 +338,7 @@ fn file_store_survives_reopen() {
             store.transcript("r").await.unwrap(),
             vec![Entry::Message {
                 role: "user".into(),
-                body: json!({"text": "hi"})
+                body: json!({"text": "hi"}).to_string()
             }]
         );
         std::fs::remove_dir_all(&dir).unwrap();

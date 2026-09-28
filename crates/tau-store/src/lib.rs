@@ -15,7 +15,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde_json::Value;
 use sqlx::{
     Connection,
     Sqlite,
@@ -101,17 +100,19 @@ impl Status {
     }
 }
 
-/// One transcript entry.
+/// One transcript entry. Its body is JSON text, which the store keeps
+/// as given: callers serialize straight to text and parse straight from
+/// it, with no `Value` in between.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Entry {
     Message {
         role: String,
-        body: Value,
+        body: String,
     },
     /// A compaction record. Loading a transcript drops everything before
     /// the latest one.
     Compaction {
-        body: Value,
+        body: String,
     },
 }
 
@@ -321,13 +322,11 @@ impl Store {
         for (offset, entry) in entries.iter().enumerate() {
             let seq = next + offset as i64;
             let (kind, role, body) = match entry {
-                Entry::Message { role, body } => (
-                    "message",
-                    Some(role.as_str()),
-                    serde_json::to_string(body)?,
-                ),
+                Entry::Message { role, body } => {
+                    ("message", Some(role.as_str()), body.as_str())
+                }
                 Entry::Compaction { body } => {
-                    ("compaction", None, serde_json::to_string(body)?)
+                    ("compaction", None, body.as_str())
                 }
             };
             sqlx::query!(
@@ -372,21 +371,21 @@ impl Store {
             .iter()
             .rposition(|row| row.kind == "compaction")
             .unwrap_or(0);
-        rows.into_iter()
+        Ok(rows
+            .into_iter()
             .skip(start)
             .map(|row| {
-                let body = serde_json::from_str(&row.body)?;
-                Ok(if row.kind == "compaction" {
-                    Entry::Compaction { body }
+                if row.kind == "compaction" {
+                    Entry::Compaction { body: row.body }
                 } else {
                     Entry::Message {
                         // The schema sets a role on every message row.
                         role: row.role.unwrap_or_default(),
-                        body,
+                        body: row.body,
                     }
-                })
+                }
             })
-            .collect()
+            .collect())
     }
 
     /// Sets a run's final status and result or error.

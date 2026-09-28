@@ -750,10 +750,10 @@ fn messages(
     for entry in entries {
         match entry {
             Entry::Message { body, .. } => {
-                messages.push(serde_json::from_value(body)?);
+                messages.push(serde_json::from_str(&body)?);
             }
             Entry::Compaction { body } => {
-                let record: Record = serde_json::from_value(body)?;
+                let record: Record = serde_json::from_str(&body)?;
                 messages.push(record.message());
                 compacted = Some(record);
             }

@@ -412,7 +412,7 @@ impl Runner {
 
         let kept = transcript.split_off(plan.kept_from);
         let mut entries = vec![Entry::Compaction {
-            body: serde_json::to_value(&record).expect("records serialize"),
+            body: serde_json::to_string(&record).expect("records serialize"),
         }];
         entries.extend(kept.iter().map(entry));
         self.store
@@ -919,7 +919,7 @@ fn jitter() -> f64 {
 fn entry(message: &Message) -> Entry {
     Entry::Message {
         role: message.role().to_owned(),
-        body: serde_json::to_value(message).expect("messages serialize"),
+        body: serde_json::to_string(message).expect("messages serialize"),
     }
 }
 

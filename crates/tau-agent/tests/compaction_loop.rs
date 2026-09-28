@@ -165,7 +165,7 @@ fn threshold_compaction_summarizes_older_messages() {
         let Entry::Compaction { body } = &entries[0] else {
             panic!("{entries:?}")
         };
-        let record: Record = serde_json::from_value(body.clone()).unwrap();
+        let record: Record = serde_json::from_str(body).unwrap();
         assert_eq!(record.message(), next[0]);
         assert_eq!(record.read_files, vec!["src/lib.rs".to_owned()]);
         assert_eq!(entries.len(), 3);
@@ -294,13 +294,18 @@ fn an_overflow_compacts_and_retries_once() {
         assert_eq!(requests.len(), 4);
         assert_eq!(requests[3].transcript.len(), 2);
         let stored = store.transcript(&outcome.run.0).await.unwrap();
-        let errors = stored
-            .iter()
-            .filter(|e| match e {
-                Entry::Message { body, .. } => body["stopReason"] == "error",
-                _ => false,
-            })
-            .count();
+        let errors =
+            stored
+                .iter()
+                .filter(|e| match e {
+                    Entry::Message { body, .. } => {
+                        serde_json::from_str::<serde_json::Value>(body).unwrap()
+                            ["stopReason"]
+                            == "error"
+                    }
+                    _ => false,
+                })
+                .count();
         assert_eq!(errors, 0);
     });
 }
