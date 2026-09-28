@@ -146,7 +146,7 @@ fn a_failed_turn_write_leaves_no_partial_turn(tc: TestCase) {
             .iter()
             .map(|e| match e {
                 Entry::Message { role, .. } => role.as_str(),
-                Entry::Compaction { .. } => panic!("no compaction here"),
+                other => panic!("only messages here: {other:?}"),
             })
             .collect();
         let mut expected = vec!["user"];

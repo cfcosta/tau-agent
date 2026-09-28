@@ -1,6 +1,8 @@
 # Plugins
 
-- Status: proposed
+- Status: in progress. `Plugin`, `RunPlan`, the tool hooks, `on_event`,
+  `before_stop`, `finish`, `charge` and `record` are implemented.
+  `rewrite_context` and the compaction port are next.
 - Date: 2026-09-28
 
 A plugin extends an agent from its own crate. It can add tools, shape a
@@ -8,7 +10,7 @@ run before it starts, check tool calls, rewrite the context between
 turns, hold the run back from stopping, and act when the run ends.
 
 This document defines those seams and checks them against the first
-four plugins. Nothing here is implemented yet.
+four plugins.
 
 ## Principles
 
@@ -123,7 +125,8 @@ pub trait PluginRun: Send {
 
     /// Called when the model has answered with no tool calls and the run
     /// would stop. `Continue(text)` adds `text` as a user message and
-    /// runs another turn.
+    /// runs another turn, at most `Limits::max_continuations` times per
+    /// run (default 3).
     async fn before_stop(&mut self, message: &AssistantMessage,
         ctx: &PluginCtx) -> anyhow::Result<StopDecision> {
         Ok(StopDecision::Stop)
@@ -169,7 +172,7 @@ impl PluginCtx {
     /// Stores a record for this plugin in the run's transcript. The
     /// model never sees it. Forks and resumed runs get it back in
     /// `RunPlan::records`.
-    pub async fn record(&self, body: Value) -> Result<(), StoreError>;
+    pub async fn record(&self, body: &Value) -> Result<(), StoreError>;
 }
 ```
 
@@ -402,9 +405,6 @@ times.
 
 ## Open questions
 
-- `before_stop` makes a run continue past the model's own stop. Should
-  there be a global cap on continuations per run, beyond the turn
-  limit?
 - Should `finish` be awaited before the outcome returns, or run in the
   background? Awaiting is predictable but adds, for example, memory
   distillation to the latency of every run.

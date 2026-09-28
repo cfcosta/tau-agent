@@ -7,7 +7,14 @@ pi, a note says so.
 
 ## One run
 
-1. Emit `RunStart`. Append the input as a user message.
+0. Before the run: store it as `running`, start each plugin in
+   registration order (`Plugin::start` may change the input, the
+   context before it, the instructions and the reasoning effort), then
+   open the session with the resulting settings. A plugin that fails to
+   start fails the run, which is stored as `failed`
+   ([plugins.md](plugins.md)).
+1. Emit `RunStart`. Append the input as a user message, after any
+   context the plugins added.
 2. **Turn loop:**
    1. Emit `TurnStart`.
    2. Build the request from the run's fixed instructions and tools, the
@@ -27,9 +34,16 @@ pi, a note says so.
    8. Check limits and cancellation.
    9. Emit `TurnEnd`.
    10. Drain the steering queue into the transcript.
-   11. Check the compaction threshold.
-   12. Loop while the model called tools or steering added messages.
-3. Emit `RunEnd`. Set the run's status and result.
+   11. No tool calls and no steering: ask each plugin's `before_stop`,
+       in order. The first that continues adds its text as a user
+       message and emits `Continued`, up to `Limits::max_continuations`
+       times (default 3) per run. A plugin error there is reported as
+       `PluginError` and counts as letting the run stop.
+   12. Check the compaction threshold.
+   13. Loop while the model called tools, steering added messages, or a
+       plugin continued the run.
+3. Emit `RunEnd`. Set the run's status and result. Then call each
+   plugin's `finish`, before the outcome is returned.
 
 ## Tool execution
 
@@ -133,6 +147,8 @@ pub enum RunEvent {
     TurnEnd    { run: RunId, turn: u32, usage: Usage },
     Compacted  { run: RunId, tokens_before: u64 },
     Retry      { run: RunId, turn: u32, attempt: u32, delay: Duration, error: String },
+    Continued  { run: RunId, plugin: Arc<str>, message: String },  // between turns
+    PluginError { run: RunId, plugin: Arc<str>, message: String },
     RunEnd     { run: RunId, parent: Option<RunId>, stop: StopReason, cost: f64 },
 }
 ```

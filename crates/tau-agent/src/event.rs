@@ -106,6 +106,20 @@ pub enum RunEvent {
         delay: Duration,
         error: String,
     },
+    /// A plugin kept the run from stopping: `message` goes to the model
+    /// as the user's, and another turn starts. Comes after the turn's
+    /// `TurnEnd`.
+    Continued {
+        run: RunId,
+        plugin: Arc<str>,
+        message: String,
+    },
+    /// A plugin failed at a seam where failing does not end the run.
+    PluginError {
+        run: RunId,
+        plugin: Arc<str>,
+        message: String,
+    },
     RunEnd {
         run: RunId,
         parent: Option<RunId>,

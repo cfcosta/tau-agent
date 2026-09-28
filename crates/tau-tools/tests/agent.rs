@@ -72,7 +72,7 @@ fn a_run_uses_every_tool() {
             Entry::Message { body, .. } => {
                 serde_json::from_str::<Message>(&body).ok()
             }
-            Entry::Compaction { .. } => None,
+            _ => None,
         })
         .filter_map(|message| match message {
             Message::ToolResult(result) => {

@@ -114,6 +114,19 @@ pub enum Entry {
     Compaction {
         body: String,
     },
+    /// A context rewrite by `plugin`: the transcript restarts after it,
+    /// with the messages that follow. Loading a transcript drops
+    /// everything before the latest one, as for a compaction.
+    Context {
+        plugin: String,
+        body: String,
+    },
+    /// A record `plugin` keeps with the run. It is never part of the
+    /// transcript; [`Store::records`] reads it back.
+    Plugin {
+        plugin: String,
+        body: String,
+    },
 }
 
 /// Token and cost totals added by one turn.
@@ -279,12 +292,14 @@ impl Store {
 
     /// Appends one turn's entries and adds its usage to the run's totals,
     /// in one write transaction: either all of it is stored or none.
+    /// Returns the `seq` of the run's last entry afterwards, or -1 when
+    /// the run has none.
     pub async fn append_turn(
         &self,
         run: &str,
         entries: &[Entry],
         usage: TurnUsage,
-    ) -> Result<()> {
+    ) -> Result<i64> {
         // The wait covers the connection and the write lock, which
         // another process can hold.
         let started = Instant::now();
@@ -321,21 +336,28 @@ impl Store {
 
         for (offset, entry) in entries.iter().enumerate() {
             let seq = next + offset as i64;
-            let (kind, role, body) = match entry {
+            let (kind, role, plugin, body) = match entry {
                 Entry::Message { role, body } => {
-                    ("message", Some(role.as_str()), body.as_str())
+                    ("message", Some(role.as_str()), None, body.as_str())
                 }
                 Entry::Compaction { body } => {
-                    ("compaction", None, body.as_str())
+                    ("compaction", None, None, body.as_str())
+                }
+                Entry::Context { plugin, body } => {
+                    ("context", None, Some(plugin.as_str()), body.as_str())
+                }
+                Entry::Plugin { plugin, body } => {
+                    ("plugin", None, Some(plugin.as_str()), body.as_str())
                 }
             };
             sqlx::query!(
-                "INSERT INTO messages (run_id, seq, kind, role, body, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                "INSERT INTO messages (run_id, seq, kind, role, plugin, body, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
                 run,
                 seq,
                 kind,
                 role,
+                plugin,
                 body,
             )
             .execute(&mut *tx)
@@ -343,11 +365,12 @@ impl Store {
         }
 
         tx.commit().await?;
-        Ok(())
+        Ok(next + entries.len() as i64 - 1)
     }
 
     /// The run's transcript: the inherited messages of its fork chain,
-    /// then its own, from the latest compaction record onward.
+    /// then its own, from the latest compaction or context entry onward.
+    /// Plugin records are not part of it.
     pub async fn transcript(&self, run: &str) -> Result<Vec<Entry>> {
         let rows = sqlx::query!(
             r#"WITH RECURSIVE chain(run_id, cutoff, depth) AS (
@@ -358,9 +381,10 @@ impl Store {
                    WHERE r.kind = 'fork'
                )
                SELECT m.kind AS "kind!: String", m.role AS "role?: String",
-                      m.body AS "body!: String"
+                      m.plugin AS "plugin?: String", m.body AS "body!: String"
                FROM chain JOIN messages m ON m.run_id = chain.run_id
-               WHERE chain.cutoff IS NULL OR m.seq <= chain.cutoff
+               WHERE (chain.cutoff IS NULL OR m.seq <= chain.cutoff)
+                 AND m.kind != 'plugin'
                ORDER BY chain.depth DESC, m.seq"#,
             run
         )
@@ -369,23 +393,53 @@ impl Store {
 
         let start = rows
             .iter()
-            .rposition(|row| row.kind == "compaction")
+            .rposition(|row| row.kind == "compaction" || row.kind == "context")
             .unwrap_or(0);
         Ok(rows
             .into_iter()
             .skip(start)
-            .map(|row| {
-                if row.kind == "compaction" {
-                    Entry::Compaction { body: row.body }
-                } else {
-                    Entry::Message {
-                        // The schema sets a role on every message row.
-                        role: row.role.unwrap_or_default(),
-                        body: row.body,
-                    }
-                }
+            .map(|row| match row.kind.as_str() {
+                "compaction" => Entry::Compaction { body: row.body },
+                "context" => Entry::Context {
+                    // The loop sets a plugin on every context row.
+                    plugin: row.plugin.unwrap_or_default(),
+                    body: row.body,
+                },
+                _ => Entry::Message {
+                    // The schema sets a role on every message row.
+                    role: row.role.unwrap_or_default(),
+                    body: row.body,
+                },
             })
             .collect())
+    }
+
+    /// The bodies of `plugin`'s records along the run's fork chain, oldest
+    /// first: the inherited ones, then the run's own.
+    pub async fn records(
+        &self,
+        run: &str,
+        plugin: &str,
+    ) -> Result<Vec<String>> {
+        let rows = sqlx::query_scalar!(
+            r#"WITH RECURSIVE chain(run_id, cutoff, depth) AS (
+                   SELECT id, NULL, 0 FROM runs WHERE id = ?1
+                   UNION ALL
+                   SELECT r.parent_run_id, r.fork_seq, chain.depth + 1
+                   FROM chain JOIN runs r ON r.id = chain.run_id
+                   WHERE r.kind = 'fork'
+               )
+               SELECT m.body AS "body!: String"
+               FROM chain JOIN messages m ON m.run_id = chain.run_id
+               WHERE (chain.cutoff IS NULL OR m.seq <= chain.cutoff)
+                 AND m.kind = 'plugin' AND m.plugin = ?2
+               ORDER BY chain.depth DESC, m.seq"#,
+            run,
+            plugin
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        Ok(rows)
     }
 
     /// Sets a run's final status and result or error.

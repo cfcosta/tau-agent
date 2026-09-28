@@ -19,7 +19,11 @@
 use std::{
     collections::{HashMap, VecDeque},
     hash::BuildHasher,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        Mutex,
+        atomic::{AtomicI64, Ordering},
+    },
     time::SystemTime,
 };
 
@@ -66,8 +70,9 @@ use crate::{
         turn_prefix_max_output_tokens,
     },
     event::{RunEvent, StopReason},
-    hook::{Decision, HookCtx, RunHook, ToolCall},
+    hook::{Decision, ToolCall},
     limits::Limits,
+    plugin::{Charged, FinishedRun, PluginCtx, PluginRun, StopDecision},
     tool::{
         AgentTool,
         ExecutionMode,
@@ -107,13 +112,20 @@ pub(crate) struct LoopTool {
     pub schema: Arc<ArgumentSchema>,
 }
 
+/// A plugin's part in a run, with its context.
+pub(crate) struct ActivePlugin {
+    pub run: Box<dyn PluginRun>,
+    pub ctx: PluginCtx,
+}
+
 /// Everything one run needs.
 pub(crate) struct Runner {
     pub run: RunId,
     pub parent: Option<RunId>,
     pub agent: Arc<str>,
     pub tools: HashMap<String, LoopTool>,
-    pub hooks: Vec<Arc<dyn RunHook>>,
+    /// In registration order.
+    pub plugins: Vec<ActivePlugin>,
     pub limits: Limits,
     pub session: Box<dyn LlmSession>,
     pub store: Store,
@@ -123,8 +135,11 @@ pub(crate) struct Runner {
     pub clock: Clock,
     /// Messages the run inherits (a fork's), before its input.
     pub history: Vec<Message>,
-    /// How many entries of its own the run has stored.
-    pub stored: i64,
+    /// The `seq` of the run's last stored entry, -1 before the first.
+    /// Shared with plugins, which store records too.
+    pub last_seq: Arc<AtomicI64>,
+    /// What plugins charged to the run.
+    pub charged: Arc<Mutex<Charged>>,
     pub workflow: Option<Arc<str>>,
     /// The usage of the sub-agent runs this run's tools started.
     pub children: Arc<Mutex<Usage>>,
@@ -171,7 +186,7 @@ enum Prepared {
 impl Runner {
     pub(crate) async fn run(
         mut self,
-        input: String,
+        input: UserContent,
     ) -> Result<RunResult, StoreError> {
         let started = Instant::now();
         self.emit(RunEvent::RunStart {
@@ -195,11 +210,15 @@ impl Runner {
                 }
             }
         }
-        let first = self.user(input);
+        let first = Message::User(UserMessage {
+            content: input,
+            timestamp: (self.clock)(),
+        });
         self.persist(std::slice::from_ref(&first), &own).await?;
         let mut transcript = std::mem::take(&mut self.history);
         transcript.push(first);
         let mut turn = 0;
+        let mut continuations = 0;
 
         let stop = loop {
             turn += 1;
@@ -286,7 +305,24 @@ impl Runner {
                 transcript.push(message);
             }
             if calls.is_empty() && steered.is_none() {
-                break StopReason::Stop;
+                if continuations >= self.limits.max_continuations {
+                    break StopReason::Stop;
+                }
+                let Some((plugin, text)) = self.before_stop(&message).await
+                else {
+                    break StopReason::Stop;
+                };
+                continuations += 1;
+                self.emit(RunEvent::Continued {
+                    run: self.run.clone(),
+                    plugin,
+                    message: text.clone(),
+                })
+                .await;
+                let message = self.user(text);
+                self.persist(std::slice::from_ref(&message), &Usage::default())
+                    .await?;
+                transcript.push(message);
             }
             if self.over_threshold(&transcript) {
                 match self.compact(&mut transcript, &mut own).await? {
@@ -315,16 +351,73 @@ impl Runner {
                 (Status::Failed, Some(message.as_str()))
             }
         };
+        self.save_charged().await?;
         self.store
             .finish_run(&self.run.0, status, Some(&text), error)
             .await?;
+        let finished = FinishedRun {
+            transcript: &transcript,
+            stop: &stop,
+            usage: &total,
+            text: &text,
+        };
+        for plugin in &mut self.plugins {
+            plugin.run.finish(&finished, &plugin.ctx).await;
+        }
+        // What plugins charged while finishing still counts.
+        self.save_charged().await?;
+        let usage = self.total(&own);
         Ok(RunResult {
             transcript,
             stop,
-            usage: total,
+            usage,
             text,
-            last_seq: self.stored - 1,
+            last_seq: self.last_seq.load(Ordering::SeqCst),
         })
+    }
+
+    /// Asks each plugin, in order, whether the run may stop after
+    /// `message`. Returns the first plugin that continues it, and the
+    /// text to continue with.
+    async fn before_stop(
+        &mut self,
+        message: &AssistantMessage,
+    ) -> Option<(Arc<str>, String)> {
+        let mut decision = None;
+        let mut failures = Vec::new();
+        for plugin in &mut self.plugins {
+            match plugin.run.before_stop(message, &plugin.ctx).await {
+                Ok(StopDecision::Stop) => {}
+                Ok(StopDecision::Continue(text)) => {
+                    decision = Some((plugin.ctx.plugin().into(), text));
+                    break;
+                }
+                Err(error) => failures
+                    .push((plugin.ctx.plugin().into(), error.to_string())),
+            }
+        }
+        for (plugin, message) in failures {
+            self.emit(RunEvent::PluginError {
+                run: self.run.clone(),
+                plugin,
+                message,
+            })
+            .await;
+        }
+        decision
+    }
+
+    /// Stores the usage plugins charged since the last write.
+    async fn save_charged(&mut self) -> Result<(), StoreError> {
+        let unsaved = std::mem::take(
+            &mut self.charged.lock().expect("not poisoned").unsaved,
+        );
+        if unsaved != Usage::default() {
+            self.store
+                .append_turn(&self.run.0, &[], turn_usage(&unsaved))
+                .await?;
+        }
+        Ok(())
     }
 
     /// Whether the transcript has grown past the compaction threshold.
@@ -415,10 +508,11 @@ impl Runner {
             body: serde_json::to_string(&record).expect("records serialize"),
         }];
         entries.extend(kept.iter().map(entry));
-        self.store
+        let last = self
+            .store
             .append_turn(&self.run.0, &entries, turn_usage(&usage))
             .await?;
-        self.stored += entries.len() as i64;
+        self.last_seq.fetch_max(last, Ordering::SeqCst);
         add_usage(own, &usage);
         *transcript = std::iter::once(record.message()).chain(kept).collect();
         self.compacted = Some(record);
@@ -677,9 +771,8 @@ impl Runner {
                         Ok(output) => (output, false),
                         Err(error) => (ToolOutput::text(error.to_string()), true),
                     };
-                    let ctx = self.hook_ctx();
-                    for hook in self.hooks.clone() {
-                        hook.after_tool(&call, &mut output, &ctx).await;
+                    for plugin in &mut self.plugins {
+                        plugin.run.after_tool(&call, &mut output, &plugin.ctx).await;
                     }
                     self.emit_end(&call.id, &output, is_error).await;
                     outcomes[index] = Some((output, is_error));
@@ -734,10 +827,9 @@ impl Runner {
             name: call.name.clone(),
             args,
         };
-        let ctx = self.hook_ctx();
-        for hook in self.hooks.clone() {
+        for plugin in &mut self.plugins {
             let before = hook_call.args.clone();
-            match hook.before_tool(&mut hook_call, &ctx).await {
+            match plugin.run.before_tool(&mut hook_call, &plugin.ctx).await {
                 Ok(Decision::Allow) => {}
                 Ok(Decision::Block(reason)) => {
                     return Prepared::Immediate(ToolOutput::text(reason));
@@ -810,10 +902,15 @@ impl Runner {
         }
     }
 
-    /// The run's own usage plus its children's.
+    /// The run's own usage plus its children's and what its plugins
+    /// charged.
     fn total(&self, own: &Usage) -> Usage {
         let mut total = own.clone();
         add_usage(&mut total, &self.children.lock().expect("not poisoned"));
+        add_usage(
+            &mut total,
+            &self.charged.lock().expect("not poisoned").total,
+        );
         total
     }
 
@@ -824,13 +921,6 @@ impl Runner {
             partial: Arc::new(partial),
         })
         .await;
-    }
-
-    fn hook_ctx(&self) -> HookCtx {
-        HookCtx {
-            run: self.run.clone(),
-            parent: self.parent.clone(),
-        }
     }
 
     async fn emit_start(&mut self, call: &MessageToolCall) {
@@ -858,10 +948,10 @@ impl Runner {
         .await;
     }
 
-    /// Hands an event to every hook, in order, then to the subscriber.
+    /// Hands an event to every plugin, in order, then to the subscriber.
     async fn emit(&mut self, event: RunEvent) {
-        for hook in &self.hooks {
-            hook.on_event(&event).await;
+        for plugin in &mut self.plugins {
+            plugin.run.on_event(&event, &plugin.ctx).await;
         }
         if let Some(events) = &self.events
             && events.send(event).await.is_err()
@@ -894,17 +984,35 @@ impl Runner {
         }
     }
 
-    /// Stores messages and the usage they cost in one write.
+    /// Stores messages and the usage they cost in one write, with what
+    /// plugins charged since the last write.
     async fn persist(
         &mut self,
         messages: &[Message],
         usage: &Usage,
     ) -> Result<(), StoreError> {
         let entries: Vec<Entry> = messages.iter().map(entry).collect();
-        self.store
-            .append_turn(&self.run.0, &entries, turn_usage(usage))
-            .await?;
-        self.stored += entries.len() as i64;
+        let mut usage = usage.clone();
+        let unsaved = std::mem::take(
+            &mut self.charged.lock().expect("not poisoned").unsaved,
+        );
+        add_usage(&mut usage, &unsaved);
+        let last = match self
+            .store
+            .append_turn(&self.run.0, &entries, turn_usage(&usage))
+            .await
+        {
+            Ok(last) => last,
+            Err(error) => {
+                // Not stored: charge it again with the next write.
+                add_usage(
+                    &mut self.charged.lock().expect("not poisoned").unsaved,
+                    &unsaved,
+                );
+                return Err(error);
+            }
+        };
+        self.last_seq.fetch_max(last, Ordering::SeqCst);
         Ok(())
     }
 }

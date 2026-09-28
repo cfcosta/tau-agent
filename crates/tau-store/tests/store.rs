@@ -74,34 +74,67 @@ impl Model {
         entries
     }
 
-    /// The transcript: the chain from its latest compaction onward.
+    /// The transcript: the chain from its latest compaction or context
+    /// entry onward, without plugin records.
     fn transcript(&self, run: &str) -> Vec<Entry> {
-        let chain = self.chain(run);
+        let chain: Vec<Entry> = self
+            .chain(run)
+            .into_iter()
+            .filter(|e| !matches!(e, Entry::Plugin { .. }))
+            .collect();
         let start = chain
             .iter()
-            .rposition(|e| matches!(e, Entry::Compaction { .. }))
+            .rposition(|e| {
+                matches!(e, Entry::Compaction { .. } | Entry::Context { .. })
+            })
             .unwrap_or(0);
         chain[start..].to_vec()
+    }
+
+    /// `plugin`'s records along the chain, oldest first.
+    fn records(&self, run: &str, plugin: &str) -> Vec<String> {
+        self.chain(run)
+            .into_iter()
+            .filter_map(|e| match e {
+                Entry::Plugin { plugin: p, body } if p == plugin => Some(body),
+                _ => None,
+            })
+            .collect()
     }
 }
 
 #[hegel::composite]
 fn entry(tc: TestCase) -> Entry {
     let text: String = tc.draw(gs::text().max_size(12));
-    if tc.draw(gs::integers::<u8>().max_value(4)) == 0 {
-        Entry::Compaction {
+    let plugin = || {
+        tc.draw(gs::sampled_from(vec![
+            "memory".to_owned(),
+            "prune".to_owned(),
+        ]))
+    };
+    match tc.draw(gs::integers::<u8>().max_value(7)) {
+        0 => Entry::Compaction {
             body: json!({ "summary": text, "tokensBefore": 1000 }).to_string(),
-        }
-    } else {
-        let role = tc.draw(gs::sampled_from(vec![
-            "user".to_owned(),
-            "assistant".to_owned(),
-            "toolResult".to_owned(),
-        ]));
-        Entry::Message {
-            body: json!({ "role": role.clone(), "text": text, "n": 1.5 })
-                .to_string(),
-            role,
+        },
+        1 => Entry::Context {
+            plugin: plugin(),
+            body: json!({ "ledger": text }).to_string(),
+        },
+        2 => Entry::Plugin {
+            plugin: plugin(),
+            body: json!({ "note": text }).to_string(),
+        },
+        _ => {
+            let role = tc.draw(gs::sampled_from(vec![
+                "user".to_owned(),
+                "assistant".to_owned(),
+                "toolResult".to_owned(),
+            ]));
+            Entry::Message {
+                body: json!({ "role": role.clone(), "text": text, "n": 1.5 })
+                    .to_string(),
+                role,
+            }
         }
     }
 }
@@ -218,9 +251,15 @@ fn store_matches_model_body(tc: TestCase) {
                     let entries: Vec<Entry> =
                         tc.draw(gs::vecs(entry()).max_size(3));
                     let usage = tc.draw(usage());
-                    store.append_turn(&run, &entries, usage).await.unwrap();
+                    let last =
+                        store.append_turn(&run, &entries, usage).await.unwrap();
                     let m = model.runs.get_mut(&run).unwrap();
                     m.own.extend(entries);
+                    assert_eq!(
+                        last,
+                        m.own.len() as i64 - 1,
+                        "last seq of {run}"
+                    );
                     m.input += i64::from(usage.input_tokens);
                     m.output += i64::from(usage.output_tokens);
                     m.cost += usage.cost_usd;
@@ -260,6 +299,13 @@ fn store_matches_model_body(tc: TestCase) {
                     model.transcript(id),
                     "transcript of {id}"
                 );
+                for plugin in ["memory", "prune"] {
+                    assert_eq!(
+                        store.records(id, plugin).await.unwrap(),
+                        model.records(id, plugin),
+                        "{plugin} records of {id}"
+                    );
+                }
                 let record = store.run(id).await.unwrap().expect("stored run");
                 assert_eq!(record.kind, m.kind, "{id}");
                 assert_eq!(record.status, m.status, "{id}");

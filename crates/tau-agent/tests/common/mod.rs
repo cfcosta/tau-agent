@@ -15,13 +15,14 @@ pub async fn stored(store: &Store, run: &str) -> Vec<Message> {
         .into_iter()
         .map(|entry| match entry {
             Entry::Message { body, .. } => serde_json::from_str(&body).unwrap(),
-            Entry::Compaction { .. } => panic!("no compaction in these runs"),
+            other => panic!("only messages in these runs: {other:?}"),
         })
         .collect()
 }
 
 /// Checks `RunStart (TurnStart … TurnEnd)* RunEnd` with increasing turn
-/// numbers, and that tool events sit inside turns.
+/// numbers, that tool events sit inside turns, and that continuations
+/// sit between them.
 pub fn assert_grammar(events: &[RunEvent]) {
     assert!(
         matches!(events.first(), Some(RunEvent::RunStart { .. })),
@@ -48,6 +49,12 @@ pub fn assert_grammar(events: &[RunEvent]) {
                 last_turn = *turn;
                 in_turn = None;
             }
+            // A continuation comes between turns; a plugin can fail
+            // anywhere.
+            RunEvent::Continued { .. } => {
+                assert!(in_turn.is_none(), "{event:?} inside a turn")
+            }
+            RunEvent::PluginError { .. } => {}
             _ => assert!(in_turn.is_some(), "{event:?} outside a turn"),
         }
     }

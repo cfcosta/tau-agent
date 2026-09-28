@@ -18,6 +18,11 @@ The model has two tables: `runs` and `messages`.
 - **A compaction** is a row in `messages` with `kind = 'compaction'`.
   When a run's transcript is loaded, everything before its latest
   compaction record is dropped.
+- **A context rewrite** is a row with `kind = 'context'`, naming the
+  plugin that made it. It cuts the transcript like a compaction.
+- **A plugin record** is a row with `kind = 'plugin'`, naming its
+  plugin. It is never part of the transcript. `Store::records` reads a
+  plugin's records along a run's fork chain.
 
 ## Schema: `migrations/0001_runs.sql`
 
@@ -45,8 +50,9 @@ CREATE INDEX runs_by_parent   ON runs (parent_run_id);
 CREATE TABLE messages (
   run_id     TEXT    NOT NULL REFERENCES runs (id),
   seq        INTEGER NOT NULL,
-  kind       TEXT    NOT NULL CHECK (kind IN ('message', 'compaction')),
+  kind       TEXT    NOT NULL CHECK (kind IN ('message', 'compaction', 'context', 'plugin')),
   role       TEXT,                          -- user | assistant | toolResult
+  plugin     TEXT,                          -- the plugin of a context or plugin entry
   body       TEXT    NOT NULL CHECK (json_valid(body)),
   created_at TEXT    NOT NULL,
   PRIMARY KEY (run_id, seq)

@@ -7,13 +7,34 @@ use tau_ai::message::Usage;
 
 use crate::event::LimitKind;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Limits {
     pub max_turns: Option<u32>,
     /// Input, output and cached tokens together.
     pub max_tokens: Option<u64>,
     pub max_usd: Option<f64>,
     pub timeout: Option<Duration>,
+    /// How many times plugins may keep a run from stopping
+    /// (`PluginRun::before_stop`). Past it, the run stops when the model
+    /// does.
+    pub max_continuations: u32,
+}
+
+/// Continuations a run allows by default.
+pub const DEFAULT_MAX_CONTINUATIONS: u32 = 3;
+
+impl Default for Limits {
+    /// No limit on turns, tokens, cost or time, and
+    /// [`DEFAULT_MAX_CONTINUATIONS`] continuations.
+    fn default() -> Self {
+        Self {
+            max_turns: None,
+            max_tokens: None,
+            max_usd: None,
+            timeout: None,
+            max_continuations: DEFAULT_MAX_CONTINUATIONS,
+        }
+    }
 }
 
 impl Limits {
@@ -34,6 +55,11 @@ impl Limits {
 
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    pub fn max_continuations(mut self, continuations: u32) -> Self {
+        self.max_continuations = continuations;
         self
     }
 

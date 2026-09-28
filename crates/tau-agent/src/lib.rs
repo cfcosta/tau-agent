@@ -5,6 +5,7 @@ pub mod compaction;
 pub mod event;
 pub mod hook;
 pub mod limits;
+pub mod plugin;
 pub mod runner;
 pub mod schema;
 pub mod tool;

@@ -5,7 +5,11 @@
 //! starts a [`Run`], one execution with its own event stream, steering
 //! and cancellation.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Arc, atomic::AtomicI64},
+};
 
 use async_trait::async_trait;
 use futures_util::{Stream, stream};
@@ -14,11 +18,11 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tau_ai::{
     llm::{Llm, LlmError},
-    message::{Message, Usage},
+    message::{InputBlock, Message, TextContent, Usage, UserContent},
     responses::request::{ReasoningEffort, Settings, ToolDefinition},
     retry::RetryPolicy,
 };
-use tau_store::{Entry, NewRun, RunKind, Store, StoreError};
+use tau_store::{Entry, NewRun, RunKind, Status, Store, StoreError};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
@@ -27,7 +31,8 @@ use crate::{
     event::{RunEvent, StopReason},
     hook::RunHook,
     limits::Limits,
-    runner::{Clock, LoopTool, Runner, add_usage, system_clock},
+    plugin::{Hooked, Plugin, RunPlan, RunShared},
+    runner::{ActivePlugin, Clock, LoopTool, Runner, add_usage, system_clock},
     schema::to_strict,
     tool::{AgentTool, RunId, ToolCtx, ToolOutput},
     validation::ArgumentSchema,
@@ -56,6 +61,11 @@ pub enum AgentError {
         outcome: Box<Outcome>,
         message: String,
     },
+    /// A plugin's `start` failed; the run did not start.
+    Plugin {
+        plugin: String,
+        message: String,
+    },
     /// The run's task panicked.
     Panicked,
 }
@@ -76,6 +86,9 @@ impl fmt::Display for AgentError {
                 "the final message is not a valid output ({message}); the run stopped with {:?}",
                 outcome.stop
             ),
+            Self::Plugin { plugin, message } => {
+                write!(f, "plugin {plugin} could not start the run: {message}")
+            }
             Self::Panicked => f.write_str("the run's task panicked"),
         }
     }
@@ -189,7 +202,8 @@ struct AgentInner {
     instructions: Option<String>,
     reasoning: Option<ReasoningEffort>,
     tools: Vec<Arc<dyn AgentTool>>,
-    hooks: Vec<Arc<dyn RunHook>>,
+    /// Plugins and hooks, in registration order.
+    plugins: Vec<Arc<dyn Plugin>>,
     limits: Limits,
     compaction: Option<Compaction>,
     retry: RetryPolicy,
@@ -223,7 +237,7 @@ impl Agent {
             instructions: None,
             reasoning: None,
             tools: Vec::new(),
-            hooks: Vec::new(),
+            plugins: Vec::new(),
             limits: Limits::default(),
             compaction: None,
             retry: RetryPolicy::default(),
@@ -267,8 +281,19 @@ impl Agent {
         self.with(|a| a.tools.extend(tools))
     }
 
+    /// Adds a hook. It runs in registration order among the plugins,
+    /// and every run shares it.
     pub fn hook(self, hook: impl RunHook) -> Self {
-        self.with(|a| a.hooks.push(Arc::new(hook)))
+        self.with(|a| a.plugins.push(Arc::new(Hooked(Arc::new(hook)))))
+    }
+
+    /// Adds a plugin (`docs/reference/plugins.md`): its tools join the
+    /// agent's, and each run starts it after the plugins added before it.
+    pub fn plugin(self, plugin: impl Plugin) -> Self {
+        self.with(|a| {
+            a.tools.extend(plugin.tools());
+            a.plugins.push(Arc::new(plugin));
+        })
     }
 
     pub fn limits(self, limits: Limits) -> Self {
@@ -300,9 +325,10 @@ impl Agent {
         self.with(|a| a.clock = clock)
     }
 
-    /// The settings a run of this agent sends. Tool schemas go in strict
-    /// form when they convert; otherwise as they are, with `strict: false`.
-    fn settings(&self, text_format: Option<Value>) -> Settings {
+    /// The settings a run of this agent sends, as its plan left them.
+    /// Tool schemas go in strict form when they convert; otherwise as
+    /// they are, with `strict: false`.
+    fn settings(&self, plan: &RunPlan, text_format: Option<Value>) -> Settings {
         let tools = self
             .0
             .tools
@@ -322,9 +348,9 @@ impl Agent {
             .collect();
         Settings {
             model: self.0.model.clone(),
-            instructions: self.0.instructions.clone(),
+            instructions: plan.instructions.clone(),
             tools,
-            reasoning: self.0.reasoning,
+            reasoning: plan.reasoning,
             text_format,
             ..Settings::default()
         }
@@ -669,8 +695,6 @@ async fn run_task(
             },
         );
     }
-    let settings = agent.settings(launch.text_format);
-    let session = agent.0.llm.open(settings).await.map_err(AgentError::Llm)?;
     let mut workflow = launch.workflow.as_deref().map(str::to_owned);
     let parent_run = match &launch.kind {
         RunKind::Root => None,
@@ -693,11 +717,58 @@ async fn run_task(
             id: &id.0,
             workflow_id: workflow.as_deref(),
             agent: &agent.0.name,
-            kind: launch.kind,
+            kind: launch.kind.clone(),
             model: &agent.0.model,
         })
         .await
         .map_err(AgentError::Store)?;
+    let workflow: Option<Arc<str>> = workflow.map(Into::into);
+
+    let shared = RunShared {
+        run: id.clone(),
+        parent: launch.parent.clone(),
+        agent: agent.0.name.clone(),
+        cancel: launch.cancel.clone(),
+        llm: agent.0.llm.clone(),
+        store: store.clone(),
+        charged: Arc::default(),
+        last_seq: Arc::new(AtomicI64::new(-1)),
+    };
+    let mut plan = RunPlan::new(
+        input,
+        agent.0.instructions.clone(),
+        agent.0.reasoning,
+        agent.0.model.clone(),
+        launch.kind.clone(),
+        workflow.clone(),
+    );
+    let mut plugins = Vec::with_capacity(agent.0.plugins.len());
+    for plugin in &agent.0.plugins {
+        let ctx = shared.ctx(plugin.name());
+        let records = match plugin_records(&store, &id, plugin.name()).await {
+            Ok(records) => records,
+            Err(error) => return Err(fail(&store, &id, error).await),
+        };
+        plan.set_records(records);
+        match plugin.start(&mut plan, &ctx).await {
+            Ok(run) => plugins.push(ActivePlugin { run, ctx }),
+            Err(error) => {
+                let error = AgentError::Plugin {
+                    plugin: plugin.name().to_owned(),
+                    message: error.to_string(),
+                };
+                return Err(fail(&store, &id, error).await);
+            }
+        }
+    }
+
+    let settings = agent.settings(&plan, launch.text_format);
+    let session = match agent.0.llm.open(settings).await {
+        Ok(session) => session,
+        Err(error) => {
+            return Err(fail(&store, &id, AgentError::Llm(error)).await);
+        }
+    };
     let (history, compacted) = if fork {
         let entries =
             store.transcript(&id.0).await.map_err(AgentError::Store)?;
@@ -705,12 +776,13 @@ async fn run_task(
     } else {
         (Vec::new(), None)
     };
+    let first = first_message(plan.context, plan.input);
     let result = Runner {
         run: id.clone(),
         parent: launch.parent,
         agent: agent.0.name.clone(),
         tools,
-        hooks: agent.0.hooks.clone(),
+        plugins,
         limits: agent.0.limits,
         session,
         store,
@@ -719,8 +791,9 @@ async fn run_task(
         cancel: launch.cancel,
         clock: agent.0.clock.clone(),
         history,
-        stored: 0,
-        workflow: workflow.map(Into::into),
+        last_seq: shared.last_seq,
+        charged: shared.charged,
+        workflow,
         children: Arc::default(),
         llm: agent.0.llm.clone(),
         compaction: agent.0.compaction,
@@ -728,7 +801,7 @@ async fn run_task(
         retry: agent.0.retry,
         warmup: agent.0.warmup,
     }
-    .run(input)
+    .run(first)
     .await
     .map_err(AgentError::Store)?;
     Ok(Outcome {
@@ -738,6 +811,56 @@ async fn run_task(
         usage: result.usage,
         last_seq: result.last_seq,
     })
+}
+
+/// A plugin's records along the run's fork chain, parsed.
+async fn plugin_records(
+    store: &Store,
+    run: &RunId,
+    plugin: &str,
+) -> Result<Vec<Value>, AgentError> {
+    let bodies = store
+        .records(&run.0, plugin)
+        .await
+        .map_err(AgentError::Store)?;
+    bodies
+        .iter()
+        .map(|body| serde_json::from_str(body))
+        .collect::<Result<_, _>>()
+        .map_err(|error| AgentError::Store(StoreError::Json(error)))
+}
+
+/// Marks a run that could not start as failed, and returns why. If even
+/// that write fails, the store's error wins: the run is left `running`.
+async fn fail(store: &Store, run: &RunId, error: AgentError) -> AgentError {
+    let message = error.to_string();
+    match store
+        .finish_run(&run.0, Status::Failed, None, Some(&message))
+        .await
+    {
+        Ok(()) => error,
+        Err(store_error) => AgentError::Store(store_error),
+    }
+}
+
+/// The run's first user message: the plan's context, then its input. With
+/// no context, it is the input alone, as plain text.
+fn first_message(context: Vec<String>, input: String) -> UserContent {
+    if context.is_empty() {
+        return UserContent::Text(input);
+    }
+    UserContent::Blocks(
+        context
+            .into_iter()
+            .chain(std::iter::once(input))
+            .map(|text| {
+                InputBlock::Text(TextContent {
+                    text,
+                    text_signature: None,
+                })
+            })
+            .collect(),
+    )
 }
 
 /// The messages of a stored transcript, and the compaction it starts
@@ -752,6 +875,9 @@ fn messages(
             Entry::Message { body, .. } => {
                 messages.push(serde_json::from_str(&body)?);
             }
+            // `Store::transcript` leaves plugin records out, and context
+            // entries come with the loop's rewrites (not yet written).
+            Entry::Plugin { .. } | Entry::Context { .. } => {}
             Entry::Compaction { body } => {
                 let record: Record = serde_json::from_str(&body)?;
                 messages.push(record.message());

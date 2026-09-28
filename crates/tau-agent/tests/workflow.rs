@@ -455,6 +455,8 @@ fn run_of(event: &RunEvent) -> &RunId {
         | RunEvent::TurnEnd { run, .. }
         | RunEvent::Compacted { run, .. }
         | RunEvent::Retry { run, .. }
+        | RunEvent::Continued { run, .. }
+        | RunEvent::PluginError { run, .. }
         | RunEvent::RunEnd { run, .. } => run,
     }
 }
@@ -766,6 +768,7 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
         max_usd: tc
             .draw(gs::optional(gs::sampled_from(vec![0.25, 0.5, 1.0, 2.0]))),
         timeout: None,
+        ..Limits::default()
     };
 
     let mut lead_llm = ScriptedModel::new();
