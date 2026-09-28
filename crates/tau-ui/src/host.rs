@@ -1678,6 +1678,21 @@ impl Host {
                     })
                     .detach();
                 }
+                WorkspaceEvent::Query { sql } => {
+                    let job = {
+                        let (store, sql) = (handler.store.clone(), sql.clone());
+                        handler.runtime.spawn(async move {
+                            store.query(&sql, 200).await.map_err(|e| e.to_string())
+                        })
+                    };
+                    let workspace = workspace.downgrade();
+                    cx.spawn(async move |cx| {
+                        let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
+                        let _ = workspace
+                            .update(cx, |ws, cx| ws.set_query_result(result, cx));
+                    })
+                    .detach();
+                }
                 WorkspaceEvent::EditConstitution { repo } => {
                     match handler.constitution_file(repo) {
                         Ok(path) => cx.open_with_system(&path),

@@ -959,3 +959,32 @@ fn the_typesafe_key_is_asked_for_and_forgotten(cx: &mut TestAppContext) {
         Some(&WorkspaceEvent::JevKey { key: None })
     );
 }
+
+#[gpui::test]
+fn history_runs_the_query_typed_and_shows_its_rows(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    cx.update(|_, cx| demo::respond(&workspace, cx));
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::History, cx);
+        ws.run_query(cx);
+    });
+    // The box starts with the store's sample query.
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::Query {
+            sql: demo::catalog().store.sample_query
+        })
+    );
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        let Some(Ok(table)) = ws.query_result() else {
+            panic!("a table")
+        };
+        assert_eq!(table.columns, ["agent", "sum(cost_usd)"]);
+        assert_eq!(table.rows.len(), 2);
+    });
+    workspace.update(&mut cx, |ws, cx| {
+        ws.set_query_result(Err("no such table: nope".into()), cx);
+        assert!(matches!(ws.query_result(), Some(Err(_))));
+    });
+}

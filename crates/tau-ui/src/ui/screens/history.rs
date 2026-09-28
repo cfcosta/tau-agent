@@ -254,13 +254,10 @@ pub fn render(
                     .border_color(t.border)
                     .child(mono("SQL", Type::MICRO, t.dim))
                     .child(
-                        mono(
-                            ws.catalog.store.sample_query.clone(),
-                            Type::CAPTION,
-                            t.text_soft,
-                        )
-                        .flex_1()
-                        .truncate(),
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(ui::field(&ws.query, true, t)),
                     )
                     .child(
                         div()
@@ -275,6 +272,7 @@ pub fn render(
                             ),
                     ),
             )
+            .children(ws.query_result().map(|result| query_result(result, t)))
             .into_any_element()
     };
 
@@ -323,4 +321,51 @@ fn cell(grow: f32, right: bool) -> gpui::Div {
         .min_w(px(0.))
         .truncate()
         .when(right, |cell| cell.flex().justify_end())
+}
+
+/// What the query returned: a table, or SQLite's reason.
+fn query_result(
+    result: &Result<tau_store::Table, String>,
+    t: &Theme,
+) -> gpui::Div {
+    let table = match result {
+        Err(error) => {
+            return div().px(sp(4.)).py(sp(3.)).child(ui::notice(
+                Icon::Warning,
+                error.clone(),
+                t.red,
+                Type::SMALL,
+                t,
+            ));
+        }
+        Ok(table) => table,
+    };
+    let columns = table.columns.len().max(1) as f32;
+    let line = |cells: &[String], color| {
+        row(t).children(cells.iter().map(|cell| {
+            mono(cell.clone(), Type::CAPTION, color)
+                .flex_basis(gpui::relative(1. / columns))
+                .flex_grow()
+                .min_w(px(0.))
+                .truncate()
+        }))
+    };
+    div()
+        .flex()
+        .flex_col()
+        .child(line(&table.columns, t.dim))
+        .children(table.rows.iter().map(|cells| line(cells, t.text)))
+        .child(
+            div()
+                .px(sp(4.))
+                .py(sp(2.))
+                .typeset(Type::CAPTION)
+                .text_color(t.dim)
+                .child(match (table.rows.len(), table.truncated) {
+                    (0, _) => "No rows.".to_owned(),
+                    (n, true) => format!("The first {n} rows."),
+                    (1, false) => "1 row.".to_owned(),
+                    (n, false) => format!("{n} rows."),
+                }),
+        )
 }

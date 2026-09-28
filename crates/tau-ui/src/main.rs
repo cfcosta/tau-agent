@@ -280,6 +280,11 @@ fn open_demo_screen(
             workspace.set_tab(tau_ui::ui::inspector::Tab::Plugins, cx);
             return;
         }
+        Some("history-query") => {
+            workspace.navigate(Route::History, cx);
+            workspace.run_query(cx);
+            return;
+        }
         Some("sheet-plugins") => {
             workspace.navigate(Route::Run(demo::run_id()), cx);
             workspace.set_tab(tau_ui::ui::inspector::Tab::Plugins, cx);

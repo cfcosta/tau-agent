@@ -320,6 +320,9 @@ pub struct Workspace {
     current: Option<RunId>,
     composer: Entity<TextInput>,
     pub(crate) history_filter: Entity<TextInput>,
+    /// History's query box, and what the last query returned.
+    pub(crate) query: Entity<TextInput>,
+    pub(crate) query_result: Option<Result<tau_store::Table, String>>,
     pub(crate) memory_search: Entity<TextInput>,
     tab: Tab,
     sheet_open: bool,
@@ -429,6 +432,12 @@ impl Workspace {
             TextInput::new("Filter by run, repository, model or stop", cx)
         });
         let memory_search = cx.new(|cx| TextInput::new("Search notes", cx));
+        let query = cx.new(|cx| {
+            let mut input =
+                TextInput::new("select … from runs", cx).keep_on_submit();
+            input.set_text(catalog.store.sample_query.clone(), cx);
+            input
+        });
         let model_search = cx.new(|cx| TextInput::new("Search models", cx));
         let github_token =
             cx.new(|cx| TextInput::new("github_pat_…", cx).masked());
@@ -484,6 +493,10 @@ impl Workspace {
                 let InputEvent::Submit(path) = event;
                 ws.submit_repo_path(path.clone(), cx);
             }),
+            cx.subscribe(&query, |ws, _, event: &InputEvent, cx| {
+                let InputEvent::Submit(_) = event;
+                ws.run_query(cx);
+            }),
             cx.subscribe(&jev_key, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(key) = event;
                 ws.submit_jev_key(key.clone(), cx);
@@ -513,6 +526,8 @@ impl Workspace {
             current,
             composer,
             history_filter,
+            query,
+            query_result: None,
             memory_search,
             tab: Tab::Run,
             sheet_open: false,
@@ -591,6 +606,13 @@ impl Workspace {
     }
 
     pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
+        // The query box starts from the store's sample, until typed in.
+        let typed = self.query.read(cx).text().to_owned();
+        if typed.trim().is_empty() || typed == self.catalog.store.sample_query {
+            let sample = catalog.store.sample_query.clone();
+            self.query
+                .update(cx, |input, cx| input.set_text(sample, cx));
+        }
         self.closed.extend(catalog.closed_runs.iter().cloned());
         self.catalog = catalog;
         self.restore_repos();
@@ -942,10 +964,27 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Runs what the query box holds against the store.
     pub fn run_query(&mut self, cx: &mut Context<Self>) {
-        cx.emit(WorkspaceEvent::Query {
-            sql: self.catalog.store.sample_query.clone(),
-        });
+        let sql = self.query.read(cx).text().trim().to_owned();
+        if sql.is_empty() {
+            return;
+        }
+        cx.emit(WorkspaceEvent::Query { sql });
+    }
+
+    /// What the store returned for the query, or why it did not.
+    pub fn set_query_result(
+        &mut self,
+        result: Result<tau_store::Table, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.query_result = Some(result);
+        cx.notify();
+    }
+
+    pub fn query_result(&self) -> Option<&Result<tau_store::Table, String>> {
+        self.query_result.as_ref()
     }
 
     fn cancel(&mut self, cx: &mut Context<Self>) {

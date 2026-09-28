@@ -808,6 +808,20 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     ws.set_catalog(catalog, cx);
                 });
             }
+            // The demo's store answers every query with its runs' costs.
+            WorkspaceEvent::Query { .. } => {
+                workspace.update(cx, |ws, cx| {
+                    let table = tau_store::Table {
+                        columns: vec!["agent".into(), "sum(cost_usd)".into()],
+                        rows: vec![
+                            vec!["coder".into(), "4.312".into()],
+                            vec!["reviewer".into(), "0.206".into()],
+                        ],
+                        truncated: false,
+                    };
+                    ws.set_query_result(Ok(table), cx);
+                });
+            }
             // Updating finds nothing new.
             WorkspaceEvent::UpdateRepo { repo } => {
                 let text = format!("{repo} is up to date");
@@ -1070,7 +1084,7 @@ pub fn catalog() -> Catalog {
         store: StoreInfo {
             path: "runs.db".into(),
             size: "18.4 MB".into(),
-            sample_query: "select agent, sum(cost_usd) from runs where started_at > date('now', '-7 days') group by agent".into(),
+            sample_query: "select agent, sum(cost_usd) from runs where created_at > date('now', '-7 days') group by agent".into(),
         },
         pull_requests: true,
         project: Default::default(),

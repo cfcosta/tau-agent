@@ -16,7 +16,9 @@ use std::{
 };
 
 use sqlx::{
+    Column as _,
     Connection,
+    Row as _,
     Sqlite,
     SqlitePool,
     pool::PoolConnection,
@@ -172,6 +174,39 @@ pub struct AgentCost {
     pub usd: f64,
 }
 
+/// What a query returned, as text.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Table {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    /// There were more rows than the limit.
+    pub truncated: bool,
+}
+
+/// One value of a row, as text: `NULL` for none, numbers as written,
+/// and blobs by their size.
+fn cell(row: &sqlx::sqlite::SqliteRow, i: usize) -> String {
+    use sqlx::{Row as _, ValueRef as _};
+    match row.try_get_raw(i) {
+        Ok(raw) if raw.is_null() => return "NULL".into(),
+        Err(_) => return String::new(),
+        Ok(_) => {}
+    }
+    if let Ok(value) = row.try_get::<i64, _>(i) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<f64, _>(i) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<String, _>(i) {
+        return value;
+    }
+    match row.try_get::<Vec<u8>, _>(i) {
+        Ok(bytes) => format!("<{} bytes>", bytes.len()),
+        Err(_) => String::new(),
+    }
+}
+
 /// How long writes waited for the writer connection
 /// (`docs/reference/storage.md`, "Connections"). SQLite has one writer,
 /// so parallel runs queue on it; this is how much that queue costs.
@@ -243,6 +278,47 @@ impl Store {
             writer: pool.clone(),
             reader: pool,
             stats: Arc::default(),
+        })
+    }
+
+    /// Runs a query someone typed, such as History's query box, and
+    /// returns at most `limit` rows, every value as text. The query only
+    /// reads: SQLite refuses anything that would write. It is SQL from a
+    /// person, not from tau's code, so it goes unchecked by the macros.
+    pub async fn query(&self, sql: &str, limit: usize) -> Result<Table> {
+        let sql = sql.trim().trim_end_matches(';').trim();
+        let mut connection = self.reader.acquire().await?;
+        sqlx::query("PRAGMA query_only = ON")
+            .execute(&mut *connection)
+            .await?;
+        // One row past the limit says whether there are more.
+        let wrapped = format!("SELECT * FROM ({sql}) LIMIT {}", limit + 1);
+        let rows = sqlx::query(sqlx::AssertSqlSafe(wrapped))
+            .fetch_all(&mut *connection)
+            .await;
+        sqlx::query("PRAGMA query_only = OFF")
+            .execute(&mut *connection)
+            .await?;
+        let rows = rows?;
+        let columns = rows
+            .first()
+            .map(|row| {
+                row.columns()
+                    .iter()
+                    .map(|column| column.name().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let truncated = rows.len() > limit;
+        let rows = rows
+            .iter()
+            .take(limit)
+            .map(|row| (0..row.columns().len()).map(|i| cell(row, i)).collect())
+            .collect();
+        Ok(Table {
+            columns,
+            rows,
+            truncated,
         })
     }
 

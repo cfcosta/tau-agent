@@ -630,3 +630,39 @@ fn plugin_entries_carry_their_seq() {
         );
     });
 }
+
+/// A typed query reads, and only reads.
+#[test]
+fn typed_queries_only_read() {
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        for id in ["a", "b", "c"] {
+            store.create_run(&new_run(id)).await.unwrap();
+        }
+        let table = store
+            .query("select id, agent, result from runs order by id;", 2)
+            .await
+            .unwrap();
+        assert_eq!(table.columns, ["id", "agent", "result"]);
+        assert_eq!(
+            table.rows,
+            [["a", "a", "NULL"], ["b", "a", "NULL"]]
+                .map(|row| row.map(String::from))
+        );
+        assert!(table.truncated);
+        let counted = store
+            .query("select count(*) as n, 1.5 as x from runs", 10)
+            .await
+            .unwrap();
+        assert_eq!(counted.rows, [["3", "1.5"].map(String::from)]);
+        assert!(!counted.truncated);
+
+        // Writing is refused, and the store still writes after.
+        assert!(store.query("delete from runs", 10).await.is_err());
+        assert!(store.query("select 1; delete from runs", 10).await.is_err());
+        assert!(store.query("not sql", 10).await.is_err());
+        store.create_run(&new_run("d")).await.unwrap();
+        let after = store.query("select count(*) from runs", 10).await.unwrap();
+        assert_eq!(after.rows, [["4"].map(String::from)]);
+    });
+}
