@@ -284,7 +284,7 @@ fn branch(
             div()
                 .text_color(t.text_soft)
                 .line_height(relative(1.6))
-                .child(rich(text, t))
+                .child(rich(text, t.text_soft, t))
         }))
         .children(diff)
         .child(

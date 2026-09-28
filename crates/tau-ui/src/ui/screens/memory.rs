@@ -21,8 +21,8 @@ use crate::{
     assets::Icon,
     catalog::Note,
     route::Route,
-    theme::Theme,
-    ui::{self, heading, icon, mono, rich},
+    theme::{SANS, SERIF, Theme},
+    ui::{self, heading, icon, mono, rich_in},
     workspace::Workspace,
 };
 
@@ -223,7 +223,7 @@ fn list(
                         .text_size(px(12.))
                         .text_color(t.muted)
                         .line_height(relative(1.45))
-                        .child(note.snippet().to_owned()),
+                        .child(rich_in(note.snippet(), SANS, t.muted, t)),
                 )
                 .child(mono(
                     format!(
@@ -261,17 +261,17 @@ fn reader(
         ))
         .child(
             div()
-                .text_size(px(if compact { 24. } else { 30. }))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_family(SERIF)
+                .text_size(px(if compact { 26. } else { 34. }))
+                .font_weight(FontWeight::MEDIUM)
                 .line_height(relative(1.2))
                 .child(note.title.clone()),
         )
         .children(note.body.iter().map(|paragraph| {
             div()
-                .text_size(px(if compact { 15. } else { 16. }))
-                .text_color(t.text_soft)
+                .text_size(px(if compact { 16. } else { 18. }))
                 .line_height(relative(1.65))
-                .child(rich(paragraph, t))
+                .child(rich_in(paragraph, SERIF, t.text_soft, t))
         }))
         .child(div().flex().flex_wrap().gap(px(8.)).children(
             note.paths.iter().map(|path| {
@@ -305,12 +305,16 @@ fn neighborhood(
     let back: Vec<(&Note, &str)> = memory.backlinks(&note.id).collect();
 
     // Links out sit above the note, backlinks below.
-    let spots = |count: usize, y: f32| {
-        (0..count)
-            .map(move |i| ((i as f32 + 0.5) / count as f32 * 0.84 + 0.08, y))
-    };
-    let out_spots: Vec<(f32, f32)> = spots(out.len(), 0.16).collect();
-    let back_spots: Vec<(f32, f32)> = spots(back.len(), 0.84).collect();
+    // Fixed spots, staggered so labels never share a line: links out
+    // above the note, backlinks below it.
+    // Labels are 120 px boxes centred on their node, so nodes stay 60 px
+    // or more inside the map's edges.
+    const ABOVE: [(f32, f32); 3] = [(0.22, 0.2), (0.78, 0.26), (0.5, 0.06)];
+    const BELOW: [(f32, f32); 3] = [(0.22, 0.7), (0.5, 0.82), (0.78, 0.66)];
+    let out_spots: Vec<(f32, f32)> =
+        ABOVE.iter().copied().take(out.len()).collect();
+    let back_spots: Vec<(f32, f32)> =
+        BELOW.iter().copied().take(back.len()).collect();
     let all: Vec<(f32, f32)> =
         out_spots.iter().chain(&back_spots).copied().collect();
     let edge = t.border_strong;
@@ -341,7 +345,8 @@ fn neighborhood(
                 .absolute()
                 .left(relative(x))
                 .top(relative(y))
-                .ml(px(-size / 2.))
+                .w(px(120.))
+                .ml(px(-60.))
                 .mt(px(-size / 2.))
                 .flex()
                 .flex_col()
@@ -357,7 +362,7 @@ fn neighborhood(
                 .children(label.map(|label| {
                     div()
                         .mt(px(4.))
-                        .max_w(px(110.))
+                        .max_w(px(120.))
                         .truncate()
                         .text_size(px(11.))
                         .text_color(t.muted)
@@ -397,7 +402,12 @@ fn neighborhood(
             .gap(px(2.))
             .py(px(6.))
             .cursor_pointer()
-            .child(div().text_color(t.blue).child(target.title.clone()))
+            .child(
+                div()
+                    .text_color(t.text)
+                    .hover(|style| style.text_color(t.blue))
+                    .child(target.title.clone()),
+            )
             .child(
                 div()
                     .text_size(px(12.))

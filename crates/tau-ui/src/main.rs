@@ -12,6 +12,9 @@
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
 //!   compare, plan or ledger (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
+//! - `--frame <w>x<h>`: lay out at exactly that size in the top-left
+//!   corner, to compare with the designs.
+//! - `--steps <n>`: stop the demo script after its first `n` updates.
 
 use std::path::PathBuf;
 
@@ -40,6 +43,8 @@ struct Args {
     phone: bool,
     open: Option<String>,
     prompt: Option<String>,
+    frame: Option<(f32, f32)>,
+    steps: Option<usize>,
     model: String,
     root: PathBuf,
 }
@@ -59,6 +64,11 @@ fn args() -> Args {
         phone: flag("--phone"),
         open: value("--open"),
         prompt: value("--prompt"),
+        frame: value("--frame").and_then(|frame| {
+            let (w, h) = frame.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        }),
+        steps: value("--steps").and_then(|steps| steps.parse().ok()),
         model: value("--model").unwrap_or_else(|| "gpt-5.5".into()),
         root: value("--root")
             .map(PathBuf::from)
@@ -125,6 +135,7 @@ fn main() {
                             cx,
                         );
                         workspace.set_phone_preview(args.phone, cx);
+                        workspace.set_frame(args.frame, cx);
                         workspace
                     }
                     None => demo_workspace(&args, window, cx),
@@ -170,10 +181,15 @@ fn demo_workspace(
     let mut workspace =
         Workspace::new("tau-agent", runs, demo::catalog(), window, cx);
     workspace.set_phone_preview(args.phone, cx);
+    workspace.set_frame(args.frame, cx);
     if let Some(route) = args.open.as_deref().and_then(demo::route) {
         workspace.navigate(route, cx);
     }
-    if args.finished {
+    if let Some(steps) = args.steps {
+        for (_, update) in demo::script().into_iter().take(steps) {
+            workspace.update_run(&demo::run_id(), update, cx);
+        }
+    } else if args.finished {
         for (_, update) in demo::script() {
             workspace.update_run(&demo::run_id(), update, cx);
         }

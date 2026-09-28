@@ -258,7 +258,11 @@ fn fact(title: &str, body: &str, t: &Theme) -> impl IntoElement {
                 .text_color(t.muted)
                 .child(title.to_owned()),
         )
-        .child(div().line_height(relative(1.5)).child(ui::rich(body, t)))
+        .child(
+            div()
+                .line_height(relative(1.5))
+                .child(ui::rich(body, t.text, t)),
+        )
 }
 
 fn spend(plugins: &[PluginInfo], t: &Theme) -> impl IntoElement {

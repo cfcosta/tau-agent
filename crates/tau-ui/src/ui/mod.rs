@@ -10,14 +10,15 @@ pub mod transcript;
 use gpui::{
     Div,
     FontWeight,
-    HighlightStyle,
     Hsla,
     IntoElement,
     SharedString,
     Styled,
     StyledText,
     Svg,
+    TextRun,
     div,
+    font,
     prelude::*,
     px,
     svg,
@@ -26,7 +27,7 @@ use tau_agent::event::StopReason;
 
 use crate::{
     assets::Icon,
-    theme::{MONO, Theme},
+    theme::{MONO, SANS, Theme},
     view::{RunStatus, RunView},
 };
 
@@ -55,25 +56,89 @@ pub fn heading(text: &str, t: &Theme) -> Div {
         .child(text.to_uppercase())
 }
 
-/// Prose with `code` spans marked the way the transcript shows them.
-pub fn rich(text: &str, t: &Theme) -> StyledText {
-    let mut plain = String::with_capacity(text.len());
-    let mut code = Vec::new();
-    for (index, part) in text.split('`').enumerate() {
-        let start = plain.len();
-        plain.push_str(part);
-        if index % 2 == 1 {
-            code.push((
-                start..plain.len(),
-                HighlightStyle {
-                    color: Some(t.text),
-                    background_color: Some(t.raised),
-                    ..HighlightStyle::default()
-                },
-            ));
+/// Prose in `color`, with the two marks models use most: `code` in the
+/// monospace face on a chip, and `**bold**`.
+pub fn rich(text: &str, color: Hsla, t: &Theme) -> StyledText {
+    rich_in(text, SANS, color, t)
+}
+
+/// [`rich`] in another body face, such as the serif of a note.
+pub fn rich_in(
+    text: &str,
+    family: &'static str,
+    color: Hsla,
+    t: &Theme,
+) -> StyledText {
+    let spans = spans(text);
+    let plain: String = spans.iter().map(|(span, _)| span.as_str()).collect();
+    let runs = spans
+        .iter()
+        .map(|(span, mark)| {
+            let base = font(family);
+            let (font, color, background) = match mark {
+                Mark::Plain => (base, color, None),
+                Mark::Bold => (
+                    gpui::Font {
+                        weight: FontWeight::SEMIBOLD,
+                        ..base
+                    },
+                    t.text,
+                    None,
+                ),
+                Mark::Code => (font(MONO), t.text, Some(t.raised)),
+            };
+            TextRun {
+                len: span.len(),
+                font,
+                color,
+                background_color: background,
+                underline: None,
+                strikethrough: None,
+            }
+        })
+        .filter(|run| run.len > 0)
+        .collect();
+    StyledText::new(plain).with_runs(runs)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    Plain,
+    Bold,
+    Code,
+}
+
+/// Splits text into plain, `**bold**` and `` `code` `` spans. Marks
+/// inside code stay literal; an unclosed mark is plain text.
+fn spans(text: &str) -> Vec<(String, Mark)> {
+    let mut spans = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let code = rest.find('`');
+        let bold = rest.find("**");
+        let (at, mark, open, close) = match (code, bold) {
+            (Some(c), Some(b)) if b < c => (b, Mark::Bold, 2, "**"),
+            (Some(c), _) => (c, Mark::Code, 1, "`"),
+            (None, Some(b)) => (b, Mark::Bold, 2, "**"),
+            (None, None) => break,
+        };
+        let inner = &rest[at + open..];
+        let Some(end) = inner.find(close) else { break };
+        if at > 0 {
+            spans.push((rest[..at].to_owned(), Mark::Plain));
         }
+        // Code chips get a thin space of padding on each side.
+        let body = &inner[..end];
+        spans.push(match mark {
+            Mark::Code => (format!("\u{2009}{body}\u{2009}"), Mark::Code),
+            other => (body.to_owned(), other),
+        });
+        rest = &inner[end + close.len()..];
     }
-    StyledText::new(plain).with_highlights(code)
+    if !rest.is_empty() {
+        spans.push((rest.to_owned(), Mark::Plain));
+    }
+    spans
 }
 
 /// A rounded badge of text.
@@ -153,7 +218,8 @@ pub fn primary_button(label: impl Into<SharedString>, t: &Theme) -> Div {
         .child(label.into())
 }
 
-/// Two columns of name and value.
+/// Two columns of name and value: names in a fixed column, values
+/// left-aligned beside them.
 pub fn key_values(
     rows: impl IntoIterator<Item = (SharedString, Div)>,
     t: &Theme,
@@ -167,8 +233,8 @@ pub fn key_values(
                 .flex()
                 .items_start()
                 .gap(px(12.))
-                .child(mono(key, 12., t.muted).flex_1())
-                .child(value)
+                .child(mono(key, 12., t.muted).w(px(128.)).flex_shrink_0())
+                .child(div().flex_1().min_w(px(0.)).child(value))
         }))
 }
 
@@ -305,4 +371,30 @@ pub fn empty(text: impl Into<SharedString>, t: &Theme) -> Div {
         .py(px(48.))
         .text_color(t.muted)
         .child(text.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marks_split_into_spans() {
+        let found = spans("see `a**b` and **bold** then `x");
+        let marks: Vec<Mark> = found.iter().map(|(_, m)| *m).collect();
+        assert_eq!(
+            marks,
+            [
+                Mark::Plain,
+                Mark::Code,
+                Mark::Plain,
+                Mark::Bold,
+                Mark::Plain
+            ]
+        );
+        assert_eq!(found[1].0, "\u{2009}a**b\u{2009}");
+        assert_eq!(found[3].0, "bold");
+        assert_eq!(found[4].0, " then `x");
+        assert_eq!(spans("plain").len(), 1);
+        assert!(spans("").is_empty());
+    }
 }

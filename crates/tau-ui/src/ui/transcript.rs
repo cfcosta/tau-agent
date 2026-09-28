@@ -16,7 +16,7 @@ use gpui::{
     rgb,
 };
 
-use super::{dot, icon, link, mono, primary_button, rich, stop_look};
+use super::{bar, dot, icon, link, mono, primary_button, rich, stop_look};
 use crate::{
     assets::Icon,
     route::Route,
@@ -75,10 +75,12 @@ fn item_view(
             .max_w(px(760.))
             .text_color(t.text_soft)
             .line_height(relative(1.6))
-            .child(rich(text, t))
+            .child(rich(text, t.text_soft, t))
             .into_any_element(),
         Item::Thinking(text) => thinking(text, t).into_any_element(),
-        Item::Tool(card) => tool(run, card, t, compact, cx).into_any_element(),
+        Item::Tool(card) => {
+            tool(ws, run, card, t, compact, cx).into_any_element()
+        }
         Item::Plugin(note) => {
             plugin_note(ws, run, kept, index, note, t, compact, cx)
                 .into_any_element()
@@ -171,7 +173,7 @@ fn user(text: &str, t: &Theme, compact: bool) -> Div {
             .border_color(rgb(0x30323a))
             .rounded(px(10.))
             .line_height(relative(1.55))
-            .child(rich(text, t)),
+            .child(rich(text, t.text, t)),
     )
 }
 
@@ -188,6 +190,7 @@ fn thinking(text: &str, t: &Theme) -> Div {
 }
 
 fn tool(
+    ws: &Workspace,
     run: &RunView,
     card: &ToolCard,
     t: &Theme,
@@ -211,45 +214,71 @@ fn tool(
         card.pruned,
         Some(Pruned::ResultDropped | Pruned::CallDropped)
     );
+    // A pruned call shows its size from the ledger: what pruning weighed.
+    let ledger_size = card.pruned.and_then(|_| {
+        run.ledger
+            .iter()
+            .find(|entry| entry.call_id == card.call_id)
+            .map(|entry| tokens(entry.tokens))
+    });
     let summary = mono(card.summary.clone(), 12., t.text_soft)
         .flex_1()
         .min_w(px(0.))
         .truncate()
         .when(card.pruned == Some(Pruned::CallDropped), |s| {
-            s.line_through()
+            s.line_through().text_color(t.muted)
         });
+
+    let review = matches!(card.state, ToolState::Flagged { .. }).then(|| {
+        let run_id = run.id.clone();
+        let call_id = card.call_id.clone();
+        div()
+            .id(SharedString::from(format!("review-{}", card.call_id)))
+            .child(link("Review", t))
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                ws.review_call(&run_id, &call_id, cx)
+            }))
+    });
 
     let header = div()
         .flex()
         .items_center()
         .gap(px(8.))
-        .min_h(px(if compact { 44. } else { 34. }))
+        .min_h(px(if compact {
+            44.
+        } else if dropped {
+            32.
+        } else {
+            36.
+        }))
         .px(px(12.))
         .child(status)
         .child(mono(card.tool.clone(), 12., t.blue).flex_shrink_0())
-        .when_some(card.from_plugin.clone(), |row, plugin| {
-            row.child(
-                div()
-                    .flex_shrink_0()
-                    .px(px(6.))
-                    .py(px(1.))
-                    .border_1()
-                    .border_color(t.border)
-                    .rounded(px(4.))
-                    .text_size(px(11.))
-                    .text_color(t.dim)
-                    .child(plugin),
-            )
-        })
+        .when_some(
+            card.from_plugin.clone().filter(|_| !compact),
+            |row, plugin| {
+                row.child(
+                    div()
+                        .flex_shrink_0()
+                        .px(px(6.))
+                        .py(px(1.))
+                        .border_1()
+                        .border_color(t.border)
+                        .rounded(px(4.))
+                        .text_size(px(11.))
+                        .text_color(t.dim)
+                        .child(plugin),
+                )
+            },
+        )
         .child(summary)
-        .when(!compact, |row| {
-            row.children(
-                card.checks
-                    .iter()
-                    .map(|check| mono(check.clone(), 11., t.dim)),
-            )
+        .when(!compact && !card.checks.is_empty(), |row| {
+            row.child(mono(card.checks.join(" · "), 11., t.dim))
         })
-        .child(state_label(card, t))
+        .child(match &ledger_size {
+            Some(size) => mono(size.clone(), 11., t.dim).into_any_element(),
+            None => state_label(card, t).into_any_element(),
+        })
         .when_some(card.pruned, |row, pruned| {
             row.child(
                 div()
@@ -267,7 +296,8 @@ fn tool(
                     })
                     .child(pruned.label()),
             )
-        });
+        })
+        .children(review);
 
     let body: Option<AnyElement> = match (&card.state, &card.body) {
         (
@@ -279,7 +309,7 @@ fn tool(
             },
             _,
         ) => Some(
-            blocked_body(card, plugin, rule, reason, score, t, cx)
+            blocked_body(ws, card, plugin, rule, reason, score, t, compact, cx)
                 .into_any_element(),
         ),
         (ToolState::Flagged { .. }, _) => None,
@@ -291,17 +321,6 @@ fn tool(
         _ => None,
     };
 
-    let review = matches!(card.state, ToolState::Flagged { .. }).then(|| {
-        let run_id = run.id.clone();
-        let call_id = card.call_id.clone();
-        div()
-            .id(SharedString::from(format!("review-{}", card.call_id)))
-            .child(super::button("Review", t))
-            .on_click(cx.listener(move |ws, _, _, cx| {
-                ws.review_call(&run_id, &call_id, cx)
-            }))
-    });
-
     div()
         .flex()
         .flex_col()
@@ -310,23 +329,13 @@ fn tool(
         .rounded(px(8.))
         .bg(t.card)
         .overflow_hidden()
-        .when(dropped, |card| card.opacity(0.6))
+        .when(dropped, |card| card.opacity(0.7))
         .child(
             header.when(body.is_some(), |h| {
                 h.border_b_1().border_color(t.border)
             }),
         )
         .children(body)
-        .when_some(review, |card, review| {
-            card.child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .px(px(12.))
-                    .pb(px(8.))
-                    .child(review),
-            )
-        })
 }
 
 fn state_label(card: &ToolCard, t: &Theme) -> Div {
@@ -342,9 +351,22 @@ fn state_label(card: &ToolCard, t: &Theme) -> Div {
             (text, color)
         }
         ToolState::Failed(error) => (error.clone(), t.red),
-        ToolState::Blocked { .. } => ("Blocked".into(), t.red),
+        ToolState::Blocked { rule, .. } => {
+            (format!("Blocked by {rule}"), t.red)
+        }
         ToolState::Flagged { rule, score, .. } => {
-            (format!("Ran · flagged by {rule} {score}"), t.accent)
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .flex_shrink_0()
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(t.accent)
+                        .child("Ran · flagged for review"),
+                )
+                .child(mono(format!("{rule} {score}"), 11., t.dim));
         }
     };
     div()
@@ -356,13 +378,24 @@ fn state_label(card: &ToolCard, t: &Theme) -> Div {
         .child(text)
 }
 
+/// The first number in a score such as `p 0.95 ≥ 0.80`.
+fn probability(score: &str) -> Option<f32> {
+    score
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|part| part.contains('.'))
+        .and_then(|part| part.parse().ok())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn blocked_body(
+    ws: &Workspace,
     card: &ToolCard,
     plugin: &str,
     rule: &str,
     reason: &str,
     score: &str,
     t: &Theme,
+    compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Div {
     let route = Route::Constitution {
@@ -375,6 +408,71 @@ fn blocked_body(
             text,
         })
         .collect();
+    let thresholds = ws
+        .catalog
+        .constitution
+        .rules
+        .iter()
+        .find(|known| known.id == rule)
+        .map(|known| (known.review, known.block));
+    let meter = probability(score).map(|p| {
+        let tick = |at: f32| {
+            div()
+                .absolute()
+                .top(px(-3.))
+                .left(relative(at))
+                .w(px(2.))
+                .h(px(14.))
+                .bg(t.text)
+        };
+        div()
+            .w(px(if compact { 150. } else { 220. }))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(
+                div()
+                    .flex()
+                    .text_size(px(12.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(t.muted)
+                            .child("p(violation)"),
+                    )
+                    .child(mono(format!("{p:.2}"), 12., t.text)),
+            )
+            .child(
+                div()
+                    .relative()
+                    .child(bar(p, 8., t.red, t.border))
+                    .when_some(thresholds, |track, (review, block)| {
+                        track.child(tick(review)).child(tick(block))
+                    }),
+            )
+            .when_some(thresholds, |meter, (review, block)| {
+                meter.child(
+                    div()
+                        .relative()
+                        .h(px(14.))
+                        .child(
+                            div()
+                                .absolute()
+                                .left(relative(review))
+                                .ml(px(-20.))
+                                .child(mono("review", 11., t.dim)),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .left(relative(block))
+                                .ml(px(-16.))
+                                .child(mono("block", 11., t.dim)),
+                        ),
+                )
+            })
+    });
     div()
         .flex()
         .flex_col()
@@ -382,37 +480,58 @@ fn blocked_body(
         .child(
             div()
                 .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(12.))
+                .when(compact, |row| row.flex_col())
+                .items_start()
+                .gap(px(16.))
                 .px(px(12.))
-                .py(px(10.))
+                .py(px(12.))
                 .bg(rgb(0x1d1716))
                 .border_t_1()
                 .border_color(rgb(0x3a2724))
-                .child(mono(plugin.to_owned(), 12., t.red))
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(200.))
-                        .text_color(t.text_soft)
-                        .line_height(relative(1.5))
-                        .child(format!(
-                            "{reason} The model got this reason back."
-                        )),
+                        .min_w(px(0.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(mono(plugin.to_owned(), 12., t.red))
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(t.muted)
+                                        .child("Reason sent to the model"),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!(
+                                            "rule-{}",
+                                            card.call_id
+                                        )))
+                                        .child(link(format!("Rule {rule}"), t))
+                                        .on_click(cx.listener(
+                                            move |ws, _, _, cx| {
+                                                ws.navigate(route.clone(), cx)
+                                            },
+                                        )),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_color(t.text_soft)
+                                .line_height(relative(1.5))
+                                .child(rich(reason, t.text_soft, t)),
+                        ),
                 )
-                .child(mono(score.to_owned(), 12., t.red))
-                .child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "rule-{}",
-                            card.call_id
-                        )))
-                        .child(link(format!("Rule {rule}"), t))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.navigate(route.clone(), cx)
-                        })),
-                ),
+                .children(meter)
+                .when(probability(score).is_none(), |row| {
+                    row.child(mono(score.to_owned(), 12., t.red))
+                }),
         )
 }
 
@@ -494,7 +613,7 @@ fn plugin_note(
             mono(note.plugin.clone(), 12., t.tone(note.tone)).flex_shrink_0(),
         )
         .when(!compact, |row| {
-            row.child(div().text_color(t.text_soft).child(note.text.clone()))
+            row.child(div().child(rich(&note.text, t.text_soft, t)))
         })
         .child(div().flex_1())
         .when_some(note.detail.clone().filter(|_| !compact), |row, detail| {
@@ -514,6 +633,7 @@ fn plugin_note(
             },
         );
 
+    let note_plugin = note.plugin.clone();
     let body: Option<AnyElement> = match &note.body {
         NoteBody::None => None,
         NoteBody::Chips(chips) => {
@@ -523,6 +643,27 @@ fn plugin_note(
             levels,
             chosen,
             note,
+            ..
+        } if compact => {
+            // The phone shows the answer and links to the chart.
+            let level = levels
+                .get(*chosen)
+                .map_or(String::new(), |(name, _)| name.clone());
+            ws.plugin_route_named(&note_plugin, &run.id).map(|route| {
+                div()
+                    .id(SharedString::from(format!("why-{index}")))
+                    .child(link(format!("Why {level}"), t).text_size(px(13.)))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(route.clone(), cx)
+                    }))
+                    .into_any_element()
+            })
+        }
+        NoteBody::Distribution {
+            levels,
+            chosen,
+            note,
+            ..
         } => Some(
             distribution(levels, *chosen, note, t, compact, 44.)
                 .into_any_element(),
@@ -609,7 +750,7 @@ fn plugin_note(
                 div()
                     .text_color(t.text_soft)
                     .line_height(relative(1.45))
-                    .child(note.text.clone()),
+                    .child(rich(&note.text, t.text_soft, t)),
             )
         })
         .when_some(body, |card, body| {

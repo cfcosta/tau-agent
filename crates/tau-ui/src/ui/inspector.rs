@@ -28,16 +28,19 @@ pub enum Tab {
     Run,
     Context,
     Plugins,
+    Events,
 }
 
 impl Tab {
-    pub const ALL: [Self; 3] = [Self::Run, Self::Context, Self::Plugins];
+    pub const ALL: [Self; 4] =
+        [Self::Run, Self::Context, Self::Plugins, Self::Events];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Run => "Run",
             Self::Context => "Context",
             Self::Plugins => "Plugins",
+            Self::Events => "Events",
         }
     }
 }
@@ -51,9 +54,18 @@ pub fn content(
 ) -> Div {
     let body = div().flex().flex_col().gap(px(20.));
     match tab {
-        Tab::Run => run_tab(run, body, t, cx),
+        Tab::Run => {
+            let body = run_tab(run, body, t, cx);
+            if run.plugins.is_empty() {
+                body
+            } else {
+                body.child(heading("Plugins", t))
+                    .child(plugin_states(ws, run, t, cx))
+            }
+        }
         Tab::Context => context_tab(run, body, t, cx),
         Tab::Plugins => plugins_tab(ws, run, body, t, cx),
+        Tab::Events => events_tab(run, body, t),
     }
 }
 
@@ -90,7 +102,6 @@ fn run_tab(
         let value = div()
             .flex()
             .flex_col()
-            .items_end()
             .gap(px(2.))
             .child(mono(
                 field.value.clone(),
@@ -315,47 +326,8 @@ fn plugins_tab(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    body.child(heading("Plugins", t))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .border_1()
-                .border_color(t.border)
-                .rounded(px(8.))
-                .overflow_hidden()
-                .children(run.plugins.iter().map(|plugin| {
-                    let route = ws.plugin_route_named(&plugin.name, &run.id);
-                    div()
-                        .id(SharedString::from(format!(
-                            "status-{}",
-                            plugin.name
-                        )))
-                        .when_some(route, |row, route| {
-                            row.cursor_pointer()
-                                .hover(|style| {
-                                    style.bg(gpui::white().opacity(0.03))
-                                })
-                                .on_click(cx.listener(move |ws, _, _, cx| {
-                                    ws.navigate(route.clone(), cx)
-                                }))
-                        })
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .min_h(px(36.))
-                        .px(px(12.))
-                        .border_b_1()
-                        .border_color(t.border)
-                        .child(mono(plugin.name.clone(), 12., t.text).flex_1())
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(t.tone(plugin.tone))
-                                .child(plugin.state.clone()),
-                        )
-                })),
-        )
+    body.child(heading("Plugins this run", t))
+        .child(plugin_states(ws, run, t, cx))
         .child(
             div()
                 .text_size(px(12.))
@@ -366,6 +338,48 @@ fn plugins_tab(
                     usd(run.usage.plugin_cost)
                 )),
         )
+}
+
+/// Each plugin's state in the run; a row opens the plugin's screen.
+fn plugin_states(
+    ws: &Workspace,
+    run: &RunView,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .border_1()
+        .border_color(t.border)
+        .rounded(px(8.))
+        .overflow_hidden()
+        .children(run.plugins.iter().map(|plugin| {
+            let route = ws.plugin_route_named(&plugin.name, &run.id);
+            div()
+                .id(SharedString::from(format!("status-{}", plugin.name)))
+                .when_some(route, |row, route| {
+                    row.cursor_pointer()
+                        .hover(|style| style.bg(gpui::white().opacity(0.03)))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.navigate(route.clone(), cx)
+                        }))
+                })
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .min_h(px(36.))
+                .px(px(12.))
+                .border_b_1()
+                .border_color(t.border)
+                .child(mono(plugin.name.clone(), 12., t.text).flex_1())
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(t.tone(plugin.tone))
+                        .child(plugin.state.clone()),
+                )
+        }))
 }
 
 /// The tab strip, for the desktop panel.
@@ -380,4 +394,43 @@ pub fn tab_label(tab: Tab, active: bool, t: &Theme) -> impl IntoElement {
         .text_color(if active { t.text } else { t.muted })
         .when(active, |tab| tab.border_b_2().border_color(t.accent))
         .child(tab.label())
+}
+
+fn events_tab(run: &RunView, body: Div, t: &Theme) -> Div {
+    let color = |kind: &str| match kind {
+        "ToolStart" | "Retry" | "Continued" => t.accent,
+        "ToolEnd" | "RunStart" => t.green,
+        "Usage" | "Rewrite" => t.blue,
+        "PluginError" => t.red,
+        _ => t.text_soft,
+    };
+    body.child(heading("Live events", t)).child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .p(px(12.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(t.border)
+            .bg(t.bg)
+            .when(run.log.is_empty(), |log| {
+                log.child(mono("No events yet.", 11., t.dim))
+            })
+            .children(run.log.iter().rev().take(60).map(|line| {
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(
+                        mono(format!("t{}", line.turn), 11., t.dim).w(px(24.)),
+                    )
+                    .child(mono(line.kind, 11., color(line.kind)).w(px(80.)))
+                    .child(
+                        mono(line.text.clone(), 11., t.muted)
+                            .flex_1()
+                            .min_w(px(0.))
+                            .truncate(),
+                    )
+            })),
+    )
 }

@@ -142,6 +142,9 @@ pub struct Workspace {
     replay: Option<Task<()>>,
     /// Draw the phone layout in a phone-sized frame, whatever the width.
     phone_preview: bool,
+    /// Lay out at exactly this size, pinned to the top left: for
+    /// comparing screens against their designs.
+    frame: Option<(f32, f32)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -201,6 +204,7 @@ impl Workspace {
             focus: cx.focus_handle(),
             replay: None,
             phone_preview: false,
+            frame: None,
             _subscriptions: subscriptions,
         };
         workspace.sync_placeholder(cx);
@@ -298,6 +302,17 @@ impl Workspace {
 
     /// Shows the phone layout in a 390×844 frame, for previewing it on a
     /// desktop.
+    /// Lays the workspace out at `width`×`height` pixels in the window's
+    /// top-left corner, whatever the window's size.
+    pub fn set_frame(
+        &mut self,
+        frame: Option<(f32, f32)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.frame = frame;
+        cx.notify();
+    }
+
     pub fn set_phone_preview(&mut self, on: bool, cx: &mut Context<Self>) {
         self.phone_preview = on;
         cx.notify();
@@ -643,15 +658,12 @@ impl Workspace {
                 t.raised,
             ))
             .child(ui::mono(
-                format!(
-                    "{} · {}",
-                    run.agent,
-                    crate::view::clock(run.limits.elapsed)
-                ),
+                format!("{} · turn {}", run.agent, run.turn),
                 12.,
                 t.dim,
             ))
             .child(div().flex_1())
+            .child(ui::mono(crate::view::usd(run.usage.cost), 12., t.muted))
             .children(
                 run.children
                     .iter()
@@ -1039,7 +1051,7 @@ impl Workspace {
                     .child(
                         div()
                             .grid()
-                            .grid_cols(3)
+                            .grid_cols(Tab::ALL.len() as u16)
                             .gap(px(4.))
                             .p(px(4.))
                             .rounded(px(10.))
@@ -1101,7 +1113,10 @@ impl Render for Workspace {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let t = theme(cx).clone();
-        let width = window.viewport_size().width;
+        let width = match self.frame {
+            Some((width, _)) => px(width),
+            None => window.viewport_size().width,
+        };
         let phone = self.phone_preview || width < PHONE_MAX;
         let body = if phone {
             self.phone(&t, cx)
@@ -1125,6 +1140,19 @@ impl Render for Workspace {
                         .rounded(px(28.))
                         .border_1()
                         .border_color(t.border_strong)
+                        .bg(t.bg)
+                        .child(body),
+                )
+                .into_any_element()
+        } else if let Some((width, height)) = self.frame {
+            div()
+                .size_full()
+                .bg(gpui::rgb(0x0b0c0e))
+                .child(
+                    div()
+                        .w(px(width))
+                        .h(px(height))
+                        .overflow_hidden()
                         .bg(t.bg)
                         .child(body),
                 )

@@ -41,7 +41,20 @@ pub struct RunView {
     pub started: String,
     /// The latest context pruning's decision for each tool call.
     pub ledger: Vec<LedgerEntry>,
+    /// The last run events, newest last, for the Events tab.
+    pub log: Vec<LogLine>,
 }
+
+/// One run event, as the Events tab lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogLine {
+    pub turn: u32,
+    pub kind: &'static str,
+    pub text: String,
+}
+
+/// How many events a run keeps for the Events tab.
+const LOG_LIMIT: usize = 200;
 
 /// Where a run came from.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -249,6 +262,10 @@ pub enum NoteBody {
         levels: Vec<(String, f32)>,
         chosen: usize,
         note: String,
+        /// The answer's confidence and the threshold it had to pass.
+        confidence: Option<(f32, f32)>,
+        /// What each level suits, in the order of `levels`.
+        hints: Vec<String>,
     },
     /// Notes a plugin suggests keeping.
     Proposals(Vec<Proposal>),
@@ -392,6 +409,7 @@ impl RunView {
             origin: Origin::Root,
             started: String::new(),
             ledger: Vec::new(),
+            log: Vec::new(),
         }
     }
 
@@ -588,6 +606,7 @@ impl RunView {
             self.apply_child(event);
             return;
         }
+        self.log(event);
         match event {
             RunEvent::RunStart { agent, .. } => {
                 self.agent = agent.to_string();
@@ -699,6 +718,68 @@ impl RunView {
                     plugin_cost: self.usage.plugin_cost,
                 });
             }
+        }
+    }
+
+    fn log(&mut self, event: &RunEvent) {
+        let (kind, text) = match event {
+            RunEvent::RunStart { agent, .. } => ("RunStart", agent.to_string()),
+            RunEvent::TurnStart { turn, .. } => {
+                ("TurnStart", format!("turn {turn}"))
+            }
+            RunEvent::ToolStart { tool, args, .. } => {
+                ("ToolStart", format!("{tool} {}", summarize_args(args)))
+            }
+            RunEvent::ToolEnd {
+                call_id, is_error, ..
+            } => (
+                "ToolEnd",
+                format!("{call_id} {}", if *is_error { "error" } else { "ok" }),
+            ),
+            RunEvent::TurnEnd { usage, .. } => (
+                "Usage",
+                format!(
+                    "in {} out {} {}",
+                    tokens(usage.input),
+                    tokens(usage.output),
+                    usd(usage.cost.total)
+                ),
+            ),
+            RunEvent::ContextRewritten {
+                plugin,
+                tokens_before,
+                tokens_after,
+                ..
+            } => (
+                "Rewrite",
+                format!(
+                    "{plugin} {} → {}",
+                    tokens(*tokens_before),
+                    tokens(*tokens_after)
+                ),
+            ),
+            RunEvent::Retry { attempt, error, .. } => {
+                ("Retry", format!("attempt {attempt}: {error}"))
+            }
+            RunEvent::Continued { plugin, .. } => {
+                ("Continued", plugin.to_string())
+            }
+            RunEvent::PluginError {
+                plugin, message, ..
+            } => ("PluginError", format!("{plugin}: {message}")),
+            RunEvent::RunEnd { stop, cost, .. } => {
+                ("RunEnd", format!("{stop:?} {}", usd(*cost)))
+            }
+            // Deltas are too many to list.
+            _ => return,
+        };
+        self.log.push(LogLine {
+            turn: self.turn,
+            kind,
+            text,
+        });
+        if self.log.len() > LOG_LIMIT {
+            self.log.remove(0);
         }
     }
 
@@ -835,11 +916,14 @@ pub fn summarize_args(args: &Value) -> String {
         (Some(pattern), Some(path)) => format!("\"{pattern}\" {path}"),
         (Some(pattern), None) => format!("\"{pattern}\""),
         (None, Some(path)) => path.to_owned(),
-        (None, None) => ["query", "id", "title"]
-            .into_iter()
-            .find_map(text)
-            .unwrap_or_default()
-            .to_owned(),
+        (None, None) => match (text("id"), text("title")) {
+            (Some(id), Some(title)) => format!("{id} · {title}"),
+            _ => ["query", "id", "title"]
+                .into_iter()
+                .find_map(text)
+                .unwrap_or_default()
+                .to_owned(),
+        },
     }
 }
 
@@ -872,10 +956,18 @@ fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
         .and_then(|details| details.get("diff"))
         .and_then(Value::as_str)
         .map(parse_diff);
+    // A tool may say how to sum up its result ("5 matches · 9 ms").
+    let reported = output
+        .details
+        .as_ref()
+        .and_then(|details| details.get("summary"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     card.state = ToolState::Done {
-        summary: match &diff {
-            Some(lines) => Some(diff_stat(lines)),
-            None => line_count(&text),
+        summary: match (&diff, reported) {
+            (Some(lines), _) => Some(diff_stat(lines)),
+            (None, Some(summary)) => Some(summary),
+            (None, None) => line_count(&text),
         },
     };
     card.body = match diff {

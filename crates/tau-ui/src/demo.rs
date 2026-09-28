@@ -603,6 +603,14 @@ impl Script {
     }
 }
 
+/// An output that says how to sum itself up, as tools may.
+fn summarized(output: ToolOutput, summary: &str) -> ToolOutput {
+    ToolOutput {
+        details: Some(json!({ "summary": summary })),
+        ..output
+    }
+}
+
 fn lines(count: usize) -> ToolOutput {
     ToolOutput::text(
         (1..=count)
@@ -649,7 +657,7 @@ pub fn script() -> Vec<Step> {
         500,
         PluginNote {
             plugin: "tau-reasoning".into(),
-            text: "picked high reasoning for this run".into(),
+            text: "picked **high** reasoning for this run".into(),
             detail: Some("Jev · 180 ms · $0.00002".into()),
             tone: Tone::Info,
             body: NoteBody::Distribution {
@@ -668,6 +676,17 @@ pub fn script() -> Vec<Step> {
                     "Confidence 0.84 is above 0.70, so the run uses high. It \
                    stays fixed for the whole run."
                         .into(),
+                confidence: Some((0.84, 0.70)),
+                hints: [
+                    "lookups",
+                    "small edits",
+                    "routine code",
+                    "refactors",
+                    "audits, proofs",
+                ]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
             },
         },
     );
@@ -722,7 +741,11 @@ pub fn script() -> Vec<Step> {
 
     s.turn();
     s.think("The user wants retry-after honored. Memory has a note on this.");
-    s.start_tool("c1", "memory_read", json!({ "id": "n-0388" }));
+    s.start_tool(
+        "c1",
+        "memory_read",
+        json!({ "id": "n-0388", "title": "Retry policy honors server hints" }),
+    );
     s.at(
         0,
         RunUpdate::ToolPlugin {
@@ -733,7 +756,10 @@ pub fn script() -> Vec<Step> {
     s.end_tool(
         300,
         "c1",
-        ToolOutput::text("Retry policy honors server hints\n\n412 words"),
+        summarized(
+            ToolOutput::text("Retry policy honors server hints\n\n412 words"),
+            "412 words",
+        ),
     );
     s.say(
         "The note says we already decided `retry-after` should win over \
@@ -745,7 +771,7 @@ pub fn script() -> Vec<Step> {
         "c2",
         "grep",
         json!({ "pattern": "retry_after|RetryPolicy", "path": "crates/tau-ai/src" }),
-        lines(5),
+        summarized(lines(5), "5 matches · 9 ms"),
     );
     s.end_turn(9_800, 420, 0.012);
 

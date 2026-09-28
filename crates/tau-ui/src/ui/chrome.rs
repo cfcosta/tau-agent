@@ -534,6 +534,7 @@ pub fn phone_header(
             .memory
             .note(id)
             .map_or("Memory".to_owned(), |note| note.title.clone()),
+        Route::Home => ws.name.clone(),
         route => route.title().to_owned(),
     };
     div()

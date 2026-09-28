@@ -6,6 +6,8 @@ use crate::view::Tone;
 
 pub const SANS: &str = "Geist";
 pub const MONO: &str = "Geist Mono";
+/// The reading face of notes.
+pub const SERIF: &str = "Newsreader 16pt 16pt";
 
 /// Below this width the window gets the one-column phone layout.
 pub const PHONE_MAX: Pixels = px(720.);

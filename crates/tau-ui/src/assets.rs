@@ -155,13 +155,16 @@ impl AssetSource for Assets {
     }
 }
 
-/// Geist and Geist Mono (SIL Open Font License, `assets/fonts/OFL.txt`).
-const FONTS: [&[u8]; 5] = [
+/// Geist and Geist Mono (SIL Open Font License, `assets/fonts/OFL.txt`),
+/// and Newsreader for reading notes (`assets/fonts/OFL-Newsreader.txt`).
+const FONTS: [&[u8]; 7] = [
     include_bytes!("../assets/fonts/Geist-Regular.ttf"),
     include_bytes!("../assets/fonts/Geist-Medium.ttf"),
     include_bytes!("../assets/fonts/Geist-SemiBold.ttf"),
     include_bytes!("../assets/fonts/GeistMono-Regular.ttf"),
     include_bytes!("../assets/fonts/GeistMono-Medium.ttf"),
+    include_bytes!("../assets/fonts/Newsreader-Regular.ttf"),
+    include_bytes!("../assets/fonts/Newsreader-Medium.ttf"),
 ];
 
 pub fn load_fonts(cx: &App) -> Result<()> {
