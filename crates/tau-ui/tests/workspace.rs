@@ -127,3 +127,37 @@ fn pull_requests_are_drafted_then_created(cx: &mut TestAppContext) {
         assert!(ws.pull_request(&run).unwrap().is_open());
     });
 }
+
+#[gpui::test]
+fn fork_mode_sends_the_chosen_turn(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open(cx);
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        for (_, update) in demo::script() {
+            ws.update_run(&run, update, cx);
+        }
+        ws.navigate(Route::Run(run.clone()), cx);
+    });
+    let last = workspace.read_with(&cx, |ws, _| ws.run(&run).unwrap().turn);
+    assert!(last > 2);
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.start_fork(window, cx);
+        ws.submit_prompt("try a longer backoff".into(), cx);
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::Fork {
+            run: run.clone(),
+            turn: Some(last),
+            prompt: "try a longer backoff".into(),
+        })
+    );
+    // The next message is an ordinary one again.
+    workspace.update(&mut cx, |ws, cx| {
+        ws.submit_prompt("hello".into(), cx);
+    });
+    assert!(matches!(
+        events.borrow().last(),
+        Some(WorkspaceEvent::NewRun { .. })
+    ));
+}

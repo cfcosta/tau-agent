@@ -7635,6 +7635,8 @@ dependencies = [
  "tau-store",
  "tau-testing",
  "tau-tools",
+ "tau-vcs",
+ "tempfile",
  "tokio",
  "unicode-segmentation",
 ]

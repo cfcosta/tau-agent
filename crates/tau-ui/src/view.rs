@@ -14,7 +14,13 @@ use tau_agent::{
     event::{LimitKind, RunEvent, StopReason},
     tool::{RunId, ToolOutput},
 };
-use tau_ai::message::{InputBlock, Usage};
+use tau_ai::message::{
+    AssistantBlock,
+    InputBlock,
+    Message,
+    Usage,
+    UserContent,
+};
 
 /// One run, as the transcript, the inspector and the run list show it.
 #[derive(Debug, Clone, PartialEq)]
@@ -413,6 +419,94 @@ impl RunView {
         }
     }
 
+    /// A stored run, rebuilt from its transcript: the user's messages,
+    /// the model's text and tool calls with their results. Plugin notes
+    /// and ledgers are not stored with the messages, so they are missing.
+    /// The caller sets the status and adds the stop.
+    pub fn from_messages(
+        id: RunId,
+        title: impl Into<String>,
+        agent: impl Into<String>,
+        model: impl Into<String>,
+        messages: &[Message],
+    ) -> Self {
+        let mut view = Self::new(id, title, agent, model);
+        for message in messages {
+            match message {
+                Message::User(user) => {
+                    let text = match &user.content {
+                        UserContent::Text(text) => text.clone(),
+                        UserContent::Blocks(blocks) => blocks
+                            .iter()
+                            .filter_map(|block| match block {
+                                InputBlock::Text(text) => {
+                                    Some(text.text.as_str())
+                                }
+                                InputBlock::Image(_) => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    };
+                    view.push_user(text);
+                }
+                Message::Assistant(reply) => {
+                    view.turn += 1;
+                    view.add_usage(&reply.usage);
+                    for block in &reply.content {
+                        match block {
+                            AssistantBlock::Text(text) => {
+                                view.items.push(Item::Text(text.text.clone()))
+                            }
+                            AssistantBlock::Thinking(thinking) => {
+                                view.items.push(Item::Thinking(
+                                    thinking.thinking.clone(),
+                                ))
+                            }
+                            AssistantBlock::ToolCall(call) => {
+                                let args =
+                                    Value::Object(call.arguments.clone());
+                                view.items.push(Item::Tool(ToolCard {
+                                    call_id: call.id.clone(),
+                                    tool: call.name.clone(),
+                                    summary: summarize_args(&args),
+                                    args,
+                                    state: ToolState::Running,
+                                    body: ToolBody::None,
+                                    from_plugin: None,
+                                    checks: Vec::new(),
+                                    pruned: None,
+                                }))
+                            }
+                        }
+                    }
+                }
+                Message::ToolResult(result) => {
+                    let output = ToolOutput {
+                        content: result.content.clone(),
+                        details: result.details.clone(),
+                    };
+                    if let Some(card) = view.tool_mut(&result.tool_call_id) {
+                        finish_tool(card, &output, result.is_error);
+                    }
+                }
+            }
+        }
+        view
+    }
+
+    /// Ends a rebuilt run: its status, and the stop line.
+    pub fn finish_stored(&mut self, stop: StopReason, cost: f64) {
+        self.usage.cost = cost;
+        self.status = RunStatus::Finished(stop.clone());
+        self.items.push(Item::Stop {
+            stop,
+            turns: self.turn,
+            tokens: self.usage.tokens,
+            cost,
+            plugin_cost: self.usage.plugin_cost,
+        });
+    }
+
     pub fn with_origin(mut self, origin: Origin) -> Self {
         self.origin = origin;
         self
@@ -801,12 +895,8 @@ impl RunView {
                     status: RunStatus::Running,
                 });
             }
-            RunEvent::RunEnd {
-                run,
-                parent: Some(parent),
-                stop,
-                ..
-            } if parent == &self.id => {
+            // A fork's events name no parent; its entry is found by id.
+            RunEvent::RunEnd { run, stop, .. } => {
                 if let Some(child) =
                     self.children.iter_mut().find(|child| &child.id == run)
                 {

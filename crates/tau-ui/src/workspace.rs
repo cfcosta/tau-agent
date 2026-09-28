@@ -58,7 +58,16 @@ use crate::{
         screens,
         transcript,
     },
-    view::{ChildKind, Proposal, RunStatus, RunUpdate, RunView, ToolState},
+    view::{
+        ChildKind,
+        ChildRun,
+        Origin,
+        Proposal,
+        RunStatus,
+        RunUpdate,
+        RunView,
+        ToolState,
+    },
 };
 
 actions!(
@@ -103,9 +112,12 @@ pub enum WorkspaceEvent {
     Cancel {
         run: RunId,
     },
-    /// Fork the run at its latest checkpoint.
+    /// Fork the run after `turn` (its latest turn when `None`): a new
+    /// run on `prompt`, from that turn's conversation and code.
     Fork {
         run: RunId,
+        turn: Option<u32>,
+        prompt: String,
     },
     /// Keep this branch of a fork and drop the others.
     KeepBranch {
@@ -179,6 +191,8 @@ pub struct Workspace {
     sheet_open: bool,
     /// Steering messages sent but not yet seen by the run, per run.
     queued: HashMap<RunId, String>,
+    /// The composer is writing a fork of this run, after this turn.
+    forking: Option<(RunId, u32)>,
     /// Notes kept, per run, by title.
     pub(crate) kept: HashMap<RunId, HashSet<String>>,
     /// Flagged calls someone looked at, as `(run, call id)`.
@@ -283,6 +297,7 @@ impl Workspace {
             tab: Tab::Run,
             sheet_open: false,
             queued: HashMap::new(),
+            forking: None,
             kept: HashMap::new(),
             dismissed: HashSet::new(),
             kept_branch: None,
@@ -332,11 +347,36 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Adds a run at the top of the list and opens it.
+    /// Adds a run at the top of the list and opens it. A fork is listed
+    /// under the run it came from, too.
     pub fn push_run(&mut self, run: RunView, cx: &mut Context<Self>) {
         let id = run.id.clone();
+        if let Origin::Fork { from, .. } = &run.origin
+            && let Some(parent) =
+                self.runs.iter_mut().find(|view| &view.id == from)
+        {
+            parent.children.push(ChildRun {
+                id: id.clone(),
+                title: run.title.clone(),
+                kind: ChildKind::Fork,
+                status: run.status.clone(),
+            });
+        }
         self.runs.insert(0, run);
         self.navigate(Route::Run(id), cx);
+    }
+
+    /// Adds runs from earlier sessions below the ones already shown.
+    pub fn add_history(&mut self, runs: Vec<RunView>, cx: &mut Context<Self>) {
+        for run in runs {
+            if self.run(&run.id).is_none() {
+                self.runs.push(run);
+            }
+        }
+        if self.current.is_none() {
+            self.current = self.runs.first().map(|run| run.id.clone());
+        }
+        cx.notify();
     }
 
     /// Feeds a run event to every run it belongs to: its own run, and
@@ -453,6 +493,14 @@ impl Workspace {
                 self.follow = true;
             }
             self.current = Some(run);
+        }
+        // A fork being written belongs to the run it forks.
+        if self
+            .forking
+            .as_ref()
+            .is_some_and(|(run, _)| self.route.run() != Some(run))
+        {
+            self.forking = None;
         }
         self.sheet_open = false;
         self.sync_placeholder(cx);
@@ -591,12 +639,49 @@ impl Workspace {
         }
     }
 
-    fn fork(&mut self, cx: &mut Context<Self>) {
-        if let Some(run) = self.current() {
-            cx.emit(WorkspaceEvent::Fork {
-                run: run.id.clone(),
-            });
+    /// The last turn of `run` that can be forked from: its last finished
+    /// turn.
+    fn last_fork_turn(run: &RunView) -> u32 {
+        if run.status.is_live() {
+            run.turn.saturating_sub(1)
+        } else {
+            run.turn
         }
+    }
+
+    /// Puts the composer in fork mode: the next message starts a fork of
+    /// the current run, after its latest finished turn.
+    pub fn start_fork(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(run) = self.current() else { return };
+        let (id, turn) = (run.id.clone(), Self::last_fork_turn(run).max(1));
+        if !matches!(self.route, Route::Run(_) | Route::Home) {
+            self.navigate(Route::Run(id.clone()), cx);
+        }
+        self.forking = Some((id, turn));
+        self.sheet_open = false;
+        self.composer.update(cx, |input, cx| {
+            input.clear(cx);
+            input.set_placeholder("What should the fork try instead?");
+        });
+        self.composer.read(cx).focus_handle(cx).focus(window);
+        cx.notify();
+    }
+
+    /// Moves the fork point one turn back or forward.
+    fn step_fork(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let Some((run, turn)) = self.forking.clone() else {
+            return;
+        };
+        let last = self.run(&run).map_or(1, Self::last_fork_turn).max(1);
+        let turn = turn.saturating_add_signed(delta).clamp(1, last);
+        self.forking = Some((run, turn));
+        cx.notify();
+    }
+
+    fn cancel_fork(&mut self, cx: &mut Context<Self>) {
+        self.forking = None;
+        self.sync_placeholder(cx);
+        cx.notify();
     }
 
     pub fn toggle_sheet(&mut self, cx: &mut Context<Self>) {
@@ -616,6 +701,16 @@ impl Workspace {
     }
 
     fn submit(&mut self, text: String, cx: &mut Context<Self>) {
+        if let Some((run, turn)) = self.forking.take() {
+            cx.emit(WorkspaceEvent::Fork {
+                run,
+                turn: Some(turn),
+                prompt: text,
+            });
+            self.sync_placeholder(cx);
+            cx.notify();
+            return;
+        }
         match self.current().filter(|_| self.route != Route::NewRun) {
             Some(run) if run.status.is_live() => {
                 let run = run.id.clone();
@@ -642,8 +737,11 @@ impl Workspace {
 
     fn sync_placeholder(&mut self, cx: &mut Context<Self>) {
         let live = self.route != Route::NewRun && self.is_live();
+        let forking = self.forking.is_some();
         self.composer.update(cx, |input, _| {
-            input.set_placeholder(if live {
+            input.set_placeholder(if forking {
+                "What should the fork try instead?"
+            } else if live {
                 "Steer the run, or @ a file, agent or checkpoint"
             } else {
                 "Start a new run"
@@ -1069,7 +1167,9 @@ impl Workspace {
                         13.,
                         t.text_soft,
                     )))
-                    .on_click(cx.listener(|ws, _, _, cx| ws.fork(cx))),
+                    .on_click(cx.listener(|ws, _, window, cx| {
+                        ws.start_fork(window, cx)
+                    })),
             )
             .when(live, |header| {
                 header.child(
@@ -1111,7 +1211,13 @@ impl Workspace {
                 .child(ui::icon(Icon::Send, 18., t.bg))
         } else {
             send.child(ui::primary_button(
-                if live { "Steer" } else { "Start" },
+                if self.forking.is_some() {
+                    "Fork"
+                } else if live {
+                    "Steer"
+                } else {
+                    "Start"
+                },
                 t,
             ))
         };
@@ -1125,6 +1231,7 @@ impl Workspace {
             .pt(px(if compact { 10. } else { 0. }))
             .pb(px(if compact { 18. } else { 16. }))
             .when(compact, |bar| bar.border_t_1().border_color(t.border))
+            .when_some(self.fork_banner(t, cx), |bar, banner| bar.child(banner))
             .when_some(queued, |bar, text| {
                 bar.child(
                     div()
@@ -1199,6 +1306,75 @@ impl Workspace {
                     )
                     .child(send),
             )
+    }
+
+    /// Above the composer while it writes a fork: the turn it forks
+    /// after, with steps back and forward, and a way out.
+    fn fork_banner(
+        &self,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        let (run, turn) = self.forking.as_ref()?;
+        let run = self.run(run)?;
+        let last = Self::last_fork_turn(run).max(1);
+        let step = |id: &'static str, glyph: Icon, delta: i32, on: bool| {
+            div()
+                .id(id)
+                .size(px(22.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.))
+                .when(on, |button| {
+                    button
+                        .cursor_pointer()
+                        .hover(|style| style.bg(gpui::white().opacity(0.06)))
+                })
+                .child(ui::icon(glyph, 13., if on { t.blue } else { t.dim }))
+                .on_click(
+                    cx.listener(move |ws, _, _, cx| ws.step_fork(delta, cx)),
+                )
+        };
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .px(px(12.))
+                .py(px(5.))
+                .rounded(px(6.))
+                .bg(t.blue_soft)
+                .border_1()
+                .border_color(t.blue_border)
+                .text_size(px(12.))
+                .child(ui::icon(Icon::Fork, 13., t.blue))
+                .child(div().text_color(t.blue).child("Fork"))
+                .child(
+                    div()
+                        .text_color(t.text_soft)
+                        .child(format!("{} after turn", run.title)),
+                )
+                .child(step("fork-earlier", Icon::Back, -1, *turn > 1))
+                .child(ui::mono(format!("{turn} of {last}"), 12., t.text))
+                .child(step("fork-later", Icon::Chevron, 1, *turn < last))
+                .child(
+                    div().flex_1().text_color(t.muted).child(
+                        "The fork gets this turn's conversation and code.",
+                    ),
+                )
+                .child(
+                    div()
+                        .id("fork-cancel")
+                        .text_color(t.blue)
+                        .cursor_pointer()
+                        .hover(|style| style.underline())
+                        .child("Cancel")
+                        .on_click(
+                            cx.listener(|ws, _, _, cx| ws.cancel_fork(cx)),
+                        ),
+                ),
+        )
     }
 
     fn inspector(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1491,9 +1667,11 @@ impl Workspace {
                                             .h(px(44.))
                                             .rounded(px(10.)),
                                     )
-                                    .on_click(
-                                        cx.listener(|ws, _, _, cx| ws.fork(cx)),
-                                    ),
+                                    .on_click(cx.listener(
+                                        |ws, _, window, cx| {
+                                            ws.start_fork(window, cx)
+                                        },
+                                    )),
                             )
                             .when(done, |row| {
                                 row.child(

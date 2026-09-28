@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
+tempfile.workspace = true
 tau-testing.workspace = true
 
 [dependencies]
@@ -18,6 +19,7 @@ tau-ai.workspace = true
 tau-compaction.workspace = true
 tau-store.workspace = true
 tau-tools.workspace = true
+tau-vcs.workspace = true
 futures-util.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 anyhow.workspace = true

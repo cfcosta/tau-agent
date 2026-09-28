@@ -89,6 +89,7 @@ fn main() {
         model: model.clone(),
         root: root.clone(),
         store: HostConfig::default_store(),
+        repos: HostConfig::default_repos(),
     };
     let host = access.and_then(|access| match Host::new(config(access)) {
         Ok(host) => Some(host),

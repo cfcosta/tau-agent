@@ -92,6 +92,9 @@
                   pkgs.makeWrapper
                 ];
                 buildInputs = guiLibs;
+                # The tests make fixture repositories with git; the app
+                # itself does not need it.
+                nativeCheckInputs = [ pkgs.git ];
 
                 # GPUI opens Vulkan, Wayland and X11 with dlopen, so the
                 # binary needs them on its library path.
