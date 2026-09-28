@@ -27,6 +27,7 @@ use jj_lib::{
         default_working_copy_factory,
     },
     git::{GitImportOptions, import_refs},
+    matchers::EverythingMatcher,
     object_id::ObjectId as _,
     ref_name::{RefName, WorkspaceNameBuf},
     repo::{ReadonlyRepo, Repo as _},
@@ -35,7 +36,10 @@ use jj_lib::{
 };
 use pollster::block_on;
 
-use crate::vcs::{Identity, Vcs, settings};
+use crate::{
+    diff::{ChangeKind, FileChange},
+    vcs::{Identity, Vcs, settings},
+};
 
 const GIT: &str = "git";
 const MAIN: &str = "main";
@@ -226,6 +230,23 @@ impl Project {
         Ok(())
     }
 
+    /// How the files differ from commit `from` to commit `to` (full hex
+    /// ids): one entry per changed file, in path order, with its line
+    /// counts and its unified diff.
+    pub fn diff(&self, from: &str, to: &str) -> anyhow::Result<Vec<FileDiff>> {
+        let repo = self.load()?;
+        let from = commit(&repo, from)?.tree();
+        let to = commit(&repo, to)?.tree();
+        let (text, changes) = crate::diff::unified(
+            repo.as_ref(),
+            &self.inner.settings,
+            &from,
+            &to,
+            &EverythingMatcher,
+        )?;
+        Ok(split_files(&text, changes))
+    }
+
     /// The names of the workspaces runs have, sorted.
     pub fn workspaces(&self) -> anyhow::Result<Vec<String>> {
         let repo = self.load()?;
@@ -256,6 +277,65 @@ impl Project {
         let main = self.main()?;
         Ok(block_on(main.repo_loader().load_at_head())?)
     }
+}
+
+/// One file's change between two commits.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct FileDiff {
+    pub path: String,
+    pub kind: ChangeKind,
+    pub added: usize,
+    pub removed: usize,
+    /// The file's unified diff, as `git diff` writes it.
+    pub text: String,
+}
+
+/// Splits a multi-file diff into its files, in the order `changes` lists
+/// them, and counts each file's lines.
+fn split_files(text: &str, changes: Vec<FileChange>) -> Vec<FileDiff> {
+    let mut sections: Vec<&str> = Vec::new();
+    let mut start = None;
+    for (at, _) in text.match_indices("diff --git a/") {
+        if at == 0 || text.as_bytes()[at - 1] == b'\n' {
+            if let Some(begin) = start {
+                sections.push(&text[begin..at]);
+            }
+            start = Some(at);
+        }
+    }
+    if let Some(begin) = start {
+        sections.push(&text[begin..]);
+    }
+    changes
+        .into_iter()
+        .zip(
+            sections
+                .into_iter()
+                .map(Some)
+                .chain(std::iter::repeat(None)),
+        )
+        .map(|(change, section)| {
+            let text = section.unwrap_or_default().to_owned();
+            let body = text.lines().filter(|line| {
+                !line.starts_with("+++") && !line.starts_with("---")
+            });
+            let (mut added, mut removed) = (0, 0);
+            for line in body {
+                if line.starts_with('+') {
+                    added += 1;
+                } else if line.starts_with('-') {
+                    removed += 1;
+                }
+            }
+            FileDiff {
+                path: change.path,
+                kind: change.kind,
+                added,
+                removed,
+                text,
+            }
+        })
+        .collect()
 }
 
 /// The commit a full hex id names.

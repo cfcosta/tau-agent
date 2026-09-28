@@ -183,7 +183,13 @@ fn main() {
                     );
                 }
                 // The demo: answer the way a host would.
-                None => demo::respond(&workspace, cx),
+                None => {
+                    demo::respond(&workspace, cx);
+                    // After the responder, so what the screen asks for
+                    // on opening is answered.
+                    workspace
+                        .update(cx, |ws, cx| open_demo_screen(ws, &args, cx));
+                }
             }
             cx.activate(true);
         });
@@ -200,6 +206,26 @@ fn demo_workspace(
         Workspace::new("tau-agent", runs, demo::catalog(), window, cx);
     workspace.set_phone_preview(args.phone, cx);
     workspace.set_frame(args.frame, cx);
+    if let Some(steps) = args.steps {
+        for (_, update) in demo::script().into_iter().take(steps) {
+            workspace.update_run(&demo::run_id(), update, cx);
+        }
+    } else if args.finished {
+        for (_, update) in demo::script() {
+            workspace.update_run(&demo::run_id(), update, cx);
+        }
+    } else {
+        workspace.replay(demo::run_id(), demo::script(), cx);
+    }
+    workspace
+}
+
+/// The screen `--open` names, with the demo data it needs.
+fn open_demo_screen(
+    workspace: &mut Workspace,
+    args: &Args,
+    cx: &mut gpui::Context<Workspace>,
+) {
     match args.open.as_deref().and_then(demo::route) {
         Some(Route::Setup(step)) => {
             workspace.set_setup(demo::setup(step), cx);
@@ -216,16 +242,4 @@ fn demo_workspace(
         Some(route) => workspace.navigate(route, cx),
         None => {}
     }
-    if let Some(steps) = args.steps {
-        for (_, update) in demo::script().into_iter().take(steps) {
-            workspace.update_run(&demo::run_id(), update, cx);
-        }
-    } else if args.finished {
-        for (_, update) in demo::script() {
-            workspace.update_run(&demo::run_id(), update, cx);
-        }
-    } else {
-        workspace.replay(demo::run_id(), demo::script(), cx);
-    }
-    workspace
 }

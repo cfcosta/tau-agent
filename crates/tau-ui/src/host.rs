@@ -43,6 +43,8 @@ use tau_compaction::Compaction;
 use tau_store::{Entry, RunKind, Status, Store};
 use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
+    ChangeKind,
+    FileDiff,
     Identity,
     Link,
     Project,
@@ -56,9 +58,14 @@ use crate::{
     catalog::{Catalog, PluginInfo, PluginScreen, Seam, StoreInfo},
     setup::{DeviceCode, GitHub, ModelAccess, SetupUpdate},
     view::{
+        BranchCode,
         ChildKind,
         ChildRun,
+        CodeState,
         ContextWindow,
+        FileChange,
+        FileKind,
+        FileStat,
         Limits as ViewLimits,
         NoteBody,
         Origin,
@@ -68,6 +75,7 @@ use crate::{
         RunUpdate,
         RunView,
         Tone,
+        parse_diff,
     },
     workspace::{Workspace, WorkspaceEvent},
 };
@@ -548,6 +556,28 @@ impl Host {
         })
     }
 
+    /// The code of `main` and its fork `fork`: what each changed after
+    /// the fork point, and how the fork's code differs from the run's.
+    pub fn branch_code(
+        &self,
+        main: &RunId,
+        fork: &RunId,
+    ) -> impl std::future::Future<Output = anyhow::Result<BranchCode>> + Send + 'static
+    {
+        branch_code(
+            self.store.clone(),
+            self.project.clone(),
+            main.clone(),
+            fork.clone(),
+        )
+    }
+
+    /// Runs `future` on the host's runtime and waits for it, for callers
+    /// outside the runtime.
+    pub fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+
     /// Runs from earlier sessions, newest first, rebuilt from the store.
     pub fn history(&self) -> anyhow::Result<Vec<RunView>> {
         self.runtime.block_on(history(&self.store))
@@ -712,6 +742,27 @@ impl Host {
                         }),
                     }
                 }
+                WorkspaceEvent::CompareCode { main, fork } => {
+                    let job =
+                        handler.runtime.spawn(handler.branch_code(main, fork));
+                    let (main, fork) = (main.clone(), fork.clone());
+                    let workspace = workspace.downgrade();
+                    cx.spawn(async move |cx| {
+                        let code = match job.await {
+                            Ok(Ok(code)) => CodeState::Ready(code),
+                            Ok(Err(error)) => {
+                                CodeState::Unavailable(format!("{error:#}"))
+                            }
+                            Err(error) => {
+                                CodeState::Unavailable(error.to_string())
+                            }
+                        };
+                        let _ = workspace.update(cx, |ws, cx| {
+                            ws.set_branch_code(&main, &fork, code, cx)
+                        });
+                    })
+                    .detach();
+                }
                 WorkspaceEvent::KeepBranch { run } => {
                     if let Err(error) = handler.keep_branch(run) {
                         eprintln!(
@@ -738,6 +789,87 @@ impl Host {
             drop(host);
         })
         .detach();
+    }
+}
+
+/// The latest link in `entries`, up to `seq` when given.
+fn last_link(entries: &[(i64, String)], seq: Option<i64>) -> Option<Link> {
+    entries
+        .iter()
+        .filter(|(at, _)| seq.is_none_or(|seq| *at <= seq))
+        .filter_map(|(_, body)| Link::parse(body))
+        .next_back()
+}
+
+/// See [`Host::branch_code`].
+async fn branch_code(
+    store: Store,
+    project: Option<Project>,
+    main: RunId,
+    fork: RunId,
+) -> anyhow::Result<BranchCode> {
+    let project = project.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Runs work in the checkout itself, so there are no commits to \
+             compare"
+        )
+    })?;
+    let record = store
+        .run(&fork.0)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("No run {}", fork.0))?;
+    let RunKind::Fork { parent, fork_seq } = record.kind else {
+        anyhow::bail!("{} is not a fork", fork.0);
+    };
+    let base = last_link(
+        &store.plugin_entries(&parent, WORKSPACE_PLUGIN).await?,
+        Some(fork_seq),
+    )
+    .ok_or_else(|| anyhow::anyhow!("The fork point has no commit"))?
+    .commit_id;
+    let head = |run: &RunId| {
+        let store = store.clone();
+        let run = run.0.to_string();
+        let base = base.clone();
+        async move {
+            let entries = store.plugin_entries(&run, WORKSPACE_PLUGIN).await?;
+            anyhow::Ok(
+                last_link(&entries, None).map_or(base, |link| link.commit_id),
+            )
+        }
+    };
+    let main_head = head(&main).await?;
+    let fork_head = head(&fork).await?;
+    tokio::task::spawn_blocking(move || {
+        let stats = |from: &str, to: &str| -> anyhow::Result<Vec<FileStat>> {
+            Ok(project.diff(from, to)?.iter().map(file_stat).collect())
+        };
+        Ok(BranchCode {
+            main: stats(&base, &main_head)?,
+            fork: stats(&base, &fork_head)?,
+            between: project
+                .diff(&main_head, &fork_head)?
+                .iter()
+                .map(|file| FileChange {
+                    stat: file_stat(file),
+                    lines: parse_diff(&file.text),
+                })
+                .collect(),
+        })
+    })
+    .await?
+}
+
+fn file_stat(file: &FileDiff) -> FileStat {
+    FileStat {
+        path: file.path.clone(),
+        kind: match file.kind {
+            ChangeKind::Added => FileKind::Added,
+            ChangeKind::Modified => FileKind::Modified,
+            ChangeKind::Removed => FileKind::Removed,
+        },
+        added: file.added,
+        removed: file.removed,
     }
 }
 

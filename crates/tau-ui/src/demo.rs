@@ -41,8 +41,12 @@ use crate::{
         SetupUpdate,
     },
     view::{
+        BranchCode,
         ContextWindow,
         Decision,
+        FileChange,
+        FileKind,
+        FileStat,
         LedgerEntry,
         Limits,
         NoteBody,
@@ -494,6 +498,12 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                         Answer::Pr(run, state) => {
                             ws.set_pull_request_state(&run, state, cx)
                         }
+                        Answer::Code(main, fork, code) => ws.set_branch_code(
+                            &main,
+                            &fork,
+                            crate::view::CodeState::Ready(code),
+                            cx,
+                        ),
                     });
                     if done.is_err() {
                         return;
@@ -583,6 +593,13 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
             WorkspaceEvent::CreatePullRequest { run, .. } => {
                 later(vec![(1200, Answer::Pr(run.clone(), opened()))], cx)
             }
+            WorkspaceEvent::CompareCode { main, fork } => later(
+                vec![(
+                    400,
+                    Answer::Code(main.clone(), fork.clone(), branch_code()),
+                )],
+                cx,
+            ),
             other => eprintln!("tau-ui: {other:?}"),
         }
     })
@@ -592,6 +609,82 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
 enum Answer {
     Setup(SetupUpdate),
     Pr(RunId, PrState),
+    Code(RunId, RunId, BranchCode),
+}
+
+/// The code of `rotation-jitter` and its `backoff` fork.
+pub fn branch_code() -> BranchCode {
+    let stat = |path: &str, kind, added, removed| FileStat {
+        path: path.into(),
+        kind,
+        added,
+        removed,
+    };
+    let lines = |text: &str| crate::view::parse_diff(text);
+    BranchCode {
+        main: vec![
+            stat(
+                "crates/tau-ai/src/transport/pool.rs",
+                FileKind::Modified,
+                14,
+                3,
+            ),
+            stat("crates/tau-ai/tests/rotation.rs", FileKind::Added, 38, 0),
+        ],
+        fork: vec![
+            stat(
+                "crates/tau-ai/src/transport/pool.rs",
+                FileKind::Modified,
+                9,
+                3,
+            ),
+            stat("crates/tau-ai/src/retry.rs", FileKind::Modified, 6, 1),
+        ],
+        between: vec![
+            FileChange {
+                stat: stat(
+                    "crates/tau-ai/src/transport/pool.rs",
+                    FileKind::Modified,
+                    3,
+                    6,
+                ),
+                lines: lines(
+                    " fn next_rotation(&self, now: Instant) -> Instant {\n\
+                     -    let jitter = self.rng.gen_range(0..=self.max_jitter);\n\
+                     -    now + self.period + jitter\n\
+                     +    // Back off instead of jittering: the pool waits longer\n\
+                     +    // after each failed rotation.\n\
+                     +    now + self.period * 2u32.pow(self.failures.min(4))\n\
+                      }\n",
+                ),
+            },
+            FileChange {
+                stat: stat(
+                    "crates/tau-ai/src/retry.rs",
+                    FileKind::Modified,
+                    6,
+                    1,
+                ),
+                lines: lines(
+                    " pub fn delay(&self, attempt: u32) -> Duration {\n\
+                     -    self.base * attempt\n\
+                     +    self.base * 2u32.pow(attempt.min(6))\n\
+                      }\n",
+                ),
+            },
+            FileChange {
+                stat: stat(
+                    "crates/tau-ai/tests/rotation.rs",
+                    FileKind::Removed,
+                    0,
+                    38,
+                ),
+                lines: lines(
+                    "-#[test]\n-fn rotation_is_jittered() {\n-    // ...\n-}\n",
+                ),
+            },
+        ],
+    }
 }
 
 /// The plugins, notes, rules and store the demo workspace shows.

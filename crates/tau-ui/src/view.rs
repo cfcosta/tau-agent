@@ -349,6 +349,61 @@ pub enum ChildKind {
     Fork,
 }
 
+/// How a file changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileKind {
+    Added,
+    Modified,
+    Removed,
+}
+
+impl FileKind {
+    /// The letter `jj status` shows.
+    pub fn letter(self) -> char {
+        match self {
+            Self::Added => 'A',
+            Self::Modified => 'M',
+            Self::Removed => 'D',
+        }
+    }
+}
+
+/// A changed file, with its line counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileStat {
+    pub path: String,
+    pub kind: FileKind,
+    pub added: usize,
+    pub removed: usize,
+}
+
+/// A changed file and its diff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileChange {
+    pub stat: FileStat,
+    pub lines: Vec<DiffLine>,
+}
+
+/// The code of a run and one of its forks, side by side.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BranchCode {
+    /// What the run changed after the fork point.
+    pub main: Vec<FileStat>,
+    /// What the fork changed after the fork point.
+    pub fork: Vec<FileStat>,
+    /// How the fork's code differs from the run's now, file by file.
+    pub between: Vec<FileChange>,
+}
+
+/// Where the code of a comparison is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeState {
+    Loading,
+    Ready(BranchCode),
+    /// The host cannot say: no project, or the diff failed.
+    Unavailable(String),
+}
+
 /// Anything that changes a [`RunView`]: a run event, or what the host
 /// knows that no event carries yet.
 #[derive(Debug, Clone, PartialEq)]
@@ -1102,12 +1157,19 @@ fn line_count(text: &str) -> Option<String> {
 
 /// Reads a unified diff into lines, dropping the file and hunk headers.
 pub fn parse_diff(diff: &str) -> Vec<DiffLine> {
+    const HEADERS: [&str; 9] = [
+        "---",
+        "+++",
+        "@@",
+        "diff --git ",
+        "new file mode",
+        "deleted file mode",
+        "old mode",
+        "new mode",
+        "\\ No newline",
+    ];
     diff.lines()
-        .filter(|line| {
-            !(line.starts_with("---")
-                || line.starts_with("+++")
-                || line.starts_with("@@"))
-        })
+        .filter(|line| !HEADERS.iter().any(|header| line.starts_with(header)))
         .map(|line| {
             let (kind, rest) = match line.chars().next() {
                 Some('+') => (DiffKind::Added, &line[1..]),

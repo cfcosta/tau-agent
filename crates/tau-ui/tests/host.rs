@@ -12,7 +12,7 @@ use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_ui::{
     host::{Access, Host, HostConfig},
-    view::{Item, Origin, RunStatus, ToolState},
+    view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
 };
 use tau_vcs::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -192,6 +192,28 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         })
         .count();
     assert_eq!(writes, 2);
+
+    // Compare: the run changed a.txt after the fork point, the fork did
+    // nothing, and their code differs in a.txt.
+    let code = host.block_on(host.branch_code(&main.id, &fork.id)).unwrap();
+    let paths = |files: &[FileStat]| {
+        files
+            .iter()
+            .map(|file| (file.path.clone(), file.added, file.removed))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(paths(&code.main), [("a.txt".to_owned(), 1, 1)]);
+    assert!(code.fork.is_empty());
+    assert_eq!(code.between.len(), 1);
+    let lines: Vec<(DiffKind, &str)> = code.between[0]
+        .lines
+        .iter()
+        .map(|line| (line.kind, line.text.as_str()))
+        .collect();
+    assert_eq!(
+        lines,
+        [(DiffKind::Removed, "two"), (DiffKind::Added, "one")]
+    );
 
     // Keeping the fork drops the main run's workspace, not its commits.
     host.keep_branch(&fork.id).unwrap();

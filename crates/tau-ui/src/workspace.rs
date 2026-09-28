@@ -73,6 +73,7 @@ use crate::{
     view::{
         ChildKind,
         ChildRun,
+        CodeState,
         Origin,
         Proposal,
         RunStatus,
@@ -177,6 +178,12 @@ pub enum WorkspaceEvent {
     PreparePullRequest {
         run: RunId,
     },
+    /// Diff the code of a run and its fork, for
+    /// [`Workspace::set_branch_code`].
+    CompareCode {
+        main: RunId,
+        fork: RunId,
+    },
     /// Push the run's branch and open the pull request.
     CreatePullRequest {
         run: RunId,
@@ -212,6 +219,8 @@ pub struct Workspace {
     pub(crate) kept_branch: Option<RunId>,
     pub(crate) setup: Setup,
     pub(crate) pull_requests: HashMap<RunId, PullRequest>,
+    /// The code of each comparison opened, by (run, fork).
+    pub(crate) branch_code: HashMap<(RunId, RunId), CodeState>,
     pub(crate) github_token: Entity<TextInput>,
     pub(crate) api_key: Entity<TextInput>,
     pub(crate) repo_filter: Entity<TextInput>,
@@ -315,6 +324,7 @@ impl Workspace {
             kept_branch: None,
             setup: Setup::default(),
             pull_requests: HashMap::new(),
+            branch_code: HashMap::new(),
             github_token,
             api_key,
             repo_filter,
@@ -505,6 +515,19 @@ impl Workspace {
                 self.follow = true;
             }
             self.current = Some(run);
+        }
+        // Comparing two branches shows their code; ask for it once.
+        if let Route::Compare { main, fork } = &self.route {
+            let key = (main.clone(), fork.clone());
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                self.branch_code.entry(key)
+            {
+                entry.insert(CodeState::Loading);
+                cx.emit(WorkspaceEvent::CompareCode {
+                    main: main.clone(),
+                    fork: fork.clone(),
+                });
+            }
         }
         // A fork being written belongs to the run it forks.
         if self
@@ -934,6 +957,26 @@ impl Workspace {
     ) {
         let task = self.first_task.read(cx).text().to_owned();
         self.start_first_run(task, cx);
+    }
+
+    /// The code of a comparison, as the host found it.
+    pub fn set_branch_code(
+        &mut self,
+        main: &RunId,
+        fork: &RunId,
+        code: CodeState,
+        cx: &mut Context<Self>,
+    ) {
+        self.branch_code.insert((main.clone(), fork.clone()), code);
+        cx.notify();
+    }
+
+    pub fn branch_code(
+        &self,
+        main: &RunId,
+        fork: &RunId,
+    ) -> Option<&CodeState> {
+        self.branch_code.get(&(main.clone(), fork.clone()))
     }
 
     // Pull requests.

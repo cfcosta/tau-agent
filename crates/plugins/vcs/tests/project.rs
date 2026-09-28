@@ -182,3 +182,37 @@ fn turns_are_commits_and_forks_start_from_one() {
         assert_eq!(names, ["first", "fork"]);
     });
 }
+
+#[test]
+fn diffs_between_commits_count_lines_per_file() {
+    let src = tempfile::tempdir().unwrap();
+    let head = source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let vcs = project.add_workspace("w", &head).unwrap();
+    let dir = project.workspace_dir("w");
+    std::fs::write(dir.join("README.md"), "hello\nworld\n").unwrap();
+    std::fs::write(dir.join("new.txt"), "a\nb\nc\n").unwrap();
+    let turn = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(vcs.checkpoint("turn 1"))
+        .unwrap();
+    assert!(turn.changed);
+
+    let files = project.diff(&head, &turn.commit_id).unwrap();
+    let summary: Vec<(&str, usize, usize)> = files
+        .iter()
+        .map(|file| (file.path.as_str(), file.added, file.removed))
+        .collect();
+    assert_eq!(summary, [("README.md", 1, 0), ("new.txt", 3, 0)]);
+    assert!(files[1].text.starts_with("diff --git a/new.txt b/new.txt"));
+    assert!(files[0].text.contains("+world"));
+    assert!(project.diff(&head, &head).unwrap().is_empty());
+}

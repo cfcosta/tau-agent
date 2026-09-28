@@ -10,6 +10,7 @@ use tau_ui::{
     pull_request::PrState,
     route::Route,
     setup::{GitHub, ModelAccess, Setup, SetupStep, SetupUpdate},
+    view::{BranchCode, CodeState},
 };
 
 fn open(
@@ -160,4 +161,38 @@ fn fork_mode_sends_the_chosen_turn(cx: &mut TestAppContext) {
         events.borrow().last(),
         Some(WorkspaceEvent::NewRun { .. })
     ));
+}
+
+#[gpui::test]
+fn comparing_asks_for_the_code_once(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open(cx);
+    let (main, fork) = (demo::run_id(), demo::fork_id());
+    let compare = Route::Compare {
+        main: main.clone(),
+        fork: fork.clone(),
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(compare.clone(), cx);
+        assert_eq!(ws.branch_code(&main, &fork), Some(&CodeState::Loading));
+        ws.back(cx);
+        ws.navigate(compare.clone(), cx);
+        ws.set_branch_code(
+            &main,
+            &fork,
+            CodeState::Ready(BranchCode::default()),
+            cx,
+        );
+    });
+    let asked = events
+        .borrow()
+        .iter()
+        .filter(|event| matches!(event, WorkspaceEvent::CompareCode { .. }))
+        .count();
+    assert_eq!(asked, 1);
+    workspace.read_with(&cx, |ws, _| {
+        assert!(matches!(
+            ws.branch_code(&main, &fork),
+            Some(CodeState::Ready(_))
+        ));
+    });
 }

@@ -33,7 +33,7 @@ mod vcs;
 pub use diff::{ChangeKind, FileChange, MAX_DIFF_BYTES};
 pub use ops::{ChangeInfo, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT, TurnCommit};
 pub use plugin::VcsPlugin;
-pub use project::Project;
+pub use project::{FileDiff, Project};
 pub use run_workspace::{Link, RunWorkspace};
 pub use session::MAX_NEW_FILE_SIZE;
 pub use vcs::{Identity, Vcs};
