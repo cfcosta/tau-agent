@@ -30,13 +30,26 @@ use gpui::{
     prelude::*,
     px,
 };
-use tau_agent::{event::RunEvent, tool::RunId};
+use tau_agent::{
+    event::{RunEvent, StopReason},
+    tool::RunId,
+};
 
 use crate::{
     assets::Icon,
     catalog::{Catalog, PluginInfo, PluginScreen},
     input::{InputEvent, TextInput},
+    pull_request::{PrState, PullRequest},
     route::{self, Route},
+    setup::{
+        CloneState,
+        GitHub,
+        ModelAccess,
+        RepoClone,
+        Setup,
+        SetupStep,
+        SetupUpdate,
+    },
     theme::{NARROW_MAX, PHONE_MAX, Theme, theme},
     ui::{
         self,
@@ -112,6 +125,43 @@ pub enum WorkspaceEvent {
     Query {
         sql: String,
     },
+    /// Start GitHub's device sign-in; answer with a
+    /// [`GitHub::Waiting`] code, then [`GitHub::SignedIn`].
+    GitHubSignIn,
+    /// The user says they approved the sign-in: check now rather than at
+    /// the next poll.
+    GitHubCheck,
+    /// Check a fine-grained personal access token.
+    GitHubToken {
+        token: String,
+    },
+    /// Sign in to ChatGPT for Codex, in the browser or with a device
+    /// code.
+    CodexSignIn {
+        device: bool,
+    },
+    /// Use an OpenAI API key.
+    ApiKey {
+        key: String,
+    },
+    /// Clone these repositories (`owner/name`) into tau's storage.
+    CloneRepos {
+        repos: Vec<String>,
+    },
+    /// Write a pull request draft from the run, for
+    /// [`Workspace::set_pull_request`].
+    PreparePullRequest {
+        run: RunId,
+    },
+    /// Push the run's branch and open the pull request.
+    CreatePullRequest {
+        run: RunId,
+        title: String,
+        body: String,
+        draft: bool,
+        keep_pushing: bool,
+        reviewers: Vec<String>,
+    },
 }
 
 pub struct Workspace {
@@ -134,6 +184,14 @@ pub struct Workspace {
     /// Flagged calls someone looked at, as `(run, call id)`.
     pub(crate) dismissed: HashSet<(RunId, String)>,
     pub(crate) kept_branch: Option<RunId>,
+    pub(crate) setup: Setup,
+    pub(crate) pull_requests: HashMap<RunId, PullRequest>,
+    pub(crate) github_token: Entity<TextInput>,
+    pub(crate) api_key: Entity<TextInput>,
+    pub(crate) repo_filter: Entity<TextInput>,
+    pub(crate) first_task: Entity<TextInput>,
+    pub(crate) pr_title: Entity<TextInput>,
+    pub(crate) reviewers: Entity<TextInput>,
     scroll: ScrollHandle,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
     /// turns it off; scrolling back down turns it on.
@@ -169,6 +227,22 @@ impl Workspace {
             TextInput::new("Filter by run, agent, model or stop", cx)
         });
         let memory_search = cx.new(|cx| TextInput::new("Search notes", cx));
+        let github_token =
+            cx.new(|cx| TextInput::new("github_pat_…", cx).masked());
+        let api_key = cx.new(|cx| TextInput::new("sk-…", cx).masked());
+        let repo_filter =
+            cx.new(|cx| TextInput::new("Filter your repositories", cx));
+        let first_task = cx.new(|cx| {
+            TextInput::new(
+                "Describe the task, for example: the retry loop ignores \
+                 retry-after on 429s. Honor it and add tests.",
+                cx,
+            )
+        });
+        let pr_title =
+            cx.new(|cx| TextInput::new("Title", cx).keep_on_submit());
+        let reviewers =
+            cx.new(|cx| TextInput::new("@reviewer", cx).keep_on_submit());
         let subscriptions = vec![
             cx.subscribe_in(
                 &composer,
@@ -180,6 +254,19 @@ impl Workspace {
             // Filters apply as you type.
             cx.observe(&history_filter, |_, _, cx| cx.notify()),
             cx.observe(&memory_search, |_, _, cx| cx.notify()),
+            cx.observe(&repo_filter, |_, _, cx| cx.notify()),
+            cx.subscribe(&github_token, |ws, _, event: &InputEvent, cx| {
+                let InputEvent::Submit(token) = event;
+                ws.submit_token(token.clone(), cx);
+            }),
+            cx.subscribe(&api_key, |ws, _, event: &InputEvent, cx| {
+                let InputEvent::Submit(key) = event;
+                ws.submit_api_key(key.clone(), cx);
+            }),
+            cx.subscribe(&first_task, |ws, _, event: &InputEvent, cx| {
+                let InputEvent::Submit(task) = event;
+                ws.start_first_run(task.clone(), cx);
+            }),
         ];
         composer.read(cx).focus_handle(cx).focus(window);
         let current = runs.first().map(|run| run.id.clone());
@@ -199,6 +286,14 @@ impl Workspace {
             kept: HashMap::new(),
             dismissed: HashSet::new(),
             kept_branch: None,
+            setup: Setup::default(),
+            pull_requests: HashMap::new(),
+            github_token,
+            api_key,
+            repo_filter,
+            first_task,
+            pr_title,
+            reviewers,
             scroll: ScrollHandle::new(),
             follow: true,
             focus: cx.focus_handle(),
@@ -560,6 +655,274 @@ impl Workspace {
         self.current().is_some_and(|run| run.status.is_live())
     }
 
+    // Onboarding.
+
+    pub fn setup(&self) -> &Setup {
+        &self.setup
+    }
+
+    /// Replaces what onboarding knows, as when resuming it.
+    pub fn set_setup(&mut self, setup: Setup, cx: &mut Context<Self>) {
+        self.setup = setup;
+        cx.notify();
+    }
+
+    /// Opens onboarding at `step`, with no way back to the runs until it
+    /// is done.
+    pub fn start_setup(&mut self, step: SetupStep, cx: &mut Context<Self>) {
+        self.back_stack.clear();
+        self.route = Route::Setup(step);
+        self.entered(cx);
+    }
+
+    /// Records what the host learned, and moves on when a step is done.
+    pub fn update_setup(
+        &mut self,
+        update: SetupUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let signed_in =
+            matches!(update, SetupUpdate::GitHub(GitHub::SignedIn { .. }));
+        let connected =
+            matches!(update, SetupUpdate::Model(ModelAccess::Connected { .. }));
+        self.setup.update(update);
+        match self.route {
+            Route::Setup(SetupStep::GitHub | SetupStep::Token) if signed_in => {
+                self.navigate(Route::Setup(SetupStep::Model), cx)
+            }
+            Route::Setup(SetupStep::Model) if connected => {
+                if self.setup.repos.is_empty() {
+                    self.finish_setup(cx);
+                } else {
+                    self.navigate(Route::Setup(SetupStep::Repos), cx);
+                }
+            }
+            _ => cx.notify(),
+        }
+    }
+
+    /// Leaves onboarding for a new run.
+    pub fn finish_setup(&mut self, cx: &mut Context<Self>) {
+        self.back_stack.clear();
+        self.route = if self.runs.is_empty() {
+            Route::NewRun
+        } else {
+            Route::Home
+        };
+        self.entered(cx);
+    }
+
+    pub fn sign_in_github(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.setup.github, GitHub::Waiting(_)) {
+            self.setup.github = GitHub::SignedOut;
+            cx.emit(WorkspaceEvent::GitHubSignIn);
+        }
+        self.navigate(Route::Setup(SetupStep::GitHub), cx);
+    }
+
+    pub(crate) fn submit_token(
+        &mut self,
+        token: String,
+        cx: &mut Context<Self>,
+    ) {
+        let token = token.trim().to_owned();
+        if token.is_empty() {
+            return;
+        }
+        self.github_token.update(cx, |input, cx| input.clear(cx));
+        self.setup.github = GitHub::Checking;
+        cx.emit(WorkspaceEvent::GitHubToken { token });
+        cx.notify();
+    }
+
+    pub(crate) fn submit_token_from_button(&mut self, cx: &mut Context<Self>) {
+        let token = self.github_token.read(cx).text().to_owned();
+        self.submit_token(token, cx);
+    }
+
+    pub fn sign_in_codex(&mut self, device: bool, cx: &mut Context<Self>) {
+        self.setup.model = ModelAccess::SigningIn {
+            url: None,
+            device: None,
+        };
+        cx.emit(WorkspaceEvent::CodexSignIn { device });
+        cx.notify();
+    }
+
+    pub(crate) fn submit_api_key(
+        &mut self,
+        key: String,
+        cx: &mut Context<Self>,
+    ) {
+        let key = key.trim().to_owned();
+        if key.is_empty() {
+            return;
+        }
+        self.api_key.update(cx, |input, cx| input.clear(cx));
+        self.setup.model = ModelAccess::SigningIn {
+            url: None,
+            device: None,
+        };
+        cx.emit(WorkspaceEvent::ApiKey { key });
+        cx.notify();
+    }
+
+    pub(crate) fn submit_api_key_from_button(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let key = self.api_key.read(cx).text().to_owned();
+        self.submit_api_key(key, cx);
+    }
+
+    pub fn toggle_repo(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.setup.toggle(name);
+        cx.notify();
+    }
+
+    /// Clones the picked repositories and opens the first run's screen.
+    pub fn clone_selected(&mut self, cx: &mut Context<Self>) {
+        let repos: Vec<String> = self
+            .setup
+            .selected()
+            .map(|repo| repo.name.clone())
+            .collect();
+        for name in &repos {
+            if !self.setup.clones.iter().any(|clone| &clone.name == name) {
+                self.setup.clones.push(RepoClone {
+                    name: name.clone(),
+                    state: CloneState::Cloning {
+                        share: 0.0,
+                        detail: "starting".into(),
+                    },
+                });
+            }
+        }
+        if !repos.is_empty() {
+            cx.emit(WorkspaceEvent::CloneRepos { repos });
+        }
+        self.navigate(Route::Setup(SetupStep::Ready), cx);
+    }
+
+    pub(crate) fn start_first_run(
+        &mut self,
+        task: String,
+        cx: &mut Context<Self>,
+    ) {
+        let task = task.trim().to_owned();
+        if task.is_empty() {
+            return;
+        }
+        self.first_task.update(cx, |input, cx| input.clear(cx));
+        self.finish_setup(cx);
+        cx.emit(WorkspaceEvent::NewRun { prompt: task });
+    }
+
+    pub(crate) fn start_first_run_from_button(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let task = self.first_task.read(cx).text().to_owned();
+        self.start_first_run(task, cx);
+    }
+
+    // Pull requests.
+
+    pub fn pull_request(&self, run: &RunId) -> Option<&PullRequest> {
+        self.pull_requests.get(run)
+    }
+
+    /// Opens the pull request screen for a run, asking the host for a
+    /// draft if there is none yet.
+    pub fn open_pull_request(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        match self.pull_requests.get(run) {
+            Some(pr) => {
+                let title = pr.title.clone();
+                self.pr_title
+                    .update(cx, |input, cx| input.set_text(title, cx));
+            }
+            None => {
+                cx.emit(WorkspaceEvent::PreparePullRequest { run: run.clone() })
+            }
+        }
+        self.navigate(Route::PullRequest(run.clone()), cx);
+    }
+
+    /// The draft the host wrote from a run.
+    pub fn set_pull_request(
+        &mut self,
+        run: &RunId,
+        pr: PullRequest,
+        cx: &mut Context<Self>,
+    ) {
+        if self.route == Route::PullRequest(run.clone()) {
+            let title = pr.title.clone();
+            self.pr_title
+                .update(cx, |input, cx| input.set_text(title, cx));
+        }
+        self.pull_requests.insert(run.clone(), pr);
+        cx.notify();
+    }
+
+    /// What became of a pull request: creating, opened or failed.
+    pub fn set_pull_request_state(
+        &mut self,
+        run: &RunId,
+        state: PrState,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pr) = self.pull_requests.get_mut(run) {
+            pr.state = state;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn toggle_pr_option(
+        &mut self,
+        run: &RunId,
+        draft: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pr) = self.pull_requests.get_mut(run) {
+            if draft {
+                pr.draft = !pr.draft;
+            } else {
+                pr.keep_pushing = !pr.keep_pushing;
+            }
+            cx.notify();
+        }
+    }
+
+    pub fn create_pull_request(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        let title = self.pr_title.read(cx).text().trim().to_owned();
+        let reviewers: Vec<String> = self
+            .reviewers
+            .read(cx)
+            .text()
+            .split([',', ' '])
+            .map(|name| name.trim().trim_start_matches('@'))
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let Some(pr) = self.pull_requests.get_mut(run) else {
+            return;
+        };
+        if !title.is_empty() {
+            pr.title = title;
+        }
+        pr.state = PrState::Creating;
+        let event = WorkspaceEvent::CreatePullRequest {
+            run: run.clone(),
+            title: pr.title.clone(),
+            body: pr.body.clone(),
+            draft: pr.draft,
+            keep_pushing: pr.keep_pushing,
+            reviewers,
+        };
+        cx.emit(event);
+        cx.notify();
+    }
+
     // Layouts.
 
     fn transcript(
@@ -632,6 +995,9 @@ impl Workspace {
         };
         let (color, label) = ui::status_look(&run.status, t);
         let live = run.status.is_live();
+        let done = self.catalog.pull_requests
+            && run.status == RunStatus::Finished(StopReason::Stop);
+        let id = run.id.clone();
         div()
             .h(px(48.))
             .flex_shrink_0()
@@ -681,6 +1047,20 @@ impl Workspace {
                             }))
                     }),
             )
+            .when(done, |header| {
+                header.child(
+                    div()
+                        .id("pull-request")
+                        .child(ui::button("Pull request", t).child(ui::icon(
+                            Icon::PullRequest,
+                            13.,
+                            t.text_soft,
+                        )))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.open_pull_request(&id, cx)
+                        })),
+                )
+            })
             .child(
                 div()
                     .id("fork")
@@ -911,6 +1291,9 @@ impl Workspace {
             Route::Ledger(run) => {
                 screens::ledger::render(self, run, compact, t, cx)
             }
+            Route::Setup(_) | Route::PullRequest(_) => {
+                self.focused(compact, t, cx)
+            }
         }
     }
 
@@ -920,6 +1303,9 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.route.is_focused() {
+            return self.focused(false, t, cx);
+        }
         let on_run = matches!(self.route, Route::Home | Route::Run(_));
         div()
             .size_full()
@@ -959,7 +1345,28 @@ impl Workspace {
             .into_any_element()
     }
 
+    /// A screen that takes the whole window.
+    fn focused(
+        &self,
+        compact: bool,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match &self.route {
+            Route::Setup(step) => {
+                screens::setup::render(self, *step, compact, t, cx)
+            }
+            Route::PullRequest(run) => {
+                screens::pull_request::render(self, run, compact, t, cx)
+            }
+            _ => self.screen(compact, t, cx),
+        }
+    }
+
     fn phone(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        if self.route.is_focused() {
+            return self.focused(true, t, cx);
+        }
         let screen = div().size_full().relative().flex().flex_col();
         match (&self.route, self.current()) {
             (Route::Run(_), Some(run)) => screen
@@ -1014,6 +1421,9 @@ impl Workspace {
                 .on_click(cx.listener(move |ws, _, _, cx| ws.set_tab(tab, cx)))
         });
         let live = run.status.is_live();
+        let done = self.catalog.pull_requests
+            && run.status == RunStatus::Finished(StopReason::Stop);
+        let id = run.id.clone();
         div()
             .absolute()
             .inset_0()
@@ -1071,7 +1481,7 @@ impl Workspace {
                     .child(
                         div()
                             .grid()
-                            .grid_cols(if live { 2 } else { 1 })
+                            .grid_cols(if live || done { 2 } else { 1 })
                             .gap(px(8.))
                             .child(
                                 div()
@@ -1085,6 +1495,22 @@ impl Workspace {
                                         cx.listener(|ws, _, _, cx| ws.fork(cx)),
                                     ),
                             )
+                            .when(done, |row| {
+                                row.child(
+                                    div()
+                                        .id("sheet-pull-request")
+                                        .child(
+                                            ui::button("Pull request", t)
+                                                .h(px(44.))
+                                                .rounded(px(10.)),
+                                        )
+                                        .on_click(cx.listener(
+                                            move |ws, _, _, cx| {
+                                                ws.open_pull_request(&id, cx)
+                                            },
+                                        )),
+                                )
+                            })
                             .when(live, |row| {
                                 row.child(
                                     div()

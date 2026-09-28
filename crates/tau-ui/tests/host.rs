@@ -22,7 +22,7 @@ fn host(llm: ScriptedModel) -> (Host, UnboundedReceiver<RunEvent>) {
     let store = runtime.block_on(Store::memory()).unwrap();
     let agent = Agent::new(llm).name("coder");
     let config = HostConfig {
-        access: Access::ApiKey,
+        access: Access::ApiKey("sk-test".into()),
         model: "gpt-5.5".into(),
         root: std::env::temp_dir(),
         store: std::env::temp_dir().join("unused.db"),

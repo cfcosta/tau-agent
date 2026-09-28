@@ -29,6 +29,15 @@ pub enum Icon {
     Memory,
     History,
     Paperclip,
+    Lock,
+    Repo,
+    PullRequest,
+    Key,
+    Chat,
+    Folder,
+    Copy,
+    Arrow,
+    Info,
 }
 
 impl Icon {
@@ -53,6 +62,15 @@ impl Icon {
             Self::Memory => "icons/memory.svg",
             Self::History => "icons/history.svg",
             Self::Paperclip => "icons/paperclip.svg",
+            Self::Lock => "icons/lock.svg",
+            Self::Repo => "icons/repo.svg",
+            Self::PullRequest => "icons/pull-request.svg",
+            Self::Key => "icons/key.svg",
+            Self::Chat => "icons/chat.svg",
+            Self::Folder => "icons/folder.svg",
+            Self::Copy => "icons/copy.svg",
+            Self::Arrow => "icons/arrow.svg",
+            Self::Info => "icons/info.svg",
         }
     }
 
@@ -101,10 +119,33 @@ impl Icon {
             Self::Paperclip => {
                 r#"<path d="M21 11l-8.5 8.5a5 5 0 01-7-7L14 4a3.5 3.5 0 015 5l-8.5 8.5a2 2 0 01-3-3L15 7"/>"#
             }
+            Self::Lock => {
+                r#"<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/>"#
+            }
+            Self::Repo => {
+                r#"<path d="M5 4h11a3 3 0 013 3v13H8a3 3 0 01-3-3z"/><path d="M5 17a3 3 0 013-3h11"/>"#
+            }
+            Self::PullRequest => {
+                r#"<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8v8M18 16V9a3 3 0 00-3-3h-4M13 3l-3 3 3 3"/>"#
+            }
+            Self::Key => {
+                r#"<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/>"#
+            }
+            Self::Chat => r#"<path d="M4 5h16v11H9l-5 4z"/>"#,
+            Self::Folder => {
+                r#"<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>"#
+            }
+            Self::Copy => {
+                r#"<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/>"#
+            }
+            Self::Arrow => r#"<path d="M5 12h14M13 6l6 6-6 6"/>"#,
+            Self::Info => {
+                r#"<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>"#
+            }
         }
     }
 
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 28] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -124,6 +165,15 @@ impl Icon {
         Self::Memory,
         Self::History,
         Self::Paperclip,
+        Self::Lock,
+        Self::Repo,
+        Self::PullRequest,
+        Self::Key,
+        Self::Chat,
+        Self::Folder,
+        Self::Copy,
+        Self::Arrow,
+        Self::Info,
     ];
 
     fn svg(self) -> String {

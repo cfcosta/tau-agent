@@ -22,7 +22,14 @@ use tau_agent::{
 };
 use tau_ai::{
     client::OpenAi,
-    codex::{CodexAuth, CodexCredentials},
+    codex::{
+        BrowserLogin,
+        CodexAuth,
+        CodexCredentials,
+        DeviceLogin,
+        ORIGINATOR,
+        oauth,
+    },
     model::find,
 };
 use tau_compaction::Compaction;
@@ -32,6 +39,7 @@ use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
     catalog::{Catalog, PluginInfo, PluginScreen, Seam, StoreInfo},
+    setup::{DeviceCode, GitHub, ModelAccess, SetupUpdate},
     view::{
         ContextWindow,
         Limits as ViewLimits,
@@ -44,34 +52,81 @@ use crate::{
 };
 
 /// How the host reaches a model.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Access {
     /// A ChatGPT sign-in, from this credentials file.
     Codex(PathBuf),
-    /// `OPENAI_API_KEY`.
-    ApiKey,
+    /// An OpenAI API key.
+    ApiKey(String),
+}
+
+impl std::fmt::Debug for Access {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Codex(path) => f.debug_tuple("Codex").field(path).finish(),
+            Self::ApiKey(_) => f.write_str("ApiKey(..)"),
+        }
+    }
 }
 
 impl Access {
-    /// Codex credentials if saved, else an API key if set.
+    /// Codex credentials if saved, else `OPENAI_API_KEY`, else a key
+    /// saved during onboarding.
     pub fn detect() -> Option<Self> {
-        let codex =
-            CodexCredentials::default_path().filter(|path| path.exists());
-        match codex {
-            Some(path) => Some(Self::Codex(path)),
-            None => std::env::var(tau_ai::client::API_KEY_VAR)
-                .ok()
-                .filter(|key| !key.is_empty())
-                .map(|_| Self::ApiKey),
+        if let Some(path) =
+            CodexCredentials::default_path().filter(|path| path.exists())
+        {
+            return Some(Self::Codex(path));
         }
+        std::env::var(tau_ai::client::API_KEY_VAR)
+            .ok()
+            .or_else(|| {
+                api_key_path()
+                    .and_then(|path| std::fs::read_to_string(path).ok())
+            })
+            .map(|key| key.trim().to_owned())
+            .filter(|key| !key.is_empty())
+            .map(Self::ApiKey)
     }
 
     pub fn label(&self) -> &'static str {
         match self {
             Self::Codex(_) => "ChatGPT (Codex)",
-            Self::ApiKey => "OpenAI API key",
+            Self::ApiKey(_) => "OpenAI API key",
         }
     }
+
+    /// How the model reads in onboarding: `gpt-5.5 · Codex`.
+    fn short_label(&self, model: &str) -> String {
+        match self {
+            Self::Codex(_) => format!("{model} · Codex"),
+            Self::ApiKey(_) => format!("{model} · API key"),
+        }
+    }
+}
+
+/// Where onboarding keeps an API key: `$XDG_CONFIG_HOME/tau/openai-key`,
+/// beside the Codex credentials.
+pub fn api_key_path() -> Option<PathBuf> {
+    CodexCredentials::default_path()
+        .and_then(|path| path.parent().map(|dir| dir.join("openai-key")))
+}
+
+/// Saves an API key, readable only by the user.
+pub fn save_api_key(key: &str) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+    let path = api_key_path().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory")
+    })?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(&path)?.write_all(key.as_bytes())?;
+    Ok(path)
 }
 
 /// What the host needs to start.
@@ -135,7 +190,7 @@ impl Host {
                 Access::Codex(path) => {
                     OpenAi::codex(CodexAuth::from_file(path)?)
                 }
-                Access::ApiKey => OpenAi::from_env()?,
+                Access::ApiKey(key) => OpenAi::new(key.clone()),
             }
         };
         let mut compaction = Compaction::default();
@@ -216,6 +271,7 @@ impl Host {
                     "select agent, sum(cost_usd) from runs group by agent"
                         .into(),
             },
+            pull_requests: false,
         }
     }
 
@@ -344,6 +400,172 @@ impl Host {
         })
         .detach();
     }
+}
+
+/// How a sign-in running on its own thread is going.
+enum SignIn {
+    Code(DeviceCode),
+    Done(Result<CodexCredentials, String>),
+}
+
+/// Carries out onboarding when no model is configured: the ChatGPT
+/// sign-in (browser or device code) and API keys. Once one works and is
+/// saved, `ready` gets the new [`Access`] to build a [`Host`] from.
+///
+/// GitHub needs tau's GitHub App, which does not exist yet, so GitHub
+/// sign-ins answer with an error and onboarding starts at the model.
+pub fn onboard(
+    workspace: &Entity<Workspace>,
+    model: String,
+    cx: &mut App,
+    ready: impl Fn(Access, &mut App) + 'static,
+) {
+    let ready = std::rc::Rc::new(ready);
+    cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
+        let connect = {
+            let ready = ready.clone();
+            let model = model.clone();
+            move |access: Access,
+                  workspace: &Entity<Workspace>,
+                  cx: &mut App| {
+                let label = access.short_label(&model);
+                ready(access, cx);
+                workspace.update(cx, |ws, cx| {
+                    ws.update_setup(
+                        SetupUpdate::Model(ModelAccess::Connected { label }),
+                        cx,
+                    )
+                });
+            }
+        };
+        let fail =
+            |workspace: &Entity<Workspace>, error: String, cx: &mut App| {
+                workspace.update(cx, |ws, cx| {
+                    ws.update_setup(
+                        SetupUpdate::Model(ModelAccess::Failed(error)),
+                        cx,
+                    )
+                });
+            };
+        match event {
+            WorkspaceEvent::CodexSignIn { device } => {
+                let browser =
+                    (!device).then(|| BrowserLogin::start(ORIGINATOR));
+                if let Some(login) = &browser {
+                    cx.open_url(&login.url);
+                    let pending = ModelAccess::SigningIn {
+                        url: Some(login.url.clone()),
+                        device: None,
+                    };
+                    workspace.update(cx, |ws, cx| {
+                        ws.update_setup(SetupUpdate::Model(pending), cx)
+                    });
+                }
+                let (progress, mut updates) = mpsc::unbounded_channel();
+                std::thread::spawn(move || {
+                    let done = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| error.to_string())
+                        .and_then(|runtime| {
+                            runtime.block_on(sign_in(browser, &progress))
+                        });
+                    let _ = progress.send(SignIn::Done(done));
+                });
+                let workspace = workspace.downgrade();
+                cx.spawn(async move |cx| {
+                    while let Some(update) = updates.recv().await {
+                        let Some(workspace) = workspace.upgrade() else {
+                            return;
+                        };
+                        let applied = cx.update(|cx| match update {
+                            SignIn::Code(code) => {
+                                let pending = ModelAccess::SigningIn {
+                                    url: None,
+                                    device: Some(code),
+                                };
+                                workspace.update(cx, |ws, cx| {
+                                    ws.update_setup(
+                                        SetupUpdate::Model(pending),
+                                        cx,
+                                    )
+                                });
+                            }
+                            SignIn::Done(Ok(credentials)) => {
+                                match CodexCredentials::default_path()
+                                    .ok_or_else(|| {
+                                        "no home directory".to_owned()
+                                    })
+                                    .and_then(|path| {
+                                        credentials
+                                            .save(&path)
+                                            .map(|()| path)
+                                            .map_err(|error| error.to_string())
+                                    }) {
+                                    Ok(path) => connect(
+                                        Access::Codex(path),
+                                        &workspace,
+                                        cx,
+                                    ),
+                                    Err(error) => fail(&workspace, error, cx),
+                                }
+                            }
+                            SignIn::Done(Err(error)) => {
+                                fail(&workspace, error, cx)
+                            }
+                        });
+                        if applied.is_err() {
+                            return;
+                        }
+                    }
+                })
+                .detach();
+            }
+            WorkspaceEvent::ApiKey { key } => match save_api_key(key) {
+                Ok(_) => connect(Access::ApiKey(key.clone()), &workspace, cx),
+                Err(error) => fail(&workspace, error.to_string(), cx),
+            },
+            WorkspaceEvent::GitHubSignIn
+            | WorkspaceEvent::GitHubCheck
+            | WorkspaceEvent::GitHubToken { .. } => {
+                workspace.update(cx, |ws, cx| {
+                    ws.update_setup(
+                        SetupUpdate::GitHub(GitHub::Failed(
+                            "tau cannot sign in to GitHub yet: it needs its \
+                             GitHub App. Connect a model to start."
+                                .into(),
+                        )),
+                        cx,
+                    )
+                });
+            }
+            _ => {}
+        }
+    })
+    .detach();
+}
+
+/// Signs in to ChatGPT: waits for the browser, or asks for a device code
+/// and reports it before waiting.
+async fn sign_in(
+    browser: Option<BrowserLogin>,
+    progress: &mpsc::UnboundedSender<SignIn>,
+) -> Result<CodexCredentials, String> {
+    let credentials = match browser {
+        Some(login) => login.wait().await,
+        None => {
+            let login =
+                DeviceLogin::start().await.map_err(|e| e.to_string())?;
+            let url = oauth::DEVICE_VERIFICATION_URL;
+            let _ = progress.send(SignIn::Code(DeviceCode {
+                code: login.user_code.clone(),
+                url: url.trim_start_matches("https://").to_owned(),
+                expires: "15 minutes".into(),
+            }));
+            login.wait().await
+        }
+    };
+    credentials.map_err(|error| error.to_string())
 }
 
 /// A short run title from the prompt: its first words.

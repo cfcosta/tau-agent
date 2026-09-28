@@ -31,15 +31,22 @@
 //! [`host::Host`] is that wiring for a real coding agent: a tokio runtime
 //! beside GPUI, `tau-tools` and `tau-compaction` as plugins, a ChatGPT
 //! (Codex) sign-in or an API key, and the run store. `cargo run -p
-//! tau-ui` uses it when a model is configured; otherwise, or with
-//! `--demo`, [`demo`] replays a scripted session.
+//! tau-ui` uses it when a model is configured, and opens onboarding to
+//! set one up when none is ([`host::onboard`]). With `--demo`, [`demo`]
+//! replays a scripted session.
+//!
+//! Onboarding ([`setup`]) and pull requests ([`pull_request`]) follow
+//! the same pattern: the workspace emits a request, the host answers
+//! with [`Workspace::update_setup`] or [`Workspace::set_pull_request`].
 
 pub mod assets;
 pub mod catalog;
 pub mod demo;
 pub mod host;
 pub mod input;
+pub mod pull_request;
 pub mod route;
+pub mod setup;
 pub mod theme;
 pub mod ui;
 pub mod view;

@@ -4,6 +4,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use gpui::{App, Entity};
 use serde_json::{Value, json};
 use tau_agent::{
     event::{RunEvent, StopReason},
@@ -12,6 +13,8 @@ use tau_agent::{
 use tau_ai::message::{Usage, UsageCost};
 
 use crate::{
+    Workspace,
+    WorkspaceEvent,
     catalog::{
         Catalog,
         Constitution,
@@ -24,6 +27,18 @@ use crate::{
         Rule,
         Seam,
         StoreInfo,
+    },
+    pull_request::{Checks, PrCommit, PrState, PullRequest},
+    setup::{
+        CloneState,
+        DeviceCode,
+        GitHub,
+        ModelAccess,
+        RepoChoice,
+        RepoClone,
+        Setup,
+        SetupStep,
+        SetupUpdate,
     },
     view::{
         ContextWindow,
@@ -328,8 +343,255 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
         },
         "plan" => Route::Plan(run_id()),
         "ledger" => Route::Ledger(run_id()),
+        "welcome" | "setup" => Route::Setup(SetupStep::Welcome),
+        "github" => Route::Setup(SetupStep::GitHub),
+        "token" => Route::Setup(SetupStep::Token),
+        "model" => Route::Setup(SetupStep::Model),
+        "repos" => Route::Setup(SetupStep::Repos),
+        "ready" => Route::Setup(SetupStep::Ready),
+        "pr" | "pr-opened" => Route::PullRequest(run_id()),
         _ => return None,
     })
+}
+
+const DEVICE_CODE: &str = "WDJB-MJHT";
+
+fn device_code() -> DeviceCode {
+    DeviceCode {
+        code: DEVICE_CODE.into(),
+        url: "github.com/login/device".into(),
+        expires: "15 minutes".into(),
+    }
+}
+
+fn repos() -> Vec<RepoChoice> {
+    [
+        ("cfcosta/tau-agent", "Rust library for LLM agents", true),
+        (
+            "cfcosta/docbert",
+            "Local hybrid search over documents",
+            true,
+        ),
+        (
+            "cfcosta/homelab.nix",
+            "NixOS configuration for the homelab",
+            false,
+        ),
+        ("cfcosta/home.nix", "Home Manager configuration", false),
+        ("cfcosta/duskpi", "", false),
+        ("cfcosta/cfcosta.github.io", "", false),
+    ]
+    .into_iter()
+    .map(|(name, description, selected)| RepoChoice {
+        name: name.into(),
+        description: description.into(),
+        branch: "main".into(),
+        selected,
+    })
+    .collect()
+}
+
+/// Onboarding as it stands when `step` opens.
+pub fn setup(step: SetupStep) -> Setup {
+    let mut setup = Setup {
+        repos: repos(),
+        ..Setup::default()
+    };
+    let stage = step.stage();
+    setup.github = if step == SetupStep::Welcome {
+        GitHub::SignedOut
+    } else if stage == 0 {
+        GitHub::Waiting(device_code())
+    } else {
+        GitHub::SignedIn {
+            user: "cfcosta".into(),
+        }
+    };
+    if stage >= 2 {
+        setup.model = ModelAccess::Connected {
+            label: "gpt-5.5 · Codex".into(),
+        };
+    }
+    if stage >= 3 {
+        setup.clones = vec![
+            RepoClone {
+                name: "cfcosta/tau-agent".into(),
+                state: CloneState::Ready,
+            },
+            RepoClone {
+                name: "cfcosta/docbert".into(),
+                state: CloneState::Cloning {
+                    share: 0.64,
+                    detail: "41 MB of 64 MB".into(),
+                },
+            },
+        ];
+    }
+    setup
+}
+
+/// The pull request the finished demo run would open.
+pub fn pull_request() -> PullRequest {
+    PullRequest {
+        repo: "cfcosta/tau-agent".into(),
+        head: "tau/retry-after".into(),
+        base: "main".into(),
+        mergeable: true,
+        summary:
+            "From run retry-after, which finished after 14 turns with its \
+                  tests passing. tau pushes a branch and opens the pull \
+                  request as you."
+                .into(),
+        tests: Some("14 tests passed".into()),
+        title: "Honor retry-after on 429 and 503".into(),
+        body: "The retry loop ignored `retry-after`. It now overrides the \
+               backoff on\n429 and 503, as seconds or an HTTP date, capped at \
+               `max_delay`. A\nheader that does not parse falls back to the \
+               normal backoff.\n\nTests: cargo nextest run -p tau-ai retry:: \
+               (14 passed, 4 new).\n\nMade with tau from run retry-after."
+            .into(),
+        commits: vec![
+            PrCommit {
+                title: "feat(tau-ai): honor retry-after on 429 and 503".into(),
+                added: 11,
+                removed: 2,
+            },
+            PrCommit {
+                title: "test(tau-ai): cover the retry-after header".into(),
+                added: 64,
+                removed: 0,
+            },
+        ],
+        draft: true,
+        keep_pushing: true,
+        state: PrState::Draft,
+    }
+}
+
+/// The opened pull request's state.
+pub fn opened() -> PrState {
+    PrState::Opened {
+        number: 142,
+        url: "https://github.com/cfcosta/tau-agent/pull/142".into(),
+        checks: Checks::Running,
+    }
+}
+
+/// Answers what the workspace asks for the way a host would, after a
+/// pause: sign-ins succeed, clones progress, pull requests open.
+pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
+    cx.subscribe(workspace, |workspace, event: &WorkspaceEvent, cx| {
+        // Each answer comes after its pause, in milliseconds.
+        let later = |steps: Vec<(u64, Answer)>, cx: &mut App| {
+            let workspace = workspace.downgrade();
+            cx.spawn(async move |cx| {
+                for (wait, answer) in steps {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(wait))
+                        .await;
+                    let done = workspace.update(cx, |ws, cx| match answer {
+                        Answer::Setup(update) => ws.update_setup(update, cx),
+                        Answer::Pr(run, state) => {
+                            ws.set_pull_request_state(&run, state, cx)
+                        }
+                    });
+                    if done.is_err() {
+                        return;
+                    }
+                }
+            })
+            .detach();
+        };
+        let setup = Answer::Setup;
+        let signed_in = || {
+            setup(SetupUpdate::GitHub(GitHub::SignedIn {
+                user: "cfcosta".into(),
+            }))
+        };
+        match event {
+            WorkspaceEvent::GitHubSignIn => later(
+                vec![
+                    (
+                        400,
+                        setup(SetupUpdate::GitHub(GitHub::Waiting(
+                            device_code(),
+                        ))),
+                    ),
+                    (0, setup(SetupUpdate::Repos(repos()))),
+                    (5000, signed_in()),
+                ],
+                cx,
+            ),
+            WorkspaceEvent::GitHubCheck
+            | WorkspaceEvent::GitHubToken { .. } => {
+                later(vec![(600, signed_in())], cx)
+            }
+            WorkspaceEvent::CodexSignIn { device } => {
+                let pending = ModelAccess::SigningIn {
+                    url: None,
+                    device: device.then(|| DeviceCode {
+                        code: "K7PX-2QRM".into(),
+                        url: "auth.openai.com/codex/device".into(),
+                        expires: "15 minutes".into(),
+                    }),
+                };
+                let connected = ModelAccess::Connected {
+                    label: "gpt-5.5 · Codex".into(),
+                };
+                later(
+                    vec![
+                        (300, setup(SetupUpdate::Model(pending))),
+                        (2500, setup(SetupUpdate::Model(connected))),
+                    ],
+                    cx,
+                )
+            }
+            WorkspaceEvent::ApiKey { .. } => {
+                let connected = ModelAccess::Connected {
+                    label: "gpt-5.5 · API key".into(),
+                };
+                later(vec![(600, setup(SetupUpdate::Model(connected)))], cx)
+            }
+            WorkspaceEvent::CloneRepos { repos } => {
+                let steps = (1..=10)
+                    .flat_map(|tenth| {
+                        repos.iter().map(move |name| {
+                            let state = if tenth == 10 {
+                                CloneState::Ready
+                            } else {
+                                CloneState::Cloning {
+                                    share: tenth as f32 / 10.,
+                                    detail: format!("{tenth}0%"),
+                                }
+                            };
+                            let clone = RepoClone {
+                                name: name.clone(),
+                                state,
+                            };
+                            (250, setup(SetupUpdate::Clone(clone)))
+                        })
+                    })
+                    .collect();
+                later(steps, cx)
+            }
+            WorkspaceEvent::PreparePullRequest { run } => {
+                let run = run.clone();
+                workspace.update(cx, |ws, cx| {
+                    ws.set_pull_request(&run, pull_request(), cx)
+                });
+            }
+            WorkspaceEvent::CreatePullRequest { run, .. } => {
+                later(vec![(1200, Answer::Pr(run.clone(), opened()))], cx)
+            }
+            other => eprintln!("tau-ui: {other:?}"),
+        }
+    })
+    .detach();
+}
+
+enum Answer {
+    Setup(SetupUpdate),
+    Pr(RunId, PrState),
 }
 
 /// The plugins, notes, rules and store the demo workspace shows.
@@ -442,6 +704,7 @@ pub fn catalog() -> Catalog {
             size: "18.4 MB".into(),
             sample_query: "select agent, sum(cost_usd) from runs where started_at > date('now', '-7 days') group by agent".into(),
         },
+        pull_requests: true,
     }
 }
 

@@ -16,6 +16,8 @@ pub struct Catalog {
     pub memory: Memory,
     pub constitution: Constitution,
     pub store: StoreInfo,
+    /// Whether the host can open pull requests from runs.
+    pub pull_requests: bool,
 }
 
 /// The seams a plugin can use, in the order the loop reaches them.

@@ -3,6 +3,8 @@
 
 use tau_agent::tool::RunId;
 
+use crate::setup::SetupStep;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     /// The run list. On a desktop, the sidebar is the list, so this shows
@@ -26,6 +28,10 @@ pub enum Route {
     },
     /// A run's pruning ledger.
     Ledger(RunId),
+    /// Onboarding: GitHub, a model, repositories, the first run.
+    Setup(SetupStep),
+    /// A pull request from a run: the draft, then the opened one.
+    PullRequest(RunId),
 }
 
 /// The phone's bottom tabs.
@@ -64,7 +70,10 @@ impl Route {
     /// The run a screen is about, if any.
     pub fn run(&self) -> Option<&RunId> {
         match self {
-            Self::Run(run) | Self::Plan(run) | Self::Ledger(run) => Some(run),
+            Self::Run(run)
+            | Self::Plan(run)
+            | Self::Ledger(run)
+            | Self::PullRequest(run) => Some(run),
             Self::Compare { main, .. } => Some(main),
             _ => None,
         }
@@ -92,7 +101,15 @@ impl Route {
             Self::Memory { .. } => "Memory",
             Self::Constitution { .. } => "Constitution",
             Self::Ledger(_) => "Context ledger",
+            Self::Setup(step) => step.title(),
+            Self::PullRequest(_) => "Pull request",
         }
+    }
+
+    /// Screens that take the whole window, without the sidebar: a task
+    /// to finish before going back to the runs.
+    pub fn is_focused(&self) -> bool {
+        matches!(self, Self::Setup(_) | Self::PullRequest(_))
     }
 
     /// Top-level screens get the phone's tab bar.

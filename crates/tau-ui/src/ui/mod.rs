@@ -3,6 +3,7 @@
 //! decides where they go for the window's width.
 
 pub mod chrome;
+pub mod form;
 pub mod inspector;
 pub mod screens;
 pub mod transcript;
@@ -69,7 +70,31 @@ pub fn rich_in(
     color: Hsla,
     t: &Theme,
 ) -> StyledText {
-    let spans = spans(text);
+    marked(text, family, color, true, t)
+}
+
+/// Prose where `code` is only set in the monospace face, with no chip:
+/// for paths and names inside a sentence.
+pub fn prose(text: &str, color: Hsla, t: &Theme) -> StyledText {
+    marked(text, SANS, color, false, t)
+}
+
+fn marked(
+    text: &str,
+    family: &'static str,
+    color: Hsla,
+    chips: bool,
+    t: &Theme,
+) -> StyledText {
+    let spans: Vec<(String, Mark)> = spans(text)
+        .into_iter()
+        .map(|(span, mark)| match mark {
+            Mark::Code if !chips => {
+                (span.trim_matches('\u{2009}').to_owned(), mark)
+            }
+            _ => (span, mark),
+        })
+        .collect();
     let plain: String = spans.iter().map(|(span, _)| span.as_str()).collect();
     let runs = spans
         .iter()
@@ -85,7 +110,8 @@ pub fn rich_in(
                     t.text,
                     None,
                 ),
-                Mark::Code => (font(MONO), t.text, Some(t.raised)),
+                Mark::Code if chips => (font(MONO), t.text, Some(t.raised)),
+                Mark::Code => (font(MONO), color, None),
             };
             TextRun {
                 len: span.len(),

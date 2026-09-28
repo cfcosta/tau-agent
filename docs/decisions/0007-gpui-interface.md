@@ -27,7 +27,8 @@ reach into the loop.
   the agents and wires the workspace in two directions:
   - in: it forwards each `RunEvent` to `Workspace::apply_event`;
   - out: it acts on each `WorkspaceEvent` (new run, steer, cancel,
-    fork, keep a note, keep a branch, run a query).
+    fork, keep a note, keep a branch, run a query, and the onboarding
+    and pull request requests below).
 - **The view model is separate from GPUI.** `RunView` folds run events
   and can be tested without a window. What is not per-run (plugins and
   their seams, memory notes, constitution rules, the store) comes in
@@ -40,9 +41,25 @@ reach into the loop.
 - **One layout per width, not per device.** Below 720 px the window
   gets a one-column phone layout with a tab bar and bottom sheets;
   below 1100 px the desktop layout drops the inspector.
-- **A demo host ships with the crate.** `cargo run -p tau-ui` replays a
-  scripted session through the same `RunUpdate` path a real agent
-  uses; `--open <screen>` and `--phone` start on a screen or in a
+- **Onboarding and pull requests are screens with seams too.** The
+  setup flow (GitHub, a model, repositories, the first run) and the
+  pull request screens hold a `Setup` and `PullRequest` view model.
+  The workspace asks with `WorkspaceEvent`s (sign in, clone, prepare
+  or create a pull request) and the host answers with
+  `Workspace::update_setup`, `set_pull_request` and
+  `set_pull_request_state`. The workspace moves to the next step when
+  an answer completes one. These screens take the whole window,
+  without the sidebar.
+- **The bundled host does what the libraries can.** It signs in to
+  ChatGPT (browser or device code) or saves an API key, then starts
+  agents. GitHub sign-in, clones and pull requests need a GitHub App
+  that tau does not have yet. Until then onboarding starts at the
+  model, and the pull request button only shows when the catalog says
+  the host can open one.
+- **A demo host ships with the crate.** `cargo run -p tau-ui -- --demo`
+  replays a scripted session through the same `RunUpdate` path a real
+  agent uses, and answers onboarding and pull requests the way a host
+  would. `--open <screen>` and `--phone` start on a screen or in a
   phone frame.
 
 ## Consequences

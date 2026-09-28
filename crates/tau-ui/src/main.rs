@@ -1,16 +1,17 @@
 //! Opens the interface.
 //!
-//! With a ChatGPT sign-in (`cargo run -p tau-ai --example codex_login`)
-//! or `OPENAI_API_KEY`, `tau-ui` runs a real coding agent in the current
-//! directory: type a task to start a run. Without either, or with
-//! `--demo`, it replays the scripted session instead.
+//! With a ChatGPT sign-in or an OpenAI API key, `tau-ui` runs a real
+//! coding agent in the current directory: type a task to start a run.
+//! Without either it opens onboarding to set one up. With `--demo` it
+//! replays the scripted session instead.
 //!
 //! - `--model <id>`: the model, `gpt-5.5` by default.
 //! - `--root <dir>`: where the coding tools work.
 //! - `--prompt <text>`: start a run with this task right away.
 //! - `--demo`: the scripted session; `--finished` opens it done.
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
-//!   compare, plan or ledger (demo screens).
+//!   compare, plan or ledger; onboarding's welcome, github, token,
+//!   model, repos or ready; or pr and pr-opened (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
 //! - `--frame <w>x<h>`: lay out at exactly that size in the top-left
 //!   corner, to compare with the designs.
@@ -31,10 +32,12 @@ use gpui::{
 };
 use tau_ui::{
     Workspace,
-    WorkspaceEvent,
     assets::Assets,
+    catalog::Catalog,
     demo,
-    host::{Access, Host, HostConfig},
+    host::{self, Access, Host, HostConfig},
+    route::Route,
+    setup::SetupStep,
 };
 
 struct Args {
@@ -80,30 +83,21 @@ fn args() -> Args {
 fn main() {
     let args = args();
     let access = if args.demo { None } else { Access::detect() };
-    let host = access.and_then(|access| {
-        let config = HostConfig {
-            access,
-            model: args.model.clone(),
-            root: args.root.clone(),
-            store: HostConfig::default_store(),
-        };
-        match Host::new(config) {
-            Ok(host) => Some(host),
-            Err(error) => {
-                eprintln!(
-                    "tau-ui: cannot start agents ({error}); showing the demo"
-                );
-                None
-            }
+    let (model, root) = (args.model.clone(), args.root.clone());
+    let config = move |access| HostConfig {
+        access,
+        model: model.clone(),
+        root: root.clone(),
+        store: HostConfig::default_store(),
+    };
+    let host = access.and_then(|access| match Host::new(config(access)) {
+        Ok(host) => Some(host),
+        Err(error) => {
+            eprintln!("tau-ui: cannot start agents: {error}");
+            None
         }
     });
-    if host.is_none() && !args.demo {
-        eprintln!(
-            "tau-ui: no model configured. Sign in with \
-             `cargo run -p tau-ai --example codex_login` or set \
-             OPENAI_API_KEY. Showing the demo."
-        );
-    }
+    let onboarding = host.is_none() && !args.demo;
 
     Application::new()
         .with_assets(Assets)
@@ -123,7 +117,11 @@ fn main() {
             let name = args.root.file_name().map_or("tau".into(), |name| {
                 name.to_string_lossy().into_owned()
             });
-            let live = host.as_ref().map(|(host, _)| host.catalog());
+            let live = match &host {
+                Some((host, _)) => Some(host.catalog()),
+                None if onboarding => Some(Catalog::default()),
+                None => None,
+            };
             let opened = cx.open_window(options, |window, cx| {
                 cx.new(|cx| match live {
                     Some(catalog) => {
@@ -149,23 +147,42 @@ fn main() {
             };
             match host {
                 Some((host, events)) => {
-                    workspace.update(cx, |ws, cx| {
-                        ws.navigate(tau_ui::route::Route::NewRun, cx)
-                    });
-                    let prompt = args.prompt.clone();
+                    workspace
+                        .update(cx, |ws, cx| ws.navigate(Route::NewRun, cx));
                     host.attach(&workspace, events, cx);
-                    if let Some(prompt) = prompt {
+                    if let Some(prompt) = args.prompt.clone() {
                         workspace
                             .update(cx, |ws, cx| ws.submit_prompt(prompt, cx));
                     }
                 }
-                None => {
-                    // No agent: show what a host would receive.
-                    cx.subscribe(&workspace, |_, event: &WorkspaceEvent, _| {
-                        eprintln!("tau-ui: {event:?}");
-                    })
-                    .detach();
+                // No model yet: set one up, then start the host.
+                None if onboarding => {
+                    workspace.update(cx, |ws, cx| {
+                        ws.start_setup(SetupStep::Model, cx)
+                    });
+                    let entity = workspace.clone();
+                    host::onboard(
+                        &workspace,
+                        args.model.clone(),
+                        cx,
+                        move |access, cx| match Host::new(config(access)) {
+                            Ok((host, events)) => {
+                                let catalog = host.catalog();
+                                entity.update(cx, |ws, cx| {
+                                    ws.set_catalog(catalog, cx)
+                                });
+                                host.attach(&entity, events, cx);
+                            }
+                            Err(error) => {
+                                eprintln!(
+                                    "tau-ui: cannot start agents: {error}"
+                                )
+                            }
+                        },
+                    );
                 }
+                // The demo: answer the way a host would.
+                None => demo::respond(&workspace, cx),
             }
             cx.activate(true);
         });
@@ -182,8 +199,21 @@ fn demo_workspace(
         Workspace::new("tau-agent", runs, demo::catalog(), window, cx);
     workspace.set_phone_preview(args.phone, cx);
     workspace.set_frame(args.frame, cx);
-    if let Some(route) = args.open.as_deref().and_then(demo::route) {
-        workspace.navigate(route, cx);
+    match args.open.as_deref().and_then(demo::route) {
+        Some(Route::Setup(step)) => {
+            workspace.set_setup(demo::setup(step), cx);
+            workspace.navigate(Route::Setup(step), cx);
+        }
+        Some(Route::PullRequest(run)) => {
+            let mut pr = demo::pull_request();
+            if args.open.as_deref() == Some("pr-opened") {
+                pr.state = demo::opened();
+            }
+            workspace.set_pull_request(&run, pr, cx);
+            workspace.open_pull_request(&run, cx);
+        }
+        Some(route) => workspace.navigate(route, cx),
+        None => {}
     }
     if let Some(steps) = args.steps {
         for (_, update) in demo::script().into_iter().take(steps) {

@@ -104,7 +104,15 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    /// Draw a dot for each character, for secrets.
+    masked: bool,
+    /// Keep the text when enter is pressed, for fields that are part of
+    /// a form rather than a prompt.
+    keep_on_submit: bool,
 }
+
+/// What a masked field draws for each character.
+const MASK: char = '•';
 
 impl EventEmitter<InputEvent> for TextInput {}
 
@@ -123,6 +131,53 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            masked: false,
+            keep_on_submit: false,
+        }
+    }
+
+    /// A field for a secret: it draws dots and refuses to copy.
+    pub fn masked(mut self) -> Self {
+        self.masked = true;
+        self
+    }
+
+    pub fn keep_on_submit(mut self) -> Self {
+        self.keep_on_submit = true;
+        self
+    }
+
+    /// Replaces the text and puts the cursor at its end.
+    pub fn set_text(
+        &mut self,
+        text: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.content = text.into();
+        self.selected_range = self.content.len()..self.content.len();
+        self.selection_reversed = false;
+        self.marked_range = None;
+        cx.notify();
+    }
+
+    /// Where `offset` into the text falls in what the field draws.
+    fn display_offset(&self, offset: usize) -> usize {
+        if self.masked {
+            self.content[..offset].chars().count() * MASK.len_utf8()
+        } else {
+            offset
+        }
+    }
+
+    /// The offset into the text of `index` into what the field draws.
+    fn text_offset(&self, index: usize) -> usize {
+        if self.masked {
+            self.content
+                .char_indices()
+                .nth(index / MASK.len_utf8())
+                .map_or(self.content.len(), |(at, _)| at)
+        } else {
+            index
         }
     }
 
@@ -146,7 +201,9 @@ impl TextInput {
         let text = self.content.trim().to_owned();
         if !text.is_empty() {
             cx.emit(InputEvent::Submit(text));
-            self.clear(cx);
+            if !self.keep_on_submit {
+                self.clear(cx);
+            }
         }
     }
 
@@ -280,7 +337,7 @@ impl TextInput {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -288,7 +345,7 @@ impl TextInput {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -324,7 +381,7 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left())
+        self.text_offset(line.closest_index_for_x(position.x - bounds.left()))
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -493,11 +550,13 @@ impl EntityInputHandler for TextInput {
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
-                bounds.left() + last_layout.x_for_index(range.start),
+                bounds.left()
+                    + last_layout.x_for_index(self.display_offset(range.start)),
                 bounds.top(),
             ),
             point(
-                bounds.left() + last_layout.x_for_index(range.end),
+                bounds.left()
+                    + last_layout.x_for_index(self.display_offset(range.end)),
                 bounds.bottom(),
             ),
         ))
@@ -511,8 +570,8 @@ impl EntityInputHandler for TextInput {
     ) -> Option<usize> {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
-        Some(self.offset_to_utf16(utf8_index))
+        let index = last_layout.index_for_x(point.x - line_point.x)?;
+        Some(self.offset_to_utf16(self.text_offset(index)))
     }
 }
 
@@ -572,9 +631,16 @@ impl Element for TextElement {
     ) -> Self::PrepaintState {
         let colors = theme(cx).clone();
         let input = self.input.read(cx);
-        let content = input.content.clone();
-        let selected_range = input.selected_range.clone();
-        let cursor = input.cursor_offset();
+        let content: SharedString = if input.masked {
+            MASK.to_string()
+                .repeat(input.content.chars().count())
+                .into()
+        } else {
+            input.content.clone()
+        };
+        let selected_range = input.display_offset(input.selected_range.start)
+            ..input.display_offset(input.selected_range.end);
+        let cursor = input.display_offset(input.cursor_offset());
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
@@ -590,7 +656,9 @@ impl Element for TextElement {
             underline: None,
             strikethrough: None,
         };
-        let runs = match input.marked_range.as_ref() {
+        // Composition in a masked field is drawn plain.
+        let marked = input.marked_range.as_ref().filter(|_| !input.masked);
+        let runs = match marked {
             Some(marked) => [
                 TextRun {
                     len: marked.start,
