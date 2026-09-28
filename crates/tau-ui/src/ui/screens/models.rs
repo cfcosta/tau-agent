@@ -5,9 +5,9 @@ use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
 use crate::{
     assets::Icon,
-    models::ModelOption,
+    models::{AccessKind, ModelOption},
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
-    ui::{self, heading, mono},
+    ui::{self, ButtonKind, heading, mono},
     workspace::{PickerTarget, Workspace},
 };
 
@@ -118,67 +118,52 @@ pub fn render(
         .collect::<Vec<_>>();
 
     let access = &models.access;
+    let saved = |kind| access.saved.contains(&kind);
+    let chatgpt = account_row(
+        "account-chatgpt",
+        Icon::Chat,
+        "ChatGPT",
+        if access.chatgpt {
+            "Signed in · runs use it, and count against your plan"
+        } else if saved(AccessKind::ChatGpt) {
+            "Signed in · not in use"
+        } else {
+            "Not signed in"
+        },
+        access.chatgpt,
+        if saved(AccessKind::ChatGpt) {
+            ("Sign out", Some(AccessKind::ChatGpt))
+        } else {
+            ("Sign in", None)
+        },
+        t,
+        cx,
+    );
+    let key = account_row(
+        "account-api-key",
+        Icon::Key,
+        "OpenAI API key",
+        if access.api_key {
+            "Saved · runs use it, billed per token"
+        } else if saved(AccessKind::ApiKey) {
+            "Saved · used once you sign out of ChatGPT"
+        } else {
+            "None · every model, billed per token on your account"
+        },
+        access.api_key,
+        if saved(AccessKind::ApiKey) {
+            ("Remove", Some(AccessKind::ApiKey))
+        } else {
+            ("Add a key", None)
+        },
+        t,
+        cx,
+    );
     let access_card = ui::panel(4.5, t)
         .gap(sp(3.))
-        .child(heading("Access", t))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .child(ui::icon(
-                    Icon::Chat,
-                    IconSize::LARGE,
-                    if access.chatgpt { t.green } else { t.dim },
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .flex()
-                        .flex_col()
-                        .gap(sp(0.5))
-                        .child("ChatGPT")
-                        .child(ui::text(
-                            if access.chatgpt {
-                                "Signed in · runs count against the plan"
-                            } else {
-                                "Not signed in"
-                            },
-                            Type::CAPTION,
-                            t.muted,
-                        )),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .child(ui::icon(
-                    Icon::Key,
-                    IconSize::LARGE,
-                    if access.api_key { t.green } else { t.dim },
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .flex()
-                        .flex_col()
-                        .gap(sp(0.5))
-                        .child("OpenAI API key")
-                        .child(ui::text(
-                            if access.api_key {
-                                "Set · every model, billed per token"
-                            } else {
-                                "None · the models your plan does not include need one"
-                            },
-                            Type::CAPTION,
-                            t.muted,
-                        )),
-                ),
-        );
+        .child(heading("Accounts", t))
+        .child(chatgpt)
+        .child(key);
 
     let limit = match models.settings.ask_above {
         Some(limit) => format!("${limit:.0} / M out"),
@@ -273,4 +258,48 @@ fn available_with(ws: &Workspace) -> &'static str {
         (true, false) => "ChatGPT",
         _ => "API key",
     }
+}
+
+/// An account: what it is, whether runs use it, and signing in or out.
+/// `action` signs out of `Some` kind, or connects one when `None`.
+#[allow(clippy::too_many_arguments)]
+fn account_row(
+    id: &'static str,
+    glyph: Icon,
+    name: &'static str,
+    status: &'static str,
+    in_use: bool,
+    action: (&'static str, Option<AccessKind>),
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> gpui::Div {
+    let (label, kind) = action;
+    div()
+        .flex()
+        .items_center()
+        .gap(sp(2.5))
+        .child(ui::icon(
+            glyph,
+            IconSize::LARGE,
+            if in_use { t.green } else { t.dim },
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .gap(sp(0.5))
+                .child(name)
+                .child(ui::text(status, Type::CAPTION, t.muted)),
+        )
+        .child(
+            div()
+                .id(id)
+                .child(ui::button(label, ButtonKind::Secondary, t))
+                .on_click(cx.listener(move |ws, _, _, cx| match kind {
+                    Some(kind) => ws.sign_out(kind, cx),
+                    None => ws.connect_model(cx),
+                })),
+        )
 }

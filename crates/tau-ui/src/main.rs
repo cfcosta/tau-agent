@@ -33,10 +33,11 @@ use gpui::{
 };
 use tau_ui::{
     Workspace,
+    accounts::Credentials,
     assets::Assets,
     catalog::Catalog,
     demo,
-    host::{self, Access, Host, HostConfig},
+    host::{self, Host, HostConfig},
     route::Route,
     setup::SetupStep,
 };
@@ -83,10 +84,17 @@ fn args() -> Args {
 
 fn main() {
     let args = args();
-    let access = if args.demo { None } else { Access::detect() };
+    let credentials = Credentials::default_dir();
+    let access = if args.demo {
+        None
+    } else {
+        credentials.access()
+    };
     let (model, root) = (args.model.clone(), args.root.clone());
+    let saved = credentials.clone();
     let config = move |access| HostConfig {
         access,
+        credentials: saved.clone(),
         model: model.clone(),
         root: root.clone(),
         store: HostConfig::default_store(),
@@ -168,6 +176,7 @@ fn main() {
                     host::onboard(
                         &workspace,
                         args.model.clone(),
+                        credentials.clone(),
                         cx,
                         move |access, cx| match Host::new(config(access)) {
                             Ok((host, events)) => {

@@ -39,6 +39,7 @@
 //! the same pattern: the workspace emits a request, the host answers
 //! with [`Workspace::update_setup`] or [`Workspace::set_pull_request`].
 
+pub mod accounts;
 pub mod assets;
 pub mod catalog;
 pub mod demo;

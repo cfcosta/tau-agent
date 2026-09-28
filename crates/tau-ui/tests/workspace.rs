@@ -287,7 +287,10 @@ fn escape_closes_an_alert_before_going_back(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
     use tau_testing::scripted::ScriptedModel;
-    use tau_ui::host::{Access, Host, HostConfig};
+    use tau_ui::{
+        accounts::{Access, Credentials},
+        host::{Host, HostConfig},
+    };
 
     let (workspace, mut cx, _) = open(cx);
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -300,6 +303,9 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         tau_agent::agent::Agent::new(ScriptedModel::new()).name("coder");
     let config = HostConfig {
         access: Access::ApiKey("sk-test".into()),
+        credentials: Credentials::new(
+            std::env::temp_dir().join("tau-unused-credentials"),
+        ),
         model: "gpt-5.5".into(),
         root: std::env::temp_dir(),
         store: std::env::temp_dir().join("unused.db"),
@@ -627,4 +633,25 @@ fn a_kept_note_goes_to_its_runs_repository(cx: &mut TestAppContext) {
         assert_eq!(ws.repo_named("tau-agent").memory.notes.len(), before + 1);
         assert_eq!(ws.repo_named("docbert").memory.notes.len(), 3);
     });
+}
+
+#[gpui::test]
+fn connecting_from_the_models_screen_comes_back_to_it(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Models, cx);
+        ws.connect_model(cx);
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
+        assert!(ws.can_go_back(), "the Models screen is a step back");
+        ws.update_setup(
+            SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
+            cx,
+        );
+        assert_eq!(ws.route(), &Route::Models);
+        ws.sign_out(tau_ui::models::AccessKind::ApiKey, cx);
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::SignOut(tau_ui::models::AccessKind::ApiKey))
+    );
 }

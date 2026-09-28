@@ -237,13 +237,27 @@ impl ModelSettings {
     }
 }
 
-/// How the host reaches models, for the picker's footer.
+/// A way to reach models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessKind {
+    /// A ChatGPT sign-in, through Codex.
+    ChatGpt,
+    /// An OpenAI API key.
+    ApiKey,
+}
+
+/// How the host reaches models, for the picker's footer and the
+/// accounts on the Models screen.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AccessInfo {
-    /// `ChatGPT (Codex)`, `OpenAI API key`.
+    /// What runs use: `ChatGPT (Codex)`, `OpenAI API key`, or empty.
     pub label: String,
+    /// Runs go through the ChatGPT sign-in.
     pub chatgpt: bool,
+    /// Runs go through the API key.
     pub api_key: bool,
+    /// What is saved, whether runs use it or not.
+    pub saved: Vec<AccessKind>,
 }
 
 /// Everything about models the interface shows.

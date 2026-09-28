@@ -11,8 +11,9 @@ use tau_agent::{
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_ui::{
-    host::{Access, Host, HostConfig},
-    models::{Effort, ModelChoice},
+    accounts::{Access, Credentials},
+    host::{Host, HostConfig},
+    models::{AccessKind, Effort, ModelChoice},
     view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
 };
 use tau_vcs::{Identity, Project};
@@ -34,6 +35,9 @@ fn host_on(
     let agent = Agent::new(llm).name("coder");
     let config = HostConfig {
         access: Access::ApiKey("sk-test".into()),
+        credentials: Credentials::new(
+            std::env::temp_dir().join("tau-unused-credentials"),
+        ),
         model: "gpt-5.5".into(),
         root: root.to_owned(),
         store: std::env::temp_dir().join("unused.db"),
@@ -339,6 +343,7 @@ fn repositories_are_listed_and_remembered() {
 fn config_on(root: &Path, data: &Path) -> HostConfig {
     HostConfig {
         access: Access::ApiKey("sk-test".into()),
+        credentials: Credentials::new(data.join("config")),
         model: "gpt-5.5".into(),
         root: root.to_owned(),
         store: data.join("runs.db"),
@@ -433,4 +438,47 @@ fn models_follow_the_sign_in_and_settings_persist() {
         );
     }
     assert!(models.access.chatgpt);
+}
+
+#[test]
+fn signing_out_runs_on_what_is_left() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let config = config_on(dir.path(), data.path());
+    let credentials = config.credentials.clone();
+    credentials.save_api_key("sk-saved").unwrap();
+    std::fs::write(
+        credentials.codex(),
+        serde_json::json!({
+            "access": "a", "refresh": "r", "expires": 0, "accountId": "x"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let access = credentials.access().unwrap();
+    let (host, _events) = Host::new(HostConfig { access, ..config }).unwrap();
+    let saved = |host: &Host| host.models().access.saved;
+    assert!(host.models().access.chatgpt);
+    assert_eq!(saved(&host), [AccessKind::ChatGpt, AccessKind::ApiKey]);
+
+    // Signing out of ChatGPT leaves the key, which runs every model.
+    let left = host.sign_out(AccessKind::ChatGpt).unwrap();
+    assert_eq!(left, Some(Access::ApiKey("sk-saved".into())));
+    assert!(!credentials.codex().exists());
+    let models = host.models();
+    assert!(models.access.api_key && !models.access.chatgpt);
+    assert_eq!(models.access.saved, [AccessKind::ApiKey]);
+    assert!(models.options.iter().all(|option| option.available));
+
+    // Nothing left: no model is available and runs do not start.
+    assert_eq!(host.sign_out(AccessKind::ApiKey).unwrap(), None);
+    assert!(saved(&host).is_empty());
+    assert!(host.models().options.iter().all(|option| !option.available));
+    let error = host.start("hi", &ModelChoice::default(), "").unwrap_err();
+    assert!(error.to_string().contains("signed out"), "{error}");
+
+    // Signing in again brings runs back.
+    host.set_access(Some(Access::ApiKey("sk-new".into())))
+        .unwrap();
+    assert!(host.models().access.api_key);
 }

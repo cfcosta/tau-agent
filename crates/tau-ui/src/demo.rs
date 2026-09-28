@@ -738,6 +738,24 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     ws.replay(id, steps, cx);
                 });
             }
+            // Signing out leaves what else is saved in use.
+            WorkspaceEvent::SignOut(kind) => {
+                let kind = *kind;
+                workspace.update(cx, |ws, cx| {
+                    let mut catalog = ws.catalog().clone();
+                    let access = &mut catalog.models.access;
+                    access.saved.retain(|saved| *saved != kind);
+                    match kind {
+                        crate::models::AccessKind::ChatGpt => {
+                            access.chatgpt = false
+                        }
+                        crate::models::AccessKind::ApiKey => {
+                            access.api_key = false
+                        }
+                    }
+                    ws.set_catalog(catalog, cx);
+                });
+            }
             // The checkout at `path` becomes a repository with no notes
             // or rules yet.
             WorkspaceEvent::AddRepo { path } => {
@@ -1150,6 +1168,7 @@ pub fn models() -> crate::models::Models {
             label: "ChatGPT Pro".into(),
             chatgpt: true,
             api_key: false,
+            saved: vec![crate::models::AccessKind::ChatGpt],
         },
         agents: vec![
             ("coder".into(), "Runs you start from the composer.".into()),

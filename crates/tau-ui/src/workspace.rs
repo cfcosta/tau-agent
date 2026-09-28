@@ -39,7 +39,7 @@ use crate::{
     assets::Icon,
     catalog::{Catalog, PluginInfo, PluginScreen},
     input::{InputEvent, TextInput},
-    models::{ModelChoice, ModelSettings},
+    models::{AccessKind, ModelChoice, ModelSettings},
     pull_request::{PrState, PullRequest},
     route::{self, Route},
     setup::{
@@ -189,6 +189,8 @@ pub enum WorkspaceEvent {
     ApiKey {
         key: String,
     },
+    /// Forget that kind of access; runs use what is left, if anything.
+    SignOut(AccessKind),
     /// Clone these repositories (`owner/name`) into tau's storage.
     CloneRepos {
         repos: Vec<String>,
@@ -304,6 +306,9 @@ pub struct Workspace {
     pub(crate) sidebar_filter: Entity<TextInput>,
     /// The dialog that adds a repository, with its path field.
     pub(crate) adding_repo: bool,
+    /// Connecting a model from the Models screen: once connected, go
+    /// back there rather than on through onboarding.
+    pub(crate) reconnecting: bool,
     pub(crate) repo_path: Entity<TextInput>,
     scroll: ScrollHandle,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
@@ -438,6 +443,7 @@ impl Workspace {
             repo_menu: None,
             sidebar_filter,
             adding_repo: false,
+            reconnecting: false,
             repo_path,
             scroll: ScrollHandle::new(),
             follow: true,
@@ -647,6 +653,9 @@ impl Workspace {
                 self.emit_open_repos(cx);
             }
             self.repo = Some(repo);
+        }
+        if !matches!(self.route, Route::Setup(_)) {
+            self.reconnecting = false;
         }
         self.repo_menu = None;
         // Comparing two branches shows their code; ask for it once.
@@ -1021,6 +1030,12 @@ impl Workspace {
             Route::Setup(SetupStep::GitHub | SetupStep::Token) if signed_in => {
                 self.navigate(Route::Setup(SetupStep::Model), cx)
             }
+            Route::Setup(SetupStep::Model)
+                if connected && self.reconnecting =>
+            {
+                self.reconnecting = false;
+                self.back(cx);
+            }
             Route::Setup(SetupStep::Model) if connected => {
                 if self.setup.repos.is_empty() {
                     self.finish_setup(cx);
@@ -1069,6 +1084,18 @@ impl Workspace {
     pub(crate) fn submit_token_from_button(&mut self, cx: &mut Context<Self>) {
         let token = self.github_token.read(cx).text().to_owned();
         self.submit_token(token, cx);
+    }
+
+    /// Opens the model step of onboarding from the Models screen, to
+    /// sign in to ChatGPT or add an API key, coming back once done.
+    pub fn connect_model(&mut self, cx: &mut Context<Self>) {
+        self.setup.model = ModelAccess::None;
+        self.reconnecting = true;
+        self.navigate(Route::Setup(SetupStep::Model), cx);
+    }
+
+    pub fn sign_out(&mut self, kind: AccessKind, cx: &mut Context<Self>) {
+        cx.emit(WorkspaceEvent::SignOut(kind));
     }
 
     pub fn sign_in_codex(&mut self, device: bool, cx: &mut Context<Self>) {

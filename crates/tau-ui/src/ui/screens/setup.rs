@@ -900,6 +900,16 @@ fn model(
         .child(codex.flex_1().min_w(px(0.)))
         .child(api.flex_1().min_w(px(0.)));
     column(960., 6., compact)
+        .when(ws.reconnecting, |col| {
+            col.child(
+                div().flex().child(
+                    div()
+                        .id("setup-back")
+                        .child(text_link("Back to Models", Type::SMALL, t))
+                        .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
+                ),
+            )
+        })
         .when_some(ws.setup.user(), |col, user| {
             col.child(
                 div()
