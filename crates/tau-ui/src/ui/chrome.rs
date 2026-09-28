@@ -516,14 +516,14 @@ fn repo_group(
         body = body.child(run_row(run, active, t, cx));
         body = body.children(run.children.iter().map(|child| {
             let (color, label) = status_look(&child.status, t);
-            let route = match child.kind {
-                ChildKind::Fork => Some(Route::Compare {
+            // A fork is a chat of its own: it opens like one.
+            let route = match (child.kind, ws.run(&child.id)) {
+                (_, Some(_)) => Some(Route::Run(child.id.clone())),
+                (ChildKind::Fork, None) => Some(Route::Compare {
                     main: run.id.clone(),
                     fork: child.id.clone(),
                 }),
-                ChildKind::SubAgent => {
-                    ws.run(&child.id).map(|_| Route::Run(child.id.clone()))
-                }
+                (ChildKind::SubAgent, None) => None,
             };
             let active = route.as_ref() == Some(&ws.route);
             div()
@@ -1031,11 +1031,7 @@ fn phone_group(
     let mut group = group.child(chips);
     for run in rows.runs {
         group = group.child(phone_run_row(run, t, cx));
-        for (route, child) in run
-            .children
-            .iter()
-            .filter_map(|child| fork_route(run, child))
-        {
+        for (route, child) in run.children.iter().filter_map(fork_route) {
             group = group.child(phone_child_row(route, child, t, cx));
         }
     }
@@ -1062,20 +1058,12 @@ fn phone_group(
     group
 }
 
-/// A phone lists a run's forks, which open their comparison.
-fn fork_route<'a>(
-    run: &RunView,
-    child: &'a crate::view::ChildRun,
-) -> Option<(Route, &'a crate::view::ChildRun)> {
-    (child.kind == ChildKind::Fork).then(|| {
-        (
-            Route::Compare {
-                main: run.id.clone(),
-                fork: child.id.clone(),
-            },
-            child,
-        )
-    })
+/// A phone lists a run's forks, which open as chats of their own.
+fn fork_route(
+    child: &crate::view::ChildRun,
+) -> Option<(Route, &crate::view::ChildRun)> {
+    (child.kind == ChildKind::Fork)
+        .then(|| (Route::Run(child.id.clone()), child))
 }
 
 fn phone_run_row(

@@ -930,3 +930,42 @@ fn a_running_run_does_not_resume() {
         running.cancel();
     });
 }
+
+/// A fork told where it forks counts its turns on from there, and so
+/// does the store: resuming the fork later keeps counting.
+#[test]
+fn a_fork_counts_turns_from_its_fork_point() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("one"))
+        .turn(|t| t.text("fork"))
+        .turn(|t| t.text("more"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm);
+        let base = agent.run("start", &store).await.unwrap();
+        let mut fork = agent
+            .fork(&base.checkpoint())
+            .after_turn(1)
+            .start("instead", &store);
+        let mut turns = Vec::new();
+        while let Some(event) = fork.events().next().await {
+            if let RunEvent::TurnStart { turn, .. } = event {
+                turns.push(turn);
+            }
+        }
+        let fork = fork.outcome().await.unwrap();
+        assert_eq!(turns, [2]);
+        let record = store.run(&fork.run.0).await.unwrap().unwrap();
+        assert_eq!(record.turns, 2, "inherited and own");
+
+        let mut more = agent.resume(&fork.run).start("more", &store);
+        let mut turns = Vec::new();
+        while let Some(event) = more.events().next().await {
+            if let RunEvent::TurnStart { turn, .. } = event {
+                turns.push(turn);
+            }
+        }
+        more.outcome().await.unwrap();
+        assert_eq!(turns, [3]);
+    });
+}

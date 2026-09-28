@@ -229,6 +229,7 @@ fn store_matches_model_body(tc: TestCase) {
                             agent,
                             kind: kind.clone(),
                             model: "gpt-5.5",
+                            turns: 0,
                         })
                         .await
                         .unwrap();
@@ -383,6 +384,7 @@ fn file_store_survives_reopen() {
                     agent: "a",
                     kind: RunKind::Root,
                     model: "m",
+                    turns: 0,
                 })
                 .await
                 .unwrap();
@@ -439,6 +441,7 @@ fn large_token_counts_add_exactly() {
                 agent: "a",
                 kind: RunKind::Root,
                 model: "m",
+                turns: 0,
             })
             .await
             .unwrap();
@@ -464,6 +467,7 @@ fn new_run(id: &str) -> NewRun<'_> {
         agent: "a",
         kind: RunKind::Root,
         model: "m",
+        turns: 0,
     }
 }
 
@@ -559,6 +563,7 @@ fn recent_runs_skip_subagents() {
                     agent: "coder",
                     kind,
                     model: "m",
+                    turns: 0,
                 })
                 .await
                 .unwrap();
@@ -591,6 +596,7 @@ fn plugin_entries_carry_their_seq() {
                 agent: "coder",
                 kind: RunKind::Root,
                 model: "m",
+                turns: 0,
             })
             .await
             .unwrap();

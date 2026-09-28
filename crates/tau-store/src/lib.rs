@@ -68,6 +68,8 @@ pub struct NewRun<'a> {
     pub agent: &'a str,
     pub kind: RunKind,
     pub model: &'a str,
+    /// Turns the run starts after: a fork's, inherited from its parent.
+    pub turns: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -278,8 +280,8 @@ impl Store {
         };
         sqlx::query!(
             "INSERT INTO runs (id, workflow_id, agent, kind, parent_run_id, fork_seq,
-                               model, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running',
+                               model, status, turns, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8,
                      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
             run.id,
@@ -289,6 +291,7 @@ impl Store {
             parent,
             fork_seq,
             run.model,
+            run.turns,
         )
         .execute(&mut *self.writer().await?)
         .await?;

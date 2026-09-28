@@ -252,6 +252,22 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         [(DiffKind::Removed, "two"), (DiffKind::Added, "one")]
     );
 
+    // Forking the fork at a turn it inherited forks the run that took
+    // that turn, with the same conversation and code.
+    let again = host
+        .fork(&fork.id, Some(1), "a third way", &ModelChoice::default())
+        .unwrap();
+    assert_eq!(
+        again.origin,
+        Origin::Fork {
+            from: main.id.clone(),
+            turn: 1
+        }
+    );
+    host.cancel(&again.id);
+    until_end(&mut events);
+    wait_until_done(&host, &again.id);
+
     // Keeping the fork drops the main run's workspace, not its commits.
     host.keep_branch(&fork.id).unwrap();
     assert!(!main_dir.exists());

@@ -227,6 +227,14 @@ pub enum WorkspaceEvent {
     },
 }
 
+/// `run`'s transcript up to the end of `turn`, for a fork after it.
+fn inherited_items(run: &RunView, turn: u32) -> Vec<crate::view::Item> {
+    let end = run.items.iter().position(|item| {
+        matches!(item, crate::view::Item::TurnEnd { turn: t } if *t == turn)
+    });
+    end.map_or_else(Vec::new, |end| run.items[..=end].to_vec())
+}
+
 /// What an onboarding step opened from the app is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupGoal {
@@ -515,8 +523,16 @@ impl Workspace {
 
     /// Adds a run at the top of the list and opens it. A fork is listed
     /// under the run it came from, too.
-    pub fn push_run(&mut self, run: RunView, cx: &mut Context<Self>) {
+    pub fn push_run(&mut self, mut run: RunView, cx: &mut Context<Self>) {
         let id = run.id.clone();
+        // A fork is the conversation up to its turn, then its own.
+        if let Origin::Fork { from, turn } = &run.origin
+            && let Some(parent) = self.run(from)
+        {
+            let inherited = inherited_items(parent, *turn);
+            run.items.splice(0..0, inherited);
+            run.turn = run.turn.max(*turn);
+        }
         if let Origin::Fork { from, .. } = &run.origin
             && let Some(parent) =
                 self.runs.iter_mut().find(|view| &view.id == from)
@@ -1596,11 +1612,16 @@ impl Workspace {
                 run.children
                     .iter()
                     .find(|child| child.kind == ChildKind::Fork)
-                    .map(|fork| {
-                        let route = Route::Compare {
-                            main: run.id.clone(),
-                            fork: fork.id.clone(),
-                        };
+                    .map(|fork| (run.id.clone(), fork.id.clone()))
+                    // A fork compares with the run it came from.
+                    .or_else(|| match &run.origin {
+                        Origin::Fork { from, .. } => {
+                            Some((from.clone(), run.id.clone()))
+                        }
+                        _ => None,
+                    })
+                    .map(|(main, fork)| {
+                        let route = Route::Compare { main, fork };
                         div()
                             .id("compare")
                             .child(ui::button(

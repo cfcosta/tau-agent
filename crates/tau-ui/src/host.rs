@@ -938,24 +938,52 @@ impl Host {
                 repo.path.display()
             );
         }
-        let (seq, link) = self.link(run, turn)?.ok_or_else(|| match turn {
-            Some(turn) => {
-                anyhow::anyhow!("Turn {turn} has no commit to fork from")
-            }
-            None => {
-                anyhow::anyhow!("The run has no finished turn to fork from yet")
-            }
-        })?;
+        let (source, seq, link) =
+            self.fork_point(run, turn)?.ok_or_else(|| match turn {
+                Some(turn) => {
+                    anyhow::anyhow!("Turn {turn} has no commit to fork from")
+                }
+                None => anyhow::anyhow!(
+                    "The run has no finished turn to fork from yet"
+                ),
+            })?;
         let (agent, workspace) = self.agent_for_run(choice, &repo, None)?;
         let _guard = self.runtime.enter();
         let forked = agent
-            .fork(&Checkpoint::at(run.clone(), seq))
+            .fork(&Checkpoint::at(source.clone(), seq))
+            .after_turn(link.turn)
             .start(prompt, &self.store);
         let id = self.track(forked, workspace, choice, &repo.name);
         Ok(self.view(id, prompt).with_origin(Origin::Fork {
-            from: run.clone(),
+            from: source,
             turn: link.turn,
         }))
+    }
+
+    /// Where forking `run` after `turn` starts: the run that took the
+    /// turn, which for a turn a fork inherited is an ancestor, with the
+    /// `seq` and link of that turn.
+    fn fork_point(
+        &self,
+        run: &RunId,
+        turn: Option<u32>,
+    ) -> anyhow::Result<Option<(RunId, i64, Link)>> {
+        let mut run = run.clone();
+        loop {
+            if let Some((seq, link)) = self.link(&run, turn)? {
+                return Ok(Some((run, seq, link)));
+            }
+            if turn.is_none() {
+                return Ok(None);
+            }
+            let record = self.runtime.block_on(self.store.run(&run.0))?;
+            match record.map(|record| record.kind) {
+                Some(RunKind::Fork { parent, .. }) => {
+                    run = RunId(parent.into());
+                }
+                _ => return Ok(None),
+            }
+        }
     }
 
     /// Goes on with `run`, a finished chat, on `prompt`: the same run,

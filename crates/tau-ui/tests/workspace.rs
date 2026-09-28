@@ -269,6 +269,29 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
         )));
         let parent = ws.run(&run).unwrap();
         assert!(parent.children.iter().any(|child| child.id == fork.id));
+        // The fork keeps the conversation up to turn 2, then its own.
+        let users: Vec<&str> = fork
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::User(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(users.len(), 2, "{users:?}");
+        assert_eq!(users[1], "double the delay instead");
+        assert!(matches!(fork.items.first(), Some(Item::User(_))));
+        // Its turns count on from the fork point, without repeats.
+        let turns: Vec<u32> = fork
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::TurnEnd { turn } => Some(*turn),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(&turns[..3], [1, 2, 3], "{turns:?}");
+        assert!(turns.windows(2).all(|pair| pair[0] < pair[1]), "{turns:?}");
     });
 }
 

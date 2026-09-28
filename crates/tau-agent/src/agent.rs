@@ -393,6 +393,7 @@ impl Agent {
         Forked {
             agent: self.clone(),
             from: checkpoint.clone(),
+            after_turn: 0,
         }
     }
 
@@ -473,9 +474,18 @@ impl Agent {
 pub struct Forked {
     agent: Agent,
     from: Checkpoint,
+    after_turn: u32,
 }
 
 impl Forked {
+    /// The checkpoint ends the parent's `turn`th turn: the fork's turns
+    /// count on from it, as the conversation does. Without it they count
+    /// from 1.
+    pub fn after_turn(mut self, turn: u32) -> Self {
+        self.after_turn = turn;
+        self
+    }
+
     /// Starts the fork on `input`. Unless the input names a workflow,
     /// the fork joins the workflow of the run it forks from.
     pub fn start(&self, input: impl Into<Input>, store: &Store) -> Run {
@@ -519,6 +529,7 @@ impl Forked {
             fork_seq: self.from.seq,
         };
         launch.inherit_workflow = input.workflow.is_none();
+        launch.turns_before = self.after_turn;
         launch
     }
 }
@@ -591,6 +602,7 @@ impl AgentTool for SubAgent {
             inherit_workflow: false,
             events: Events::Forward(scope.events.clone()),
             resume: None,
+            turns_before: 0,
         };
         let outcome = self
             .agent
@@ -634,6 +646,8 @@ struct Launch {
     events: Events,
     /// Go on with this stored run instead of starting a new one.
     resume: Option<RunId>,
+    /// Turns a new run starts after: a fork's, from its parent.
+    turns_before: u32,
 }
 
 /// Where a run's events go.
@@ -656,6 +670,7 @@ impl Launch {
             inherit_workflow: false,
             events: Events::Own,
             resume: None,
+            turns_before: 0,
         }
     }
 }
@@ -771,13 +786,14 @@ async fn run_task(
                 agent: &agent.0.name,
                 kind: launch.kind.clone(),
                 model: &agent.0.model,
+                turns: i64::from(launch.turns_before),
             })
             .await
             .map_err(AgentError::Store)?,
     }
-    let turns_before = resumed
-        .as_ref()
-        .map_or(0, |record| u32::try_from(record.turns).unwrap_or(u32::MAX));
+    let turns_before = resumed.as_ref().map_or(launch.turns_before, |record| {
+        u32::try_from(record.turns).unwrap_or(u32::MAX)
+    });
     let workflow: Option<Arc<str>> = workflow.map(Into::into);
 
     let shared = RunShared {
