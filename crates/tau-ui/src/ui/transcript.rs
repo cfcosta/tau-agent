@@ -171,11 +171,51 @@ fn item_view(
 }
 
 fn user(text: &str, t: &Theme, compact: bool) -> Div {
+    // Attached files show as their names, not their content.
+    let (said, files) = split_attachments(text);
     div().flex().justify_end().child(
         super::bubble(t)
             .max_w(px(if compact { 300. } else { 620. }))
-            .child(rich(text, t.text, t)),
+            .flex()
+            .flex_col()
+            .gap(sp(2.))
+            .child(rich(said, t.text, t))
+            .when(!files.is_empty(), |bubble| {
+                bubble.child(div().flex().flex_wrap().gap(sp(1.5)).children(
+                    files.into_iter().map(|name| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(sp(1.))
+                            .typeset(Type::CAPTION)
+                            .text_color(t.text_soft)
+                            .child(icon(
+                                Icon::Paperclip,
+                                IconSize::SMALL,
+                                t.muted,
+                            ))
+                            .child(name.to_owned())
+                    }),
+                ))
+            }),
     )
+}
+
+/// A message's own words, and the names of the files attached after
+/// them.
+fn split_attachments(text: &str) -> (&str, Vec<&str>) {
+    const MARK: &str = "\n\n<attached file=\"";
+    let Some(start) = text.find(MARK) else {
+        return (text, Vec::new());
+    };
+    let names = text[start..]
+        .match_indices("<attached file=\"")
+        .filter_map(|(at, open)| {
+            let rest = &text[start + at + open.len()..];
+            rest.find('"').map(|end| &rest[..end])
+        })
+        .collect();
+    (&text[..start], names)
 }
 
 /// Where one turn ends. Nothing shows there; on a desktop, hovering the
@@ -1002,4 +1042,16 @@ fn rewrite(
                      then turns are deltas again.",
                 ),
         )
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::split_attachments;
+
+    #[test]
+    fn attached_files_are_named_not_shown() {
+        let text = "use them\n\n<attached file=\"a.md\">\nA\n</attached>\n\n<attached file=\"b.rs\">\nB\n</attached>";
+        assert_eq!(split_attachments(text), ("use them", vec!["a.md", "b.rs"]));
+        assert_eq!(split_attachments("plain"), ("plain", vec![]));
+    }
 }

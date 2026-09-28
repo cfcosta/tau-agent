@@ -331,6 +331,8 @@ pub struct Workspace {
     /// History's query box, and what the last query returned.
     pub(crate) query: Entity<TextInput>,
     pub(crate) query_result: Option<Result<tau_store::Table, String>>,
+    /// Files attached to the next message.
+    pub(crate) attachments: Vec<crate::attach::Attachment>,
     /// The search palette, and what is typed in it.
     pub(crate) searching: bool,
     pub(crate) search: Entity<TextInput>,
@@ -554,6 +556,7 @@ impl Workspace {
             query_result: None,
             searching: false,
             search,
+            attachments: Vec::new(),
             memory_search,
             tab: Tab::Run,
             sheet_open: false,
@@ -1148,6 +1151,7 @@ impl Workspace {
     }
 
     fn submit(&mut self, text: String, cx: &mut Context<Self>) {
+        let text = self.with_attachments(text);
         if let Some((run, turn)) = self.forking.take() {
             cx.emit(WorkspaceEvent::Fork {
                 run,
@@ -2130,6 +2134,34 @@ impl Workspace {
                 )
             })
             .when_some(self.fork_banner(t, cx), |bar, banner| bar.child(banner))
+            .when(!self.attachments.is_empty(), |bar| {
+                bar.child(
+                    div().flex().flex_wrap().gap(sp(1.5)).children(
+                        self.attachments.iter().enumerate().map(|(n, file)| {
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(sp(1.5))
+                                .px(sp(2.))
+                                .py(sp(1.))
+                                .rounded(radius::CONTROL)
+                                .bg(t.raised)
+                                .typeset(Type::CAPTION)
+                                .child(ui::icon(Icon::Paperclip, IconSize::SMALL, t.muted))
+                                .child(file.name.clone())
+                                .child(
+                                    div()
+                                        .id(("detach", n))
+                                        .cursor_pointer()
+                                        .child(ui::icon(Icon::Close, IconSize::SMALL, t.dim))
+                                        .on_click(cx.listener(move |ws, _, _, cx| {
+                                            ws.remove_attachment(n, cx)
+                                        })),
+                                )
+                        }),
+                    ),
+                )
+            })
             .when_some(queued, |bar, text| {
                 bar.child(
                     div()
@@ -2186,7 +2218,15 @@ impl Workspace {
                             .rounded(if compact { radius::FULL } else { radius::LARGE })
                             .bg(t.panel)
                             .when(!compact, |field| {
-                                field.child(ui::icon(Icon::Paperclip, IconSize::BASE, t.muted))
+                                field.child(
+                                    div()
+                                        .id("attach")
+                                        .cursor_pointer()
+                                        .child(ui::icon(Icon::Paperclip, IconSize::BASE, t.muted))
+                                        .on_click(cx.listener(|ws, _, _, cx| {
+                                            ws.pick_attachments(cx)
+                                        })),
+                                )
                             })
                             .child(self.composer.clone())
                             .when(!compact, |field| {

@@ -1043,3 +1043,36 @@ fn search_finds_runs_repositories_and_actions(cx: &mut TestAppContext) {
         assert_eq!(ws.selected_repo(), Some("homelab.nix"));
     });
 }
+
+#[gpui::test]
+fn attached_files_go_with_the_next_message(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let notes = dir.path().join("notes.md");
+    std::fs::write(&notes, "the retry budget is 3\n").unwrap();
+    let binary = dir.path().join("blob.bin");
+    std::fs::write(&binary, [0xff, 0xfe, 0x00]).unwrap();
+    let (workspace, mut cx, events) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::NewRun, cx);
+        ws.attach_path(&notes, cx);
+        assert_eq!(ws.attachments().len(), 1);
+        // A file that is not text is refused, saying why.
+        ws.attach_path(&binary, cx);
+        assert_eq!(ws.attachments().len(), 1);
+        assert!(ws.alert().unwrap().1.contains("not text"));
+        ws.submit_prompt("use the notes".into(), cx);
+        assert!(ws.attachments().is_empty(), "they went with the message");
+    });
+    let Some(WorkspaceEvent::NewRun { prompt, .. }) =
+        events.borrow().last().cloned()
+    else {
+        panic!("a new run")
+    };
+    assert!(prompt.starts_with("use the notes"));
+    assert!(
+        prompt.contains(
+            "<attached file=\"notes.md\">\nthe retry budget is 3\n</attached>"
+        ),
+        "{prompt}"
+    );
+}

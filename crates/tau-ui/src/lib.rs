@@ -41,6 +41,7 @@
 
 pub mod accounts;
 pub mod assets;
+pub mod attach;
 pub mod catalog;
 pub mod demo;
 pub mod github;
