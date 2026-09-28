@@ -684,11 +684,34 @@ impl Workspace {
         }
     }
 
+    /// Whether a fork can start after `turn` of `run`: the turn has
+    /// ended.
+    pub fn can_fork_at(run: &RunView, turn: u32) -> bool {
+        turn >= 1 && turn <= Self::last_fork_turn(run)
+    }
+
     /// Puts the composer in fork mode: the next message starts a fork of
     /// the current run, after its latest finished turn.
     pub fn start_fork(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(run) = self.current() else { return };
         let (id, turn) = (run.id.clone(), Self::last_fork_turn(run).max(1));
+        self.fork_from(&id, turn, window, cx);
+    }
+
+    /// Puts the composer in fork mode for a fork of `run` after `turn`,
+    /// as the transcript's "Fork from here" does.
+    pub fn fork_from(
+        &mut self,
+        run: &RunId,
+        turn: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(run) = self.run(run) else { return };
+        let (id, turn) = (
+            run.id.clone(),
+            turn.clamp(1, Self::last_fork_turn(run).max(1)),
+        );
         if !matches!(self.route, Route::Run(_) | Route::Home) {
             self.navigate(Route::Run(id.clone()), cx);
         }

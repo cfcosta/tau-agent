@@ -157,6 +157,10 @@ pub enum Item {
         delay: Duration,
         error: String,
     },
+    /// A turn ended here: the point a fork can start from.
+    TurnEnd {
+        turn: u32,
+    },
     /// The run ended.
     Stop {
         stop: StopReason,
@@ -505,6 +509,11 @@ impl RunView {
                     view.push_user(text);
                 }
                 Message::Assistant(reply) => {
+                    // A turn is a reply and the results of its calls; the
+                    // next reply starts the next one.
+                    if view.turn > 0 {
+                        view.items.push(Item::TurnEnd { turn: view.turn });
+                    }
                     view.turn += 1;
                     view.add_usage(&reply.usage);
                     for block in &reply.content {
@@ -545,6 +554,9 @@ impl RunView {
                     }
                 }
             }
+        }
+        if view.turn > 0 {
+            view.items.push(Item::TurnEnd { turn: view.turn });
         }
         view
     }
@@ -812,6 +824,7 @@ impl RunView {
             RunEvent::TurnEnd { turn, usage, .. } => {
                 self.turn = *turn;
                 self.add_usage(usage);
+                self.items.push(Item::TurnEnd { turn: *turn });
             }
             RunEvent::ContextRewritten {
                 plugin,
@@ -1372,5 +1385,54 @@ mod tests {
         assert_eq!(usd(0.184), "$0.184");
         assert_eq!(usd(2.0), "$2.00");
         assert_eq!(clock(Duration::from_secs(192)), "3:12");
+    }
+
+    #[test]
+    fn turns_end_with_a_marker_to_fork_from() {
+        let mut view = view();
+        view.apply(&RunEvent::TurnEnd {
+            run: run(),
+            turn: 1,
+            usage: Usage::default(),
+        });
+        assert_eq!(view.items.last(), Some(&Item::TurnEnd { turn: 1 }));
+    }
+
+    #[test]
+    fn stored_runs_get_a_marker_after_each_turn() {
+        let user: Message = serde_json::from_value(json!({
+            "role": "user", "content": "go", "timestamp": 0
+        }))
+        .unwrap();
+        let reply = |text: &str| -> Message {
+            serde_json::from_value(json!({
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}],
+                "api": "responses", "provider": "openai", "model": "m",
+                "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
+                          "totalTokens": 0,
+                          "cost": {"input": 0, "output": 0, "cacheRead": 0,
+                                   "cacheWrite": 0, "total": 0}},
+                "stopReason": "stop", "timestamp": 0
+            }))
+            .unwrap()
+        };
+        let view = RunView::from_messages(
+            run(),
+            "t",
+            "a",
+            "m",
+            &[user, reply("one"), reply("two")],
+        );
+        let markers: Vec<u32> = view
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::TurnEnd { turn } => Some(*turn),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(markers, [1, 2]);
+        assert_eq!(view.turn, 2);
     }
 }

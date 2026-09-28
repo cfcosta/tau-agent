@@ -77,6 +77,9 @@ fn item_view(
             .child(rich(text, t.text_soft, t))
             .into_any_element(),
         Item::Thinking(text) => thinking(text, t).into_any_element(),
+        Item::TurnEnd { turn } => {
+            turn_end(run, *turn, t, compact, cx).into_any_element()
+        }
         Item::Tool(card) => {
             tool(ws, run, card, t, compact, cx).into_any_element()
         }
@@ -167,6 +170,43 @@ fn user(text: &str, t: &Theme, compact: bool) -> Div {
             .max_w(px(if compact { 300. } else { 620. }))
             .child(rich(text, t.text, t)),
     )
+}
+
+/// Where a turn ended: a quiet rule with the turn's number, and a way to
+/// fork the run from here, shown on hover (always on a phone, which has
+/// no hover).
+fn turn_end(
+    run: &RunView,
+    turn: u32,
+    t: &Theme,
+    compact: bool,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let group = SharedString::from(format!("turn-{turn}"));
+    let forkable = Workspace::can_fork_at(run, turn);
+    let id = run.id.clone();
+    div()
+        .group(group.clone())
+        .flex()
+        .items_center()
+        .gap(sp(2.))
+        .h(px(16.))
+        .child(div().flex_1().h(px(1.)).bg(t.border).opacity(0.5))
+        .child(mono(format!("turn {turn}"), Type::MICRO, t.dim))
+        .when(forkable, |row| {
+            row.child(
+                div()
+                    .id(SharedString::from(format!("fork-at-{turn}")))
+                    .when(!compact, |link| {
+                        link.opacity(0.)
+                            .group_hover(group, |style| style.opacity(1.))
+                    })
+                    .child(link("Fork from here", t))
+                    .on_click(cx.listener(move |ws, _, window, cx| {
+                        ws.fork_from(&id, turn, window, cx)
+                    })),
+            )
+        })
 }
 
 fn thinking(text: &str, t: &Theme) -> Div {

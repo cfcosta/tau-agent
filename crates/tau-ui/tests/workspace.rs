@@ -196,3 +196,32 @@ fn comparing_asks_for_the_code_once(cx: &mut TestAppContext) {
         ));
     });
 }
+
+#[gpui::test]
+fn forking_from_a_turn_sends_that_turn(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open(cx);
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        for (_, update) in demo::script() {
+            ws.update_run(&run, update, cx);
+        }
+    });
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.fork_from(&run, 2, window, cx);
+        ws.submit_prompt("go another way".into(), cx);
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::Fork {
+            run: run.clone(),
+            turn: Some(2),
+            prompt: "go another way".into(),
+        })
+    );
+    workspace.read_with(&cx, |ws, _| {
+        let view = ws.run(&run).unwrap();
+        assert!(tau_ui::Workspace::can_fork_at(view, 2));
+        assert!(!tau_ui::Workspace::can_fork_at(view, 0));
+        assert!(!tau_ui::Workspace::can_fork_at(view, view.turn + 1));
+    });
+}
