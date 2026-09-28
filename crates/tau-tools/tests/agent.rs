@@ -1,6 +1,6 @@
-//! The tools inside a run: an agent built with `coding_tools` writes,
-//! edits, reads, searches and runs a command in a real directory, with
-//! `ScriptedModel` choosing the calls.
+//! The tools inside a run: an agent with the `CodingTools` plugin
+//! writes, edits, reads, searches and runs a command in a real
+//! directory, with `ScriptedModel` choosing the calls.
 
 #![cfg(unix)]
 
@@ -9,7 +9,11 @@ use tau_agent::agent::Agent;
 use tau_ai::message::{InputBlock, Message};
 use tau_store::{Entry, Store};
 use tau_testing::scripted::ScriptedModel;
-use tau_tools::{coding_tools, path::Root};
+use tau_tools::{
+    coding_tools,
+    path::Root,
+    plugin::{CodingTools, Tool},
+};
 
 /// Every tool is offered to the model in strict or plain form, each
 /// call runs against the root, and each result lands in the transcript
@@ -41,7 +45,7 @@ fn a_run_uses_every_tool() {
         .block_on(async {
             let store = Store::memory().await.unwrap();
             let outcome = Agent::new(llm.clone())
-                .tools(coding_tools(&Root::new(dir.path())))
+                .plugin(CodingTools::new(Root::new(dir.path())))
                 .run("edit the notes", &store)
                 .await
                 .unwrap();
@@ -106,4 +110,35 @@ fn a_run_uses_every_tool() {
         assert!(!is_error, "{name}: {text}");
         assert!(text.contains(want_text), "{name}: {text}");
     }
+}
+
+fn tool_names(
+    tools: &[std::sync::Arc<dyn tau_agent::tool::AgentTool>],
+) -> Vec<&str> {
+    tools.iter().map(|tool| tool.name()).collect()
+}
+
+/// `coding_tools` and the plugin offer the same seven tools, in pi's
+/// order; `only` and `without` pick a subset, and the order stays pi's
+/// whatever order the subset was named in.
+#[test]
+fn the_plugin_picks_tools_in_pis_order() {
+    use tau_agent::plugin::Plugin;
+    let root = Root::new("/tmp");
+    let all = CodingTools::new(root.clone());
+    assert_eq!(all.name(), "coding-tools");
+    assert_eq!(tool_names(&all.tools()), tool_names(&coding_tools(&root)));
+    assert_eq!(tool_names(&all.tools()), Tool::ALL.map(Tool::name).to_vec());
+    let picked = CodingTools::new(root.clone()).only(&[
+        Tool::Ls,
+        Tool::Read,
+        Tool::Grep,
+    ]);
+    assert_eq!(picked.selected(), [Tool::Read, Tool::Grep, Tool::Ls]);
+    assert_eq!(tool_names(&picked.tools()), ["read", "grep", "ls"]);
+    let no_shell = CodingTools::new(root).without(Tool::Bash);
+    assert_eq!(
+        tool_names(&no_shell.tools()),
+        ["read", "edit", "write", "grep", "find", "ls"]
+    );
 }

@@ -337,16 +337,19 @@ that runs after any other context plugin, and a
 directory, and relative paths resolve against it.
 
 ```rust
-use tau_tools::{coding_tools, path::Root};
+use tau_tools::{path::Root, plugin::{CodingTools, Tool}};
 
 let coder = Agent::new(OpenAi::from_env()?)
     .name("coder")
-    .tools(coding_tools(&Root::new("/path/to/repo")));
+    .plugin(CodingTools::new(Root::new("/path/to/repo")));
+
+// Or a subset: `.only(&[Tool::Read, Tool::Grep])`, `.without(Tool::Bash)`.
 ```
 
-`bash`, and so `coding_tools`, is Unix-only. The search tools run
-in-process: no `rg` or `fd` binary is needed. To pick a subset, build
-them one by one, for example `tau_tools::read::Read::new(root.clone())`.
+`CodingTools` is a plugin that only adds tools; `tau_tools::coding_tools`
+returns the same seven for `Agent::tools`. `bash`, and so both, is
+Unix-only. The search tools run in-process: no `rg` or `fd` binary is
+needed.
 
 The root sets where relative paths go. It is not a sandbox: absolute
 paths and `bash` can reach the rest of the machine. Use a hook to limit

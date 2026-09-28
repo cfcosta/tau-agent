@@ -24,8 +24,10 @@ The truncation helpers:
 A tool that fails returns `Err`, and the loop marks the result
 `is_error`. Every tool takes a root directory (`tau_tools::path::Root`)
 at construction, and all paths resolve against it.
-`tau_tools::coding_tools(&root)` returns all seven, for
-`Agent::tools`. `bash`, and so `coding_tools`, is unix-only.
+`tau_tools::plugin::CodingTools::new(root)` adds all seven to an agent
+as a plugin (`Agent::plugin`); `only` and `without` pick a subset, which
+keeps pi's order. `tau_tools::coding_tools(&root)` returns the same
+seven, for `Agent::tools`. `bash`, and so both, is unix-only.
 
 ## read: `{ path, offset?, limit? }`
 
