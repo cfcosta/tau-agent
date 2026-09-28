@@ -388,3 +388,85 @@ fn the_real_jev_tells_a_broken_rule_from_a_kept_one() {
     );
     assert_eq!(writes, 1);
 }
+
+#[test]
+fn a_rule_is_edited_in_place() {
+    let mut rules = Constitution::parse(RULES).unwrap();
+    rules
+        .replace(
+            "R2",
+            "No unwrap anywhere.",
+            &["edit.newText".into()],
+            0.2,
+            0.6,
+        )
+        .unwrap();
+    let r2 = &rules.rules[0];
+    assert_eq!(
+        (r2.id.as_str(), r2.text.as_str()),
+        ("R2", "No unwrap anywhere.")
+    );
+    assert_eq!((r2.review, r2.block), (0.2, 0.6));
+    assert_eq!(rules.rules[1].id, "R6", "the order stays");
+    // Checked like a file: thresholds in order, somewhere to apply.
+    assert!(rules.replace("R2", "x", &[], 0.2, 0.6).is_err());
+    assert!(
+        rules
+            .replace("R2", "x", &["edit.newText".into()], 0.9, 0.6)
+            .is_err()
+    );
+    assert!(
+        rules
+            .replace("R9", "x", &["edit.newText".into()], 0.2, 0.6)
+            .is_err()
+    );
+    // The round trip keeps it.
+    let again = Constitution::parse(&rules.to_toml()).unwrap();
+    assert_eq!(again, rules);
+}
+
+#[test]
+fn a_rule_is_tried_on_what_a_check_would_show() {
+    let rules = Constitution::parse(RULES).unwrap();
+    let jev = FakeJev::nouls(|_| 0.9);
+    let calls = vec![
+        ("write".to_owned(), write("x.unwrap()")),
+        // Not about write.content: skipped.
+        ("bash".to_owned(), json!({ "command": "ls" })),
+        ("write".to_owned(), write("Ok(x)")),
+    ];
+    let answers = vec!["Done.".to_owned()];
+    let (trials, cost) = block_on(tau_constitution::try_rule(
+        &jev,
+        &rules.rules[0],
+        &calls,
+        &answers,
+    ))
+    .unwrap();
+    // R2 is on write.content, not the final answer.
+    let shown: Vec<&str> = trials.iter().map(|t| t.shown.as_str()).collect();
+    assert_eq!(shown, ["x.unwrap()", "Ok(x)"]);
+    assert!(trials.iter().all(|t| t.tool.as_deref() == Some("write")));
+    assert!(cost > 0.0);
+    // Jev saw what the check sees: the tool and the field, nothing else.
+    let requests = jev.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].state,
+        json!({ "tool": "write", "arguments": { "content": "x.unwrap()" } })
+    );
+
+    // A final-answer rule tries the answers.
+    let (trials, _) = block_on(tau_constitution::try_rule(
+        &jev,
+        &rules.rules[1],
+        &calls,
+        &answers,
+    ))
+    .unwrap();
+    assert_eq!(trials.len(), 1);
+    assert_eq!(
+        (trials[0].tool.as_deref(), trials[0].shown.as_str()),
+        (None, "Done.")
+    );
+}

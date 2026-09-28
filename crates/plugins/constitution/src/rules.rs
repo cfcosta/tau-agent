@@ -203,6 +203,31 @@ impl Constitution {
         Ok(id)
     }
 
+    /// Rewrites the rule `id` in place: same id, same position, checked
+    /// like one read from a file.
+    pub fn replace(
+        &mut self,
+        id: &str,
+        text: &str,
+        on: &[String],
+        review: f64,
+        block: f64,
+    ) -> anyhow::Result<()> {
+        let at = self
+            .rules
+            .iter()
+            .position(|rule| rule.id == id)
+            .with_context(|| format!("There is no rule {id}"))?;
+        self.rules[at] = checked(RuleFile {
+            id: id.to_owned(),
+            text: text.to_owned(),
+            on: on.to_vec(),
+            review: Some(review),
+            block: Some(block),
+        })?;
+        Ok(())
+    }
+
     /// Removes the rule `id`. Returns whether there was one.
     pub fn remove(&mut self, id: &str) -> bool {
         let before = self.rules.len();

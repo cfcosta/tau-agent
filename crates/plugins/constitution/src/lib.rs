@@ -190,27 +190,7 @@ impl Checks {
     ) -> Result<Vec<f64>, String> {
         let mut request = Request::new(state);
         for (n, (rule, what)) in rules.iter().enumerate() {
-            request = request.question(
-                question_id(n),
-                Question::Noul {
-                    instructions: format!(
-                        "Does {what} break this rule? Judge only what is \
-                         shown.\n\nRule {}: {}",
-                        rule.id, rule.text
-                    )
-                    .into(),
-                    criteria: Some(NoulCriteria {
-                        yes: Some(format!("{what} breaks the rule.").into()),
-                        no: Some(
-                            format!(
-                                "{what} follows the rule, or the rule is not \
-                                 about it."
-                            )
-                            .into(),
-                        ),
-                    }),
-                },
-            );
+            request = request.question(question_id(n), question(rule, what));
         }
         let response =
             self.jev.ask(&request).await.map_err(|e| e.to_string())?;
@@ -249,6 +229,101 @@ impl Checks {
 
 fn question_id(n: usize) -> String {
     format!("rule-{n}")
+}
+
+/// The question a check asks about `rule` on `what` (such as "the
+/// `command` of this `bash` call").
+fn question(rule: &Rule, what: &str) -> Question {
+    Question::Noul {
+        instructions: format!(
+            "Does {what} break this rule? Judge only what is shown.\n\n\
+             Rule {}: {}",
+            rule.id, rule.text
+        )
+        .into(),
+        criteria: Some(NoulCriteria {
+            yes: Some(format!("{what} breaks the rule.").into()),
+            no: Some(
+                format!(
+                    "{what} follows the rule, or the rule is not about it."
+                )
+                .into(),
+            ),
+        }),
+    }
+}
+
+/// What a call's check shows Jev, and what the question calls it.
+fn call_state(tool: &str, fields: &Map<String, Value>) -> (Value, String) {
+    let names: Vec<&str> = fields.keys().map(String::as_str).collect();
+    (
+        json!({ "tool": tool, "arguments": fields }),
+        format!("the `{}` of this `{tool}` call", names.join("` and `")),
+    )
+}
+
+/// Something a rule was tried on, and Jev's probability that it breaks
+/// the rule.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Trial {
+    /// The tool, or `None` for a final answer.
+    pub tool: Option<String>,
+    /// What the rule reads of it: the fields' values, or the answer.
+    pub shown: String,
+    pub score: f64,
+}
+
+/// Tries `rule` on past calls (tool, arguments) and final answers, as a
+/// check would ask about each: those it does not apply to are skipped.
+/// Returns each trial, and what Jev cost. Nothing runs again; Jev sees
+/// only what a check would show it.
+pub async fn try_rule(
+    jev: &dyn Jev,
+    rule: &Rule,
+    calls: &[(String, Value)],
+    answers: &[String],
+) -> Result<(Vec<Trial>, f64), String> {
+    let one = Constitution {
+        rules: vec![rule.clone()],
+        ..Constitution::default()
+    };
+    let mut asks: Vec<(Option<String>, String, Value, String)> = Vec::new();
+    for (tool, args) in calls {
+        if let Some((_, fields)) = one.for_call(tool, args).into_iter().next() {
+            let shown = fields
+                .values()
+                .map(|value| match value {
+                    Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let (state, what) = call_state(tool, &fields);
+            asks.push((Some(tool.clone()), shown, state, what));
+        }
+    }
+    if !one.for_final_answer().is_empty() {
+        for answer in answers {
+            asks.push((
+                None,
+                answer.clone(),
+                json!({ "final_answer": answer }),
+                "this final answer".to_owned(),
+            ));
+        }
+    }
+    let mut trials = Vec::with_capacity(asks.len());
+    let mut cost = 0.0;
+    for (tool, shown, state, what) in asks {
+        let request =
+            Request::new(state).question(question_id(0), question(rule, &what));
+        let response = jev.ask(&request).await.map_err(|e| e.to_string())?;
+        cost += response.usage().cost.total;
+        let score =
+            response.noul(&question_id(0)).map_err(|e| e.to_string())?;
+        trials.push(Trial { tool, shown, score });
+    }
+    Ok((trials, cost))
 }
 
 #[async_trait]
