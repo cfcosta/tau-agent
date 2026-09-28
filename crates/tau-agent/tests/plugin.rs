@@ -59,6 +59,10 @@ struct Probe {
     log: Arc<Mutex<Vec<String>>>,
     finished: Arc<Mutex<Vec<(usize, StopReason, String)>>>,
     records_seen: Arc<Mutex<Vec<Vec<Value>>>>,
+    /// What `start` saw of the plan and its context.
+    seen: Arc<Mutex<Vec<String>>>,
+    /// Charges this usage in `finish`.
+    charge_at_finish: Option<Usage>,
 }
 
 impl Probe {
@@ -92,6 +96,13 @@ impl Plugin for Probe {
         self.log.lock().unwrap().push(format!(
             "{} start: instructions {:?}",
             self.name, plan.instructions
+        ));
+        self.seen.lock().unwrap().push(format!(
+            "model {} kind {:?} workflow {:?} now {} ctx {ctx:?}",
+            plan.model(),
+            plan.kind(),
+            plan.workflow(),
+            ctx.now()
         ));
         self.records_seen
             .lock()
@@ -167,7 +178,10 @@ impl PluginRun for ProbeRun {
         Ok(StopDecision::Stop)
     }
 
-    async fn finish(&mut self, run: &FinishedRun<'_>, _ctx: &PluginCtx) {
+    async fn finish(&mut self, run: &FinishedRun<'_>, ctx: &PluginCtx) {
+        if let Some(usage) = &self.probe.charge_at_finish {
+            ctx.charge(usage);
+        }
         self.probe.finished.lock().unwrap().push((
             run.transcript.len(),
             run.stop.clone(),
@@ -262,11 +276,28 @@ fn start_shapes_the_run() {
             ..Probe::named("second")
         };
         let agent = Agent::new(model.clone())
+            .clock(Arc::new(|| 42))
+            .model("gpt-5.4-mini")
             .instructions("Be thorough.")
             .plugin(first.clone())
             .plugin(second.clone());
         let store = Store::memory().await.unwrap();
-        agent.run("what color?", &store).await.unwrap();
+        let outcome = agent
+            .run(
+                tau_agent::agent::Input::new("what color?").workflow("w1"),
+                &store,
+            )
+            .await
+            .unwrap();
+        let seen = first.seen.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            [format!(
+                "model gpt-5.4-mini kind Root workflow Some(\"w1\") now 42 ctx \
+                 PluginCtx {{ run: {:?}, plugin: \"first\", .. }}",
+                outcome.run
+            )]
+        );
 
         assert_eq!(
             first.log(),
@@ -875,5 +906,62 @@ fn a_legacy_compaction_row_still_forks() {
         assert_eq!(transcript[0], record.message());
         assert_eq!(transcript[1], kept);
         assert_eq!(user_texts(&transcript[2]), ["and now"]);
+    });
+}
+
+/// What a plugin charges while the run finishes still counts: in the
+/// outcome and in the stored cost.
+#[test]
+fn usage_charged_at_finish_is_stored() {
+    block_on(async {
+        let model = ScriptedModel::new().turn(|t| t.text("done").cost(0.5));
+        let probe = Probe {
+            charge_at_finish: Some(Usage {
+                cost: UsageCost {
+                    total: 0.25,
+                    ..UsageCost::default()
+                },
+                ..Usage::default()
+            }),
+            ..Probe::named("distiller")
+        };
+        let agent = Agent::new(model).plugin(probe);
+        let store = Store::memory().await.unwrap();
+        let outcome = agent.run("go", &store).await.unwrap();
+        assert_eq!(outcome.usage.cost.total, 0.75);
+        let record = store.run(&outcome.run.0).await.unwrap().unwrap();
+        assert_eq!(record.cost_usd, 0.75);
+    });
+}
+
+/// A hook's `after_tool` still changes the output the model sees: hooks
+/// run through the plugin seams.
+#[test]
+fn a_hook_changes_tool_output() {
+    struct Tag;
+
+    #[async_trait]
+    impl tau_agent::hook::RunHook for Tag {
+        async fn after_tool(
+            &self,
+            _call: &ToolCall,
+            output: &mut ToolOutput,
+            _ctx: &tau_agent::hook::HookCtx,
+        ) {
+            *output = ToolOutput::text("tagged");
+        }
+    }
+
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.tool_call("echo", json!({"text": "x"})))
+            .turn(|t| t.text("done"));
+        let agent = Agent::new(model.clone()).tool(Echo::new()).hook(Tag);
+        let store = Store::memory().await.unwrap();
+        agent.run("go", &store).await.unwrap();
+        assert_eq!(
+            tool_result_text(&model.requests()[1].transcript[2]),
+            "tagged"
+        );
     });
 }

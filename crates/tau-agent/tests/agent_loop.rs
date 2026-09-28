@@ -938,3 +938,36 @@ fn tools_adds_several_in_order() {
         assert_eq!(names, ["first", "a", "b"]);
     });
 }
+
+/// A batch holding a sequential tool runs its calls one at a time, in
+/// source order, parallel calls included; a batch of parallel tools
+/// alone runs its calls together.
+#[test]
+fn a_sequential_tool_serializes_its_batch() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("probe", json!({"ms": 100}))
+                .tool_call("serial", json!({"ms": 100}))
+                .tool_call("probe", json!({"ms": 100}))
+        })
+        .turn(|t| {
+            t.tool_call("probe", json!({"ms": 100}))
+                .tool_call("probe", json!({"ms": 100}))
+        })
+        .turn(|t| t.text("done"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm.clone())
+            .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
+            .tool(Probe::new("serial", ExecutionMode::Sequential, log.clone()));
+        let outcome = agent.run("go", &store).await.unwrap();
+        assert_eq!(outcome.text, "done");
+        let log = log.lock().unwrap().clone();
+        assert_eq!(log.len(), 5);
+        for pair in log[..3].windows(2) {
+            assert!(pair[1].start >= pair[0].end, "{log:?}");
+        }
+        assert_eq!(log[3].start, log[4].start, "{log:?}");
+    });
+}

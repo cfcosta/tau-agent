@@ -156,4 +156,26 @@ exclude_re = [
   # is already true from the outer check, and `>=` cannot disagree with
   # `>` on any reachable input.
   'bash\.rs:419:.*replace > with >= in Accumulator::snapshot',
+
+  # The default bodies of `Plugin::tools` and the `PluginRun` seams that
+  # return nothing (`after_tool`, `on_event`, `finish`) already do
+  # nothing: replacing them with `vec![]` or `()` is the same code.
+  'plugin\.rs:.*replace Plugin::tools -> Vec<Arc<dyn AgentTool>> with vec!\[\]',
+  'plugin\.rs:.*replace PluginRun::(after_tool|on_event|finish) with \(\)',
+  # Likewise the default `rewrite_context`, which already returns
+  # `Ok(None)`.
+  'plugin\.rs:.*replace PluginRun::rewrite_context -> anyhow::Result<Option<Rewrite>> with Ok\(None\)',
+
+  # `Hooked::name` ("hook") names the plugin a `RunHook` runs as. A name
+  # only shows in `PluginError` and `Continued` events, rewrites and
+  # records, and a hook reaches none of them: `RunHook` has no
+  # `before_stop`, `rewrite_context` or `record`. No run can observe it.
+  'plugin\.rs:.*replace <impl Plugin for Hooked>::name -> &str with',
+
+  # run_task starts `last_seq` at -1, "nothing stored". It is only read
+  # when the run ends, and by then the run has stored its input (seq 0)
+  # and at least one response (seq >= 1): every path to `RunResult`
+  # persists both, and a failed write returns before reading it. So a
+  # start of 1 gives the same `fetch_max` on every reachable path.
+  'agent\.rs:.*delete - in run_task',
 ]

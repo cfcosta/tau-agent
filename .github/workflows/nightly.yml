@@ -45,10 +45,12 @@ jobs:
             --file crates/tau-ai/src/responses/input.rs \
             --file crates/tau-ai/src/event.rs \
             --file crates/tau-agent/src/runner.rs \
+            --file crates/tau-agent/src/plugin.rs \
             --file crates/tau-agent/src/agent.rs \
             --file crates/tau-agent/src/validation.rs \
             --file crates/tau-agent/src/schema.rs \
             --file crates/tau-agent/src/compaction.rs \
+            --file crates/tau-agent/src/compaction/run.rs \
             --file crates/tau-tools/src/edit.rs \
             --file crates/tau-tools/src/truncate.rs \
             --file crates/tau-store/src/lib.rs
