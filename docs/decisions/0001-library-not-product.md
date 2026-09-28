@@ -1,6 +1,7 @@
 # 0001: A library for agent workflows, not a coding-agent product
 
-- Status: accepted
+- Status: accepted; the optional UI crate is in
+  [0007](0007-gpui-interface.md)
 - Date: 2026-09-26
 
 ## Context
@@ -41,7 +42,8 @@ The library adds a few workflow primitives that pi lacks:
 
 - The core is about 7.5k lines of Rust, estimated at about 5 weeks.
 - Out of scope:
-  - a CLI, a TUI, and an RPC server;
+  - a CLI, a TUI, and an RPC server in the library (an optional GUI
+    crate sits beside it, see [0007](0007-gpui-interface.md));
   - settings files and context-file discovery;
   - skills and prompt templates;
   - pi's session tree and `context_edit`;

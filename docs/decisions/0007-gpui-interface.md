@@ -1,0 +1,83 @@
+# 0007: An optional GPUI interface, outside the library
+
+- Status: proposed
+- Date: 2026-09-28
+
+## Context
+
+[0001](0001-library-not-product.md) keeps tau-agent a library, with no
+CLI, TUI or server. Watching runs from code alone is hard, though:
+streams of events, forks, sub-agents, and plugins that change a run
+without saying so in the transcript. We want an interface for people
+to start, steer and read runs, including what each plugin decided.
+
+The interface must not turn the library into a product. The library's
+users should not pay for a UI they do not use, and the UI must not
+reach into the loop.
+
+## Decision
+
+- **`tau-ui` is its own crate** in `crates/tau-ui`. No core crate or
+  plugin depends on it. It depends on `tau-agent` and `tau-ai` and uses
+  only their public API, as any host program would.
+- **GPUI draws it.** It is Zed's framework: GPU-rendered (Metal,
+  Vulkan, DirectX), keyboard-first, and native on macOS, Linux and
+  Windows.
+- **The crate draws runs; it does not start them.** A host program owns
+  the agents and wires the workspace in two directions:
+  - in: it forwards each `RunEvent` to `Workspace::apply_event`;
+  - out: it acts on each `WorkspaceEvent` (new run, steer, cancel,
+    fork, keep a note, keep a branch, run a query).
+- **The view model is separate from GPUI.** `RunView` folds run events
+  and can be tested without a window. What is not per-run (plugins and
+  their seams, memory notes, constitution rules, the store) comes in
+  as a `Catalog` from the host.
+- **Plugin decisions no event carries yet come in as `RunUpdate`s**: the
+  effort `tau-reasoning` chose, which rule blocked a call, the notes
+  `tau-memory` suggests, the pruning ledger. A blocked call reaches the
+  event stream as plain text today, with no sign of the plugin or the
+  rule.
+- **One layout per width, not per device.** Below 720 px the window
+  gets a one-column phone layout with a tab bar and bottom sheets;
+  below 1100 px the desktop layout drops the inspector.
+- **A demo host ships with the crate.** `cargo run -p tau-ui` replays a
+  scripted session through the same `RunUpdate` path a real agent
+  uses; `--open <screen>` and `--phone` start on a screen or in a
+  phone frame.
+
+## Consequences
+
+- 0001 still holds for the library: `tau-agent` has no UI, and a user
+  who wants none depends on nothing new. The UI is a product-shaped
+  crate beside the library, not inside it.
+- Plugins should report their decisions as run events. Until
+  `RunEvent` has a plugin event, hosts translate what they know into
+  `RunUpdate`s, and a UI fed only run events shows less than the
+  mockups do.
+- GPUI brings a large dependency tree. `deny.toml` carries its license
+  exceptions and unmaintained-crate advisories, each marked as coming
+  from gpui.
+- On Linux the app needs Vulkan, Wayland or X11, and xkbcommon at run
+  time. The dev shell provides them; a packaged app must too.
+- GPUI has no Android or iOS backend. The phone layout serves narrow
+  windows until one exists (see "Phones" below).
+
+## Phones
+
+- **Agents do not run on the phone.** A phone app is a remote client:
+  runs live on a desktop or a server, and the phone shows and steers
+  them. That needs a protocol that carries `RunEvent`s and
+  `RunUpdate`s to the phone and `WorkspaceEvent`s back. 0001 keeps an
+  RPC server out of the library, so the protocol gets its own decision
+  and its own crate.
+- **No phone build for now.** The candidate for one is
+  [gpui-mobile](https://github.com/itsbalamurali/gpui-mobile), which
+  implements GPUI's `Platform` trait for iOS (Metal) and Android
+  (Vulkan) through wgpu. Adopting it would mean:
+  - moving from `gpui` 0.2.2 on crates.io to GPUI from Zed's git
+    repository, with its `gpui_wgpu` renderer, which is what
+    gpui-mobile builds on (its crates.io release is a placeholder);
+  - its license, a choice of GPL-3.0, AGPL-3.0 or Apache-2.0;
+  - an Android build in the flake (SDK, NDK, and packaging an APK).
+- The phone layout is already written against the same `Workspace`, so
+  a mobile backend would ship the screens we have.
