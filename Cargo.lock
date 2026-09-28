@@ -7641,6 +7641,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-goal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-jev",
+ "tau-store",
+ "tau-testing",
+ "tokio",
+]
+
+[[package]]
 name = "tau-jev"
 version = "0.1.0"
 dependencies = [
@@ -7743,6 +7761,7 @@ dependencies = [
  "tau-compaction",
  "tau-constitution",
  "tau-fast-compaction",
+ "tau-goal",
  "tau-jev",
  "tau-reasoning",
  "tau-store",

@@ -443,6 +443,19 @@ impl PluginCtx {
             .push((self.plugin.clone(), body));
     }
 
+    /// This plugin's records along the run's fork chain as stored now,
+    /// oldest first: what [`RunPlan::records`] had at the start, plus
+    /// what the run recorded since, and what others (an interface)
+    /// stored for the plugin with the run meanwhile.
+    pub async fn records(&self) -> Result<Vec<Value>, StoreError> {
+        self.store
+            .records(&self.run.0, &self.plugin)
+            .await?
+            .iter()
+            .map(|body| serde_json::from_str(body).map_err(StoreError::Json))
+            .collect()
+    }
+
     /// Stores a record for this plugin with the run. The model never sees
     /// it. Forks of the run get it back in [`RunPlan::records`].
     pub async fn record(&self, body: &Value) -> Result<(), StoreError> {

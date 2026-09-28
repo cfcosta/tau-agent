@@ -183,6 +183,10 @@ impl PluginCtx {
     /// model never sees it. Forks and resumed runs get it back in
     /// `RunPlan::records`.
     pub async fn record(&self, body: &Value) -> Result<(), StoreError>;
+    /// The plugin's records along the run's fork chain as stored now:
+    /// its own since the start, and any an interface stored for it
+    /// meanwhile (tau-goal's pause, extend and clear).
+    pub async fn records(&self) -> Result<Vec<Value>, StoreError>;
 }
 ```
 
@@ -420,6 +424,20 @@ Built: `crates/plugins/fast-compaction`. Its reference is
   resends rare.
 - **Forks** get the ledger back through `RunPlan::last_rewrite`: the
   latest `context` entry, when fast compaction made it.
+
+### `tau-goal`: keep going until a goal holds
+
+Built: `crates/plugins/goal`. Its reference is [goal.md](goal.md).
+
+- **Seams:** `start` (a `/goal` input sets the goal), `after_tool` (the
+  latest results, as evidence), `on_event` (what the turns cost), and
+  `before_stop` (the check).
+- **How:** one `Noul` per stop: does the goal hold, judged from the
+  model's last answer and its recent tool results. Not yet sends the
+  model back with the goal, within the goal's continuations and budget.
+- **State:** records only. The goal belongs to the conversation, so a
+  resumed run keeps it; an interface pauses, extends or clears it by
+  storing a record, which the plugin reads at its next check.
 
 ## What changed in tau-agent
 

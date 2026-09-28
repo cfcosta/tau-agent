@@ -1,0 +1,23 @@
+[package]
+name = "tau-goal"
+description = "Keeps a tau run going until a goal holds, checked with Jev, as a plugin."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+tau-jev.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+schemars.workspace = true
+tau-store.workspace = true
+tau-testing.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "time"] }
