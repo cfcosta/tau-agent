@@ -488,6 +488,60 @@ pub fn notice(
         .child(div().flex_1().min_w(px(0.)).child(text.into()))
 }
 
+/// A modal dialog over a dimmed backdrop: a title, a message and what
+/// to do about it. Callers put their buttons in `actions` and handle
+/// dismissal.
+pub fn dialog(
+    title: impl Into<SharedString>,
+    message: impl Into<SharedString>,
+    actions: impl IntoElement,
+    t: &Theme,
+) -> Div {
+    div()
+        .absolute()
+        .inset_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .p(sp(4.))
+        .bg(t.scrim)
+        .child(
+            div()
+                .w_full()
+                .max_w(px(440.))
+                .flex()
+                .flex_col()
+                .gap(sp(3.))
+                .p(sp(5.))
+                .bg(t.panel)
+                .border_1()
+                .border_color(t.border_strong)
+                .rounded(radius::CARD)
+                .shadow_lg()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(sp(2.5))
+                        .child(icon(Icon::Warning, IconSize::LARGE, t.red))
+                        .child(
+                            div()
+                                .typeset(Type::SUBTITLE)
+                                .font_weight(weight::STRONG)
+                                .child(title.into()),
+                        ),
+                )
+                .child(
+                    div()
+                        .typeset(Type::SMALL)
+                        .leading(1.55)
+                        .text_color(t.text_soft)
+                        .child(message.into()),
+                )
+                .child(div().flex().justify_end().gap(sp(2.)).child(actions)),
+        )
+}
+
 /// An empty state.
 pub fn empty(text: impl Into<SharedString>, t: &Theme) -> Div {
     div()

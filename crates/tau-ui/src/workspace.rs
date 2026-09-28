@@ -212,6 +212,8 @@ pub struct Workspace {
     queued: HashMap<RunId, String>,
     /// The composer is writing a fork of this run, after this turn.
     forking: Option<(RunId, u32)>,
+    /// Something went wrong that the user must read: a title and why.
+    alert: Option<(String, String)>,
     /// Notes kept, per run, by title.
     pub(crate) kept: HashMap<RunId, HashSet<String>>,
     /// Flagged calls someone looked at, as `(run, call id)`.
@@ -320,6 +322,7 @@ impl Workspace {
             sheet_open: false,
             queued: HashMap::new(),
             forking: None,
+            alert: None,
             kept: HashMap::new(),
             dismissed: HashSet::new(),
             kept_branch: None,
@@ -981,6 +984,37 @@ impl Workspace {
     ) {
         let task = self.first_task.read(cx).text().to_owned();
         self.start_first_run(task, cx);
+    }
+
+    /// Shows a dialog: something failed that the user asked for.
+    pub fn show_alert(
+        &mut self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.alert = Some((title.into(), message.into()));
+        cx.notify();
+    }
+
+    pub fn alert(&self) -> Option<(&str, &str)> {
+        self.alert
+            .as_ref()
+            .map(|(title, message)| (title.as_str(), message.as_str()))
+    }
+
+    pub fn dismiss_alert(&mut self, cx: &mut Context<Self>) {
+        self.alert = None;
+        cx.notify();
+    }
+
+    /// Esc: closes a dialog if one is open, else goes back.
+    pub fn escape(&mut self, cx: &mut Context<Self>) {
+        if self.alert.is_some() {
+            self.dismiss_alert(cx);
+        } else {
+            self.back(cx);
+        }
     }
 
     /// The code of a comparison, as the host found it.
@@ -1823,6 +1857,25 @@ impl Render for Workspace {
         } else {
             self.desktop(width >= NARROW_MAX, &t, cx)
         };
+        // A dialog covers the app, wherever the app is drawn.
+        let body = div()
+            .relative()
+            .size_full()
+            .child(body)
+            .when_some(self.alert.clone(), |body, (title, message)| {
+                body.child(ui::dialog(
+                    title,
+                    message,
+                    div()
+                        .id("alert-ok")
+                        .child(ui::button("OK", ButtonKind::Primary, &t))
+                        .on_click(
+                            cx.listener(|ws, _, _, cx| ws.dismiss_alert(cx)),
+                        ),
+                    &t,
+                ))
+            })
+            .into_any_element();
         let body = if self.phone_preview {
             div()
                 .size_full()
@@ -1863,7 +1916,7 @@ impl Render for Workspace {
         div()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
-            .on_action(cx.listener(|ws, _: &GoBack, _, cx| ws.back(cx)))
+            .on_action(cx.listener(|ws, _: &GoBack, _, cx| ws.escape(cx)))
             .on_action(cx.listener(|ws, _: &NewRun, window, cx| {
                 ws.start_new_run(window, cx)
             }))

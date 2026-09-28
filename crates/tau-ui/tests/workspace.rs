@@ -262,3 +262,59 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
         assert!(parent.children.iter().any(|child| child.id == fork.id));
     });
 }
+
+#[gpui::test]
+fn escape_closes_an_alert_before_going_back(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::History, cx);
+        ws.show_alert("Could not fork the run", "no project", cx);
+        ws.escape(cx);
+        assert!(ws.alert().is_none());
+        assert_eq!(ws.route(), &Route::History, "the dialog took the escape");
+        ws.escape(cx);
+        assert_ne!(ws.route(), &Route::History);
+    });
+}
+
+#[gpui::test]
+fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
+    use tau_testing::scripted::ScriptedModel;
+    use tau_ui::host::{Access, Host, HostConfig};
+
+    let (workspace, mut cx, _) = open(cx);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store::Store::memory()).unwrap();
+    let agent =
+        tau_agent::agent::Agent::new(ScriptedModel::new()).name("coder");
+    let config = HostConfig {
+        access: Access::ApiKey("sk-test".into()),
+        model: "gpt-5.5".into(),
+        root: std::env::temp_dir(),
+        store: std::env::temp_dir().join("unused.db"),
+        repos: std::env::temp_dir().join("unused-repos"),
+    };
+    // No project: runs work in the checkout, and forking cannot work.
+    let (host, events) = Host::with_agent(runtime, agent, store, config);
+    cx.update(|_, cx| host.attach(&workspace, events, cx));
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        for (_, update) in demo::script() {
+            ws.update_run(&run, update, cx);
+        }
+    });
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.fork_from(&run, 2, window, cx);
+        ws.submit_prompt("try again".into(), cx);
+    });
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        let (title, message) = ws.alert().expect("a dialog");
+        assert_eq!(title, "Could not fork the run");
+        assert!(message.starts_with("Forking needs a project"), "{message}");
+    });
+}

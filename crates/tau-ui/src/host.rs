@@ -74,12 +74,9 @@ use crate::{
         FileKind,
         FileStat,
         Limits as ViewLimits,
-        NoteBody,
         Origin,
         PlanField,
-        PluginNote,
         PluginStatus,
-        RunUpdate,
         RunView,
         Tone,
         parse_diff,
@@ -814,9 +811,13 @@ impl Host {
                         Ok(view) => {
                             workspace.update(cx, |ws, cx| ws.push_run(view, cx))
                         }
-                        Err(error) => {
-                            eprintln!("tau-ui: cannot start the run: {error:#}")
-                        }
+                        Err(error) => workspace.update(cx, |ws, cx| {
+                            ws.show_alert(
+                                "Could not start the run",
+                                format!("{error:#}"),
+                                cx,
+                            )
+                        }),
                     }
                 }
                 WorkspaceEvent::Fork { run, turn, prompt } => {
@@ -825,17 +826,11 @@ impl Host {
                             workspace.update(cx, |ws, cx| ws.push_run(view, cx))
                         }
                         Err(error) => workspace.update(cx, |ws, cx| {
-                            ws.update_run(
-                                run,
-                                RunUpdate::Note(PluginNote {
-                                    plugin: "workspace".into(),
-                                    text: format!("could not fork: {error:#}"),
-                                    detail: None,
-                                    tone: Tone::Danger,
-                                    body: NoteBody::None,
-                                }),
+                            ws.show_alert(
+                                "Could not fork the run",
+                                format!("{error:#}"),
                                 cx,
-                            );
+                            )
                         }),
                     }
                 }

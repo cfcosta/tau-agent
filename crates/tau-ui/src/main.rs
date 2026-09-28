@@ -11,7 +11,8 @@
 //! - `--demo`: the scripted session; `--finished` opens it done.
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
 //!   compare, plan or ledger; onboarding's welcome, github, token,
-//!   model, repos or ready; or pr and pr-opened (demo screens).
+//!   model, repos or ready; pr and pr-opened; or alert, a sample
+//!   dialog (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
 //! - `--frame <w>x<h>`: lay out at exactly that size in the top-left
 //!   corner, to compare with the designs.
@@ -226,6 +227,15 @@ fn open_demo_screen(
     args: &Args,
     cx: &mut gpui::Context<Workspace>,
 ) {
+    if args.open.as_deref() == Some("alert") {
+        workspace.show_alert(
+            "Could not fork the run",
+            "Forking needs a project: /home/you/notes could not be copied: \
+             it is not a Git repository.",
+            cx,
+        );
+        return;
+    }
     match args.open.as_deref().and_then(demo::route) {
         Some(Route::Setup(step)) => {
             workspace.set_setup(demo::setup(step), cx);
