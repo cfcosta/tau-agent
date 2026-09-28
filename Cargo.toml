@@ -65,6 +65,7 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 tokio-util = { version = "0.7.19", default-features = false }
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
 tau-agent = { path = "crates/tau-agent", version = "0.1.0" }
+tau-compaction = { path = "crates/plugins/compaction", version = "0.1.0" }
 tau-ai = { path = "crates/tau-ai", version = "0.1.0" }
 tau-store = { path = "crates/tau-store", version = "0.1.0" }
 tau-testing = { path = "crates/tau-testing", version = "0.1.0" }

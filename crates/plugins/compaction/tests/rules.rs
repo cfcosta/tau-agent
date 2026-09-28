@@ -1,4 +1,4 @@
-//! Context compaction (`tau_agent::compaction`), the I/O-free core.
+//! Context compaction (`tau_compaction`), the I/O-free core.
 //!
 //! Oracle for the rules: `docs/reference/compaction.md`, and pi's
 //! `packages/coding-agent/src/core/compaction/{compaction,utils}.ts`.
@@ -9,28 +9,10 @@ use std::collections::VecDeque;
 
 use hegel::{TestCase, generators as gs};
 use serde_json::{Map, json};
-use tau_agent::compaction::{
-    Compaction,
-    CutPoint,
-    FileOperations,
-    Plan,
-    SUMMARIZATION_PROMPT,
-    TURN_PREFIX_SUMMARIZATION_PROMPT,
-    UPDATE_SUMMARIZATION_PROMPT,
-    build_summary_request,
-    build_turn_prefix_summary_request,
-    check_summary,
+use tau_agent::context::{
     estimate_context_tokens,
     estimate_message_tokens,
-    find_cut_point,
-    format_file_operations,
     is_context_overflow,
-    merge_split_turn_summary,
-    plan,
-    serialize_conversation,
-    should_compact,
-    summary_max_output_tokens,
-    turn_prefix_max_output_tokens,
 };
 use tau_ai::message::{
     API,
@@ -49,6 +31,26 @@ use tau_ai::message::{
     UsageCost,
     UserContent,
     UserMessage,
+};
+use tau_compaction::{
+    Compaction,
+    CutPoint,
+    FileOperations,
+    Plan,
+    SUMMARIZATION_PROMPT,
+    TURN_PREFIX_SUMMARIZATION_PROMPT,
+    UPDATE_SUMMARIZATION_PROMPT,
+    build_summary_request,
+    build_turn_prefix_summary_request,
+    check_summary,
+    find_cut_point,
+    format_file_operations,
+    merge_split_turn_summary,
+    plan,
+    serialize_conversation,
+    should_compact,
+    summary_max_output_tokens,
+    turn_prefix_max_output_tokens,
 };
 use tau_testing::generators;
 
@@ -203,8 +205,8 @@ fn should_compact_matches_the_threshold_formula(tc: TestCase) {
     let tokens = tc.draw(gs::integers::<u64>().max_value(1_000_000));
     let context_window = tc.draw(gs::integers::<u64>().max_value(1_000_000));
     let reserve_tokens = tc.draw(gs::integers::<u64>().max_value(1_000_000));
-    let compaction = tau_agent::compaction::Compaction::default()
-        .reserve_tokens(reserve_tokens);
+    let compaction =
+        tau_compaction::Compaction::default().reserve_tokens(reserve_tokens);
     let expected = tokens > context_window.saturating_sub(reserve_tokens);
     assert_eq!(
         should_compact(tokens, context_window, &compaction),

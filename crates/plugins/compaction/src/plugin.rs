@@ -1,18 +1,27 @@
 //! Compaction as a plugin: the part that makes requests and keeps state.
 //!
-//! The rules are the parent module's pure functions; this module asks
-//! for summaries and turns them into a [`Rewrite`]. `Agent::compaction`
-//! adds it after every other plugin, so cheaper rewrites (pruning) get
-//! the first chance.
+//! The rules are the crate root's pure functions; this module asks for
+//! summaries and turns them into a [`Rewrite`]. Add it to an agent after
+//! every other context plugin, so cheaper rewrites (pruning) get the
+//! first chance.
 
 use async_trait::async_trait;
+use tau_agent::plugin::{
+    ContextView,
+    Plugin,
+    PluginCtx,
+    PluginRun,
+    Rewrite,
+    RunPlan,
+    Trigger,
+};
 use tau_ai::{
     message::{Message, UserContent, UserMessage},
     model,
     responses::request::{ReasoningEffort, Settings},
 };
 
-use super::{
+use crate::{
     Compaction,
     Record,
     SUMMARIZATION_SYSTEM_PROMPT,
@@ -25,15 +34,6 @@ use super::{
     should_compact,
     summary_max_output_tokens,
     turn_prefix_max_output_tokens,
-};
-use crate::plugin::{
-    ContextView,
-    Plugin,
-    PluginCtx,
-    PluginRun,
-    Rewrite,
-    RunPlan,
-    Trigger,
 };
 
 /// The name compaction goes by in events and stored rewrites.

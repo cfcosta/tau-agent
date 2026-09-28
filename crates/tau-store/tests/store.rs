@@ -1,5 +1,6 @@
 //! The store (`tau_store`), checked against a `Vec`-based model over
-//! random sequences of run creation, appends, compactions and finishes.
+//! random sequences of run creation, appends (context rewrites and plugin
+//! records included) and finishes.
 //!
 //! These tests use a normal tokio runtime, not tau-testing's paused one:
 //! sqlx's SQLite driver waits on its own worker threads, and paused time
@@ -74,7 +75,7 @@ impl Model {
         entries
     }
 
-    /// The transcript: the chain from its latest compaction or context
+    /// The transcript: the chain from its latest context
     /// entry onward, without plugin records.
     fn transcript(&self, run: &str) -> Vec<Entry> {
         let chain: Vec<Entry> = self
@@ -84,9 +85,7 @@ impl Model {
             .collect();
         let start = chain
             .iter()
-            .rposition(|e| {
-                matches!(e, Entry::Compaction { .. } | Entry::Context { .. })
-            })
+            .rposition(|e| matches!(e, Entry::Context { .. }))
             .unwrap_or(0);
         chain[start..].to_vec()
     }
@@ -112,15 +111,12 @@ fn entry(tc: TestCase) -> Entry {
             "prune".to_owned(),
         ]))
     };
-    match tc.draw(gs::integers::<u8>().max_value(7)) {
-        0 => Entry::Compaction {
-            body: json!({ "summary": text, "tokensBefore": 1000 }).to_string(),
-        },
-        1 => Entry::Context {
+    match tc.draw(gs::integers::<u8>().max_value(6)) {
+        0 => Entry::Context {
             plugin: plugin(),
             body: json!({ "ledger": text }).to_string(),
         },
-        2 => Entry::Plugin {
+        1 => Entry::Plugin {
             plugin: plugin(),
             body: json!({ "note": text }).to_string(),
         },

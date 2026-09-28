@@ -1,0 +1,23 @@
+[package]
+name = "tau-compaction"
+description = "Summarizing compaction for tau agents, as a plugin."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+hegeltest.workspace = true
+schemars.workspace = true
+tau-store.workspace = true
+tau-testing.workspace = true
+tokio = { workspace = true, features = ["rt"] }

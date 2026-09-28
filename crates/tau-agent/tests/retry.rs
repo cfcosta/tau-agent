@@ -8,7 +8,6 @@ use futures_util::StreamExt;
 use hegel::{TestCase, generators as gs};
 use tau_agent::{
     agent::Agent,
-    compaction::Compaction,
     event::{RunEvent, StopReason},
 };
 use tau_ai::{message::Message, retry::RetryPolicy};
@@ -156,69 +155,5 @@ fn a_cancel_during_backoff_ends_the_run() {
         let outcome = run.outcome().await.unwrap();
         assert_eq!(outcome.stop, StopReason::Cancelled);
         assert_eq!(llm.requests().len(), 1);
-    });
-}
-
-/// A context overflow reported by its code (not its wording) compacts,
-/// and the summary request goes through the retry policy too.
-#[test]
-fn an_overflow_code_compacts_and_the_summary_is_retried() {
-    let llm = ScriptedModel::new()
-        .turn(|t| t.text("first"))
-        .turn(|t| t.error("context_length_exceeded", "no room"))
-        .turn(|t| t.error("server_error", "try again"))
-        .turn(|t| t.text("summary"))
-        .turn(|t| t.text("done"));
-    block_on(async {
-        let store = Store::memory().await.unwrap();
-        let agent = Agent::new(llm.clone()).compaction(
-            Compaction::default()
-                .context_window(u64::MAX)
-                .keep_recent_tokens(1),
-        );
-        let mut run = agent.start("go", &store);
-        run.steer("more");
-        let events: Vec<RunEvent> = run.events().collect().await;
-        let outcome = run.outcome().await.unwrap();
-        assert_eq!(outcome.text, "done");
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, RunEvent::ContextRewritten { .. }))
-        );
-        llm.assert_exhausted();
-    });
-}
-
-/// A summary request that keeps failing retryably is tried as many times
-/// as the policy allows, and then compaction fails.
-#[test]
-fn a_failing_summary_is_tried_as_the_policy_allows() {
-    let llm = ScriptedModel::new()
-        .turn(|t| t.text("first"))
-        .turn(|t| t.error("context_length_exceeded", "no room"))
-        .turn(|t| t.error("server_error", "try again"))
-        .turn(|t| t.error("server_error", "try again"))
-        .turn(|t| t.text("never"));
-    block_on(async {
-        let store = Store::memory().await.unwrap();
-        let policy = RetryPolicy {
-            max_attempts: 2,
-            ..RetryPolicy::default()
-        };
-        let agent = Agent::new(llm.clone()).retry(policy).compaction(
-            Compaction::default()
-                .context_window(u64::MAX)
-                .keep_recent_tokens(1),
-        );
-        let run = agent.start("go", &store);
-        run.steer("more");
-        let outcome = run.outcome().await.unwrap();
-        let StopReason::Error(message) = &outcome.stop else {
-            panic!("{:?}", outcome.stop)
-        };
-        assert!(message.contains("compaction failed"), "{message}");
-        assert_eq!(llm.requests().len(), 4);
-        assert_eq!(llm.remaining(), 1);
     });
 }

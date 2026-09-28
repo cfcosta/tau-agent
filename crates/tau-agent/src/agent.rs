@@ -27,7 +27,6 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    compaction::{self, Compaction, Record},
     event::{RunEvent, StopReason},
     hook::RunHook,
     limits::Limits,
@@ -211,7 +210,6 @@ struct AgentInner {
     /// Plugins and hooks, in registration order.
     plugins: Vec<Arc<dyn Plugin>>,
     limits: Limits,
-    compaction: Option<Compaction>,
     retry: RetryPolicy,
     warmup: bool,
     clock: Clock,
@@ -245,7 +243,6 @@ impl Agent {
             tools: Vec::new(),
             plugins: Vec::new(),
             limits: Limits::default(),
-            compaction: None,
             retry: RetryPolicy::default(),
             warmup: false,
             clock: system_clock(),
@@ -304,12 +301,6 @@ impl Agent {
 
     pub fn limits(self, limits: Limits) -> Self {
         self.with(|a| a.limits = limits)
-    }
-
-    /// Turns compaction on (`docs/reference/compaction.md`). It is off
-    /// by default.
-    pub fn compaction(self, compaction: Compaction) -> Self {
-        self.with(|a| a.compaction = Some(compaction))
     }
 
     /// How failed responses are retried (`docs/reference/agent-loop.md`,
@@ -765,14 +756,8 @@ async fn run_task(
         launch.kind.clone(),
         workflow.clone(),
     );
-    // Compaction goes last: it is the most expensive rewrite, and it
-    // sees the reasoning effort every other plugin settled on.
-    let compaction = agent
-        .0
-        .compaction
-        .map(|compaction| Arc::new(compaction) as Arc<dyn Plugin>);
-    let mut plugins = Vec::with_capacity(agent.0.plugins.len() + 1);
-    for plugin in agent.0.plugins.iter().chain(compaction.iter()) {
+    let mut plugins = Vec::with_capacity(agent.0.plugins.len());
+    for plugin in &agent.0.plugins {
         let ctx = shared.ctx(plugin.name());
         let records = match plugin_records(&store, &id, plugin.name()).await {
             Ok(records) => records,
@@ -896,9 +881,7 @@ type LatestRewrite = (String, Value);
 /// in it, if any: the plugin that made it, and its details.
 ///
 /// A context entry is followed by the messages it rewrote the transcript
-/// to. A `compaction` entry, from before compaction was a plugin, stands
-/// for its summary message, and counts as the compaction plugin's
-/// rewrite.
+/// to.
 fn messages(
     entries: Vec<Entry>,
 ) -> Result<(Vec<Message>, Option<LatestRewrite>), StoreError> {
@@ -911,14 +894,6 @@ fn messages(
             }
             Entry::Context { plugin, body } => {
                 rewrite = Some((plugin, serde_json::from_str(&body)?));
-            }
-            Entry::Compaction { body } => {
-                let record: Record = serde_json::from_str(&body)?;
-                messages.push(record.message());
-                rewrite = Some((
-                    compaction::NAME.to_owned(),
-                    serde_json::from_str(&body)?,
-                ));
             }
             // `Store::transcript` leaves plugin records out.
             Entry::Plugin { .. } => {}

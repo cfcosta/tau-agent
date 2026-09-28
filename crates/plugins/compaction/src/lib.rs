@@ -6,11 +6,13 @@
 //! `docs/reference/compaction.md` for the rules this module implements.
 //!
 //! Everything in this module is a pure function or a plain data type: no
-//! store, no LLM request, no async. The `run` submodule is compaction as
+//! store, no LLM request, no async. The `plugin` module is compaction as
 //! a plugin (`docs/reference/plugins.md`): it decides when to compact,
 //! sends the summary requests, and hands the loop a context rewrite to
-//! store. Compaction is off by default; a run only compacts when its
-//! agent is configured with a [`Compaction`].
+//! store. An agent compacts only when it has the plugin:
+//! `Agent::plugin(Compaction::default())`, added after any other context
+//! plugin. The token estimate it compacts by is the loop's
+//! (`tau_agent::context`).
 //!
 //! ## Deviations from pi
 //!
@@ -43,12 +45,13 @@
 //!   [`FileOperations`] uses a `BTreeSet`, which keeps the same
 //!   deduplicated, sorted result without a separate sort step.
 
-mod run;
+mod plugin;
 
 use std::{collections::BTreeSet, fmt, ops::Range};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tau_agent::context::estimate_message_tokens;
 use tau_ai::message::{
     AssistantBlock,
     AssistantMessage,
@@ -60,13 +63,7 @@ use tau_ai::message::{
     UserMessage,
 };
 
-pub use self::run::NAME;
-// The estimate and overflow check are the loop's; compaction uses them.
-pub use crate::context::{
-    estimate_context_tokens,
-    estimate_message_tokens,
-    is_context_overflow,
-};
+pub use self::plugin::NAME;
 
 /// A tool result is serialized with at most this many characters before
 /// being cut off (`docs/reference/compaction.md`, "Input").
@@ -78,10 +75,10 @@ const TOOL_RESULT_MAX_CHARS: usize = 2000;
 
 /// Compaction thresholds (`docs/reference/compaction.md`).
 ///
-/// Compaction is off by default: a run only compacts when it is built
-/// with `Agent::compaction(Compaction::default())` (or a customized
-/// value). This type carries no "enabled" flag; the caller decides
-/// whether compaction runs at all by whether it holds one of these.
+/// Compaction is off by default: a run only compacts when its agent has
+/// the plugin, `Agent::plugin(Compaction::default())` (or a customized
+/// value). This type carries no "enabled" flag; an agent compacts
+/// exactly when it has one of these as a plugin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Compaction {
     /// Tokens reserved for the model's response and the next request's

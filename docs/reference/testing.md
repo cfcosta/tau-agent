@@ -370,7 +370,7 @@ also run in the nightly extended tier and under `cargo mutants`.
 | Arguments changed by `before_tool` are validated again; invalid ones yield an error result and the tool never runs                                                     | Model        |
 | Limits: a run ends with `StopReason::Limit` if and only if a limit was exceeded after some turn, and child usage counts                                                | Model        |
 | A fork's transcript equals the parent's transcript up to the checkpoint, followed by the fork's own messages                                                           | Model        |
-| Compaction cut point never falls between a tool call and its result, and never on a tool result                                                                        | Invariant    |
+| (`tau-compaction`) Compaction cut point never falls between a tool call and its result, and never on a tool result                                                     | Invariant    |
 | The kept suffix holds at least `keep_recent_tokens`, unless the whole transcript holds fewer or snapping past an oversized tool result moved the cut                   | Invariant    |
 | The token estimate never decreases when a message is appended                                                                                                          | Invariant    |
 | With no reported usage anywhere, the estimate is `chars / 4` over every message                                                                                        | Differential |
@@ -380,15 +380,15 @@ also run in the nightly extended tier and under `cargo mutants`.
 
 ### `tau-store`
 
-| Property                                                                                                              | Oracle       |
-| --------------------------------------------------------------------------------------------------------------------- | ------------ |
-| State machine over create run, append turn, fork, compact and finish, against a `Vec`-based model; every read matches | Model        |
-| After any sequence of appends, a run's `seq` values are `0..n` with no gaps                                           | Invariant    |
-| The recursive-CTE transcript equals a Rust walk up the fork chain over the model                                      | Differential |
-| Loading a run drops everything before its latest compaction record                                                    | Model        |
-| A failed append leaves neither messages nor usage totals behind                                                       | Model        |
-| Loop and store together: a cancel or a write failure between tool completion and persistence leaves no partial turn   | Model        |
-| Message bodies round-trip through the `body` column unchanged                                                         | Round trip   |
+| Property                                                                                                                                                    | Oracle       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| State machine over create run, append turn (context rewrites and plugin records included), fork and finish, against a `Vec`-based model; every read matches | Model        |
+| After any sequence of appends, a run's `seq` values are `0..n` with no gaps                                                                                 | Invariant    |
+| The recursive-CTE transcript equals a Rust walk up the fork chain over the model                                                                            | Differential |
+| Loading a run drops everything before its latest context entry, and leaves plugin records out                                                               | Model        |
+| A failed append leaves neither messages nor usage totals behind                                                                                             | Model        |
+| Loop and store together: a cancel or a write failure between tool completion and persistence leaves no partial turn                                         | Model        |
+| Message bodies round-trip through the `body` column unchanged                                                                                               | Round trip   |
 
 Store tests use `Store::memory()`. Each Hegel case opens a new store, so
 cases do not share state.
@@ -598,8 +598,9 @@ the workflow code around it.
 `cargo mutants` runs on the modules where a silent bug costs the most:
 
 - `tau-ai`: the delta rule, the lane state and the event processor;
-- `tau-agent`: the loop, runs (typed results, forks, sub-agents),
-  compaction, coercion and the strict schema rewrite;
+- `tau-agent`: the loop, plugins, runs (typed results, forks,
+  sub-agents), coercion and the strict schema rewrite;
+- `tau-compaction`: the compaction rules and the plugin;
 - `tau-store`: the append and transcript queries;
 - `tau-tools`: `edit`, which rewrites files, and truncation.
 

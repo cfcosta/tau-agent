@@ -109,14 +109,9 @@ pub enum Entry {
         role: String,
         body: String,
     },
-    /// A compaction record. Loading a transcript drops everything before
-    /// the latest one.
-    Compaction {
-        body: String,
-    },
     /// A context rewrite by `plugin`: the transcript restarts after it,
     /// with the messages that follow. Loading a transcript drops
-    /// everything before the latest one, as for a compaction.
+    /// everything before the latest one.
     Context {
         plugin: String,
         body: String,
@@ -340,9 +335,6 @@ impl Store {
                 Entry::Message { role, body } => {
                     ("message", Some(role.as_str()), None, body.as_str())
                 }
-                Entry::Compaction { body } => {
-                    ("compaction", None, None, body.as_str())
-                }
                 Entry::Context { plugin, body } => {
                     ("context", None, Some(plugin.as_str()), body.as_str())
                 }
@@ -369,7 +361,7 @@ impl Store {
     }
 
     /// The run's transcript: the inherited messages of its fork chain,
-    /// then its own, from the latest compaction or context entry onward.
+    /// then its own, from the latest context entry onward.
     /// Plugin records are not part of it.
     pub async fn transcript(&self, run: &str) -> Result<Vec<Entry>> {
         let rows = sqlx::query!(
@@ -393,13 +385,12 @@ impl Store {
 
         let start = rows
             .iter()
-            .rposition(|row| row.kind == "compaction" || row.kind == "context")
+            .rposition(|row| row.kind == "context")
             .unwrap_or(0);
         Ok(rows
             .into_iter()
             .skip(start)
             .map(|row| match row.kind.as_str() {
-                "compaction" => Entry::Compaction { body: row.body },
                 "context" => Entry::Context {
                     // The loop sets a plugin on every context row.
                     plugin: row.plugin.unwrap_or_default(),

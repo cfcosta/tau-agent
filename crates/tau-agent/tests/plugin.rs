@@ -622,10 +622,14 @@ enum Prune {
     Decline,
 }
 
-/// A context plugin that prunes at every turn boundary and overflow.
+/// A context plugin that prunes when offered the context: at turn
+/// boundaries, overflows, or both.
 #[derive(Clone)]
 struct Pruner {
+    name: &'static str,
     how: Prune,
+    /// Rewrites only on this trigger; `None` for both.
+    on: Option<tau_agent::plugin::Trigger>,
     offered: Arc<Mutex<Vec<(tau_agent::plugin::Trigger, usize)>>>,
     resumed: Arc<Mutex<Vec<Option<Value>>>>,
 }
@@ -633,7 +637,9 @@ struct Pruner {
 impl Pruner {
     fn new(how: Prune) -> Self {
         Self {
+            name: "pruner",
             how,
+            on: None,
             offered: Arc::default(),
             resumed: Arc::default(),
         }
@@ -643,7 +649,7 @@ impl Pruner {
 #[async_trait]
 impl Plugin for Pruner {
     fn name(&self) -> &str {
-        "pruner"
+        self.name
     }
 
     async fn start(
@@ -670,6 +676,9 @@ impl PluginRun for Pruner {
             .lock()
             .unwrap()
             .push((view.trigger, view.transcript.len()));
+        if self.on.is_some_and(|on| on != view.trigger) {
+            return Ok(None);
+        }
         let messages = match self.how {
             Prune::Decline => return Ok(None),
             Prune::KeepLastUser => {
@@ -810,36 +819,57 @@ fn a_bad_rewrite_is_rejected() {
     });
 }
 
-/// On an overflow, plugins are offered the context in order, compaction
-/// last: a pruner that declines leaves it to the summary, and the turn is
-/// retried once on the summary's transcript.
+/// On an overflow, plugins are offered the context in order until one
+/// rewrites it: the first rewrite wins, later plugins are not offered
+/// that overflow, and the turn is retried once on the new transcript.
 #[test]
-fn compaction_takes_an_overflow_a_pruner_declines() {
+fn the_first_rewrite_takes_an_overflow() {
+    use tau_agent::plugin::Trigger;
     block_on(async {
         let model = ScriptedModel::new()
             .turn(|t| t.tool_call("echo", json!({"text": "x"})))
             .turn(|t| t.error("context_length_exceeded", "too long"))
-            .turn(|t| t.text("summary"))
             .turn(|t| t.text("done"));
-        let pruner = Pruner::new(Prune::Decline);
+        let declines = Pruner {
+            name: "declines",
+            ..Pruner::new(Prune::Decline)
+        };
+        let prunes = Pruner {
+            name: "prunes",
+            on: Some(Trigger::Overflow),
+            ..Pruner::new(Prune::KeepLastUser)
+        };
+        let later = Pruner {
+            name: "later",
+            on: Some(Trigger::Overflow),
+            ..Pruner::new(Prune::KeepLastUser)
+        };
         let agent = Agent::new(model.clone())
             .tool(Echo::new())
-            .compaction(
-                tau_agent::compaction::Compaction::default()
-                    .context_window(u64::MAX)
-                    .keep_recent_tokens(1),
-            )
-            // Added after compaction, still offered first.
-            .plugin(pruner.clone());
+            .plugin(declines.clone())
+            .plugin(prunes.clone())
+            .plugin(later.clone());
         let store = Store::memory().await.unwrap();
         let (events, outcome) =
             run_to_end(&agent, &store, "go", Some("then this")).await;
         assert_eq!(outcome.text, "done");
         model.assert_exhausted();
-        let offered = pruner.offered.lock().unwrap().clone();
         assert!(
-            offered.contains(&(tau_agent::plugin::Trigger::Overflow, 4)),
-            "{offered:?}"
+            declines
+                .offered
+                .lock()
+                .unwrap()
+                .contains(&(Trigger::Overflow, 4))
+        );
+        // Every plugin is offered each turn end; only the first to
+        // rewrite takes the overflow.
+        assert_eq!(
+            prunes.offered.lock().unwrap().clone(),
+            [(Trigger::TurnEnd, 4), (Trigger::Overflow, 4)]
+        );
+        assert_eq!(
+            later.offered.lock().unwrap().clone(),
+            [(Trigger::TurnEnd, 4)]
         );
         let by: Vec<&str> = events
             .iter()
@@ -848,64 +878,11 @@ fn compaction_takes_an_overflow_a_pruner_declines() {
                 _ => None,
             })
             .collect();
-        assert_eq!(by, ["compaction"]);
-    });
-}
-
-/// A run stored before compaction was a plugin, with a `compaction`
-/// entry, still forks: the fork starts from the summary, and compaction
-/// gets its record back.
-#[test]
-fn a_legacy_compaction_row_still_forks() {
-    use tau_agent::compaction::Record;
-    use tau_store::{Entry, TurnUsage};
-    block_on(async {
-        let model = ScriptedModel::new()
-            .turn(|t| t.text("before"))
-            .turn(|t| t.text("forked"));
-        let agent = Agent::new(model.clone())
-            .compaction(tau_agent::compaction::Compaction::default());
-        let store = Store::memory().await.unwrap();
-        let base = agent.run("go", &store).await.unwrap();
-        let record = Record {
-            summary: "old summary".into(),
-            tokens_before: 10,
-            read_files: vec![],
-            modified_files: vec![],
-            timestamp: 1,
-        };
-        let kept =
-            tau_ai::message::Message::User(tau_ai::message::UserMessage {
-                content: UserContent::Text("kept".into()),
-                timestamp: 2,
-            });
-        let last = store
-            .append_turn(
-                &base.run.0,
-                &[
-                    Entry::Compaction {
-                        body: serde_json::to_string(&record).unwrap(),
-                    },
-                    Entry::Message {
-                        role: "user".into(),
-                        body: serde_json::to_string(&kept).unwrap(),
-                    },
-                ],
-                TurnUsage::default(),
-            )
-            .await
-            .unwrap();
-        let checkpoint =
-            tau_agent::agent::Checkpoint::at(base.run.clone(), last);
-        agent
-            .fork(&checkpoint)
-            .run("and now", &store)
-            .await
-            .unwrap();
-        let transcript = &model.requests()[1].transcript;
-        assert_eq!(transcript[0], record.message());
-        assert_eq!(transcript[1], kept);
-        assert_eq!(user_texts(&transcript[2]), ["and now"]);
+        assert_eq!(by, ["prunes"]);
+        assert_eq!(
+            user_texts(&model.requests()[2].transcript[0]),
+            ["then this"]
+        );
     });
 }
 

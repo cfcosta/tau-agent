@@ -18,11 +18,15 @@ CREATE TABLE runs (
 CREATE INDEX runs_by_workflow ON runs (workflow_id, created_at);
 CREATE INDEX runs_by_parent   ON runs (parent_run_id);
 
+-- kind: message, or
+--   context: a context rewrite by `plugin`; the transcript restarts after it
+--   plugin:  a record `plugin` keeps with the run; never in the transcript
 CREATE TABLE messages (
   run_id     TEXT    NOT NULL REFERENCES runs (id),
   seq        INTEGER NOT NULL,
-  kind       TEXT    NOT NULL CHECK (kind IN ('message', 'compaction')),
+  kind       TEXT    NOT NULL CHECK (kind IN ('message', 'context', 'plugin')),
   role       TEXT,                          -- user | assistant | toolResult
+  plugin     TEXT,                          -- the plugin of a context or plugin entry
   body       TEXT    NOT NULL CHECK (json_valid(body)),
   created_at TEXT    NOT NULL,
   PRIMARY KEY (run_id, seq)

@@ -1,5 +1,5 @@
 //! Compaction inside the agent loop (`docs/reference/compaction.md`),
-//! driven through `Agent` with `ScriptedModel`, `Store::memory()` and
+//! as a plugin of an `Agent` with `ScriptedModel`, `Store::memory()` and
 //! paused time.
 //!
 //! The scripts steer a second user message in before the first turn
@@ -13,20 +13,20 @@ use serde::Deserialize;
 use serde_json::json;
 use tau_agent::{
     agent::Agent,
-    compaction::{
-        Compaction,
-        Record,
-        SUMMARIZATION_SYSTEM_PROMPT,
-        SUMMARY_PREFIX,
-        TURN_PREFIX_SUMMARIZATION_PROMPT,
-        UPDATE_SUMMARIZATION_PROMPT,
-    },
     event::{RunEvent, StopReason},
     tool::{ToolCtx, ToolOutput, TypedTool, typed},
 };
 use tau_ai::{
     message::{Message, StopReason as MessageStop, UserContent},
     responses::request::ReasoningEffort,
+};
+use tau_compaction::{
+    Compaction,
+    Record,
+    SUMMARIZATION_SYSTEM_PROMPT,
+    SUMMARY_PREFIX,
+    TURN_PREFIX_SUMMARIZATION_PROMPT,
+    UPDATE_SUMMARIZATION_PROMPT,
 };
 use tau_store::{Entry, Store};
 use tau_testing::{block_on, scripted::ScriptedModel};
@@ -60,9 +60,7 @@ fn settings() -> Compaction {
 }
 
 fn agent(llm: &ScriptedModel) -> Agent {
-    Agent::new(llm.clone())
-        .tool(typed(Read))
-        .compaction(settings())
+    Agent::new(llm.clone()).tool(typed(Read)).plugin(settings())
 }
 
 fn text(message: &Message) -> String {
@@ -255,7 +253,7 @@ fn a_split_turn_gets_a_prefix_summary() {
         // second assistant message, inside the first turn.
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
-            .compaction(settings().keep_recent_tokens(10));
+            .plugin(settings().keep_recent_tokens(10));
         let outcome = agent.run("go", &store).await.unwrap();
         assert_eq!(outcome.text, "done");
         let requests = llm.requests();
@@ -295,7 +293,7 @@ fn an_overflow_compacts_and_retries_once() {
         // The threshold never fires: the window is huge.
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
-            .compaction(settings().context_window(u64::MAX));
+            .plugin(settings().context_window(u64::MAX));
         let (_, outcome) = run(&agent, &store, "go", "then this").await;
         assert_eq!(outcome.stop, StopReason::Stop);
         assert_eq!(outcome.text, "done");
@@ -334,7 +332,7 @@ fn a_second_overflow_fails_the_run() {
         let store = Store::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
-            .compaction(settings().context_window(u64::MAX));
+            .plugin(settings().context_window(u64::MAX));
         let (_, outcome) = run(&agent, &store, "go", "then this").await;
         assert!(
             matches!(&outcome.stop, StopReason::Error(m) if m.contains("context_length_exceeded")),
@@ -357,7 +355,7 @@ fn a_rejected_summary_on_overflow_fails_the_run() {
         let store = Store::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
-            .compaction(settings().context_window(u64::MAX));
+            .plugin(settings().context_window(u64::MAX));
         let (events, outcome) = run(&agent, &store, "go", "then this").await;
         let StopReason::Error(message) = &outcome.stop else {
             panic!("{:?}", outcome.stop)
@@ -455,7 +453,7 @@ fn no_compaction_below_the_threshold() {
         let store = Store::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
-            .compaction(settings().context_window(u64::MAX));
+            .plugin(settings().context_window(u64::MAX));
         let (events, outcome) = run(&agent, &store, "go", "then this").await;
         assert_eq!(outcome.text, "done");
         assert_eq!(llm.requests().len(), 3);
@@ -492,7 +490,7 @@ fn an_overflow_is_recognized_by_its_wording() {
         let store = Store::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
-            .compaction(settings().context_window(u64::MAX));
+            .plugin(settings().context_window(u64::MAX));
         let (events, outcome) = run(&agent, &store, "go", "then this").await;
         assert_eq!(outcome.text, "done");
         assert!(
@@ -500,5 +498,70 @@ fn an_overflow_is_recognized_by_its_wording() {
                 .iter()
                 .any(|e| matches!(e, RunEvent::ContextRewritten { .. }))
         );
+    });
+}
+
+/// A context overflow reported by its code (not its wording) compacts,
+/// and the summary request goes through the retry policy too.
+#[test]
+fn an_overflow_code_compacts_and_the_summary_is_retried() {
+    use futures_util::StreamExt;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("first"))
+        .turn(|t| t.error("context_length_exceeded", "no room"))
+        .turn(|t| t.error("server_error", "try again"))
+        .turn(|t| t.text("summary"))
+        .turn(|t| t.text("done"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm.clone()).plugin(
+            Compaction::default()
+                .context_window(u64::MAX)
+                .keep_recent_tokens(1),
+        );
+        let mut run = agent.start("go", &store);
+        run.steer("more");
+        let events: Vec<RunEvent> = run.events().collect().await;
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.text, "done");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, RunEvent::ContextRewritten { .. }))
+        );
+        llm.assert_exhausted();
+    });
+}
+
+/// A summary request that keeps failing retryably is tried as many times
+/// as the policy allows, and then compaction fails.
+#[test]
+fn a_failing_summary_is_tried_as_the_policy_allows() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("first"))
+        .turn(|t| t.error("context_length_exceeded", "no room"))
+        .turn(|t| t.error("server_error", "try again"))
+        .turn(|t| t.error("server_error", "try again"))
+        .turn(|t| t.text("never"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let policy = tau_ai::retry::RetryPolicy {
+            max_attempts: 2,
+            ..tau_ai::retry::RetryPolicy::default()
+        };
+        let agent = Agent::new(llm.clone()).retry(policy).plugin(
+            Compaction::default()
+                .context_window(u64::MAX)
+                .keep_recent_tokens(1),
+        );
+        let run = agent.start("go", &store);
+        run.steer("more");
+        let outcome = run.outcome().await.unwrap();
+        let StopReason::Error(message) = &outcome.stop else {
+            panic!("{:?}", outcome.stop)
+        };
+        assert!(message.contains("compaction failed"), "{message}");
+        assert_eq!(llm.requests().len(), 4);
+        assert_eq!(llm.remaining(), 1);
     });
 }
