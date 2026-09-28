@@ -75,7 +75,7 @@ fn one_response(
     let model_name = settings.model.clone();
     sim.client("client", async move {
         let client = OpenAi::with_connector(SimConnector, Limits::default());
-        let session = client.session(settings).await.unwrap();
+        let mut session = client.session(settings).await.unwrap();
         // The session keeps the caller's settings, with whether the model
         // reasons taken from the model table.
         assert_eq!(session.settings().model, model_name);

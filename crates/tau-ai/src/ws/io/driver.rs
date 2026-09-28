@@ -27,13 +27,19 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
 
-use super::connection::{self, ConnectionEvent, ConnectionHandle, Connector};
+use super::connection::{
+    self,
+    ConnectionEvent,
+    ConnectionHandle,
+    Connector,
+    Outgoing,
+};
 use crate::{
     event::{Accumulator, AssistantEvent},
     message::Timestamp,
@@ -462,16 +468,18 @@ impl<C: Connector> Driver<C> {
                 PoolAction::Send {
                     connection,
                     lane,
-                    mut body,
+                    body,
                 } => {
                     let Some(active) = self.lanes.get_mut(&lane) else {
                         continue;
                     };
                     active.new_attempt();
                     active.sent_on = Some(connection);
-                    body.insert("stream_id".into(), json!(stream_id(lane)));
                     if let Some(handle) = self.connections.get(&connection) {
-                        handle.send(Value::Object(body));
+                        handle.send(Outgoing::Request {
+                            body,
+                            stream_id: Value::String(stream_id(lane)),
+                        });
                     }
                 }
                 PoolAction::Fail { lane, .. } => {

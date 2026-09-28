@@ -17,11 +17,11 @@
 //! Every field except `input` depends only on [`Settings`], so two turns
 //! of one run differ only in `input`. The delta rule depends on that.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use serde_json::{Map, Value, json};
 
-use crate::ws::proto::continuation::Body;
+use crate::ws::proto::continuation::{Body, Fields};
 
 /// OpenAI rejects `max_output_tokens` below this (pi #6265).
 pub const MIN_OUTPUT_TOKENS: u64 = 16;
@@ -127,6 +127,15 @@ pub fn body(
     input: Vec<Value>,
     stream_id: Option<&StreamId>,
 ) -> Body {
+    Body::new(
+        Arc::new(fields(settings, stream_id)),
+        input.into_iter().map(Arc::new).collect(),
+    )
+}
+
+/// Every field of the `response.create` body but `input`. It depends
+/// only on `settings`, so a session builds it once.
+pub fn fields(settings: &Settings, stream_id: Option<&StreamId>) -> Fields {
     let mut body = Map::new();
     body.insert("type".into(), json!("response.create"));
     if let Some(stream_id) = stream_id {
@@ -179,6 +188,5 @@ pub fn body(
             key.chars().take(PROMPT_CACHE_KEY_MAX_CHARS).collect();
         body.insert("prompt_cache_key".into(), json!(clamped));
     }
-    body.insert("input".into(), Value::Array(input));
     body
 }

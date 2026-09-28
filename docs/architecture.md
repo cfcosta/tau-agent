@@ -28,8 +28,8 @@ Agent::start(input, &store)
        ├─ store: INSERT runs (status = running)
        ├─ lane = pool.acquire_lane()                 # stream_id on a shared socket
        └─ loop
-            ├─ transcript = store.transcript(run)     # fork ancestors included
-            ├─ body = responses::build(instructions, tools, transcript, text.format?)
+            ├─ transcript: kept in memory; fork ancestors loaded once at start
+            ├─ body = session fields (built once) + InputCache(transcript)
             ├─ lane.create(body)                     # delta rule: suffix + previous_response_id
             │    └─ response.* events → AssistantEvent stream → RunEvent (hooks awaited)
             ├─ tool calls? prepare sequentially → execute in parallel → results in source order

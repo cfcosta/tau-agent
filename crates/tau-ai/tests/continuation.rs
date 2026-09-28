@@ -4,9 +4,34 @@
 use std::collections::HashMap;
 
 use hegel::{TestCase, generators as gs};
-use serde_json::{Value, json};
-use tau_ai::ws::proto::continuation::{Continuation, RequestKind, prepare};
+use serde_json::{Map, Value, json};
+use tau_ai::ws::proto::continuation::{self, Body, Continuation, RequestKind};
 use tau_testing::generators::{self, lane::LaneHistory};
+
+/// A request prepared from a JSON body, as a JSON body again.
+struct Prepared {
+    body: Map<String, Value>,
+    kind: RequestKind,
+}
+
+fn prepare(
+    continuation: Option<&Continuation>,
+    full: Map<String, Value>,
+) -> Prepared {
+    let prepared = continuation::prepare(continuation, &Body::from(full));
+    Prepared {
+        body: prepared.body.to_map(),
+        kind: prepared.kind,
+    }
+}
+
+fn record(
+    full: &Map<String, Value>,
+    output_items: Vec<Value>,
+    response_id: String,
+) -> Continuation {
+    Continuation::record(&Body::from(full.clone()), output_items, response_id)
+}
 
 /// The server side of one connection: the full item list behind every
 /// response it holds, as OpenAI keeps them in memory.
@@ -49,7 +74,7 @@ fn run_lane(
         let mut held = seen;
         held.extend(turn.output_items.iter().cloned());
         server.responses.insert(turn.response_id.clone(), held);
-        continuation = Some(Continuation::record(
+        continuation = Some(record(
             &full,
             turn.output_items.clone(),
             turn.response_id.clone(),
@@ -171,11 +196,8 @@ fn prepared_bodies_keep_other_fields(tc: TestCase) {
     assert_eq!(first.body, full);
 
     let turn = &history.turns[0];
-    let continuation = Continuation::record(
-        &full,
-        turn.output_items.clone(),
-        turn.response_id.clone(),
-    );
+    let continuation =
+        record(&full, turn.output_items.clone(), turn.response_id.clone());
     let mut next = full.clone();
     let mut input = history.full_input(0);
     input.extend(turn.output_items.iter().cloned());
@@ -201,7 +223,7 @@ fn prepared_bodies_keep_other_fields(tc: TestCase) {
 fn shorter_input_forces_full_resend() {
     let mut full = serde_json::Map::new();
     full.insert("input".into(), json!([{"type": "message", "text": "a"}]));
-    let continuation = Continuation::record(
+    let continuation = record(
         &full,
         vec![json!({"type": "message", "text": "b"})],
         "resp_1".into(),
@@ -214,7 +236,7 @@ fn shorter_input_forces_full_resend() {
 fn key_order_does_not_matter() {
     let mut full = serde_json::Map::new();
     full.insert("input".into(), json!([{"type": "message", "text": "a"}]));
-    let continuation = Continuation::record(&full, vec![], "resp_1".into());
+    let continuation = record(&full, vec![], "resp_1".into());
     let mut next = serde_json::Map::new();
     next.insert("input".into(), serde_json::from_str(r#"[{"text": "a", "type": "message"}, {"type": "message", "text": "c"}]"#).unwrap());
     assert_eq!(prepare(Some(&continuation), next).kind, RequestKind::Delta);
@@ -233,8 +255,7 @@ fn a_real_turn_continues_from_a_warm_up(tc: TestCase) {
     warm_up.insert("generate".into(), json!(false));
     let mut server = Server::default();
     server.responses.insert("resp_warm".into(), Vec::new());
-    let continuation =
-        Continuation::record(&warm_up, Vec::new(), "resp_warm".into());
+    let continuation = record(&warm_up, Vec::new(), "resp_warm".into());
     let prepared = prepare(Some(&continuation), first.clone());
     assert_eq!(prepared.kind, RequestKind::Delta);
     assert_eq!(prepared.body["previous_response_id"], json!("resp_warm"));
@@ -244,4 +265,45 @@ fn a_real_turn_continues_from_a_warm_up(tc: TestCase) {
         first["input"].as_array().unwrap().clone()
     );
     assert!(prepared.body.get("generate").is_none());
+}
+
+/// A body serialized as a frame is the body as one JSON object, plus
+/// the extra fields, which replace fields of the same name.
+#[hegel::test(test_cases = 200)]
+fn a_frame_is_the_body_as_json(tc: TestCase) {
+    let history = tc.draw(generators::lane::lane_history());
+    let index =
+        tc.draw(gs::integers::<usize>().max_value(history.turns.len() - 1));
+    let mut full = history.full_body(index);
+    if tc.draw(gs::booleans()) {
+        full.insert("previous_response_id".into(), json!("resp_1"));
+    }
+    if tc.draw(gs::booleans()) {
+        full.insert("stream_id".into(), json!("stale"));
+    }
+    let body = Body::from(full);
+    let stream_id = json!("tau-7");
+    let frame: Value =
+        serde_json::from_str(&body.to_frame(&[("stream_id", &stream_id)]))
+            .unwrap();
+    let mut expected = body.to_map();
+    expected.insert("stream_id".into(), stream_id);
+    assert_eq!(frame, Value::Object(expected));
+}
+
+/// A JSON body splits into fields, input and `previous_response_id`, and
+/// joins back unchanged.
+#[hegel::test(test_cases = 200)]
+fn a_json_body_round_trips(tc: TestCase) {
+    let history = tc.draw(generators::lane::lane_history());
+    let mut full = history.full_body(0);
+    let previous = tc.draw(gs::booleans());
+    if previous {
+        full.insert("previous_response_id".into(), json!("resp_1"));
+    }
+    let body = Body::from(full.clone());
+    assert_eq!(body.previous_response_id.is_some(), previous);
+    assert!(!body.fields.contains_key("previous_response_id"));
+    assert!(!body.fields.contains_key("input"));
+    assert_eq!(body.to_map(), full);
 }

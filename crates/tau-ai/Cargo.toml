@@ -19,4 +19,8 @@ webpki-roots.workspace = true
 hegeltest.workspace = true
 tau-testing.workspace = true
 turmoil.workspace = true
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["io-util", "net", "rt-multi-thread"] }
+
+[[bench]]
+name = "transport"
+harness = false

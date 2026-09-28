@@ -478,10 +478,8 @@ impl Pool {
         match action {
             None => Vec::new(),
             Some(lane::Action::Send(body)) => {
-                if body.contains_key("previous_response_id") {
-                    self.last_delta_items = body["input"]
-                        .as_array()
-                        .map_or(0, |items| items.len() as u64);
+                if body.previous_response_id.is_some() {
+                    self.last_delta_items = body.input.len() as u64;
                 }
                 vec![PoolAction::Send {
                     connection,

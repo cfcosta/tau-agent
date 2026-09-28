@@ -9,9 +9,17 @@ use tau_ai::responses::request::{
     Settings,
     StreamId,
     ToolDefinition,
-    body,
 };
 use tau_testing::generators;
+
+/// The body as one JSON object.
+fn body(
+    settings: &Settings,
+    input: Vec<Value>,
+    lane: Option<&StreamId>,
+) -> serde_json::Map<String, Value> {
+    tau_ai::responses::request::body(settings, input, lane).to_map()
+}
 
 #[hegel::composite]
 fn settings(tc: TestCase) -> Settings {

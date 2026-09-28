@@ -18,7 +18,7 @@ use tokio_tungstenite::{
     tungstenite::{Message, client::IntoClientRequest, http},
 };
 
-use crate::ws::proto::pool::ConnectionId;
+use crate::ws::proto::{continuation::Body, pool::ConnectionId};
 
 /// Opens the byte stream a WebSocket runs over, and says how to upgrade
 /// it. The default connects with TLS to OpenAI; tests connect on a
@@ -47,18 +47,47 @@ pub enum ConnectionEvent {
     Closed { connection: ConnectionId },
 }
 
+/// A frame to send.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Outgoing {
+    Json(Value),
+    /// A request on a lane. It is serialized by the connection task, so
+    /// a full resend costs the driver, which every lane shares, nothing.
+    Request {
+        body: Body,
+        stream_id: Value,
+    },
+}
+
+impl From<Value> for Outgoing {
+    fn from(frame: Value) -> Self {
+        Self::Json(frame)
+    }
+}
+
+impl Outgoing {
+    fn into_text(self) -> String {
+        match self {
+            Self::Json(frame) => frame.to_string(),
+            Self::Request { body, stream_id } => {
+                body.to_frame(&[("stream_id", &stream_id)])
+            }
+        }
+    }
+}
+
 /// The driver's handle on a connection task. Dropping it closes the
 /// connection.
 #[derive(Debug, Clone)]
 pub struct ConnectionHandle {
-    outgoing: mpsc::UnboundedSender<Value>,
+    outgoing: mpsc::UnboundedSender<Outgoing>,
 }
 
 impl ConnectionHandle {
     /// Queues a frame. Frames queued before the connection opens are sent
     /// once it does. Returns false if the connection is already gone.
-    pub fn send(&self, frame: Value) -> bool {
-        self.outgoing.send(frame).is_ok()
+    pub fn send(&self, frame: impl Into<Outgoing>) -> bool {
+        self.outgoing.send(frame.into()).is_ok()
     }
 }
 
@@ -79,7 +108,7 @@ pub fn spawn<C: Connector>(
 async fn run<C: Connector>(
     connection: ConnectionId,
     connector: Arc<C>,
-    mut frames: mpsc::UnboundedReceiver<Value>,
+    mut frames: mpsc::UnboundedReceiver<Outgoing>,
     events: &mpsc::UnboundedSender<ConnectionEvent>,
 ) {
     let Ok(stream) = connector.connect().await else {
@@ -98,7 +127,7 @@ async fn run<C: Connector>(
         tokio::select! {
             outgoing = frames.recv() => match outgoing {
                 Some(frame) => {
-                    if socket.send(Message::text(frame.to_string())).await.is_err() {
+                    if socket.send(Message::text(frame.into_text())).await.is_err() {
                         return;
                     }
                 }

@@ -112,7 +112,10 @@
 //!   fires on a round trip; we do not get to assume that, since
 //!   `response_items` must agree with `to_input` even in that case.
 
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use serde_json::{Value, json};
 
@@ -152,10 +155,63 @@ pub fn split_tool_call_id(id: &str) -> (&str, Option<&str>) {
 pub fn to_input(messages: &[Message]) -> Vec<Value> {
     let groups: Vec<Vec<ConvertedItem>> =
         messages.iter().map(build_group).collect();
+    let items = select(&groups);
+    // The groups hold the other reference to each item: drop them so
+    // the items unwrap without a copy.
+    drop(groups);
+    items.into_iter().map(Arc::unwrap_or_clone).collect()
+}
 
+/// Converts transcripts turn after turn, as [`to_input`] does, but keeps
+/// each message's items and reuses them while the message stays the
+/// same. A run's transcript only grows between turns, so each turn
+/// converts only its new messages.
+///
+/// The items come out shared, and an unchanged message yields the very
+/// same `Arc`s as before. That is what lets a lane match a request
+/// against its baseline by pointer (see
+/// [`continuation`](crate::ws::proto::continuation)).
+#[derive(Debug, Default)]
+pub struct InputCache {
+    groups: Vec<(Message, Vec<ConvertedItem>)>,
+}
+
+impl InputCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The `input` array for `messages`: equal to `to_input(messages)`.
+    pub fn input(&mut self, messages: &[Message]) -> Vec<Arc<Value>> {
+        let same = self
+            .groups
+            .iter()
+            .zip(messages)
+            .take_while(|((cached, _), message)| cached == *message)
+            .count();
+        self.groups.truncate(same);
+        self.groups.extend(
+            messages[same..]
+                .iter()
+                .map(|message| (message.clone(), build_group(message))),
+        );
+        let groups: Vec<&[ConvertedItem]> = self
+            .groups
+            .iter()
+            .map(|(_, items)| items.as_slice())
+            .collect();
+        select(&groups)
+    }
+}
+
+/// Picks the items [`to_input`] keeps from each message's converted
+/// items.
+fn select(groups: &[impl AsRef<[ConvertedItem]>]) -> Vec<Arc<Value>> {
+    let groups: Vec<&[ConvertedItem]> =
+        groups.iter().map(AsRef::as_ref).collect();
     let mut keep: Vec<Vec<bool>> =
         groups.iter().map(|g| vec![false; g.len()]).collect();
-    let mut pending: HashMap<String, VecDeque<(usize, usize)>> = HashMap::new();
+    let mut pending: HashMap<&str, VecDeque<(usize, usize)>> = HashMap::new();
 
     // Pair each function_call with the first later output of the same
     // call_id (invariants 1 and 2).
@@ -166,13 +222,10 @@ pub fn to_input(messages: &[Message]) -> Vec<Value> {
                     keep[gi][ii] = true
                 }
                 ConvertedItem::FunctionCall { call_id, .. } => {
-                    pending
-                        .entry(call_id.clone())
-                        .or_default()
-                        .push_back((gi, ii));
+                    pending.entry(call_id).or_default().push_back((gi, ii));
                 }
                 ConvertedItem::ToolOutput { call_id, .. } => {
-                    if let Some(queue) = pending.get_mut(call_id)
+                    if let Some(queue) = pending.get_mut(call_id.as_str())
                         && let Some((cg, ci)) = queue.pop_front()
                     {
                         keep[cg][ci] = true;
@@ -197,10 +250,10 @@ pub fn to_input(messages: &[Message]) -> Vec<Value> {
     }
 
     let mut result = Vec::new();
-    for (gi, group) in groups.into_iter().enumerate() {
-        for (ii, item) in group.into_iter().enumerate() {
+    for (gi, group) in groups.iter().enumerate() {
+        for (ii, item) in group.iter().enumerate() {
             if keep[gi][ii] {
-                result.push(item.into_value());
+                result.push(item.value().clone());
             }
         }
     }
@@ -234,25 +287,38 @@ pub fn to_input(messages: &[Message]) -> Vec<Value> {
 pub fn response_items(message: &AssistantMessage) -> Vec<Value> {
     let mut items = build_assistant_group(message);
     trim_trailing_reasoning(&mut items);
-    items.into_iter().map(ConvertedItem::into_value).collect()
+    items
+        .into_iter()
+        .map(|item| Arc::unwrap_or_clone(item.into_value()))
+        .collect()
 }
 
 /// One converted Responses item, tagged with what [`to_input`] needs to
 /// decide whether to keep it.
+#[derive(Debug)]
 enum ConvertedItem {
     /// Always kept: a user item or an assistant text item.
-    Plain(Value),
+    Plain(Arc<Value>),
     /// A reasoning item, kept unless left trailing (see the module docs).
-    Reasoning(Value),
+    Reasoning(Arc<Value>),
     /// A `function_call` item, kept only if a later output claims it.
-    FunctionCall { value: Value, call_id: String },
+    FunctionCall { value: Arc<Value>, call_id: String },
     /// A `function_call_output` item, kept only if it claims an earlier
     /// call.
-    ToolOutput { value: Value, call_id: String },
+    ToolOutput { value: Arc<Value>, call_id: String },
 }
 
 impl ConvertedItem {
-    fn into_value(self) -> Value {
+    fn into_value(self) -> Arc<Value> {
+        match self {
+            ConvertedItem::Plain(v)
+            | ConvertedItem::Reasoning(v)
+            | ConvertedItem::FunctionCall { value: v, .. }
+            | ConvertedItem::ToolOutput { value: v, .. } => v,
+        }
+    }
+
+    fn value(&self) -> &Arc<Value> {
         match self {
             ConvertedItem::Plain(v)
             | ConvertedItem::Reasoning(v)
@@ -266,7 +332,7 @@ fn build_group(message: &Message) -> Vec<ConvertedItem> {
     match message {
         Message::User(user) => build_user_item(user)
             .into_iter()
-            .map(ConvertedItem::Plain)
+            .map(|item| ConvertedItem::Plain(Arc::new(item)))
             .collect(),
         Message::ToolResult(result) => vec![build_tool_output(result)],
         Message::Assistant(assistant) => build_assistant_group(assistant),
@@ -337,16 +403,16 @@ fn build_assistant_group(assistant: &AssistantMessage) -> Vec<ConvertedItem> {
     for block in &assistant.content {
         match block {
             AssistantBlock::Text(text) => {
-                items.push(ConvertedItem::Plain(build_text_item(
+                items.push(ConvertedItem::Plain(Arc::new(build_text_item(
                     assistant.response_id.as_deref(),
                     text_block_index,
                     text,
-                )));
+                ))));
                 text_block_index += 1;
             }
             AssistantBlock::Thinking(thinking) => {
                 if let Some(value) = build_reasoning_item(thinking) {
-                    items.push(ConvertedItem::Reasoning(value));
+                    items.push(ConvertedItem::Reasoning(Arc::new(value)));
                 }
             }
             AssistantBlock::ToolCall(call) => {
@@ -445,7 +511,7 @@ fn build_function_call(call: &ToolCall) -> ConvertedItem {
         value["id"] = json!(item_id);
     }
     ConvertedItem::FunctionCall {
-        value,
+        value: Arc::new(value),
         call_id: call_id.to_owned(),
     }
 }
@@ -459,7 +525,7 @@ fn build_tool_output(result: &ToolResultMessage) -> ConvertedItem {
         "output": output,
     });
     ConvertedItem::ToolOutput {
-        value,
+        value: Arc::new(value),
         call_id: call_id.to_owned(),
     }
 }

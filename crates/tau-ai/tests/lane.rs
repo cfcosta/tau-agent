@@ -93,13 +93,14 @@ fn lane_against_simulated_server_body(tc: TestCase) {
         let second = tc.draw(gs::booleans());
         tc.note(&format!("turn {i}: {fault:?}, second fault: {second}"));
 
-        let mut action = Some(lane.submit(full.clone()).unwrap());
-        assert_eq!(lane.submit(full.clone()), Err(LaneError::Busy));
+        let mut action = Some(lane.submit(Body::from(full.clone())).unwrap());
+        assert_eq!(lane.submit(Body::from(full.clone())), Err(LaneError::Busy));
         let mut attempts = 0;
 
         while let Some(next) = action.take() {
             match next {
                 Action::Send(body) => {
+                    let body = body.to_map();
                     attempts += 1;
                     assert!(
                         attempts <= 2,
@@ -251,15 +252,12 @@ fn clean_lane_sends_deltas(tc: TestCase) {
     let history = tc.draw(lane_history());
     let mut lane = Lane::new();
     for (i, turn) in history.turns.iter().enumerate() {
-        let Action::Send(body) = lane.submit(history.full_body(i)).unwrap()
+        let Action::Send(body) =
+            lane.submit(Body::from(history.full_body(i))).unwrap()
         else {
             panic!("expected a send");
         };
-        assert_eq!(
-            body.contains_key("previous_response_id"),
-            i > 0,
-            "turn {i}"
-        );
+        assert_eq!(body.previous_response_id.is_some(), i > 0, "turn {i}");
         lane.handle(Event::Output);
         lane.handle(Event::Completed {
             response_id: turn.response_id.clone(),
@@ -272,10 +270,10 @@ fn clean_lane_sends_deltas(tc: TestCase) {
 }
 
 fn body(items: Value) -> Body {
-    let mut body = Body::new();
+    let mut body = serde_json::Map::new();
     body.insert("model".into(), json!("gpt-5.5"));
     body.insert("input".into(), items);
-    body
+    Body::from(body)
 }
 
 /// A completed lane whose next request would be a delta.
@@ -299,7 +297,7 @@ fn next_body() -> Body {
 }
 
 fn is_full(action: &Option<Action>) -> bool {
-    matches!(action, Some(Action::Send(b)) if !b.contains_key("previous_response_id"))
+    matches!(action, Some(Action::Send(b)) if b.previous_response_id.is_none())
 }
 
 /// Each event that invalidates the connection's cache makes the next

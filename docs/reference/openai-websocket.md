@@ -91,8 +91,8 @@ Ported from pi's `getCachedWebSocketInputDelta`
 
 After each `response.completed` on a lane, the lane records three things:
 
-- `body_sans_input`: the full request, minus `input` and
-  `previous_response_id`.
+- `fields`: the full request, minus `input`, `previous_response_id`
+  and `generate`.
 - `baseline`: the request's input items, followed by the response's
   output items. Tool outputs are excluded, because the next request
   supplies them.
@@ -102,10 +102,24 @@ For the next request on that lane, send only
 `input[baseline.len()..]` with `previous_response_id = response_id`,
 but only if both of these hold:
 
-1. the new request equals `body_sans_input` apart from `input`; and
+1. the new request's fields equal `fields`; and
 2. `input[..baseline.len()] == baseline`.
 
 Otherwise send the full input and no `previous_response_id`.
+
+The check is cheap even for a long transcript, because nothing in it is
+copied:
+
+- A request holds its fields and each input item behind an `Arc`. A
+  session builds its fields once, and its `InputCache` converts only
+  the messages that changed since the last turn, so an unchanged
+  message yields the very same item `Arc`s.
+- `Arc<Value>` equality compares pointers before contents, so the prefix
+  check touches the baseline's items by pointer. Only the last
+  response's output items, built separately by the lane and the
+  session, are compared by value.
+- The lane records its baseline by cloning `Arc`s, and the connection
+  task, not the driver every lane shares, serializes the frame.
 
 Events that force a full resend:
 

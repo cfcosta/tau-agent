@@ -282,14 +282,12 @@ impl Lane {
 
     /// Prepares and records a request; returns the send action.
     fn send(&mut self, full_body: Body) -> Action {
-        let prepared = prepare(self.continuation.as_ref(), full_body.clone());
+        let prepared = prepare(self.continuation.as_ref(), &full_body);
         match prepared.kind {
             RequestKind::Full => self.stats.full_requests += 1,
             RequestKind::Delta => {
                 self.stats.delta_requests += 1;
-                self.stats.last_delta_items = prepared.body["input"]
-                    .as_array()
-                    .map_or(0, |items| items.len() as u64);
+                self.stats.last_delta_items = prepared.body.input.len() as u64;
             }
         }
         self.request = Some(Request {

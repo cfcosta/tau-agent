@@ -16,13 +16,14 @@ use tau_ai::ws::proto::{
 };
 
 fn body(n: u64) -> Body {
-    let mut body = Body::new();
+    with_input(json!([{"type": "message", "text": n.to_string()}]))
+}
+
+fn with_input(items: serde_json::Value) -> Body {
+    let mut body = serde_json::Map::new();
     body.insert("model".into(), json!("gpt-5.5"));
-    body.insert(
-        "input".into(),
-        json!([{"type": "message", "text": n.to_string()}]),
-    );
-    body
+    body.insert("input".into(), items);
+    Body::from(body)
 }
 
 /// What the test knows from the actions alone.
@@ -67,7 +68,7 @@ impl Model {
                     );
                     self.waiting.retain(|l| l != lane);
                     self.in_flight.insert(*lane, *connection);
-                    if body.contains_key("previous_response_id") {
+                    if body.previous_response_id.is_some() {
                         self.delta_sends += 1;
                     } else {
                         self.full_sends += 1;
@@ -511,7 +512,7 @@ fn connection_limit_moves_the_lane() {
                 PoolAction::Close(0),
                 PoolAction::Open(1),
                 PoolAction::Send { connection: 1, body, .. },
-            ] if !body.contains_key("previous_response_id")
+            ] if body.previous_response_id.is_none()
         ),
         "{actions:?}"
     );
@@ -540,7 +541,7 @@ fn lost_connection_moves_every_lane() {
     assert_eq!(actions[0], PoolAction::Open(1));
     assert!(actions.iter().any(
         |a| matches!(a, PoolAction::Send { lane, connection: 1, body }
-        if *lane == quiet && !body.contains_key("previous_response_id"))
+        if *lane == quiet && body.previous_response_id.is_none())
     ));
     assert!(actions.iter().any(
         |a| matches!(a, PoolAction::Fail { lane, .. } if *lane == talking)
@@ -638,8 +639,7 @@ fn closed_lane_stats_are_kept() {
     // A third lane continues with a delta that the server has lost.
     let (third, _) = pool.open_lane();
     let first_input = json!([{"type": "message", "text": "a"}]);
-    let mut first = body(3);
-    first.insert("input".into(), first_input);
+    let first = with_input(first_input);
     pool.submit(third, first).unwrap();
     pool.handle(
         third,
@@ -649,8 +649,9 @@ fn closed_lane_stats_are_kept() {
         },
     )
     .unwrap();
-    let mut next = body(3);
-    next.insert("input".into(), json!([{"type": "message", "text": "a"}, {"type": "message", "text": "b"}]));
+    let next = with_input(
+        json!([{"type": "message", "text": "a"}, {"type": "message", "text": "b"}]),
+    );
     pool.submit(third, next).unwrap();
     pool.handle(
         third,
@@ -732,12 +733,13 @@ fn rotation_moves_lanes_and_closes() {
     assert_eq!(actions, vec![PoolAction::Close(0)]);
     assert_eq!(pool.connection_of(busy), Some(1));
 
-    let mut next = body(1);
-    next.insert("input".into(), json!([{"type": "message", "text": "1"}, {"type": "message", "text": "more"}]));
+    let next = with_input(
+        json!([{"type": "message", "text": "1"}, {"type": "message", "text": "more"}]),
+    );
     let sent = pool.submit(idle, next).unwrap();
     assert!(
         matches!(&sent[..], [PoolAction::Send { connection: 1, body, .. }]
-        if !body.contains_key("previous_response_id")),
+        if body.previous_response_id.is_none()),
         "{sent:?}"
     );
 }

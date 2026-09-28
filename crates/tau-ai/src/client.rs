@@ -6,14 +6,16 @@
 //! the lane decides whether it goes out as a delta. When a response
 //! completes, its usage gets its cost from the model table.
 
+use std::sync::Arc;
+
 use crate::{
     cost::apply,
     event::AssistantEvent,
     message::{Message, Timestamp},
     model::{Model, ServiceTier, find},
     responses::{
-        input::to_input,
-        request::{Settings, body},
+        input::InputCache,
+        request::{Settings, fields},
     },
     ws::{
         io::{
@@ -21,7 +23,10 @@ use crate::{
             driver::{LaneHandle, Response, Stopped, Transport},
             tls::OpenAiConnector,
         },
-        proto::pool::{Limits, PoolStats},
+        proto::{
+            continuation::{Body, Fields},
+            pool::{Limits, PoolStats},
+        },
     },
 };
 
@@ -81,8 +86,10 @@ impl OpenAi {
         }
         Ok(Session {
             lane: self.transport.open_lane().await?,
+            fields: Arc::new(fields(&settings, None)),
             settings,
             model,
+            input: InputCache::new(),
         })
     }
 
@@ -97,18 +104,23 @@ impl OpenAi {
 pub struct Session {
     lane: LaneHandle,
     settings: Settings,
+    /// The request fields, built once: every request of the session
+    /// shares them.
+    fields: Arc<Fields>,
     model: Option<&'static Model>,
+    input: InputCache,
 }
 
 impl Session {
     /// Asks for the next response to `transcript`. `timestamp` becomes
     /// the response's timestamp.
     pub fn respond(
-        &self,
+        &mut self,
         transcript: &[Message],
         timestamp: Timestamp,
     ) -> SessionResponse {
-        let request = body(&self.settings, to_input(transcript), None);
+        let request =
+            Body::new(self.fields.clone(), self.input.input(transcript));
         SessionResponse {
             response: self.lane.request(
                 request,
@@ -125,8 +137,9 @@ impl Session {
     /// false`. It produces no output; the lane's next request continues
     /// from it.
     pub fn warm_up(&self, timestamp: Timestamp) -> SessionResponse {
-        let mut request = body(&self.settings, Vec::new(), None);
-        request.insert("generate".into(), false.into());
+        let mut fields = (*self.fields).clone();
+        fields.insert("generate".into(), false.into());
+        let request = Body::new(Arc::new(fields), Vec::new());
         SessionResponse {
             response: self.lane.request(
                 request,

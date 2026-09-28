@@ -6,9 +6,9 @@
 //! `crates/tau-ai/src/responses/input.rs` and in
 //! `docs/reference/testing.md`'s `tau-ai` property inventory.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use hegel::TestCase;
+use hegel::{TestCase, generators as gs};
 use serde_json::{Map, Value, json};
 use tau_ai::{
     message::{
@@ -28,7 +28,12 @@ use tau_ai::{
         UserContent,
         UserMessage,
     },
-    responses::input::{response_items, split_tool_call_id, to_input},
+    responses::input::{
+        InputCache,
+        response_items,
+        split_tool_call_id,
+        to_input,
+    },
 };
 use tau_testing::generators;
 
@@ -718,6 +723,48 @@ fn undamaged_prefix_after_a_completed_turn_is_a_prefix_of_the_full_input(
             full.starts_with(&prefix),
             "prefix of length {len} is not a prefix of the full input"
         );
+    }
+}
+
+/// The cache converts exactly as `to_input` does, whatever it saw
+/// before: a transcript that grew, one cut short, or a different one
+/// altogether (a compaction, a fork).
+#[hegel::test(test_cases = 300)]
+fn the_cache_converts_like_to_input(tc: TestCase) {
+    let base = tc.draw(generators::damaged_transcript());
+    let steps = tc.draw(gs::integers::<usize>().min_value(1).max_value(5));
+    let mut cache = InputCache::new();
+    for step in 0..steps {
+        let messages = if tc.draw(gs::booleans()) {
+            let len = tc.draw(gs::integers::<usize>().max_value(base.len()));
+            base[..len].to_vec()
+        } else {
+            tc.draw(generators::damaged_transcript())
+        };
+        let cached: Vec<Value> = cache
+            .input(&messages)
+            .iter()
+            .map(|item| (**item).clone())
+            .collect();
+        assert_eq!(cached, to_input(&messages), "step {step}");
+    }
+}
+
+/// Once a turn completes, the next turn's input starts with the very
+/// items of the previous one, not copies: the lane matches them by
+/// pointer.
+#[hegel::test(test_cases = 300)]
+fn the_cache_shares_the_items_of_earlier_turns(tc: TestCase) {
+    let messages = tc.draw(generators::transcript());
+    let mut cache = InputCache::new();
+    let mut previous: Vec<Arc<Value>> = Vec::new();
+    for len in safe_prefix_lengths(&messages) {
+        let input = cache.input(&messages[..len]);
+        assert!(input.len() >= previous.len(), "length {len}");
+        for (index, (before, now)) in previous.iter().zip(&input).enumerate() {
+            assert!(Arc::ptr_eq(before, now), "length {len}, item {index}");
+        }
+        previous = input;
     }
 }
 
