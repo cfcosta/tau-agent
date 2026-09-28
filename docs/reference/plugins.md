@@ -311,6 +311,11 @@ Token estimates and overflow detection, which the loop uses for
 
 ### `tau-reasoning`: reasoning effort per job
 
+Built: `crates/plugins/reasoning`. Runs whose effort is "auto" get
+it in tau-ui when a TypeSafe key is saved; its choice (every level's
+probability, the confidence and the threshold) is reported and
+recorded, and shows as the run's reasoning note and plan.
+
 - **Seam:** `start` only.
 - **How:**
   1. Put the input, and the start of the instructions, into the state.

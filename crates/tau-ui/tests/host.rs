@@ -894,3 +894,72 @@ fn host_credentials(host: &Host) -> tau_ui::accounts::Credentials {
 fn project_base(host: &Host, repo: &str) -> String {
     host.project_of(repo).unwrap().trunk().unwrap()
 }
+
+#[test]
+fn auto_reasoning_takes_the_effort_jev_picks() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new().turn(|t| t.text("done"));
+    let (host, mut events) = host_on(llm.clone(), dir.path());
+    // Jev is sure the task wants high.
+    let jev = tau_jev::fake::FakeJev::new(|request| {
+        let answers = request
+            .questions
+            .keys()
+            .map(|id| {
+                let probabilities = [0.01, 0.02, 0.09, 0.84, 0.04]
+                    .iter()
+                    .enumerate()
+                    .map(|(n, p)| (n.to_string(), *p))
+                    .collect();
+                (
+                    id.clone(),
+                    tau_jev::Answer::Score {
+                        score: 3.0,
+                        probabilities,
+                        confidence: 0.84,
+                    },
+                )
+            })
+            .collect();
+        Ok(tau_jev::fake::response(answers, request))
+    });
+    let host = host.with_jev(std::sync::Arc::new(jev));
+    let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
+    let mut view = host.start("track down the race", &auto, "").unwrap();
+    for event in until_end(&mut events) {
+        view.apply(&event);
+    }
+    wait_until_done(&host, &view.id);
+    assert_eq!(
+        llm.requests()[0].settings.reasoning,
+        Some(tau_ai::responses::request::ReasoningEffort::High)
+    );
+    let chosen = |view: &tau_ui::view::RunView| {
+        view.plan.iter().any(|field| {
+            field.name == "reasoning"
+                && field.value == "high"
+                && field.set_by.as_deref() == Some("tau-reasoning")
+        })
+    };
+    assert!(chosen(&view), "{:?}", view.plan);
+    assert!(
+        view.items
+            .iter()
+            .any(|item| matches!(item, Item::Plugin(note)
+        if note.plugin == "tau-reasoning"))
+    );
+    // History shows it again, from the plugin's record.
+    assert!(chosen(&host.history().unwrap()[0]));
+
+    // An effort someone chose is not scored.
+    let (host, mut events) =
+        host_on(ScriptedModel::new().turn(|t| t.text("ok")), dir.path());
+    let host =
+        host.with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::new(|_| {
+            panic!("not asked")
+        })));
+    let low = ModelChoice::new("gpt-5.5", Effort::Low);
+    let run = host.start("rename a variable", &low, "").unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &run.id);
+}

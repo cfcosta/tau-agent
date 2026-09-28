@@ -1431,11 +1431,16 @@ impl Script {
 
     /// A report from tau-constitution.
     fn verdict(&mut self, body: Value) {
+        self.report("tau-constitution", body);
+    }
+
+    /// A plugin's report, as the run emits it.
+    fn report(&mut self, plugin: &str, body: Value) {
         self.event(
             60,
             RunEvent::PluginReport {
                 run: self.run.clone(),
-                plugin: Arc::from("tau-constitution"),
+                plugin: Arc::from(plugin),
                 body,
             },
         );
@@ -1532,42 +1537,19 @@ pub fn script() -> Vec<Step> {
     );
 
     // tau-reasoning and tau-memory run in `start`, before the session.
-    s.note(
-        500,
-        PluginNote {
-            plugin: "tau-reasoning".into(),
-            text: "picked **high** reasoning for this run".into(),
-            detail: Some("Jev · 180 ms · $0.00002".into()),
-            tone: Tone::Info,
-            body: NoteBody::Distribution {
-                levels: [
-                    ("minimal", 0.01),
-                    ("low", 0.02),
-                    ("medium", 0.09),
-                    ("high", 0.84),
-                    ("xhigh", 0.04),
-                ]
-                .into_iter()
-                .map(|(name, p)| (name.to_owned(), p))
-                .collect(),
-                chosen: 3,
-                note:
-                    "Confidence 0.84 is above 0.70, so the run uses high. It \
-                   stays fixed for the whole run."
-                        .into(),
-                confidence: Some((0.84, 0.70)),
-                hints: [
-                    "lookups",
-                    "small edits",
-                    "routine code",
-                    "refactors",
-                    "audits, proofs",
-                ]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            },
-        },
+    s.report(
+        "tau-reasoning",
+        json!({
+            "kind": "chose", "effort": "high", "confidence": 0.84,
+            "threshold": 0.7, "cost": 0.00002,
+            "levels": [
+                { "effort": "minimal", "suits": "lookups", "p": 0.01 },
+                { "effort": "low", "suits": "small edits", "p": 0.02 },
+                { "effort": "medium", "suits": "routine code", "p": 0.09 },
+                { "effort": "high", "suits": "refactors", "p": 0.84 },
+                { "effort": "xhigh", "suits": "audits, proofs", "p": 0.04 },
+            ],
+        }),
     );
     s.note(
         400,

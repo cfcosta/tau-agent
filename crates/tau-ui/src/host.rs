@@ -961,6 +961,13 @@ impl Host {
             .expect("not poisoned")
             .clone()
             .model(&choice.model);
+        let jev = self.jev();
+        // "auto" leaves the effort to tau-reasoning, when it can ask Jev.
+        if choice.effort == Effort::Auto
+            && let Some(jev) = &jev
+        {
+            agent = agent.plugin(tau_reasoning::Reasoning::new(jev.clone()));
+        }
         if let Some(effort) = choice.effort.reasoning() {
             agent = agent.reasoning(effort);
         }
@@ -971,12 +978,6 @@ impl Host {
         }
         let agent = agent.plugin(compaction).plugin(RepoTag(repo.name.clone()));
         // The repository's rules, checked with Jev when there is a key.
-        let jev: Option<Arc<dyn tau_jev::Jev>> =
-            self.jev.clone().or_else(|| {
-                self.config.credentials.jev_key().map(|key| {
-                    Arc::new(TypeSafe::new(key)) as Arc<dyn tau_jev::Jev>
-                })
-            });
         let constitution = jev.map(|jev| {
             ConstitutionPlugin::from_file(jev, self.constitution_path(repo))
         });
@@ -992,6 +993,15 @@ impl Host {
             .plugin(VcsPlugin::new(workspace.vcs().clone()))
             .plugin(workspace);
         Ok((with_plugin(agent, constitution), Some(name)))
+    }
+
+    /// Jev, when there is a TypeSafe key (or one given for tests).
+    fn jev(&self) -> Option<Arc<dyn tau_jev::Jev>> {
+        self.jev.clone().or_else(|| {
+            self.config.credentials.jev_key().map(|key| {
+                Arc::new(TypeSafe::new(key)) as Arc<dyn tau_jev::Jev>
+            })
+        })
     }
 
     /// Where a repository's constitution is kept: in tau's directory for
@@ -2611,10 +2621,13 @@ pub async fn history(
             ),
         };
         view.finish_stored(stop, record.cost_usd);
-        // The constitution's verdicts mark the calls they were about.
-        for body in store.records(&record.id, tau_constitution::NAME).await? {
-            if let Ok(body) = serde_json::from_str(&body) {
-                view.report(tau_constitution::NAME, &body);
+        // What the plugins recorded: the effort chosen, and the
+        // constitution's checks and verdicts on the calls.
+        for plugin in [tau_reasoning::NAME, tau_constitution::NAME] {
+            for body in store.records(&record.id, plugin).await? {
+                if let Ok(body) = serde_json::from_str(&body) {
+                    view.report(plugin, &body);
+                }
             }
         }
         if let RunKind::Fork { parent, fork_seq } = &record.kind {

@@ -1174,6 +1174,10 @@ impl RunView {
     /// plugins' reports only reach the event log.
     pub fn report(&mut self, plugin: &str, body: &Value) {
         use tau_constitution::{Verdict, VerdictKind};
+        if plugin == tau_reasoning::NAME {
+            self.reasoning_report(body);
+            return;
+        }
         if plugin != tau_constitution::NAME {
             return;
         }
@@ -1195,6 +1199,7 @@ impl RunView {
             }
             stats.questions += check.scores.len() as u32;
             stats.cost += check.cost;
+            self.usage.plugin_cost += check.cost;
             // Every score shows on the call's card, passed or not.
             if let Some(call_id) = &check.call_id
                 && let Some(card) = self.tool_mut(call_id)
@@ -1269,6 +1274,99 @@ impl RunView {
             tone,
             body: NoteBody::None,
         });
+    }
+
+    /// What tau-reasoning chose, as a note with its distribution, the
+    /// plan's reasoning, and its line in the plugin list.
+    fn reasoning_report(&mut self, body: &Value) {
+        let plugin = tau_reasoning::NAME;
+        if body["kind"] == "error" {
+            self.push_note(PluginNote {
+                plugin: plugin.to_owned(),
+                text: body["message"].as_str().unwrap_or("failed").to_owned(),
+                detail: Some("kept the default".into()),
+                tone: Tone::Danger,
+                body: NoteBody::None,
+            });
+            return;
+        }
+        let Some(choice) = tau_reasoning::Choice::parse(body) else {
+            return;
+        };
+        let chose = choice.kind == "chose";
+        let comparison = if chose { "above" } else { "below" };
+        let outcome = if chose {
+            format!(
+                "so the run uses {}. It stays fixed for the whole run.",
+                choice.effort
+            )
+        } else {
+            "so the run keeps the model's default.".to_owned()
+        };
+        self.push_note(PluginNote {
+            plugin: plugin.to_owned(),
+            text: if chose {
+                format!("picked **{}** reasoning for this run", choice.effort)
+            } else {
+                "left reasoning at the default: not sure enough".to_owned()
+            },
+            detail: Some(format!("Jev · {}", usd(choice.cost))),
+            tone: Tone::Info,
+            body: NoteBody::Distribution {
+                levels: choice
+                    .levels
+                    .iter()
+                    .map(|level| (level.effort.clone(), level.p as f32))
+                    .collect(),
+                chosen: choice.chosen(),
+                note: format!(
+                    "Confidence {:.2} is {comparison} {:.2}, {outcome}",
+                    choice.confidence, choice.threshold
+                ),
+                confidence: Some((
+                    choice.confidence as f32,
+                    choice.threshold as f32,
+                )),
+                hints: choice
+                    .levels
+                    .iter()
+                    .map(|level| level.suits.clone())
+                    .collect(),
+            },
+        });
+        if chose {
+            match self.plan.iter_mut().find(|field| field.name == "reasoning") {
+                Some(field) => {
+                    field.value = choice.effort.clone();
+                    field.set_by = Some(plugin.to_owned());
+                }
+                None => self.plan.insert(
+                    0,
+                    PlanField {
+                        name: "reasoning".into(),
+                        value: choice.effort.clone(),
+                        set_by: Some(plugin.to_owned()),
+                    },
+                ),
+            }
+        }
+        let state = if chose {
+            format!("chose {}", choice.effort)
+        } else {
+            "kept the default".to_owned()
+        };
+        self.usage.plugin_cost += choice.cost;
+        match self.plugins.iter_mut().find(|status| status.name == plugin) {
+            Some(status) => status.state = state,
+            None => self.plugins.insert(
+                0,
+                PluginStatus {
+                    name: plugin.to_owned(),
+                    state,
+                    tone: Tone::Quiet,
+                },
+            ),
+        }
     }
 
     /// The run's plugin list says what the constitution did so far.
