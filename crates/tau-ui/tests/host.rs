@@ -357,11 +357,17 @@ fn repositories_are_listed_and_remembered() {
     host.set_closed(&first, true).unwrap();
     host.set_closed(&second, true).unwrap();
     host.set_closed(&second, false).unwrap();
+    // So are flagged calls someone looked at.
+    host.set_reviewed(&first, "call-1").unwrap();
+    host.set_reviewed(&first, "call-1").unwrap();
     drop(host);
 
     let (host, _events) =
         Host::new(config_on(home.path(), data.path())).unwrap();
     assert_eq!(names(&host), [home_name.as_str(), "proj-2"]);
+    let catalog = host.catalog();
+    assert_eq!(catalog.closed_runs, std::slice::from_ref(&first));
+    assert_eq!(catalog.reviewed, [(first, "call-1".to_owned())]);
     // Adding a removed one lists it again, under its name.
     assert_eq!(host.add_repo(a.to_str().unwrap()).unwrap().name, "proj");
     assert_eq!(names(&host), [home_name.as_str(), "proj", "proj-2"]);

@@ -118,8 +118,7 @@ pub fn render(
                                 .id(("review-dismiss", n))
                                 .child(ui::button("Looks fine", ButtonKind::Secondary, t))
                                 .on_click(cx.listener(move |ws, _, _, cx| {
-                                    ws.dismissed.insert(dismiss.clone());
-                                    cx.notify();
+                                    ws.mark_reviewed(&dismiss.0, &dismiss.1, cx);
                                 })),
                         ),
                 )

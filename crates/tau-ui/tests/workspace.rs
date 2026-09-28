@@ -988,3 +988,19 @@ fn history_runs_the_query_typed_and_shows_its_rows(cx: &mut TestAppContext) {
         assert!(matches!(ws.query_result(), Some(Err(_))));
     });
 }
+
+#[gpui::test]
+fn a_reviewed_call_leaves_the_queue_for_good(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.mark_reviewed(&run, "c6", cx);
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::Reviewed {
+            run: run.clone(),
+            call_id: "c6".into()
+        })
+    );
+}

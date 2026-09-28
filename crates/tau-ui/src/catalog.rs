@@ -22,6 +22,9 @@ pub struct Catalog {
     /// Conversations the user closed: History lists them, the sidebar
     /// does not.
     pub closed_runs: Vec<tau_agent::tool::RunId>,
+    /// Flagged calls someone looked at, as `(run, call id)`: off the
+    /// review queue.
+    pub reviewed: Vec<(tau_agent::tool::RunId, String)>,
     pub store: StoreInfo,
     /// Whether the host can open pull requests from runs.
     pub pull_requests: bool,

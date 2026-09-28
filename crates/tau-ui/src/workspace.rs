@@ -190,6 +190,12 @@ pub enum WorkspaceEvent {
         run: RunId,
         title: String,
     },
+    /// A flagged call was looked at and found fine: it leaves the review
+    /// queue for good.
+    Reviewed {
+        run: RunId,
+        call_id: String,
+    },
     /// Open a call a plugin flagged.
     ReviewCall {
         run: RunId,
@@ -605,7 +611,23 @@ impl Workspace {
         &self.catalog
     }
 
+    /// Takes a flagged call off the review queue, for good.
+    pub fn mark_reviewed(
+        &mut self,
+        run: &RunId,
+        call_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.dismissed.insert((run.clone(), call_id.to_owned()));
+        cx.emit(WorkspaceEvent::Reviewed {
+            run: run.clone(),
+            call_id: call_id.to_owned(),
+        });
+        cx.notify();
+    }
+
     pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
+        self.dismissed.extend(catalog.reviewed.iter().cloned());
         // The query box starts from the store's sample, until typed in.
         let typed = self.query.read(cx).text().to_owned();
         if typed.trim().is_empty() || typed == self.catalog.store.sample_query {

@@ -1081,6 +1081,7 @@ pub fn catalog() -> Catalog {
         ],
         open_repos: vec!["tau-agent".into()],
         closed_runs: Vec::new(),
+        reviewed: Vec::new(),
         store: StoreInfo {
             path: "runs.db".into(),
             size: "18.4 MB".into(),

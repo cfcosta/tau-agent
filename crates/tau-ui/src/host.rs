@@ -193,6 +193,9 @@ struct RepoList {
     /// Conversations closed: History lists them, the sidebar does not.
     #[serde(default)]
     closed: Vec<String>,
+    /// Flagged calls looked at, as `[run, call id]`.
+    #[serde(default)]
+    reviewed: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -759,6 +762,20 @@ impl Host {
         list.save(&self.config.repo_list)
     }
 
+    /// Remembers that a flagged call was looked at.
+    pub fn set_reviewed(
+        &self,
+        run: &RunId,
+        call_id: &str,
+    ) -> anyhow::Result<()> {
+        let mut list = self.list.lock().expect("not poisoned");
+        let entry = (run.0.to_string(), call_id.to_owned());
+        if !list.reviewed.contains(&entry) {
+            list.reviewed.push(entry);
+        }
+        list.save(&self.config.repo_list)
+    }
+
     /// Remembers which repositories the sidebar shows open.
     pub fn set_open_repos(&self, open: Vec<String>) -> anyhow::Result<()> {
         let mut list = self.list.lock().expect("not poisoned");
@@ -901,6 +918,11 @@ impl Host {
                 .closed
                 .iter()
                 .map(|id| RunId(id.as_str().into()))
+                .collect(),
+            reviewed: list
+                .reviewed
+                .iter()
+                .map(|(run, call)| (RunId(run.as_str().into()), call.clone()))
                 .collect(),
             store: StoreInfo {
                 path: self.config.store.display().to_string(),
@@ -1737,6 +1759,13 @@ impl Host {
                         }
                     });
                 }
+                WorkspaceEvent::Reviewed { run, call_id } => {
+                    if let Err(error) = handler.set_reviewed(run, call_id) {
+                        eprintln!("tau-ui: cannot save the review: {error:#}");
+                    }
+                }
+                // Opening a flagged call only shows it; nothing to keep.
+                WorkspaceEvent::ReviewCall { .. } => {}
                 WorkspaceEvent::CloseRun { run } => {
                     if let Err(error) = handler.set_closed(run, true) {
                         eprintln!("tau-ui: cannot save closed runs: {error:#}");
