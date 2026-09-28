@@ -185,6 +185,9 @@ struct RepoList {
     /// The ones the sidebar shows open.
     #[serde(default)]
     open: Vec<String>,
+    /// Conversations closed: History lists them, the sidebar does not.
+    #[serde(default)]
+    closed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -716,6 +719,16 @@ impl Host {
         list.save(&self.config.repo_list)
     }
 
+    /// Closes a conversation, or opens it again, for the sidebar.
+    pub fn set_closed(&self, run: &RunId, closed: bool) -> anyhow::Result<()> {
+        let mut list = self.list.lock().expect("not poisoned");
+        list.closed.retain(|id| **id != *run.0);
+        if closed {
+            list.closed.push(run.0.to_string());
+        }
+        list.save(&self.config.repo_list)
+    }
+
     /// Remembers which repositories the sidebar shows open.
     pub fn set_open_repos(&self, open: Vec<String>) -> anyhow::Result<()> {
         let mut list = self.list.lock().expect("not poisoned");
@@ -832,6 +845,11 @@ impl Host {
             jev: None,
             repos,
             open_repos: list.open,
+            closed_runs: list
+                .closed
+                .iter()
+                .map(|id| RunId(id.as_str().into()))
+                .collect(),
             store: StoreInfo {
                 path: self.config.store.display().to_string(),
                 size: std::fs::metadata(&self.config.store)
@@ -1421,7 +1439,14 @@ impl Host {
                         )
                     }),
                 },
+                WorkspaceEvent::CloseRun { run } => {
+                    if let Err(error) = handler.set_closed(run, true) {
+                        eprintln!("tau-ui: cannot save closed runs: {error:#}");
+                    }
+                }
                 WorkspaceEvent::Resume { run, prompt, model } => {
+                    // A message opens a closed conversation again.
+                    let _ = handler.set_closed(run, false);
                     if let Err(error) = handler.resume(run, prompt, model) {
                         workspace.update(cx, |ws, cx| {
                             ws.resume_failed(run, cx);

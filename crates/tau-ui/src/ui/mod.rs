@@ -11,7 +11,17 @@ pub mod screens;
 pub mod transcript;
 
 pub use components::*;
-use gpui::{Hsla, IntoElement, SharedString, StyledText, TextRun, font};
+use gpui::{
+    Hsla,
+    IntoElement,
+    SharedString,
+    StyledText,
+    TextRun,
+    div,
+    font,
+    prelude::*,
+    px,
+};
 use tau_agent::event::StopReason;
 
 use crate::{
@@ -141,7 +151,8 @@ pub fn status_look(status: &RunStatus, t: &Theme) -> (Hsla, SharedString) {
 
 pub fn stop_look(stop: &StopReason, t: &Theme) -> (Hsla, SharedString) {
     match stop {
-        StopReason::Stop => (t.green, "finished".into()),
+        // A conversation that stopped is not over: it waits for the user.
+        StopReason::Stop => (t.muted, "your turn".into()),
         StopReason::Limit(kind) => {
             (t.red, format!("limit · {kind:?}").to_lowercase().into())
         }
@@ -160,12 +171,14 @@ pub fn status_icon(
         RunStatus::Planning | RunStatus::Running => {
             dot(t.accent, 8.).into_any_element()
         }
-        RunStatus::Finished(StopReason::Stop) => {
-            icon(Icon::Check, size, t.green).into_any_element()
-        }
-        RunStatus::Finished(StopReason::Cancelled) => {
-            icon(Icon::Stop, size, t.muted).into_any_element()
-        }
+        // Waiting for the user, whether it stopped or was stopped.
+        RunStatus::Finished(StopReason::Stop | StopReason::Cancelled) => div()
+            .size(px(size.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(dot(t.border_strong, 6.))
+            .into_any_element(),
         RunStatus::Finished(_) => {
             icon(Icon::Warning, size, t.red).into_any_element()
         }

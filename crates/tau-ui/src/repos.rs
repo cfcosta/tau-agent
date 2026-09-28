@@ -72,7 +72,9 @@ impl Workspace {
         repo: &'a str,
     ) -> impl Iterator<Item = &'a RunView> {
         self.runs.iter().filter(move |run| {
-            run.origin == Origin::Root && self.repo_of(run) == repo
+            run.origin == Origin::Root
+                && self.repo_of(run) == repo
+                && !self.closed.contains(&run.id)
         })
     }
 

@@ -347,6 +347,14 @@ fn repositories_are_listed_and_remembered() {
     assert_eq!(host.catalog().open_repos, ["proj-2"]);
     host.hide_repo("proj").unwrap();
     assert_eq!(names(&host), [home_name.as_str(), "proj-2"]);
+    // Closed conversations are remembered too, until opened again.
+    let (first, second) = (
+        tau_agent::tool::RunId("a".into()),
+        tau_agent::tool::RunId("b".into()),
+    );
+    host.set_closed(&first, true).unwrap();
+    host.set_closed(&second, true).unwrap();
+    host.set_closed(&second, false).unwrap();
     drop(host);
 
     let (host, _events) =

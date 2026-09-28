@@ -317,6 +317,21 @@ pub fn repo_mark(repo: &Repo, size: f32, t: &Theme) -> Div {
     .font_weight(weight::EMPHASIS)
 }
 
+/// A count on a pill: a conversation's unread replies.
+pub fn count_pill(count: usize, t: &Theme) -> Div {
+    mono(count.to_string(), Type::MICRO, t.bg)
+        .flex_shrink_0()
+        .min_w(px(18.))
+        .h(px(18.))
+        .px(sp(1.5))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(radius::FULL)
+        .bg(t.accent)
+        .font_weight(weight::EMPHASIS)
+}
+
 pub fn dot(color: Hsla, size: f32) -> Div {
     div()
         .size(px(size))

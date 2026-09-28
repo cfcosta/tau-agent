@@ -846,3 +846,58 @@ fn the_repository_menu_fetches_new_commits(cx: &mut TestAppContext) {
         })
     );
 }
+
+#[gpui::test]
+fn replies_are_unread_until_their_conversation_is_open(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    let run = demo::run_id();
+    let other = tau_agent::tool::RunId("plugin-docs".into());
+    workspace.update(&mut cx, |ws, cx| {
+        // Looking at another conversation while this one works.
+        ws.navigate(Route::Run(other.clone()), cx);
+        for (_, update) in demo::script() {
+            ws.update_run(&run, update, cx);
+        }
+        let view = ws.run(&run).unwrap();
+        assert!(ws.unread(view) > 0, "its replies are unread");
+        assert_eq!(ws.unread(ws.run(&other).unwrap()), 0);
+        ws.navigate(Route::Run(run.clone()), cx);
+        assert_eq!(ws.unread(ws.run(&run).unwrap()), 0, "opening reads them");
+    });
+}
+
+#[gpui::test]
+fn closing_a_conversation_takes_it_off_the_sidebar(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let live = tau_agent::tool::RunId("pdf-ingest".into());
+    let done = tau_agent::tool::RunId("plugin-docs".into());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(done.clone()), cx);
+        ws.close_run(&done, cx);
+        assert!(ws.is_closed(&done));
+        // The screen moves to another open conversation.
+        assert_ne!(ws.route(), &Route::Run(done.clone()));
+        let listed = |ws: &Workspace, id: &tau_agent::tool::RunId| {
+            ws.repo_rows("")
+                .iter()
+                .any(|rows| rows.runs.iter().any(|run| &run.id == id))
+        };
+        assert!(!listed(ws, &done));
+        // History still has it.
+        assert!(ws.runs().iter().any(|run| run.id == done));
+        ws.close_run(&live, cx);
+    });
+    let events = events.borrow();
+    assert!(events.contains(&WorkspaceEvent::CloseRun { run: done.clone() }));
+    // Closing one that works stops it.
+    assert!(events.contains(&WorkspaceEvent::Cancel { run: live.clone() }));
+    drop(events);
+    // A message to it opens it again.
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(done.clone()), cx);
+        ws.submit_prompt("one more thing".into(), cx);
+        assert!(!ws.is_closed(&done));
+    });
+}

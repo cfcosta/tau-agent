@@ -19,6 +19,9 @@ pub struct Catalog {
     pub repos: Vec<Repo>,
     /// The repositories the sidebar had open when the user last left it.
     pub open_repos: Vec<String>,
+    /// Conversations the user closed: History lists them, the sidebar
+    /// does not.
+    pub closed_runs: Vec<tau_agent::tool::RunId>,
     pub store: StoreInfo,
     /// Whether the host can open pull requests from runs.
     pub pull_requests: bool,

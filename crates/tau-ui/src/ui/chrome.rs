@@ -513,51 +513,56 @@ fn repo_group(
         );
     for run in rows.runs {
         let active = on_run && current.as_ref() == Some(&run.id);
-        body = body.child(run_row(run, active, t, cx));
-        body = body.children(run.children.iter().map(|child| {
-            let (color, label) = status_look(&child.status, t);
-            // A fork is a chat of its own: it opens like one.
-            let route = match (child.kind, ws.run(&child.id)) {
-                (_, Some(_)) => Some(Route::Run(child.id.clone())),
-                (ChildKind::Fork, None) => Some(Route::Compare {
+        body = body.child(run_row(ws, run, active, false, t, cx));
+        for child in &run.children {
+            if ws.is_closed(&child.id) {
+                continue;
+            }
+            // A fork is a conversation of its own: it opens like one.
+            if let Some(view) = ws.run(&child.id) {
+                let active = on_run && current.as_ref() == Some(&child.id);
+                body = body.child(run_row(ws, view, active, true, t, cx));
+                continue;
+            }
+            let route =
+                (child.kind == ChildKind::Fork).then(|| Route::Compare {
                     main: run.id.clone(),
                     fork: child.id.clone(),
-                }),
-                (ChildKind::SubAgent, None) => None,
-            };
+                });
             let active = route.as_ref() == Some(&ws.route);
-            div()
-                .id(SharedString::from(format!("child-{}", child.id)))
-                .flex()
-                .flex_shrink_0()
-                .items_center()
-                .gap(sp(2.))
-                .h(px(34.))
-                .pl(sp(7.))
-                .pr(sp(2.5))
-                .rounded(radius::CONTROL)
-                .text_color(t.text_soft)
-                .when(active, |row| row.bg(t.selected))
-                .child(icon(
-                    match child.kind {
-                        ChildKind::SubAgent => Icon::SubAgent,
-                        ChildKind::Fork => Icon::Fork,
-                    },
-                    IconSize::SMALL,
-                    t.blue,
-                ))
-                .child(div().flex_1().truncate().child(child.title.clone()))
-                .child(
-                    div().typeset(Type::MICRO).text_color(color).child(label),
-                )
-                .when_some(route, |row, route| {
-                    row.cursor_pointer()
-                        .hover(|style| style.bg(gpui::white().opacity(0.03)))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.navigate(route.clone(), cx)
-                        }))
-                })
-        }));
+            body = body.child(
+                div()
+                    .id(SharedString::from(format!("child-{}", child.id)))
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap(sp(2.))
+                    .h(px(34.))
+                    .pl(sp(7.))
+                    .pr(sp(2.5))
+                    .rounded(radius::CONTROL)
+                    .text_color(t.text_soft)
+                    .when(active, |row| row.bg(t.selected))
+                    .child(icon(
+                        match child.kind {
+                            ChildKind::SubAgent => Icon::SubAgent,
+                            ChildKind::Fork => Icon::Fork,
+                        },
+                        IconSize::SMALL,
+                        t.blue,
+                    ))
+                    .child(div().flex_1().truncate().child(child.title.clone()))
+                    .when_some(route, |row, route| {
+                        row.cursor_pointer()
+                            .hover(|style| {
+                                style.bg(gpui::white().opacity(0.03))
+                            })
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                ws.navigate(route.clone(), cx)
+                            }))
+                    }),
+            );
+        }
     }
     if rows.older > 0 {
         let name = name.clone();
@@ -582,18 +587,21 @@ fn repo_group(
 }
 
 /// A run in the tree: its state, title, and turn or cost.
+/// A conversation in the tree: whether it is working, its title, and
+/// its unread replies; hovering it offers to close it. A fork sits
+/// under its run, with the fork mark.
 fn run_row(
+    ws: &Workspace,
     run: &RunView,
     active: bool,
+    nested: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let route = Route::Run(run.id.clone());
-    let meta = if run.status.is_live() {
-        format!("turn {}", run.turn)
-    } else {
-        usd(run.usage.cost)
-    };
+    let hovered = ws.hovered_run.as_ref() == Some(&run.id);
+    let unread = ws.unread(run);
+    let (hover_id, close_id) = (run.id.clone(), run.id.clone());
     div()
         .id(SharedString::from(format!("run-{}", run.id)))
         .flex()
@@ -601,24 +609,60 @@ fn run_row(
         .items_center()
         .gap(sp(2.5))
         .h(px(34.))
-        .px(sp(2.5))
+        .pl(sp(if nested { 7. } else { 2.5 }))
+        .pr(sp(2.))
         .rounded(radius::CONTROL)
         .cursor_pointer()
         .when(active, |row| row.bg(t.selected))
         .when(!active, |row| {
             row.hover(|style| style.bg(gpui::white().opacity(0.03)))
         })
-        .child(status_icon(run, t, IconSize::SMALL))
+        .map(|row| {
+            if nested {
+                row.child(icon(Icon::Fork, IconSize::SMALL, t.blue))
+            } else {
+                row.child(status_icon(run, t, IconSize::SMALL))
+            }
+        })
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.))
                 .truncate()
                 .text_color(if active { t.text } else { t.text_soft })
-                .when(active, |title| title.font_weight(weight::EMPHASIS))
+                .when(active || unread > 0, |title| {
+                    title.font_weight(weight::EMPHASIS)
+                })
                 .child(run.title.clone()),
         )
-        .child(mono(meta, Type::MICRO, t.muted))
+        .map(|row| {
+            if hovered {
+                row.child(
+                    div()
+                        .id("close-run")
+                        .size(px(20.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(radius::TAG)
+                        .hover(|style| style.bg(t.border_strong))
+                        .child(icon(Icon::Close, IconSize::SMALL, t.text_soft))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            cx.stop_propagation();
+                            ws.close_run(&close_id, cx)
+                        })),
+                )
+            } else if unread > 0 {
+                row.child(super::count_pill(unread, t))
+            } else if nested && run.status.is_live() {
+                row.child(dot(t.accent, 6.))
+            } else {
+                row
+            }
+        })
+        .on_hover(cx.listener(move |ws, hovered: &bool, _, cx| {
+            ws.hover_run(&hover_id, *hovered, cx)
+        }))
         .on_click(
             cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
         )
@@ -917,7 +961,7 @@ pub fn phone_run_list(
     let groups: Vec<AnyElement> = ws
         .repo_rows("")
         .into_iter()
-        .map(|rows| phone_group(rows, t, cx).into_any_element())
+        .map(|rows| phone_group(ws, rows, t, cx).into_any_element())
         .collect();
     div()
         .id("phone-runs")
@@ -936,6 +980,7 @@ pub fn phone_run_list(
 }
 
 fn phone_group(
+    ws: &Workspace,
     rows: RepoRows<'_>,
     t: &Theme,
     cx: &mut Context<Workspace>,
@@ -1048,8 +1093,13 @@ fn phone_group(
         );
     let mut group = group.child(chips);
     for run in rows.runs {
-        group = group.child(phone_run_row(run, t, cx));
-        for (route, child) in run.children.iter().filter_map(fork_route) {
+        group = group.child(phone_run_row(ws, run, t, cx));
+        for (route, child) in run
+            .children
+            .iter()
+            .filter(|child| !ws.is_closed(&child.id))
+            .filter_map(fork_route)
+        {
             group = group.child(phone_child_row(route, child, t, cx));
         }
     }
@@ -1085,16 +1135,18 @@ fn fork_route(
 }
 
 fn phone_run_row(
+    ws: &Workspace,
     run: &RunView,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let (color, label) = status_look(&run.status, t);
     let route = Route::Run(run.id.clone());
+    let unread = ws.unread(run);
     let meta = if run.status.is_live() {
         format!("{label} · turn {}", run.turn)
     } else {
-        format!("{label} · {} turns · {}", run.turn, usd(run.usage.cost))
+        label.to_string()
     };
     div()
         .id(SharedString::from(format!("phone-run-{}", run.id)))
@@ -1114,9 +1166,17 @@ fn phone_run_row(
                 .flex()
                 .flex_col()
                 .gap(sp(0.75))
-                .child(div().truncate().child(run.title.clone()))
+                .child(
+                    div()
+                        .truncate()
+                        .when(unread > 0, |title| {
+                            title.font_weight(weight::EMPHASIS)
+                        })
+                        .child(run.title.clone()),
+                )
                 .child(mono(meta, Type::MICRO, color)),
         )
+        .when(unread > 0, |row| row.child(super::count_pill(unread, t)))
         .on_click(
             cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
         )

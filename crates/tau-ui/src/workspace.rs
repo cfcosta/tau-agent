@@ -137,6 +137,11 @@ pub enum WorkspaceEvent {
     UpdateRepo {
         repo: String,
     },
+    /// Close the conversation: it leaves the sidebar (History keeps it),
+    /// and stops if it is going. A message to it opens it again.
+    CloseRun {
+        run: RunId,
+    },
     /// Queue a message for a running run (`Run::steer`).
     Steer {
         run: RunId,
@@ -231,6 +236,14 @@ pub enum WorkspaceEvent {
     },
 }
 
+/// How many replies `run` has: its texts from the model.
+fn replies(run: &RunView) -> usize {
+    run.items
+        .iter()
+        .filter(|item| matches!(item, crate::view::Item::Text(_)))
+        .count()
+}
+
 /// `run`'s transcript up to the end of `turn`, for a fork after it.
 fn inherited_items(run: &RunView, turn: u32) -> Vec<crate::view::Item> {
     let end = run.items.iter().position(|item| {
@@ -295,6 +308,13 @@ pub struct Workspace {
     /// Finished runs asked to go on, with how they had ended, until they
     /// start again.
     resuming: HashMap<RunId, RunStatus>,
+    /// How many of each run's replies the user has seen: the rest are
+    /// unread.
+    seen: HashMap<RunId, usize>,
+    /// Conversations closed: not in the sidebar.
+    pub(crate) closed: HashSet<RunId>,
+    /// The run row under the pointer, which offers to close it.
+    pub(crate) hovered_run: Option<RunId>,
     /// The composer is writing a fork of this run, after this turn.
     forking: Option<(RunId, u32)>,
     /// A dialog over the app: something failed, or a choice to confirm.
@@ -452,6 +472,9 @@ impl Workspace {
             sheet_open: false,
             queued: HashMap::new(),
             resuming: HashMap::new(),
+            seen: HashMap::new(),
+            closed: HashSet::new(),
+            hovered_run: None,
             forking: None,
             dialog: None,
             next_model,
@@ -491,6 +514,7 @@ impl Workspace {
             _subscriptions: subscriptions,
         };
         workspace.restore_repos();
+        workspace.mark_all_seen();
         workspace.sync_placeholder(cx);
         workspace
     }
@@ -517,6 +541,7 @@ impl Workspace {
     }
 
     pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
+        self.closed.extend(catalog.closed_runs.iter().cloned());
         self.catalog = catalog;
         self.restore_repos();
         if !self.next_model_picked {
@@ -556,6 +581,8 @@ impl Workspace {
     pub fn add_history(&mut self, runs: Vec<RunView>, cx: &mut Context<Self>) {
         for run in runs {
             if self.run(&run.id).is_none() {
+                // What happened while tau was closed is not news.
+                self.seen.insert(run.id.clone(), replies(&run));
                 self.runs.push(run);
             }
         }
@@ -708,6 +735,7 @@ impl Workspace {
         if !matches!(self.route, Route::Setup(_)) {
             self.setup_goal = None;
         }
+        self.mark_open_seen();
         self.repo_menu = None;
         // Comparing two branches shows their code; ask for it once.
         if let Route::Compare { main, fork } = &self.route {
@@ -1028,6 +1056,8 @@ impl Workspace {
         };
         let mut view = self.runs.remove(at);
         let model = Self::model_of(&view);
+        // A message to a closed conversation opens it again.
+        self.closed.remove(run);
         self.resuming.insert(run.clone(), view.status.clone());
         view.push_user(text.clone());
         view.status = RunStatus::Planning;
@@ -1072,8 +1102,86 @@ impl Workspace {
     }
 
     fn after_update(&mut self, cx: &mut Context<Self>) {
+        self.mark_open_seen();
         self.sync_placeholder(cx);
         cx.notify();
+    }
+
+    /// The replies of `run` the user has not seen: the run's pill.
+    pub fn unread(&self, run: &RunView) -> usize {
+        replies(run)
+            .saturating_sub(self.seen.get(&run.id).copied().unwrap_or(0))
+    }
+
+    fn mark_all_seen(&mut self) {
+        for run in &self.runs {
+            self.seen.insert(run.id.clone(), replies(run));
+        }
+    }
+
+    /// The run on screen has nothing unread.
+    fn mark_open_seen(&mut self) {
+        let open = match &self.route {
+            Route::Run(id) => Some(id.clone()),
+            Route::Home => self.current.clone(),
+            _ => None,
+        };
+        if let Some(run) = open.and_then(|id| self.run(&id)) {
+            self.seen.insert(run.id.clone(), replies(run));
+        }
+    }
+
+    /// Closes a conversation: it leaves the sidebar, and stops if it is
+    /// going. History keeps it, and a message to it opens it again.
+    pub fn close_run(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        if self.run(run).is_some_and(|view| view.status.is_live()) {
+            cx.emit(WorkspaceEvent::Cancel { run: run.clone() });
+        }
+        self.closed.insert(run.clone());
+        self.hovered_run = None;
+        cx.emit(WorkspaceEvent::CloseRun { run: run.clone() });
+        if self.route.run() == Some(run) || self.current.as_ref() == Some(run) {
+            // Show the next open conversation, or a new one.
+            let next = self
+                .runs
+                .iter()
+                .find(|view| {
+                    !self.closed.contains(&view.id)
+                        && view.origin == Origin::Root
+                })
+                .map(|view| view.id.clone());
+            self.current = next.clone();
+            self.back_stack.clear();
+            self.route = match next {
+                Some(next) => Route::Run(next),
+                None => Route::NewRun,
+            };
+            self.entered(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn is_closed(&self, run: &RunId) -> bool {
+        self.closed.contains(run)
+    }
+
+    pub fn hover_run(
+        &mut self,
+        run: &RunId,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let now = if hovered {
+            Some(run.clone())
+        } else if self.hovered_run.as_ref() == Some(run) {
+            None
+        } else {
+            return;
+        };
+        if self.hovered_run != now {
+            self.hovered_run = now;
+            cx.notify();
+        }
     }
 
     fn sync_placeholder(&mut self, cx: &mut Context<Self>) {

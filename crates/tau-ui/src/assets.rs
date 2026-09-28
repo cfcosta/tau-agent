@@ -39,6 +39,7 @@ pub enum Icon {
     Arrow,
     Info,
     Down,
+    Close,
 }
 
 impl Icon {
@@ -73,6 +74,7 @@ impl Icon {
             Self::Arrow => "icons/arrow.svg",
             Self::Info => "icons/info.svg",
             Self::Down => "icons/down.svg",
+            Self::Close => "icons/close.svg",
         }
     }
 
@@ -142,13 +144,14 @@ impl Icon {
             }
             Self::Arrow => r#"<path d="M5 12h14M13 6l6 6-6 6"/>"#,
             Self::Down => r#"<path d="M6 9l6 6 6-6"/>"#,
+            Self::Close => r#"<path d="M6 6l12 12M18 6L6 18"/>"#,
             Self::Info => {
                 r#"<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>"#
             }
         }
     }
 
-    const ALL: [Self; 29] = [
+    const ALL: [Self; 30] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -178,6 +181,7 @@ impl Icon {
         Self::Arrow,
         Self::Info,
         Self::Down,
+        Self::Close,
     ];
 
     fn svg(self) -> String {

@@ -119,6 +119,12 @@ fn item_view(
                 delay.as_secs_f32()
             ))
             .into_any_element(),
+        // A conversation that stopped by itself waits for the next
+        // message: nothing to say.
+        Item::Stop {
+            stop: tau_agent::event::StopReason::Stop,
+            ..
+        } => div().into_any_element(),
         Item::Stop {
             stop,
             turns,
@@ -172,9 +178,6 @@ fn user(text: &str, t: &Theme, compact: bool) -> Div {
     )
 }
 
-/// Where a turn ended: a quiet rule with the turn's number, and a way to
-/// fork the run from here, shown on hover (always on a phone, which has
-/// no hover).
 /// Where one turn ends. Nothing shows there; on a desktop, hovering the
 /// gap offers a fork from that turn. A phone forks from the run's sheet.
 fn turn_end(
