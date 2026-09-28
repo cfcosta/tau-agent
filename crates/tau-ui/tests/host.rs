@@ -715,6 +715,50 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert!(blocked(&history[0]));
     assert_eq!(history[0].constitution, view.constitution);
 
+    // Editing a rule saves over it, in place.
+    host.edit_rules(host.home(), |rules| {
+        rules.replace(
+            "R1",
+            "No unwrap, ever.",
+            &["write.content".into()],
+            0.3,
+            0.9,
+        )
+    })
+    .unwrap();
+    let edited = host.catalog().repos[0].constitution.rules[0].clone();
+    assert_eq!(
+        (edited.id.as_str(), edited.text.as_str()),
+        ("R1", "No unwrap, ever.")
+    );
+    assert_eq!(edited.block, 0.9);
+    // Trying a rule asks Jev about each past call it reads.
+    let calls = vec![
+        (
+            "write".to_owned(),
+            serde_json::json!({ "path": "a", "content": "x.unwrap()" }),
+        ),
+        ("bash".to_owned(), serde_json::json!({ "command": "ls" })),
+    ];
+    let (trials, cost) = host
+        .try_rule(
+            "No unwrap.",
+            &["write.content".into()],
+            0.3,
+            0.8,
+            &calls,
+            &[],
+        )
+        .unwrap();
+    assert_eq!(trials.len(), 1);
+    assert_eq!(trials[0].shown, "x.unwrap()");
+    assert!((trials[0].score - 0.95).abs() < 1e-9 && cost > 0.0);
+    assert!(
+        host.try_rule("x", &["nowhere".into()], 0.3, 0.8, &calls, &[])
+            .is_err(),
+        "a place that names nothing is refused"
+    );
+
     // Removing a rule saves it.
     host.edit_rules(host.home(), |rules| {
         rules.remove("R1");

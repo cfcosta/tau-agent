@@ -79,6 +79,18 @@ pub struct ConstitutionStats {
     pub held: Vec<String>,
     /// How many holds a run may have.
     pub max_holds: Option<u32>,
+    /// Final answers that stood but were flagged for a person, with the
+    /// rule and its score.
+    pub flagged_answers: Vec<FlaggedAnswer>,
+}
+
+/// A final answer flagged for review.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlaggedAnswer {
+    pub rule: String,
+    pub text: String,
+    pub score: f64,
+    pub answer: String,
 }
 
 impl ConstitutionStats {
@@ -1259,6 +1271,15 @@ impl RunView {
         let Some(verdict) = Verdict::parse(body) else {
             return;
         };
+        if verdict.call_id.is_none() && verdict.kind == VerdictKind::Flagged {
+            let answer = self.last_text().unwrap_or_default().to_owned();
+            self.constitution.flagged_answers.push(FlaggedAnswer {
+                rule: verdict.rule.clone(),
+                text: verdict.text.clone(),
+                score: verdict.score,
+                answer,
+            });
+        }
         let stats = &mut self.constitution;
         match verdict.kind {
             VerdictKind::Blocked => stats.blocked.push(verdict.rule.clone()),

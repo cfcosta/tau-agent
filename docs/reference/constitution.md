@@ -65,8 +65,21 @@ the run, so history can show it again. A failed check is reported as
 
 - Each repository has its own constitution, kept in tau's directory for
   the repository (`repos/<name>-<hash>/constitution.toml`), so rules
-  apply to the next run without a commit. The Constitution screen lists
-  them, adds and removes them, and shows the review queue.
+  apply to the next run without a commit.
+- The Constitution screen:
+  - **Rules:** each rule's places, strictness and what it did in the
+    repository's runs.
+  - **Editor:** writes and edits a rule, with places picked from a list
+    (or any `tool.field`), Lenient / Balanced / Strict thresholds
+    (flag/block at 0.5/0.9, 0.3/0.8, 0.2/0.6) or steps of 0.05, and
+    **Try it**. Try it asks Jev about the repository's latest calls and
+    answers the rule reads, with the same question and state a check
+    uses (`tau_constitution::try_rule`), so nothing runs again.
+  - **Review:** flagged calls and answers, with the rule and the score
+    against its thresholds; Looks fine takes one off the queue. Next to
+    it, what the rules handled on their own.
+  - **A broken file:** the error with the lines it points at, and the
+    rules as they were at the last good read.
 - Checks need a TypeSafe key, added on the Models screen and kept in
   tau's config directory (`typesafe-key`), readable only by the user.
   Without one, runs are not checked and the screen says so.

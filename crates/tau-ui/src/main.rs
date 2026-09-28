@@ -275,6 +275,69 @@ fn open_demo_screen(
             workspace.toggle_repo_menu("homelab.nix", cx);
             return;
         }
+        // The Constitution screen's states.
+        Some(
+            open @ ("rule-editor" | "rule-missing" | "rules-review"
+            | "rules-broken" | "rules-empty"),
+        ) => {
+            let repo = "tau-agent";
+            workspace.navigate(
+                Route::Constitution {
+                    repo: repo.into(),
+                    rule: None,
+                },
+                cx,
+            );
+            match open {
+                "rule-editor" => {
+                    workspace.open_rule_editor(repo, None, cx);
+                    workspace.rule_text_for_test(
+                        "Never run migrations against the production database.",
+                        cx,
+                    );
+                    workspace.toggle_place("bash.command", cx);
+                    workspace.try_rule(cx);
+                }
+                "rule-missing" => {
+                    workspace.open_rule_editor(repo, None, cx);
+                    workspace.rule_text_for_test(
+                        "Never run migrations against the production database.",
+                        cx,
+                    );
+                    workspace.save_rule(cx);
+                }
+                "rules-review" => workspace
+                    .set_rules_tab(tau_ui::rule_editor::RulesTab::Review, cx),
+                _ => {
+                    let mut catalog = workspace.catalog().clone();
+                    if let Some(listed) = catalog.repo_mut(repo) {
+                        let rules = &mut listed.constitution;
+                        if open == "rules-broken" {
+                            rules.error = Some(
+                                "constitution.toml is not valid: Rule R4: review \
+                                 (0.95) is above block (0.9)"
+                                    .into(),
+                            );
+                            rules.excerpt = vec![
+                                (13, "[[rule]]".into()),
+                                (14, "id = \"R4\"".into()),
+                                (15, "text = \"Comments explain why, not what.\"".into()),
+                                (16, "on = [\"edit.newText\"]".into()),
+                                (17, "review = 0.95".into()),
+                                (18, "block = 0.9".into()),
+                            ];
+                            rules.error_line = Some(14);
+                            rules.rules.clear();
+                        } else {
+                            rules.rules.clear();
+                            catalog.models.access.jev = false;
+                        }
+                    }
+                    workspace.set_catalog(catalog, cx);
+                }
+            }
+            return;
+        }
         // /goal: the command menu, writing a goal, and a goal's states.
         Some("slash") => {
             workspace.navigate(Route::Run(demo::run_id()), cx);

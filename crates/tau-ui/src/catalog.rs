@@ -252,6 +252,10 @@ pub struct Constitution {
     /// Why the file could not be read, if it could not: runs fail until
     /// it is fixed.
     pub error: Option<String>,
+    /// The file's lines around what the error is about, numbered, and
+    /// which of them it points at.
+    pub excerpt: Vec<(usize, String)>,
+    pub error_line: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

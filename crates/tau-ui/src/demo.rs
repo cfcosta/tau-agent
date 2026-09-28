@@ -716,6 +716,9 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                             crate::view::CodeState::Ready(code),
                             cx,
                         ),
+                        Answer::Trial(trials, cost) => {
+                            ws.set_rule_trial(Ok((trials, cost)), cx)
+                        }
                     });
                     if done.is_err() {
                         return;
@@ -829,8 +832,15 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                 });
             }
             // Rules change in the catalog, as the host's file would.
-            WorkspaceEvent::AddRule { repo, text, on } => {
+            WorkspaceEvent::AddRule {
+                repo,
+                text,
+                on,
+                review,
+                block,
+            } => {
                 let (repo, text, on) = (repo.clone(), text.clone(), on.clone());
+                let (review, block) = (*review as f32, *block as f32);
                 workspace.update(cx, |ws, cx| {
                     let mut catalog = ws.catalog().clone();
                     if let Some(listed) = catalog.repo_mut(&repo) {
@@ -843,12 +853,66 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                             id,
                             text,
                             applies_to: on,
-                            review: 0.5,
-                            block: 0.8,
+                            review,
+                            block,
                         });
                     }
                     ws.set_catalog(catalog, cx);
                 });
+            }
+            WorkspaceEvent::UpdateRule {
+                repo,
+                id,
+                text,
+                on,
+                review,
+                block,
+            } => {
+                let (repo, id, text, on) =
+                    (repo.clone(), id.clone(), text.clone(), on.clone());
+                let (review, block) = (*review as f32, *block as f32);
+                workspace.update(cx, |ws, cx| {
+                    let mut catalog = ws.catalog().clone();
+                    if let Some(rule) =
+                        catalog.repo_mut(&repo).and_then(|listed| {
+                            listed
+                                .constitution
+                                .rules
+                                .iter_mut()
+                                .find(|rule| rule.id == id)
+                        })
+                    {
+                        *rule = Rule {
+                            id,
+                            text,
+                            applies_to: on,
+                            review,
+                            block,
+                        };
+                    }
+                    ws.set_catalog(catalog, cx);
+                });
+            }
+            // Jev's scores, as the demo scripts them: the calls in the
+            // order they came.
+            WorkspaceEvent::TryRule { calls, answers, .. } => {
+                const SCORES: [f64; 6] = [0.94, 0.41, 0.06, 0.12, 0.33, 0.71];
+                let shown = calls
+                    .iter()
+                    .map(|(tool, args)| {
+                        (Some(tool.clone()), crate::view::summarize_args(args))
+                    })
+                    .chain(answers.iter().map(|answer| (None, answer.clone())));
+                let trials = shown
+                    .zip(SCORES.iter().cycle())
+                    .map(|((tool, shown), score)| tau_constitution::Trial {
+                        tool,
+                        shown,
+                        score: *score,
+                    })
+                    .collect::<Vec<_>>();
+                let cost = 0.00001 * trials.len() as f64;
+                later(vec![(900, Answer::Trial(trials, cost))], cx)
             }
             WorkspaceEvent::RemoveRule { repo, id } => {
                 let (repo, id) = (repo.clone(), id.clone());
@@ -952,6 +1016,7 @@ enum Answer {
     Repo(Repo),
     Pr(RunId, PrState),
     Code(RunId, RunId, BranchCode),
+    Trial(Vec<tau_constitution::Trial>, f64),
 }
 
 /// The code of `rotation-jitter` and its `backoff` fork.
@@ -1119,6 +1184,8 @@ pub fn catalog() -> Catalog {
                     path: "constitution.toml".into(),
                     max_continuations: 3,
                     error: None,
+                    excerpt: Vec::new(),
+                    error_line: None,
                     rules: vec![
                         rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
                         rule("D2", "Search results keep their scores; never sort them away.", &["edit.newText"], 0.40, 0.85),
@@ -1263,6 +1330,8 @@ fn tau_agent_rules(rule: RuleFn<'_>) -> Constitution {
         path: "constitution.toml".into(),
         max_continuations: 3,
         error: None,
+        excerpt: Vec::new(),
+        error_line: None,
         rules: vec![
             rule(
                 "R1",

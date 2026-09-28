@@ -785,6 +785,37 @@ impl Host {
         list.save(&self.config.repo_list)
     }
 
+    /// Asks Jev what a rule being written makes of past `calls` (tool,
+    /// arguments) and final `answers`, as a check would ask. Blocks.
+    pub fn try_rule(
+        &self,
+        text: &str,
+        on: &[String],
+        review: f64,
+        block: f64,
+        calls: &[(String, serde_json::Value)],
+        answers: &[String],
+    ) -> Result<(Vec<tau_constitution::Trial>, f64), String> {
+        let on = on
+            .iter()
+            .map(|place| tau_constitution::rules::Target::parse(place))
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(|error| format!("{error:#}"))?;
+        let rule = tau_constitution::Rule {
+            id: "new".into(),
+            text: text.to_owned(),
+            on,
+            review,
+            block,
+        };
+        let jev = self.jev().ok_or_else(|| {
+            "Trying a rule asks Jev: add a TypeSafe key on the Models screen."
+                .to_owned()
+        })?;
+        self.runtime
+            .block_on(tau_constitution::try_rule(&*jev, &rule, calls, answers))
+    }
+
     /// Stores a change to `run`'s goal for tau-goal, which reads it at
     /// its next check, or when the run starts again.
     pub fn goal_record(
@@ -1113,6 +1144,11 @@ impl Host {
             Ok(loaded) => (loaded, None),
             Err(error) => (Constitution::default(), Some(format!("{error:#}"))),
         };
+        let (excerpt, error_line) = error
+            .as_deref()
+            .zip(std::fs::read_to_string(&path).ok())
+            .map(|(error, text)| error_excerpt(error, &text))
+            .unwrap_or_default();
         CatalogConstitution {
             path: path.display().to_string(),
             rules: loaded
@@ -1128,6 +1164,8 @@ impl Host {
                 .collect(),
             max_continuations: loaded.max_holds,
             error,
+            excerpt,
+            error_line,
         }
     }
 
@@ -1711,16 +1749,15 @@ impl Host {
                         )
                     }),
                 },
-                WorkspaceEvent::AddRule { repo, text, on } => {
+                WorkspaceEvent::AddRule {
+                    repo,
+                    text,
+                    on,
+                    review,
+                    block,
+                } => {
                     let added = handler.edit_rules(repo, |rules| {
-                        rules
-                            .add(
-                                text,
-                                on,
-                                tau_constitution::rules::DEFAULT_REVIEW,
-                                tau_constitution::rules::DEFAULT_BLOCK,
-                            )
-                            .map(drop)
+                        rules.add(text, on, *review, *block).map(drop)
                     });
                     let catalog = handler.catalog();
                     workspace.update(cx, |ws, cx| {
@@ -1733,6 +1770,56 @@ impl Host {
                             );
                         }
                     });
+                }
+                WorkspaceEvent::UpdateRule {
+                    repo,
+                    id,
+                    text,
+                    on,
+                    review,
+                    block,
+                } => {
+                    let saved = handler.edit_rules(repo, |rules| {
+                        rules.replace(id, text, on, *review, *block)
+                    });
+                    let catalog = handler.catalog();
+                    workspace.update(cx, |ws, cx| {
+                        ws.set_catalog(catalog, cx);
+                        if let Err(error) = saved {
+                            ws.show_alert(
+                                "Could not save the rule",
+                                format!("{error:#}"),
+                                cx,
+                            );
+                        }
+                    });
+                }
+                WorkspaceEvent::TryRule {
+                    text,
+                    on,
+                    review,
+                    block,
+                    calls,
+                    answers,
+                    ..
+                } => {
+                    let job = {
+                        let host = handler.clone();
+                        let (text, on) = (text.clone(), on.clone());
+                        let (review, block) = (*review, *block);
+                        let (calls, answers) = (calls.clone(), answers.clone());
+                        handler.runtime.spawn_blocking(move || {
+                            host.try_rule(&text, &on, review, block, &calls, &answers)
+                        })
+                    };
+                    let workspace = workspace.downgrade();
+                    cx.spawn(async move |cx| {
+                        let result =
+                            job.await.unwrap_or_else(|e| Err(e.to_string()));
+                        let _ = workspace
+                            .update(cx, |ws, cx| ws.set_rule_trial(result, cx));
+                    })
+                    .detach();
                 }
                 WorkspaceEvent::PreparePullRequest { run } => {
                     let job = {
@@ -2898,6 +2985,41 @@ fn clone_into_tau(
     .detach();
 }
 
+/// The lines of a constitution file an error is about: the line a TOML
+/// error names, or the rule a check names (`Rule R4: ...`), with two
+/// lines around it, and the line to point at.
+pub fn error_excerpt(
+    error: &str,
+    text: &str,
+) -> (Vec<(usize, String)>, Option<usize>) {
+    let lines: Vec<&str> = text.lines().collect();
+    let named_line = error.split("line ").nth(1).and_then(|rest| {
+        rest.split(|c: char| !c.is_ascii_digit())
+            .next()?
+            .parse()
+            .ok()
+    });
+    let rule_line = || {
+        let id = error.split("Rule ").nth(1)?.split([':', ' ']).next()?;
+        let wanted = format!("\"{id}\"");
+        lines
+            .iter()
+            .position(|line| {
+                line.trim_start().starts_with("id") && line.contains(&wanted)
+            })
+            .map(|at| at + 1)
+    };
+    let Some(line) = named_line.or_else(rule_line) else {
+        return (Vec::new(), None);
+    };
+    let first = line.saturating_sub(2).max(1);
+    let last = (line + 3).min(lines.len());
+    let excerpt = (first..=last)
+        .filter_map(|n| lines.get(n - 1).map(|text| (n, (*text).to_owned())))
+        .collect();
+    (excerpt, Some(line))
+}
+
 /// A short run title from the prompt: its first words, or its goal's.
 pub fn title(prompt: &str) -> String {
     let goal = tau_goal::set_message(prompt);
@@ -2917,6 +3039,23 @@ pub fn title(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constitution_errors_point_at_their_lines() {
+        let text = "[[rule]]\nid = \"R1\"\ntext = \"a\"\non = [\"x.y\"]\n\n[[rule]]\nid = \"R4\"\ntext = \"b\"\non = [\"x.y\"]\nreview = 0.95\nblock = 0.9\n";
+        let (lines, at) = error_excerpt(
+            "x is not valid: Rule R4: review (0.95) is above block (0.9)",
+            text,
+        );
+        assert_eq!(at, Some(7));
+        assert_eq!(lines.first().map(|l| l.0), Some(5));
+        assert!(lines.iter().any(|(_, line)| line.contains("review = 0.95")));
+        let (lines, at) =
+            error_excerpt("TOML parse error at line 3, column 8", text);
+        assert_eq!(at, Some(3));
+        assert_eq!(lines.len(), 6);
+        assert_eq!(error_excerpt("Cannot read it", text), (Vec::new(), None));
+    }
 
     #[test]
     fn titles_come_from_the_first_words() {

@@ -750,3 +750,77 @@ pub fn phone_body(id: &'static str) -> Stateful<Div> {
 pub fn any(element: impl IntoElement) -> AnyElement {
     element.into_any_element()
 }
+
+/// A rule's strictness: the probability line from 0 to 1, split where
+/// the rule flags a call and where it blocks one, with a mark at
+/// `score` when there is one. `handles` draws the thresholds as knobs,
+/// for the editor.
+pub fn strictness(
+    review: f64,
+    block: f64,
+    score: Option<f64>,
+    width: Option<f32>,
+    handles: bool,
+    t: &Theme,
+) -> Div {
+    let height = if handles { 6. } else { 5. };
+    let zone = |share: f64, color: Hsla| {
+        div()
+            .h(px(height))
+            .w(relative(share.clamp(0.0, 1.0) as f32))
+            .bg(color)
+    };
+    let knob = |at: f64, color: Hsla| {
+        div()
+            .absolute()
+            .left(relative(at as f32))
+            .top(px(-6.))
+            .ml(px(-9.))
+            .size(px(18.))
+            .rounded(radius::FULL)
+            .bg(t.text)
+            .border_3()
+            .border_color(color)
+    };
+    div()
+        .relative()
+        .h(px(height))
+        .flex_shrink_0()
+        .map(|line| match width {
+            Some(width) => line.w(px(width)),
+            None => line.w_full(),
+        })
+        .child(
+            div()
+                .flex()
+                .size_full()
+                .rounded(radius::HAIRLINE)
+                .overflow_hidden()
+                .child(zone(review, t.border_strong))
+                .child(zone(block - review, t.accent.opacity(0.55)))
+                .child(div().flex_1().h(px(height)).bg(t.red.opacity(0.6))),
+        )
+        .when_some(score, |line, score| {
+            let color = if score >= block {
+                t.red
+            } else if score >= review {
+                t.accent
+            } else {
+                t.text_soft
+            };
+            line.child(
+                div()
+                    .absolute()
+                    .left(relative(score.clamp(0.0, 1.0) as f32))
+                    .top(px(-4.))
+                    .ml(px(-1.))
+                    .w(px(2.))
+                    .h(px(height + 8.))
+                    .rounded(radius::HAIRLINE)
+                    .bg(color),
+            )
+        })
+        .when(handles, |line| {
+            line.child(knob(review, t.accent)).child(knob(block, t.red))
+        })
+}

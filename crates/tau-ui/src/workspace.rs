@@ -159,6 +159,28 @@ pub enum WorkspaceEvent {
         repo: String,
         text: String,
         on: Vec<String>,
+        review: f64,
+        block: f64,
+    },
+    /// Rewrite rule `id` in place.
+    UpdateRule {
+        repo: String,
+        id: String,
+        text: String,
+        on: Vec<String>,
+        review: f64,
+        block: f64,
+    },
+    /// Ask Jev what a rule being written makes of past calls and
+    /// answers; the host answers with `Workspace::set_rule_trial`.
+    TryRule {
+        repo: String,
+        text: String,
+        on: Vec<String>,
+        review: f64,
+        block: f64,
+        calls: Vec<(String, serde_json::Value)>,
+        answers: Vec<String>,
     },
     RemoveRule {
         repo: String,
@@ -420,6 +442,14 @@ pub struct Workspace {
     /// screen.
     pub(crate) rule_text: Entity<TextInput>,
     pub(crate) rule_on: Entity<TextInput>,
+    /// The rule editor, the Constitution screen's list, and the rule
+    /// whose ⋯ menu is open.
+    pub(crate) rule_draft: Option<crate::rule_editor::RuleDraft>,
+    pub(crate) rules_tab: crate::rule_editor::RulesTab,
+    pub(crate) rule_menu: Option<String>,
+    /// Each repository's rules at the last good read of its file, to
+    /// show while the file is broken.
+    pub(crate) last_good_rules: HashMap<String, Vec<crate::catalog::Rule>>,
     /// The dialog that asks for the TypeSafe key, with its field.
     pub(crate) adding_jev_key: bool,
     pub(crate) jev_key: Entity<TextInput>,
@@ -507,11 +537,8 @@ impl Workspace {
             .keep_on_submit()
         });
         let rule_on = cx.new(|cx| {
-            TextInput::new(
-                "Where: edit.newText, write.content, bash.command, final answer",
-                cx,
-            )
-            .keep_on_submit()
+            TextInput::new("tool.field, such as grep.pattern", cx)
+                .keep_on_submit()
         });
         let jev_key = cx.new(|cx| TextInput::new("ts-…", cx).masked());
         let limit = |text: String, cx: &mut Context<Self>| {
@@ -534,6 +561,15 @@ impl Workspace {
                     }
                 },
             ),
+            // The rule editor: Enter in the rule saves it, Enter in the
+            // other field adds it; what is missing updates as you type.
+            cx.subscribe(&rule_text, |ws, _, _: &InputEvent, cx| {
+                ws.save_rule(cx)
+            }),
+            cx.subscribe(&rule_on, |ws, _, _: &InputEvent, cx| {
+                ws.add_other_place(cx);
+            }),
+            cx.observe(&rule_text, |_, _, cx| cx.notify()),
             // Its popover follows what is typed.
             cx.observe(&composer, |ws, _, cx| ws.composer_changed(cx)),
             cx.subscribe(&goal_continuations, |ws, _, _: &InputEvent, cx| {
@@ -639,6 +675,10 @@ impl Workspace {
             repo_path,
             rule_text,
             rule_on,
+            rule_draft: None,
+            rules_tab: Default::default(),
+            rule_menu: None,
+            last_good_rules: HashMap::new(),
             adding_jev_key: false,
             jev_key,
             slash_selected: 0,
@@ -655,6 +695,8 @@ impl Workspace {
             _subscriptions: subscriptions,
         };
         workspace.restore_repos();
+        let catalog = workspace.catalog.clone();
+        workspace.remember_good_rules(&catalog);
         workspace.mark_all_seen();
         workspace.sync_placeholder(cx);
         workspace
@@ -696,6 +738,16 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Keeps each repository's rules while its file reads.
+    fn remember_good_rules(&mut self, catalog: &Catalog) {
+        for repo in &catalog.repos {
+            if repo.constitution.error.is_none() {
+                self.last_good_rules
+                    .insert(repo.name.clone(), repo.constitution.rules.clone());
+            }
+        }
+    }
+
     pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
         self.dismissed.extend(catalog.reviewed.iter().cloned());
         // The query box starts from the store's sample, until typed in.
@@ -706,6 +758,7 @@ impl Workspace {
                 .update(cx, |input, cx| input.set_text(sample, cx));
         }
         self.closed.extend(catalog.closed_runs.iter().cloned());
+        self.remember_good_rules(&catalog);
         self.catalog = catalog;
         self.restore_repos();
         if !self.next_model_picked {
@@ -1580,43 +1633,13 @@ impl Workspace {
         self.setup_goal = Some(SetupGoal::Model);
     }
 
-    /// Adds the rule written in the Constitution screen's form to
-    /// `repo`'s constitution.
-    pub fn add_rule(&mut self, repo: &str, cx: &mut Context<Self>) {
-        let text = self.rule_text.read(cx).text().trim().to_owned();
-        let on: Vec<String> = self
-            .rule_on
-            .read(cx)
-            .text()
-            .split(',')
-            .map(|target| target.trim().to_owned())
-            .filter(|target| !target.is_empty())
-            .collect();
-        if text.is_empty() || on.is_empty() {
-            self.show_alert(
-                "The rule needs words and a place",
-                "Write the rule, and where it applies: a tool's field such \
-                 as edit.newText or bash.command, or final answer.",
-                cx,
-            );
-            return;
-        }
-        self.rule_text.update(cx, |input, cx| input.clear(cx));
-        self.rule_on.update(cx, |input, cx| input.clear(cx));
-        cx.emit(WorkspaceEvent::AddRule {
-            repo: repo.to_owned(),
-            text,
-            on,
-        });
-    }
-
-    /// Fills the new rule's text, as typing would: for tests.
+    /// Fills the rule being written, as typing would: for tests.
     pub fn rule_text_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
         self.rule_text
             .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
     }
 
-    /// Fills where the new rule applies: for tests.
+    /// Fills "Another tool's field", as typing would: for tests.
     pub fn rule_on_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
         self.rule_on
             .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
@@ -1850,7 +1873,11 @@ impl Workspace {
 
     /// Esc: closes a dialog if one is open, else goes back.
     pub fn escape(&mut self, cx: &mut Context<Self>) {
-        if self.slash_dismiss(cx) {
+        if self.rule_menu.take().is_some() {
+            cx.notify();
+        } else if self.rule_draft.is_some() {
+            self.close_rule_editor(cx);
+        } else if self.slash_dismiss(cx) {
         } else if self.dialog.is_some() {
             self.dismiss_alert(cx);
         } else if self.searching {

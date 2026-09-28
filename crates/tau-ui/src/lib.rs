@@ -54,6 +54,7 @@ pub mod picker;
 pub mod pull_request;
 pub mod repos;
 pub mod route;
+pub mod rule_editor;
 pub mod search;
 pub mod setup;
 pub mod slash;

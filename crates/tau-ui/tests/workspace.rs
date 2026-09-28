@@ -920,41 +920,149 @@ fn a_phone_closes_the_conversation_it_shows(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn rules_are_added_and_removed_from_the_constitution_screen(
-    cx: &mut TestAppContext,
-) {
+fn rules_are_written_edited_and_removed_in_the_editor(cx: &mut TestAppContext) {
+    use tau_ui::rule_editor::{Mark, Preset};
     let (workspace, mut cx, events) = open_demo(cx);
     cx.update(|_, cx| demo::respond(&workspace, cx));
     workspace.update(&mut cx, |ws, cx| {
         ws.open_constitution("docbert", cx);
-        // Without words or a place, nothing is sent.
-        ws.add_rule("docbert", cx);
-        assert!(ws.alert().is_some());
-    });
-    workspace.update(&mut cx, |ws, cx| {
-        ws.escape(cx);
+        ws.open_rule_editor("docbert", None, cx);
         ws.rule_text_for_test("Never delete an index.", cx);
-        ws.rule_on_for_test("bash.command, final answer", cx);
-        ws.add_rule("docbert", cx);
+        // Nothing picked: nothing is sent, and the editor says why, in
+        // place of a dialog.
+        ws.save_rule(cx);
+        assert!(ws.alert().is_none());
+        assert_eq!(
+            ws.draft_problem(cx),
+            Some("Pick at least one place, or Jev has nothing to check.")
+        );
+        assert!(ws.rule_draft().unwrap().tried_to_save);
+        // Places are picked, and any tool's field can be added by name.
+        ws.toggle_place("bash.command", cx);
+        ws.rule_on_for_test("not a field", cx);
+        assert!(!ws.add_other_place(cx));
+        ws.rule_on_for_test("grep.pattern", cx);
+        assert!(ws.add_other_place(cx));
+        // Presets, then a step: review never passes block.
+        ws.set_preset(Preset::Strict, cx);
+        assert_eq!(ws.rule_draft().unwrap().preset(), Some(Preset::Strict));
+        ws.nudge(Mark::Block, 0.05, cx);
+        assert_eq!(ws.rule_draft().unwrap().preset(), None);
+        for _ in 0..20 {
+            ws.nudge(Mark::Review, 0.05, cx);
+        }
+        let draft = ws.rule_draft().unwrap();
+        assert_eq!((draft.review, draft.block), (0.65, 0.65));
+        ws.nudge(Mark::Review, -0.35, cx);
+        ws.save_rule(cx);
+        assert!(ws.rule_draft().is_none());
     });
     assert_eq!(
         events.borrow().last(),
         Some(&WorkspaceEvent::AddRule {
             repo: "docbert".into(),
             text: "Never delete an index.".into(),
-            on: vec!["bash.command".into(), "final answer".into()],
+            on: vec!["bash.command".into(), "grep.pattern".into()],
+            review: 0.3,
+            block: 0.65,
         })
     );
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {
-        let rules = &ws.repo_named("docbert").constitution.rules;
+        let rules = ws.repo_named("docbert").constitution.rules.clone();
         assert_eq!(rules.len(), 4);
+        // Editing opens with the rule as it is, and saves over it.
         let id = rules.last().unwrap().id.clone();
+        ws.open_rule_editor("docbert", Some(&id), cx);
+        let draft = ws.rule_draft().unwrap();
+        assert_eq!(draft.editing.as_deref(), Some(id.as_str()));
+        assert_eq!(draft.places, ["bash.command", "grep.pattern"]);
+        ws.toggle_place("grep.pattern", cx);
+        ws.save_rule(cx);
+    });
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        let rules = ws.repo_named("docbert").constitution.rules.clone();
+        let edited = rules.last().unwrap();
+        assert_eq!(edited.applies_to, ["bash.command"]);
+        assert_eq!(rules.len(), 4, "saved over, not added");
+        let id = edited.id.clone();
         ws.remove_rule("docbert", &id, cx);
     });
     cx.run_until_parked();
     workspace.read_with(&cx, |ws, _| {
         assert_eq!(ws.repo_named("docbert").constitution.rules.len(), 3);
+    });
+}
+
+#[gpui::test]
+fn a_rule_is_tried_on_the_repositorys_latest_calls(cx: &mut TestAppContext) {
+    use tau_ui::rule_editor::Trying;
+    let (workspace, mut cx, events) = open_demo(cx);
+    cx.update(|_, cx| demo::respond(&workspace, cx));
+    workspace.update(&mut cx, |ws, cx| {
+        for (_, update) in demo::script() {
+            ws.update_run(&demo::run_id(), update, cx);
+        }
+        ws.open_rule_editor("tau-agent", None, cx);
+        ws.rule_text_for_test("Never touch the production database.", cx);
+        ws.toggle_place("bash.command", cx);
+        ws.try_rule(cx);
+        assert_eq!(ws.rule_draft().unwrap().trying, Trying::Asking);
+    });
+    {
+        let events = events.borrow();
+        let Some(WorkspaceEvent::TryRule { calls, answers, .. }) =
+            events.last()
+        else {
+            panic!("no TryRule: {events:?}");
+        };
+        assert!(!calls.is_empty() && calls.len() <= 6);
+        assert!(calls.iter().all(|(tool, _)| tool == "bash"), "{calls:?}");
+        assert!(answers.is_empty(), "the rule reads no answers");
+    }
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        let Trying::Done { trials, .. } = &ws.rule_draft().unwrap().trying
+        else {
+            panic!("not tried");
+        };
+        assert!(!trials.is_empty());
+    });
+}
+
+#[gpui::test]
+fn the_constitution_counts_its_runs_and_lists_what_waits(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        for (_, update) in demo::script() {
+            ws.update_run(&demo::run_id(), update, cx);
+        }
+        let stats = ws.rules_stats("tau-agent");
+        assert!(stats.checked > 0);
+        assert_eq!((stats.blocked, stats.flagged, stats.waiting), (1, 1, 1));
+        assert_eq!(stats.per_rule.get("R2"), Some(&(1, 0, 0)));
+        let waiting = ws.review_items("tau-agent");
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].rule, "R1");
+        assert_eq!(waiting[0].tool.as_deref(), Some("bash"));
+        // Looks fine: off the queue, and onto what was handled.
+        let (run, key) = (waiting[0].run.clone(), waiting[0].key.clone());
+        ws.mark_reviewed(&run, &key, cx);
+        assert!(ws.review_items("tau-agent").is_empty());
+        let fine = ws
+            .handled("tau-agent")
+            .into_iter()
+            .filter(|done| {
+                done.what == tau_ui::rule_editor::HandledKind::LookedFine
+            })
+            .count();
+        assert_eq!(fine, 1);
     });
 }
 
