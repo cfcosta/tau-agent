@@ -4,10 +4,14 @@
 use gpui::{
     AnyElement,
     Context,
+    Corner,
     Div,
     IntoElement,
     SharedString,
+    anchored,
+    deferred,
     div,
+    point,
     prelude::*,
     px,
 };
@@ -16,19 +20,29 @@ use super::{dot, icon, icon_button, logo, mono, status_icon, status_look};
 use crate::{
     assets::Icon,
     catalog::ProjectStatus,
+    repos::RepoRows,
     route::{Route, Tab},
-    theme::{Design as _, IconSize, MONO, Theme, Type, radius, sp, weight},
-    ui::components::ButtonKind,
-    view::{ChildKind, Origin, RunView, tokens, usd},
+    theme::{
+        Design as _,
+        IconSize,
+        MONO,
+        Theme,
+        Type,
+        control,
+        radius,
+        sp,
+        weight,
+    },
+    view::{ChildKind, RunView, tokens, usd},
     workspace::Workspace,
 };
 
 fn tab_icon(tab: Tab) -> Icon {
     match tab {
         Tab::Runs => Icon::Runs,
-        Tab::Memory => Icon::Memory,
         Tab::History => Icon::History,
         Tab::Plugins => Icon::Plug,
+        Tab::Models => Icon::Settings,
     }
 }
 
@@ -142,38 +156,304 @@ pub fn title_bar(
         )
 }
 
-/// The desktop sidebar: sections, then runs with their forks and
-/// sub-agents, then agents.
+/// The desktop sidebar: a new run in the selected repository, the
+/// repositories as a tree (each with its memory, constitution and runs),
+/// then what is the same everywhere.
 pub fn sidebar(
     ws: &Workspace,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> gpui::Stateful<Div> {
-    let nav = [
-        (Route::History, Icon::History, "History", "Ctrl 3"),
-        (
-            Route::Memory { note: None },
-            Icon::Memory,
-            "Memory",
-            "Ctrl 2",
-        ),
-        (Route::Plugins, Icon::Plug, "Plugins", "Ctrl 4"),
-        (
-            Route::Constitution { rule: None },
-            Icon::Blocked,
-            "Constitution",
-            "",
-        ),
+    let selected = ws.selected_repo().map(str::to_owned);
+    let filter = ws.sidebar_filter.read(cx).text().to_owned();
+    let rows = ws.repo_rows(&filter);
+    let many = ws.catalog.repos.len() > 3;
+
+    let new_run = div()
+        .id("new-run")
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(sp(2.))
+        .h(control::MEDIUM)
+        .px(sp(2.5))
+        .border_1()
+        .border_color(t.border)
+        .bg(t.raised)
+        .rounded(radius::CONTROL)
+        .cursor_pointer()
+        .hover(|style| style.bg(t.selected))
+        .child(icon(Icon::Plus, IconSize::BASE, t.text))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .gap(sp(1.))
+                .child("New run")
+                .when_some(selected.clone(), |label, repo| {
+                    label
+                        .child(div().text_color(t.muted).child("in"))
+                        .child(div().truncate().child(repo))
+                }),
+        )
+        .child(mono("Ctrl N", Type::MICRO, t.dim))
+        .on_click(
+            cx.listener(|ws, _, window, cx| ws.start_new_run(window, cx)),
+        );
+
+    let filter_field = div()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(sp(2.))
+        .h(px(34.))
+        .mt(sp(2.))
+        .px(sp(2.5))
+        .border_1()
+        .border_color(t.border_strong)
+        .rounded(radius::CONTROL)
+        .child(icon(Icon::Search, IconSize::COMPACT, t.dim))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .child(ws.sidebar_filter.clone()),
+        );
+
+    let add = div()
+        .id("add-repo")
+        .size(px(22.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(radius::TAG)
+        .cursor_pointer()
+        .hover(|style| style.bg(t.selected))
+        .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
+        .on_click(
+            cx.listener(|ws, _, window, cx| ws.show_add_repo(window, cx)),
+        );
+
+    let everywhere = [
+        (Route::History, Icon::History, "History", "all repos"),
+        (Route::Plugins, Icon::Plug, "Plugins", ""),
         (Route::Models, Icon::Settings, "Models", ""),
     ];
-    let active_section = |route: &Route| match (route, &ws.route) {
-        (Route::Memory { .. }, Route::Memory { .. }) => true,
-        (Route::Constitution { .. }, Route::Constitution { .. }) => true,
-        (a, b) => a == b,
+
+    div()
+        .id("sidebar")
+        .flex()
+        .flex_col()
+        .gap(sp(0.5))
+        .p(sp(2.))
+        .bg(t.panel)
+        .border_r_1()
+        .border_color(t.border)
+        .overflow_y_scroll()
+        .child(new_run)
+        .when(many, |bar| bar.child(filter_field))
+        .child(section("Repositories", Some(add.into_any_element()), t))
+        .children({
+            let groups: Vec<AnyElement> = rows
+                .into_iter()
+                .map(|rows| repo_group(ws, rows, t, cx).into_any_element())
+                .collect();
+            groups
+        })
+        .when(ws.catalog.repos.is_empty(), |bar| {
+            bar.child(
+                div()
+                    .px(sp(2.5))
+                    .py(sp(2.))
+                    .typeset(Type::CAPTION)
+                    .text_color(t.muted)
+                    .child("No repositories yet. Add one to start runs in it."),
+            )
+        })
+        .child(div().flex_1().min_h(sp(4.)))
+        .child(section("Everywhere", None, t))
+        .children(everywhere.into_iter().map(|(route, glyph, label, meta)| {
+            let active = ws.route == route;
+            nav_row(glyph, label, meta.into(), active, t)
+                .id(label)
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.navigate(route.clone(), cx)
+                }))
+        }))
+}
+
+/// A sidebar section's heading, with an action at its end.
+fn section(title: &str, action: Option<AnyElement>, t: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .pt(sp(4.))
+        .pb(sp(1.5))
+        .px(sp(2.5))
+        .child(div().flex_1().child(super::heading(title, t)))
+        .children(action)
+}
+
+/// A row that opens a screen: an icon, a label, and a quiet detail.
+fn nav_row(
+    glyph: Icon,
+    label: &str,
+    meta: SharedString,
+    active: bool,
+    t: &Theme,
+) -> Div {
+    div()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(sp(2.5))
+        .h(px(34.))
+        .px(sp(2.5))
+        .rounded(radius::CONTROL)
+        .cursor_pointer()
+        .when(active, |row| row.bg(t.selected))
+        .when(!active, |row| {
+            row.hover(|style| style.bg(gpui::white().opacity(0.03)))
+        })
+        .child(icon(
+            glyph,
+            IconSize::BASE,
+            if active { t.text } else { t.muted },
+        ))
+        .child(
+            div()
+                .flex_1()
+                .text_color(if active { t.text } else { t.text_soft })
+                .child(label.to_owned()),
+        )
+        .when(!meta.is_empty(), |row| {
+            row.child(mono(meta, Type::MICRO, t.dim))
+        })
+}
+
+/// A repository in the sidebar's tree: its row, then, when open, its
+/// memory, constitution and runs.
+fn repo_group(
+    ws: &Workspace,
+    rows: RepoRows<'_>,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let name = rows.repo.name.clone();
+    let menu = ws.repo_menu.as_deref() == Some(name.as_str());
+    let hovered = menu || ws.hovered_repo.as_deref() == Some(name.as_str());
+    let action = |id: &'static str, glyph: Option<Icon>, t: &Theme| {
+        div()
+            .id(id)
+            .size(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(radius::TAG)
+            .bg(t.raised)
+            .text_color(t.text_soft)
+            .cursor_pointer()
+            .hover(|style| style.bg(t.border_strong))
+            .map(|button| match glyph {
+                Some(glyph) => {
+                    button.child(icon(glyph, IconSize::COMPACT, t.text_soft))
+                }
+                None => button.child("···"),
+            })
     };
-    let reviews: usize = ws
+    let head = div()
+        .id(SharedString::from(format!("repo-{name}")))
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(sp(2.))
+        .h(control::MEDIUM)
+        .px(sp(2.))
+        .rounded(radius::CONTROL)
+        .cursor_pointer()
+        .when(hovered, |row| row.bg(t.selected))
+        .when(!hovered && rows.open, |row| row.bg(t.raised))
+        .child(icon(
+            if rows.open { Icon::Down } else { Icon::Chevron },
+            IconSize::SMALL,
+            t.muted,
+        ))
+        .child(super::repo_mark(rows.repo, 20., t))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .truncate()
+                .when(rows.open, |label| label.font_weight(weight::STRONG))
+                .child(name.clone()),
+        )
+        .map(|row| {
+            if hovered {
+                let (new, more) = (name.clone(), name.clone());
+                row.child(action("repo-new", Some(Icon::Plus), t).on_click(
+                    cx.listener(move |ws, _, window, cx| {
+                        cx.stop_propagation();
+                        ws.new_run_in(&new, window, cx)
+                    }),
+                ))
+                .child(action("repo-more", None, t).on_click(cx.listener(
+                    move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.toggle_repo_menu(&more, cx)
+                    },
+                )))
+            } else {
+                row.when(rows.live > 0, |row| {
+                    row.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(sp(1.25))
+                            .typeset(Type::MICRO)
+                            .text_color(t.accent)
+                            .child(dot(t.accent, 6.))
+                            .child(rows.live.to_string()),
+                    )
+                })
+                .child(mono(
+                    rows.total.to_string(),
+                    Type::MICRO,
+                    t.dim,
+                ))
+            }
+        })
+        .on_hover({
+            let name = name.clone();
+            cx.listener(move |ws, hovered: &bool, _, cx| {
+                ws.hover_repo(&name, *hovered, cx)
+            })
+        })
+        .on_click({
+            let name = name.clone();
+            cx.listener(move |ws, _, _, cx| ws.toggle_repo_open(&name, cx))
+        });
+
+    let group = div()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .child(head)
+        .when(menu, |group| group.child(repo_menu(&name, t, cx)));
+    if !rows.open {
+        return group;
+    }
+
+    let repo = rows.repo;
+    let memory_active =
+        matches!(&ws.route, Route::Memory { repo: r, .. } if *r == name);
+    let rules_active =
+        matches!(&ws.route, Route::Constitution { repo: r, .. } if *r == name);
+    let reviews = ws
         .runs
         .iter()
+        .filter(|run| ws.repo_of(run) == name)
         .flat_map(|run| run.reviews().map(move |card| (run, card)))
         .filter(|(run, card)| {
             matches!(card.state, crate::view::ToolState::Flagged { .. })
@@ -182,100 +462,59 @@ pub fn sidebar(
                     .contains(&(run.id.clone(), card.call_id.clone()))
         })
         .count();
-
-    let nav =
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(0.5))
-            .children(nav.into_iter().map(|(route, glyph, label, keys)| {
-                let active = active_section(&route);
-                let badge =
-                    (label == "Constitution" && reviews > 0).then(|| {
-                        mono(reviews.to_string(), Type::MICRO, t.bg)
-                            .px(sp(1.5))
-                            .rounded(radius::BOX)
-                            .bg(t.accent)
-                    });
-                div()
-                    .id(label)
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.5))
-                    .px(sp(2.5))
-                    .py(sp(1.75))
-                    .rounded(radius::CONTROL)
-                    .cursor_pointer()
-                    .when(active, |row| row.bg(t.selected))
-                    .when(!active, |row| {
-                        row.hover(|style| style.bg(gpui::white().opacity(0.03)))
-                    })
-                    .child(icon(
-                        glyph,
-                        IconSize::BASE,
-                        if active { t.text } else { t.muted },
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(if active {
-                                t.text
-                            } else {
-                                t.text_soft
-                            })
-                            .child(label),
-                    )
-                    .children(badge)
-                    .when(!keys.is_empty(), |row| {
-                        row.child(mono(keys, Type::MICRO, t.dim))
-                    })
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.navigate(route.clone(), cx)
-                    }))
-            }));
-
     let current = ws.current().map(|run| run.id.clone());
-    let mut list = div().flex().flex_col().gap(sp(0.5)).child(
-        div()
-            .px(sp(2.5))
-            .pb(sp(1.5))
-            .child(super::heading("Runs", t)),
-    );
-    for run in ws.runs.iter().filter(|run| run.origin == Origin::Root) {
-        let active = current.as_ref() == Some(&run.id)
-            && matches!(ws.route, Route::Run(_) | Route::Home);
-        let route = Route::Run(run.id.clone());
-        list = list.child(
-            div()
-                .id(SharedString::from(format!("run-{}", run.id)))
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .px(sp(2.5))
-                .py(sp(1.75))
-                .rounded(radius::CONTROL)
-                .cursor_pointer()
-                .when(active, |row| row.bg(t.selected))
-                .when(!active, |row| {
-                    row.hover(|style| style.bg(gpui::white().opacity(0.03)))
-                })
-                .child(status_icon(run, t, IconSize::SMALL))
-                .child(
-                    div()
-                        .flex_1()
-                        .truncate()
-                        .text_color(if active { t.text } else { t.text_soft })
-                        .when(active, |title| {
-                            title.font_weight(weight::EMPHASIS)
-                        })
-                        .child(run.title.clone()),
+    let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
+
+    let mut body = div()
+        .flex()
+        .flex_col()
+        .gap(sp(0.5))
+        .ml(sp(4.25))
+        .pl(sp(2.))
+        .pt(sp(0.5))
+        .pb(sp(1.5))
+        .border_l_1()
+        .border_color(t.border)
+        .child(
+            nav_row(
+                Icon::Memory,
+                "Memory",
+                format!("{} notes", repo.memory.notes.len()).into(),
+                memory_active,
+                t,
+            )
+            .id(SharedString::from(format!("memory-{name}")))
+            .on_click({
+                let name = name.clone();
+                cx.listener(move |ws, _, _, cx| ws.open_memory(&name, cx))
+            }),
+        )
+        .child(
+            nav_row(
+                Icon::Blocked,
+                "Constitution",
+                format!("{} rules", repo.constitution.rules.len()).into(),
+                rules_active,
+                t,
+            )
+            .when(reviews > 0, |row| {
+                row.child(
+                    mono(reviews.to_string(), Type::MICRO, t.bg)
+                        .px(sp(1.5))
+                        .rounded(radius::BOX)
+                        .bg(t.accent),
                 )
-                .child(mono(usd(run.usage.cost), Type::MICRO, t.muted))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.navigate(route.clone(), cx)
-                })),
+            })
+            .id(SharedString::from(format!("constitution-{name}")))
+            .on_click({
+                let name = name.clone();
+                cx.listener(move |ws, _, _, cx| ws.open_constitution(&name, cx))
+            }),
         );
-        list = list.children(run.children.iter().map(|child| {
+    for run in rows.runs {
+        let active = on_run && current.as_ref() == Some(&run.id);
+        body = body.child(run_row(run, active, t, cx));
+        body = body.children(run.children.iter().map(|child| {
             let (color, label) = status_look(&child.status, t);
             let route = match child.kind {
                 ChildKind::Fork => Some(Route::Compare {
@@ -290,11 +529,12 @@ pub fn sidebar(
             div()
                 .id(SharedString::from(format!("child-{}", child.id)))
                 .flex()
+                .flex_shrink_0()
                 .items_center()
                 .gap(sp(2.))
+                .h(px(34.))
                 .pl(sp(7.))
                 .pr(sp(2.5))
-                .py(sp(1.5))
                 .rounded(radius::CONTROL)
                 .text_color(t.text_soft)
                 .when(active, |row| row.bg(t.selected))
@@ -319,87 +559,162 @@ pub fn sidebar(
                 })
         }));
     }
+    if rows.older > 0 {
+        let name = name.clone();
+        body = body.child(
+            super::text_link(
+                format!("Show {} older runs", rows.older),
+                Type::CAPTION,
+                t,
+            )
+            .id(SharedString::from(format!("older-{name}")))
+            .h(px(30.))
+            .flex()
+            .items_center()
+            .px(sp(2.5))
+            .cursor_pointer()
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.show_older_runs(&name, cx)),
+            ),
+        );
+    }
+    group.child(body)
+}
 
-    let mut agents: Vec<&str> =
-        ws.runs.iter().map(|run| run.agent.as_str()).collect();
-    agents.sort_unstable();
-    agents.dedup();
-
+/// A run in the tree: its state, title, and turn or cost.
+fn run_row(
+    run: &RunView,
+    active: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let route = Route::Run(run.id.clone());
+    let meta = if run.status.is_live() {
+        format!("turn {}", run.turn)
+    } else {
+        usd(run.usage.cost)
+    };
     div()
-        .id("sidebar")
+        .id(SharedString::from(format!("run-{}", run.id)))
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(sp(2.5))
+        .h(px(34.))
+        .px(sp(2.5))
+        .rounded(radius::CONTROL)
+        .cursor_pointer()
+        .when(active, |row| row.bg(t.selected))
+        .when(!active, |row| {
+            row.hover(|style| style.bg(gpui::white().opacity(0.03)))
+        })
+        .child(status_icon(run, t, IconSize::SMALL))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .truncate()
+                .text_color(if active { t.text } else { t.text_soft })
+                .when(active, |title| title.font_weight(weight::EMPHASIS))
+                .child(run.title.clone()),
+        )
+        .child(mono(meta, Type::MICRO, t.muted))
+        .on_click(
+            cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
+        )
+}
+
+/// A repository's menu, under its row.
+fn repo_menu(
+    name: &str,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let entry = |id: &'static str, glyph: Icon, label: String, color| {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .gap(sp(2.5))
+            .h(px(34.))
+            .px(sp(2.5))
+            .rounded(radius::CONTROL)
+            .cursor_pointer()
+            .text_color(color)
+            .hover(|style| style.bg(t.selected))
+            .child(icon(
+                glyph,
+                IconSize::BASE,
+                if color == t.red { t.red } else { t.muted },
+            ))
+            .child(label)
+    };
+    let owned = |name: &str| name.to_owned();
+    let (new, memory, rules, files, remove) = (
+        owned(name),
+        owned(name),
+        owned(name),
+        owned(name),
+        owned(name),
+    );
+    let menu = div()
+        .id("repo-menu")
+        .w(px(232.))
         .flex()
         .flex_col()
-        .gap(sp(4.5))
-        .px(sp(2.))
-        .py(sp(3.))
+        .p(sp(1.5))
         .bg(t.panel)
-        .border_r_1()
-        .border_color(t.border)
-        .overflow_y_scroll()
+        .border_1()
+        .border_color(t.border_strong)
+        .rounded(radius::LARGE)
+        .shadow_lg()
         .child(
-            div()
-                .id("new-run")
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .h(px(36.))
-                .px(sp(2.5))
-                .border_1()
-                .border_color(t.border)
-                .bg(t.raised)
-                .rounded(radius::CONTROL)
-                .cursor_pointer()
-                .child(icon(Icon::Plus, IconSize::BASE, t.text))
-                .child(div().flex_1().child("New run"))
-                .child(mono("Ctrl N", Type::MICRO, t.dim))
-                .on_click(cx.listener(|ws, _, window, cx| {
-                    ws.start_new_run(window, cx)
+            entry("menu-new", Icon::Plus, format!("New run in {name}"), t.text)
+                .on_click(cx.listener(move |ws, _, window, cx| {
+                    ws.new_run_in(&new, window, cx)
                 })),
         )
-        .child(nav)
-        .child(list)
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(0.5))
-                .child(
-                    div()
-                        .px(sp(2.5))
-                        .pb(sp(1.5))
-                        .child(super::heading("Agents", t)),
-                )
-                .children(agents.into_iter().map(|agent| {
-                    div()
-                        .id(SharedString::from(format!("agent-{agent}")))
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .px(sp(2.5))
-                        .py(sp(1.5))
-                        .rounded(radius::CONTROL)
-                        .cursor_pointer()
-                        .hover(|style| style.bg(gpui::white().opacity(0.03)))
-                        .child(
-                            mono(
-                                agent.chars().next().unwrap_or('?').to_string(),
-                                Type::MICRO,
-                                t.blue,
-                            )
-                            .size(px(18.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(radius::SMALL)
-                            .bg(t.blue_border),
-                        )
-                        .child(div().flex_1().child(agent.to_owned()))
-                        .child(mono("plugins", Type::MICRO, t.dim))
-                        .on_click(cx.listener(|ws, _, _, cx| {
-                            ws.navigate(Route::Plugins, cx)
-                        }))
+            entry("menu-memory", Icon::Memory, "Memory".into(), t.text)
+                .on_click(
+                    cx.listener(move |ws, _, _, cx| {
+                        ws.open_memory(&memory, cx)
+                    }),
+                ),
+        )
+        .child(
+            entry("menu-rules", Icon::Blocked, "Constitution".into(), t.text)
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.open_constitution(&rules, cx)
                 })),
         )
+        .child(
+            entry("menu-files", Icon::Folder, "Show in files".into(), t.text)
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.show_in_files(&files, cx)
+                })),
+        )
+        .child(div().h(px(1.)).my(sp(1.)).bg(t.border))
+        .child(
+            entry(
+                "menu-remove",
+                Icon::Warning,
+                "Remove from tau".into(),
+                t.red,
+            )
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.remove_repo(&remove, cx)),
+            ),
+        )
+        .on_mouse_down_out(cx.listener(|ws, _, _, cx| ws.close_repo_menu(cx)));
+    deferred(
+        anchored()
+            .anchor(Corner::TopLeft)
+            .offset(point(px(120.), px(2.)))
+            .snap_to_window_with_margin(px(8.))
+            .child(menu),
+    )
+    .with_priority(1)
 }
 
 pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
@@ -449,9 +764,10 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
         .child(div().flex_1())
         .child("Esc back")
         .child(format!(
-            "{} · {} runs",
+            "{} · {} runs · {} repos",
             ws.catalog.store.path,
-            ws.runs.len()
+            ws.runs.len(),
+            ws.catalog.repos.len()
         ))
 }
 
@@ -523,12 +839,15 @@ pub fn phone_header(
     cx: &mut Context<Workspace>,
 ) -> Div {
     let title = match &ws.route {
-        Route::Memory { note: Some(id) } => ws
-            .catalog
+        Route::Memory {
+            repo,
+            note: Some(id),
+        } => ws
+            .repo_named(repo)
             .memory
             .note(id)
             .map_or("Memory".to_owned(), |note| note.title.clone()),
-        Route::Home => ws.name.clone(),
+        Route::Home => "Runs".to_owned(),
         route => route.title().to_owned(),
     };
     div()
@@ -560,77 +879,28 @@ pub fn phone_header(
                 .child(title),
         )
         .when(matches!(ws.route, Route::Home), |bar| {
-            bar.child(icon_button("phone-new", Icon::Plus, 44., t).on_click(
-                cx.listener(|ws, _, window, cx| ws.start_new_run(window, cx)),
-            ))
+            bar.child(
+                icon_button("phone-add-repo", Icon::Folder, 44., t).on_click(
+                    cx.listener(|ws, _, window, cx| {
+                        ws.show_add_repo(window, cx)
+                    }),
+                ),
+            )
         })
 }
 
-/// The phone's home: live runs as cards, then the rest.
+/// The phone's home: runs grouped by repository, each group with its
+/// memory and rules.
 pub fn phone_run_list(
     ws: &Workspace,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
-    let live: Vec<AnyElement> = ws
-        .runs
-        .iter()
-        .filter(|run| run.status.is_live())
-        .map(|run| live_card(run, t, cx).into_any_element())
+    let groups: Vec<AnyElement> = ws
+        .repo_rows("")
+        .into_iter()
+        .map(|rows| phone_group(rows, t, cx).into_any_element())
         .collect();
-    let earlier =
-        ws.runs
-            .iter()
-            .filter(|run| !run.status.is_live())
-            .map(|run| {
-                let (color, label) = status_look(&run.status, t);
-                let route = match &run.origin {
-                    Origin::Fork { from, .. } => Route::Compare {
-                        main: from.clone(),
-                        fork: run.id.clone(),
-                    },
-                    _ => Route::Run(run.id.clone()),
-                };
-                div()
-                    .id(SharedString::from(format!("phone-run-{}", run.id)))
-                    .flex()
-                    .items_center()
-                    .gap(sp(3.))
-                    .min_h(px(56.))
-                    .px(sp(4.))
-                    .border_b_1()
-                    .border_color(t.border)
-                    .cursor_pointer()
-                    .child(status_icon(run, t, IconSize::BASE))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .flex()
-                            .flex_col()
-                            .gap(sp(0.5))
-                            .child(
-                                div()
-                                    .truncate()
-                                    .font_weight(weight::EMPHASIS)
-                                    .child(run.title.clone()),
-                            )
-                            .child(
-                                div()
-                                    .typeset(Type::CAPTION)
-                                    .text_color(color)
-                                    .child(format!(
-                                        "{label} · {} turns",
-                                        run.turn
-                                    )),
-                            ),
-                    )
-                    .child(mono(usd(run.usage.cost), Type::CAPTION, t.muted))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.navigate(route.clone(), cx)
-                    }))
-            });
-
     div()
         .id("phone-runs")
         .flex_1()
@@ -638,100 +908,245 @@ pub fn phone_run_list(
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .child(div().flex().flex_col().gap(sp(3.)).p(sp(4.)).children(live))
-        .child(
-            div()
-                .px(sp(4.))
-                .pb(sp(1.5))
-                .child(super::heading("Earlier", t)),
-        )
-        .children(earlier)
+        .children(groups)
+        .when(ws.catalog.repos.is_empty(), |list| {
+            list.child(super::empty(
+                "No repositories yet. Add one to start runs in it.",
+                t,
+            ))
+        })
 }
 
-fn live_card(
+fn phone_group(
+    rows: RepoRows<'_>,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let name = rows.repo.name.clone();
+    let head = div()
+        .id(SharedString::from(format!("phone-repo-{name}")))
+        .flex()
+        .items_center()
+        .gap(sp(3.))
+        .min_h(px(52.))
+        .px(sp(4.))
+        .bg(t.panel)
+        .border_b_1()
+        .border_color(t.border)
+        .cursor_pointer()
+        .child(icon(
+            if rows.open { Icon::Down } else { Icon::Chevron },
+            IconSize::BASE,
+            t.muted,
+        ))
+        .child(super::repo_mark(rows.repo, 26., t))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .truncate()
+                .typeset(Type::SUBTITLE)
+                .font_weight(weight::STRONG)
+                .child(name.clone()),
+        )
+        .when(rows.live > 0, |row| {
+            row.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(1.25))
+                    .typeset(Type::CAPTION)
+                    .text_color(t.accent)
+                    .child(dot(t.accent, 7.))
+                    .child(rows.live.to_string()),
+            )
+        })
+        .child(
+            icon_button("phone-repo-new", Icon::Plus, 44., t)
+                .mr(sp(-3.))
+                .on_click({
+                    let name = name.clone();
+                    cx.listener(move |ws, _, window, cx| {
+                        cx.stop_propagation();
+                        ws.new_run_in(&name, window, cx)
+                    })
+                }),
+        )
+        .on_click({
+            let name = name.clone();
+            cx.listener(move |ws, _, _, cx| ws.toggle_repo_open(&name, cx))
+        });
+    let group = div().flex().flex_col().child(head);
+    if !rows.open {
+        return group;
+    }
+    let chip = |id: &'static str, glyph: Icon, label: &str, count: usize| {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .gap(sp(1.5))
+            .px(sp(3.))
+            .py(sp(2.))
+            .rounded(radius::BOX)
+            .bg(t.raised)
+            .typeset(Type::SMALL)
+            .cursor_pointer()
+            .child(icon(glyph, IconSize::BASE, t.text_soft))
+            .child(label.to_owned())
+            .child(mono(count.to_string(), Type::SMALL, t.dim))
+    };
+    let (memory, rules) = (name.clone(), name.clone());
+    let chips = div()
+        .flex()
+        .gap(sp(2.))
+        .px(sp(4.))
+        .py(sp(2.5))
+        .border_b_1()
+        .border_color(t.border)
+        .child(
+            chip(
+                "phone-memory",
+                Icon::Memory,
+                "Memory",
+                rows.repo.memory.notes.len(),
+            )
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.open_memory(&memory, cx)),
+            ),
+        )
+        .child(
+            chip(
+                "phone-rules",
+                Icon::Blocked,
+                "Rules",
+                rows.repo.constitution.rules.len(),
+            )
+            .on_click(
+                cx.listener(move |ws, _, _, cx| {
+                    ws.open_constitution(&rules, cx)
+                }),
+            ),
+        );
+    let mut group = group.child(chips);
+    for run in rows.runs {
+        group = group.child(phone_run_row(run, t, cx));
+        for (route, child) in run
+            .children
+            .iter()
+            .filter_map(|child| fork_route(run, child))
+        {
+            group = group.child(phone_child_row(route, child, t, cx));
+        }
+    }
+    if rows.older > 0 {
+        group = group.child(
+            super::text_link(
+                format!("Show {} older runs", rows.older),
+                Type::SMALL,
+                t,
+            )
+            .id(SharedString::from(format!("phone-older-{name}")))
+            .min_h(px(44.))
+            .flex()
+            .items_center()
+            .px(sp(4.))
+            .border_b_1()
+            .border_color(t.border)
+            .cursor_pointer()
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.show_older_runs(&name, cx)),
+            ),
+        );
+    }
+    group
+}
+
+/// A phone lists a run's forks, which open their comparison.
+fn fork_route<'a>(
+    run: &RunView,
+    child: &'a crate::view::ChildRun,
+) -> Option<(Route, &'a crate::view::ChildRun)> {
+    (child.kind == ChildKind::Fork).then(|| {
+        (
+            Route::Compare {
+                main: run.id.clone(),
+                fork: child.id.clone(),
+            },
+            child,
+        )
+    })
+}
+
+fn phone_run_row(
     run: &RunView,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
-    let meter = run.meters().into_iter().find(|meter| meter.label == "Cost");
-    let blocked = run
-        .plugins
-        .iter()
-        .find(|plugin| plugin.state.contains("blocked"));
+    let (color, label) = status_look(&run.status, t);
     let route = Route::Run(run.id.clone());
+    let meta = if run.status.is_live() {
+        format!("{label} · turn {}", run.turn)
+    } else {
+        format!("{label} · {} turns · {}", run.turn, usd(run.usage.cost))
+    };
     div()
+        .id(SharedString::from(format!("phone-run-{}", run.id)))
         .flex()
-        .flex_col()
+        .items_center()
         .gap(sp(3.))
-        .p(sp(3.5))
-        .border_1()
-        .border_color(t.accent_border)
-        .rounded(radius::TILE)
-        .bg(t.panel)
+        .min_h(px(56.))
+        .px(sp(4.))
+        .border_b_1()
+        .border_color(t.border)
+        .cursor_pointer()
+        .child(status_icon(run, t, IconSize::BASE))
         .child(
             div()
+                .flex_1()
+                .min_w(px(0.))
                 .flex()
-                .items_center()
-                .gap(sp(2.))
-                .child(dot(t.accent, 8.))
-                .child(
-                    div()
-                        .flex_1()
-                        .font_weight(weight::STRONG)
-                        .child(run.title.clone()),
-                )
-                .child(mono(
-                    format!("turn {} · {}", run.turn, usd(run.usage.cost)),
-                    Type::CAPTION,
-                    t.muted,
-                )),
+                .flex_col()
+                .gap(sp(0.75))
+                .child(div().truncate().child(run.title.clone()))
+                .child(mono(meta, Type::MICRO, color)),
         )
-        .when_some(blocked, |card, plugin| {
-            card.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.))
-                    .px(sp(2.5))
-                    .py(sp(2.))
-                    .rounded(radius::BOX)
-                    .bg(t.red_soft)
-                    .child(icon(Icon::Blocked, IconSize::MEDIUM, t.red))
-                    .child(mono(plugin.name.clone(), Type::CAPTION, t.red))
-                    .child(
-                        div()
-                            .text_color(t.text_soft)
-                            .child(plugin.state.clone()),
-                    ),
-            )
-        })
-        .when_some(meter, |card, meter| {
-            card.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(1.25))
-                    .child(
-                        div()
-                            .flex()
-                            .typeset(Type::CAPTION)
-                            .child(div().flex_1().child("Cost"))
-                            .child(mono(meter.value, Type::CAPTION, t.muted)),
-                    )
-                    .child(super::bar(meter.share, 4., t.text_soft, t.border)),
-            )
-        })
+        .on_click(
+            cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
+        )
+}
+
+fn phone_child_row(
+    route: Route,
+    child: &crate::view::ChildRun,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let (color, label) = status_look(&child.status, t);
+    div()
+        .id(SharedString::from(format!("phone-child-{}", child.id)))
+        .flex()
+        .items_center()
+        .gap(sp(3.))
+        .min_h(px(56.))
+        .pl(sp(11.))
+        .pr(sp(4.))
+        .border_b_1()
+        .border_color(t.border)
+        .cursor_pointer()
+        .child(icon(Icon::Fork, IconSize::COMPACT, t.blue))
         .child(
             div()
-                .id(SharedString::from(format!("open-{}", run.id)))
-                .child(
-                    super::button("Open", ButtonKind::Primary, t)
-                        .h(px(44.))
-                        .rounded(radius::LARGE),
-                )
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.navigate(route.clone(), cx)
-                })),
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .gap(sp(0.75))
+                .child(div().truncate().child(child.title.clone()))
+                .child(mono(label, Type::MICRO, color)),
+        )
+        .on_click(
+            cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
         )
 }
 

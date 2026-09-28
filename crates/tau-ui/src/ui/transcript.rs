@@ -438,7 +438,9 @@ fn blocked_body(
     compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Div {
+    let repo = ws.current().map_or("", |run| ws.repo_of(run));
     let route = Route::Constitution {
+        repo: repo.to_owned(),
         rule: Some(rule.to_owned()),
     };
     let proposed: Vec<DiffLine> = proposed_text(&card.args)
@@ -449,7 +451,7 @@ fn blocked_body(
         })
         .collect();
     let thresholds = ws
-        .catalog
+        .repo_named(repo)
         .constitution
         .rules
         .iter()
@@ -815,12 +817,16 @@ pub fn chips_view(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
+    // Notes come from the memory of the open run's repository.
+    let repo = ws.current().map_or("", |run| ws.repo_of(run));
     div().flex().flex_wrap().gap(sp(1.5)).children(
         chips.iter().enumerate().map(|(n, chip)| {
-            let route =
-                ws.catalog.memory.by_title(chip).map(|note| Route::Memory {
+            let route = ws.repo_named(repo).memory.by_title(chip).map(|note| {
+                Route::Memory {
+                    repo: repo.to_owned(),
                     note: Some(note.id.clone()),
-                });
+                }
+            });
             div()
                 .id(SharedString::from(format!("chip-{index}-{n}")))
                 .px(sp(2.25))

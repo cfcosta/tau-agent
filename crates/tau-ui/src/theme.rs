@@ -84,6 +84,8 @@ pub struct Theme {
     /// Behind and around the body of a blocked call.
     pub danger_surface: Hsla,
     pub danger_edge: Hsla,
+    /// The colors a repository's mark can take.
+    pub marks: [Hsla; 6],
 }
 
 fn c(color: Rgba) -> Hsla {
@@ -126,7 +128,24 @@ impl Theme {
             info_panel: c(rgb(0x171a21)),
             danger_surface: c(rgb(0x1d1716)),
             danger_edge: c(rgb(0x3a2724)),
+            marks: [
+                c(rgb(0xe5a54a)),
+                c(rgb(0x82aaff)),
+                c(rgb(0x7fc98a)),
+                c(rgb(0xc49bf0)),
+                c(rgb(0xf0a37e)),
+                c(rgb(0x7ec8c8)),
+            ],
         }
+    }
+
+    /// A repository's mark color, by its name, so it keeps its color
+    /// whatever else is listed.
+    pub fn mark(&self, name: &str) -> Hsla {
+        let hash = name.bytes().fold(0x811c_9dc5_u32, |hash, byte| {
+            (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+        });
+        self.marks[hash as usize % self.marks.len()]
     }
 
     /// The color a tone is written in.

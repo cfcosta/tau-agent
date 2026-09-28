@@ -37,23 +37,28 @@ use crate::{
 
 pub fn render(
     ws: &Workspace,
+    repo: &str,
     note: Option<&str>,
     compact: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let memory = &ws.catalog.memory;
+    let memory = &ws.repo_named(repo).memory;
     let open = note
         .and_then(|id| memory.note(id))
         .or_else(|| (!compact).then(|| memory.notes.first()).flatten());
     if compact {
         return match open {
-            Some(note) => {
-                ui::screen("memory-note", true, reader(ws, note, true, t, cx))
+            Some(note) => ui::screen(
+                "memory-note",
+                true,
+                reader(ws, repo, note, true, t, cx),
+            )
+            .into_any_element(),
+            None => {
+                ui::screen("memory-list", true, list(ws, repo, None, t, cx))
                     .into_any_element()
             }
-            None => ui::screen("memory-list", true, list(ws, None, t, cx))
-                .into_any_element(),
         };
     }
     div()
@@ -70,7 +75,13 @@ pub fn render(
                 .border_r_1()
                 .border_color(t.border)
                 .p(sp(3.))
-                .child(list(ws, open.map(|note| note.id.as_str()), t, cx)),
+                .child(list(
+                    ws,
+                    repo,
+                    open.map(|note| note.id.as_str()),
+                    t,
+                    cx,
+                )),
         )
         .child(match open {
             Some(note) => div()
@@ -85,7 +96,7 @@ pub fn render(
                         .overflow_y_scroll()
                         .px(sp(12.))
                         .py(sp(8.))
-                        .child(reader(ws, note, false, t, cx)),
+                        .child(reader(ws, repo, note, false, t, cx)),
                 )
                 .child(
                     div()
@@ -97,7 +108,7 @@ pub fn render(
                         .border_l_1()
                         .border_color(t.border)
                         .p(sp(5.))
-                        .child(neighborhood(ws, note, t, cx)),
+                        .child(neighborhood(ws, repo, note, t, cx)),
                 )
                 .into_any_element(),
             None => ui::empty("No notes yet.", t).flex_1().into_any_element(),
@@ -107,19 +118,27 @@ pub fn render(
 
 fn list(
     ws: &Workspace,
+    repo: &str,
     open: Option<&str>,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
-    let memory = &ws.catalog.memory;
+    let memory = &ws.repo_named(repo).memory;
     let query = ws.memory_search.read(cx).text().to_lowercase();
     let notes = memory.notes.iter().filter(|note| {
         query.is_empty()
             || note.title.to_lowercase().contains(&query)
             || note.body.iter().any(|p| p.to_lowercase().contains(&query))
     });
-    let pending: Vec<_> = ws.pending_proposals().collect();
+    // Suggestions from this repository's runs.
+    let pending: Vec<_> = ws
+        .pending_proposals()
+        .filter(|(run, _)| {
+            ws.run(run).is_some_and(|run| ws.repo_of(run) == repo)
+        })
+        .collect();
 
+    let owner = ws.repo_named(repo);
     div()
         .flex()
         .flex_col()
@@ -128,17 +147,51 @@ fn list(
             div()
                 .flex()
                 .flex_col()
+                .gap(sp(2.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(sp(2.))
+                        .child(ui::repo_mark(owner, 20., t))
+                        .child(
+                            div()
+                                .typeset(Type::TITLE)
+                                .font_weight(weight::STRONG)
+                                .child("Memory"),
+                        )
+                        .child(mono(
+                            format!("{} notes", memory.notes.len()),
+                            Type::CAPTION,
+                            t.dim,
+                        )),
+                )
+                .child(
+                    div()
+                        .typeset(Type::CAPTION)
+                        .text_color(t.muted)
+                        .line_height(relative(1.5))
+                        .child(format!(
+                            "What runs in {repo} learned. Runs in other \
+                             repositories never see these notes."
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
                 .gap(sp(0.5))
-                .child(mono(
-                    format!("{} · {} notes", memory.path, memory.notes.len()),
-                    Type::MICRO,
-                    t.dim,
-                ))
-                .child(mono(
-                    format!("docbert collection {}", memory.collection),
-                    Type::MICRO,
-                    t.dim,
-                )),
+                .when(!memory.path.is_empty(), |paths| {
+                    paths.child(mono(memory.path.clone(), Type::MICRO, t.dim))
+                })
+                .when(!memory.collection.is_empty(), |paths| {
+                    paths.child(mono(
+                        format!("docbert collection {}", memory.collection),
+                        Type::MICRO,
+                        t.dim,
+                    ))
+                }),
         )
         .child(
             div()
@@ -211,6 +264,7 @@ fn list(
         .children(notes.map(|note| {
             let active = open == Some(note.id.as_str());
             let route = Route::Memory {
+                repo: repo.to_owned(),
                 note: Some(note.id.clone()),
             };
             let backlinks = memory.backlinks(&note.id).count();
@@ -254,6 +308,7 @@ fn list(
 
 fn reader(
     ws: &Workspace,
+    repo: &str,
     note: &Note,
     compact: bool,
     t: &Theme,
@@ -302,18 +357,19 @@ fn reader(
             }),
         ))
         .when(compact, |reader| {
-            reader.child(neighborhood(ws, note, t, cx))
+            reader.child(neighborhood(ws, repo, note, t, cx))
         })
 }
 
 /// The note's links out and in, as a small map and as lists.
 fn neighborhood(
     ws: &Workspace,
+    repo: &str,
     note: &Note,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
-    let memory = &ws.catalog.memory;
+    let memory = &ws.repo_named(repo).memory;
     let out: Vec<(&Note, &str)> = note
         .links
         .iter()
@@ -407,6 +463,7 @@ fn neighborhood(
                     why: &str,
                     cx: &mut Context<Workspace>| {
         let route = Route::Memory {
+            repo: repo.to_owned(),
             note: Some(target.id.clone()),
         };
         div()

@@ -92,6 +92,7 @@ fn main() {
         store: HostConfig::default_store(),
         repos: HostConfig::default_repos(),
         settings: HostConfig::default_settings(),
+        repo_list: HostConfig::default_repo_list(),
     };
     let host = access.and_then(|access| match Host::new(config(access)) {
         Ok(host) => Some(host),
@@ -244,6 +245,23 @@ fn open_demo_screen(
             workspace.navigate(Route::Run(demo::run_id()), cx);
             workspace.start_fork_at(&demo::run_id(), 2, cx);
             workspace.show_picker(tau_ui::workspace::PickerTarget::Fork, cx);
+            return;
+        }
+        _ => {}
+    }
+    // The repository tree's states.
+    match args.open.as_deref() {
+        Some("add-repo") => {
+            workspace.ask_for_repo(cx);
+            return;
+        }
+        Some("repo-menu") => {
+            workspace.toggle_repo_open("docbert", cx);
+            workspace.toggle_repo_menu("homelab.nix", cx);
+            return;
+        }
+        Some("repo-open") => {
+            workspace.toggle_repo_open("docbert", cx);
             return;
         }
         _ => {}

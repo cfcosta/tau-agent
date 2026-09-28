@@ -305,6 +305,7 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         store: std::env::temp_dir().join("unused.db"),
         repos: std::env::temp_dir().join("unused-repos"),
         settings: std::env::temp_dir().join("unused-models.json"),
+        repo_list: std::env::temp_dir().join("unused-repos.json"),
     };
     // No project: runs work in the checkout, and forking cannot work.
     let (host, events) = Host::with_agent(runtime, agent, store, config);
@@ -360,6 +361,7 @@ fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
         Some(&WorkspaceEvent::NewRun {
             prompt: "fix it".into(),
             model: ModelChoice::new("gpt-6-sol", Effort::Low),
+            repo: String::new(),
         })
     );
 }
@@ -440,4 +442,189 @@ fn a_fork_can_run_on_another_model(cx: &mut TestAppContext) {
         }
         other => panic!("expected a fork, got {other:?}"),
     }
+}
+
+/// The demo's workspace: three repositories, tau-agent open.
+fn open_demo(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Workspace>,
+    VisualTestContext,
+    std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>,
+) {
+    let (workspace, mut cx, events) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.add_history(demo::history(), cx);
+        ws.set_catalog(demo::catalog(), cx);
+    });
+    events.borrow_mut().clear();
+    (workspace, cx, events)
+}
+
+#[gpui::test]
+fn the_tree_groups_runs_by_repository(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        assert_eq!(ws.selected_repo(), Some("tau-agent"));
+        let rows = ws.repo_rows("");
+        let names: Vec<&str> =
+            rows.iter().map(|rows| rows.repo.name.as_str()).collect();
+        assert_eq!(names, ["tau-agent", "docbert", "homelab.nix"]);
+        // tau-agent: 6 root runs, the fork under rotation-jitter.
+        assert!(rows[0].open);
+        assert_eq!(
+            (rows[0].total, rows[0].runs.len(), rows[0].older),
+            (6, 5, 1)
+        );
+        assert_eq!(rows[0].live, 1);
+        assert!(!rows[1].open);
+        assert_eq!((rows[1].total, rows[1].live), (3, 1));
+
+        ws.toggle_repo_open("docbert", cx);
+        assert!(ws.is_repo_open("docbert"));
+        assert_eq!(ws.selected_repo(), Some("docbert"));
+        ws.show_older_runs("tau-agent", cx);
+        assert_eq!(ws.repo_rows("")[0].older, 0);
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::OpenRepos(vec![
+            "tau-agent".into(),
+            "docbert".into()
+        ]))
+    );
+}
+
+#[gpui::test]
+fn a_filter_finds_repositories_and_runs(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, _| {
+        let rows = ws.repo_rows("home");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].repo.name, "homelab.nix");
+        // A run's name opens its repository on the runs that match.
+        let rows = ws.repo_rows("rerank");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].repo.name, "docbert");
+        assert!(rows[0].open);
+        let titles: Vec<&str> =
+            rows[0].runs.iter().map(|run| run.title.as_str()).collect();
+        assert_eq!(titles, ["rerank-latency"]);
+        assert!(ws.repo_rows("nothing like it").is_empty());
+    });
+}
+
+#[gpui::test]
+fn a_new_run_starts_in_the_chosen_repository(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.new_run_in("homelab.nix", window, cx);
+        assert_eq!(ws.route(), &Route::NewRun);
+        ws.submit_prompt("rotate the backups".into(), cx);
+    });
+    assert!(matches!(
+        events.borrow().last(),
+        Some(WorkspaceEvent::NewRun { repo, .. }) if repo == "homelab.nix"
+    ));
+    // Opening a run selects its repository, and opens it in the tree.
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(
+            Route::Run(tau_agent::tool::RunId("pdf-ingest".into())),
+            cx,
+        );
+        assert_eq!(ws.selected_repo(), Some("docbert"));
+        assert!(ws.is_repo_open("docbert"));
+    });
+}
+
+#[gpui::test]
+fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.open_memory("docbert", cx);
+        assert_eq!(
+            ws.route(),
+            &Route::Memory {
+                repo: "docbert".into(),
+                note: None
+            }
+        );
+        assert_eq!(ws.selected_repo(), Some("docbert"));
+        assert_eq!(ws.repo_named("docbert").memory.notes.len(), 3);
+        assert_eq!(ws.repo_named("tau-agent").memory.notes.len(), 8);
+        ws.open_constitution("homelab.nix", cx);
+        assert!(ws.repo_named("homelab.nix").constitution.rules.is_empty());
+        assert!(ws.repo_named("not listed").memory.notes.is_empty());
+    });
+}
+
+#[gpui::test]
+fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.show_add_repo(window, cx);
+        ws.navigate(
+            Route::Memory {
+                repo: "docbert".into(),
+                note: None,
+            },
+            cx,
+        );
+    });
+    workspace.update(&mut cx, |ws, cx| {
+        ws.add_repo(tau_ui::catalog::Repo::new("dotfiles", "~/dotfiles"), cx);
+        assert_eq!(ws.selected_repo(), Some("dotfiles"));
+        assert!(ws.is_repo_open("dotfiles"));
+        ws.remove_repo("docbert", cx);
+        assert!(ws.catalog().repo("docbert").is_none());
+        // Its screen closes with it.
+        assert_eq!(ws.route(), &Route::Home);
+        // Its runs stay, for History.
+        assert!(ws.runs().iter().any(|run| run.repo == "docbert"));
+        assert!(
+            ws.repo_rows("")
+                .iter()
+                .all(|rows| rows.repo.name != "docbert")
+        );
+    });
+    assert!(events.borrow().contains(&WorkspaceEvent::HideRepo {
+        repo: "docbert".into()
+    }));
+}
+
+#[gpui::test]
+fn the_demo_adds_a_repository_by_path(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    cx.update(|_, cx| demo::respond(&workspace, cx));
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.show_add_repo(window, cx);
+    });
+    cx.simulate_input("~/Code/you/dotfiles");
+    cx.simulate_keystrokes("enter");
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        let repo = ws.catalog().repo("dotfiles").expect("added");
+        assert_eq!(repo.path, "~/Code/you/dotfiles");
+        assert_eq!(ws.selected_repo(), Some("dotfiles"));
+    });
+}
+
+#[gpui::test]
+fn a_kept_note_goes_to_its_runs_repository(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let run = demo::run_id();
+        for (_, update) in demo::script() {
+            ws.update_run(&run, update, cx);
+        }
+        let (_, proposal) =
+            ws.pending_proposals().next().expect("a suggestion");
+        let title = proposal.title.clone();
+        let before = ws.repo_named("tau-agent").memory.notes.len();
+        ws.keep_note(&run, &title, cx);
+        assert_eq!(ws.repo_named("tau-agent").memory.notes.len(), before + 1);
+        assert_eq!(ws.repo_named("docbert").memory.notes.len(), 3);
+    });
 }

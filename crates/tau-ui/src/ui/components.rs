@@ -25,6 +25,7 @@ use gpui::{
 use super::prose;
 use crate::{
     assets::Icon,
+    catalog::Repo,
     input::TextInput,
     theme::{Design, IconSize, MONO, Theme, Type, control, radius, sp, weight},
     workspace::Workspace,
@@ -294,6 +295,28 @@ pub fn logo(t: &Theme, size: f32) -> Div {
         .child("τ")
 }
 
+/// A repository's mark: its letter on its color, 20 px in the sidebar
+/// and 26 px on a phone.
+pub fn repo_mark(repo: &Repo, size: f32, t: &Theme) -> Div {
+    mono(
+        repo.letter(),
+        if size > 22. { Type::SMALL } else { Type::MICRO },
+        t.bg,
+    )
+    .size(px(size))
+    .flex_shrink_0()
+    .flex()
+    .items_center()
+    .justify_center()
+    .rounded(if size > 22. {
+        radius::CONTROL
+    } else {
+        radius::TAG
+    })
+    .bg(t.mark(&repo.name))
+    .font_weight(weight::EMPHASIS)
+}
+
 pub fn dot(color: Hsla, size: f32) -> Div {
     div()
         .size(px(size))
@@ -497,6 +520,26 @@ pub fn dialog(
     actions: impl IntoElement,
     t: &Theme,
 ) -> Div {
+    modal(
+        icon(Icon::Warning, IconSize::LARGE, t.red),
+        title,
+        message,
+        None,
+        actions,
+        t,
+    )
+}
+
+/// A modal over a dimmed backdrop: a title, a message, then anything
+/// the message asks for (a field, a choice) above the actions.
+pub fn modal(
+    glyph: Svg,
+    title: impl Into<SharedString>,
+    message: impl Into<SharedString>,
+    body: Option<AnyElement>,
+    actions: impl IntoElement,
+    t: &Theme,
+) -> Div {
     div()
         .absolute()
         .inset_0()
@@ -506,9 +549,11 @@ pub fn dialog(
         .p(sp(4.))
         .bg(t.scrim)
         .child(
+            // A set width, not a share of the backdrop, so wrapped text
+            // is measured at the width it is drawn at.
             div()
-                .w_full()
-                .max_w(px(440.))
+                .w(px(440.))
+                .max_w_full()
                 .flex()
                 .flex_col()
                 .gap(sp(3.))
@@ -523,7 +568,7 @@ pub fn dialog(
                         .flex()
                         .items_center()
                         .gap(sp(2.5))
-                        .child(icon(Icon::Warning, IconSize::LARGE, t.red))
+                        .child(glyph)
                         .child(
                             div()
                                 .typeset(Type::SUBTITLE)
@@ -538,6 +583,7 @@ pub fn dialog(
                         .text_color(t.text_soft)
                         .child(message.into()),
                 )
+                .children(body)
                 .child(div().flex().justify_end().gap(sp(2.)).child(actions)),
         )
 }

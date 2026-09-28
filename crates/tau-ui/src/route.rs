@@ -20,10 +20,14 @@ pub enum Route {
     Plugins,
     /// What each plugin's `start` decided for a run.
     Plan(RunId),
+    /// A repository's notes.
     Memory {
+        repo: String,
         note: Option<String>,
     },
+    /// A repository's rules.
     Constitution {
+        repo: String,
         rule: Option<String>,
     },
     /// A run's pruning ledger.
@@ -39,31 +43,32 @@ pub enum Route {
 /// The phone's bottom tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
+    /// Runs, grouped by repository, with each one's memory and rules.
     Runs,
-    Memory,
     History,
     Plugins,
+    Models,
 }
 
 impl Tab {
     pub const ALL: [Self; 4] =
-        [Self::Runs, Self::Memory, Self::History, Self::Plugins];
+        [Self::Runs, Self::History, Self::Plugins, Self::Models];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Runs => "Runs",
-            Self::Memory => "Memory",
             Self::History => "History",
             Self::Plugins => "Plugins",
+            Self::Models => "Models",
         }
     }
 
     pub fn route(self) -> Route {
         match self {
             Self::Runs => Route::Home,
-            Self::Memory => Route::Memory { note: None },
             Self::History => Route::History,
             Self::Plugins => Route::Plugins,
+            Self::Models => Route::Models,
         }
     }
 }
@@ -81,14 +86,22 @@ impl Route {
         }
     }
 
+    /// The repository a screen is about, if it names one.
+    pub fn repo(&self) -> Option<&str> {
+        match self {
+            Self::Memory { repo, .. } | Self::Constitution { repo, .. } => {
+                Some(repo)
+            }
+            _ => None,
+        }
+    }
+
     /// The tab a screen belongs under.
     pub fn tab(&self) -> Tab {
         match self {
-            Self::Memory { .. } => Tab::Memory,
             Self::History => Tab::History,
-            Self::Plugins | Self::Constitution { .. } | Self::Models => {
-                Tab::Plugins
-            }
+            Self::Plugins => Tab::Plugins,
+            Self::Models => Tab::Models,
             _ => Tab::Runs,
         }
     }
@@ -121,10 +134,7 @@ impl Route {
     pub fn is_top_level(&self) -> bool {
         matches!(
             self,
-            Self::Home
-                | Self::History
-                | Self::Plugins
-                | Self::Memory { note: None }
+            Self::Home | Self::History | Self::Plugins | Self::Models
         )
     }
 }
@@ -148,11 +158,12 @@ mod tests {
         let run = RunId(Arc::from("r"));
         assert_eq!(Route::Ledger(run.clone()).run(), Some(&run));
         assert_eq!(Route::Plan(run.clone()).tab(), Tab::Runs);
-        assert!(
-            !Route::Memory {
-                note: Some("n".into())
-            }
-            .is_top_level()
-        );
+        let memory = Route::Memory {
+            repo: "docbert".into(),
+            note: None,
+        };
+        assert!(!memory.is_top_level());
+        assert_eq!(memory.tab(), Tab::Runs);
+        assert_eq!(memory.repo(), Some("docbert"));
     }
 }

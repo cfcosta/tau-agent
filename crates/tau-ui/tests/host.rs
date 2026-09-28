@@ -39,8 +39,20 @@ fn host_on(
         store: std::env::temp_dir().join("unused.db"),
         repos: std::env::temp_dir().join("unused-repos"),
         settings: std::env::temp_dir().join("unused-models.json"),
+        repo_list: fresh_repo_list(),
     };
     Host::with_agent(runtime, agent, store, config)
+}
+
+/// A repository list of the test's own, so tests do not share one.
+fn fresh_repo_list() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNT: AtomicU32 = AtomicU32::new(0);
+    std::env::temp_dir().join(format!(
+        "tau-ui-repos-{}-{}.json",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 /// Receives until `RunEnd`, with a timeout so a hang fails the test.
@@ -67,7 +79,7 @@ fn a_run_streams_into_its_view() {
     let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
     let (host, mut events) = host(llm);
     let mut view = host
-        .start("Say hello, please", &ModelChoice::default())
+        .start("Say hello, please", &ModelChoice::default(), "")
         .unwrap();
     assert_eq!(view.title, "say-hello-please");
     assert!(
@@ -92,7 +104,7 @@ fn a_run_can_be_cancelled_from_the_ui() {
     let llm = ScriptedModel::new()
         .turn(|t| t.delay(Duration::from_secs(30)).text("too late"));
     let (host, mut events) = host(llm);
-    let view = host.start("wait", &ModelChoice::default()).unwrap();
+    let view = host.start("wait", &ModelChoice::default(), "").unwrap();
     std::thread::sleep(Duration::from_millis(100));
     assert!(host.is_running(&view.id));
     host.cancel(&view.id);
@@ -152,7 +164,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     let host = host.with_project(project);
 
     let main = host
-        .start("write a.txt twice", &ModelChoice::default())
+        .start("write a.txt twice", &ModelChoice::default(), "")
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main.id);
@@ -199,6 +211,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     assert_eq!(history[0].title, "try-it-another-way");
     assert_eq!(history[0].origin, fork.origin);
     assert_eq!(history[0].status, RunStatus::Finished(StopReason::Stop));
+    assert!(history.iter().all(|view| view.repo == host.home()));
     let old_main = &history[1];
     assert_eq!(old_main.children.len(), 1);
     assert_eq!(old_main.turn, 3);
@@ -240,6 +253,89 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     assert!(fork_dir.exists());
 }
 
+#[test]
+fn runs_come_back_under_their_repository() {
+    let other = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("one"))
+        .turn(|t| t.text("two"));
+    let (host, mut events) = host(llm);
+    let repo = host.add_repo(other.path().to_str().unwrap()).unwrap();
+
+    let here = host
+        .start("in the checkout", &ModelChoice::default(), "")
+        .unwrap();
+    assert_eq!(here.repo, host.home());
+    until_end(&mut events);
+    wait_until_done(&host, &here.id);
+    let there = host
+        .start("in the other", &ModelChoice::default(), &repo.name)
+        .unwrap();
+    assert_eq!(there.repo, repo.name);
+    until_end(&mut events);
+    wait_until_done(&host, &there.id);
+
+    let history = host.history().unwrap();
+    let repo_of = |id| {
+        history
+            .iter()
+            .find(|view| view.id == id)
+            .map(|view| view.repo.clone())
+            .unwrap()
+    };
+    assert_eq!(repo_of(here.id.clone()), host.home());
+    assert_eq!(repo_of(there.id.clone()), repo.name);
+}
+
+#[test]
+fn repositories_are_listed_and_remembered() {
+    let home = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let (a, b) = (
+        elsewhere.path().join("a/proj"),
+        elsewhere.path().join("b/proj"),
+    );
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let names = |host: &Host| -> Vec<String> {
+        host.catalog()
+            .repos
+            .iter()
+            .map(|repo| repo.name.clone())
+            .collect()
+    };
+
+    let (host, _events) =
+        Host::new(config_on(home.path(), data.path())).unwrap();
+    let home_name = host.home().to_owned();
+    assert_eq!(names(&host), [home_name.as_str()]);
+    // Two checkouts with one name get two names.
+    assert_eq!(host.add_repo(a.to_str().unwrap()).unwrap().name, "proj");
+    assert_eq!(host.add_repo(b.to_str().unwrap()).unwrap().name, "proj-2");
+    // Adding one again keeps its name.
+    assert_eq!(host.add_repo(a.to_str().unwrap()).unwrap().name, "proj");
+    assert!(host.add_repo("/no/such/checkout").is_err());
+    host.set_open_repos(vec!["proj-2".into()]).unwrap();
+    assert_eq!(names(&host), [home_name.as_str(), "proj", "proj-2"]);
+    drop(host);
+
+    let (host, _events) =
+        Host::new(config_on(home.path(), data.path())).unwrap();
+    assert_eq!(names(&host), [home_name.as_str(), "proj", "proj-2"]);
+    assert_eq!(host.catalog().open_repos, ["proj-2"]);
+    host.hide_repo("proj").unwrap();
+    assert_eq!(names(&host), [home_name.as_str(), "proj-2"]);
+    drop(host);
+
+    let (host, _events) =
+        Host::new(config_on(home.path(), data.path())).unwrap();
+    assert_eq!(names(&host), [home_name.as_str(), "proj-2"]);
+    // Adding a removed one lists it again, under its name.
+    assert_eq!(host.add_repo(a.to_str().unwrap()).unwrap().name, "proj");
+    assert_eq!(names(&host), [home_name.as_str(), "proj", "proj-2"]);
+}
+
 fn config_on(root: &Path, data: &Path) -> HostConfig {
     HostConfig {
         access: Access::ApiKey("sk-test".into()),
@@ -248,6 +344,7 @@ fn config_on(root: &Path, data: &Path) -> HostConfig {
         store: data.join("runs.db"),
         repos: data.join("repos"),
         settings: data.join("models.json"),
+        repo_list: data.join("repos.json"),
     }
 }
 

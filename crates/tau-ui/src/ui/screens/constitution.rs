@@ -14,16 +14,18 @@ use crate::{
 
 pub fn render(
     ws: &Workspace,
+    repo: &str,
     focus: Option<&str>,
     compact: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let constitution = &ws.catalog.constitution;
+    let constitution = &ws.repo_named(repo).constitution;
     // (run, card, rule) for every call a rule touched.
     let reviews: Vec<_> = ws
         .runs
         .iter()
+        .filter(|run| ws.repo_of(run) == repo)
         .flat_map(|run| run.reviews().map(move |card| (run, card)))
         .filter_map(|(run, card)| match &card.state {
             ToolState::Blocked { rule, .. }
@@ -139,6 +141,7 @@ pub fn render(
             let focused = focus == Some(rule.id.as_str());
             let hot = blocked > 0 || focused;
             let route = Route::Constitution {
+                repo: repo.to_owned(),
                 rule: Some(rule.id.clone()),
             };
             let stat = match (blocked, flagged) {

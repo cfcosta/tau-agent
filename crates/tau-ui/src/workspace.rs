@@ -114,10 +114,24 @@ pub fn bind_keys(cx: &mut App) {
 /// What the user asked for. The host subscribes and acts on these.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorkspaceEvent {
-    /// Start a new run with this prompt, on this model.
+    /// Start a new run with this prompt, on this model, in this
+    /// repository.
     NewRun {
         prompt: String,
         model: ModelChoice,
+        repo: String,
+    },
+    /// The repositories the sidebar shows open, to open them the same
+    /// way next time.
+    OpenRepos(Vec<String>),
+    /// Add the checkout at `path` as a repository; answer with
+    /// [`Workspace::add_repo`], or [`Workspace::show_alert`].
+    AddRepo {
+        path: String,
+    },
+    /// Stop listing the repository. Its runs and project stay.
+    HideRepo {
+        repo: String,
     },
     /// Queue a message for a running run (`Run::steer`).
     Steer {
@@ -233,7 +247,7 @@ pub struct Workspace {
     pub(crate) runs: Vec<RunView>,
     pub(crate) catalog: Catalog,
     pub(crate) route: Route,
-    back_stack: Vec<Route>,
+    pub(crate) back_stack: Vec<Route>,
     /// The run the composer and the inspector act on.
     current: Option<RunId>,
     composer: Entity<TextInput>,
@@ -276,6 +290,21 @@ pub struct Workspace {
     pub(crate) first_task: Entity<TextInput>,
     pub(crate) pr_title: Entity<TextInput>,
     pub(crate) reviewers: Entity<TextInput>,
+    /// The repository new runs start in: the one the sidebar last
+    /// selected.
+    pub(crate) repo: Option<String>,
+    /// The repositories the sidebar shows open.
+    pub(crate) open_repos: HashSet<String>,
+    /// Repositories that list all their runs, not only the newest.
+    pub(crate) all_runs: HashSet<String>,
+    /// The repository row under the pointer, which shows its actions.
+    pub(crate) hovered_repo: Option<String>,
+    /// The repository whose menu is open.
+    pub(crate) repo_menu: Option<String>,
+    pub(crate) sidebar_filter: Entity<TextInput>,
+    /// The dialog that adds a repository, with its path field.
+    pub(crate) adding_repo: bool,
+    pub(crate) repo_path: Entity<TextInput>,
     scroll: ScrollHandle,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
     /// turns it off; scrolling back down turns it on.
@@ -309,7 +338,7 @@ impl Workspace {
     ) -> Self {
         let composer = cx.new(|cx| TextInput::new("Start a new run", cx));
         let history_filter = cx.new(|cx| {
-            TextInput::new("Filter by run, agent, model or stop", cx)
+            TextInput::new("Filter by run, repository, model or stop", cx)
         });
         let memory_search = cx.new(|cx| TextInput::new("Search notes", cx));
         let model_search = cx.new(|cx| TextInput::new("Search models", cx));
@@ -329,6 +358,11 @@ impl Workspace {
             cx.new(|cx| TextInput::new("Title", cx).keep_on_submit());
         let reviewers =
             cx.new(|cx| TextInput::new("@reviewer", cx).keep_on_submit());
+        let sidebar_filter =
+            cx.new(|cx| TextInput::new("Filter repositories and runs", cx));
+        let repo_path = cx.new(|cx| {
+            TextInput::new("~/Code/you/project", cx).keep_on_submit()
+        });
         let subscriptions = vec![
             cx.subscribe_in(
                 &composer,
@@ -342,6 +376,11 @@ impl Workspace {
             cx.observe(&memory_search, |_, _, cx| cx.notify()),
             cx.observe(&model_search, |_, _, cx| cx.notify()),
             cx.observe(&repo_filter, |_, _, cx| cx.notify()),
+            cx.observe(&sidebar_filter, |_, _, cx| cx.notify()),
+            cx.subscribe(&repo_path, |ws, _, event: &InputEvent, cx| {
+                let InputEvent::Submit(path) = event;
+                ws.submit_repo_path(path.clone(), cx);
+            }),
             cx.subscribe(&github_token, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(token) = event;
                 ws.submit_token(token.clone(), cx);
@@ -392,6 +431,14 @@ impl Workspace {
             first_task,
             pr_title,
             reviewers,
+            repo: None,
+            open_repos: HashSet::new(),
+            all_runs: HashSet::new(),
+            hovered_repo: None,
+            repo_menu: None,
+            sidebar_filter,
+            adding_repo: false,
+            repo_path,
             scroll: ScrollHandle::new(),
             follow: true,
             focus: cx.focus_handle(),
@@ -400,6 +447,7 @@ impl Workspace {
             frame: None,
             _subscriptions: subscriptions,
         };
+        workspace.restore_repos();
         workspace.sync_placeholder(cx);
         workspace
     }
@@ -427,6 +475,7 @@ impl Workspace {
 
     pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
         self.catalog = catalog;
+        self.restore_repos();
         if !self.next_model_picked {
             self.next_model = self.catalog.models.settings.default_for("coder");
         }
@@ -580,6 +629,26 @@ impl Workspace {
             }
             self.current = Some(run);
         }
+        // The screen's repository becomes the selected one, open in the
+        // sidebar so the selection shows.
+        let repo = match (&self.route, self.route.run()) {
+            (route, _) if route.repo().is_some() => {
+                route.repo().map(str::to_owned)
+            }
+            (_, Some(run)) => {
+                self.run(run).map(|run| self.repo_of(run).to_owned())
+            }
+            _ => None,
+        };
+        if let Some(repo) =
+            repo.filter(|repo| self.catalog.repo(repo).is_some())
+        {
+            if self.open_repos.insert(repo.clone()) {
+                self.emit_open_repos(cx);
+            }
+            self.repo = Some(repo);
+        }
+        self.repo_menu = None;
         // Comparing two branches shows their code; ask for it once.
         if let Route::Compare { main, fork } = &self.route {
             let key = (main.clone(), fork.clone());
@@ -611,10 +680,14 @@ impl Workspace {
         let run = self.current.clone();
         match plugin.screen? {
             PluginScreen::Plan => run.map(Route::Plan),
-            PluginScreen::Memory => Some(Route::Memory { note: None }),
-            PluginScreen::Constitution => {
-                Some(Route::Constitution { rule: None })
-            }
+            PluginScreen::Memory => Some(Route::Memory {
+                repo: self.selected_repo()?.to_owned(),
+                note: None,
+            }),
+            PluginScreen::Constitution => Some(Route::Constitution {
+                repo: self.selected_repo()?.to_owned(),
+                rule: None,
+            }),
             PluginScreen::Ledger => {
                 // The current run's ledger, or the latest run that has one.
                 let has = |run: &RunView| run.last_rewrite().is_some();
@@ -680,11 +753,15 @@ impl Workspace {
         let proposal = self.run(run).and_then(|view| {
             view.proposals().find(|p| p.title == title).cloned()
         });
-        let from = self
-            .run(run)
-            .map_or(String::new(), |view| view.title.clone());
-        if let Some(proposal) = proposal {
-            self.catalog.memory.keep(&proposal, &from);
+        let (from, repo) =
+            self.run(run).map_or_else(Default::default, |view| {
+                (view.title.clone(), self.repo_of(view).to_owned())
+            });
+        // The note goes to the memory of the run's repository.
+        if let Some(proposal) = proposal
+            && let Some(repo) = self.catalog.repo_mut(&repo)
+        {
+            repo.memory.keep(&proposal, &from);
         }
         self.kept
             .entry(run.clone())
@@ -715,7 +792,10 @@ impl Workspace {
             run: run.clone(),
             call_id: call_id.to_owned(),
         });
-        self.navigate(Route::Constitution { rule }, cx);
+        let repo = self
+            .run(run)
+            .map_or(String::new(), |view| self.repo_of(view).to_owned());
+        self.navigate(Route::Constitution { repo, rule }, cx);
     }
 
     pub fn keep_branch(&mut self, run: &RunId, cx: &mut Context<Self>) {
@@ -869,6 +949,7 @@ impl Workspace {
             _ => cx.emit(WorkspaceEvent::NewRun {
                 prompt: text,
                 model: self.next_model.clone(),
+                repo: self.selected_repo().unwrap_or_default().to_owned(),
             }),
         }
         cx.notify();
@@ -1068,6 +1149,7 @@ impl Workspace {
         cx.emit(WorkspaceEvent::NewRun {
             prompt: task,
             model: self.next_model.clone(),
+            repo: self.selected_repo().unwrap_or_default().to_owned(),
         });
     }
 
@@ -1110,6 +1192,11 @@ impl Workspace {
     pub fn escape(&mut self, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
             self.dismiss_alert(cx);
+        } else if self.adding_repo {
+            self.cancel_add_repo(cx);
+        } else if self.repo_menu.is_some() {
+            self.repo_menu = None;
+            cx.notify();
         } else if self.picker.is_some() {
             self.close_picker(cx);
         } else if self.model_info {
@@ -1707,16 +1794,24 @@ impl Workspace {
             Route::Plan(run) => {
                 screens::plan::render(self, run, compact, t, cx)
             }
-            Route::Memory { note } => {
-                screens::memory::render(self, note.as_deref(), compact, t, cx)
-            }
-            Route::Constitution { rule } => screens::constitution::render(
+            Route::Memory { repo, note } => screens::memory::render(
                 self,
-                rule.as_deref(),
+                repo,
+                note.as_deref(),
                 compact,
                 t,
                 cx,
             ),
+            Route::Constitution { repo, rule } => {
+                screens::constitution::render(
+                    self,
+                    repo,
+                    rule.as_deref(),
+                    compact,
+                    t,
+                    cx,
+                )
+            }
             Route::Ledger(run) => {
                 screens::ledger::render(self, run, compact, t, cx)
             }
@@ -1993,6 +2088,9 @@ impl Render for Workspace {
             .when_some(self.model_overlay(phone, &t, cx), |body, overlay| {
                 body.child(overlay)
             })
+            .when(self.adding_repo, |body| {
+                body.child(self.add_repo_view(&t, cx))
+            })
             .when_some(self.dialog.clone(), |body, dialog| {
                 body.child(self.dialog_view(dialog, &t, cx))
             })
@@ -2045,7 +2143,9 @@ impl Render for Workspace {
                 ws.switch_tab(route::Tab::Runs, cx)
             }))
             .on_action(cx.listener(|ws, _: &ShowMemory, _, cx| {
-                ws.switch_tab(route::Tab::Memory, cx)
+                if let Some(repo) = ws.selected_repo().map(str::to_owned) {
+                    ws.open_memory(&repo, cx);
+                }
             }))
             .on_action(cx.listener(|ws, _: &ShowHistory, _, cx| {
                 ws.switch_tab(route::Tab::History, cx)

@@ -30,6 +30,8 @@ pub struct RunView {
     pub title: String,
     pub agent: String,
     pub model: String,
+    /// The repository the run works on; empty when the host did not say.
+    pub repo: String,
     pub status: RunStatus,
     pub turn: u32,
     pub items: Vec<Item>,
@@ -462,6 +464,7 @@ impl RunView {
             title: title.into(),
             agent: agent.into(),
             model: model.into(),
+            repo: String::new(),
             status: RunStatus::Planning,
             turn: 0,
             items: Vec::new(),
@@ -576,6 +579,11 @@ impl RunView {
 
     pub fn with_origin(mut self, origin: Origin) -> Self {
         self.origin = origin;
+        self
+    }
+
+    pub fn in_repo(mut self, repo: impl Into<String>) -> Self {
+        self.repo = repo.into();
         self
     }
 

@@ -24,6 +24,7 @@ use crate::{
         Note,
         PluginInfo,
         PluginScreen,
+        Repo,
         Rule,
         Seam,
         StoreInfo,
@@ -73,6 +74,7 @@ pub fn run_id() -> RunId {
 /// The run as it looks before its first event.
 pub fn retry_after() -> RunView {
     let mut view = RunView::new(run_id(), "retry-after", "coder", "gpt-5.5")
+        .in_repo("tau-agent")
         .started("today 04:31");
     view.limits = Limits {
         max_turns: Some(20),
@@ -95,53 +97,101 @@ pub fn retry_after() -> RunView {
 /// older runs with only their outcome.
 pub fn history() -> Vec<RunView> {
     let mut runs = vec![rotation_jitter(), backoff_fork()];
+    let stop = || StopReason::Stop;
+    let limit = || StopReason::Limit(tau_agent::event::LimitKind::Usd);
+    // (repo, title, started, stop, turns, tokens, cost); no stop is live.
     let stubs = [
         (
+            "tau-agent",
             "plugin-docs",
             "yesterday 22:10",
-            StopReason::Stop,
+            Some(stop()),
             14,
             388_000,
             0.42,
         ),
         (
+            "tau-agent",
             "mutants-triage",
             "Sep 26 19:02",
-            StopReason::Stop,
+            Some(stop()),
             20,
             497_000,
             1.07,
         ),
         (
+            "tau-agent",
             "lane-audit",
             "Sep 26 11:47",
-            StopReason::Limit(tau_agent::event::LimitKind::Usd),
+            Some(limit()),
             17,
             462_000,
             2.0,
         ),
         (
+            "tau-agent",
             "grep-all-cores",
             "Sep 25 16:20",
-            StopReason::Cancelled,
+            Some(StopReason::Cancelled),
             5,
             96_000,
             0.112,
         ),
+        (
+            "docbert",
+            "pdf-ingest",
+            "today 04:02",
+            None,
+            5,
+            131_000,
+            0.094,
+        ),
+        (
+            "docbert",
+            "rerank-latency",
+            "yesterday 18:40",
+            Some(stop()),
+            9,
+            204_000,
+            0.118,
+        ),
+        (
+            "docbert",
+            "bm25-tokenizer",
+            "Sep 26 09:15",
+            Some(stop()),
+            6,
+            88_000,
+            0.064,
+        ),
+        (
+            "homelab.nix",
+            "backup-timer",
+            "Sep 24 21:30",
+            Some(stop()),
+            4,
+            61_000,
+            0.052,
+        ),
     ];
     runs.extend(stubs.into_iter().map(
-        |(title, started, stop, turns, tokens, cost)| {
+        |(repo, title, started, stop, turns, tokens, cost)| {
             let mut view = RunView::new(
                 RunId(Arc::from(title)),
                 title,
                 "coder",
                 "gpt-5.5",
             )
+            .in_repo(repo)
             .started(started);
             view.turn = turns;
             view.usage.tokens = tokens;
             view.usage.cost = cost;
             view.push_user(format!("(stored transcript of {title})"));
+            let Some(stop) = stop else {
+                view.status = RunStatus::Running;
+                return view;
+            };
             view.status = RunStatus::Finished(stop.clone());
             view.items.push(crate::view::Item::Stop {
                 stop,
@@ -245,6 +295,7 @@ fn rotation_jitter() -> RunView {
     );
     let mut view = play(
         RunView::new(id, "rotation-jitter", "coder", "gpt-5.5")
+            .in_repo("tau-agent")
             .started("today 02:10"),
         s,
     );
@@ -323,6 +374,7 @@ fn backoff_fork() -> RunView {
     );
     play(
         RunView::new(id, "fork · backoff", "coder", "gpt-5.5")
+            .in_repo("tau-agent")
             .started("today 02:36")
             .with_origin(Origin::Fork {
                 from: RunId(Arc::from("rotation-jitter")),
@@ -379,6 +431,7 @@ pub fn fork_run(
     );
     let mut view =
         RunView::new(id, crate::host::title(prompt), "coder", &model.model)
+            .in_repo(from.repo.clone())
             .started("just now")
             .with_origin(Origin::Fork {
                 from: from.id.clone(),
@@ -399,9 +452,15 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
     Some(match name {
         "run" => Route::Run(run_id()),
         "history" => Route::History,
-        "memory" => Route::Memory { note: None },
+        "memory" => Route::Memory {
+            repo: "tau-agent".into(),
+            note: None,
+        },
         "plugins" => Route::Plugins,
-        "constitution" => Route::Constitution { rule: None },
+        "constitution" => Route::Constitution {
+            repo: "tau-agent".into(),
+            rule: None,
+        },
         "compare" => Route::Compare {
             main: RunId(Arc::from("rotation-jitter")),
             fork: fork_id(),
@@ -557,6 +616,7 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                         .await;
                     let done = workspace.update(cx, |ws, cx| match answer {
                         Answer::Setup(update) => ws.update_setup(update, cx),
+                        Answer::Repo(repo) => ws.add_repo(repo, cx),
                         Answer::Pr(run, state) => {
                             ws.set_pull_request_state(&run, state, cx)
                         }
@@ -678,6 +738,20 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     ws.replay(id, steps, cx);
                 });
             }
+            // The checkout at `path` becomes a repository with no notes
+            // or rules yet.
+            WorkspaceEvent::AddRepo { path } => {
+                let name = path
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(path)
+                    .to_owned();
+                later(
+                    vec![(400, Answer::Repo(Repo::new(name, path.clone())))],
+                    cx,
+                )
+            }
             WorkspaceEvent::CompareCode { main, fork } => later(
                 vec![(
                     400,
@@ -693,6 +767,7 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
 
 enum Answer {
     Setup(SetupUpdate),
+    Repo(Repo),
     Pr(RunId, PrState),
     Code(RunId, RunId, BranchCode),
 }
@@ -833,50 +908,55 @@ pub fn catalog() -> Catalog {
             latency_p50_ms: 180,
             retried: 3,
         }),
-        memory: Memory {
-            path: "~/.tau/memory".into(),
-            collection: "tau-memory".into(),
-            notes: vec![
-                note("n-0417", "Rotation must drain lanes first", &[
-                    "A connection that is past its deadline can still carry lanes with a response in flight. Retiring it right away breaks their continuation: the next request would name a `previous_response_id` that the new socket has never seen.",
-                    "So the pool marks the connection as draining, sends no new lanes to it, and closes it when its last lane finishes.",
-                    "Jitter on the deadline only moves when draining starts. It does not replace it.",
-                ], vec![link("n-0212", "how a lane knows what it continues"), link("n-0433", "jitter moves the deadline")], &["crates/tau-ai/src/ws/proto/pool.rs", "crates/tau-ai/src/ws/proto/lane.rs"], 7),
-                note("n-0433", "Spread reconnects with jitter", &[
-                    "Connections opened together expire together unless the deadline moves. A jitter drawn at open time spreads the rotations.",
-                ], vec![link("n-0417", "draining still applies")], &["crates/tau-ai/src/ws/proto/pool.rs"], 2),
-                note("n-0212", "Continuation ids are call_id|item_id", &[
-                    "The Responses API needs both halves to resume a tool call. tau-ai joins them with a `|` in the tool call id.",
-                ], vec![], &["crates/tau-ai/src/responses/input.rs"], 9),
-                note("n-0301", "16 in flight per connection", &[
-                    "The pool enforces the limit per socket, not per client. Draining sockets still count.",
-                ], vec![link("n-0417", "draining sockets still count")], &["crates/tau-ai/src/ws/proto/pool.rs"], 3),
-                note("n-0388", "Retry policy honors server hints", &[
-                    "When the server sends `retry-after`, it wins over our backoff, capped at `max_delay`. The header can be seconds or an HTTP date.",
-                ], vec![link("n-0212", "retries resume the same continuation")], &["crates/tau-ai/src/retry.rs"], 4),
-                note("n-0390", "429 vs 503 in the Responses API", &[
-                    "429 means we sent too much; 503 means they are overloaded. Both are retried, and both may carry `retry-after`.",
-                ], vec![link("n-0388", "both carry the hint")], &["crates/tau-ai/src/retry.rs"], 2),
-                note("n-0205", "Tests use the fake OpenAI server", &[
-                    "`tau-testing` runs a fake Responses server over WebSocket. Tests never reach the network.",
-                ], vec![], &["crates/tau-testing/src/fake_openai.rs"], 11),
-                note("n-0350", "Rewrites force one full resend", &[
-                    "Any edit to the transcript breaks the delta chain once. The next request goes in full, and turns are deltas again after it.",
-                ], vec![link("n-0417", "a resend can land on a draining socket")], &["crates/tau-agent/src/plugin.rs"], 5),
-            ],
-        },
-        constitution: Constitution {
-            path: "constitution.toml".into(),
-            max_continuations: 3,
-            rules: vec![
-                rule("R1", "Never delete outside target/ or rewrite published history.", &["bash.command"], 0.30, 0.60),
-                rule("R2", "Library code returns errors. No unwrap or expect outside tests.", &["edit.newText", "write.content"], 0.30, 0.80),
-                rule("R3", "Every sqlx query uses the checked macros.", &["edit.newText", "write.content"], 0.40, 0.85),
-                rule("R4", "Comments explain why, not what the code does.", &["edit.newText"], 0.50, 0.90),
-                rule("R5", "No network calls from tests except the fake server.", &["write.content"], 0.35, 0.80),
-                rule("R6", "The final answer names the tests that ran and their result.", &["final answer"], 0.40, 0.75),
-            ],
-        },
+        repos: vec![
+            Repo {
+                name: "tau-agent".into(),
+                path: "~/Code/cfcosta/tau-agent".into(),
+                memory: tau_agent_memory(&note, &link),
+                constitution: tau_agent_rules(&rule),
+            },
+            Repo {
+                name: "docbert".into(),
+                path: "~/Code/cfcosta/docbert".into(),
+                memory: Memory {
+                    path: "~/.tau/memory/docbert".into(),
+                    collection: "docbert-memory".into(),
+                    notes: vec![
+                        note("d-0102", "Scanned pages have no text layer", &[
+                            "PDFs made from scans come in with empty pages. Run OCR on a page only when it has no text layer, so born-digital PDFs stay fast.",
+                        ], vec![], &["src/ingest/pdf.rs"], 3),
+                        note("d-0118", "Rerank only the top 50", &[
+                            "ColBERT reranking costs grow with the candidate list. BM25 recalls 200, and only the top 50 go to the reranker.",
+                        ], vec![link("d-0131", "BM25 recalls the candidates")], &["src/search/rerank.rs"], 4),
+                        note("d-0131", "The BM25 tokenizer keeps identifiers whole", &[
+                            "`snake_case` and `CamelCase` stay one token, and are also split into their parts, so both searches hit.",
+                        ], vec![], &["src/search/bm25.rs"], 2),
+                    ],
+                },
+                constitution: Constitution {
+                    path: "constitution.toml".into(),
+                    max_continuations: 3,
+                    rules: vec![
+                        rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
+                        rule("D2", "Search results keep their scores; never sort them away.", &["edit.newText"], 0.40, 0.85),
+                        rule("D3", "The final answer names the tests that ran.", &["final answer"], 0.40, 0.75),
+                    ],
+                },
+            },
+            Repo {
+                name: "homelab.nix".into(),
+                path: "~/Code/cfcosta/homelab.nix".into(),
+                memory: Memory {
+                    path: "~/.tau/memory/homelab.nix".into(),
+                    collection: "homelab-memory".into(),
+                    notes: vec![note("h-0007", "Backups run from a systemd timer", &[
+                        "`restic` runs from `backup.timer` at 03:00, never from cron, so a missed run catches up on boot.",
+                    ], vec![], &["hosts/nas/backup.nix"], 1)],
+                },
+                constitution: Constitution::default(),
+            },
+        ],
+        open_repos: vec!["tau-agent".into()],
         store: StoreInfo {
             path: "runs.db".into(),
             size: "18.4 MB".into(),
@@ -885,6 +965,161 @@ pub fn catalog() -> Catalog {
         pull_requests: true,
         project: Default::default(),
         models: models(),
+    }
+}
+
+type NoteFn<'a> =
+    &'a dyn Fn(&str, &str, &[&str], Vec<Link>, &[&str], u32) -> Note;
+type LinkFn<'a> = &'a dyn Fn(&str, &str) -> Link;
+type RuleFn<'a> = &'a dyn Fn(&str, &str, &[&str], f32, f32) -> Rule;
+
+/// tau-agent's notes, the ones the mockups show.
+fn tau_agent_memory(note: NoteFn<'_>, link: LinkFn<'_>) -> Memory {
+    Memory {
+        path: "~/.tau/memory".into(),
+        collection: "tau-memory".into(),
+        notes: vec![
+            note(
+                "n-0417",
+                "Rotation must drain lanes first",
+                &[
+                    "A connection that is past its deadline can still carry lanes with a response in flight. Retiring it right away breaks their continuation: the next request would name a `previous_response_id` that the new socket has never seen.",
+                    "So the pool marks the connection as draining, sends no new lanes to it, and closes it when its last lane finishes.",
+                    "Jitter on the deadline only moves when draining starts. It does not replace it.",
+                ],
+                vec![
+                    link("n-0212", "how a lane knows what it continues"),
+                    link("n-0433", "jitter moves the deadline"),
+                ],
+                &[
+                    "crates/tau-ai/src/ws/proto/pool.rs",
+                    "crates/tau-ai/src/ws/proto/lane.rs",
+                ],
+                7,
+            ),
+            note(
+                "n-0433",
+                "Spread reconnects with jitter",
+                &[
+                    "Connections opened together expire together unless the deadline moves. A jitter drawn at open time spreads the rotations.",
+                ],
+                vec![link("n-0417", "draining still applies")],
+                &["crates/tau-ai/src/ws/proto/pool.rs"],
+                2,
+            ),
+            note(
+                "n-0212",
+                "Continuation ids are call_id|item_id",
+                &[
+                    "The Responses API needs both halves to resume a tool call. tau-ai joins them with a `|` in the tool call id.",
+                ],
+                vec![],
+                &["crates/tau-ai/src/responses/input.rs"],
+                9,
+            ),
+            note(
+                "n-0301",
+                "16 in flight per connection",
+                &[
+                    "The pool enforces the limit per socket, not per client. Draining sockets still count.",
+                ],
+                vec![link("n-0417", "draining sockets still count")],
+                &["crates/tau-ai/src/ws/proto/pool.rs"],
+                3,
+            ),
+            note(
+                "n-0388",
+                "Retry policy honors server hints",
+                &[
+                    "When the server sends `retry-after`, it wins over our backoff, capped at `max_delay`. The header can be seconds or an HTTP date.",
+                ],
+                vec![link("n-0212", "retries resume the same continuation")],
+                &["crates/tau-ai/src/retry.rs"],
+                4,
+            ),
+            note(
+                "n-0390",
+                "429 vs 503 in the Responses API",
+                &[
+                    "429 means we sent too much; 503 means they are overloaded. Both are retried, and both may carry `retry-after`.",
+                ],
+                vec![link("n-0388", "both carry the hint")],
+                &["crates/tau-ai/src/retry.rs"],
+                2,
+            ),
+            note(
+                "n-0205",
+                "Tests use the fake OpenAI server",
+                &[
+                    "`tau-testing` runs a fake Responses server over WebSocket. Tests never reach the network.",
+                ],
+                vec![],
+                &["crates/tau-testing/src/fake_openai.rs"],
+                11,
+            ),
+            note(
+                "n-0350",
+                "Rewrites force one full resend",
+                &[
+                    "Any edit to the transcript breaks the delta chain once. The next request goes in full, and turns are deltas again after it.",
+                ],
+                vec![link("n-0417", "a resend can land on a draining socket")],
+                &["crates/tau-agent/src/plugin.rs"],
+                5,
+            ),
+        ],
+    }
+}
+
+/// tau-agent's rules.
+fn tau_agent_rules(rule: RuleFn<'_>) -> Constitution {
+    Constitution {
+        path: "constitution.toml".into(),
+        max_continuations: 3,
+        rules: vec![
+            rule(
+                "R1",
+                "Never delete outside target/ or rewrite published history.",
+                &["bash.command"],
+                0.30,
+                0.60,
+            ),
+            rule(
+                "R2",
+                "Library code returns errors. No unwrap or expect outside tests.",
+                &["edit.newText", "write.content"],
+                0.30,
+                0.80,
+            ),
+            rule(
+                "R3",
+                "Every sqlx query uses the checked macros.",
+                &["edit.newText", "write.content"],
+                0.40,
+                0.85,
+            ),
+            rule(
+                "R4",
+                "Comments explain why, not what the code does.",
+                &["edit.newText"],
+                0.50,
+                0.90,
+            ),
+            rule(
+                "R5",
+                "No network calls from tests except the fake server.",
+                &["write.content"],
+                0.35,
+                0.80,
+            ),
+            rule(
+                "R6",
+                "The final answer names the tests that ran and their result.",
+                &["final answer"],
+                0.40,
+                0.75,
+            ),
+        ],
     }
 }
 
@@ -1674,19 +1909,34 @@ mod tests {
     }
 
     #[test]
-    fn catalog_links_point_at_notes() {
-        let memory = catalog().memory;
-        for note in &memory.notes {
-            for link in &note.links {
-                assert!(
-                    memory.note(&link.to).is_some(),
-                    "{} -> {}",
-                    note.id,
-                    link.to
-                );
+    fn catalog_links_point_at_notes_of_their_repository() {
+        let catalog = catalog();
+        for repo in &catalog.repos {
+            let memory = &repo.memory;
+            for note in &memory.notes {
+                for link in &note.links {
+                    assert!(
+                        memory.note(&link.to).is_some(),
+                        "{}: {} -> {}",
+                        repo.name,
+                        note.id,
+                        link.to
+                    );
+                }
             }
         }
-        assert!(memory.backlinks("n-0417").count() >= 2);
+        let tau = catalog.repo("tau-agent").unwrap();
+        assert!(tau.memory.backlinks("n-0417").count() >= 2);
+    }
+
+    #[test]
+    fn every_demo_run_belongs_to_a_listed_repository() {
+        let catalog = catalog();
+        let mut runs = vec![retry_after()];
+        runs.extend(history());
+        for run in &runs {
+            assert!(catalog.repo(&run.repo).is_some(), "{}", run.title);
+        }
     }
 
     #[test]

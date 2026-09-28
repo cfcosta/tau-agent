@@ -1,6 +1,7 @@
 //! What the workspace shows beyond single runs: the agent's plugins, the
-//! memory notes, the constitution and the store. The host fills it from
-//! its agents and plugin crates; [`crate::demo`] has an example.
+//! repositories with their memory notes and constitutions, and the
+//! store. The host fills it from its agents and plugin crates;
+//! [`crate::demo`] has an example.
 
 use crate::view::Proposal;
 
@@ -13,8 +14,11 @@ pub struct Catalog {
     /// In registration order.
     pub plugins: Vec<PluginInfo>,
     pub jev: Option<JevStats>,
-    pub memory: Memory,
-    pub constitution: Constitution,
+    /// The repositories runs work on, in the sidebar's order. Each has
+    /// its own notes and rules.
+    pub repos: Vec<Repo>,
+    /// The repositories the sidebar had open when the user last left it.
+    pub open_repos: Vec<String>,
     pub store: StoreInfo,
     /// Whether the host can open pull requests from runs.
     pub pull_requests: bool,
@@ -22,6 +26,46 @@ pub struct Catalog {
     pub project: ProjectStatus,
     /// The models the picker offers, and the user's choices about them.
     pub models: crate::models::Models,
+}
+
+impl Catalog {
+    pub fn repo(&self, name: &str) -> Option<&Repo> {
+        self.repos.iter().find(|repo| repo.name == name)
+    }
+
+    pub fn repo_mut(&mut self, name: &str) -> Option<&mut Repo> {
+        self.repos.iter_mut().find(|repo| repo.name == name)
+    }
+}
+
+/// A repository runs work on: its memory and constitution belong to it
+/// alone.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Repo {
+    /// What the sidebar calls it; unique in the catalog.
+    pub name: String,
+    /// The checkout it came from.
+    pub path: String,
+    pub memory: Memory,
+    pub constitution: Constitution,
+}
+
+impl Repo {
+    pub fn new(name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+            ..Self::default()
+        }
+    }
+
+    /// The letter on the repository's mark.
+    pub fn letter(&self) -> String {
+        self.name
+            .chars()
+            .find(|c| c.is_alphanumeric())
+            .map_or("?".into(), |c| c.to_lowercase().to_string())
+    }
 }
 
 /// Where the host's runs work, for the status bar.

@@ -1,4 +1,5 @@
-//! Every stored run, filterable, with a query box for the store.
+//! Every stored run, in every repository, filterable, with a query box
+//! for the store.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
@@ -11,8 +12,9 @@ use crate::{
     workspace::Workspace,
 };
 
-const COLUMNS: [(&str, f32, bool); 7] = [
+const COLUMNS: [(&str, f32, bool); 8] = [
     ("Run", 2.4, false),
+    ("Repository", 1.2, false),
     ("Agent", 1.0, false),
     ("Model", 1.0, false),
     ("Started", 1.2, false),
@@ -30,7 +32,7 @@ pub fn render(
     let filter = ws.history_filter.read(cx).text().to_lowercase();
     let matches = |run: &RunView| {
         filter.is_empty()
-            || [&run.title, &run.agent, &run.model]
+            || [&run.title, &run.agent, &run.model, &run.repo]
                 .iter()
                 .any(|field| field.to_lowercase().contains(&filter))
             || status_look(&run.status, t)
@@ -126,7 +128,8 @@ pub fn render(
                                     .typeset(Type::CAPTION)
                                     .text_color(color)
                                     .child(format!(
-                                        "{label} · {} turns",
+                                        "{} · {label} · {} turns",
+                                        ws.repo_of(run),
                                         run.turn
                                     )),
                             ),
@@ -190,6 +193,12 @@ pub fn render(
                                     .font_weight(weight::EMPHASIS)
                                     .child(run.title.clone()),
                             ),
+                    )
+                    .child(
+                        cell(1.2, false)
+                            .truncate()
+                            .text_color(t.text_soft)
+                            .child(ws.repo_of(run).to_owned()),
                     )
                     .child(
                         cell(1.0, false)

@@ -6,24 +6,29 @@
 //! the workspace drains on the UI thread. Steering and cancelling go the
 //! other way through each run's [`RunControl`].
 //!
-//! Runs do not work in the user's checkout. The host copies it into a
-//! [`Project`] under `$XDG_DATA_HOME/tau/repos`, and each run gets a jj
-//! workspace there ([`RunWorkspace`]) with a commit per turn, so a fork
-//! starts from a turn's conversation and code. Past runs come back from
-//! the store as history.
+//! Runs do not work in the user's checkouts. The host copies each
+//! repository into a [`Project`] under `$XDG_DATA_HOME/tau/repos`, and
+//! each run gets a jj workspace there ([`RunWorkspace`]) with a commit
+//! per turn, so a fork starts from a turn's conversation and code. The
+//! repositories tau lists, and which the sidebar shows open, are kept in
+//! `repos.json`; each run records its repository ([`RepoTag`]), so past
+//! runs come back from the store under theirs.
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
+use async_trait::async_trait;
 use futures_util::StreamExt;
 use gpui::{App, Entity};
+use serde::{Deserialize, Serialize};
 use tau_agent::{
     agent::{Agent, Checkpoint, RunControl},
     event::{RunEvent, StopReason},
     limits::Limits,
+    plugin::{Plugin, PluginCtx, PluginRun, RunPlan},
     tool::RunId,
 };
 use tau_ai::{
@@ -60,6 +65,7 @@ use crate::{
         PluginInfo,
         PluginScreen,
         ProjectStatus,
+        Repo,
         Seam,
         StoreInfo,
     },
@@ -185,6 +191,8 @@ pub struct HostConfig {
     pub repos: PathBuf,
     /// The user's model choices, usually `$XDG_CONFIG_HOME/tau/models.json`.
     pub settings: PathBuf,
+    /// The repositories tau lists, usually `$XDG_DATA_HOME/tau/repos.json`.
+    pub repo_list: PathBuf,
 }
 
 impl HostConfig {
@@ -209,6 +217,10 @@ impl HostConfig {
         Self::data_dir().join("repos")
     }
 
+    pub fn default_repo_list() -> PathBuf {
+        Self::data_dir().join("repos.json")
+    }
+
     /// `models.json` beside the sign-in, in tau's config directory.
     pub fn default_settings() -> PathBuf {
         CodexCredentials::default_path()
@@ -216,17 +228,154 @@ impl HostConfig {
             .unwrap_or_else(|| PathBuf::from("models.json"))
     }
 
-    /// The project directory for `root`: its name and a hash of its full
-    /// path, so two checkouts with one name get two projects.
+    /// The project directory for `root`.
     pub fn project_dir(&self) -> PathBuf {
-        let full = std::fs::canonicalize(&self.root)
-            .unwrap_or_else(|_| self.root.clone());
-        let name = full.file_name().map_or("project".into(), |name| {
-            name.to_string_lossy().into_owned()
-        });
-        self.repos
-            .join(format!("{name}-{:08x}", fnv(&full.to_string_lossy())))
+        self.project_dir_of(&self.root)
     }
+
+    /// The project directory for the checkout at `path`: its name and a
+    /// hash of its full path, so two checkouts with one name get two
+    /// projects.
+    pub fn project_dir_of(&self, path: &Path) -> PathBuf {
+        let full = canonical(path);
+        self.repos.join(format!(
+            "{}-{:08x}",
+            dir_name(&full),
+            fnv(&full.to_string_lossy())
+        ))
+    }
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+}
+
+/// A directory's last component, or `project`.
+fn dir_name(path: &Path) -> String {
+    path.file_name()
+        .map_or("project".into(), |name| name.to_string_lossy().into_owned())
+}
+
+/// The repositories tau lists, as `repos.json` keeps them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct RepoList {
+    repos: Vec<Listed>,
+    /// The ones the sidebar shows open.
+    #[serde(default)]
+    open: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Listed {
+    name: String,
+    path: PathBuf,
+    /// Removed from tau: not listed, but its runs keep its name.
+    #[serde(default)]
+    hidden: bool,
+}
+
+impl RepoList {
+    fn load(path: &Path) -> Self {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
+        Ok(())
+    }
+
+    /// Lists the checkout at `path`, or lists it again if it was
+    /// removed, and returns its name: the directory's, made unique.
+    fn list(&mut self, path: &Path) -> String {
+        let path = canonical(path);
+        if let Some(listed) =
+            self.repos.iter_mut().find(|listed| listed.path == path)
+        {
+            listed.hidden = false;
+            return listed.name.clone();
+        }
+        let base = dir_name(&path);
+        let taken = |name: &str| self.repos.iter().any(|l| l.name == name);
+        let name = (1..)
+            .map(|n| {
+                if n == 1 {
+                    base.clone()
+                } else {
+                    format!("{base}-{n}")
+                }
+            })
+            .find(|name| !taken(name))
+            .expect("some suffix is free");
+        self.repos.push(Listed {
+            name: name.clone(),
+            path,
+            hidden: false,
+        });
+        name
+    }
+}
+
+/// The plugin name under which a run records its repository.
+pub const REPO_PLUGIN: &str = "repo";
+
+/// Records the repository a run works on, so history can list the run
+/// under it.
+struct RepoTag(String);
+
+#[async_trait]
+impl Plugin for RepoTag {
+    fn name(&self) -> &str {
+        REPO_PLUGIN
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> anyhow::Result<Box<dyn PluginRun>> {
+        Ok(Box::new(TagOnce {
+            repo: self.0.clone(),
+            done: false,
+        }))
+    }
+}
+
+struct TagOnce {
+    repo: String,
+    done: bool,
+}
+
+#[async_trait]
+impl PluginRun for TagOnce {
+    async fn on_event(&mut self, event: &RunEvent, ctx: &PluginCtx) {
+        // At its first turn: the run is stored by then.
+        let RunEvent::TurnStart { run, .. } = event else {
+            return;
+        };
+        if self.done || run != &ctx.run {
+            return;
+        }
+        let body = serde_json::json!({ "repo": self.repo });
+        self.done = ctx.record(&body).await.is_ok();
+    }
+}
+
+/// The repository a stored run recorded, if it did.
+async fn stored_repo(store: &Store, run: &str) -> Option<String> {
+    let entries = store.plugin_entries(run, REPO_PLUGIN).await.ok()?;
+    entries.iter().find_map(|(_, body)| {
+        serde_json::from_str::<serde_json::Value>(body)
+            .ok()?
+            .get("repo")?
+            .as_str()
+            .map(str::to_owned)
+    })
 }
 
 /// A stable 32-bit FNV-1a hash, for directory names.
@@ -283,13 +432,30 @@ impl ProjectSlot {
     }
 }
 
+/// A listed repository: its checkout, and the project runs in it work
+/// in.
+#[derive(Clone)]
+struct RepoSlot {
+    name: String,
+    path: PathBuf,
+    project: Arc<ProjectSlot>,
+}
+
 pub struct Host {
     runtime: Runtime,
     /// The agent every run starts from; each run adds its own tools.
     base: Agent,
     store: Store,
     config: HostConfig,
-    project: Arc<ProjectSlot>,
+    /// The repositories of this session, in the list's order. Removed
+    /// ones stay here, unlisted, for their runs.
+    repos: Arc<Mutex<Vec<RepoSlot>>>,
+    /// The checkout the host started in; runs that recorded no
+    /// repository belong to it.
+    home: String,
+    list: Arc<Mutex<RepoList>>,
+    /// The repository each run of this session works in.
+    run_repos: Arc<Mutex<HashMap<RunId, String>>>,
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
     /// The workspace each run of this session works in.
     workspaces: Arc<Mutex<HashMap<RunId, String>>>,
@@ -346,19 +512,40 @@ impl Host {
             .model(&config.model)
             .instructions(INSTRUCTIONS)
             .limits(Limits::default().max_turns(MAX_TURNS));
-        let (mut host, events) =
-            Self::with_agent(runtime, agent, store, config);
-        // Copying the checkout can take a while; the window opens first.
-        let slot = ProjectSlot::new(ProjectState::Importing);
-        host.project = slot.clone();
-        let (source, dir) = (
-            host.config.root.to_string_lossy().into_owned(),
-            host.config.project_dir(),
-        );
+        let (host, events) = Self::with_agent(runtime, agent, store, config);
+        // Copying checkouts can take a while; the window opens first.
+        let listed: Vec<Listed> = host
+            .list
+            .lock()
+            .expect("not poisoned")
+            .repos
+            .iter()
+            .filter(|listed| !listed.hidden)
+            .cloned()
+            .collect();
+        let mut slots = Vec::new();
+        for listed in listed {
+            let slot = RepoSlot {
+                name: listed.name,
+                path: listed.path,
+                project: ProjectSlot::new(ProjectState::Importing),
+            };
+            host.spawn_import(&slot)?;
+            slots.push(slot);
+        }
+        *host.repos.lock().expect("not poisoned") = slots;
+        Ok((host, events))
+    }
+
+    /// Opens or copies a repository's project on a thread of its own.
+    fn spawn_import(&self, slot: &RepoSlot) -> anyhow::Result<()> {
+        let project = slot.project.clone();
+        let source = slot.path.to_string_lossy().into_owned();
+        let dir = self.config.project_dir_of(&slot.path);
         std::thread::Builder::new()
             .name("tau-import".into())
             .spawn(move || {
-                slot.set(match Project::open_or_import(&source, dir, identity()) {
+                project.set(match Project::open_or_import(&source, dir, identity()) {
                     Ok(project) => ProjectState::Ready(project),
                     Err(error) => {
                         eprintln!(
@@ -368,7 +555,7 @@ impl Host {
                     }
                 });
             })?;
-        Ok((host, events))
+        Ok(())
     }
 
     /// A host over an agent built elsewhere: another model, other
@@ -382,6 +569,19 @@ impl Host {
     ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
         let settings = load_settings(&config.settings, &config.model);
+        // The checkout the host starts in is always listed.
+        let mut list = RepoList::load(&config.repo_list);
+        let home = list.list(&config.root);
+        if let Err(error) = list.save(&config.repo_list) {
+            eprintln!("tau-ui: cannot save the repository list: {error:#}");
+        }
+        let slot = RepoSlot {
+            name: home.clone(),
+            path: canonical(&config.root),
+            project: ProjectSlot::new(ProjectState::Checkout(
+                "no project was given".into(),
+            )),
+        };
         let host = Self {
             runtime,
             base: agent,
@@ -389,9 +589,10 @@ impl Host {
             choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
             config,
-            project: ProjectSlot::new(ProjectState::Checkout(
-                "no project was given".into(),
-            )),
+            repos: Arc::new(Mutex::new(vec![slot])),
+            home,
+            list: Arc::new(Mutex::new(list)),
+            run_repos: Arc::default(),
             runs: Arc::default(),
             workspaces: Arc::default(),
             events,
@@ -399,21 +600,110 @@ impl Host {
         (host, receiver)
     }
 
-    /// Gives each run a workspace in `project`, and a commit per turn.
+    /// Gives each run in the checkout a workspace in `project`, and a
+    /// commit per turn.
     pub fn with_project(self, project: Project) -> Self {
-        self.project.set(ProjectState::Ready(project));
+        self.home_slot().project.set(ProjectState::Ready(project));
         self
     }
 
-    /// The project runs work in, waiting for the import if it is still
-    /// going; `None` when runs work in the checkout.
-    pub fn project(&self) -> Option<Project> {
-        self.project.wait()
+    fn home_slot(&self) -> RepoSlot {
+        self.slot(&self.home)
+            .expect("the checkout's repository is always there")
     }
 
-    /// Whether the checkout is still being imported.
+    fn slot(&self, name: &str) -> Option<RepoSlot> {
+        self.repos
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .find(|slot| slot.name == name)
+            .cloned()
+    }
+
+    /// The repository `run` works in: as this session started it, as
+    /// the store recorded it, or the checkout's.
+    fn slot_of_run(&self, run: &RunId) -> RepoSlot {
+        let known = self
+            .run_repos
+            .lock()
+            .expect("not poisoned")
+            .get(run)
+            .cloned();
+        let name = known.or_else(|| {
+            self.runtime.block_on(stored_repo(&self.store, &run.0))
+        });
+        name.and_then(|name| self.slot(&name))
+            .unwrap_or_else(|| self.home_slot())
+    }
+
+    /// The checkout's project, waiting for the import if it is still
+    /// going; `None` when runs work in the checkout.
+    pub fn project(&self) -> Option<Project> {
+        self.home_slot().project.wait()
+    }
+
+    /// A listed repository's project, waiting for its import.
+    pub fn project_of(&self, repo: &str) -> Option<Project> {
+        self.slot(repo)?.project.wait()
+    }
+
+    /// The name the checkout is listed under.
+    pub fn home(&self) -> &str {
+        &self.home
+    }
+
+    /// Whether a repository is still being imported.
     pub fn is_importing(&self) -> bool {
-        matches!(self.project.peek(), ProjectState::Importing)
+        self.repos
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .any(|slot| matches!(slot.project.peek(), ProjectState::Importing))
+    }
+
+    /// Lists the checkout at `path` (`~` for the home directory) and
+    /// starts copying it. Returns it as the sidebar shows it.
+    pub fn add_repo(&self, path: &str) -> anyhow::Result<Repo> {
+        let path = crate::repos::expand_home(path);
+        if !path.is_dir() {
+            anyhow::bail!("{} is not a directory", path.display());
+        }
+        let name = {
+            let mut list = self.list.lock().expect("not poisoned");
+            let name = list.list(&path);
+            list.save(&self.config.repo_list)?;
+            name
+        };
+        if self.slot(&name).is_none() {
+            let slot = RepoSlot {
+                name: name.clone(),
+                path: canonical(&path),
+                project: ProjectSlot::new(ProjectState::Importing),
+            };
+            self.spawn_import(&slot)?;
+            self.repos.lock().expect("not poisoned").push(slot);
+        }
+        Ok(Repo::new(name, canonical(&path).display().to_string()))
+    }
+
+    /// Stops listing a repository. Its project and runs stay.
+    pub fn hide_repo(&self, name: &str) -> anyhow::Result<()> {
+        let mut list = self.list.lock().expect("not poisoned");
+        for listed in &mut list.repos {
+            if listed.name == name {
+                listed.hidden = true;
+            }
+        }
+        list.open.retain(|open| open != name);
+        list.save(&self.config.repo_list)
+    }
+
+    /// Remembers which repositories the sidebar shows open.
+    pub fn set_open_repos(&self, open: Vec<String>) -> anyhow::Result<()> {
+        let mut list = self.list.lock().expect("not poisoned");
+        list.open = open;
+        list.save(&self.config.repo_list)
     }
 
     /// Whether `run` is still going.
@@ -429,7 +719,7 @@ impl Host {
             .expect("not poisoned")
             .get(run)?
             .clone();
-        Some(self.project()?.workspace_dir(&name))
+        Some(self.slot_of_run(run).project.wait()?.workspace_dir(&name))
     }
 
     /// What the workspace shows beyond runs: the agent's plugins and the
@@ -442,7 +732,8 @@ impl Host {
             spend: 0.0,
             screen: None,
         }];
-        let state = self.project.peek();
+        let home = self.home_slot();
+        let state = home.project.peek();
         if matches!(state, ProjectState::Ready(_)) {
             plugins.extend([
                 PluginInfo {
@@ -473,13 +764,6 @@ impl Host {
             spend: 0.0,
             screen: Some(PluginScreen::Ledger),
         });
-        let project_name = self
-            .config
-            .project_dir()
-            .file_name()
-            .map_or_else(String::new, |name| {
-                name.to_string_lossy().into_owned()
-            });
         let source = match &state {
             ProjectState::Ready(project) => format!(
                 "{} · {} → {}",
@@ -493,18 +777,39 @@ impl Host {
                 self.config.root.display()
             ),
         };
-        let project = match state {
-            ProjectState::Importing => ProjectStatus::Importing(project_name),
-            ProjectState::Ready(_) => ProjectStatus::Ready(project_name),
-            ProjectState::Checkout(why) => ProjectStatus::Checkout(why),
+        let slots = self.repos.lock().expect("not poisoned").clone();
+        let list = self.list.lock().expect("not poisoned").clone();
+        // Any import going on shows; else how the checkout's runs work.
+        let importing = slots.iter().find(|slot| {
+            matches!(slot.project.peek(), ProjectState::Importing)
+        });
+        let project = match (importing, state) {
+            (Some(slot), _) => ProjectStatus::Importing(slot.name.clone()),
+            (None, ProjectState::Ready(_)) => {
+                ProjectStatus::Ready(home.name.clone())
+            }
+            (None, ProjectState::Checkout(why)) => ProjectStatus::Checkout(why),
+            (None, ProjectState::Importing) => {
+                ProjectStatus::Importing(home.name.clone())
+            }
         };
+        // In the list's order, which adding a repository again keeps.
+        let repos = list
+            .repos
+            .iter()
+            .filter(|listed| !listed.hidden)
+            .filter(|listed| slots.iter().any(|slot| slot.name == listed.name))
+            .map(|listed| {
+                Repo::new(&listed.name, listed.path.display().to_string())
+            })
+            .collect();
         Catalog {
             agent: "coder".into(),
             agent_source: Some(source),
             plugins,
             jev: None,
-            memory: Default::default(),
-            constitution: Default::default(),
+            repos,
+            open_repos: list.open,
             store: StoreInfo {
                 path: self.config.store.display().to_string(),
                 size: std::fs::metadata(&self.config.store)
@@ -525,6 +830,7 @@ impl Host {
     fn agent_for_run(
         &self,
         choice: &ModelChoice,
+        repo: &RepoSlot,
     ) -> anyhow::Result<(Agent, Option<String>)> {
         let mut agent = self.base.clone().model(&choice.model);
         if let Some(effort) = choice.effort.reasoning() {
@@ -535,9 +841,9 @@ impl Host {
         if let Some(model) = find(&choice.model) {
             compaction = compaction.context_window(model.context_window);
         }
-        let agent = agent.plugin(compaction);
-        let Some(project) = self.project() else {
-            let tools = CodingTools::new(Root::new(self.config.root.clone()));
+        let agent = agent.plugin(compaction).plugin(RepoTag(repo.name.clone()));
+        let Some(project) = repo.project.wait() else {
+            let tools = CodingTools::new(Root::new(repo.path.clone()));
             return Ok((agent.plugin(tools), None));
         };
         let name = workspace_name();
@@ -585,15 +891,19 @@ impl Host {
 
     /// Starts a run and returns its view, ready to be pushed into the
     /// workspace before its first event arrives.
+    /// It works in `repo`, or in the checkout's repository when no
+    /// repository has that name.
     pub fn start(
         &self,
         prompt: &str,
         choice: &ModelChoice,
+        repo: &str,
     ) -> anyhow::Result<RunView> {
-        let (agent, workspace) = self.agent_for_run(choice)?;
+        let repo = self.slot(repo).unwrap_or_else(|| self.home_slot());
+        let (agent, workspace) = self.agent_for_run(choice, &repo)?;
         let _guard = self.runtime.enter();
         let run = agent.start(prompt, &self.store);
-        let id = self.track(run, workspace, choice);
+        let id = self.track(run, workspace, choice, &repo.name);
         Ok(self.view(id, prompt))
     }
 
@@ -607,10 +917,11 @@ impl Host {
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
-        if self.project().is_none() {
+        let repo = self.slot_of_run(run);
+        if repo.project.wait().is_none() {
             anyhow::bail!(
-                "Forking needs a project: {} could not be cloned",
-                self.config.root.display()
+                "Forking needs a project: {} could not be copied",
+                repo.path.display()
             );
         }
         let (seq, link) = self.link(run, turn)?.ok_or_else(|| match turn {
@@ -621,12 +932,12 @@ impl Host {
                 anyhow::anyhow!("The run has no finished turn to fork from yet")
             }
         })?;
-        let (agent, workspace) = self.agent_for_run(choice)?;
+        let (agent, workspace) = self.agent_for_run(choice, &repo)?;
         let _guard = self.runtime.enter();
         let forked = agent
             .fork(&Checkpoint::at(run.clone(), seq))
             .start(prompt, &self.store);
-        let id = self.track(forked, workspace, choice);
+        let id = self.track(forked, workspace, choice, &repo.name);
         Ok(self.view(id, prompt).with_origin(Origin::Fork {
             from: run.clone(),
             turn: link.turn,
@@ -656,7 +967,7 @@ impl Host {
     /// other branches that are not running: the run it was forked from,
     /// and its other forks. Their commits stay in the project.
     pub fn keep_branch(&self, run: &RunId) -> anyhow::Result<()> {
-        let Some(project) = self.project() else {
+        let Some(project) = self.slot_of_run(run).project.wait() else {
             return Ok(());
         };
         let store = self.store.clone();
@@ -715,7 +1026,7 @@ impl Host {
     {
         branch_code(
             self.store.clone(),
-            self.project.clone(),
+            self.slot_of_run(main).project,
             main.clone(),
             fork.clone(),
         )
@@ -729,7 +1040,7 @@ impl Host {
 
     /// Runs from earlier sessions, newest first, rebuilt from the store.
     pub fn history(&self) -> anyhow::Result<Vec<RunView>> {
-        self.runtime.block_on(history(&self.store))
+        self.runtime.block_on(history(&self.store, &self.home))
     }
 
     /// Follows a started run: its control, its workspace, and a task
@@ -739,8 +1050,13 @@ impl Host {
         mut run: tau_agent::agent::Run,
         workspace: Option<String>,
         choice: &ModelChoice,
+        repo: &str,
     ) -> RunId {
         let id = run.id();
+        self.run_repos
+            .lock()
+            .expect("not poisoned")
+            .insert(id.clone(), repo.to_owned());
         self.choices
             .lock()
             .expect("not poisoned")
@@ -784,7 +1100,9 @@ impl Host {
             .unwrap_or_else(|| {
                 ModelChoice::new(self.config.model.clone(), Effort::Auto)
             });
+        let repo = self.slot_of_run(&id);
         let mut view = RunView::new(id, title(prompt), "coder", &choice.model)
+            .in_repo(repo.name.clone())
             .started("just now");
         view.push_user(prompt);
         view.limits = ViewLimits {
@@ -819,11 +1137,11 @@ impl Host {
             },
             PlanField {
                 name: "workspace".into(),
-                value: match (self.project(), &workspace) {
+                value: match (repo.project.wait(), &workspace) {
                     (Some(project), Some(name)) => {
                         project.workspace_dir(name).display().to_string()
                     }
-                    _ => self.config.root.display().to_string(),
+                    _ => repo.path.display().to_string(),
                 },
                 set_by: workspace.as_ref().map(|_| "workspace".to_owned()),
             },
@@ -875,39 +1193,32 @@ impl Host {
             Err(error) => eprintln!("tau-ui: cannot read past runs: {error:#}"),
         }
         let host = Arc::new(self);
-        // Once the checkout is imported, the plugins and the status bar
+        // Once a repository is imported, the plugins and the status bar
         // change.
-        if host.is_importing() {
-            let slot = host.project.clone();
-            let wait = host.runtime.spawn_blocking(move || slot.wait());
-            let waiter = host.clone();
-            let workspace = workspace.downgrade();
-            cx.spawn(async move |cx| {
-                let _ = wait.await;
-                let catalog = waiter.catalog();
-                let _ =
-                    workspace.update(cx, |ws, cx| ws.set_catalog(catalog, cx));
-            })
-            .detach();
+        let slots = host.repos.lock().expect("not poisoned").clone();
+        for slot in slots {
+            refresh_when_imported(&host, &slot, workspace, cx);
         }
         let handler = host.clone();
         cx.subscribe(
             workspace,
             move |workspace, event: &WorkspaceEvent, cx| match event {
-                WorkspaceEvent::NewRun { prompt, model } => {
-                    match handler.start(prompt, model) {
-                        Ok(view) => {
-                            workspace.update(cx, |ws, cx| ws.push_run(view, cx))
-                        }
-                        Err(error) => workspace.update(cx, |ws, cx| {
-                            ws.show_alert(
-                                "Could not start the run",
-                                format!("{error:#}"),
-                                cx,
-                            )
-                        }),
+                WorkspaceEvent::NewRun {
+                    prompt,
+                    model,
+                    repo,
+                } => match handler.start(prompt, model, repo) {
+                    Ok(view) => {
+                        workspace.update(cx, |ws, cx| ws.push_run(view, cx))
                     }
-                }
+                    Err(error) => workspace.update(cx, |ws, cx| {
+                        ws.show_alert(
+                            "Could not start the run",
+                            format!("{error:#}"),
+                            cx,
+                        )
+                    }),
+                },
                 WorkspaceEvent::Fork {
                     run,
                     turn,
@@ -965,6 +1276,39 @@ impl Host {
                         );
                     }
                 }
+                WorkspaceEvent::AddRepo { path } => {
+                    match handler.add_repo(path) {
+                        Ok(repo) => {
+                            if let Some(slot) = handler.slot(&repo.name) {
+                                refresh_when_imported(
+                                    &handler, &slot, &workspace, cx,
+                                );
+                            }
+                            workspace.update(cx, |ws, cx| ws.add_repo(repo, cx))
+                        }
+                        Err(error) => workspace.update(cx, |ws, cx| {
+                            ws.show_alert(
+                                "Could not add the repository",
+                                format!("{error:#}"),
+                                cx,
+                            )
+                        }),
+                    }
+                }
+                WorkspaceEvent::HideRepo { repo } => {
+                    if let Err(error) = handler.hide_repo(repo) {
+                        eprintln!(
+                            "tau-ui: cannot save the repository list: {error:#}"
+                        );
+                    }
+                }
+                WorkspaceEvent::OpenRepos(open) => {
+                    if let Err(error) = handler.set_open_repos(open.clone()) {
+                        eprintln!(
+                            "tau-ui: cannot save the repository list: {error:#}"
+                        );
+                    }
+                }
                 WorkspaceEvent::Steer { run, text } => handler.steer(run, text),
                 WorkspaceEvent::Cancel { run } => handler.cancel(run),
                 other => eprintln!("tau-ui: not handled yet: {other:?}"),
@@ -985,6 +1329,29 @@ impl Host {
         })
         .detach();
     }
+}
+
+/// Refreshes the workspace's catalog once `slot` is imported, if it is
+/// importing.
+fn refresh_when_imported(
+    host: &Arc<Host>,
+    slot: &RepoSlot,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    if !matches!(slot.project.peek(), ProjectState::Importing) {
+        return;
+    }
+    let project = slot.project.clone();
+    let wait = host.runtime.spawn_blocking(move || project.wait());
+    let host = host.clone();
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let _ = wait.await;
+        let catalog = host.catalog();
+        let _ = workspace.update(cx, |ws, cx| ws.set_catalog(catalog, cx));
+    })
+    .detach();
 }
 
 /// The latest link in `entries`, up to `seq` when given.
@@ -1094,8 +1461,12 @@ fn workspace_name() -> String {
     format!("run-{millis:x}-{}", COUNT.fetch_add(1, Ordering::Relaxed))
 }
 
-/// Past runs, rebuilt from their stored transcripts.
-pub async fn history(store: &Store) -> anyhow::Result<Vec<RunView>> {
+/// Past runs, rebuilt from their stored transcripts, each under the
+/// repository it recorded, or `home` if it recorded none.
+pub async fn history(
+    store: &Store,
+    home: &str,
+) -> anyhow::Result<Vec<RunView>> {
     let records = store.recent_runs(HISTORY).await?;
     let mut views = Vec::with_capacity(records.len());
     for record in &records {
@@ -1130,6 +1501,11 @@ pub async fn history(store: &Store) -> anyhow::Result<Vec<RunView>> {
             &record.agent,
             &record.model,
             &messages,
+        )
+        .in_repo(
+            stored_repo(store, &record.id)
+                .await
+                .unwrap_or_else(|| home.to_owned()),
         )
         .started(started(&record.created_at));
         let stop = match record.status {
