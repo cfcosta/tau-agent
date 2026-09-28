@@ -655,3 +655,65 @@ fn connecting_from_the_models_screen_comes_back_to_it(cx: &mut TestAppContext) {
         Some(&WorkspaceEvent::SignOut(tau_ui::models::AccessKind::ApiKey))
     );
 }
+
+#[gpui::test]
+fn github_from_the_app_comes_back_when_done(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        // Signing in from the Models screen goes back there.
+        ws.navigate(Route::Models, cx);
+        ws.connect_github(cx);
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::GitHub));
+        ws.update_setup(
+            SetupUpdate::GitHub(GitHub::SignedIn {
+                user: "octocat".into(),
+            }),
+            cx,
+        );
+        assert_eq!(ws.route(), &Route::Models);
+        ws.sign_out_github(cx);
+    });
+    assert_eq!(events.borrow().first(), Some(&WorkspaceEvent::GitHubSignIn));
+    assert_eq!(events.borrow().last(), Some(&WorkspaceEvent::GitHubSignOut));
+
+    // Adding from GitHub, signed in: pick, clone, and back to the run.
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(demo::run_id()), cx);
+        ws.update_setup(
+            SetupUpdate::Repos(vec![tau_ui::setup::RepoChoice {
+                name: "octocat/hello".into(),
+                description: String::new(),
+                branch: "main".into(),
+                selected: false,
+            }]),
+            cx,
+        );
+        ws.pick_github_repos(cx);
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Repos));
+        ws.toggle_repo("octocat/hello", cx);
+        ws.clone_selected(cx);
+        assert_eq!(ws.route(), &Route::Run(demo::run_id()));
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::CloneRepos {
+            repos: vec!["octocat/hello".into()]
+        })
+    );
+}
+
+#[gpui::test]
+fn github_sign_in_during_onboarding_moves_on_to_the_model(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, _) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.start_setup(SetupStep::Welcome, cx);
+        ws.sign_in_github(cx);
+        ws.update_setup(
+            SetupUpdate::GitHub(GitHub::SignedIn { user: "o".into() }),
+            cx,
+        );
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
+    });
+}

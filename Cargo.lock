@@ -2376,6 +2376,7 @@ dependencies = [
  "gix-command",
  "gix-commitgraph",
  "gix-config",
+ "gix-credentials",
  "gix-date",
  "gix-diff",
  "gix-discover",
@@ -2389,12 +2390,14 @@ dependencies = [
  "gix-ignore",
  "gix-index",
  "gix-lock",
+ "gix-negotiate",
  "gix-note",
  "gix-object",
  "gix-odb",
  "gix-pack",
  "gix-path",
  "gix-pathspec",
+ "gix-prompt",
  "gix-protocol",
  "gix-quote",
  "gix-ref",
@@ -2406,6 +2409,7 @@ dependencies = [
  "gix-submodule",
  "gix-tempfile",
  "gix-trace",
+ "gix-transport",
  "gix-traverse",
  "gix-url",
  "gix-utils",
@@ -2519,6 +2523,25 @@ dependencies = [
  "bstr",
  "gix-path",
  "libc",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "gix-credentials"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16c11822054fd4b80a1ab722b703f2e7c691b20484d898374289b742c1f49e50"
+dependencies = [
+ "bstr",
+ "gix-command",
+ "gix-config-value",
+ "gix-date",
+ "gix-path",
+ "gix-prompt",
+ "gix-quote",
+ "gix-sec",
+ "gix-trace",
+ "gix-url",
  "thiserror 2.0.21",
 ]
 
@@ -2742,6 +2765,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gix-negotiate"
+version = "0.35.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91068ecee956121d663635b873ae87ad9c5d3f2d6788facfd12829140b39c897"
+dependencies = [
+ "bitflags 2.13.2",
+ "gix-commitgraph",
+ "gix-date",
+ "gix-hash",
+ "gix-object",
+ "gix-revwalk",
+]
+
+[[package]]
 name = "gix-note"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2811,8 +2848,10 @@ dependencies = [
  "gix-hashtable",
  "gix-object",
  "gix-path",
+ "gix-tempfile",
  "gix-zlib",
  "memmap2",
+ "parking_lot",
  "smallvec",
  "thiserror 2.0.21",
  "uluru",
@@ -2858,18 +2897,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "gix-prompt"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "802256e13ecb2133ba5f9e6acbaa6b08bac027b1c5929f85f6adbb56ba3a4f28"
+dependencies = [
+ "gix-command",
+ "gix-config-value",
+ "parking_lot",
+ "rustix 1.1.5",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "gix-protocol"
 version = "0.65.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68878c37ae168b474c762d70adc8a8e0f9323ed0d80444a672e2eb561fa16691"
 dependencies = [
  "bstr",
+ "gix-credentials",
  "gix-date",
  "gix-features",
  "gix-hash",
+ "gix-lock",
  "gix-macros",
+ "gix-negotiate",
+ "gix-object",
  "gix-ref",
+ "gix-refspec",
+ "gix-revwalk",
  "gix-shallow",
+ "gix-trace",
  "gix-transport",
  "gix-utils",
  "nonempty",
@@ -3017,14 +3076,18 @@ version = "0.59.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3f41a64939953ff49117df4eb91334d299abc59ff57a90fb2193d8ffa5886f1"
 dependencies = [
+ "base64 0.22.1",
  "bstr",
  "gix-command",
+ "gix-credentials",
  "gix-features",
  "gix-packetline",
  "gix-path",
  "gix-quote",
  "gix-sec",
  "gix-url",
+ "parking_lot",
+ "reqwest",
  "thiserror 2.0.21",
 ]
 
@@ -6173,7 +6236,11 @@ checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
 dependencies = [
  "base64 0.23.1",
  "bytes",
+ "encoding_rs",
+ "futures-channel",
  "futures-core",
+ "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
@@ -6182,6 +6249,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime",
  "percent-encoding",
  "pin-project-lite",
  "rustls",
@@ -7629,6 +7697,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "gpui",
+ "reqwest",
  "serde",
  "serde_json",
  "tau-agent",
@@ -7640,7 +7709,9 @@ dependencies = [
  "tau-vcs",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "unicode-segmentation",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -7653,6 +7724,7 @@ dependencies = [
  "gix",
  "jj-lib",
  "pollster 1.0.1",
+ "reqwest",
  "schemars",
  "serde",
  "serde_json",
@@ -7664,6 +7736,7 @@ dependencies = [
  "tau-tools",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
 ]
 

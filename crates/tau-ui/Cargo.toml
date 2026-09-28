@@ -23,6 +23,9 @@ tau-store.workspace = true
 tau-tools.workspace = true
 tau-vcs.workspace = true
 futures-util.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+reqwest.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
 anyhow.workspace = true
 unicode-segmentation = "1.12.0"

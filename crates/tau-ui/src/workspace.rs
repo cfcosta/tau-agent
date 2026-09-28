@@ -180,6 +180,8 @@ pub enum WorkspaceEvent {
     GitHubToken {
         token: String,
     },
+    /// Forget the GitHub sign-in.
+    GitHubSignOut,
     /// Sign in to ChatGPT for Codex, in the browser or with a device
     /// code.
     CodexSignIn {
@@ -215,6 +217,17 @@ pub enum WorkspaceEvent {
         keep_pushing: bool,
         reviewers: Vec<String>,
     },
+}
+
+/// What an onboarding step opened from the app is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupGoal {
+    /// Sign in to ChatGPT or add an API key.
+    Model,
+    /// Sign in to GitHub.
+    GitHub,
+    /// Clone repositories from GitHub.
+    Repos,
 }
 
 /// A dialog over the app.
@@ -306,9 +319,9 @@ pub struct Workspace {
     pub(crate) sidebar_filter: Entity<TextInput>,
     /// The dialog that adds a repository, with its path field.
     pub(crate) adding_repo: bool,
-    /// Connecting a model from the Models screen: once connected, go
-    /// back there rather than on through onboarding.
-    pub(crate) reconnecting: bool,
+    /// Why an onboarding step was opened from the app, if it was: once
+    /// that is done, go back rather than on through onboarding.
+    pub(crate) setup_goal: Option<SetupGoal>,
     pub(crate) repo_path: Entity<TextInput>,
     scroll: ScrollHandle,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
@@ -443,7 +456,7 @@ impl Workspace {
             repo_menu: None,
             sidebar_filter,
             adding_repo: false,
-            reconnecting: false,
+            setup_goal: None,
             repo_path,
             scroll: ScrollHandle::new(),
             follow: true,
@@ -655,7 +668,7 @@ impl Workspace {
             self.repo = Some(repo);
         }
         if !matches!(self.route, Route::Setup(_)) {
-            self.reconnecting = false;
+            self.setup_goal = None;
         }
         self.repo_menu = None;
         // Comparing two branches shows their code; ask for it once.
@@ -1026,15 +1039,25 @@ impl Workspace {
         let connected =
             matches!(update, SetupUpdate::Model(ModelAccess::Connected { .. }));
         self.setup.update(update);
+        let goal = self.setup_goal;
         match self.route {
+            Route::Setup(SetupStep::GitHub | SetupStep::Token)
+                if signed_in && goal == Some(SetupGoal::GitHub) =>
+            {
+                self.leave_setup(cx)
+            }
+            Route::Setup(SetupStep::GitHub | SetupStep::Token)
+                if signed_in && goal == Some(SetupGoal::Repos) =>
+            {
+                self.navigate(Route::Setup(SetupStep::Repos), cx)
+            }
             Route::Setup(SetupStep::GitHub | SetupStep::Token) if signed_in => {
                 self.navigate(Route::Setup(SetupStep::Model), cx)
             }
             Route::Setup(SetupStep::Model)
-                if connected && self.reconnecting =>
+                if connected && goal == Some(SetupGoal::Model) =>
             {
-                self.reconnecting = false;
-                self.back(cx);
+                self.leave_setup(cx)
             }
             Route::Setup(SetupStep::Model) if connected => {
                 if self.setup.repos.is_empty() {
@@ -1045,6 +1068,38 @@ impl Workspace {
             }
             _ => cx.notify(),
         }
+    }
+
+    /// Goes back to the screen an onboarding step was opened from.
+    pub fn leave_setup(&mut self, cx: &mut Context<Self>) {
+        let mut route = self.back_stack.pop().unwrap_or(Route::Home);
+        while let Route::Setup(_) = route {
+            route = self.back_stack.pop().unwrap_or(Route::Home);
+        }
+        self.route = route;
+        self.entered(cx);
+    }
+
+    /// Opens GitHub's sign-in from the app, coming back once signed in.
+    pub fn connect_github(&mut self, cx: &mut Context<Self>) {
+        self.sign_in_github(cx);
+        self.setup_goal = Some(SetupGoal::GitHub);
+    }
+
+    pub fn sign_out_github(&mut self, cx: &mut Context<Self>) {
+        cx.emit(WorkspaceEvent::GitHubSignOut);
+    }
+
+    /// Picks repositories to clone from GitHub, signing in first if
+    /// needed, then comes back.
+    pub fn pick_github_repos(&mut self, cx: &mut Context<Self>) {
+        self.adding_repo = false;
+        if self.setup.user().is_some() {
+            self.navigate(Route::Setup(SetupStep::Repos), cx);
+        } else {
+            self.sign_in_github(cx);
+        }
+        self.setup_goal = Some(SetupGoal::Repos);
     }
 
     /// Leaves onboarding for a new run.
@@ -1090,8 +1145,8 @@ impl Workspace {
     /// sign in to ChatGPT or add an API key, coming back once done.
     pub fn connect_model(&mut self, cx: &mut Context<Self>) {
         self.setup.model = ModelAccess::None;
-        self.reconnecting = true;
         self.navigate(Route::Setup(SetupStep::Model), cx);
+        self.setup_goal = Some(SetupGoal::Model);
     }
 
     pub fn sign_out(&mut self, kind: AccessKind, cx: &mut Context<Self>) {
@@ -1159,7 +1214,13 @@ impl Workspace {
         if !repos.is_empty() {
             cx.emit(WorkspaceEvent::CloneRepos { repos });
         }
-        self.navigate(Route::Setup(SetupStep::Ready), cx);
+        // From the app, the clones show up in the sidebar; from
+        // onboarding, the first run comes next.
+        if self.setup_goal == Some(SetupGoal::Repos) {
+            self.leave_setup(cx);
+        } else {
+            self.navigate(Route::Setup(SetupStep::Ready), cx);
+        }
     }
 
     pub(crate) fn start_first_run(

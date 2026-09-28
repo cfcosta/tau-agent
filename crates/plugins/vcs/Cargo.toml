@@ -10,7 +10,14 @@ publish.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
-gix.workspace = true
+# Clones over HTTPS without the git binary. reqwest brings rustls,
+# with the ring provider tokio-rustls already builds.
+gix = { workspace = true, features = [
+  "blocking-http-transport-reqwest",
+  "blocking-network-client",
+] }
+reqwest.workspace = true
+tokio-rustls.workspace = true
 jj-lib.workspace = true
 pollster.workspace = true
 schemars.workspace = true

@@ -9,7 +9,14 @@ use tau_agent::agent::{Agent, Checkpoint};
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_tools::{path::Root, plugin::CodingTools};
-use tau_vcs::{Identity, Link, Project, RunWorkspace, run_workspace::PLUGIN};
+use tau_vcs::{
+    Identity,
+    Link,
+    Project,
+    RunWorkspace,
+    clone_bare,
+    run_workspace::PLUGIN,
+};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -71,6 +78,48 @@ fn a_project_gives_each_run_a_workspace_on_trunk() {
     project.forget_workspace("one").unwrap();
     assert!(!dir.exists());
     assert!(project.workspaces().unwrap().is_empty());
+}
+
+#[test]
+fn a_clone_imports_like_a_checkout() {
+    let src = tempfile::tempdir().unwrap();
+    let head = source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let bare = home.path().join("owner/clone.git");
+    let url = format!("file://{}", src.path().display());
+    clone_bare(&url, Some("unused"), &bare).unwrap();
+    let project = Project::import(
+        bare.to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    assert_eq!(project.trunk().unwrap(), head);
+
+    // A failed clone leaves nothing behind.
+    let missing = home.path().join("missing.git");
+    let error =
+        clone_bare("file:///no/such/repository", None, &missing).unwrap_err();
+    assert!(format!("{error:#}").contains("Cannot clone"), "{error:#}");
+    assert!(!missing.exists());
+}
+
+/// Clones a small public repository from GitHub over HTTPS. Needs the
+/// network: `cargo test -p tau-vcs -- --ignored`.
+#[test]
+#[ignore = "needs the network"]
+fn clones_over_https() {
+    let home = tempfile::tempdir().unwrap();
+    let bare = home.path().join("hello.git");
+    clone_bare("https://github.com/octocat/Hello-World.git", None, &bare)
+        .unwrap();
+    let project = Project::import(
+        bare.to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    assert!(!project.trunk().unwrap().is_empty());
 }
 
 #[test]

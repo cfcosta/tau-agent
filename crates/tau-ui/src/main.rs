@@ -169,9 +169,15 @@ fn main() {
                 }
                 // No model yet: set one up, then start the host.
                 None if onboarding => {
-                    workspace.update(cx, |ws, cx| {
-                        ws.start_setup(SetupStep::Model, cx)
-                    });
+                    // GitHub first, unless a saved sign-in makes it done.
+                    let step = if tau_ui::github::Token::load(&credentials)
+                        .is_some()
+                    {
+                        SetupStep::Model
+                    } else {
+                        SetupStep::Welcome
+                    };
+                    workspace.update(cx, |ws, cx| ws.start_setup(step, cx));
                     let entity = workspace.clone();
                     host::onboard(
                         &workspace,

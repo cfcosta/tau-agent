@@ -12,6 +12,7 @@ use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_ui::{
     accounts::{Access, Credentials},
+    github::{Api, Token},
     host::{Host, HostConfig},
     models::{AccessKind, Effort, ModelChoice},
     view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
@@ -481,4 +482,50 @@ fn signing_out_runs_on_what_is_left() {
     host.set_access(Some(Access::ApiKey("sk-new".into())))
         .unwrap();
     assert!(host.models().access.api_key);
+}
+
+#[test]
+fn github_repositories_clone_into_tau() {
+    let (dir, data, remote) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    // What GitHub would serve, as a local repository at owner/name.git.
+    let src = remote.path().join("cfcosta/hello.git");
+    std::fs::create_dir_all(&src).unwrap();
+    git(&src, &["init", "--quiet"]);
+    std::fs::write(src.join("README.md"), "hello\n").unwrap();
+    git(&src, &["add", "README.md"]);
+    git(&src, &["commit", "--quiet", "-m", "first"]);
+
+    let config = config_on(dir.path(), data.path());
+    let credentials = config.credentials.clone();
+    let (host, _events) = Host::new(config).unwrap();
+    let web = format!("file://{}", remote.path().display());
+    let host = host.with_github(Api::at(&web, "http://127.0.0.1:9"));
+    let error = host.clone_github("cfcosta/hello").unwrap_err();
+    assert!(error.to_string().contains("Sign in to GitHub"), "{error}");
+
+    Token {
+        token: "ghu_token".into(),
+        user: "cfcosta".into(),
+        expires_at: None,
+    }
+    .save(&credentials)
+    .unwrap();
+    assert!(host.clone_github("../escape").is_err());
+    assert!(host.clone_github("cfcosta/..").is_err());
+    let repo = host.clone_github("cfcosta/hello").unwrap();
+    assert_eq!(repo.name, "hello");
+    assert!(
+        host.catalog()
+            .repos
+            .iter()
+            .any(|listed| listed.name == "hello")
+    );
+    let project = host.project_of("hello").expect("the clone imports");
+    assert!(!project.trunk().unwrap().is_empty());
+    // Cloning it again lists the same repository, without fetching.
+    assert_eq!(host.clone_github("cfcosta/hello").unwrap().name, "hello");
 }

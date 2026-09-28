@@ -159,11 +159,69 @@ pub fn render(
         t,
         cx,
     );
+    let github_user = ws.setup.user().map(str::to_owned);
+    let github = div()
+        .flex()
+        .items_center()
+        .gap(sp(2.5))
+        .child(ui::icon(
+            Icon::Repo,
+            IconSize::LARGE,
+            if github_user.is_some() {
+                t.green
+            } else {
+                t.dim
+            },
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .gap(sp(0.5))
+                .child("GitHub")
+                .child(ui::text(
+                    match &github_user {
+                        Some(user) => {
+                            format!(
+                                "Signed in as @{user} · clones repositories"
+                            )
+                        }
+                        None => {
+                            "Not signed in · for cloning repositories".into()
+                        }
+                    },
+                    Type::CAPTION,
+                    t.muted,
+                )),
+        )
+        .child(
+            div()
+                .id("account-github")
+                .child(ui::button(
+                    if github_user.is_some() {
+                        "Sign out"
+                    } else {
+                        "Sign in"
+                    },
+                    ButtonKind::Secondary,
+                    t,
+                ))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    if ws.setup.user().is_some() {
+                        ws.sign_out_github(cx)
+                    } else {
+                        ws.connect_github(cx)
+                    }
+                })),
+        );
     let access_card = ui::panel(4.5, t)
         .gap(sp(3.))
         .child(heading("Accounts", t))
         .child(chatgpt)
-        .child(key);
+        .child(key)
+        .child(github);
 
     let limit = match models.settings.ask_above {
         Some(limit) => format!("${limit:.0} / M out"),

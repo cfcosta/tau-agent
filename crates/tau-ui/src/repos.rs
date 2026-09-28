@@ -351,8 +351,18 @@ impl Workspace {
             .flex_shrink_0()
             .into_any_element();
         let actions = div()
+            .w_full()
             .flex()
             .gap(sp(2.))
+            .child(
+                div()
+                    .id("add-repo-github")
+                    .child(ui::button("From GitHub…", ButtonKind::Secondary, t))
+                    .on_click(
+                        cx.listener(|ws, _, _, cx| ws.pick_github_repos(cx)),
+                    ),
+            )
+            .child(div().flex_1())
             .child(
                 div()
                     .id("add-repo-cancel")

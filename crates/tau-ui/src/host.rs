@@ -63,6 +63,7 @@ use crate::{
         Seam,
         StoreInfo,
     },
+    github,
     models::{
         AccessInfo,
         AccessKind,
@@ -72,7 +73,7 @@ use crate::{
         Models,
         coding_models,
     },
-    setup::{GitHub, ModelAccess, SetupStep, SetupUpdate},
+    setup::{CloneState, ModelAccess, RepoClone, SetupStep, SetupUpdate},
     view::{
         BranchCode,
         ChildKind,
@@ -368,6 +369,7 @@ pub struct Host {
     base: Mutex<Agent>,
     /// What runs reach models with; `None` after signing out of all.
     access: Mutex<Option<Access>>,
+    github: github::Api,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -514,6 +516,7 @@ impl Host {
             runtime,
             base: Mutex::new(agent),
             access: Mutex::new(Some(config.access.clone())),
+            github: github::Api::default(),
             store,
             choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
@@ -614,6 +617,39 @@ impl Host {
             self.repos.lock().expect("not poisoned").push(slot);
         }
         Ok(Repo::new(name, canonical(&path).display().to_string()))
+    }
+
+    /// Reaches GitHub at `api`, for tests.
+    pub fn with_github(mut self, api: github::Api) -> Self {
+        self.github = api;
+        self
+    }
+
+    /// Clones `full_name` (`owner/name`) from GitHub with the saved
+    /// sign-in, unless it was cloned before, and lists it like a
+    /// checkout. Blocks for the clone.
+    pub fn clone_github(&self, full_name: &str) -> anyhow::Result<Repo> {
+        let token = github::Token::load(&self.config.credentials)
+            .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
+        let (owner, name) = full_name
+            .split_once('/')
+            .filter(|(owner, name)| {
+                [owner, name].iter().all(|part| {
+                    !part.is_empty()
+                        && !part.starts_with('.')
+                        && !part.contains('/')
+                })
+            })
+            .ok_or_else(|| anyhow::anyhow!("{full_name} is not owner/name"))?;
+        let dir = self.config.repos.join("github").join(owner).join(name);
+        if !dir.exists() {
+            tau_vcs::clone_bare(
+                &self.github.clone_url(full_name),
+                Some(&token.token),
+                &dir,
+            )?;
+        }
+        self.add_repo(&dir.to_string_lossy())
     }
 
     /// Stops listing a repository. Its project and runs stay.
@@ -1176,6 +1212,7 @@ impl Host {
         for slot in slots {
             refresh_when_imported(&host, &slot, workspace, cx);
         }
+        github::restore(workspace, &host.config.credentials, &host.github, cx);
         let handler = host.clone();
         // A sign-in from the Models screen changes what new runs use.
         let connected: accounts::Connected = {
@@ -1205,6 +1242,12 @@ impl Host {
                     &handler.config.model,
                     &connected,
                     cx,
+                ) || github::handle(
+                    event,
+                    &workspace,
+                    &handler.config.credentials,
+                    &handler.github,
+                    cx,
                 ) {
                     return;
                 }
@@ -1232,10 +1275,10 @@ impl Host {
                         )
                     }),
                 },
-                WorkspaceEvent::GitHubSignIn
-                | WorkspaceEvent::GitHubCheck
-                | WorkspaceEvent::GitHubToken { .. } => {
-                    github_unavailable(&workspace, cx)
+                WorkspaceEvent::CloneRepos { repos } => {
+                    for name in repos {
+                        clone_into_tau(&handler, name, &workspace, cx);
+                    }
                 }
                 WorkspaceEvent::NewRun {
                     prompt,
@@ -1609,8 +1652,8 @@ fn started(created_at: &str) -> String {
 /// saved, `ready` gets the new [`Access`] to build a [`Host`] from, and
 /// the host handles sign-ins from then on.
 ///
-/// GitHub needs tau's GitHub App, which does not exist yet, so GitHub
-/// sign-ins answer with an error and onboarding starts at the model.
+/// GitHub sign-ins work before a model is connected, so onboarding can
+/// start with them.
 pub fn onboard(
     workspace: &Entity<Workspace>,
     model: String,
@@ -1626,42 +1669,79 @@ pub fn onboard(
             ready(access, cx)
         })
     };
+    let api = github::Api::default();
+    github::restore(workspace, &credentials, &api, cx);
     cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
-        if done.get()
-            || accounts::handle_sign_in(
-                event,
-                &workspace,
-                &credentials,
-                &model,
-                &connected,
-                cx,
-            )
-        {
+        // Once a host runs, it answers.
+        if done.get() {
             return;
         }
-        if matches!(
+        let _ = accounts::handle_sign_in(
             event,
-            WorkspaceEvent::GitHubSignIn
-                | WorkspaceEvent::GitHubCheck
-                | WorkspaceEvent::GitHubToken { .. }
-        ) {
-            github_unavailable(&workspace, cx);
-        }
+            &workspace,
+            &credentials,
+            &model,
+            &connected,
+            cx,
+        ) || github::handle(event, &workspace, &credentials, &api, cx);
     })
     .detach();
 }
 
-fn github_unavailable(workspace: &Entity<Workspace>, cx: &mut App) {
+/// Clones a GitHub repository on the host's runtime, reporting how it
+/// goes to onboarding's list, and adds it to the sidebar once done.
+fn clone_into_tau(
+    host: &Arc<Host>,
+    name: &str,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let report = |state| {
+        SetupUpdate::Clone(RepoClone {
+            name: name.to_owned(),
+            state,
+        })
+    };
     workspace.update(cx, |ws, cx| {
         ws.update_setup(
-            SetupUpdate::GitHub(GitHub::Failed(
-                "tau cannot sign in to GitHub yet: it needs its GitHub App. \
-                 Connect a model to start."
-                    .into(),
-            )),
+            report(CloneState::Cloning {
+                share: 0.3,
+                detail: "fetching from GitHub".into(),
+            }),
             cx,
         )
     });
+    let job = {
+        let (cloner, name) = (host.clone(), name.to_owned());
+        host.runtime
+            .spawn_blocking(move || cloner.clone_github(&name))
+    };
+    let (host, name) = (host.clone(), name.to_owned());
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let cloned = match job.await {
+            Ok(result) => result.map_err(|error| format!("{error:#}")),
+            Err(error) => Err(error.to_string()),
+        };
+        let Some(workspace) = workspace.upgrade() else {
+            return;
+        };
+        let _ = cx.update(|cx| {
+            let state = match cloned {
+                Ok(repo) => {
+                    if let Some(slot) = host.slot(&repo.name) {
+                        refresh_when_imported(&host, &slot, &workspace, cx);
+                    }
+                    workspace.update(cx, |ws, cx| ws.add_repo(repo, cx));
+                    CloneState::Ready
+                }
+                Err(error) => CloneState::Failed(error),
+            };
+            let update = SetupUpdate::Clone(RepoClone { name, state });
+            workspace.update(cx, |ws, cx| ws.update_setup(update, cx));
+        });
+    })
+    .detach();
 }
 
 /// A short run title from the prompt: its first words.

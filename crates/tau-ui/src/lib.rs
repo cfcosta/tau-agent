@@ -43,6 +43,7 @@ pub mod accounts;
 pub mod assets;
 pub mod catalog;
 pub mod demo;
+pub mod github;
 pub mod host;
 pub mod input;
 pub mod models;

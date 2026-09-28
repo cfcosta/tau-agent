@@ -290,7 +290,8 @@ fn welcome(
                         .typeset(Type::SMALL)
                         .text_color(t.dim)
                         .child("Takes about a minute."),
-                ),
+                )
+                .child(skip_or_back(ws, Type::SMALL, t, cx)),
         )
         .child(
             div()
@@ -505,7 +506,8 @@ fn github(
                 .on_click(cx.listener(|ws, _, _, cx| {
                     ws.navigate(Route::Setup(SetupStep::Token), cx)
                 })),
-        );
+        )
+        .child(skip_or_back(ws, Type::SMALL, t, cx));
 
     let rows = PERMISSIONS.iter().map(|(glyph, name, detail, level)| {
         div()
@@ -657,7 +659,37 @@ fn phone_github(
                     ws.navigate(Route::Setup(SetupStep::Token), cx)
                 })),
         )
+        .child(skip_or_back(ws, Type::BODY, t, cx))
         .into_any_element()
+}
+
+/// From onboarding, a way past GitHub to the model; from the app, the
+/// way back.
+fn skip_or_back(
+    ws: &Workspace,
+    style: Type,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let from_app = ws.setup_goal.is_some();
+    div()
+        .id("skip-github")
+        .child(text_link(
+            if from_app {
+                "Back"
+            } else {
+                "Skip GitHub for now"
+            },
+            style,
+            t,
+        ))
+        .on_click(cx.listener(move |ws, _, _, cx| {
+            if from_app {
+                ws.leave_setup(cx)
+            } else {
+                ws.navigate(Route::Setup(SetupStep::Model), cx)
+            }
+        }))
 }
 
 fn token(
@@ -900,13 +932,13 @@ fn model(
         .child(codex.flex_1().min_w(px(0.)))
         .child(api.flex_1().min_w(px(0.)));
     column(960., 6., compact)
-        .when(ws.reconnecting, |col| {
+        .when(ws.setup_goal.is_some(), |col| {
             col.child(
                 div().flex().child(
                     div()
                         .id("setup-back")
-                        .child(text_link("Back to Models", Type::SMALL, t))
-                        .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
+                        .child(text_link("Back", Type::SMALL, t))
+                        .on_click(cx.listener(|ws, _, _, cx| ws.leave_setup(cx))),
                 ),
             )
         })
@@ -1118,11 +1150,17 @@ fn repos(
                 )
                 .child(
                     div()
+                        .id("install-app")
                         .flex()
                         .justify_center()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.dim)
-                        .child("You can add more later from Settings."),
+                        .child(text_link(
+                            "Missing one? Give tau's GitHub App access to it",
+                            Type::CAPTION,
+                            t,
+                        ))
+                        .on_click(|_, _, cx| {
+                            cx.open_url(&crate::github::install_url())
+                        }),
                 ),
         );
     div()

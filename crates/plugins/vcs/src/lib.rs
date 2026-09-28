@@ -18,9 +18,11 @@
 //!
 //! The tools take change ids and commit ids, never revsets. Every tool
 //! snapshots the working copy first, so edits made with other tools are
-//! never lost, and the writing tools refuse immutable commits. Clone,
-//! fetch and push are left to the host.
+//! never lost, and the writing tools refuse immutable commits. Fetch and
+//! push are left to the host; [`clone_bare`] brings a remote repository
+//! in, over HTTPS, for [`Project::import`].
 
+mod clone;
 mod diff;
 mod ops;
 pub mod plugin;
@@ -30,6 +32,7 @@ mod session;
 pub mod tools;
 mod vcs;
 
+pub use clone::clone_bare;
 pub use diff::{ChangeKind, FileChange, MAX_DIFF_BYTES};
 pub use ops::{ChangeInfo, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT, TurnCommit};
 pub use plugin::VcsPlugin;
