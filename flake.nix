@@ -38,6 +38,75 @@
 
               rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
+              # tau-ui (GPUI) links xcb and xkbcommon, and loads Vulkan,
+              # Wayland and X11 at runtime.
+              guiLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (
+                with pkgs;
+                [
+                  fontconfig
+                  freetype
+                  libx11
+                  libxcb
+                  libxcursor
+                  libxi
+                  libxkbcommon
+                  libxrandr
+                  vulkan-loader
+                  wayland
+                ]
+              );
+
+              rustPlatform = pkgs.makeRustPlatform {
+                cargo = rust;
+                rustc = rust;
+              };
+
+              tau-ui = rustPlatform.buildRustPackage {
+                pname = "tau-ui";
+                version = "0.1.0";
+
+                src = pkgs.lib.fileset.toSource {
+                  root = ./.;
+                  fileset = pkgs.lib.fileset.unions [
+                    ./Cargo.toml
+                    ./Cargo.lock
+                    ./crates
+                  ];
+                };
+
+                cargoLock.lockFile = ./Cargo.lock;
+                cargoBuildFlags = [
+                  "--package"
+                  "tau-ui"
+                ];
+                cargoTestFlags = [
+                  "--package"
+                  "tau-ui"
+                ];
+
+                # The sqlx query metadata is committed; no database at build time.
+                SQLX_OFFLINE = "true";
+
+                nativeBuildInputs = [
+                  pkgs.pkg-config
+                  pkgs.makeWrapper
+                ];
+                buildInputs = guiLibs;
+
+                # GPUI opens Vulkan, Wayland and X11 with dlopen, so the
+                # binary needs them on its library path.
+                postFixup = ''
+                  wrapProgram $out/bin/tau-ui \
+                    --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibs}
+                '';
+
+                meta = {
+                  description = "A GPUI interface for tau agents";
+                  mainProgram = "tau-ui";
+                  platforms = pkgs.lib.platforms.linux;
+                };
+              };
+
               formatter =
                 (treefmt-nix.lib.evalModule pkgs {
                   projectRootFile = "flake.nix";
@@ -80,9 +149,11 @@
             {
               inherit
                 formatter
+                guiLibs
                 pkgs
                 rust
                 system
+                tau-ui
                 ;
             }
           )
@@ -91,32 +162,32 @@
     {
       formatter = forEachSupportedSystem ({ formatter, ... }: formatter);
 
+      packages = forEachSupportedSystem (
+        { pkgs, tau-ui, ... }:
+        pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          inherit tau-ui;
+          default = tau-ui;
+        }
+      );
+
+      apps = forEachSupportedSystem (
+        { pkgs, tau-ui, ... }:
+        pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          default = {
+            type = "app";
+            program = pkgs.lib.getExe tau-ui;
+          };
+        }
+      );
+
       devShells = forEachSupportedSystem (
         {
           pkgs,
           rust,
           formatter,
+          guiLibs,
           ...
         }:
-        let
-          # tau-ui (GPUI) links xcb and xkbcommon, and loads Vulkan,
-          # Wayland and X11 at runtime.
-          guiLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (
-            with pkgs;
-            [
-              fontconfig
-              freetype
-              libx11
-              libxcb
-              libxcursor
-              libxi
-              libxkbcommon
-              libxrandr
-              vulkan-loader
-              wayland
-            ]
-          );
-        in
         {
           default = pkgs.mkShell {
             name = "tau-agent";
