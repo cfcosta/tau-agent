@@ -53,6 +53,38 @@ pub fn clone_bare(
     cloned.with_context(|| format!("Cannot clone {url}"))
 }
 
+/// Fetches every branch and tag of `url` into the bare repository at
+/// `git_dir`, moving its branches to where the remote has them. A
+/// `token` answers the server's request for credentials, as for
+/// [`clone_bare`].
+#[allow(clippy::result_large_err)]
+pub(crate) fn fetch_into(
+    git_dir: &Path,
+    url: &str,
+    token: Option<&str>,
+) -> anyhow::Result<()> {
+    let _ = tokio_rustls::rustls::crypto::ring::default_provider()
+        .install_default();
+    let repo = gix::open(git_dir)
+        .with_context(|| format!("Cannot open {}", git_dir.display()))?;
+    let remote = repo.remote_at(url)?.with_refspecs(
+        ["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
+        gix::remote::Direction::Fetch,
+    )?;
+    let mut connection = remote.connect(gix::remote::Direction::Fetch)?;
+    if let Some(token) = token.map(str::to_owned) {
+        connection.set_credentials(move |action| match action {
+            Action::Get(context) => Ok(Some(answer(&token, context))),
+            Action::Store(_) | Action::Erase(_) => Ok(None),
+        });
+    }
+    connection
+        .prepare_fetch(gix::progress::Discard, Default::default())?
+        .receive(gix::progress::Discard, &AtomicBool::new(false))
+        .with_context(|| format!("Cannot fetch from {url}"))?;
+    Ok(())
+}
+
 fn answer(token: &str, context: Context) -> Outcome {
     Outcome {
         identity: Account {

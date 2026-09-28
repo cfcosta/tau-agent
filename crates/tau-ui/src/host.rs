@@ -194,6 +194,9 @@ struct Listed {
     /// Removed from tau: not listed, but its runs keep its name.
     #[serde(default)]
     hidden: bool,
+    /// Cloned from GitHub, as `owner/name`: updates fetch from there.
+    #[serde(default)]
+    github: Option<String>,
 }
 
 impl RepoList {
@@ -238,6 +241,7 @@ impl RepoList {
             name: name.clone(),
             path,
             hidden: false,
+            github: None,
         });
         name
     }
@@ -381,6 +385,10 @@ pub struct Host {
     list: Arc<Mutex<RepoList>>,
     /// The repository each run of this session works in.
     run_repos: Arc<Mutex<HashMap<RunId, String>>>,
+    /// Repositories taking in new commits now.
+    updating: Arc<Mutex<Vec<String>>>,
+    /// What the latest update found.
+    last_update: Arc<Mutex<Option<String>>>,
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
     /// The workspace each run of this session works in.
     workspaces: Arc<Mutex<HashMap<RunId, String>>>,
@@ -525,6 +533,8 @@ impl Host {
             home,
             list: Arc::new(Mutex::new(list)),
             run_repos: Arc::default(),
+            updating: Arc::default(),
+            last_update: Arc::default(),
             runs: Arc::default(),
             workspaces: Arc::default(),
             events,
@@ -649,7 +659,49 @@ impl Host {
                 &dir,
             )?;
         }
-        self.add_repo(&dir.to_string_lossy())
+        let repo = self.add_repo(&dir.to_string_lossy())?;
+        let mut list = self.list.lock().expect("not poisoned");
+        if let Some(listed) = list
+            .repos
+            .iter_mut()
+            .find(|listed| listed.name == repo.name)
+        {
+            listed.github = Some(full_name.to_owned());
+        }
+        list.save(&self.config.repo_list)?;
+        Ok(repo)
+    }
+
+    /// Brings new commits into a repository's project: from GitHub for
+    /// one cloned from there, else from its checkout. New runs start
+    /// from the new trunk; runs going on keep their code. Blocks.
+    pub fn update_repo(&self, name: &str) -> anyhow::Result<tau_vcs::Updated> {
+        let slot = self
+            .slot(name)
+            .ok_or_else(|| anyhow::anyhow!("No repository {name}"))?;
+        let project = slot.project.wait().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Runs in {name} work in its checkout, which is always current"
+            )
+        })?;
+        let github = self
+            .list
+            .lock()
+            .expect("not poisoned")
+            .repos
+            .iter()
+            .find(|listed| listed.name == name)
+            .and_then(|listed| listed.github.clone());
+        match github {
+            Some(full_name) => {
+                let token = github::Token::load(&self.config.credentials);
+                project.update(tau_vcs::UpdateFrom::Remote {
+                    url: &self.github.clone_url(&full_name),
+                    token: token.as_ref().map(|token| token.token.as_str()),
+                })
+            }
+            None => project.update(tau_vcs::UpdateFrom::Checkout(&slot.path)),
+        }
     }
 
     /// Stops listing a repository. Its project and runs stay.
@@ -748,8 +800,13 @@ impl Host {
         let importing = slots.iter().find(|slot| {
             matches!(slot.project.peek(), ProjectState::Importing)
         });
+        let updating =
+            self.updating.lock().expect("not poisoned").first().cloned();
         let project = match (importing, state) {
             (Some(slot), _) => ProjectStatus::Importing(slot.name.clone()),
+            (None, _) if updating.is_some() => {
+                ProjectStatus::Updating(updating.unwrap_or_default())
+            }
             (None, ProjectState::Ready(_)) => {
                 ProjectStatus::Ready(home.name.clone())
             }
@@ -786,6 +843,7 @@ impl Host {
             },
             pull_requests: false,
             project,
+            update: self.last_update.lock().expect("not poisoned").clone(),
             models: self.models(),
         }
     }
@@ -1273,6 +1331,8 @@ impl Host {
         let slots = host.repos.lock().expect("not poisoned").clone();
         for slot in slots {
             refresh_when_imported(&host, &slot, workspace, cx);
+            // What changed while tau was closed comes in, quietly.
+            update_in_background(&host, &slot.name, workspace, false, cx);
         }
         github::restore(workspace, &host.config.credentials, &host.github, cx);
         let handler = host.clone();
@@ -1337,6 +1397,9 @@ impl Host {
                         )
                     }),
                 },
+                WorkspaceEvent::UpdateRepo { repo } => {
+                    update_in_background(&handler, repo, &workspace, true, cx)
+                }
                 WorkspaceEvent::CloneRepos { repos } => {
                     for name in repos {
                         clone_into_tau(&handler, name, &workspace, cx);
@@ -1481,6 +1544,61 @@ impl Host {
         })
         .detach();
     }
+}
+
+/// Updates repository `name` off the UI thread, saying so in the status
+/// bar. An update the user asked for says what went wrong in a dialog;
+/// one at startup only in the status bar.
+fn update_in_background(
+    host: &Arc<Host>,
+    name: &str,
+    workspace: &Entity<Workspace>,
+    asked: bool,
+    cx: &mut App,
+) {
+    {
+        let mut updating = host.updating.lock().expect("not poisoned");
+        if updating.iter().any(|repo| repo == name) {
+            return;
+        }
+        updating.push(name.to_owned());
+    }
+    let catalog = host.catalog();
+    workspace.update(cx, |ws, cx| ws.set_catalog(catalog, cx));
+    let job = {
+        let (updater, name) = (host.clone(), name.to_owned());
+        host.runtime
+            .spawn_blocking(move || updater.update_repo(&name))
+    };
+    let (host, name) = (host.clone(), name.to_owned());
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let result = match job.await {
+            Ok(result) => result.map_err(|error| format!("{error:#}")),
+            Err(error) => Err(error.to_string()),
+        };
+        host.updating
+            .lock()
+            .expect("not poisoned")
+            .retain(|repo| *repo != name);
+        let summary = match &result {
+            Ok(updated) if updated.changed() => format!(
+                "{name} updated to {}",
+                updated.after.get(..7).unwrap_or(&updated.after)
+            ),
+            Ok(_) => format!("{name} is up to date"),
+            Err(_) => format!("{name} was not updated"),
+        };
+        *host.last_update.lock().expect("not poisoned") = Some(summary);
+        let catalog = host.catalog();
+        let _ = workspace.update(cx, |ws, cx| {
+            ws.set_catalog(catalog, cx);
+            if let (true, Err(error)) = (asked, result) {
+                ws.show_alert(format!("Could not update {name}"), error, cx);
+            }
+        });
+    })
+    .detach();
 }
 
 /// Refreshes the workspace's catalog once `slot` is imported, if it is

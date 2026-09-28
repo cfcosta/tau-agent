@@ -544,6 +544,36 @@ fn github_repositories_clone_into_tau() {
     assert!(!project.trunk().unwrap().is_empty());
     // Cloning it again lists the same repository, without fetching.
     assert_eq!(host.clone_github("cfcosta/hello").unwrap().name, "hello");
+
+    // New commits on GitHub come in with an update.
+    std::fs::write(src.join("NEW.md"), "new\n").unwrap();
+    git(&src, &["add", "NEW.md"]);
+    git(&src, &["commit", "--quiet", "-m", "second"]);
+    let updated = host.update_repo("hello").unwrap();
+    assert!(updated.changed());
+    assert_eq!(project.trunk().unwrap(), updated.after);
+    assert!(!host.update_repo("hello").unwrap().changed());
+}
+
+#[test]
+fn a_checkout_updates_from_itself() {
+    let (dir, data) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    git(dir.path(), &["init", "--quiet"]);
+    std::fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+    git(dir.path(), &["add", "README.md"]);
+    git(dir.path(), &["commit", "--quiet", "-m", "first"]);
+    let (host, _events) =
+        Host::new(config_on(dir.path(), data.path())).unwrap();
+    let project = host.project().expect("the checkout imports");
+    let before = project.trunk().unwrap();
+    std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+    git(dir.path(), &["add", "b.txt"]);
+    git(dir.path(), &["commit", "--quiet", "-m", "second"]);
+    let updated = host.update_repo(host.home()).unwrap();
+    assert_eq!(updated.before, before);
+    assert!(updated.changed());
+    assert!(host.update_repo("no-such-repo").is_err());
 }
 
 #[test]

@@ -14,6 +14,7 @@ use tau_vcs::{
     Link,
     Project,
     RunWorkspace,
+    UpdateFrom,
     clone_bare,
     run_workspace::PLUGIN,
 };
@@ -120,6 +121,76 @@ fn clones_over_https() {
     )
     .unwrap();
     assert!(!project.trunk().unwrap().is_empty());
+    let updated = project
+        .update(UpdateFrom::Remote {
+            url: "https://github.com/octocat/Hello-World.git",
+            token: None,
+        })
+        .unwrap();
+    assert!(!updated.changed(), "Hello-World does not change");
+}
+
+/// Adds a commit on `main` in `dir`, and returns its id.
+fn commit(dir: &Path, file: &str) -> String {
+    std::fs::write(dir.join(file), "more\n").unwrap();
+    git(dir, &["add", file]);
+    git(dir, &["commit", "--quiet", "-m", file]);
+    git(dir, &["rev-parse", "HEAD"])
+}
+
+#[test]
+fn a_project_updates_from_its_checkout() {
+    let src = tempfile::tempdir().unwrap();
+    let first = source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    // A run works on the old trunk meanwhile.
+    project.add_workspace("run", &first).unwrap();
+
+    let second = commit(src.path(), "b.txt");
+    // Packed objects come along too.
+    git(src.path(), &["gc", "--quiet"]);
+    let updated = project.update(UpdateFrom::Checkout(src.path())).unwrap();
+    assert!(updated.changed());
+    assert_eq!((updated.before, updated.after), (first, second.clone()));
+    assert_eq!(project.trunk().unwrap(), second);
+    let run = project.add_workspace("after", &second).unwrap();
+    assert!(run.root().join("b.txt").exists());
+    assert!(project.workspace_dir("run").join("README.md").exists());
+
+    // Nothing new: nothing changes.
+    let again = project.update(UpdateFrom::Checkout(src.path())).unwrap();
+    assert!(!again.changed());
+}
+
+#[test]
+fn a_clone_updates_from_its_remote() {
+    let src = tempfile::tempdir().unwrap();
+    source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let bare = home.path().join("owner/repo");
+    let url = format!("file://{}", src.path().display());
+    clone_bare(&url, None, &bare).unwrap();
+    let project = Project::import(
+        bare.to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    let second = commit(src.path(), "b.txt");
+    let updated = project
+        .update(UpdateFrom::Remote {
+            url: &url,
+            token: Some("unused"),
+        })
+        .unwrap();
+    assert!(updated.changed());
+    assert_eq!(project.trunk().unwrap(), second);
 }
 
 #[test]

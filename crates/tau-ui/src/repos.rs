@@ -254,6 +254,15 @@ impl Workspace {
         }
     }
 
+    /// Asks the host to bring in the repository's new commits.
+    pub fn update_repo(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.repo_menu = None;
+        cx.emit(WorkspaceEvent::UpdateRepo {
+            repo: name.to_owned(),
+        });
+        cx.notify();
+    }
+
     /// Opens the repository's checkout in the file manager.
     pub fn show_in_files(&mut self, name: &str, cx: &mut Context<Self>) {
         let path = self.repo_named(name).path.clone();

@@ -650,7 +650,8 @@ fn repo_menu(
             .child(label)
     };
     let owned = |name: &str| name.to_owned();
-    let (new, memory, rules, files, remove) = (
+    let (new, memory, rules, update, files, remove) = (
+        owned(name),
         owned(name),
         owned(name),
         owned(name),
@@ -687,6 +688,17 @@ fn repo_menu(
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.open_constitution(&rules, cx)
                 })),
+        )
+        .child(
+            entry(
+                "menu-update",
+                Icon::Arrow,
+                "Fetch new commits".into(),
+                t.text,
+            )
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.update_repo(&update, cx)),
+            ),
         )
         .child(
             entry("menu-files", Icon::Folder, "Show in files".into(), t.text)
@@ -757,10 +769,16 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
             ProjectStatus::Ready(name) => {
                 Some(div().child(format!("{name} · a workspace per run")))
             }
+            ProjectStatus::Updating(name) => Some(
+                div()
+                    .text_color(t.accent)
+                    .child(format!("updating {name}…")),
+            ),
             ProjectStatus::Checkout(_) => {
                 Some(div().text_color(t.dim).child("runs in the checkout"))
             }
         })
+        .children(ws.catalog.update.clone().map(|text| div().child(text)))
         .child(div().flex_1())
         .child("Esc back")
         .child(format!(

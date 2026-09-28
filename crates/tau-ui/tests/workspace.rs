@@ -831,3 +831,18 @@ fn the_demo_goes_on_with_a_finished_run(cx: &mut TestAppContext) {
         assert!(view.last_text().unwrap().contains("and then?"));
     });
 }
+
+#[gpui::test]
+fn the_repository_menu_fetches_new_commits(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.toggle_repo_menu("docbert", cx);
+        ws.update_repo("docbert", cx);
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::UpdateRepo {
+            repo: "docbert".into()
+        })
+    );
+}

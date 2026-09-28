@@ -769,6 +769,15 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     ws.replay(id, steps, cx);
                 });
             }
+            // Updating finds nothing new.
+            WorkspaceEvent::UpdateRepo { repo } => {
+                let text = format!("{repo} is up to date");
+                workspace.update(cx, |ws, cx| {
+                    let mut catalog = ws.catalog().clone();
+                    catalog.update = Some(text);
+                    ws.set_catalog(catalog, cx);
+                });
+            }
             // A finished run goes on with one more turn.
             WorkspaceEvent::Resume { run, prompt, .. } => {
                 let (run, prompt) = (run.clone(), prompt.clone());
@@ -1024,6 +1033,7 @@ pub fn catalog() -> Catalog {
         },
         pull_requests: true,
         project: Default::default(),
+        update: None,
         models: models(),
     }
 }

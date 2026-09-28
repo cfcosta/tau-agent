@@ -140,6 +140,35 @@ impl Project {
         })
     }
 
+    /// Brings in what changed at the source since the project was made
+    /// or last updated: new commits, and branches where the source has
+    /// them now. Runs keep their workspaces and commits; new runs start
+    /// from the new trunk. Returns the trunk before and after.
+    pub fn update(&self, from: UpdateFrom<'_>) -> anyhow::Result<Updated> {
+        let before = self.trunk()?;
+        let git_dir = self.inner.root.join(GIT);
+        match from {
+            UpdateFrom::Checkout(source) => update_git_store(source, &git_dir)?,
+            UpdateFrom::Remote { url, token } => {
+                crate::clone::fetch_into(&git_dir, url, token)?
+            }
+        }
+        let repo = self.load()?;
+        let mut tx = repo.start_transaction();
+        let options = GitImportOptions {
+            abandon_unreachable_commits: false,
+            record_synthetic_predecessors: false,
+            remote_auto_track_bookmarks: HashMap::new(),
+        };
+        block_on(import_refs(tx.repo_mut(), &options))
+            .context("Cannot import the Git branches")?;
+        block_on(tx.commit("tau: update"))?;
+        Ok(Updated {
+            before,
+            after: self.trunk()?,
+        })
+    }
+
     /// The project's directory.
     pub fn root(&self) -> &Path {
         &self.inner.root
@@ -279,6 +308,31 @@ impl Project {
     }
 }
 
+/// Where [`Project::update`] brings changes from.
+#[derive(Debug, Clone, Copy)]
+pub enum UpdateFrom<'a> {
+    /// The local repository the project was imported from.
+    Checkout(&'a Path),
+    /// A remote, over HTTPS, with a token if it needs one.
+    Remote {
+        url: &'a str,
+        token: Option<&'a str>,
+    },
+}
+
+/// The trunk before and after an update, as full commit ids in hex.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Updated {
+    pub before: String,
+    pub after: String,
+}
+
+impl Updated {
+    pub fn changed(&self) -> bool {
+        self.before != self.after
+    }
+}
+
 /// One file's change between two commits.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct FileDiff {
@@ -380,6 +434,55 @@ fn copy_git_store(source: &Path, into: &Path) -> anyhow::Result<()> {
     copied.with_context(|| {
         format!("Cannot copy the Git store of {}", source.display())
     })
+}
+
+/// Brings a copy made by [`copy_git_store`] up to date with its source:
+/// the objects it lacks (object files never change, so the ones it has
+/// are kept), and the source's branches, tags and `HEAD`.
+fn update_git_store(source: &Path, into: &Path) -> anyhow::Result<()> {
+    let git_dir = git_dir(source).ok_or_else(|| {
+        anyhow!("{} is not a Git repository any more", source.display())
+    })?;
+    (|| -> std::io::Result<()> {
+        add_missing(&git_dir.join("objects"), &into.join("objects"))?;
+        // The source's branches and tags as they are: a loose ref left
+        // from before would win over the source's packed one.
+        for refs in ["heads", "tags"] {
+            let target = into.join("refs").join(refs);
+            if target.is_dir() {
+                std::fs::remove_dir_all(&target)?;
+            }
+            copy_tree(&git_dir.join("refs").join(refs), &target, false)?;
+        }
+        for file in ["packed-refs", "HEAD"] {
+            let from = git_dir.join(file);
+            if from.is_file() {
+                std::fs::copy(&from, into.join(file))?;
+            }
+        }
+        Ok(())
+    })()
+    .with_context(|| format!("Cannot update from {}", source.display()))
+}
+
+/// Links (or copies) the files under `from` that `into` lacks.
+fn add_missing(from: &Path, into: &Path) -> std::io::Result<()> {
+    if !from.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(into)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = into.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            add_missing(&entry.path(), &target)?;
+        } else if !target.exists()
+            && std::fs::hard_link(entry.path(), &target).is_err()
+        {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 /// The directory holding a repository's objects and refs: `.git` of a

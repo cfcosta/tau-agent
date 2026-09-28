@@ -133,6 +133,10 @@ pub enum WorkspaceEvent {
     HideRepo {
         repo: String,
     },
+    /// Bring new commits into the repository from its source.
+    UpdateRepo {
+        repo: String,
+    },
     /// Queue a message for a running run (`Run::steer`).
     Steer {
         run: RunId,

@@ -24,6 +24,9 @@ pub struct Catalog {
     pub pull_requests: bool,
     /// Where runs work.
     pub project: ProjectStatus,
+    /// What the latest update of a repository found, for the status bar:
+    /// `tau-agent is up to date`.
+    pub update: Option<String>,
     /// The models the picker offers, and the user's choices about them.
     pub models: crate::models::Models,
 }
@@ -78,6 +81,9 @@ pub enum ProjectStatus {
     Importing(String),
     /// Runs get a workspace each in the project named this.
     Ready(String),
+    /// The repository named this is taking in new commits from its
+    /// source.
+    Updating(String),
     /// Runs work in the checkout itself, for this reason.
     Checkout(String),
 }
