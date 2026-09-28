@@ -1,0 +1,30 @@
+[package]
+name = "tau-vcs"
+description = "Version-control tools for tau agents, backed by jj-lib."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+gix.workspace = true
+jj-lib.workspace = true
+pollster.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+tau-agent.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+tau-ai.workspace = true
+tau-store.workspace = true
+tau-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+tokio-util.workspace = true

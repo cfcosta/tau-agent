@@ -1,0 +1,549 @@
+//! What each tool does, on the workspace's thread
+//! (`docs/reference/vcs.md`, "Tools"). Each returns the text the model
+//! sees and the `details` value callers get.
+
+use std::collections::HashSet;
+
+use anyhow::{anyhow, bail};
+use futures_util::StreamExt as _;
+use jj_lib::{
+    backend::CommitId,
+    commit::Commit,
+    object_id::ObjectId as _,
+    op_store::OperationId,
+    operation::Operation,
+    ref_name::WorkspaceName,
+    repo::Repo,
+    repo_path::RepoPathBuf,
+    revset::ResolvedRevsetExpression,
+    rewrite::restore_tree,
+};
+use pollster::block_on;
+use serde::Serialize;
+use serde_json::{Value, json};
+
+use crate::{
+    diff::{self, FileChange},
+    session::{
+        self,
+        Snapshot,
+        TOOL_ATTRIBUTE,
+        UNDO_ATTRIBUTE,
+        is_immutable,
+        resolve,
+    },
+    vcs::Worker,
+};
+
+/// The default and largest `limit` of `vcs_log`.
+pub const DEFAULT_LOG_LIMIT: u32 = 10;
+pub const MAX_LOG_LIMIT: u32 = 100;
+
+/// A tool's result: text for the model, details for callers.
+pub(crate) struct Report {
+    pub text: String,
+    pub details: Value,
+}
+
+/// One change, as the tools describe it in `details`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChangeInfo {
+    /// The full change id, in jj's `k`-`z` letters.
+    pub change_id: String,
+    /// The full commit id, in hex.
+    pub commit_id: String,
+    pub description: String,
+    /// The change touches no files.
+    pub empty: bool,
+    pub conflict: bool,
+    pub immutable: bool,
+    /// The change is this workspace's working copy (`@`).
+    pub working_copy: bool,
+}
+
+impl ChangeInfo {
+    fn of(
+        repo: &dyn Repo,
+        commit: &Commit,
+        wc: &CommitId,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            change_id: commit.change_id().reverse_hex(),
+            commit_id: commit.id().hex(),
+            description: commit.description().to_owned(),
+            empty: block_on(commit.is_empty(repo))?,
+            conflict: commit.has_conflict(),
+            immutable: is_immutable(repo, commit.id())?,
+            working_copy: commit.id() == wc,
+        })
+    }
+
+    /// `<change> <commit> [flags] <first line>`, as `vcs_log` rows.
+    fn line(&self) -> String {
+        let mut line = format!(
+            "{} {}",
+            &self.change_id[..self.change_id.len().min(session::SHORT_ID)],
+            &self.commit_id[..self.commit_id.len().min(session::SHORT_ID)],
+        );
+        for (on, flag) in [
+            (self.working_copy, "@"),
+            (self.empty, "(empty)"),
+            (self.conflict, "(conflict)"),
+            (self.immutable, "(immutable)"),
+        ] {
+            if on {
+                line.push(' ');
+                line.push_str(flag);
+            }
+        }
+        line.push(' ');
+        line.push_str(first_line(&self.description));
+        line
+    }
+}
+
+fn first_line(description: &str) -> &str {
+    match description.lines().next().map(str::trim) {
+        Some(line) if !line.is_empty() => line,
+        _ => "(no description set)",
+    }
+}
+
+/// The paths the model gave, in the repo.
+fn repo_paths(
+    worker: &mut Worker,
+    paths: &[String],
+) -> anyhow::Result<Vec<RepoPathBuf>> {
+    let root = worker.root().to_owned();
+    let workspace = worker.workspace()?;
+    paths
+        .iter()
+        .map(|path| session::repo_path(workspace, &root, path))
+        .collect()
+}
+
+fn workspace_name(
+    worker: &mut Worker,
+) -> anyhow::Result<jj_lib::ref_name::WorkspaceNameBuf> {
+    Ok(worker.workspace()?.workspace_name().to_owned())
+}
+
+fn wc_line(snapshot: &Snapshot) -> anyhow::Result<(String, ChangeInfo)> {
+    let info =
+        ChangeInfo::of(snapshot.repo.as_ref(), &snapshot.wc, snapshot.wc.id())?;
+    Ok((format!("Working copy (@): {}", info.line()), info))
+}
+
+pub(crate) fn status(worker: &mut Worker) -> anyhow::Result<Report> {
+    let snapshot = session::snapshot(worker)?;
+    let repo = snapshot.repo.as_ref();
+    let wc = &snapshot.wc;
+    let (mut text, wc_info) = wc_line(&snapshot)?;
+    let parents = block_on(wc.parents())?;
+    let mut parent_infos = Vec::new();
+    for parent in &parents {
+        let info = ChangeInfo::of(repo, parent, wc.id())?;
+        text.push_str(&format!("\nParent (@-):      {}", info.line()));
+        parent_infos.push(info);
+    }
+
+    let parent_tree = block_on(wc.parent_tree(repo))?;
+    let changes = diff::changed_paths(
+        &parent_tree,
+        &wc.tree(),
+        &jj_lib::matchers::EverythingMatcher,
+    )?;
+    if changes.is_empty() {
+        text.push_str("\nThe working copy has no changes.");
+    } else {
+        text.push_str("\nWorking copy changes:");
+        for change in &changes {
+            text.push_str(&format!(
+                "\n{} {}",
+                change.kind.letter(),
+                change.path
+            ));
+        }
+    }
+
+    let conflicts: Vec<String> = wc
+        .tree()
+        .conflicts()
+        .map(|(path, _)| path.as_internal_file_string().to_owned())
+        .collect();
+    if !conflicts.is_empty() {
+        text.push_str(
+            "\nUnresolved conflicts (edit the markers out of these files):",
+        );
+        for path in &conflicts {
+            text.push_str(&format!("\n{path}"));
+        }
+    }
+    if !snapshot.untracked.is_empty() {
+        text.push_str("\nNot tracked:");
+        for path in &snapshot.untracked {
+            text.push_str(&format!("\n{path}"));
+        }
+    }
+    Ok(Report {
+        text,
+        details: json!({
+            "working_copy": wc_info,
+            "parents": parent_infos,
+            "changes": changes,
+            "conflicts": conflicts,
+            "untracked": snapshot.untracked,
+        }),
+    })
+}
+
+pub(crate) fn diff(
+    worker: &mut Worker,
+    change: Option<String>,
+    paths: Vec<String>,
+) -> anyhow::Result<Report> {
+    let paths = repo_paths(worker, &paths)?;
+    let settings = worker.workspace()?.settings().clone();
+    let snapshot = session::snapshot(worker)?;
+    let repo = snapshot.repo.as_ref();
+    let commit = match &change {
+        Some(rev) => resolve(repo, rev)?,
+        None => snapshot.wc.clone(),
+    };
+    let parent_tree = block_on(commit.parent_tree(repo))?;
+    let matcher = session::matcher(paths);
+    let (text, files) = diff::unified(
+        repo,
+        &settings,
+        &parent_tree,
+        &commit.tree(),
+        matcher.as_ref(),
+    )?;
+    let info = ChangeInfo::of(repo, &commit, snapshot.wc.id())?;
+    let (text, truncated) = if text.is_empty() {
+        (format!("No changes in {}.", info.line()), false)
+    } else {
+        diff::truncate(text)
+    };
+    Ok(Report {
+        text,
+        details: json!({
+            "change": info,
+            "files": files,
+            "truncated": truncated,
+        }),
+    })
+}
+
+pub(crate) fn log(worker: &mut Worker, limit: u32) -> anyhow::Result<Report> {
+    let limit = limit.clamp(1, MAX_LOG_LIMIT) as usize;
+    let snapshot = session::snapshot(worker)?;
+    let repo = snapshot.repo.as_ref();
+    let expression = ResolvedRevsetExpression::commit(snapshot.wc.id().clone())
+        .ancestors()
+        .minus(&ResolvedRevsetExpression::root());
+    let revset = expression.evaluate(repo)?;
+    let ids: Vec<CommitId> =
+        block_on(revset.stream().take(limit + 1).collect::<Vec<_>>())
+            .into_iter()
+            .collect::<Result<_, _>>()?;
+    let more = ids.len() > limit;
+    let mut rows = Vec::new();
+    let mut infos = Vec::new();
+    for id in ids.iter().take(limit) {
+        let commit = repo.store().get_commit(id)?;
+        let info = ChangeInfo::of(repo, &commit, snapshot.wc.id())?;
+        rows.push(info.line());
+        infos.push(info);
+    }
+    let mut text = if rows.is_empty() {
+        "No changes yet.".to_owned()
+    } else {
+        rows.join("\n")
+    };
+    if more {
+        text.push_str(&format!(
+            "\n\n[Showing the newest {limit} changes. Use limit={} for more]",
+            (limit * 2).min(MAX_LOG_LIMIT as usize)
+        ));
+    }
+    Ok(Report {
+        text,
+        details: json!({ "changes": infos, "more": more }),
+    })
+}
+
+pub(crate) fn show(
+    worker: &mut Worker,
+    change: String,
+) -> anyhow::Result<Report> {
+    let settings = worker.workspace()?.settings().clone();
+    let snapshot = session::snapshot(worker)?;
+    let repo = snapshot.repo.as_ref();
+    let commit = resolve(repo, &change)?;
+    let info = ChangeInfo::of(repo, &commit, snapshot.wc.id())?;
+    let author = commit.author();
+    let mut text = format!(
+        "Change ID: {}\nCommit ID: {}\nAuthor: {} <{}>",
+        info.change_id, info.commit_id, author.name, author.email
+    );
+    let mut parents = Vec::new();
+    for parent in block_on(commit.parents())? {
+        let parent = ChangeInfo::of(repo, &parent, snapshot.wc.id())?;
+        text.push_str(&format!("\nParent: {}", parent.line()));
+        parents.push(parent);
+    }
+    let flags: Vec<&str> = [
+        (info.working_copy, "working copy (@)"),
+        (info.empty, "empty"),
+        (info.conflict, "conflict"),
+        (info.immutable, "immutable"),
+    ]
+    .into_iter()
+    .filter_map(|(on, flag)| on.then_some(flag))
+    .collect();
+    if !flags.is_empty() {
+        text.push_str(&format!("\nFlags: {}", flags.join(", ")));
+    }
+    text.push_str("\n\n");
+    if commit.description().trim().is_empty() {
+        text.push_str("    (no description set)\n");
+    } else {
+        for line in commit.description().trim_end().lines() {
+            text.push_str(&format!("    {line}\n"));
+        }
+    }
+    let parent_tree = block_on(commit.parent_tree(repo))?;
+    let (diff_text, files) = diff::unified(
+        repo,
+        &settings,
+        &parent_tree,
+        &commit.tree(),
+        &jj_lib::matchers::EverythingMatcher,
+    )?;
+    let mut truncated = false;
+    if !diff_text.is_empty() {
+        let (diff_text, cut) = diff::truncate(diff_text);
+        truncated = cut;
+        text.push('\n');
+        text.push_str(&diff_text);
+    }
+    Ok(Report {
+        text: text.trim_end().to_owned(),
+        details: json!({
+            "change": info,
+            "parents": parents,
+            "author": { "name": author.name, "email": author.email },
+            "files": files,
+            "truncated": truncated,
+        }),
+    })
+}
+
+/// A description as jj stores it: trailing whitespace trimmed, and one
+/// final newline unless empty.
+fn description(message: &str) -> String {
+    let trimmed = message.trim_end();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("{trimmed}\n")
+    }
+}
+
+pub(crate) fn describe(
+    worker: &mut Worker,
+    message: String,
+) -> anyhow::Result<Report> {
+    let (snapshot, ()) = session::mutate(worker, "describe", |tx, wc| {
+        block_on(
+            tx.repo_mut()
+                .rewrite_commit(wc)
+                .set_description(description(&message))
+                .write(),
+        )?;
+        Ok(())
+    })?;
+    let (line, info) = wc_line(&snapshot)?;
+    Ok(Report {
+        text: format!("Described the working copy.\n{line}"),
+        details: json!({ "working_copy": info }),
+    })
+}
+
+pub(crate) fn commit(
+    worker: &mut Worker,
+    message: String,
+) -> anyhow::Result<Report> {
+    if message.trim().is_empty() {
+        bail!("The commit message must not be empty");
+    }
+    let name = workspace_name(worker)?;
+    let (snapshot, committed) = session::mutate(worker, "commit", |tx, wc| {
+        let committed = block_on(
+            tx.repo_mut()
+                .rewrite_commit(wc)
+                .set_description(description(&message))
+                .write(),
+        )?;
+        block_on(tx.repo_mut().rebase_descendants())?;
+        block_on(tx.repo_mut().check_out(name, &committed))?;
+        Ok(committed)
+    })?;
+    let repo = snapshot.repo.as_ref();
+    let committed = ChangeInfo::of(repo, &committed, snapshot.wc.id())?;
+    let (line, info) = wc_line(&snapshot)?;
+    Ok(Report {
+        text: format!("Committed change {}\n{line}", committed.line()),
+        details: json!({ "committed": committed, "working_copy": info }),
+    })
+}
+
+pub(crate) fn new(
+    worker: &mut Worker,
+    message: Option<String>,
+) -> anyhow::Result<Report> {
+    let name = workspace_name(worker)?;
+    let (snapshot, ()) = session::mutate(worker, "new", |tx, wc| {
+        let child = block_on(
+            tx.repo_mut()
+                .new_commit(vec![wc.id().clone()], wc.tree())
+                .set_description(description(message.as_deref().unwrap_or("")))
+                .write(),
+        )?;
+        block_on(tx.repo_mut().edit(name, &child))?;
+        Ok(())
+    })?;
+    let (line, info) = wc_line(&snapshot)?;
+    Ok(Report {
+        text: format!("Started a new change.\n{line}"),
+        details: json!({ "working_copy": info }),
+    })
+}
+
+pub(crate) fn restore(
+    worker: &mut Worker,
+    paths: Vec<String>,
+    from: Option<String>,
+) -> anyhow::Result<Report> {
+    if paths.is_empty() {
+        bail!("Name at least one path to restore (\".\" restores everything)");
+    }
+    let paths = repo_paths(worker, &paths)?;
+    let matcher = session::matcher(paths);
+    let (snapshot, restored) = session::mutate(worker, "restore", |tx, wc| {
+        let source = match &from {
+            Some(rev) => resolve(tx.repo(), rev)?.tree(),
+            None => block_on(wc.parent_tree(tx.repo()))?,
+        };
+        let new_tree = block_on(restore_tree(
+            &source,
+            &wc.tree(),
+            "source".to_owned(),
+            "working copy".to_owned(),
+            matcher.as_ref(),
+        ))?;
+        let restored =
+            diff::changed_paths(&wc.tree(), &new_tree, matcher.as_ref())?;
+        if !restored.is_empty() {
+            block_on(
+                tx.repo_mut().rewrite_commit(wc).set_tree(new_tree).write(),
+            )?;
+        }
+        Ok(restored)
+    })?;
+    let (line, info) = wc_line(&snapshot)?;
+    let mut text = if restored.is_empty() {
+        "Nothing to restore: those paths already match.".to_owned()
+    } else {
+        let mut text = "Restored:".to_owned();
+        for FileChange { path, .. } in &restored {
+            text.push_str(&format!("\n{path}"));
+        }
+        text
+    };
+    text.push('\n');
+    text.push_str(&line);
+    Ok(Report {
+        text,
+        details: json!({ "restored": restored, "working_copy": info }),
+    })
+}
+
+pub(crate) fn undo(worker: &mut Worker) -> anyhow::Result<Report> {
+    let name = workspace_name(worker)?;
+    let (snapshot, undone) = session::mutate(worker, "undo", |tx, _wc| {
+        let base = tx.base_repo().clone();
+        let target = undoable(base.operation(), &name)?;
+        let parents = block_on(target.parents())?;
+        let [parent] = parents.as_slice() else {
+            bail!("The operation to undo is a merge; ask the user to undo it")
+        };
+        let bad = block_on(base.loader().load_at(&target))?;
+        let good = block_on(base.loader().load_at(parent))?;
+        block_on(tx.repo_mut().merge(&bad, &good))?;
+        tx.set_attribute(UNDO_ATTRIBUTE.to_owned(), target.id().hex());
+        Ok(target)
+    })?;
+    let metadata = undone.metadata();
+    let tool = metadata
+        .attributes
+        .get(TOOL_ATTRIBUTE)
+        .cloned()
+        .unwrap_or_default();
+    let mut id = undone.id().hex();
+    id.truncate(session::SHORT_ID);
+    let (line, info) = wc_line(&snapshot)?;
+    Ok(Report {
+        text: format!("Undid operation {id} (vcs_{tool}).\n{line}"),
+        details: json!({
+            "operation": undone.id().hex(),
+            "tool": tool,
+            "working_copy": info,
+        }),
+    })
+}
+
+/// The newest operation `vcs_undo` may undo: made by these tools in
+/// this workspace, skipping snapshots and operations already undone.
+fn undoable(
+    head: &Operation,
+    name: &WorkspaceName,
+) -> anyhow::Result<Operation> {
+    let mut undone: HashSet<OperationId> = HashSet::new();
+    let mut op = head.clone();
+    loop {
+        let parents = block_on(op.parents())?;
+        let [parent] = parents.as_slice() else {
+            if parents.is_empty() {
+                bail!("There is nothing to undo");
+            }
+            bail!(
+                "The operation log has concurrent operations here; ask the \
+                 user to undo from the operation log"
+            );
+        };
+        let metadata = op.metadata();
+        if undone.remove(op.id()) || metadata.is_snapshot {
+            op = parent.clone();
+            continue;
+        }
+        let ours = metadata.workspace_name.as_deref() == Some(name)
+            && metadata.attributes.contains_key(TOOL_ATTRIBUTE);
+        if !ours {
+            bail!(
+                "The last operation was not made by the vcs tools in this \
+                 workspace (\"{}\"); vcs_undo only undoes its own operations",
+                metadata.description
+            );
+        }
+        if let Some(target) = metadata.attributes.get(UNDO_ATTRIBUTE) {
+            let target = OperationId::try_from_hex(target)
+                .ok_or_else(|| anyhow!("Bad undo record on operation"))?;
+            undone.insert(target);
+            op = parent.clone();
+            continue;
+        }
+        return Ok(op);
+    }
+}

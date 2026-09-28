@@ -69,6 +69,7 @@ database is needed at build time: the sqlx query metadata is committed.
 | `tau-ai`      | The `OpenAi` client, messages, models and pricing, the `Llm` trait              |
 | `tau-store`   | `Store`: SQLite storage for runs, transcripts and costs                         |
 | `tau-tools`   | Optional coding tools, all rooted at one directory                              |
+| `tau-vcs`     | Optional version-control tools on one jj workspace, backed by jj-lib            |
 | `tau-testing` | `ScriptedModel` and `block_on` for deterministic tests                          |
 
 ## Core concepts

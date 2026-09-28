@@ -1,0 +1,251 @@
+# Version-control tools (`tau-vcs`, optional)
+
+- Status: implemented in `crates/plugins/vcs`, on `jj-lib` 0.45.1.
+- Design study: [jj-lib.md](../research/jj-lib.md). This crate is the
+  study's read path and write tools on one workspace. Workspaces per
+  run, turn snapshots and link records are not built yet.
+
+The model reaches version control only through these tools. It never
+runs `jj` or `git` in a shell. The tools work on a jj repository, so
+there is no staging area, and file edits made with `write`, `edit` or
+`bash` are recorded when the next vcs tool snapshots the working copy.
+
+## Setup
+
+```rust
+use tau_vcs::{Identity, Vcs, VcsPlugin};
+
+// An existing jj workspace:
+let vcs = Vcs::open("/path/to/workspace", Identity::default())?;
+// Or a new repository with an internal Git store (`jj git init`):
+let vcs = Vcs::init("/path/to/new", Identity::default())?;
+
+let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
+```
+
+- `Identity` is the author and committer of the commits and operations
+  the tools write. The default is `tau <tau@localhost>`.
+- `Vcs::open` and `Vcs::init` block while the workspace loads. Call them
+  when you set up the agent, not inside a tool.
+- `Vcs::init` makes a non-colocated repository: the Git store is in
+  `.jj/repo/store/git`, and there is no `.git` beside `.jj`.
+- `VcsPlugin::new(vcs)` adds all nine tools. `read_only()` keeps only
+  `vcs_status`, `vcs_diff`, `vcs_log` and `vcs_show`.
+- The plugin keeps no state per run. Every run of the agent works in
+  the one workspace that `vcs` opened.
+- To use the coding tools on the same files, root `CodingTools` at the
+  workspace directory.
+
+## Threading
+
+- jj-lib's futures are not `Send`. Much of their work is blocking file
+  and object I/O. So each `Vcs` has one thread that owns the workspace
+  and runs every job in order. The thread drives jj-lib's futures with
+  `pollster`.
+- A tool future only sends a job and awaits the reply on a oneshot
+  channel. It never holds jj-lib types across an await.
+- A panic in jj-lib is caught on the thread. The tool returns
+  `jj-lib panicked: <message>` as its error, and the thread loads the
+  workspace again before the next job.
+- Clones of a `Vcs` share the thread. The thread stops when the last
+  clone is dropped.
+- All tools are `ExecutionMode::Sequential`. A batch of calls runs in
+  order, so `vcs_commit` and then `vcs_log` in one turn see each other.
+
+## Scoping rules
+
+- **Ids only.** Arguments that name a change take a change id or a
+  commit id, or a unique prefix of either:
+  - change ids use jj's letters `k` to `z`;
+  - commit ids use hex digits.
+  - Revsets, `@`, bookmark names and tags are refused. A model cannot
+    write a query that is arbitrarily expensive.
+- **Snapshot first.** Every tool snapshots the working copy before it
+  reads or writes. The snapshot is its own operation, marked as a
+  snapshot, and only happens when files changed.
+- **The working copy only.** The write tools change only the
+  working-copy change (`@`) of this workspace, and they only add new
+  changes on top of it.
+- **Immutable commits are refused.** A commit is immutable if it is the
+  root commit, or an ancestor of a tag or of a remote bookmark (all
+  remotes except the internal `git` one). A write tool fails with
+  `The working-copy commit <id> is immutable` when `@` is one of them.
+- **Tagged operations.** Each write is one operation, described as
+  `tau vcs: <tool>`. It carries the workspace name and the operation
+  attribute `tau.vcs.tool = <tool>`. `vcs_undo` uses these tags.
+- **Untracked large files.** New files larger than 1 MiB
+  (`MAX_NEW_FILE_SIZE`, jj's default) stay untracked. `vcs_status`
+  lists them under `Not tracked:`.
+- **Stale working copies.** If another process rewrote this workspace's
+  commit, the tools fail with `The working copy is stale: ...` and ask
+  for the user to update the workspace. They do not update it
+  themselves.
+
+## Results
+
+Every tool returns compact text for the model and a JSON `details`
+value for callers. The model never sees `details`.
+
+A change appears in text as one line:
+
+```
+<change id, 12 letters> <commit id, 12 digits> [@] [(empty)] [(conflict)] [(immutable)] <first line of the description>
+```
+
+An empty description shows as `(no description set)`. In `details`,
+a change is a `ChangeInfo`:
+
+| Field          | Meaning                                     |
+| -------------- | ------------------------------------------- |
+| `change_id`    | full change id                              |
+| `commit_id`    | full commit id                              |
+| `description`  | full description, ending in a newline       |
+| `empty`        | the change touches no files                 |
+| `conflict`     | the change has unresolved conflicts         |
+| `immutable`    | see "Scoping rules"                         |
+| `working_copy` | the change is this workspace's working copy |
+
+A changed path is a `FileChange`:
+`{ "path": "src/lib.rs", "kind": "added" | "modified" | "removed" }`.
+
+## Read tools
+
+### vcs_status: `{}`
+
+- Text: the working-copy line, one `Parent (@-):` line for each parent,
+  then either `The working copy has no changes.` or
+  `Working copy changes:` with one `A`, `M` or `D` line for each path.
+  Then conflicted paths and untracked files, if there are any.
+- Details: `working_copy`, `parents`, `changes`, `conflicts` (paths),
+  `untracked`.
+- Conflicts are data. jj keeps them in commits, and the files hold
+  conflict markers that the model edits like any other text.
+
+### vcs_diff: `{ change?, paths? }`
+
+- `change` defaults to the working copy. The diff is against the
+  change's parent, or against the merge of its parents.
+- `paths` limits the diff to those files and directories. Each path is
+  relative to the workspace root. An absolute path must be inside the
+  workspace.
+- Text: Git-style unified diff with three lines of context. It includes
+  `new file mode`, `deleted file mode`, mode changes, and
+  `Binary files ... differ`. Conflicted files show jj's conflict
+  markers.
+- A change with no diff returns `No changes in <change line>.`
+- The output is cut to 50 KiB (`MAX_DIFF_BYTES`) at a line boundary,
+  with a note to pass `paths`.
+- Details: `change`, `files`, `truncated`.
+
+### vcs_log: `{ limit? }`
+
+- Lists the working copy and its ancestors, newest first, without the
+  root commit. There is one change line for each row.
+- `limit` defaults to 10 and is clamped to 1..=100. When there are more
+  changes, the text ends with
+  `[Showing the newest N changes. Use limit=M for more]`.
+- Details: `changes`, `more`.
+
+### vcs_show: `{ change }`
+
+- Text: `Change ID`, `Commit ID`, `Author`, one `Parent:` line for each
+  parent, then `Flags:` when any flag is set, then the full description
+  indented by four spaces, then the diff, as for `vcs_diff`.
+- Details: `change`, `parents`, `author` (`name`, `email`), `files`,
+  `truncated`.
+
+## Write tools
+
+### vcs_describe: `{ message }`
+
+- Replaces the working-copy change's description. The change id stays
+  the same.
+- Trailing whitespace is trimmed and one newline is added, as jj
+  stores descriptions. An empty message clears the description.
+
+### vcs_commit: `{ message }`
+
+- Does what `jj commit -m` does: describes the working-copy change, and
+  then starts a new empty change on top of it as the new `@`. Files do
+  not change.
+- An empty message is refused: `The commit message must not be empty`.
+- Details: `committed` and `working_copy`.
+
+### vcs_new: `{ message? }`
+
+- Starts a new empty change on top of the working copy, with an
+  optional description. The old change keeps its description. Files do
+  not change.
+
+### vcs_restore: `{ paths, from? }`
+
+- Makes `paths` in the working copy match `from`. By default `from` is
+  the working copy's parent. Files that `from` does not have are
+  deleted. Other paths are not changed.
+- At least one path is required. `.` restores everything.
+- The files on disk are updated. Details: `restored` (the paths that
+  changed) and `working_copy`.
+
+### vcs_undo: `{}`
+
+- Undoes the newest operation that these tools made in this workspace,
+  in the way that `jj undo` does. It merges the parent's view over the
+  current one, so file edits made since that operation are kept.
+- Snapshots are skipped, and so are operations that an earlier
+  `vcs_undo` already undid. Calling it again undoes the operation
+  before that one.
+- It refuses when the newest operation that is not a snapshot was not
+  made by these tools in this workspace. For example, the user's own
+  `jj` commands, another workspace, or the initial repository setup.
+  So a run never undoes work that it did not do.
+- The undo records `tau.vcs.undo = <operation id>` on its own
+  operation.
+- Details: `operation` (the id that was undone), `tool`,
+  `working_copy`.
+
+## Error strings
+
+In these messages, `<rev>` and `<path>` stand for the argument as the
+model gave it, and the real message puts it in backquotes.
+
+| Tool          | Condition                          | Message                                                                                         |
+| ------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
+| all           | cancelled before starting          | `Operation aborted`                                                                             |
+| all           | jj-lib panicked                    | `jj-lib panicked: <message>`                                                                    |
+| all           | stale working copy                 | `The working copy is stale: another process changed this workspace's commit. ...`               |
+| ids           | not an id                          | `<rev> is not a change id or a commit id. ... revsets are not accepted.`                        |
+| ids           | unknown change or commit           | `No change matches <rev>`, `No commit matches <rev>`                                            |
+| ids           | ambiguous prefix                   | `Change id prefix <rev> is ambiguous; give more of it` (or `Commit id prefix`)                  |
+| ids           | divergent change                   | `Change <rev> is divergent; pass a commit id instead`                                           |
+| ids           | abandoned change                   | `Change <rev> is hidden (abandoned)`                                                            |
+| paths         | absolute, outside the workspace    | `<path> is outside the repository`                                                              |
+| paths         | `..` or not a valid path           | `<path> is not a path inside the repository`                                                    |
+| write tools   | `@` is immutable                   | `The working-copy commit <id> is immutable`                                                     |
+| `vcs_commit`  | empty message                      | `The commit message must not be empty`                                                          |
+| `vcs_restore` | no paths                           | `Name at least one path to restore ("." restores everything)`                                   |
+| `vcs_undo`    | newest operation is not the tools' | `The last operation was not made by the vcs tools in this workspace ("<description>"); ...`     |
+| `vcs_undo`    | concurrent operations              | `The operation log has concurrent operations here; ask the user to undo from the operation log` |
+
+## Left to the host and the UI
+
+These operations change shared state, use the network, or throw work
+away. The model does not get them. The host calls jj-lib (or later
+`tau-vcs` APIs) for them when the user asks
+([jj-lib.md](../research/jj-lib.md), "Operations the user triggers from
+the UI"):
+
+- **Clone, fetch and push.** Adding a project from GitHub, updating
+  trunk, and pushing a run's bookmark. These spawn `git` and need
+  credentials.
+- **Pull requests.** Opening a PR after a push.
+- **Forking at a turn.** A new workspace whose working copy is a child
+  of the commit linked to an earlier turn.
+- **Workspaces per run, snapshots at turn end, link records.** These
+  are stage 3 of the study and are not built.
+- **Bookmarks, rebase, abandon and squash.** The study's
+  `vcs_abandon`, `vcs_squash`, `vcs_cat` and named revisions (`trunk`,
+  `fork-point`) are not built.
+- **Operation log.** Browsing it, restoring an arbitrary operation, and
+  updating a stale workspace.
+- **Guarding the shell.** A `before_tool` hook that blocks `git` and
+  `jj` in `bash` is not built.

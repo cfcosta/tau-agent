@@ -18,6 +18,9 @@ futures-util = { version = "0.3.34", default-features = false, features = [
   "std",
 ] }
 base64 = "0.23.1"
+# Only for `gix::hash::Kind`, which jj-lib's init takes; the version
+# jj-lib uses, so it adds nothing to the tree (tau-vcs).
+gix = { version = "0.87.1", default-features = false }
 globset = "0.4.20"
 grep-matcher = "0.1.9"
 grep-regex = "0.1.14"
@@ -32,7 +35,9 @@ image = { version = "0.25.10", default-features = false, features = [
   "png",
   "webp",
 ] }
+jj-lib = "=0.45.1"
 jsonschema = { version = "0.58.1", default-features = false }
+pollster = "1.0.1"
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = [
   "rustls-no-provider",
@@ -75,3 +80,4 @@ tau-ai = { path = "crates/tau-ai", version = "0.1.0" }
 tau-store = { path = "crates/tau-store", version = "0.1.0" }
 tau-testing = { path = "crates/tau-testing", version = "0.1.0" }
 tau-tools = { path = "crates/plugins/tools", version = "0.1.0" }
+tau-vcs = { path = "crates/plugins/vcs", version = "0.1.0" }
