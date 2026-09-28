@@ -332,6 +332,61 @@ fn backoff_fork() -> RunView {
     )
 }
 
+/// A fork the demo starts when asked: the run `from`, continued after
+/// `turn` on `prompt`, as a view to push and the script it plays.
+pub fn fork_run(
+    from: &RunView,
+    turn: u32,
+    prompt: &str,
+    id: RunId,
+) -> (RunView, Vec<Step>) {
+    let mut s = Script::for_run(id.clone());
+    s.turn = turn;
+    s.event(
+        300,
+        RunEvent::RunStart {
+            run: id.clone(),
+            parent: None,
+            agent: Arc::from("coder"),
+        },
+    );
+    s.turn();
+    s.say(&format!(
+        "Starting from turn {turn} of {}, with its code as it was then.",
+        from.title
+    ));
+    let (args, output) = edit(
+        "crates/tau-ai/src/retry.rs",
+        "attempt",
+        "-    self.base * attempt\n+    self.base * 2u32.pow(attempt.min(6))\n",
+    );
+    s.tool(400, "k1", "edit", args, output);
+    s.end_turn(41_000, 600, 0.021);
+    s.turn();
+    s.say(
+        "Done: the delay doubles with each attempt, up to 64 times the base.",
+    );
+    s.end_turn(42_000, 300, 0.019);
+    s.event(
+        200,
+        RunEvent::RunEnd {
+            run: id.clone(),
+            parent: None,
+            stop: StopReason::Stop,
+            cost: 0.04,
+        },
+    );
+    let mut view =
+        RunView::new(id, crate::host::title(prompt), "coder", "gpt-5.5")
+            .started("just now")
+            .with_origin(Origin::Fork {
+                from: from.id.clone(),
+                turn,
+            });
+    view.push_user(prompt);
+    (view, s.steps)
+}
+
 /// A demo screen by name, for `--open`.
 pub fn route(name: &str) -> Option<crate::route::Route> {
     use crate::route::Route;
@@ -592,6 +647,23 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
             }
             WorkspaceEvent::CreatePullRequest { run, .. } => {
                 later(vec![(1200, Answer::Pr(run.clone(), opened()))], cx)
+            }
+            WorkspaceEvent::Fork { run, turn, prompt } => {
+                use std::sync::atomic::{AtomicU32, Ordering};
+                static FORKS: AtomicU32 = AtomicU32::new(0);
+                let n = FORKS.fetch_add(1, Ordering::Relaxed) + 1;
+                let id = RunId(Arc::from(format!("{}/fork-{n}", run.0)));
+                let (run, turn, prompt) = (run.clone(), *turn, prompt.clone());
+                workspace.update(cx, |ws, cx| {
+                    let Some(from) = ws.run(&run).cloned() else {
+                        return;
+                    };
+                    let turn = turn.unwrap_or(from.turn);
+                    let (view, steps) =
+                        fork_run(&from, turn, &prompt, id.clone());
+                    ws.push_run(view, cx);
+                    ws.replay(id, steps, cx);
+                });
             }
             WorkspaceEvent::CompareCode { main, fork } => later(
                 vec![(

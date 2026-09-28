@@ -232,7 +232,8 @@ pub struct Workspace {
     /// turns it off; scrolling back down turns it on.
     follow: bool,
     focus: FocusHandle,
-    replay: Option<Task<()>>,
+    /// Scripted runs playing, for demos. Several can play at once.
+    replays: Vec<Task<()>>,
     /// Draw the phone layout in a phone-sized frame, whatever the width.
     phone_preview: bool,
     /// Lay out at exactly this size, pinned to the top left: for
@@ -334,7 +335,7 @@ impl Workspace {
             scroll: ScrollHandle::new(),
             follow: true,
             focus: cx.focus_handle(),
-            replay: None,
+            replays: Vec::new(),
             phone_preview: false,
             frame: None,
             _subscriptions: subscriptions,
@@ -442,7 +443,7 @@ impl Workspace {
         steps: Vec<(Duration, RunUpdate)>,
         cx: &mut Context<Self>,
     ) {
-        self.replay = Some(cx.spawn(async move |this, cx| {
+        self.replays.push(cx.spawn(async move |this, cx| {
             for (wait, update) in steps {
                 if !wait.is_zero() {
                     cx.background_executor().timer(wait).await;

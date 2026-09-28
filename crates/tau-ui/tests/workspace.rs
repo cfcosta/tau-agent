@@ -225,3 +225,40 @@ fn forking_from_a_turn_sends_that_turn(cx: &mut TestAppContext) {
         assert!(!tau_ui::Workspace::can_fork_at(view, view.turn + 1));
     });
 }
+
+#[gpui::test]
+fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open(cx);
+    cx.update(|_, cx| demo::respond(&workspace, cx));
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        for (_, update) in demo::script() {
+            ws.update_run(&run, update, cx);
+        }
+    });
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.fork_from(&run, 2, window, cx);
+        ws.submit_prompt("double the delay instead".into(), cx);
+    });
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(30));
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        let fork = ws.current().expect("the fork is open");
+        assert_eq!(
+            fork.origin,
+            tau_ui::view::Origin::Fork {
+                from: run.clone(),
+                turn: 2
+            }
+        );
+        assert_eq!(fork.title, "double-the-delay-instead");
+        assert!(!fork.status.is_live(), "the fork played to its end");
+        assert!(fork.items.iter().any(|item| matches!(
+            item,
+            tau_ui::view::Item::TurnEnd { turn: 3 }
+        )));
+        let parent = ws.run(&run).unwrap();
+        assert!(parent.children.iter().any(|child| child.id == fork.id));
+    });
+}
