@@ -34,6 +34,9 @@ image = { version = "0.25.10", default-features = false, features = [
 ] }
 jsonschema = { version = "0.58.1", default-features = false }
 regex = "1.13.1"
+reqwest = { version = "0.13.5", default-features = false, features = [
+  "rustls-no-provider",
+] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 sqlx = { version = "0.9.0", default-features = false, features = [
@@ -66,6 +69,7 @@ tokio-util = { version = "0.7.19", default-features = false }
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
 tau-agent = { path = "crates/tau-agent", version = "0.1.0" }
 tau-compaction = { path = "crates/plugins/compaction", version = "0.1.0" }
+tau-jev = { path = "crates/plugins/jev", version = "0.1.0" }
 tau-ai = { path = "crates/tau-ai", version = "0.1.0" }
 tau-store = { path = "crates/tau-store", version = "0.1.0" }
 tau-testing = { path = "crates/tau-testing", version = "0.1.0" }
