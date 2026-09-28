@@ -117,20 +117,23 @@ impl std::fmt::Debug for Access {
 }
 
 impl Access {
-    /// Codex credentials if saved, else `OPENAI_API_KEY`, else a key
-    /// saved during onboarding.
+    /// What onboarding configured: the Codex sign-in if saved, else the
+    /// saved API key. The environment is never read, so tau runs on
+    /// what the user set up in it, not on whatever key a shell exports.
     pub fn detect() -> Option<Self> {
-        if let Some(path) =
-            CodexCredentials::default_path().filter(|path| path.exists())
-        {
+        Self::configured(CodexCredentials::default_path(), api_key_path())
+    }
+
+    /// [`Self::detect`], from these files.
+    pub fn configured(
+        codex: Option<PathBuf>,
+        api_key: Option<PathBuf>,
+    ) -> Option<Self> {
+        if let Some(path) = codex.filter(|path| path.exists()) {
             return Some(Self::Codex(path));
         }
-        std::env::var(tau_ai::client::API_KEY_VAR)
-            .ok()
-            .or_else(|| {
-                api_key_path()
-                    .and_then(|path| std::fs::read_to_string(path).ok())
-            })
+        api_key
+            .and_then(|path| std::fs::read_to_string(path).ok())
             .map(|key| key.trim().to_owned())
             .filter(|key| !key.is_empty())
             .map(Self::ApiKey)
@@ -1752,6 +1755,24 @@ pub fn title(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn access_comes_only_from_what_was_configured() {
+        let dir = std::env::temp_dir()
+            .join(format!("tau-access-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (codex, key) = (dir.join("codex.json"), dir.join("openai-key"));
+        let configured =
+            || Access::configured(Some(codex.clone()), Some(key.clone()));
+        assert_eq!(configured(), None);
+        std::fs::write(&key, "  \n").unwrap();
+        assert_eq!(configured(), None, "a blank key is no key");
+        std::fs::write(&key, "sk-saved\n").unwrap();
+        assert_eq!(configured(), Some(Access::ApiKey("sk-saved".into())));
+        std::fs::write(&codex, "{}").unwrap();
+        assert_eq!(configured(), Some(Access::Codex(codex.clone())));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn titles_come_from_the_first_words() {

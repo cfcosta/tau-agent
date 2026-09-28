@@ -866,8 +866,8 @@ fn model(
     let api = option(
         Icon::Key,
         "OpenAI API key",
-        "Pay per token on your OpenAI account. tau reads it from \
-         `OPENAI_API_KEY` or stores it here.",
+        "Pay per token on your OpenAI account. tau keeps the key in its \
+         config directory, readable only by you.",
         None,
         false,
         t,
