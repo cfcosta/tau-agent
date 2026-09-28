@@ -832,7 +832,16 @@ impl RunView {
                 ..
             } => {
                 if let Some(card) = self.tool_mut(call_id) {
-                    finish_tool(card, output, *is_error);
+                    // A plugin's verdict on the call outlasts its end: a
+                    // blocked call stays blocked, a flagged one flagged.
+                    match card.state.clone() {
+                        ToolState::Blocked { .. } => {}
+                        flagged @ ToolState::Flagged { .. } => {
+                            finish_tool(card, output, *is_error);
+                            card.state = flagged;
+                        }
+                        _ => finish_tool(card, output, *is_error),
+                    }
                 }
             }
             RunEvent::TurnEnd { turn, usage, .. } => {
@@ -865,6 +874,12 @@ impl RunView {
                 delay: *delay,
                 error: error.clone(),
             }),
+            // The constitution's report of the hold already says it.
+            RunEvent::Continued { plugin, .. }
+                if &**plugin == tau_constitution::NAME => {}
+            RunEvent::PluginReport { plugin, body, .. } => {
+                self.report(plugin, body)
+            }
             RunEvent::Continued {
                 plugin, message, ..
             } => self.push_note(PluginNote {
@@ -939,6 +954,9 @@ impl RunView {
             }
             RunEvent::Continued { plugin, .. } => {
                 ("Continued", plugin.to_string())
+            }
+            RunEvent::PluginReport { plugin, body, .. } => {
+                ("Report", format!("{plugin} {body}"))
             }
             RunEvent::PluginError {
                 plugin, message, ..
@@ -1059,22 +1077,7 @@ impl Meter {
 }
 
 fn event_run(event: &RunEvent) -> &RunId {
-    match event {
-        RunEvent::RunStart { run, .. }
-        | RunEvent::TurnStart { run, .. }
-        | RunEvent::TextDelta { run, .. }
-        | RunEvent::ThinkingDelta { run, .. }
-        | RunEvent::ToolCallDelta { run, .. }
-        | RunEvent::ToolStart { run, .. }
-        | RunEvent::ToolUpdate { run, .. }
-        | RunEvent::ToolEnd { run, .. }
-        | RunEvent::TurnEnd { run, .. }
-        | RunEvent::ContextRewritten { run, .. }
-        | RunEvent::Retry { run, .. }
-        | RunEvent::Continued { run, .. }
-        | RunEvent::PluginError { run, .. }
-        | RunEvent::RunEnd { run, .. } => run,
-    }
+    event.run()
 }
 
 /// Picks the argument a person would want to see first.
@@ -1114,6 +1117,82 @@ pub fn proposed_text(args: &Value) -> Vec<String> {
         .flat_map(str::lines)
         .map(str::to_owned)
         .collect()
+}
+
+impl RunView {
+    /// What a plugin reported. The constitution's verdicts mark the call
+    /// they are about, or note what it did with the final answer; other
+    /// plugins' reports only reach the event log.
+    pub fn report(&mut self, plugin: &str, body: &Value) {
+        use tau_constitution::{Verdict, VerdictKind};
+        if plugin != tau_constitution::NAME {
+            return;
+        }
+        if body["kind"] == "error" {
+            self.push_note(PluginNote {
+                plugin: plugin.to_owned(),
+                text: body["message"].as_str().unwrap_or("failed").to_owned(),
+                detail: Some("not checked".into()),
+                tone: Tone::Danger,
+                body: NoteBody::None,
+            });
+            return;
+        }
+        let Some(verdict) = Verdict::parse(body) else {
+            return;
+        };
+        let score = format!("{:.2}", verdict.score);
+        if let Some(call_id) = &verdict.call_id {
+            if let Some(card) = self.tool_mut(call_id) {
+                card.state = match verdict.kind {
+                    VerdictKind::Blocked => ToolState::Blocked {
+                        plugin: plugin.to_owned(),
+                        rule: verdict.rule,
+                        reason: verdict.reason.unwrap_or(verdict.text),
+                        score,
+                    },
+                    _ => ToolState::Flagged {
+                        plugin: plugin.to_owned(),
+                        rule: verdict.rule,
+                        score,
+                    },
+                };
+            }
+            return;
+        }
+        let (text, tone) = match verdict.kind {
+            VerdictKind::Held => (
+                format!(
+                    "held the stop: {} wants {}",
+                    verdict.rule,
+                    lowercase_first(&verdict.text)
+                ),
+                Tone::Warn,
+            ),
+            _ => (
+                format!(
+                    "flagged the answer for review: {} (\"{}\")",
+                    verdict.rule, verdict.text
+                ),
+                Tone::Warn,
+            ),
+        };
+        self.push_note(PluginNote {
+            plugin: plugin.to_owned(),
+            text,
+            detail: Some(format!("before_stop · {score}")),
+            tone,
+            body: NoteBody::None,
+        });
+    }
+}
+
+fn lowercase_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
@@ -1255,6 +1334,68 @@ mod tests {
 
     fn view() -> RunView {
         RunView::new(run(), "retry-after", "coder", "gpt-5.5")
+    }
+
+    #[test]
+    fn constitution_verdicts_mark_their_calls_and_answers() {
+        let mut view = view();
+        let report = |body: Value| RunEvent::PluginReport {
+            run: run(),
+            plugin: tau_constitution::NAME.into(),
+            body,
+        };
+        view.apply(&RunEvent::ToolStart {
+            run: run(),
+            call_id: "c1".into(),
+            tool: "write".into(),
+            args: serde_json::json!({"path": "a", "content": "maybe"}),
+        });
+        view.apply(&report(serde_json::json!({
+            "kind": "flagged", "rule": "R2", "text": "No unwrap.",
+            "score": 0.55, "call_id": "c1", "tool": "write"
+        })));
+        view.apply(&RunEvent::ToolEnd {
+            run: run(),
+            call_id: "c1".into(),
+            output: Arc::new(ToolOutput::text("written")),
+            is_error: false,
+        });
+        let Some(Item::Tool(card)) = view.items.last() else {
+            panic!("a card")
+        };
+        // Running to its end does not clear the flag.
+        assert_eq!(
+            card.state,
+            ToolState::Flagged {
+                plugin: tau_constitution::NAME.into(),
+                rule: "R2".into(),
+                score: "0.55".into(),
+            }
+        );
+        // A held answer is one note, not two.
+        view.apply(&report(serde_json::json!({
+            "kind": "held", "rule": "R6", "text": "Name the tests.",
+            "score": 0.9, "reason": "Your answer breaks rule R6"
+        })));
+        view.apply(&RunEvent::Continued {
+            run: run(),
+            plugin: tau_constitution::NAME.into(),
+            message: "Your answer breaks rule R6".into(),
+        });
+        let notes = view
+            .items
+            .iter()
+            .filter(|item| matches!(item, Item::Plugin(_)))
+            .count();
+        assert_eq!(notes, 1);
+        // Other plugins' reports only reach the log.
+        let before = view.items.len();
+        view.apply(&RunEvent::PluginReport {
+            run: run(),
+            plugin: "other".into(),
+            body: serde_json::json!({"kind": "blocked"}),
+        });
+        assert_eq!(view.items.len(), before);
     }
 
     #[test]

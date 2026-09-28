@@ -443,22 +443,7 @@ fn forks_join_their_parents_workflow() {
 }
 
 fn run_of(event: &RunEvent) -> &RunId {
-    match event {
-        RunEvent::RunStart { run, .. }
-        | RunEvent::TurnStart { run, .. }
-        | RunEvent::TextDelta { run, .. }
-        | RunEvent::ThinkingDelta { run, .. }
-        | RunEvent::ToolCallDelta { run, .. }
-        | RunEvent::ToolStart { run, .. }
-        | RunEvent::ToolUpdate { run, .. }
-        | RunEvent::ToolEnd { run, .. }
-        | RunEvent::TurnEnd { run, .. }
-        | RunEvent::ContextRewritten { run, .. }
-        | RunEvent::Retry { run, .. }
-        | RunEvent::Continued { run, .. }
-        | RunEvent::PluginError { run, .. }
-        | RunEvent::RunEnd { run, .. } => run,
-    }
+    event.run()
 }
 
 /// A supervisor with sub-agents, over drawn scripts: some turns, each

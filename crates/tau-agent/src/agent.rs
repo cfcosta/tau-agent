@@ -807,6 +807,7 @@ async fn run_task(
         last_seq: Arc::new(AtomicI64::new(-1)),
         clock: agent.0.clock.clone(),
         retry: agent.0.retry,
+        reports: Arc::default(),
     };
     // A fork starts from its inherited transcript, a resumed run from
     // its own, and from the latest context rewrite in it, if any.
@@ -882,6 +883,7 @@ async fn run_task(
         cancel: launch.cancel,
         clock: agent.0.clock.clone(),
         history,
+        reports: shared.reports,
         last_seq: shared.last_seq,
         charged: shared.charged,
         workflow,

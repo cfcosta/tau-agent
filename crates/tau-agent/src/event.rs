@@ -117,6 +117,15 @@ pub enum RunEvent {
         plugin: Arc<str>,
         message: String,
     },
+    /// What a plugin decided, for interfaces to show and review: a
+    /// blocked call, a flagged one, a held stop. `body` is the plugin's
+    /// own JSON. Comes before the event it explains, such as the
+    /// `ToolEnd` of a call it blocked.
+    PluginReport {
+        run: RunId,
+        plugin: Arc<str>,
+        body: Value,
+    },
     /// A plugin failed at a seam where failing does not end the run.
     PluginError {
         run: RunId,
@@ -129,4 +138,27 @@ pub enum RunEvent {
         stop: StopReason,
         cost: f64,
     },
+}
+
+impl RunEvent {
+    /// The run the event is about.
+    pub fn run(&self) -> &RunId {
+        match self {
+            Self::RunStart { run, .. }
+            | Self::TurnStart { run, .. }
+            | Self::TextDelta { run, .. }
+            | Self::ThinkingDelta { run, .. }
+            | Self::ToolCallDelta { run, .. }
+            | Self::ToolStart { run, .. }
+            | Self::ToolUpdate { run, .. }
+            | Self::ToolEnd { run, .. }
+            | Self::TurnEnd { run, .. }
+            | Self::ContextRewritten { run, .. }
+            | Self::Retry { run, .. }
+            | Self::Continued { run, .. }
+            | Self::PluginReport { run, .. }
+            | Self::PluginError { run, .. }
+            | Self::RunEnd { run, .. } => run,
+        }
+    }
 }

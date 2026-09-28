@@ -137,6 +137,21 @@ pub enum WorkspaceEvent {
     UpdateRepo {
         repo: String,
     },
+    /// Add a rule to the repository's constitution; `on` names where it
+    /// applies (`edit.newText`, `final answer`).
+    AddRule {
+        repo: String,
+        text: String,
+        on: Vec<String>,
+    },
+    RemoveRule {
+        repo: String,
+        id: String,
+    },
+    /// Save the TypeSafe key tau-constitution checks with, or forget it.
+    JevKey {
+        key: Option<String>,
+    },
     /// Close the conversation: it leaves the sidebar (History keeps it),
     /// and stops if it is going. A message to it opens it again.
     CloseRun {
@@ -366,6 +381,13 @@ pub struct Workspace {
     /// that is done, go back rather than on through onboarding.
     pub(crate) setup_goal: Option<SetupGoal>,
     pub(crate) repo_path: Entity<TextInput>,
+    /// The new rule's text and where it applies, on the Constitution
+    /// screen.
+    pub(crate) rule_text: Entity<TextInput>,
+    pub(crate) rule_on: Entity<TextInput>,
+    /// The dialog that asks for the TypeSafe key, with its field.
+    pub(crate) adding_jev_key: bool,
+    pub(crate) jev_key: Entity<TextInput>,
     scroll: ScrollHandle,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
     /// turns it off; scrolling back down turns it on.
@@ -424,6 +446,21 @@ impl Workspace {
         let repo_path = cx.new(|cx| {
             TextInput::new("~/Code/you/project", cx).keep_on_submit()
         });
+        let rule_text = cx.new(|cx| {
+            TextInput::new(
+                "A rule in plain words: \"No unwrap or expect outside tests.\"",
+                cx,
+            )
+            .keep_on_submit()
+        });
+        let rule_on = cx.new(|cx| {
+            TextInput::new(
+                "Where: edit.newText, write.content, bash.command, final answer",
+                cx,
+            )
+            .keep_on_submit()
+        });
+        let jev_key = cx.new(|cx| TextInput::new("ts-…", cx).masked());
         let subscriptions = vec![
             cx.subscribe_in(
                 &composer,
@@ -441,6 +478,10 @@ impl Workspace {
             cx.subscribe(&repo_path, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(path) = event;
                 ws.submit_repo_path(path.clone(), cx);
+            }),
+            cx.subscribe(&jev_key, |ws, _, event: &InputEvent, cx| {
+                let InputEvent::Submit(key) = event;
+                ws.submit_jev_key(key.clone(), cx);
             }),
             cx.subscribe(&github_token, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(token) = event;
@@ -505,6 +546,10 @@ impl Workspace {
             adding_repo: false,
             setup_goal: None,
             repo_path,
+            rule_text,
+            rule_on,
+            adding_jev_key: false,
+            jev_key,
             scroll: ScrollHandle::new(),
             follow: true,
             focus: cx.focus_handle(),
@@ -1346,6 +1391,141 @@ impl Workspace {
         self.setup_goal = Some(SetupGoal::Model);
     }
 
+    /// Adds the rule written in the Constitution screen's form to
+    /// `repo`'s constitution.
+    pub fn add_rule(&mut self, repo: &str, cx: &mut Context<Self>) {
+        let text = self.rule_text.read(cx).text().trim().to_owned();
+        let on: Vec<String> = self
+            .rule_on
+            .read(cx)
+            .text()
+            .split(',')
+            .map(|target| target.trim().to_owned())
+            .filter(|target| !target.is_empty())
+            .collect();
+        if text.is_empty() || on.is_empty() {
+            self.show_alert(
+                "The rule needs words and a place",
+                "Write the rule, and where it applies: a tool's field such \
+                 as edit.newText or bash.command, or final answer.",
+                cx,
+            );
+            return;
+        }
+        self.rule_text.update(cx, |input, cx| input.clear(cx));
+        self.rule_on.update(cx, |input, cx| input.clear(cx));
+        cx.emit(WorkspaceEvent::AddRule {
+            repo: repo.to_owned(),
+            text,
+            on,
+        });
+    }
+
+    /// Fills the new rule's text, as typing would: for tests.
+    pub fn rule_text_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.rule_text
+            .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
+    }
+
+    /// Fills where the new rule applies: for tests.
+    pub fn rule_on_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.rule_on
+            .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
+    }
+
+    pub fn remove_rule(
+        &mut self,
+        repo: &str,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(WorkspaceEvent::RemoveRule {
+            repo: repo.to_owned(),
+            id: id.to_owned(),
+        });
+    }
+
+    /// Asks for the TypeSafe key.
+    pub fn ask_for_jev_key(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adding_jev_key = true;
+        self.jev_key.update(cx, |input, cx| input.clear(cx));
+        self.jev_key.read(cx).focus_handle(cx).focus(window);
+        cx.notify();
+    }
+
+    pub(crate) fn submit_jev_key(
+        &mut self,
+        key: String,
+        cx: &mut Context<Self>,
+    ) {
+        let key = key.trim().to_owned();
+        if key.is_empty() {
+            return;
+        }
+        self.adding_jev_key = false;
+        self.jev_key.update(cx, |input, cx| input.clear(cx));
+        cx.emit(WorkspaceEvent::JevKey { key: Some(key) });
+        cx.notify();
+    }
+
+    pub(crate) fn submit_jev_key_from_button(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let key = self.jev_key.read(cx).text().to_owned();
+        self.submit_jev_key(key, cx);
+    }
+
+    pub fn forget_jev_key(&mut self, cx: &mut Context<Self>) {
+        cx.emit(WorkspaceEvent::JevKey { key: None });
+    }
+
+    /// The dialog that asks for the TypeSafe key.
+    fn jev_key_view(
+        &self,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let actions = div()
+            .flex()
+            .gap(sp(2.))
+            .child(
+                div()
+                    .id("jev-key-cancel")
+                    .child(ui::button("Cancel", ButtonKind::Secondary, t))
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        ws.adding_jev_key = false;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("jev-key-save")
+                    .child(ui::button("Use this key", ButtonKind::Primary, t))
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        ws.submit_jev_key_from_button(cx)
+                    })),
+            );
+        ui::modal(
+            ui::icon(Icon::Key, IconSize::LARGE, t.muted),
+            "TypeSafe key",
+            "tau-constitution asks Jev, TypeSafe's model, whether calls break \
+             a repository's rules. The key stays in tau's config directory, \
+             readable only by you.",
+            Some(
+                ui::field(&self.jev_key, true, t)
+                    .flex_shrink_0()
+                    .into_any_element(),
+            ),
+            actions,
+            t,
+        )
+    }
+
     pub fn sign_out(&mut self, kind: AccessKind, cx: &mut Context<Self>) {
         cx.emit(WorkspaceEvent::SignOut(kind));
     }
@@ -1479,6 +1659,9 @@ impl Workspace {
             self.dismiss_alert(cx);
         } else if self.adding_repo {
             self.cancel_add_repo(cx);
+        } else if self.adding_jev_key {
+            self.adding_jev_key = false;
+            cx.notify();
         } else if self.repo_menu.is_some() {
             self.repo_menu = None;
             cx.notify();
@@ -2390,6 +2573,9 @@ impl Render for Workspace {
             })
             .when(self.adding_repo, |body| {
                 body.child(self.add_repo_view(&t, cx))
+            })
+            .when(self.adding_jev_key, |body| {
+                body.child(self.jev_key_view(&t, cx))
             })
             .when_some(self.dialog.clone(), |body, dialog| {
                 body.child(self.dialog_view(dialog, &t, cx))

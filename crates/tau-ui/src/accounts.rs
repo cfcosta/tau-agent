@@ -100,6 +100,32 @@ impl Credentials {
         self.dir.join("github.json")
     }
 
+    /// Where the TypeSafe key for Jev is kept.
+    pub fn jev(&self) -> PathBuf {
+        self.dir.join("typesafe-key")
+    }
+
+    /// The saved TypeSafe key, which tau-constitution checks with.
+    pub fn jev_key(&self) -> Option<String> {
+        std::fs::read_to_string(self.jev())
+            .ok()
+            .map(|key| key.trim().to_owned())
+            .filter(|key| !key.is_empty())
+    }
+
+    /// Saves the TypeSafe key, or forgets it with `None`.
+    pub fn set_jev_key(&self, key: Option<&str>) -> io::Result<()> {
+        match key.map(str::trim).filter(|key| !key.is_empty()) {
+            Some(key) => write_private(&self.jev(), key.as_bytes()),
+            None => match std::fs::remove_file(self.jev()) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                    Err(error)
+                }
+                _ => Ok(()),
+            },
+        }
+    }
+
     /// What runs use: the ChatGPT sign-in if saved, else the saved API
     /// key.
     pub fn access(&self) -> Option<Access> {

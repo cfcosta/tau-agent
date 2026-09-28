@@ -901,3 +901,63 @@ fn closing_a_conversation_takes_it_off_the_sidebar(cx: &mut TestAppContext) {
         assert!(!ws.is_closed(&done));
     });
 }
+
+#[gpui::test]
+fn rules_are_added_and_removed_from_the_constitution_screen(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    cx.update(|_, cx| demo::respond(&workspace, cx));
+    workspace.update(&mut cx, |ws, cx| {
+        ws.open_constitution("docbert", cx);
+        // Without words or a place, nothing is sent.
+        ws.add_rule("docbert", cx);
+        assert!(ws.alert().is_some());
+    });
+    workspace.update(&mut cx, |ws, cx| {
+        ws.escape(cx);
+        ws.rule_text_for_test("Never delete an index.", cx);
+        ws.rule_on_for_test("bash.command, final answer", cx);
+        ws.add_rule("docbert", cx);
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::AddRule {
+            repo: "docbert".into(),
+            text: "Never delete an index.".into(),
+            on: vec!["bash.command".into(), "final answer".into()],
+        })
+    );
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        let rules = &ws.repo_named("docbert").constitution.rules;
+        assert_eq!(rules.len(), 4);
+        let id = rules.last().unwrap().id.clone();
+        ws.remove_rule("docbert", &id, cx);
+    });
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        assert_eq!(ws.repo_named("docbert").constitution.rules.len(), 3);
+    });
+}
+
+#[gpui::test]
+fn the_typesafe_key_is_asked_for_and_forgotten(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.ask_for_jev_key(window, cx);
+    });
+    cx.simulate_input("ts-secret");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::JevKey {
+            key: Some("ts-secret".into())
+        })
+    );
+    workspace.update(&mut cx, |ws, cx| ws.forget_jev_key(cx));
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::JevKey { key: None })
+    );
+}

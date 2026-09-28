@@ -121,8 +121,14 @@ pub fn render(
                     t,
                 ))
                 .child(div().flex_1())
-                .child(mono(constitution.path.clone(), Type::CAPTION, t.dim)),
+                .child(mono(file_name(&constitution.path), Type::CAPTION, t.dim)),
         )
+        .when(constitution.rules.is_empty() && constitution.error.is_none(), |list| {
+            list.child(ui::empty(
+                "No rules yet. Add one below: tau checks it on every run in this repository.",
+                t,
+            ))
+        })
         .children(constitution.rules.iter().map(|rule| {
             let blocked = reviews
                 .iter()
@@ -144,6 +150,7 @@ pub fn render(
                 repo: repo.to_owned(),
                 rule: Some(rule.id.clone()),
             };
+            let (remove_repo, remove_id) = (repo.to_owned(), rule.id.clone());
             let stat = match (blocked, flagged) {
                 (0, 0) => "quiet".to_owned(),
                 (b, 0) => format!("{b} blocked"),
@@ -205,14 +212,30 @@ pub fn render(
                 )
                 .child(
                     div()
-                        .typeset(Type::CAPTION)
-                        .text_color(if blocked > 0 { t.red } else { t.dim })
-                        .child(stat),
+                        .flex()
+                        .items_center()
+                        .child(
+                            div()
+                                .flex_1()
+                                .typeset(Type::CAPTION)
+                                .text_color(if blocked > 0 { t.red } else { t.dim })
+                                .child(stat),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("remove-{}", rule.id)))
+                                .child(ui::text_link("Remove", Type::CAPTION, t))
+                                .on_click(cx.listener(move |ws, _, _, cx| {
+                                    cx.stop_propagation();
+                                    ws.remove_rule(&remove_repo, &remove_id, cx)
+                                })),
+                        ),
                 )
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.navigate(route.clone(), cx)
                 }))
-        }));
+        }))
+        .child(new_rule(ws, repo, t, cx));
 
     let blocked = reviews
         .iter()
@@ -228,12 +251,36 @@ pub fn render(
             .child(ui::screen_title(
                 "Constitution",
                 format!(
-                    "{blocked} calls blocked and {} flagged across these runs. Checks read only what the model wrote, never tool output. A held stop may continue the run {} times at most.",
+                    "{blocked} calls blocked and {} flagged across {repo}'s runs. Checks read only what the model wrote, never tool output. A final answer that breaks a rule goes back {} times at most.",
                     reviews.len() - blocked,
                     constitution.max_continuations
                 ),
                 t,
             ))
+            .when_some(constitution.error.clone(), |screen, error| {
+                screen.child(ui::notice(
+                    Icon::Warning,
+                    format!("Runs in {repo} stop at start until this is fixed: {error}"),
+                    t.red,
+                    Type::SMALL,
+                    t,
+                ))
+            })
+            .when(!ws.catalog.models.access.jev, |screen| {
+                screen.child(
+                    div()
+                        .id("jev-missing")
+                        .cursor_pointer()
+                        .child(ui::notice(
+                            Icon::Key,
+                            "Rules are not checked yet: tau asks Jev, which needs a TypeSafe key. Add one on the Models screen.",
+                            t.accent,
+                            Type::SMALL,
+                            t,
+                        ))
+                        .on_click(cx.listener(|ws, _, _, cx| ws.navigate(Route::Models, cx))),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -244,4 +291,54 @@ pub fn render(
             ),
     )
     .into_any_element()
+}
+
+/// The last part of a path, for a label.
+fn file_name(path: &str) -> String {
+    std::path::Path::new(path).file_name().map_or_else(
+        || path.to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// The form that adds a rule: its words, and where it applies.
+fn new_rule(
+    ws: &Workspace,
+    repo: &str,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let repo = repo.to_owned();
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(2.))
+        .mt(sp(2.))
+        .p(sp(3.))
+        .border_1()
+        .border_dashed()
+        .border_color(t.border_strong)
+        .rounded(radius::BOX)
+        .child(heading("New rule", t))
+        .child(ui::field(&ws.rule_text, false, t))
+        .child(ui::field(&ws.rule_on, true, t))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .child(
+                    div()
+                        .flex_1()
+                        .typeset(Type::CAPTION)
+                        .text_color(t.dim)
+                        .child("Flagged for review at 0.50, blocked at 0.80. Tune them in the file."),
+                )
+                .child(
+                    div()
+                        .id("add-rule")
+                        .child(ui::button("Add rule", ButtonKind::Primary, t))
+                        .on_click(cx.listener(move |ws, _, _, cx| ws.add_rule(&repo, cx))),
+                ),
+        )
 }

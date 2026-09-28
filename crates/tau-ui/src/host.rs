@@ -38,6 +38,8 @@ use tau_ai::{
     model::find,
 };
 use tau_compaction::Compaction;
+use tau_constitution::{Constitution, ConstitutionPlugin};
+use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store};
 use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
@@ -56,10 +58,12 @@ use crate::{
     accounts::{self, Access, Credentials},
     catalog::{
         Catalog,
+        Constitution as CatalogConstitution,
         PluginInfo,
         PluginScreen,
         ProjectStatus,
         Repo,
+        Rule as CatalogRule,
         Seam,
         StoreInfo,
     },
@@ -377,6 +381,9 @@ pub struct Host {
     /// What runs reach models with; `None` after signing out of all.
     access: Mutex<Option<Access>>,
     github: github::Api,
+    /// Jev for tau-constitution, in place of TypeSafe's with the saved
+    /// key: for tests.
+    jev: Option<Arc<dyn tau_jev::Jev>>,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -528,6 +535,7 @@ impl Host {
             base: Mutex::new(agent),
             access: Mutex::new(Some(config.access.clone())),
             github: github::Api::default(),
+            jev: None,
             store,
             choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
@@ -630,6 +638,12 @@ impl Host {
             self.repos.lock().expect("not poisoned").push(slot);
         }
         Ok(Repo::new(name, canonical(&path).display().to_string()))
+    }
+
+    /// Checks constitutions with `jev` instead of TypeSafe's, for tests.
+    pub fn with_jev(mut self, jev: Arc<dyn tau_jev::Jev>) -> Self {
+        self.jev = Some(jev);
+        self
     }
 
     /// Reaches GitHub at `api`, for tests.
@@ -829,15 +843,37 @@ impl Host {
             }
         };
         // In the list's order, which adding a repository again keeps.
-        let repos = list
+        let repos: Vec<Repo> = list
             .repos
             .iter()
             .filter(|listed| !listed.hidden)
-            .filter(|listed| slots.iter().any(|slot| slot.name == listed.name))
-            .map(|listed| {
-                Repo::new(&listed.name, listed.path.display().to_string())
+            .filter_map(|listed| {
+                let slot =
+                    slots.iter().find(|slot| slot.name == listed.name)?;
+                let mut repo =
+                    Repo::new(&listed.name, listed.path.display().to_string());
+                repo.constitution = self.repo_constitution(slot);
+                Some(repo)
             })
             .collect();
+        let rules: usize =
+            repos.iter().map(|repo| repo.constitution.rules.len()).sum();
+        let jev = self.config.credentials.jev_key().is_some();
+        plugins.push(PluginInfo {
+            name: tau_constitution::NAME.into(),
+            description: if jev {
+                format!(
+                    "{rules} rules across your repositories, checked with Jev"
+                )
+            } else {
+                "Checks calls against each repository's rules: needs a \
+                 TypeSafe key (Models)"
+                    .into()
+            },
+            seams: vec![Seam::BeforeTool, Seam::BeforeStop],
+            spend: 0.0,
+            screen: Some(PluginScreen::Constitution),
+        });
         Catalog {
             agent: "coder".into(),
             agent_source: Some(source),
@@ -895,9 +931,20 @@ impl Host {
             compaction = compaction.context_window(model.context_window);
         }
         let agent = agent.plugin(compaction).plugin(RepoTag(repo.name.clone()));
+        // The repository's rules, checked with Jev when there is a key.
+        let jev: Option<Arc<dyn tau_jev::Jev>> =
+            self.jev.clone().or_else(|| {
+                self.config.credentials.jev_key().map(|key| {
+                    Arc::new(TypeSafe::new(key)) as Arc<dyn tau_jev::Jev>
+                })
+            });
+        let constitution = jev.map(|jev| {
+            ConstitutionPlugin::from_file(jev, self.constitution_path(repo))
+        });
         let Some(project) = repo.project.wait() else {
             let tools = CodingTools::new(Root::new(repo.path.clone()));
-            return Ok((agent.plugin(tools), None));
+            let agent = agent.plugin(tools);
+            return Ok((with_plugin(agent, constitution), None));
         };
         let name = workspace.unwrap_or_else(workspace_name);
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
@@ -905,7 +952,57 @@ impl Host {
             .plugin(CodingTools::new(Root::new(workspace.dir())))
             .plugin(VcsPlugin::new(workspace.vcs().clone()))
             .plugin(workspace);
-        Ok((agent, Some(name)))
+        Ok((with_plugin(agent, constitution), Some(name)))
+    }
+
+    /// Where a repository's constitution is kept: in tau's directory for
+    /// it, so it is edited from tau and applies to the next run, without
+    /// a commit in the repository.
+    fn constitution_path(&self, repo: &RepoSlot) -> PathBuf {
+        self.config
+            .project_dir_of(&repo.path)
+            .join("constitution.toml")
+    }
+
+    /// The constitution of repository `name`, for its screen.
+    fn repo_constitution(&self, slot: &RepoSlot) -> CatalogConstitution {
+        let path = self.constitution_path(slot);
+        let (loaded, error) = match Constitution::load(&path) {
+            Ok(loaded) => (loaded, None),
+            Err(error) => (Constitution::default(), Some(format!("{error:#}"))),
+        };
+        CatalogConstitution {
+            path: path.display().to_string(),
+            rules: loaded
+                .rules
+                .iter()
+                .map(|rule| CatalogRule {
+                    id: rule.id.clone(),
+                    text: rule.text.clone(),
+                    applies_to: rule.on.iter().map(|on| on.label()).collect(),
+                    review: rule.review as f32,
+                    block: rule.block as f32,
+                })
+                .collect(),
+            max_continuations: loaded.max_holds,
+            error,
+        }
+    }
+
+    /// Adds a rule to a repository's constitution (review and block at
+    /// their defaults), or removes one, and saves it.
+    pub fn edit_rules(
+        &self,
+        repo: &str,
+        edit: impl FnOnce(&mut Constitution) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let slot = self
+            .slot(repo)
+            .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
+        let path = self.constitution_path(&slot);
+        let mut constitution = Constitution::load(&path)?;
+        edit(&mut constitution)?;
+        constitution.save(&path)
     }
 
     /// What runs reach models with, if anything.
@@ -958,6 +1055,7 @@ impl Host {
                     .into_iter()
                     .filter(|kind| credentials.has(*kind))
                     .collect(),
+                jev: credentials.jev_key().is_some(),
             },
             agents: vec![(
                 "coder".into(),
@@ -1314,6 +1412,18 @@ impl Host {
             state: "watching the window".into(),
             tone: Tone::Quiet,
         });
+        let rules = Constitution::load(&self.constitution_path(&repo))
+            .map_or(0, |constitution| constitution.rules.len());
+        view.plugins.push(PluginStatus {
+            name: tau_constitution::NAME.into(),
+            state: match (self.config.credentials.jev_key(), rules) {
+                (None, _) => "off · no TypeSafe key".into(),
+                (Some(_), 0) => "no rules".into(),
+                (Some(_), 1) => "watching 1 rule".into(),
+                (Some(_), n) => format!("watching {n} rules"),
+            },
+            tone: Tone::Quiet,
+        });
         view
     }
 
@@ -1439,6 +1549,61 @@ impl Host {
                         )
                     }),
                 },
+                WorkspaceEvent::AddRule { repo, text, on } => {
+                    let added = handler.edit_rules(repo, |rules| {
+                        rules
+                            .add(
+                                text,
+                                on,
+                                tau_constitution::rules::DEFAULT_REVIEW,
+                                tau_constitution::rules::DEFAULT_BLOCK,
+                            )
+                            .map(drop)
+                    });
+                    let catalog = handler.catalog();
+                    workspace.update(cx, |ws, cx| {
+                        ws.set_catalog(catalog, cx);
+                        if let Err(error) = added {
+                            ws.show_alert(
+                                "Could not add the rule",
+                                format!("{error:#}"),
+                                cx,
+                            );
+                        }
+                    });
+                }
+                WorkspaceEvent::RemoveRule { repo, id } => {
+                    let removed = handler.edit_rules(repo, |rules| {
+                        rules.remove(id);
+                        Ok(())
+                    });
+                    let catalog = handler.catalog();
+                    workspace.update(cx, |ws, cx| {
+                        ws.set_catalog(catalog, cx);
+                        if let Err(error) = removed {
+                            ws.show_alert(
+                                "Could not remove the rule",
+                                format!("{error:#}"),
+                                cx,
+                            );
+                        }
+                    });
+                }
+                WorkspaceEvent::JevKey { key } => {
+                    let saved =
+                        handler.config.credentials.set_jev_key(key.as_deref());
+                    let catalog = handler.catalog();
+                    workspace.update(cx, |ws, cx| {
+                        ws.set_catalog(catalog, cx);
+                        if let Err(error) = saved {
+                            ws.show_alert(
+                                "Could not save the TypeSafe key",
+                                error.to_string(),
+                                cx,
+                            );
+                        }
+                    });
+                }
                 WorkspaceEvent::CloseRun { run } => {
                     if let Err(error) = handler.set_closed(run, true) {
                         eprintln!("tau-ui: cannot save closed runs: {error:#}");
@@ -1624,6 +1789,14 @@ fn update_in_background(
         });
     })
     .detach();
+}
+
+/// `agent` with `plugin`, if there is one.
+fn with_plugin(agent: Agent, plugin: Option<ConstitutionPlugin>) -> Agent {
+    match plugin {
+        Some(plugin) => agent.plugin(plugin),
+        None => agent,
+    }
 }
 
 /// Refreshes the workspace's catalog once `slot` is imported, if it is
@@ -1815,6 +1988,12 @@ pub async fn history(
             ),
         };
         view.finish_stored(stop, record.cost_usd);
+        // The constitution's verdicts mark the calls they were about.
+        for body in store.records(&record.id, tau_constitution::NAME).await? {
+            if let Ok(body) = serde_json::from_str(&body) {
+                view.report(tau_constitution::NAME, &body);
+            }
+        }
         if let RunKind::Fork { parent, fork_seq } = &record.kind {
             let turn = store
                 .plugin_entries(parent, WORKSPACE_PLUGIN)

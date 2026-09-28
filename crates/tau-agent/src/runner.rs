@@ -130,6 +130,8 @@ pub(crate) struct Runner {
     /// The `seq` of the run's last stored entry, -1 before the first.
     /// Shared with plugins, which store records too.
     pub last_seq: Arc<AtomicI64>,
+    /// What plugins reported, to emit before the next event.
+    pub reports: crate::plugin::Reports,
     /// What plugins charged to the run.
     pub charged: Arc<Mutex<Charged>>,
     pub workflow: Option<Arc<str>>,
@@ -840,8 +842,23 @@ impl Runner {
         .await;
     }
 
-    /// Hands an event to every plugin, in order, then to the subscriber.
+    /// Hands an event to every plugin, in order, then to the subscriber;
+    /// plugins' reports go first.
     async fn emit(&mut self, event: RunEvent) {
+        let reports =
+            std::mem::take(&mut *self.reports.lock().expect("not poisoned"));
+        for (plugin, body) in reports {
+            self.deliver(RunEvent::PluginReport {
+                run: self.run.clone(),
+                plugin,
+                body,
+            })
+            .await;
+        }
+        self.deliver(event).await;
+    }
+
+    async fn deliver(&mut self, event: RunEvent) {
         for plugin in &mut self.plugins {
             plugin.run.on_event(&event, &plugin.ctx).await;
         }

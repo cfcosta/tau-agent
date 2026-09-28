@@ -769,6 +769,46 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     ws.replay(id, steps, cx);
                 });
             }
+            // Rules change in the catalog, as the host's file would.
+            WorkspaceEvent::AddRule { repo, text, on } => {
+                let (repo, text, on) = (repo.clone(), text.clone(), on.clone());
+                workspace.update(cx, |ws, cx| {
+                    let mut catalog = ws.catalog().clone();
+                    if let Some(listed) = catalog.repo_mut(&repo) {
+                        let rules = &mut listed.constitution.rules;
+                        let id = (1..)
+                            .map(|n| format!("R{n}"))
+                            .find(|id| rules.iter().all(|rule| &rule.id != id))
+                            .unwrap_or_default();
+                        rules.push(Rule {
+                            id,
+                            text,
+                            applies_to: on,
+                            review: 0.5,
+                            block: 0.8,
+                        });
+                    }
+                    ws.set_catalog(catalog, cx);
+                });
+            }
+            WorkspaceEvent::RemoveRule { repo, id } => {
+                let (repo, id) = (repo.clone(), id.clone());
+                workspace.update(cx, |ws, cx| {
+                    let mut catalog = ws.catalog().clone();
+                    if let Some(listed) = catalog.repo_mut(&repo) {
+                        listed.constitution.rules.retain(|rule| rule.id != id);
+                    }
+                    ws.set_catalog(catalog, cx);
+                });
+            }
+            WorkspaceEvent::JevKey { key } => {
+                let saved = key.is_some();
+                workspace.update(cx, |ws, cx| {
+                    let mut catalog = ws.catalog().clone();
+                    catalog.models.access.jev = saved;
+                    ws.set_catalog(catalog, cx);
+                });
+            }
             // Updating finds nothing new.
             WorkspaceEvent::UpdateRepo { repo } => {
                 let text = format!("{repo} is up to date");
@@ -1005,6 +1045,7 @@ pub fn catalog() -> Catalog {
                 constitution: Constitution {
                     path: "constitution.toml".into(),
                     max_continuations: 3,
+                    error: None,
                     rules: vec![
                         rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
                         rule("D2", "Search results keep their scores; never sort them away.", &["edit.newText"], 0.40, 0.85),
@@ -1147,6 +1188,7 @@ fn tau_agent_rules(rule: RuleFn<'_>) -> Constitution {
     Constitution {
         path: "constitution.toml".into(),
         max_continuations: 3,
+        error: None,
         rules: vec![
             rule(
                 "R1",
@@ -1222,6 +1264,7 @@ pub fn models() -> crate::models::Models {
             chatgpt: true,
             api_key: false,
             saved: vec![crate::models::AccessKind::ChatGpt],
+            jev: true,
         },
         agents: vec![
             ("coder".into(), "Runs you start from the composer.".into()),

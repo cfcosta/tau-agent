@@ -296,7 +296,11 @@ pub struct PluginCtx {
     last_seq: Arc<AtomicI64>,
     clock: Clock,
     retry: RetryPolicy,
+    reports: Reports,
 }
+
+/// Reports plugins made that the run has not emitted yet.
+pub(crate) type Reports = Arc<Mutex<Vec<(Arc<str>, Value)>>>;
 
 impl std::fmt::Debug for PluginCtx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -321,6 +325,7 @@ pub(crate) struct RunShared {
     pub last_seq: Arc<AtomicI64>,
     pub clock: Clock,
     pub retry: RetryPolicy,
+    pub reports: Reports,
 }
 
 impl RunShared {
@@ -337,6 +342,7 @@ impl RunShared {
             last_seq: self.last_seq.clone(),
             clock: self.clock.clone(),
             retry: self.retry,
+            reports: self.reports.clone(),
         }
     }
 }
@@ -424,6 +430,17 @@ impl PluginCtx {
         let mut charged = self.charged.lock().expect("not poisoned");
         charged.total += usage;
         charged.unsaved += usage;
+    }
+
+    /// Reports what the plugin decided, for interfaces: the run emits it
+    /// as [`RunEvent::PluginReport`] before its next event. Only
+    /// subscribers see it; store what should outlast the run with
+    /// [`Self::record`].
+    pub fn report(&self, body: Value) {
+        self.reports
+            .lock()
+            .expect("not poisoned")
+            .push((self.plugin.clone(), body));
     }
 
     /// Stores a record for this plugin with the run. The model never sees

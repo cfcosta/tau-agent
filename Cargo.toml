@@ -57,6 +57,7 @@ serde_json = { version = "1.0.151", features = [
 ] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
+toml = "1.1.6"
 trybuild = "1.0.121"
 unicode-normalization = "0.1.25"
 turmoil = "0.7.2"
@@ -74,6 +75,7 @@ tokio-util = { version = "0.7.19", default-features = false }
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
 tau-agent = { path = "crates/tau-agent", version = "0.1.0" }
 tau-compaction = { path = "crates/plugins/compaction", version = "0.1.0" }
+tau-constitution = { path = "crates/plugins/constitution", version = "0.1.0" }
 tau-fast-compaction = { path = "crates/plugins/fast-compaction", version = "0.1.0" }
 tau-jev = { path = "crates/plugins/jev", version = "0.1.0" }
 tau-ai = { path = "crates/tau-ai", version = "0.1.0" }

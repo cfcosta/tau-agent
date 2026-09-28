@@ -258,6 +258,8 @@ pub struct AccessInfo {
     pub api_key: bool,
     /// What is saved, whether runs use it or not.
     pub saved: Vec<AccessKind>,
+    /// A TypeSafe key is saved, so tau-constitution checks runs.
+    pub jev: bool,
 }
 
 /// Everything about models the interface shows.

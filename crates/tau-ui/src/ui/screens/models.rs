@@ -216,12 +216,56 @@ pub fn render(
                     }
                 })),
         );
+    let jev = div()
+        .flex()
+        .items_center()
+        .gap(sp(2.5))
+        .child(ui::icon(
+            Icon::Blocked,
+            IconSize::LARGE,
+            if access.jev { t.green } else { t.dim },
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .gap(sp(0.5))
+                .child("TypeSafe (Jev)")
+                .child(ui::text(
+                    if access.jev {
+                        "Saved · tau-constitution checks runs against each repository's rules"
+                    } else {
+                        "None · without it, repository rules are not checked"
+                    },
+                    Type::CAPTION,
+                    t.muted,
+                )),
+        )
+        .child(
+            div()
+                .id("account-jev")
+                .child(ui::button(
+                    if access.jev { "Remove" } else { "Add a key" },
+                    ButtonKind::Secondary,
+                    t,
+                ))
+                .on_click(cx.listener(|ws, _, window, cx| {
+                    if ws.catalog.models.access.jev {
+                        ws.forget_jev_key(cx)
+                    } else {
+                        ws.ask_for_jev_key(window, cx)
+                    }
+                })),
+        );
     let access_card = ui::panel(4.5, t)
         .gap(sp(3.))
         .child(heading("Accounts", t))
         .child(chatgpt)
         .child(key)
-        .child(github);
+        .child(github)
+        .child(jev);
 
     let limit = match models.settings.ask_above {
         Some(limit) => format!("${limit:.0} / M out"),

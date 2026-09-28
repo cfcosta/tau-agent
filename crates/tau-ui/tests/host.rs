@@ -649,3 +649,64 @@ fn a_finished_run_goes_on_in_its_workspace() {
         .collect();
     assert_eq!(prompts, ["write a.txt", "now b.txt"]);
 }
+
+#[test]
+fn the_constitution_blocks_a_call_that_breaks_a_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "write",
+                serde_json::json!({ "path": "a.txt", "content": "x.unwrap()" }),
+            )
+        })
+        .turn(|t| t.text("I could not write it."));
+    let (host, mut events) = host_on(llm, dir.path());
+    let host = host
+        .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.95)));
+    // A rule saved the way the Constitution screen saves one.
+    host.edit_rules(host.home(), |rules| {
+        rules
+            .add("No unwrap.", &["write.content".into()], 0.5, 0.8)
+            .map(drop)
+    })
+    .unwrap();
+    let catalog = host.catalog();
+    let rules = &catalog.repos[0].constitution;
+    assert_eq!(rules.rules.len(), 1);
+    assert_eq!(rules.rules[0].applies_to, ["write.content"]);
+    assert!(rules.error.is_none());
+    assert!(catalog.plugins.iter().any(|p| p.name == "tau-constitution"));
+
+    let mut view = host
+        .start("write a.txt", &ModelChoice::default(), "")
+        .unwrap();
+    for event in until_end(&mut events) {
+        view.apply(&event);
+    }
+    wait_until_done(&host, &view.id);
+    assert!(!dir.path().join("a.txt").exists(), "the write was refused");
+    let blocked = |view: &tau_ui::view::RunView| {
+        view.items.iter().any(|item| {
+            matches!(item, Item::Tool(card)
+                if matches!(&card.state, ToolState::Blocked { rule, .. } if rule == "R1"))
+        })
+    };
+    assert!(blocked(&view), "the card shows the block live");
+    // And in history, from what the plugin recorded.
+    let history = host.history().unwrap();
+    assert!(blocked(&history[0]));
+
+    // Removing a rule saves it.
+    host.edit_rules(host.home(), |rules| {
+        rules.remove("R1");
+        Ok(())
+    })
+    .unwrap();
+    let constitution = host.catalog().repos[0].constitution.clone();
+    assert!(constitution.rules.is_empty());
+    // A broken file says why, on the Constitution screen.
+    std::fs::write(&constitution.path, "[[rule]]\nid = 'A'\n").unwrap();
+    let error = host.catalog().repos[0].constitution.error.clone();
+    assert!(error.is_some_and(|error| error.contains("not valid")));
+}

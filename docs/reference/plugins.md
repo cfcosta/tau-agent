@@ -359,6 +359,9 @@ Token estimates and overflow detection, which the loop uses for
 
 ### `tau-constitution`: rules checked on specific calls
 
+Built: `crates/plugins/constitution`. Its reference is
+[constitution.md](constitution.md).
+
 - **Seams:** `before_tool`, optionally `before_stop`.
 - **Constitution:** a list of rules, each with an id, its text, and
   where it applies:

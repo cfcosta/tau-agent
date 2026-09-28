@@ -244,6 +244,9 @@ pub struct Constitution {
     pub path: String,
     pub rules: Vec<Rule>,
     pub max_continuations: u32,
+    /// Why the file could not be read, if it could not: runs fail until
+    /// it is fixed.
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
