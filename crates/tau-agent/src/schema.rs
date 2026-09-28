@@ -29,7 +29,9 @@
 //! object or array variant, because some of the providers it serves
 //! cannot take one. OpenAI's strict mode can, and tau-agent talks to
 //! nothing else, so each variant is made strict like any other node.
-//! That is what gives `Option<SomeStruct>` a strict form.
+//! That is what gives `Option<SomeStruct>` a strict form. And every
+//! object gets a `properties` map, empty when it had none, since OpenAI
+//! rejects an object schema without one.
 //!
 //! Not every schema can be rewritten this way. A schema that uses a
 //! keyword strict mode does not support (`allOf`, `oneOf`, a
@@ -199,7 +201,6 @@ fn make_strict_node(schema: &Value) -> Result<Value, NotStrict> {
         }
     }
 
-    let had_properties = obj.contains_key("properties");
     let properties = obj
         .get("properties")
         .cloned()
@@ -224,7 +225,10 @@ fn make_strict_node(schema: &Value) -> Result<Value, NotStrict> {
         return Err(NotStrict::new("required contains an unknown property"));
     }
 
-    if had_properties {
+    // Unlike pi, an object with no properties gets an empty map: OpenAI
+    // rejects an object schema without `properties`, which is what a
+    // tool with no arguments (an empty struct) generates.
+    {
         let mut strict_properties = Map::new();
         for (key, value) in properties {
             let strict_value = make_strict_node(&value)?;

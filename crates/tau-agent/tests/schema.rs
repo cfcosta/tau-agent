@@ -572,3 +572,20 @@ fn schemars_nested_structs_have_a_strict_form() {
     assert_every_object_is_closed_and_fully_required(&strict);
     assert!(!strict.to_string().contains("$ref"), "{strict}");
 }
+
+/// A tool with no arguments generates `{"type": "object"}`; OpenAI
+/// rejects an object schema without `properties`, so it gets an empty
+/// map.
+#[test]
+fn an_object_without_properties_gets_an_empty_map() {
+    let strict = to_strict(&json!({"type": "object"})).unwrap();
+    assert_eq!(
+        strict,
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        })
+    );
+}
