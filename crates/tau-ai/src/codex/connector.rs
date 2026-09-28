@@ -64,6 +64,11 @@ impl Connector for CodexConnector {
         let (access, account) = self.auth.current();
         codex_request(&access, &account, &oauth::random_hex())
     }
+
+    /// Codex rejects `stream_id`: one lane per connection.
+    fn tags_lanes(&self) -> bool {
+        false
+    }
 }
 
 /// The upgrade request for one connection. `request_id` names the

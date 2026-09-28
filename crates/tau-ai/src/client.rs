@@ -81,7 +81,7 @@ impl OpenAi {
     /// A client for OpenAI Codex, signed in with a ChatGPT account (see
     /// [`crate::codex`]). The sign-in is refreshed as it nears expiry.
     pub fn codex(auth: CodexAuth) -> Self {
-        Self::with_connector(CodexConnector::new(auth), Limits::default())
+        Self::with_connector(CodexConnector::new(auth), codex_limits())
             .endpoint(Endpoint::Codex)
     }
 
@@ -125,6 +125,16 @@ impl OpenAi {
     /// The pool's counters, including every session's requests.
     pub async fn stats(&self) -> Result<PoolStats, Stopped> {
         self.transport.stats().await
+    }
+}
+
+/// Codex takes one response stream per connection: it rejects
+/// `stream_id`, so lanes cannot share one.
+pub fn codex_limits() -> Limits {
+    Limits {
+        max_lanes: 1,
+        max_in_flight: 1,
+        ..Limits::default()
     }
 }
 

@@ -409,6 +409,15 @@ impl Pool {
             .map_or(0, |c| c.lanes.len())
     }
 
+    /// The lane on `connection`, when it carries exactly one.
+    pub fn only_lane(&self, connection: ConnectionId) -> Option<LaneId> {
+        let lanes = &self.connections.get(&connection)?.lanes;
+        match lanes.len() {
+            1 => lanes.first().copied(),
+            _ => None,
+        }
+    }
+
     /// The connection `lane` lives on.
     pub fn connection_of(&self, lane: LaneId) -> Option<ConnectionId> {
         self.lanes.get(&lane).map(|slot| slot.connection)

@@ -30,6 +30,14 @@ pub trait Connector: Send + Sync + 'static {
 
     /// The upgrade request: the URL and headers such as `Authorization`.
     fn request(&self) -> http::Request<()>;
+
+    /// Whether requests name their lane with `stream_id`, so several lanes
+    /// share a connection. An endpoint that rejects `stream_id` (Codex)
+    /// returns `false`; its client must then allow one lane per
+    /// connection, and frames go to the lane their connection carries.
+    fn tags_lanes(&self) -> bool {
+        true
+    }
 }
 
 /// What a connection task reports to the driver.
@@ -55,7 +63,8 @@ pub enum Outgoing {
     /// a full resend costs the driver, which every lane shares, nothing.
     Request {
         body: Body,
-        stream_id: Value,
+        /// `None` on an endpoint that does not take `stream_id`.
+        stream_id: Option<Value>,
     },
 }
 
@@ -69,9 +78,14 @@ impl Outgoing {
     fn into_text(self) -> String {
         match self {
             Self::Json(frame) => frame.to_string(),
-            Self::Request { body, stream_id } => {
-                body.to_frame(&[("stream_id", &stream_id)])
-            }
+            Self::Request {
+                body,
+                stream_id: Some(stream_id),
+            } => body.to_frame(&[("stream_id", &stream_id)]),
+            Self::Request {
+                body,
+                stream_id: None,
+            } => body.to_frame(&[]),
         }
     }
 }

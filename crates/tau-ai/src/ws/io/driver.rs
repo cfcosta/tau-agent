@@ -4,7 +4,10 @@
 //!
 //! Each lane gets a `stream_id` (`tau-<lane>`), which the driver writes
 //! into every request it sends and reads back from every frame it
-//! receives. Frames for a lane with no request in flight are ignored.
+//! receives. Frames for a lane with no request in flight are ignored. An
+//! endpoint that rejects `stream_id` (Codex) gets one lane per
+//! connection instead, and a frame goes to the lane of the connection it
+//! came on.
 //!
 //! A cancelled request that was already sent keeps streaming on the
 //! server. Its tail arrives on the same `stream_id`, before the frames of
@@ -111,7 +114,9 @@ impl Transport {
         let (commands, receiver) = mpsc::unbounded_channel();
         let (connection_events, connection_receiver) =
             mpsc::unbounded_channel();
+        let tagged = connector.tags_lanes();
         let driver = Driver {
+            tagged,
             connector: Arc::new(connector),
             pool: Pool::new(limits),
             connections: HashMap::new(),
@@ -216,6 +221,8 @@ struct Driver<C: Connector> {
     /// connection they stream on, and how many terminal frames to skip.
     skipping: HashMap<LaneId, (ConnectionId, usize)>,
     origin: Instant,
+    /// Whether requests carry `stream_id` ([`Connector::tags_lanes`]).
+    tagged: bool,
 }
 
 /// A request in flight on a lane.
@@ -378,14 +385,19 @@ impl<C: Connector> Driver<C> {
                 // (a stalled one) belong to requests resent elsewhere.
                 if self.connections.contains_key(&connection) {
                     self.pool.activity(connection);
-                    self.frame(&frame);
+                    self.frame(connection, &frame);
                 }
             }
         }
     }
 
-    fn frame(&mut self, frame: &Value) {
-        let Some(lane) = lane_of(frame) else { return };
+    fn frame(&mut self, connection: ConnectionId, frame: &Value) {
+        let lane = if self.tagged {
+            lane_of(frame)
+        } else {
+            self.pool.only_lane(connection)
+        };
+        let Some(lane) = lane else { return };
         if let Some((_, remaining)) = self.skipping.get_mut(&lane) {
             let terminal = matches!(
                 frame.get("type").and_then(Value::as_str),
@@ -478,7 +490,9 @@ impl<C: Connector> Driver<C> {
                     if let Some(handle) = self.connections.get(&connection) {
                         handle.send(Outgoing::Request {
                             body,
-                            stream_id: Value::String(stream_id(lane)),
+                            stream_id: self
+                                .tagged
+                                .then(|| Value::String(stream_id(lane))),
                         });
                     }
                 }

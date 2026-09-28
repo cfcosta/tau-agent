@@ -33,6 +33,9 @@ few headers differ.
   `OpenAI-Beta: responses_websockets=2026-02-06`. Every session has
   instructions (a default when the agent has none) and no
   `max_output_tokens`. `store` stays `false`, as for every request.
+- **One lane per connection.** Codex rejects the `stream_id` that lets
+  lanes share a connection, so a Codex client opens a connection per
+  run and routes frames by connection.
 - **No second HTTP stack.** The three token requests go over a small
   HTTPS client on the rustls setup the WebSocket already uses.
 - **Credentials live in `$XDG_CONFIG_HOME/tau/codex.json`**, mode 0600,

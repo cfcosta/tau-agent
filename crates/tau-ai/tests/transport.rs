@@ -65,6 +65,25 @@ impl Connector for SimConnector {
     }
 }
 
+/// `SimConnector` for an endpoint that rejects `stream_id`, as Codex does.
+struct UntaggedConnector;
+
+impl Connector for UntaggedConnector {
+    type Stream = turmoil::net::TcpStream;
+
+    async fn connect(&self) -> io::Result<Self::Stream> {
+        SimConnector.connect().await
+    }
+
+    fn request(&self) -> http::Request<()> {
+        SimConnector.request()
+    }
+
+    fn tags_lanes(&self) -> bool {
+        false
+    }
+}
+
 /// A fault the server applies to one turn's first attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fault {
@@ -559,6 +578,56 @@ fn two_lanes_share_a_connection(tc: TestCase) {
         let have = by_lane(&r.body["stream_id"]);
         want.usage.cost = have.usage.cost.clone();
         assert_eq!(have, &want, "request {i}");
+    }
+}
+
+/// Without `stream_id` (Codex), two runs get a connection each, no
+/// request names a lane, and each run gets the response its own
+/// connection carried.
+#[hegel::test(test_cases = 20)]
+fn untagged_lanes_get_a_connection_each(tc: TestCase) {
+    let (first, first_reply) = respond(&tc, "resp_a");
+    let (second, second_reply) = respond(&tc, "resp_b");
+    let got: Rc<RefCell<Vec<AssistantMessage>>> = Rc::default();
+    let seen = got.clone();
+    let labels = [
+        (first.model.clone(), first.timestamp),
+        (second.model.clone(), second.timestamp),
+    ];
+    let fake = simulate(vec![first_reply, second_reply], async move {
+        let transport =
+            Transport::start(UntaggedConnector, tau_ai::client::codex_limits());
+        let settings = Settings {
+            model: "gpt-5.5".into(),
+            ..Settings::default()
+        };
+        let input = to_input(&[user("hi")]);
+        // Open lanes keep their connections, so the next run cannot take
+        // one. One at a time, so the fake's reply order is the lanes'.
+        let mut open = Vec::new();
+        for (model, timestamp) in labels {
+            let lane = transport.open_lane().await.unwrap();
+            let response = lane.request(
+                body(&settings, input.clone(), None),
+                model,
+                timestamp,
+            );
+            let message = collect(response).await;
+            seen.borrow_mut().push(message);
+            open.push(lane);
+        }
+        Ok(())
+    });
+    assert_eq!(fake.connections(), 2);
+    let received = fake.received();
+    assert_eq!(received.len(), 2);
+    assert!(received.iter().all(|r| r.body.get("stream_id").is_none()));
+    assert_ne!(received[0].connection, received[1].connection);
+    let got = got.borrow();
+    for (have, want) in got.iter().zip([&first, &second]) {
+        let mut want = want.clone();
+        want.usage.cost = have.usage.cost.clone();
+        assert_eq!(have, &want);
     }
 }
 

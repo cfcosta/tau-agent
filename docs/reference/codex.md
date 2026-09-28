@@ -91,7 +91,16 @@ pub struct CodexCredentials {
 
 Everything after the upgrade is the protocol in
 [`openai-websocket.md`](openai-websocket.md): `response.create` frames,
-`previous_response_id`, the delta rule and the 16-in-flight limit.
+`previous_response_id` and the delta rule, with one difference: Codex
+rejects `stream_id` (`Unsupported parameter: stream_id`), so lanes
+cannot share a connection. `CodexConnector::tags_lanes` returns `false`,
+`OpenAi::codex` uses `codex_limits()` (one lane and one request in
+flight per connection), and the driver routes each frame to the lane of
+the connection it came on. Concurrent runs each get their own
+connection.
+
+Checked against a ChatGPT Pro account on 2026-09-28: a one-word answer,
+and a two-turn run with a tool call continued on the same connection.
 
 ## Requests
 
