@@ -175,6 +175,8 @@ fn user(text: &str, t: &Theme, compact: bool) -> Div {
 /// Where a turn ended: a quiet rule with the turn's number, and a way to
 /// fork the run from here, shown on hover (always on a phone, which has
 /// no hover).
+/// Where one turn ends. Nothing shows there; on a desktop, hovering the
+/// gap offers a fork from that turn. A phone forks from the run's sheet.
 fn turn_end(
     run: &RunView,
     turn: u32,
@@ -183,30 +185,32 @@ fn turn_end(
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let group = SharedString::from(format!("turn-{turn}"));
-    let forkable = Workspace::can_fork_at(run, turn);
+    let forkable = !compact && Workspace::can_fork_at(run, turn);
     let id = run.id.clone();
-    div()
-        .group(group.clone())
-        .flex()
-        .items_center()
-        .gap(sp(2.))
-        .h(px(16.))
-        .child(div().flex_1().h(px(1.)).bg(t.border).opacity(0.5))
-        .child(mono(format!("turn {turn}"), Type::MICRO, t.dim))
-        .when(forkable, |row| {
-            row.child(
-                div()
-                    .id(SharedString::from(format!("fork-at-{turn}")))
-                    .when(!compact, |link| {
-                        link.opacity(0.)
-                            .group_hover(group, |style| style.opacity(1.))
-                    })
-                    .child(link("Fork from here", t))
-                    .on_click(cx.listener(move |ws, _, window, cx| {
-                        ws.fork_from(&id, turn, window, cx)
-                    })),
-            )
-        })
+    div().relative().when(forkable, |gap| {
+        gap.child(
+            div()
+                .group(group.clone())
+                .absolute()
+                .right_0()
+                .top(px(-10.))
+                .h(px(20.))
+                .w(px(240.))
+                .flex()
+                .items_center()
+                .justify_end()
+                .child(
+                    div()
+                        .id(SharedString::from(format!("fork-at-{turn}")))
+                        .opacity(0.)
+                        .group_hover(group, |style| style.opacity(1.))
+                        .child(link(format!("Fork from turn {turn}"), t))
+                        .on_click(cx.listener(move |ws, _, window, cx| {
+                            ws.fork_from(&id, turn, window, cx)
+                        })),
+                ),
+        )
+    })
 }
 
 fn thinking(text: &str, t: &Theme) -> Div {
