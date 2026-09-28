@@ -18,6 +18,22 @@ pub struct Catalog {
     pub store: StoreInfo,
     /// Whether the host can open pull requests from runs.
     pub pull_requests: bool,
+    /// Where runs work.
+    pub project: ProjectStatus,
+}
+
+/// Where the host's runs work, for the status bar.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ProjectStatus {
+    /// No host, or one that says nothing.
+    #[default]
+    Unknown,
+    /// The checkout is being copied into a project named this.
+    Importing(String),
+    /// Runs get a workspace each in the project named this.
+    Ready(String),
+    /// Runs work in the checkout itself, for this reason.
+    Checkout(String),
 }
 
 /// The seams a plugin can use, in the order the loop reaches them.

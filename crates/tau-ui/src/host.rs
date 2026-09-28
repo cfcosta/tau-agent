@@ -55,7 +55,14 @@ use tau_vcs::{
 use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
-    catalog::{Catalog, PluginInfo, PluginScreen, Seam, StoreInfo},
+    catalog::{
+        Catalog,
+        PluginInfo,
+        PluginScreen,
+        ProjectStatus,
+        Seam,
+        StoreInfo,
+    },
     setup::{DeviceCode, GitHub, ModelAccess, SetupUpdate},
     view::{
         BranchCode,
@@ -215,13 +222,60 @@ fn fnv(text: &str) -> u32 {
     })
 }
 
+/// The project runs work in, which may still be importing. Anything
+/// that needs it waits in [`ProjectSlot::wait`], off the UI thread where
+/// it can.
+struct ProjectSlot {
+    state: Mutex<ProjectState>,
+    done: std::sync::Condvar,
+}
+
+#[derive(Clone)]
+enum ProjectState {
+    Importing,
+    Ready(Project),
+    /// Runs work in the checkout itself, for this reason.
+    Checkout(String),
+}
+
+impl ProjectSlot {
+    fn new(state: ProjectState) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(state),
+            done: std::sync::Condvar::new(),
+        })
+    }
+
+    fn set(&self, state: ProjectState) {
+        *self.state.lock().expect("not poisoned") = state;
+        self.done.notify_all();
+    }
+
+    fn peek(&self) -> ProjectState {
+        self.state.lock().expect("not poisoned").clone()
+    }
+
+    /// The project, once the import is over; `None` if runs work in the
+    /// checkout.
+    fn wait(&self) -> Option<Project> {
+        let mut state = self.state.lock().expect("not poisoned");
+        while matches!(*state, ProjectState::Importing) {
+            state = self.done.wait(state).expect("not poisoned");
+        }
+        match &*state {
+            ProjectState::Ready(project) => Some(project.clone()),
+            _ => None,
+        }
+    }
+}
+
 pub struct Host {
     runtime: Runtime,
     /// The agent every run starts from; each run adds its own tools.
     base: Agent,
     store: Store,
     config: HostConfig,
-    project: Option<Project>,
+    project: Arc<ProjectSlot>,
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
     /// The workspace each run of this session works in.
     workspaces: Arc<Mutex<HashMap<RunId, String>>>,
@@ -279,23 +333,28 @@ impl Host {
             .instructions(INSTRUCTIONS)
             .limits(Limits::default().max_turns(MAX_TURNS))
             .plugin(compaction);
-        let project = match Project::open_or_import(
-            &config.root.to_string_lossy(),
-            config.project_dir(),
-            identity(),
-        ) {
-            Ok(project) => Some(project),
-            Err(error) => {
-                eprintln!(
-                    "tau-ui: runs will work in {} itself: {error:#}",
-                    config.root.display()
-                );
-                None
-            }
-        };
         let (mut host, events) =
             Self::with_agent(runtime, agent, store, config);
-        host.project = project;
+        // Copying the checkout can take a while; the window opens first.
+        let slot = ProjectSlot::new(ProjectState::Importing);
+        host.project = slot.clone();
+        let (source, dir) = (
+            host.config.root.to_string_lossy().into_owned(),
+            host.config.project_dir(),
+        );
+        std::thread::Builder::new()
+            .name("tau-import".into())
+            .spawn(move || {
+                slot.set(match Project::open_or_import(&source, dir, identity()) {
+                    Ok(project) => ProjectState::Ready(project),
+                    Err(error) => {
+                        eprintln!(
+                            "tau-ui: runs will work in {source} itself: {error:#}"
+                        );
+                        ProjectState::Checkout(format!("{error:#}"))
+                    }
+                });
+            })?;
         Ok((host, events))
     }
 
@@ -314,7 +373,9 @@ impl Host {
             base: agent,
             store,
             config,
-            project: None,
+            project: ProjectSlot::new(ProjectState::Checkout(
+                "no project was given".into(),
+            )),
             runs: Arc::default(),
             workspaces: Arc::default(),
             events,
@@ -323,13 +384,20 @@ impl Host {
     }
 
     /// Gives each run a workspace in `project`, and a commit per turn.
-    pub fn with_project(mut self, project: Project) -> Self {
-        self.project = Some(project);
+    pub fn with_project(self, project: Project) -> Self {
+        self.project.set(ProjectState::Ready(project));
         self
     }
 
-    pub fn project(&self) -> Option<&Project> {
-        self.project.as_ref()
+    /// The project runs work in, waiting for the import if it is still
+    /// going; `None` when runs work in the checkout.
+    pub fn project(&self) -> Option<Project> {
+        self.project.wait()
+    }
+
+    /// Whether the checkout is still being imported.
+    pub fn is_importing(&self) -> bool {
+        matches!(self.project.peek(), ProjectState::Importing)
     }
 
     /// Whether `run` is still going.
@@ -345,7 +413,7 @@ impl Host {
             .expect("not poisoned")
             .get(run)?
             .clone();
-        Some(self.project.as_ref()?.workspace_dir(&name))
+        Some(self.project()?.workspace_dir(&name))
     }
 
     /// What the workspace shows beyond runs: the agent's plugins and the
@@ -358,7 +426,8 @@ impl Host {
             spend: 0.0,
             screen: None,
         }];
-        if self.project.is_some() {
+        let state = self.project.peek();
+        if matches!(state, ProjectState::Ready(_)) {
             plugins.extend([
                 PluginInfo {
                     name: "tau-vcs".into(),
@@ -388,18 +457,30 @@ impl Host {
             spend: 0.0,
             screen: Some(PluginScreen::Ledger),
         });
-        let source = match &self.project {
-            Some(project) => format!(
+        let project_name = self
+            .config
+            .project_dir()
+            .file_name()
+            .map_or_else(String::new, |name| {
+                name.to_string_lossy().into_owned()
+            });
+        let source = match &state {
+            ProjectState::Ready(project) => format!(
                 "{} · {} → {}",
                 self.config.access.label(),
                 self.config.root.display(),
                 project.root().display()
             ),
-            None => format!(
+            _ => format!(
                 "{} · {}",
                 self.config.access.label(),
                 self.config.root.display()
             ),
+        };
+        let project = match state {
+            ProjectState::Importing => ProjectStatus::Importing(project_name),
+            ProjectState::Ready(_) => ProjectStatus::Ready(project_name),
+            ProjectState::Checkout(why) => ProjectStatus::Checkout(why),
         };
         Catalog {
             agent: "coder".into(),
@@ -418,13 +499,14 @@ impl Host {
                         .into(),
             },
             pull_requests: false,
+            project,
         }
     }
 
     /// The agent for one run, with its tools on the run's workspace, and
     /// the workspace's name.
     fn agent_for_run(&self) -> anyhow::Result<(Agent, Option<String>)> {
-        let Some(project) = &self.project else {
+        let Some(project) = self.project() else {
             let tools = CodingTools::new(Root::new(self.config.root.clone()));
             return Ok((self.base.clone().plugin(tools), None));
         };
@@ -458,7 +540,7 @@ impl Host {
         turn: Option<u32>,
         prompt: &str,
     ) -> anyhow::Result<RunView> {
-        if self.project.is_none() {
+        if self.project().is_none() {
             anyhow::bail!(
                 "Forking needs a project: {} could not be cloned",
                 self.config.root.display()
@@ -507,7 +589,7 @@ impl Host {
     /// other branches that are not running: the run it was forked from,
     /// and its other forks. Their commits stay in the project.
     pub fn keep_branch(&self, run: &RunId) -> anyhow::Result<()> {
-        let Some(project) = self.project.clone() else {
+        let Some(project) = self.project() else {
             return Ok(());
         };
         let store = self.store.clone();
@@ -652,7 +734,7 @@ impl Host {
             },
             PlanField {
                 name: "workspace".into(),
-                value: match (&self.project, &workspace) {
+                value: match (self.project(), &workspace) {
                     (Some(project), Some(name)) => {
                         project.workspace_dir(name).display().to_string()
                     }
@@ -708,6 +790,21 @@ impl Host {
             Err(error) => eprintln!("tau-ui: cannot read past runs: {error:#}"),
         }
         let host = Arc::new(self);
+        // Once the checkout is imported, the plugins and the status bar
+        // change.
+        if host.is_importing() {
+            let slot = host.project.clone();
+            let wait = host.runtime.spawn_blocking(move || slot.wait());
+            let waiter = host.clone();
+            let workspace = workspace.downgrade();
+            cx.spawn(async move |cx| {
+                let _ = wait.await;
+                let catalog = waiter.catalog();
+                let _ =
+                    workspace.update(cx, |ws, cx| ws.set_catalog(catalog, cx));
+            })
+            .detach();
+        }
         let handler = host.clone();
         cx.subscribe(
             workspace,
@@ -804,16 +901,18 @@ fn last_link(entries: &[(i64, String)], seq: Option<i64>) -> Option<Link> {
 /// See [`Host::branch_code`].
 async fn branch_code(
     store: Store,
-    project: Option<Project>,
+    project: Arc<ProjectSlot>,
     main: RunId,
     fork: RunId,
 ) -> anyhow::Result<BranchCode> {
-    let project = project.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Runs work in the checkout itself, so there are no commits to \
+    let project = tokio::task::spawn_blocking(move || project.wait())
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Runs work in the checkout itself, so there are no commits to \
              compare"
-        )
-    })?;
+            )
+        })?;
     let record = store
         .run(&fork.0)
         .await?

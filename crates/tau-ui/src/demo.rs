@@ -870,6 +870,7 @@ pub fn catalog() -> Catalog {
             sample_query: "select agent, sum(cost_usd) from runs where started_at > date('now', '-7 days') group by agent".into(),
         },
         pull_requests: true,
+        project: Default::default(),
     }
 }
 

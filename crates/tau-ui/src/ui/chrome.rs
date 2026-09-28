@@ -15,6 +15,7 @@ use gpui::{
 use super::{dot, icon, icon_button, logo, mono, status_icon, status_look};
 use crate::{
     assets::Icon,
+    catalog::ProjectStatus,
     route::{Route, Tab},
     theme::{Design as _, IconSize, MONO, Theme, Type, radius, sp, weight},
     ui::components::ButtonKind,
@@ -419,6 +420,20 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
                 .child("tau-ui"),
         )
         .children(context)
+        .children(match &ws.catalog.project {
+            ProjectStatus::Unknown => None,
+            ProjectStatus::Importing(name) => Some(
+                div()
+                    .text_color(t.accent)
+                    .child(format!("importing {name}…")),
+            ),
+            ProjectStatus::Ready(name) => {
+                Some(div().child(format!("{name} · a workspace per run")))
+            }
+            ProjectStatus::Checkout(_) => {
+                Some(div().text_color(t.dim).child("runs in the checkout"))
+            }
+        })
         .child(div().flex_1())
         .child("Esc back")
         .child(format!(

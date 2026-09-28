@@ -220,3 +220,53 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     assert!(!main_dir.exists());
     assert!(fork_dir.exists());
 }
+
+fn config_on(root: &Path, data: &Path) -> HostConfig {
+    HostConfig {
+        access: Access::ApiKey("sk-test".into()),
+        model: "gpt-5.5".into(),
+        root: root.to_owned(),
+        store: data.join("runs.db"),
+        repos: data.join("repos"),
+    }
+}
+
+#[test]
+fn the_checkout_is_imported_in_the_background() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let data = tempfile::tempdir().unwrap();
+    let (host, _events) =
+        Host::new(config_on(src.path(), data.path())).unwrap();
+    // Waiting for the project is what blocks, not opening the host.
+    let project = host.project().expect("the checkout imports");
+    assert!(project.root().starts_with(data.path().join("repos")));
+    assert!(!host.is_importing());
+    assert!(matches!(
+        host.catalog().project,
+        tau_ui::catalog::ProjectStatus::Ready(_)
+    ));
+    let names: Vec<_> = host
+        .catalog()
+        .plugins
+        .into_iter()
+        .map(|plugin| plugin.name)
+        .collect();
+    assert!(names.contains(&"workspace".to_owned()));
+}
+
+#[test]
+fn a_plain_directory_means_runs_work_in_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let (host, _events) =
+        Host::new(config_on(dir.path(), data.path())).unwrap();
+    assert!(host.project().is_none());
+    assert!(matches!(
+        host.catalog().project,
+        tau_ui::catalog::ProjectStatus::Checkout(_)
+    ));
+}
