@@ -1,0 +1,53 @@
+//! A GPUI interface for tau agents: a desktop layout with the run list,
+//! the transcript and an inspector, and a one-column phone layout below
+//! 720 px.
+//!
+//! The crate draws runs; it does not start them. A host wires it to
+//! agents in two directions:
+//!
+//! - **In:** every [`RunEvent`](tau_agent::event::RunEvent) a run streams
+//!   goes to [`Workspace::apply_event`]. What plugins decide but no event
+//!   carries yet (the chosen reasoning effort, a blocked call's rule, the
+//!   notes memory suggests) goes to [`Workspace::update_run`] as a
+//!   [`RunUpdate`](view::RunUpdate).
+//! - **Out:** the workspace emits a [`WorkspaceEvent`] when the user
+//!   starts, steers, cancels or forks a run. Subscribe to it and call the
+//!   matching `Agent` or `Run` method.
+//!
+//! ```ignore
+//! let workspace = cx.new(|cx| Workspace::new("tau-agent", vec![], window, cx));
+//! cx.subscribe(&workspace, move |workspace, event, cx| match event {
+//!     WorkspaceEvent::NewRun { prompt } => {
+//!         let run = agent.start(prompt, &store);
+//!         // Stream `run.events()` into `Workspace::apply_event`.
+//!     }
+//!     WorkspaceEvent::Steer { run, text } => runs[run].steer(text),
+//!     WorkspaceEvent::Cancel { run } => runs[run].cancel(),
+//!     _ => {}
+//! })
+//! .detach();
+//! ```
+//!
+//! [`demo`] replays a scripted session, so the interface runs without an
+//! agent: `cargo run -p tau-ui`.
+
+pub mod assets;
+pub mod demo;
+pub mod input;
+pub mod theme;
+pub mod ui;
+pub mod view;
+pub mod workspace;
+
+use gpui::App;
+pub use workspace::{Workspace, WorkspaceEvent};
+
+/// Sets up what the interface needs once per app: fonts, the theme and
+/// the text field's keys.
+pub fn init(cx: &mut App) {
+    if let Err(error) = assets::load_fonts(cx) {
+        eprintln!("tau-ui: could not load the bundled fonts: {error}");
+    }
+    cx.set_global(theme::Theme::graphite());
+    input::bind_keys(cx);
+}

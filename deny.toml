@@ -73,6 +73,13 @@ ignore = [
   # paste is unmaintained but only a proc-macro of hegeltest, a
   # test-only dependency; it never ships in a tau-agent build.
   { id = "RUSTSEC-2024-0436", reason = "test-only, via hegeltest" },
+  # Unmaintained crates under gpui, used only by tau-ui.
+  { id = "RUSTSEC-2024-0384", reason = "instant, via gpui (tau-ui)" },
+  { id = "RUSTSEC-2025-0052", reason = "async-std, via gpui (tau-ui)" },
+  { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile, via gpui (tau-ui)" },
+  { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2, via gpui (tau-ui)" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via gpui (tau-ui)" },
+  { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via gpui (tau-ui)" },
   #"RUSTSEC-0000-0000",
   #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
   #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
@@ -138,6 +145,10 @@ exceptions = [
   # of §11. 0BSD asks for nothing at all, not even the notice that the
   # BSD licences above ask for.
   { allow = ["0BSD"], crate = "quoted_printable" },
+  # Under gpui, used only by tau-ui.
+  { allow = ["CC0-1.0"], crate = "hexf-parse" },
+  { allow = ["CC0-1.0"], crate = "tiny-keccak" },
+  { allow = ["NCSA"], crate = "libfuzzer-sys" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,

@@ -98,23 +98,49 @@
           formatter,
           ...
         }:
+        let
+          # tau-ui (GPUI) links xcb and xkbcommon, and loads Vulkan,
+          # Wayland and X11 at runtime.
+          guiLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (
+            with pkgs;
+            [
+              fontconfig
+              freetype
+              libx11
+              libxcb
+              libxcursor
+              libxi
+              libxkbcommon
+              libxrandr
+              vulkan-loader
+              wayland
+            ]
+          );
+        in
         {
           default = pkgs.mkShell {
             name = "tau-agent";
 
-            buildInputs = with pkgs; [
-              formatter
-              rust
+            buildInputs =
+              with pkgs;
+              [
+                formatter
+                rust
 
-              bacon
-              cargo-deny
-              cargo-mutants
-              cargo-nextest
+                bacon
+                cargo-deny
+                cargo-mutants
+                cargo-nextest
 
-              curl
-              jq
-              sqlx-cli
-            ];
+                curl
+                jq
+                sqlx-cli
+              ]
+              ++ guiLibs;
+
+            nativeBuildInputs = [ pkgs.pkg-config ];
+
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath guiLibs;
           };
         }
       );
