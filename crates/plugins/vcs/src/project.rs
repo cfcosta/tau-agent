@@ -169,6 +169,53 @@ impl Project {
         })
     }
 
+    /// A file's content at `commit` (a full id in hex), and whether it
+    /// is executable; `None` when the commit has no file there.
+    pub fn file_at(
+        &self,
+        commit: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<(Vec<u8>, bool)>> {
+        let repo = self.git()?;
+        let id = gix::ObjectId::from_hex(commit.as_bytes())
+            .with_context(|| format!("{commit} is not a commit id"))?;
+        let commit = repo.find_object(id)?.try_into_commit()?;
+        let mut tree = commit.tree()?;
+        let Some(entry) = tree.peel_to_entry_by_path(path)? else {
+            return Ok(None);
+        };
+        let mode = entry.mode();
+        if !mode.is_blob_or_symlink() {
+            return Ok(None);
+        }
+        let data = entry.object()?.detach().data;
+        Ok(Some((data, mode.is_executable())))
+    }
+
+    /// The first parent of `commit`, if it has one.
+    pub fn parent_of(&self, commit: &str) -> anyhow::Result<Option<String>> {
+        let repo = self.git()?;
+        let id = gix::ObjectId::from_hex(commit.as_bytes())
+            .with_context(|| format!("{commit} is not a commit id"))?;
+        let commit = repo.find_object(id)?.try_into_commit()?;
+        Ok(commit.parent_ids().next().map(|id| id.to_string()))
+    }
+
+    /// The source's default branch, as the copy's `HEAD` names it.
+    pub fn default_branch(&self) -> Option<String> {
+        std::fs::read_to_string(self.inner.root.join(GIT).join("HEAD"))
+            .ok()?
+            .trim()
+            .strip_prefix("ref: refs/heads/")
+            .map(str::to_owned)
+    }
+
+    fn git(&self) -> anyhow::Result<gix::Repository> {
+        gix::open(self.inner.root.join(GIT)).with_context(|| {
+            format!("No Git store in {}", self.inner.root.display())
+        })
+    }
+
     /// The project's directory.
     pub fn root(&self) -> &Path {
         &self.inner.root

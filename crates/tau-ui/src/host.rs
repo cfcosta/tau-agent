@@ -77,6 +77,7 @@ use crate::{
         Models,
         coding_models,
     },
+    pull_request::{PrCommit, PrState, PullRequest},
     setup::{CloneState, ModelAccess, RepoClone, SetupStep, SetupUpdate},
     view::{
         BranchCode,
@@ -399,6 +400,10 @@ pub struct Host {
     updating: Arc<Mutex<Vec<String>>>,
     /// What the latest update found.
     last_update: Arc<Mutex<Option<String>>>,
+    /// Pull request drafts written from runs, until they are opened.
+    drafts: Mutex<HashMap<RunId, PullRequest>>,
+    /// Pull requests opened from runs, for pushing their later turns.
+    prs: Arc<Mutex<HashMap<RunId, OpenPr>>>,
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
     /// The workspace each run of this session works in.
     workspaces: Arc<Mutex<HashMap<RunId, String>>>,
@@ -546,6 +551,8 @@ impl Host {
             run_repos: Arc::default(),
             updating: Arc::default(),
             last_update: Arc::default(),
+            drafts: Mutex::default(),
+            prs: Arc::default(),
             runs: Arc::default(),
             workspaces: Arc::default(),
             events,
@@ -599,6 +606,11 @@ impl Host {
     /// A listed repository's project, waiting for its import.
     pub fn project_of(&self, repo: &str) -> Option<Project> {
         self.slot(repo)?.project.wait()
+    }
+
+    /// Where sign-ins and keys are kept.
+    pub fn credentials(&self) -> &Credentials {
+        &self.config.credentials
     }
 
     /// The name the checkout is listed under.
@@ -701,15 +713,7 @@ impl Host {
                 "Runs in {name} work in its checkout, which is always current"
             )
         })?;
-        let github = self
-            .list
-            .lock()
-            .expect("not poisoned")
-            .repos
-            .iter()
-            .find(|listed| listed.name == name)
-            .and_then(|listed| listed.github.clone());
-        match github {
+        match self.github_of(name) {
             Some(full_name) => {
                 let token = github::Token::load(&self.config.credentials);
                 project.update(tau_vcs::UpdateFrom::Remote {
@@ -719,6 +723,18 @@ impl Host {
             }
             None => project.update(tau_vcs::UpdateFrom::Checkout(&slot.path)),
         }
+    }
+
+    /// The `owner/name` a repository was cloned from, if it came from
+    /// GitHub.
+    fn github_of(&self, name: &str) -> Option<String> {
+        self.list
+            .lock()
+            .expect("not poisoned")
+            .repos
+            .iter()
+            .find(|listed| listed.name == name)
+            .and_then(|listed| listed.github.clone())
     }
 
     /// Stops listing a repository. Its project and runs stay.
@@ -895,7 +911,8 @@ impl Host {
                     "select agent, sum(cost_usd) from runs group by agent"
                         .into(),
             },
-            pull_requests: false,
+            pull_requests: github::Token::load(&self.config.credentials)
+                .is_some(),
             project,
             update: self.last_update.lock().expect("not poisoned").clone(),
             models: self.models(),
@@ -1585,6 +1602,82 @@ impl Host {
                         }
                     });
                 }
+                WorkspaceEvent::PreparePullRequest { run } => {
+                    let job = {
+                        let (host, run) = (handler.clone(), run.clone());
+                        handler
+                            .runtime
+                            .spawn_blocking(move || host.prepare_pull_request(&run))
+                    };
+                    let (run, workspace) = (run.clone(), workspace.downgrade());
+                    cx.spawn(async move |cx| {
+                        let prepared = match job.await {
+                            Ok(result) => result.map_err(|error| format!("{error:#}")),
+                            Err(error) => Err(error.to_string()),
+                        };
+                        let _ = workspace.update(cx, |ws, cx| match prepared {
+                            Ok(draft) => ws.set_pull_request(&run, draft, cx),
+                            Err(error) => {
+                                ws.back(cx);
+                                ws.show_alert("Could not write the pull request", error, cx)
+                            }
+                        });
+                    })
+                    .detach();
+                }
+                WorkspaceEvent::CreatePullRequest {
+                    run,
+                    title,
+                    body,
+                    draft,
+                    keep_pushing,
+                    reviewers,
+                } => {
+                    let Some(prepared) = handler.draft(run) else {
+                        return;
+                    };
+                    let job = {
+                        let host = handler.clone();
+                        let (run, title, body, reviewers) =
+                            (run.clone(), title.clone(), body.clone(), reviewers.clone());
+                        let (draft, keep_pushing) = (*draft, *keep_pushing);
+                        handler.runtime.spawn_blocking(move || {
+                            host.create_pull_request(
+                                &run,
+                                &prepared,
+                                &title,
+                                &body,
+                                draft,
+                                keep_pushing,
+                                &reviewers,
+                            )
+                        })
+                    };
+                    let (host, run, workspace) =
+                        (handler.clone(), run.clone(), workspace.downgrade());
+                    cx.spawn(async move |cx| {
+                        let created = match job.await {
+                            Ok(result) => result.map_err(|error| format!("{error:#}")),
+                            Err(error) => Err(error.to_string()),
+                        };
+                        let opened = created.is_ok();
+                        let state = match created {
+                            Ok((opened, _)) => PrState::Opened {
+                                number: opened.number,
+                                url: opened.url,
+                                checks: crate::pull_request::Checks::Running,
+                            },
+                            Err(error) => PrState::Failed(error),
+                        };
+                        let _ = workspace.update(cx, |ws, cx| {
+                            ws.set_pull_request_state(&run, state, cx)
+                        });
+                        if opened {
+                            watch_checks(host, run, workspace, cx).await;
+                        }
+                    })
+                    .detach();
+                }
                 WorkspaceEvent::EditConstitution { repo } => {
                     match handler.constitution_file(repo) {
                         Ok(path) => cx.open_with_system(&path),
@@ -1748,6 +1841,19 @@ impl Host {
         let workspace = workspace.downgrade();
         cx.spawn(async move |cx| {
             while let Some(event) = events.recv().await {
+                // A pull request that keeps pushing takes the turn.
+                if let RunEvent::TurnEnd { run, .. } = &event
+                    && host.keeps_pushing(run)
+                {
+                    let (pusher, run) = (host.clone(), run.clone());
+                    host.runtime.spawn_blocking(move || {
+                        if let Err(error) = pusher.push_later_turns(&run) {
+                            eprintln!(
+                                "tau-ui: cannot push the turn: {error:#}"
+                            );
+                        }
+                    });
+                }
                 let applied =
                     workspace.update(cx, |ws, cx| ws.apply_event(&event, cx));
                 if applied.is_err() {
@@ -1816,11 +1922,459 @@ fn update_in_background(
     .detach();
 }
 
+/// A pull request opened from a run, as far as tau pushed it.
+#[derive(Debug, Clone)]
+struct OpenPr {
+    repo: String,
+    branch: String,
+    title: String,
+    keep_pushing: bool,
+    /// The branch's commit on GitHub, and the run's last turn in it.
+    head: String,
+    turn: u32,
+}
+
+/// What the host needs to push a run's commits.
+struct Pushing {
+    project: Project,
+    repo: String,
+    token: String,
+    /// Changed turns, in order, after the ones pushed already.
+    links: Vec<Link>,
+    /// The local commit the first of them builds on, and its commit on
+    /// GitHub.
+    local_parent: String,
+    remote_parent: String,
+    /// The pull request's title, for commit messages.
+    title: String,
+}
+
+impl Host {
+    /// The turns `run` took that changed files, its own and the ones it
+    /// inherits as a fork, in order.
+    fn changed_turns(&self, run: &RunId) -> anyhow::Result<Vec<Link>> {
+        let bodies = self
+            .runtime
+            .block_on(self.store.records(&run.0, WORKSPACE_PLUGIN))?;
+        Ok(bodies
+            .iter()
+            .filter_map(|body| Link::parse(body))
+            .filter(|link| link.changed)
+            .collect())
+    }
+
+    /// Writes a pull request draft from `run`: its changed turns as
+    /// commits on its repository's default branch, its prompt as the
+    /// title and its last answer as the description.
+    pub fn prepare_pull_request(
+        &self,
+        run: &RunId,
+    ) -> anyhow::Result<PullRequest> {
+        let slot = self.slot_of_run(run);
+        let repo = self.github_of(&slot.name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Pull requests need a repository added from GitHub; {} is a \
+                 local checkout",
+                slot.name
+            )
+        })?;
+        let token = github::Token::load(&self.config.credentials)
+            .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
+        let project = slot
+            .project
+            .wait()
+            .ok_or_else(|| anyhow::anyhow!("{} has no project", slot.name))?;
+        let links = self.changed_turns(run)?;
+        let (Some(first), Some(last)) = (links.first(), links.last()) else {
+            anyhow::bail!(
+                "The run changed no files, so there is nothing to propose"
+            );
+        };
+        let base = project.parent_of(&first.commit_id)?.ok_or_else(|| {
+            anyhow::anyhow!("The run's first commit has no parent")
+        })?;
+        // Whether the default branch moved on under the run, touching
+        // what the run touched.
+        let _ = project.update(tau_vcs::UpdateFrom::Remote {
+            url: &self.github.clone_url(&repo),
+            token: Some(&token.token),
+        });
+        let trunk = project.trunk()?;
+        let changed: Vec<String> = project
+            .diff(&base, &last.commit_id)?
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+        let mergeable = trunk == base
+            || project
+                .diff(&base, &trunk)?
+                .iter()
+                .all(|file| !changed.contains(&file.path));
+        let mut commits = Vec::new();
+        let mut previous = base.clone();
+        for link in &links {
+            let files = project.diff(&previous, &link.commit_id)?;
+            commits.push(PrCommit {
+                title: format!("Turn {}", link.turn),
+                added: files.iter().map(|file| file.added as u32).sum(),
+                removed: files.iter().map(|file| file.removed as u32).sum(),
+            });
+            previous = link.commit_id.clone();
+        }
+        let view = self.history()?.into_iter().find(|view| &view.id == run);
+        let prompt = view
+            .as_ref()
+            .and_then(|view| {
+                view.items.iter().find_map(|item| match item {
+                    crate::view::Item::User(text) => Some(text.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap_or_default();
+        let answer = view
+            .as_ref()
+            .and_then(|view| view.last_text().map(str::to_owned))
+            .unwrap_or_default();
+        let turns = view.as_ref().map_or(0, |view| view.turn);
+        let head = format!(
+            "tau/{}-{}",
+            title(&prompt),
+            run.0
+                .chars()
+                .rev()
+                .take(6)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>()
+        );
+        let draft = PullRequest {
+            repo: repo.clone(),
+            head,
+            base: project.default_branch().unwrap_or_else(|| "main".into()),
+            mergeable,
+            summary: format!(
+                "{} changed {} files over {turns} turns.",
+                title(&prompt),
+                changed.len()
+            ),
+            tests: tests_passed(&answer),
+            title: pr_title(&prompt),
+            body: format!(
+                "{answer}\n\n---\nMade with tau from run `{}`.",
+                run.0
+            ),
+            commits,
+            draft: true,
+            keep_pushing: true,
+            state: PrState::Draft,
+        };
+        self.drafts
+            .lock()
+            .expect("not poisoned")
+            .insert(run.clone(), draft.clone());
+        Ok(draft)
+    }
+
+    /// The draft written for `run`, if any.
+    pub fn draft(&self, run: &RunId) -> Option<PullRequest> {
+        self.drafts.lock().expect("not poisoned").get(run).cloned()
+    }
+
+    /// Pushes the run's changed turns to the draft's branch and opens
+    /// the pull request, asking `reviewers` to review it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_pull_request(
+        &self,
+        run: &RunId,
+        draft: &PullRequest,
+        title: &str,
+        body: &str,
+        as_draft: bool,
+        keep_pushing: bool,
+        reviewers: &[String],
+    ) -> anyhow::Result<(github::Opened, String)> {
+        let pushing = self.pushing(run, &draft.repo, title, None)?;
+        let (head, turn) =
+            self.runtime
+                .block_on(push(&self.github, &pushing, &draft.head))?;
+        let token = pushing.token.clone();
+        let opened = self
+            .runtime
+            .block_on(self.github.open_pull(
+                &token,
+                &draft.repo,
+                title,
+                body,
+                &draft.head,
+                &draft.base,
+                as_draft,
+            ))
+            .map_err(anyhow::Error::msg)?;
+        self.runtime
+            .block_on(self.github.request_reviewers(
+                &token,
+                &draft.repo,
+                opened.number,
+                reviewers,
+            ))
+            .map_err(anyhow::Error::msg)?;
+        self.prs.lock().expect("not poisoned").insert(
+            run.clone(),
+            OpenPr {
+                repo: draft.repo.clone(),
+                branch: draft.head.clone(),
+                title: title.to_owned(),
+                keep_pushing,
+                head: head.clone(),
+                turn,
+            },
+        );
+        Ok((opened, head))
+    }
+
+    /// What pushing `run` needs, after `from` (a commit on GitHub and
+    /// the run's last turn in it), or from its base.
+    fn pushing(
+        &self,
+        run: &RunId,
+        repo: &str,
+        title: &str,
+        from: Option<(&str, u32)>,
+    ) -> anyhow::Result<Pushing> {
+        let slot = self.slot_of_run(run);
+        let token = github::Token::load(&self.config.credentials)
+            .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
+        let project = slot
+            .project
+            .wait()
+            .ok_or_else(|| anyhow::anyhow!("{} has no project", slot.name))?;
+        let all = self.changed_turns(run)?;
+        let first = all
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("The run changed no files"))?;
+        let base = project.parent_of(&first.commit_id)?.ok_or_else(|| {
+            anyhow::anyhow!("The run's first commit has no parent")
+        })?;
+        let (local_parent, remote_parent, links) = match from {
+            None => (base.clone(), base, all),
+            Some((remote, turn)) => {
+                let local = all
+                    .iter()
+                    .rev()
+                    .find(|link| link.turn <= turn)
+                    .map_or(base, |link| link.commit_id.clone());
+                let later =
+                    all.into_iter().filter(|link| link.turn > turn).collect();
+                (local, remote.to_owned(), later)
+            }
+        };
+        let title = title.to_owned();
+        Ok(Pushing {
+            project,
+            repo: repo.to_owned(),
+            token: token.token,
+            links,
+            local_parent,
+            remote_parent,
+            title,
+        })
+    }
+
+    /// Pushes the turns `run` took since its pull request's last push,
+    /// if it has one that keeps pushing. Returns whether it pushed.
+    pub fn push_later_turns(&self, run: &RunId) -> anyhow::Result<bool> {
+        let Some(open) =
+            self.prs.lock().expect("not poisoned").get(run).cloned()
+        else {
+            return Ok(false);
+        };
+        if !open.keep_pushing {
+            return Ok(false);
+        }
+        let pushing = self.pushing(
+            run,
+            &open.repo,
+            &open.title,
+            Some((&open.head, open.turn)),
+        )?;
+        if pushing.links.is_empty() {
+            return Ok(false);
+        }
+        let (head, turn) = self.runtime.block_on(push(
+            &self.github,
+            &pushing,
+            &open.branch,
+        ))?;
+        if let Some(open) = self.prs.lock().expect("not poisoned").get_mut(run)
+        {
+            open.head = head;
+            open.turn = turn;
+        }
+        Ok(true)
+    }
+
+    /// Whether `run` has a pull request that takes its later turns.
+    pub fn keeps_pushing(&self, run: &RunId) -> bool {
+        self.prs
+            .lock()
+            .expect("not poisoned")
+            .get(run)
+            .is_some_and(|open| open.keep_pushing)
+    }
+
+    /// How the checks on an opened pull request's head stand.
+    pub fn pull_request_checks(
+        &self,
+        run: &RunId,
+    ) -> anyhow::Result<crate::pull_request::Checks> {
+        let open = self
+            .prs
+            .lock()
+            .expect("not poisoned")
+            .get(run)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No pull request for the run"))?;
+        let token = github::Token::load(&self.config.credentials)
+            .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
+        self.runtime
+            .block_on(self.github.checks(&token.token, &open.repo, &open.head))
+            .map_err(anyhow::Error::msg)
+    }
+}
+
+/// Makes a commit on GitHub for each turn in `pushing`, with the files
+/// that turn changed, and points `branch` at the last. Returns the
+/// branch's new commit and the run's last turn in it.
+async fn push(
+    api: &github::Api,
+    pushing: &Pushing,
+    branch: &str,
+) -> anyhow::Result<(String, u32)> {
+    let (token, repo) = (&pushing.token, &pushing.repo);
+    let mut remote = pushing.remote_parent.clone();
+    let mut tree = api
+        .commit_tree(token, repo, &remote)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let mut local = pushing.local_parent.clone();
+    let mut turn = 0;
+    for link in &pushing.links {
+        let mut files = Vec::new();
+        for file in pushing.project.diff(&local, &link.commit_id)? {
+            let blob =
+                match pushing.project.file_at(&link.commit_id, &file.path)? {
+                    Some((content, executable)) => Some((
+                        api.create_blob(token, repo, &content)
+                            .await
+                            .map_err(anyhow::Error::msg)?,
+                        executable,
+                    )),
+                    None => None,
+                };
+            files.push(github::TreeFile {
+                path: file.path,
+                executable: blob
+                    .as_ref()
+                    .is_some_and(|(_, executable)| *executable),
+                blob: blob.map(|(sha, _)| sha),
+            });
+        }
+        tree = api
+            .create_tree(token, repo, &tree, &files)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let message = format!("{} (turn {})", pushing.title, link.turn);
+        remote = api
+            .create_commit(token, repo, &message, &tree, &remote)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        local = link.commit_id.clone();
+        turn = link.turn;
+    }
+    api.set_branch(token, repo, branch, &remote)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    Ok((remote, turn))
+}
+
+/// A pull request's title from the run's prompt: its first line, up to
+/// 72 characters, with a capital first letter and no final period.
+fn pr_title(prompt: &str) -> String {
+    let line = prompt.lines().next().unwrap_or_default().trim();
+    let mut title: String = line.chars().take(72).collect();
+    if line.chars().count() > 72 {
+        title = title.trim_end().to_owned() + "…";
+    }
+    let title = title.trim_end_matches('.').to_owned();
+    let mut chars = title.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => "Changes from tau".into(),
+    }
+}
+
+/// `14 tests passed`, from an answer that says how many passed.
+fn tests_passed(answer: &str) -> Option<String> {
+    let words: Vec<&str> = answer.split_whitespace().collect();
+    words.windows(2).find_map(|pair| {
+        let count: u32 = pair[0]
+            .trim_matches(|c: char| !c.is_ascii_digit())
+            .parse()
+            .ok()?;
+        pair[1]
+            .starts_with("passed")
+            .then(|| format!("{count} tests passed"))
+    })
+}
+
 /// `agent` with `plugin`, if there is one.
 fn with_plugin(agent: Agent, plugin: Option<ConstitutionPlugin>) -> Agent {
     match plugin {
         Some(plugin) => agent.plugin(plugin),
         None => agent,
+    }
+}
+
+/// Asks GitHub about an opened pull request's checks until they are
+/// done, for half an hour at most, and shows each change.
+async fn watch_checks(
+    host: Arc<Host>,
+    run: RunId,
+    workspace: gpui::WeakEntity<Workspace>,
+    cx: &mut gpui::AsyncApp,
+) {
+    use crate::pull_request::Checks;
+    for _ in 0..120 {
+        let job = {
+            let (checker, run) = (host.clone(), run.clone());
+            host.runtime
+                .spawn_blocking(move || checker.pull_request_checks(&run))
+        };
+        let Ok(Ok(checks)) = job.await else {
+            return;
+        };
+        let updated = workspace.update(cx, |ws, cx| {
+            if let Some(pr) = ws.pull_request(&run).cloned()
+                && let PrState::Opened { number, url, .. } = pr.state
+            {
+                ws.set_pull_request_state(
+                    &run,
+                    PrState::Opened {
+                        number,
+                        url,
+                        checks,
+                    },
+                    cx,
+                );
+            }
+        });
+        if updated.is_err() || checks != Checks::Running {
+            return;
+        }
+        cx.background_executor()
+            .timer(std::time::Duration::from_secs(15))
+            .await;
     }
 }
 

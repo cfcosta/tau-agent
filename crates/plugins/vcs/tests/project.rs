@@ -194,6 +194,35 @@ fn a_clone_updates_from_its_remote() {
 }
 
 #[test]
+fn files_and_parents_are_read_at_a_commit() {
+    let src = tempfile::tempdir().unwrap();
+    let first = source(src.path());
+    std::fs::write(src.path().join("run.sh"), "echo hi\n").unwrap();
+    git(src.path(), &["add", "run.sh"]);
+    git(src.path(), &["update-index", "--chmod=+x", "run.sh"]);
+    git(src.path(), &["commit", "--quiet", "-m", "script"]);
+    let second = git(src.path(), &["rev-parse", "HEAD"]);
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    assert_eq!(project.default_branch().as_deref(), Some("main"));
+    assert_eq!(project.parent_of(&second).unwrap(), Some(first.clone()));
+    assert_eq!(
+        project.file_at(&second, "run.sh").unwrap(),
+        Some((b"echo hi\n".to_vec(), true))
+    );
+    assert_eq!(
+        project.file_at(&first, "README.md").unwrap(),
+        Some((b"hello\n".to_vec(), false))
+    );
+    assert_eq!(project.file_at(&first, "run.sh").unwrap(), None);
+}
+
+#[test]
 fn a_bad_source_fails_to_import() {
     let home = tempfile::tempdir().unwrap();
     let missing = home.path().join("nothing-here");

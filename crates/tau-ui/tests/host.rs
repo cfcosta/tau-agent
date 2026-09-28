@@ -2,6 +2,8 @@
 //! With a project, each run works in a workspace of its own, forks
 //! start from a turn's code, and past runs come back as history.
 
+mod support;
+
 use std::{path::Path, process::Command, time::Duration};
 
 use tau_agent::{
@@ -37,7 +39,7 @@ fn host_on(
     let config = HostConfig {
         access: Access::ApiKey("sk-test".into()),
         credentials: Credentials::new(
-            std::env::temp_dir().join("tau-unused-credentials"),
+            fresh_repo_list().with_extension("config"),
         ),
         model: "gpt-5.5".into(),
         root: root.to_owned(),
@@ -716,4 +718,173 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     std::fs::write(&constitution.path, "[[rule]]\nid = 'A'\n").unwrap();
     let error = host.catalog().repos[0].constitution.error.clone();
     assert!(error.is_some_and(|error| error.contains("not valid")));
+}
+
+#[test]
+fn a_run_becomes_a_pull_request_on_github() {
+    // What GitHub serves, as a local repository at owner/name.git.
+    let remote = tempfile::tempdir().unwrap();
+    let src = remote.path().join("cfcosta/hello.git");
+    std::fs::create_dir_all(&src).unwrap();
+    git(&src, &["init", "--quiet"]);
+    std::fs::write(src.join("README.md"), "hello\n").unwrap();
+    git(&src, &["add", "README.md"]);
+    git(&src, &["commit", "--quiet", "-m", "first"]);
+    // GitHub's API, answering the calls a push and a pull request make.
+    let (api, seen) = support::fake(|line| {
+        let answer = |sha: &str| (201, serde_json::json!({ "sha": sha }));
+        match line {
+            l if l.starts_with("GET /repos/cfcosta/hello/git/commits/") => {
+                (200, serde_json::json!({ "tree": { "sha": "tree-base" } }))
+            }
+            "POST /repos/cfcosta/hello/git/blobs" => answer("blob-1"),
+            "POST /repos/cfcosta/hello/git/trees" => answer("tree-1"),
+            "POST /repos/cfcosta/hello/git/commits" => answer("commit-1"),
+            "POST /repos/cfcosta/hello/git/refs" => {
+                (201, serde_json::json!({}))
+            }
+            "POST /repos/cfcosta/hello/pulls" => (
+                201,
+                serde_json::json!({
+                    "number": 7,
+                    "html_url": "https://github.com/cfcosta/hello/pull/7"
+                }),
+            ),
+            "POST /repos/cfcosta/hello/pulls/7/requested_reviewers" => {
+                (201, serde_json::json!({}))
+            }
+            l if l.starts_with(
+                "GET /repos/cfcosta/hello/commits/commit-1/check-runs",
+            ) =>
+            {
+                (
+                    200,
+                    serde_json::json!({ "check_runs": [
+                        { "status": "completed", "conclusion": "success" }
+                    ]}),
+                )
+            }
+            _ => (404, serde_json::json!({ "message": "Not Found" })),
+        }
+    });
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "new\n" });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("src.txt")))
+        .turn(|t| t.text("Wrote src.txt. cargo test: 3 passed."))
+        .turn(|t| t.tool_call("write", write("more.txt")))
+        .turn(|t| t.text("Added more.txt."));
+    let home = tempfile::tempdir().unwrap();
+    let (host, mut events) = host_on(llm, home.path());
+    let web = format!("file://{}", remote.path().display());
+    let host = host.with_github(Api::at(&web, &api));
+    Token {
+        token: "ghu_token".into(),
+        user: "cfcosta".into(),
+        expires_at: None,
+    }
+    .save(&host_credentials(&host))
+    .unwrap();
+    let repo = host.clone_github("cfcosta/hello").unwrap();
+    assert!(host.project_of(&repo.name).is_some());
+    assert!(host.catalog().pull_requests);
+
+    let run = host
+        .start("write src.txt, please", &ModelChoice::default(), &repo.name)
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &run.id);
+
+    let draft = host.prepare_pull_request(&run.id).unwrap();
+    assert_eq!(draft.repo, "cfcosta/hello");
+    assert_eq!(draft.base, "main");
+    assert!(
+        draft.head.starts_with("tau/write-src-txt-please-"),
+        "{}",
+        draft.head
+    );
+    assert!(draft.mergeable);
+    assert_eq!(draft.title, "Write src.txt, please");
+    assert_eq!(draft.tests.as_deref(), Some("3 tests passed"));
+    assert!(draft.body.starts_with("Wrote src.txt."), "{}", draft.body);
+    assert_eq!(draft.commits.len(), 1);
+    assert_eq!((draft.commits[0].added, draft.commits[0].removed), (1, 0));
+
+    let (opened, head) = host
+        .create_pull_request(
+            &run.id,
+            &draft,
+            "Write src.txt",
+            "The body",
+            true,
+            true,
+            &["alice".into()],
+        )
+        .unwrap();
+    assert_eq!(opened.number, 7);
+    assert_eq!(opened.url, "https://github.com/cfcosta/hello/pull/7");
+    assert_eq!(head, "commit-1");
+    assert_eq!(
+        host.pull_request_checks(&run.id).unwrap(),
+        tau_ui::pull_request::Checks::Passed
+    );
+    let requests = seen.lock().unwrap().clone();
+    let find = |line: &str| {
+        requests
+            .iter()
+            .find(|request| request.starts_with(line))
+            .unwrap_or_else(|| panic!("no {line}"))
+            .clone()
+    };
+    // The file's content, then a tree on the base's, a commit on the
+    // base, the branch, and the pull request.
+    assert!(find("POST /repos/cfcosta/hello/git/blobs").contains("bmV3Cg=="));
+    let tree = find("POST /repos/cfcosta/hello/git/trees");
+    assert!(tree.contains("\"base_tree\":\"tree-base\""), "{tree}");
+    assert!(tree.contains("\"path\":\"src.txt\""), "{tree}");
+    let commit = find("POST /repos/cfcosta/hello/git/commits");
+    assert!(commit.contains("Write src.txt (turn 1)"), "{commit}");
+    let base = project_base(&host, &repo.name);
+    assert!(commit.contains(&base), "{commit}");
+    assert!(find("POST /repos/cfcosta/hello/git/refs").contains(&draft.head));
+    let pull = find("POST /repos/cfcosta/hello/pulls ");
+    assert!(
+        pull.contains("\"draft\":true") && pull.contains("\"base\":\"main\""),
+        "{pull}"
+    );
+    assert!(
+        find("POST /repos/cfcosta/hello/pulls/7/requested_reviewers")
+            .contains("alice")
+    );
+
+    // A later turn of the run goes to the same branch.
+    assert!(host.keeps_pushing(&run.id));
+    host.resume(&run.id, "add more.txt", &ModelChoice::default())
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &run.id);
+    assert!(host.push_later_turns(&run.id).unwrap());
+    let requests = seen.lock().unwrap().clone();
+    let trees = requests
+        .iter()
+        .filter(|request| {
+            request.starts_with("POST /repos/cfcosta/hello/git/trees")
+        })
+        .count();
+    assert_eq!(trees, 2);
+    assert!(requests.iter().any(|request| {
+        request.starts_with("PATCH /repos/cfcosta/hello/git/refs/heads/")
+            || request.starts_with("POST /repos/cfcosta/hello/git/refs")
+    }));
+    assert!(!host.push_later_turns(&run.id).unwrap(), "nothing new");
+}
+
+/// The credentials directory the test hosts use.
+fn host_credentials(host: &Host) -> tau_ui::accounts::Credentials {
+    host.credentials().clone()
+}
+
+/// The trunk a repository's project had when its first run started.
+fn project_base(host: &Host, repo: &str) -> String {
+    host.project_of(repo).unwrap().trunk().unwrap()
 }

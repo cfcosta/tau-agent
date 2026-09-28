@@ -328,9 +328,7 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         tau_agent::agent::Agent::new(ScriptedModel::new()).name("coder");
     let config = HostConfig {
         access: Access::ApiKey("sk-test".into()),
-        credentials: Credentials::new(
-            std::env::temp_dir().join("tau-unused-credentials"),
-        ),
+        credentials: Credentials::new(tempfile::tempdir().unwrap().keep()),
         model: "gpt-5.5".into(),
         root: std::env::temp_dir(),
         store: std::env::temp_dir().join("unused.db"),

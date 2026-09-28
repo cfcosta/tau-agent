@@ -15,7 +15,7 @@ use std::{
 
 use gpui::{App, Entity};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::{Notify, oneshot};
 use tokio_rustls::rustls::{ClientConfig, RootCertStore, crypto::ring};
 
@@ -363,6 +363,305 @@ impl Api {
     }
 }
 
+/// A file in a tree to create: its path, whether it is executable, and
+/// its blob, or `None` to delete it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeFile {
+    pub path: String,
+    pub executable: bool,
+    pub blob: Option<String>,
+}
+
+/// A pull request GitHub opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Opened {
+    pub number: u64,
+    pub url: String,
+}
+
+impl Api {
+    /// Sends `body` as JSON to the API with `method`, and returns the
+    /// status and the answer.
+    async fn send(
+        &self,
+        method: reqwest::Method,
+        token: &str,
+        path: &str,
+        body: &Value,
+    ) -> Result<(u16, Value), String> {
+        let response = self
+            .http
+            .request(method, format!("{}{path}", self.api))
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|error| format!("Cannot reach GitHub: {error}"))?;
+        let status = response.status().as_u16();
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|error| format!("Cannot read GitHub's answer: {error}"))?;
+        Ok((
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        ))
+    }
+
+    /// `send`, expecting a success with `field` in the answer.
+    async fn expect(
+        &self,
+        method: reqwest::Method,
+        token: &str,
+        path: &str,
+        body: &Value,
+        what: &str,
+    ) -> Result<Value, String> {
+        let (status, value) = self.send(method, token, path, body).await?;
+        if (200..300).contains(&status) {
+            return Ok(value);
+        }
+        let message = value["message"].as_str().unwrap_or("no reason given");
+        Err(match status {
+            403 | 404 => format!(
+                "GitHub refused to {what} ({status}: {message}). tau's app \
+                 needs contents and pull requests write access to the \
+                 repository."
+            ),
+            _ => format!("GitHub could not {what} ({status}: {message})"),
+        })
+    }
+
+    /// Uploads a file's content, returning its blob.
+    pub async fn create_blob(
+        &self,
+        token: &str,
+        repo: &str,
+        content: &[u8],
+    ) -> Result<String, String> {
+        let body = json!({
+            "content": base64(content),
+            "encoding": "base64",
+        });
+        let value = self
+            .expect(
+                reqwest::Method::POST,
+                token,
+                &format!("/repos/{repo}/git/blobs"),
+                &body,
+                "upload a file",
+            )
+            .await?;
+        sha(&value)
+    }
+
+    /// The tree of `commit`.
+    pub async fn commit_tree(
+        &self,
+        token: &str,
+        repo: &str,
+        commit: &str,
+    ) -> Result<String, String> {
+        let (status, value) = self
+            .get(token, &format!("/repos/{repo}/git/commits/{commit}"))
+            .await?;
+        if status != 200 {
+            return Err(format!(
+                "GitHub does not have commit {commit} ({status}); fetch the \
+                 repository and try again"
+            ));
+        }
+        value["tree"]["sha"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| "GitHub sent a commit without a tree".into())
+    }
+
+    /// A tree: `base` with `files` changed.
+    pub async fn create_tree(
+        &self,
+        token: &str,
+        repo: &str,
+        base: &str,
+        files: &[TreeFile],
+    ) -> Result<String, String> {
+        let entries: Vec<Value> = files
+            .iter()
+            .map(|file| {
+                json!({
+                    "path": file.path,
+                    "mode": if file.executable { "100755" } else { "100644" },
+                    "type": "blob",
+                    "sha": file.blob,
+                })
+            })
+            .collect();
+        let body = json!({ "base_tree": base, "tree": entries });
+        let value = self
+            .expect(
+                reqwest::Method::POST,
+                token,
+                &format!("/repos/{repo}/git/trees"),
+                &body,
+                "make a tree",
+            )
+            .await?;
+        sha(&value)
+    }
+
+    pub async fn create_commit(
+        &self,
+        token: &str,
+        repo: &str,
+        message: &str,
+        tree: &str,
+        parent: &str,
+    ) -> Result<String, String> {
+        let body =
+            json!({ "message": message, "tree": tree, "parents": [parent] });
+        let value = self
+            .expect(
+                reqwest::Method::POST,
+                token,
+                &format!("/repos/{repo}/git/commits"),
+                &body,
+                "make a commit",
+            )
+            .await?;
+        sha(&value)
+    }
+
+    /// Points `branch` at `commit`, making it if it is new.
+    pub async fn set_branch(
+        &self,
+        token: &str,
+        repo: &str,
+        branch: &str,
+        commit: &str,
+    ) -> Result<(), String> {
+        let (status, _) = self
+            .send(
+                reqwest::Method::POST,
+                token,
+                &format!("/repos/{repo}/git/refs"),
+                &json!({ "ref": format!("refs/heads/{branch}"), "sha": commit }),
+            )
+            .await?;
+        if (200..300).contains(&status) {
+            return Ok(());
+        }
+        self.expect(
+            reqwest::Method::PATCH,
+            token,
+            &format!("/repos/{repo}/git/refs/heads/{branch}"),
+            &json!({ "sha": commit, "force": true }),
+            "move the branch",
+        )
+        .await
+        .map(drop)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn open_pull(
+        &self,
+        token: &str,
+        repo: &str,
+        title: &str,
+        body: &str,
+        head: &str,
+        base: &str,
+        draft: bool,
+    ) -> Result<Opened, String> {
+        let value = self
+            .expect(
+                reqwest::Method::POST,
+                token,
+                &format!("/repos/{repo}/pulls"),
+                &json!({
+                    "title": title, "body": body, "head": head,
+                    "base": base, "draft": draft,
+                }),
+                "open the pull request",
+            )
+            .await?;
+        Ok(Opened {
+            number: value["number"].as_u64().unwrap_or_default(),
+            url: value["html_url"].as_str().unwrap_or_default().to_owned(),
+        })
+    }
+
+    pub async fn request_reviewers(
+        &self,
+        token: &str,
+        repo: &str,
+        number: u64,
+        reviewers: &[String],
+    ) -> Result<(), String> {
+        if reviewers.is_empty() {
+            return Ok(());
+        }
+        self.expect(
+            reqwest::Method::POST,
+            token,
+            &format!("/repos/{repo}/pulls/{number}/requested_reviewers"),
+            &json!({ "reviewers": reviewers }),
+            "ask for reviews",
+        )
+        .await
+        .map(drop)
+    }
+
+    /// How the check runs on `commit` stand.
+    pub async fn checks(
+        &self,
+        token: &str,
+        repo: &str,
+        commit: &str,
+    ) -> Result<crate::pull_request::Checks, String> {
+        use crate::pull_request::Checks;
+        let (status, value) = self
+            .get(token, &format!("/repos/{repo}/commits/{commit}/check-runs"))
+            .await?;
+        if status != 200 {
+            return Err(format!("GitHub answered {status} for the checks"));
+        }
+        let runs = value["check_runs"].as_array().cloned().unwrap_or_default();
+        if runs.is_empty() {
+            return Ok(Checks::None);
+        }
+        let failed = runs.iter().any(|run| {
+            matches!(
+                run["conclusion"].as_str(),
+                Some("failure" | "timed_out" | "cancelled" | "action_required")
+            )
+        });
+        let done = runs.iter().all(|run| run["status"] == "completed");
+        Ok(if failed {
+            Checks::Failed
+        } else if done {
+            Checks::Passed
+        } else {
+            Checks::Running
+        })
+    }
+}
+
+fn sha(value: &Value) -> Result<String, String> {
+    value["sha"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "GitHub sent no id".into())
+}
+
+/// Standard base64, as GitHub's blobs take it.
+fn base64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
 fn repo_choice(repo: &Value) -> Option<RepoChoice> {
     Some(RepoChoice {
         name: repo.get("full_name")?.as_str()?.to_owned(),
@@ -590,6 +889,16 @@ async fn list_repos(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_matches_the_standard() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(&[0xff, 0xfe]), "//4=");
+    }
 
     #[test]
     fn form_values_are_encoded() {

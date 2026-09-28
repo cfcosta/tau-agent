@@ -14,6 +14,8 @@ pub enum Checks {
     Running,
     Passed,
     Failed,
+    /// The repository runs no checks.
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

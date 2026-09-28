@@ -516,6 +516,9 @@ fn opened(
         }
         Checks::Passed => (Icon::Check, "Checks passed on GitHub", t.green),
         Checks::Failed => (Icon::Warning, "Checks failed on GitHub", t.red),
+        Checks::None => {
+            (Icon::Info, "No checks run on this repository", t.muted)
+        }
     };
     let url = url.clone();
     let back = run.clone();
