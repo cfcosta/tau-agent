@@ -226,6 +226,55 @@ model gave it, and the real message puts it in backquotes.
 | `vcs_undo`    | newest operation is not the tools' | `The last operation was not made by the vcs tools in this workspace ("<description>"); ...`     |
 | `vcs_undo`    | concurrent operations              | `The operation log has concurrent operations here; ask the user to undo from the operation log` |
 
+## Projects
+
+A `Project` is a repository tau owns, in a directory of its own
+(the host uses `$XDG_DATA_HOME/tau/repos/<name>/`). Runs never work in
+the user's checkout.
+
+| Path           | What it is                                                             |
+| -------------- | ---------------------------------------------------------------------- |
+| `git/`         | A bare `git clone` of the source; jj's Git store.                      |
+| `main/`        | The jj repository (`main/.jj/repo`). Its own working copy stays empty. |
+| `runs/<name>/` | One jj workspace per run, named by the host.                           |
+
+- `Project::open_or_import(source, root, identity)` opens the project at
+  `root`, or clones `source` (a path or any URL `git clone` takes) and
+  imports every branch as a bookmark. Cloning needs `git` on the
+  `PATH`; jj-lib's own fetch shells out to `git` too.
+- `trunk()` is the commit new runs start from: the branch the clone's
+  `HEAD` names, else `main`, `master` or `trunk`, else the root commit.
+- `add_workspace(name, base)` makes `runs/<name>` on a new empty commit
+  on top of `base` and checks out its files. `forget_workspace(name)`
+  drops it from the view and deletes the directory; its commits stay.
+- These calls block. Call them off the async executor.
+
+## Runs and turns
+
+`RunWorkspace` is a plugin for one run: build one per run, point the
+run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
+`vcs()` (it loads on first use, after the run has made it).
+
+- **At start** it makes the run's workspace: on the commit of the
+  latest `Link` the run inherits (a fork), else on `trunk()`.
+- **After each turn** (`TurnEnd`) it ends the turn: if the working copy
+  changed, it is committed (described `tau: run <id> turn <n>` unless
+  the model described it) and an empty working copy starts on top.
+  Then it stores a `Link` record under the plugin name `workspace`:
+
+  ```json
+  { "turn": 2, "workspace": "0192…", "commit_id": "…", "change_id": "…", "changed": true }
+  ```
+
+  A turn that changed nothing links to the commit before it. A failed
+  commit stores `{ "turn": n, "error": "…" }` and the run goes on.
+
+- **Forking at a turn**: read the run's links with
+  `Store::plugin_entries(run, "workspace")`, take the `seq` of the
+  turn's link, and fork with `Checkpoint::at(run, seq)` and a new
+  `RunWorkspace`. The fork inherits the transcript and links up to that
+  turn, so it starts on that turn's code.
+
 ## Left to the host and the UI
 
 These operations change shared state, use the network, or throw work
@@ -234,14 +283,9 @@ away. The model does not get them. The host calls jj-lib (or later
 ([jj-lib.md](../research/jj-lib.md), "Operations the user triggers from
 the UI"):
 
-- **Clone, fetch and push.** Adding a project from GitHub, updating
-  trunk, and pushing a run's bookmark. These spawn `git` and need
-  credentials.
+- **Fetch and push.** Updating trunk and pushing a run's bookmark.
+  These need credentials.
 - **Pull requests.** Opening a PR after a push.
-- **Forking at a turn.** A new workspace whose working copy is a child
-  of the commit linked to an earlier turn.
-- **Workspaces per run, snapshots at turn end, link records.** These
-  are stage 3 of the study and are not built.
 - **Bookmarks, rebase, abandon and squash.** The study's
   `vcs_abandon`, `vcs_squash`, `vcs_cat` and named revisions (`trunk`,
   `fork-point`) are not built.

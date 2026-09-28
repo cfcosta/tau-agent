@@ -7657,6 +7657,7 @@ dependencies = [
  "tau-ai",
  "tau-store",
  "tau-testing",
+ "tau-tools",
  "tempfile",
  "tokio",
  "tokio-util",

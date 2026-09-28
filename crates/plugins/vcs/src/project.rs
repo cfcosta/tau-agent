@@ -1,0 +1,284 @@
+//! [`Project`]: a repository tau owns, with a jj workspace per run
+//! (`docs/reference/vcs.md`, "Projects").
+//!
+//! A project lives in a directory of its own, usually under
+//! `$XDG_DATA_HOME/tau/repos/`:
+//!
+//! - `git/`: a bare Git clone of the source, the store jj writes to;
+//! - `main/`: the jj repository, whose own working copy stays empty;
+//! - `runs/<name>/`: one jj workspace per run, each on its own commit.
+//!
+//! Runs never touch the user's own checkout. The functions here block;
+//! call them off the async executor.
+
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Arc,
+};
+
+use anyhow::{Context as _, anyhow, bail};
+use jj_lib::{
+    backend::CommitId,
+    commit::Commit,
+    default_backend_factories::{
+        default_backend_factories,
+        default_working_copy_factories,
+        default_working_copy_factory,
+    },
+    git::{GitImportOptions, import_refs},
+    object_id::ObjectId as _,
+    ref_name::{RefName, WorkspaceNameBuf},
+    repo::{ReadonlyRepo, Repo as _},
+    settings::UserSettings,
+    workspace::Workspace,
+};
+use pollster::block_on;
+
+use crate::vcs::{Identity, Vcs, settings};
+
+const GIT: &str = "git";
+const MAIN: &str = "main";
+const RUNS: &str = "runs";
+
+/// A repository tau owns. Cheap to clone.
+#[derive(Clone)]
+pub struct Project {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
+    root: PathBuf,
+    identity: Identity,
+    settings: UserSettings,
+}
+
+impl std::fmt::Debug for Project {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Project")
+            .field("root", &self.inner.root)
+            .finish()
+    }
+}
+
+impl Project {
+    /// Opens the project at `root`, or makes it there by cloning
+    /// `source` (a path or a URL `git clone` accepts) when there is none.
+    /// Needs `git` on the `PATH` to clone.
+    pub fn open_or_import(
+        source: &str,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> anyhow::Result<Self> {
+        let root = root.into();
+        if root.join(MAIN).join(".jj").is_dir() {
+            return Self::open(root, identity);
+        }
+        Self::import(source, root, identity)
+    }
+
+    /// Opens the project at `root`.
+    pub fn open(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> anyhow::Result<Self> {
+        let root = root.into();
+        if !root.join(MAIN).join(".jj").is_dir() {
+            bail!("No tau project at {}", root.display());
+        }
+        Self::new(root, identity)
+    }
+
+    /// Makes a project at `root` (which must not hold one) from a clone
+    /// of `source`, with every branch imported as a bookmark.
+    pub fn import(
+        source: &str,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> anyhow::Result<Self> {
+        let root = root.into();
+        std::fs::create_dir_all(&root)
+            .with_context(|| format!("Cannot create {}", root.display()))?;
+        let git_dir = root.join(GIT);
+        if !git_dir.is_dir() {
+            clone_bare(source, &git_dir)?;
+        }
+        let project = Self::new(root, identity)?;
+        let main = project.inner.root.join(MAIN);
+        std::fs::create_dir_all(&main)?;
+        let (_workspace, repo) = block_on(Workspace::init_external_git(
+            &project.inner.settings,
+            &main,
+            &git_dir,
+        ))
+        .context("Cannot make the jj repository")?;
+        let mut tx = repo.start_transaction();
+        let options = GitImportOptions {
+            abandon_unreachable_commits: true,
+            record_synthetic_predecessors: false,
+            remote_auto_track_bookmarks: HashMap::new(),
+        };
+        block_on(import_refs(tx.repo_mut(), &options))
+            .context("Cannot import the Git branches")?;
+        block_on(tx.commit("tau: import"))?;
+        Ok(project)
+    }
+
+    fn new(root: PathBuf, identity: Identity) -> anyhow::Result<Self> {
+        let settings = settings(&identity)?;
+        Ok(Self {
+            inner: Arc::new(Inner {
+                root,
+                identity,
+                settings,
+            }),
+        })
+    }
+
+    /// The project's directory.
+    pub fn root(&self) -> &Path {
+        &self.inner.root
+    }
+
+    /// Where run `name`'s workspace is.
+    pub fn workspace_dir(&self, name: &str) -> PathBuf {
+        self.inner.root.join(RUNS).join(name)
+    }
+
+    /// The commit new runs start from: the source's default branch, as
+    /// the clone's `HEAD` names it, or the root commit of an empty
+    /// repository. A full commit id, in hex.
+    pub fn trunk(&self) -> anyhow::Result<String> {
+        let repo = self.load()?;
+        let head =
+            std::fs::read_to_string(self.inner.root.join(GIT).join("HEAD"))
+                .unwrap_or_default();
+        let branch = head
+            .trim()
+            .strip_prefix("ref: refs/heads/")
+            .map(str::to_owned);
+        let view = repo.view();
+        let target = branch
+            .iter()
+            .map(String::as_str)
+            .chain(["main", "master", "trunk"])
+            .find_map(|name| {
+                view.get_local_bookmark(RefName::new(name))
+                    .as_normal()
+                    .cloned()
+            });
+        let id =
+            target.unwrap_or_else(|| repo.store().root_commit_id().clone());
+        Ok(id.hex())
+    }
+
+    /// Makes run `name`'s workspace, on a new empty commit on top of
+    /// `base` (a full commit id in hex), with `base`'s files checked out,
+    /// and opens it. Opens it as it is if it exists already.
+    pub fn add_workspace(&self, name: &str, base: &str) -> anyhow::Result<Vcs> {
+        let dir = self.workspace_dir(name);
+        if dir.join(".jj").is_dir() {
+            return Vcs::open(dir, self.inner.identity.clone());
+        }
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("Cannot create {}", dir.display()))?;
+        let main = self.main()?;
+        let repo = block_on(main.repo_loader().load_at_head())?;
+        let (mut workspace, repo) =
+            block_on(Workspace::init_workspace_with_existing_repo(
+                &dir,
+                main.repo_path(),
+                &repo,
+                &*default_working_copy_factory(),
+                WorkspaceNameBuf::from(name),
+            ))
+            .context("Cannot add the workspace")?;
+        let base = commit(&repo, base)?;
+        let mut tx = repo.start_transaction();
+        let wc = block_on(
+            tx.repo_mut().check_out(WorkspaceNameBuf::from(name), &base),
+        )?;
+        // Checking out abandons the empty commit the workspace began on.
+        block_on(tx.repo_mut().rebase_descendants())?;
+        let repo = block_on(tx.commit(format!("tau: add workspace {name}")))?;
+        block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
+            .context("Cannot check out the workspace's files")?;
+        Vcs::open(dir, self.inner.identity.clone())
+    }
+
+    /// Removes run `name`'s workspace: jj forgets it, and its directory
+    /// is deleted. Its commits stay in the repository.
+    pub fn forget_workspace(&self, name: &str) -> anyhow::Result<()> {
+        let repo = self.load()?;
+        let name_buf = WorkspaceNameBuf::from(name);
+        if repo.view().get_wc_commit_id(&name_buf).is_some() {
+            let mut tx = repo.start_transaction();
+            block_on(tx.repo_mut().remove_workspace(&name_buf))?;
+            block_on(tx.repo_mut().rebase_descendants())?;
+            block_on(tx.commit(format!("tau: forget workspace {name}")))?;
+        }
+        let dir = self.workspace_dir(name);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .with_context(|| format!("Cannot delete {}", dir.display()))?;
+        }
+        Ok(())
+    }
+
+    /// The names of the workspaces runs have, sorted.
+    pub fn workspaces(&self) -> anyhow::Result<Vec<String>> {
+        let repo = self.load()?;
+        let mut names: Vec<String> = repo
+            .view()
+            .wc_commit_ids()
+            .keys()
+            .map(|name| name.as_str().to_owned())
+            .filter(|name| name != "default")
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
+    fn main(&self) -> anyhow::Result<Workspace> {
+        Workspace::load(
+            &self.inner.settings,
+            &self.inner.root.join(MAIN),
+            &default_backend_factories(),
+            &default_working_copy_factories(),
+        )
+        .with_context(|| {
+            format!("No tau project at {}", self.inner.root.display())
+        })
+    }
+
+    fn load(&self) -> anyhow::Result<Arc<ReadonlyRepo>> {
+        let main = self.main()?;
+        Ok(block_on(main.repo_loader().load_at_head())?)
+    }
+}
+
+/// The commit a full hex id names.
+fn commit(repo: &Arc<ReadonlyRepo>, hex: &str) -> anyhow::Result<Commit> {
+    let id = CommitId::try_from_hex(hex.trim())
+        .ok_or_else(|| anyhow!("`{hex}` is not a commit id"))?;
+    repo.store()
+        .get_commit(&id)
+        .with_context(|| format!("No commit {hex}"))
+}
+
+fn clone_bare(source: &str, into: &Path) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .args(["clone", "--bare", "--quiet", source])
+        .arg(into)
+        .output()
+        .context("Cannot run git to clone; is it installed?")?;
+    if !output.status.success() {
+        let _ = std::fs::remove_dir_all(into);
+        bail!(
+            "git clone {source} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}

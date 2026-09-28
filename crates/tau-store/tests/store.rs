@@ -511,3 +511,84 @@ fn waiting_for_the_write_lock_is_measured() {
         std::fs::remove_dir_all(&dir).unwrap();
     });
 }
+
+/// History lists root runs and forks, newest first, without sub-agents.
+#[test]
+fn recent_runs_skip_subagents() {
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        for (id, kind) in [
+            ("a", RunKind::Root),
+            ("b", RunKind::Subagent { parent: "a".into() }),
+            (
+                "c",
+                RunKind::Fork {
+                    parent: "a".into(),
+                    fork_seq: 0,
+                },
+            ),
+        ] {
+            store
+                .create_run(&NewRun {
+                    id,
+                    workflow_id: None,
+                    agent: "coder",
+                    kind,
+                    model: "m",
+                })
+                .await
+                .unwrap();
+        }
+        let runs = store.recent_runs(10).await.unwrap();
+        let ids: Vec<&str> = runs.iter().map(|run| run.id.as_str()).collect();
+        assert_eq!(ids, ["c", "a"]);
+        assert!(!runs[0].created_at.is_empty());
+        assert_eq!(store.recent_runs(1).await.unwrap().len(), 1);
+    });
+}
+
+/// A plugin's own records come back with their `seq`, to fork at.
+#[test]
+fn plugin_entries_carry_their_seq() {
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        store
+            .create_run(&NewRun {
+                id: "r",
+                workflow_id: None,
+                agent: "coder",
+                kind: RunKind::Root,
+                model: "m",
+            })
+            .await
+            .unwrap();
+        let message = Entry::Message {
+            role: "user".into(),
+            body: json!({"text": "hi"}).to_string(),
+        };
+        let record = |n: u32| Entry::Plugin {
+            plugin: "workspace".into(),
+            body: json!({ "turn": n }).to_string(),
+        };
+        let other = Entry::Plugin {
+            plugin: "memory".into(),
+            body: json!({}).to_string(),
+        };
+        store
+            .append_turn(
+                "r",
+                &[message.clone(), record(1), other, message, record(2)],
+                TurnUsage::default(),
+            )
+            .await
+            .unwrap();
+        let entries = store.plugin_entries("r", "workspace").await.unwrap();
+        assert_eq!(
+            entries,
+            vec![
+                (1, json!({"turn": 1}).to_string()),
+                (4, json!({"turn": 2}).to_string()),
+            ]
+        );
+    });
+}

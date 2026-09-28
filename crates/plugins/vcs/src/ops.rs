@@ -421,6 +421,60 @@ pub(crate) fn new(
     })
 }
 
+/// Where a turn left the code: the commit holding its files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct TurnCommit {
+    pub commit_id: String,
+    pub change_id: String,
+    /// The turn changed files, so a new commit was made for it.
+    pub changed: bool,
+}
+
+/// Ends a turn: snapshots the working copy and, if it changed anything,
+/// commits it (described as `message` unless the model described it)
+/// and starts an empty working copy on top. Returns the commit that
+/// holds the turn's files: the new one, or the working copy's parent
+/// when the turn changed nothing.
+pub(crate) fn checkpoint(
+    worker: &mut Worker,
+    message: String,
+) -> anyhow::Result<TurnCommit> {
+    let name = workspace_name(worker)?;
+    let (_, turn) = session::mutate(worker, "checkpoint", |tx, wc| {
+        if block_on(wc.is_empty(tx.repo()))? {
+            let parent = wc
+                .parent_ids()
+                .first()
+                .ok_or_else(|| anyhow!("The working copy has no parent"))?;
+            let parent = tx.repo().store().get_commit(parent)?;
+            return Ok(TurnCommit {
+                commit_id: parent.id().hex(),
+                change_id: parent.change_id().reverse_hex(),
+                changed: false,
+            });
+        }
+        let text = if wc.description().trim().is_empty() {
+            description(&message)
+        } else {
+            wc.description().to_owned()
+        };
+        let committed = block_on(
+            tx.repo_mut()
+                .rewrite_commit(wc)
+                .set_description(text)
+                .write(),
+        )?;
+        block_on(tx.repo_mut().rebase_descendants())?;
+        block_on(tx.repo_mut().check_out(name, &committed))?;
+        Ok(TurnCommit {
+            commit_id: committed.id().hex(),
+            change_id: committed.change_id().reverse_hex(),
+            changed: true,
+        })
+    })?;
+    Ok(turn)
+}
+
 pub(crate) fn restore(
     worker: &mut Worker,
     paths: Vec<String>,

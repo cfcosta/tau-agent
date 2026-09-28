@@ -150,6 +150,9 @@ pub struct RunRecord {
     pub cost_usd: f64,
     pub result: Option<String>,
     pub error: Option<String>,
+    /// When the run started, as SQLite's `strftime` writes it
+    /// (`2026-09-28T14:03:11.402Z`).
+    pub created_at: String,
 }
 
 /// The cost of one agent's runs in a workflow.
@@ -463,20 +466,15 @@ impl Store {
         let row = sqlx::query!(
             r#"SELECT id AS "id!: String", workflow_id, agent, kind,
                       parent_run_id, fork_seq, model, status,
-                      input_tokens, output_tokens, cost_usd, result, error
+                      input_tokens, output_tokens, cost_usd, result, error,
+                      created_at
                FROM runs WHERE id = ?1"#,
             run
         )
         .fetch_optional(&self.reader)
         .await?;
         Ok(row.map(|row| RunRecord {
-            kind: match (row.kind.as_str(), row.parent_run_id, row.fork_seq) {
-                ("fork", Some(parent), Some(fork_seq)) => {
-                    RunKind::Fork { parent, fork_seq }
-                }
-                ("subagent", Some(parent), _) => RunKind::Subagent { parent },
-                _ => RunKind::Root,
-            },
+            kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq),
             id: row.id,
             workflow_id: row.workflow_id,
             agent: row.agent,
@@ -487,7 +485,62 @@ impl Store {
             cost_usd: row.cost_usd,
             result: row.result,
             error: row.error,
+            created_at: row.created_at,
         }))
+    }
+
+    /// The latest `limit` runs that are not sub-agents, newest first.
+    pub async fn recent_runs(&self, limit: u32) -> Result<Vec<RunRecord>> {
+        let rows = sqlx::query!(
+            r#"SELECT id AS "id!: String", workflow_id, agent, kind,
+                      parent_run_id, fork_seq, model, status,
+                      input_tokens, output_tokens, cost_usd, result, error,
+                      created_at
+               FROM runs WHERE kind != 'subagent'
+               ORDER BY created_at DESC, id DESC
+               LIMIT ?1"#,
+            limit
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| RunRecord {
+                kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq),
+                id: row.id,
+                workflow_id: row.workflow_id,
+                agent: row.agent,
+                model: row.model,
+                status: Status::parse(&row.status),
+                input_tokens: row.input_tokens,
+                output_tokens: row.output_tokens,
+                cost_usd: row.cost_usd,
+                result: row.result,
+                error: row.error,
+                created_at: row.created_at,
+            })
+            .collect())
+    }
+
+    /// `plugin`'s records in the run itself, not inherited, with the
+    /// `seq` each was stored at, oldest first. A fork at a record's `seq`
+    /// inherits that record and everything before it.
+    pub async fn plugin_entries(
+        &self,
+        run: &str,
+        plugin: &str,
+    ) -> Result<Vec<(i64, String)>> {
+        let rows = sqlx::query!(
+            r#"SELECT seq AS "seq!: i64", body AS "body!: String"
+               FROM messages
+               WHERE run_id = ?1 AND kind = 'plugin' AND plugin = ?2
+               ORDER BY seq"#,
+            run,
+            plugin
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        Ok(rows.into_iter().map(|row| (row.seq, row.body)).collect())
     }
 
     /// Runs and cost per agent in a workflow.
@@ -505,5 +558,19 @@ impl Store {
         )
         .fetch_all(&self.reader)
         .await?)
+    }
+}
+
+fn run_kind(
+    kind: &str,
+    parent: Option<String>,
+    fork_seq: Option<i64>,
+) -> RunKind {
+    match (kind, parent, fork_seq) {
+        ("fork", Some(parent), Some(fork_seq)) => {
+            RunKind::Fork { parent, fork_seq }
+        }
+        ("subagent", Some(parent), _) => RunKind::Subagent { parent },
+        _ => RunKind::Root,
     }
 }

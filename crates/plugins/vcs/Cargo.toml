@@ -18,9 +18,10 @@ serde.workspace = true
 serde_json.workspace = true
 similar.workspace = true
 tau-agent.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
 
 [dev-dependencies]
+tau-tools.workspace = true
 serde_json.workspace = true
 tau-ai.workspace = true
 tau-store.workspace = true

@@ -11,6 +11,11 @@
 //! - Writing: `vcs_describe`, `vcs_commit`, `vcs_new`, `vcs_restore`,
 //!   `vcs_undo`.
 //!
+//! A [`Project`] is a repository tau owns, cloned from the user's, with
+//! a workspace per run; [`RunWorkspace`] makes a run's workspace when
+//! the run starts and commits each turn, so forks start from a turn's
+//! code.
+//!
 //! The tools take change ids and commit ids, never revsets. Every tool
 //! snapshots the working copy first, so edits made with other tools are
 //! never lost, and the writing tools refuse immutable commits. Clone,
@@ -19,13 +24,17 @@
 mod diff;
 mod ops;
 pub mod plugin;
+pub mod project;
+pub mod run_workspace;
 mod session;
 pub mod tools;
 mod vcs;
 
 pub use diff::{ChangeKind, FileChange, MAX_DIFF_BYTES};
-pub use ops::{ChangeInfo, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT};
+pub use ops::{ChangeInfo, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT, TurnCommit};
 pub use plugin::VcsPlugin;
+pub use project::Project;
+pub use run_workspace::{Link, RunWorkspace};
 pub use session::MAX_NEW_FILE_SIZE;
 pub use vcs::{Identity, Vcs};
 

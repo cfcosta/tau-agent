@@ -1,0 +1,182 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!: String\", workflow_id, agent, kind,\n                      parent_run_id, fork_seq, model, status,\n                      input_tokens, output_tokens, cost_usd, result, error,\n                      created_at\n               FROM runs WHERE kind != 'subagent'\n               ORDER BY created_at DESC, id DESC\n               LIMIT ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "workflow_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "workflow_id"
+          }
+        }
+      },
+      {
+        "name": "agent",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "agent"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "parent_run_id",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "parent_run_id"
+          }
+        }
+      },
+      {
+        "name": "fork_seq",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "fork_seq"
+          }
+        }
+      },
+      {
+        "name": "model",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "model"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "input_tokens",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "input_tokens"
+          }
+        }
+      },
+      {
+        "name": "output_tokens",
+        "ordinal": 9,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "output_tokens"
+          }
+        }
+      },
+      {
+        "name": "cost_usd",
+        "ordinal": 10,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "cost_usd"
+          }
+        }
+      },
+      {
+        "name": "result",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "result"
+          }
+        }
+      },
+      {
+        "name": "error",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 13,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "574abec3f7681ef256590c1e1116349b9fc699a5abb8bdb5d993dfecd0f56970"
+}

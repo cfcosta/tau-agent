@@ -101,6 +101,27 @@ impl Vcs {
         Ok(vcs)
     }
 
+    /// A handle on the workspace that will be at `dir`, loaded by the
+    /// first job. For a workspace a plugin creates when its run starts,
+    /// after the tools that use it were built.
+    pub fn lazy(
+        dir: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> anyhow::Result<Self> {
+        Self::spawn(dir.into(), identity)
+    }
+
+    /// Ends a turn: commits what it changed, if anything, and starts an
+    /// empty working copy on top. See [`crate::TurnCommit`].
+    pub async fn checkpoint(
+        &self,
+        message: impl Into<String>,
+    ) -> anyhow::Result<crate::TurnCommit> {
+        let message = message.into();
+        self.call(move |worker| crate::ops::checkpoint(worker, message))
+            .await
+    }
+
     /// The directory the workspace was opened at.
     pub fn root(&self) -> &Path {
         &self.inner.root
@@ -201,7 +222,7 @@ impl Worker {
 }
 
 /// jj's defaults, with `identity` as the user.
-fn settings(identity: &Identity) -> anyhow::Result<UserSettings> {
+pub(crate) fn settings(identity: &Identity) -> anyhow::Result<UserSettings> {
     let mut config = StackedConfig::with_defaults();
     let mut user = ConfigLayer::empty(ConfigSource::User);
     user.set_value("user.name", identity.name.as_str())?;
