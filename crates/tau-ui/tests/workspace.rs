@@ -901,6 +901,25 @@ fn closing_a_conversation_takes_it_off_the_sidebar(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_phone_closes_the_conversation_it_shows(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let done = tau_agent::tool::RunId("plugin-docs".into());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(done.clone()), cx);
+        ws.close_run_to_list(&done, cx);
+        assert!(ws.is_closed(&done));
+        // Back to the list, with nothing to go back to.
+        assert_eq!(ws.route(), &Route::Home);
+        assert!(!ws.can_go_back());
+    });
+    assert!(
+        events
+            .borrow()
+            .contains(&WorkspaceEvent::CloseRun { run: done.clone() })
+    );
+}
+
+#[gpui::test]
 fn rules_are_added_and_removed_from_the_constitution_screen(
     cx: &mut TestAppContext,
 ) {

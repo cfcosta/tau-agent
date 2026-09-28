@@ -841,13 +841,15 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
         ))
 }
 
-/// The phone's header above a run: back, title and status, details.
+/// The phone's header above a run: back, title and status, close,
+/// details.
 pub fn phone_run_bar(
     run: &RunView,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
     let (color, label) = status_look(&run.status, t);
+    let id = run.id.clone();
     div()
         .h(px(56.))
         .flex_shrink_0()
@@ -896,6 +898,9 @@ pub fn phone_run_bar(
                         )),
                 ),
         )
+        .child(icon_button("phone-close", Icon::Close, 44., t).on_click(
+            cx.listener(move |ws, _, _, cx| ws.close_run_to_list(&id, cx)),
+        ))
         .child(
             icon_button("phone-details", Icon::Panel, 44., t)
                 .on_click(cx.listener(|ws, _, _, cx| ws.toggle_sheet(cx))),

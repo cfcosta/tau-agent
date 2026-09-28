@@ -1268,6 +1268,16 @@ impl Workspace {
 
     /// Closes a conversation: it leaves the sidebar, and stops if it is
     /// going. History keeps it, and a message to it opens it again.
+    /// Closes a conversation from its phone screen, which has no
+    /// sidebar to hover: back to the list of conversations.
+    pub fn close_run_to_list(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        self.close_run(run, cx);
+        self.back_stack.clear();
+        self.route = Route::Home;
+        self.entered(cx);
+        cx.notify();
+    }
+
     pub fn close_run(&mut self, run: &RunId, cx: &mut Context<Self>) {
         if self.run(run).is_some_and(|view| view.status.is_live()) {
             cx.emit(WorkspaceEvent::Cancel { run: run.clone() });
