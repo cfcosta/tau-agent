@@ -2,6 +2,7 @@
 //! host drives them, in GPUI's test app.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
+use tau_agent::event::StopReason;
 use tau_ui::{
     Workspace,
     WorkspaceEvent,
@@ -11,7 +12,7 @@ use tau_ui::{
     pull_request::PrState,
     route::Route,
     setup::{GitHub, ModelAccess, Setup, SetupStep, SetupUpdate},
-    view::{BranchCode, CodeState},
+    view::{BranchCode, CodeState, Item, RunStatus},
     workspace::PickerTarget,
 };
 
@@ -157,13 +158,14 @@ fn fork_mode_sends_the_chosen_turn(cx: &mut TestAppContext) {
             model: ModelChoice::new("gpt-5.5", Effort::High),
         })
     );
-    // The next message is an ordinary one again.
+    // The next message is an ordinary one again: it goes on with the
+    // run.
     workspace.update(&mut cx, |ws, cx| {
         ws.submit_prompt("hello".into(), cx);
     });
     assert!(matches!(
         events.borrow().last(),
-        Some(WorkspaceEvent::NewRun { .. })
+        Some(WorkspaceEvent::Resume { .. })
     ));
 }
 
@@ -715,5 +717,94 @@ fn github_sign_in_during_onboarding_moves_on_to_the_model(
             cx,
         );
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
+    });
+}
+
+/// Plays the demo run to its end.
+fn finish_demo_run(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
+    workspace.update(cx, |ws, cx| {
+        for (_, update) in demo::script() {
+            ws.update_run(&demo::run_id(), update, cx);
+        }
+    });
+}
+
+#[gpui::test]
+fn a_message_to_a_finished_run_goes_on_with_it(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    finish_demo_run(&workspace, &mut cx);
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        // An older run, opened from the list, goes on too.
+        let older = tau_agent::tool::RunId("plugin-docs".into());
+        ws.navigate(Route::Run(older.clone()), cx);
+        ws.navigate(Route::Run(run.clone()), cx);
+        assert!(
+            ws.run(&run).unwrap().status
+                == RunStatus::Finished(StopReason::Stop)
+        );
+        let runs_before = ws.runs().len();
+        ws.submit_prompt("now add a test for it".into(), cx);
+        // No new chat: the same run, back to work, at the top.
+        assert_eq!(ws.runs().len(), runs_before);
+        assert_eq!(ws.runs()[0].id, run);
+        let view = ws.run(&run).unwrap();
+        assert!(view.status.is_live());
+        assert!(matches!(
+            view.items.last(),
+            Some(Item::User(text)) if text == "now add a test for it"
+        ));
+        assert_eq!(ws.route(), &Route::Run(run.clone()));
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::Resume {
+            run: run.clone(),
+            prompt: "now add a test for it".into(),
+            model: ModelChoice::new("gpt-5.5", Effort::High),
+        })
+    );
+    // If the host cannot, the run ends as it had.
+    workspace.update(&mut cx, |ws, cx| {
+        ws.resume_failed(&run, cx);
+        let view = ws.run(&run).unwrap();
+        assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
+        assert!(!matches!(view.items.last(), Some(Item::User(_))));
+    });
+    // A new run is still a new run.
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::NewRun, cx);
+        ws.submit_prompt("something else".into(), cx);
+    });
+    assert!(matches!(
+        events.borrow().last(),
+        Some(WorkspaceEvent::NewRun { .. })
+    ));
+}
+
+#[gpui::test]
+fn the_demo_goes_on_with_a_finished_run(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    finish_demo_run(&workspace, &mut cx);
+    cx.update(|_, cx| demo::respond(&workspace, cx));
+    let run = demo::run_id();
+    let (turn, cost) = workspace.read_with(&cx, |ws, _| {
+        let view = ws.run(&run).unwrap();
+        (view.turn, view.usage.cost)
+    });
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(run.clone()), cx);
+        ws.submit_prompt("and then?".into(), cx);
+    });
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(5));
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        let view = ws.run(&run).unwrap();
+        assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
+        // Turns keep counting, and the cost adds up.
+        assert_eq!(view.turn, turn + 1);
+        assert!((view.usage.cost - (cost + 0.012)).abs() < 1e-9);
+        assert!(view.last_text().unwrap().contains("and then?"));
     });
 }

@@ -41,6 +41,7 @@ impl Agent {
     where T: DeserializeOwned + JsonSchema;
     pub fn as_tool(&self, name: &str, description: &str) -> impl AgentTool;
     pub fn fork(&self, from: &Checkpoint) -> Forked;  // Forked::run / run_typed / start
+    pub fn resume(&self, run: &RunId) -> Resumed;    // a finished run goes on, in place: Resumed::run / start
 }
 ```
 

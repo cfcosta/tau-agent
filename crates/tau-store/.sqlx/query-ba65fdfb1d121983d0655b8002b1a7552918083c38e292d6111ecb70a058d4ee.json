@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id!: String\", workflow_id, agent, kind,\n                      parent_run_id, fork_seq, model, status,\n                      input_tokens, output_tokens, cost_usd, result, error,\n                      created_at\n               FROM runs WHERE id = ?1",
+  "query": "SELECT id AS \"id!: String\", workflow_id, agent, kind,\n                      parent_run_id, fork_seq, model, status,\n                      input_tokens, output_tokens, cost_usd, turns, result,\n                      error, created_at\n               FROM runs WHERE id = ?1",
   "describe": {
     "columns": [
       {
@@ -125,8 +125,19 @@
         }
       },
       {
-        "name": "result",
+        "name": "turns",
         "ordinal": 11,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "turns"
+          }
+        }
+      },
+      {
+        "name": "result",
+        "ordinal": 12,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -137,7 +148,7 @@
       },
       {
         "name": "error",
-        "ordinal": 12,
+        "ordinal": 13,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -148,7 +159,7 @@
       },
       {
         "name": "created_at",
-        "ordinal": 13,
+        "ordinal": 14,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -173,10 +184,11 @@
       false,
       false,
       false,
+      false,
       true,
       true,
       false
     ]
   },
-  "hash": "d98236e5f53dc3105fc05e0142e1577a0bf16d9119348cd76082ec20749f0a70"
+  "hash": "ba65fdfb1d121983d0655b8002b1a7552918083c38e292d6111ecb70a058d4ee"
 }

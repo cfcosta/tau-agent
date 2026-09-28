@@ -182,6 +182,14 @@ pub enum WorkspaceEvent {
     },
     /// Forget the GitHub sign-in.
     GitHubSignOut,
+    /// Go on with a finished run, as a chat goes on: the same run gets
+    /// `prompt`, on its own model. Its events carry on in its view; if it
+    /// cannot, answer with [`Workspace::resume_failed`].
+    Resume {
+        run: RunId,
+        prompt: String,
+        model: ModelChoice,
+    },
     /// Sign in to ChatGPT for Codex, in the browser or with a device
     /// code.
     CodexSignIn {
@@ -272,6 +280,9 @@ pub struct Workspace {
     sheet_open: bool,
     /// Steering messages sent but not yet seen by the run, per run.
     queued: HashMap<RunId, String>,
+    /// Finished runs asked to go on, with how they had ended, until they
+    /// start again.
+    resuming: HashMap<RunId, RunStatus>,
     /// The composer is writing a fork of this run, after this turn.
     forking: Option<(RunId, u32)>,
     /// A dialog over the app: something failed, or a choice to confirm.
@@ -428,6 +439,7 @@ impl Workspace {
             tab: Tab::Run,
             sheet_open: false,
             queued: HashMap::new(),
+            resuming: HashMap::new(),
             forking: None,
             dialog: None,
             next_model,
@@ -539,9 +551,15 @@ impl Workspace {
         for run in &mut self.runs {
             run.apply(event);
         }
-        if let RunEvent::TurnStart { run, .. } = event {
+        match event {
             // The run has read what was queued.
-            self.queued.remove(run);
+            RunEvent::TurnStart { run, .. } => {
+                self.queued.remove(run);
+            }
+            RunEvent::RunStart { run, .. } => {
+                self.resuming.remove(run);
+            }
+            _ => {}
         }
         self.after_update(cx);
     }
@@ -968,6 +986,11 @@ impl Workspace {
                 self.queued.insert(run.clone(), text.clone());
                 cx.emit(WorkspaceEvent::Steer { run, text });
             }
+            // A finished chat goes on.
+            Some(run) => {
+                let run = run.id.clone();
+                self.resume(&run, text, cx);
+            }
             _ => cx.emit(WorkspaceEvent::NewRun {
                 prompt: text,
                 model: self.next_model.clone(),
@@ -975,6 +998,49 @@ impl Workspace {
             }),
         }
         cx.notify();
+    }
+
+    /// Sends `text` to a finished run: it shows at once, the run moves to
+    /// the top of the list, and the host starts it again.
+    fn resume(&mut self, run: &RunId, text: String, cx: &mut Context<Self>) {
+        let Some(at) = self.runs.iter().position(|view| &view.id == run) else {
+            return;
+        };
+        let mut view = self.runs.remove(at);
+        let model = Self::model_of(&view);
+        self.resuming.insert(run.clone(), view.status.clone());
+        view.push_user(text.clone());
+        view.status = RunStatus::Planning;
+        self.runs.insert(0, view);
+        self.follow = true;
+        cx.emit(WorkspaceEvent::Resume {
+            run: run.clone(),
+            prompt: text,
+            model,
+        });
+    }
+
+    /// The host could not go on with the run: it ends as it had, without
+    /// the message.
+    pub fn resume_failed(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        let Some(status) = self.resuming.remove(run) else {
+            return;
+        };
+        if let Some(view) = self.runs.iter_mut().find(|view| &view.id == run) {
+            view.status = status;
+            if matches!(view.items.last(), Some(crate::view::Item::User(_))) {
+                view.items.pop();
+            }
+        }
+        self.after_update(cx);
+    }
+
+    /// Whether the composer's message goes on with the open, finished
+    /// run.
+    pub(crate) fn continues_chat(&self) -> bool {
+        self.forking.is_none()
+            && self.route != Route::NewRun
+            && self.current().is_some_and(|run| !run.status.is_live())
     }
 
     fn submit_from_button(&mut self, cx: &mut Context<Self>) {
@@ -993,11 +1059,14 @@ impl Workspace {
     fn sync_placeholder(&mut self, cx: &mut Context<Self>) {
         let live = self.route != Route::NewRun && self.is_live();
         let forking = self.forking.is_some();
+        let continues = self.continues_chat();
         self.composer.update(cx, |input, _| {
             input.set_placeholder(if forking {
                 "What should the fork try instead?"
             } else if live {
                 "Steer the run, or @ a file, agent or checkpoint"
+            } else if continues {
+                "Reply to go on with this run"
             } else {
                 "Start a new run"
             })
@@ -1599,8 +1668,10 @@ impl Workspace {
         let live = self.is_live();
         // What the composer's message would do: start a run on the next
         // model (not steer a live one, not fork).
-        let starts_run =
-            self.forking.is_none() && !(live && self.route != Route::NewRun);
+        let continues = self.continues_chat();
+        let starts_run = self.forking.is_none()
+            && !(live && self.route != Route::NewRun)
+            && !continues;
         let queued = self
             .current()
             .and_then(|run| self.queued.get(&run.id))
@@ -1622,6 +1693,8 @@ impl Workspace {
                     "Fork"
                 } else if live {
                     "Steer"
+                } else if continues {
+                    "Send"
                 } else {
                     "Start"
                 },
@@ -1708,7 +1781,13 @@ impl Workspace {
                             .child(self.composer.clone())
                             .when(!compact, |field| {
                                 field.child(ui::mono(
-                                    if live { "Enter steers" } else { "Enter starts" },
+                                    if live {
+                                        "Enter steers"
+                                    } else if continues {
+                                        "Enter sends"
+                                    } else {
+                                        "Enter starts"
+                                    },
                                     Type::MICRO,
                                     t.dim,
                                 ))

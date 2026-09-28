@@ -446,6 +446,37 @@ pub fn fork_run(
     (view, s.steps)
 }
 
+/// A reply the demo plays when a finished run goes on: one more turn,
+/// numbered after the run's last.
+pub fn resume_script(run: &RunView, prompt: &str) -> Vec<Step> {
+    let mut s = Script::for_run(run.id.clone());
+    s.turn = run.turn;
+    s.event(
+        300,
+        RunEvent::RunStart {
+            run: run.id.clone(),
+            parent: None,
+            agent: Arc::from(run.agent.as_str()),
+        },
+    );
+    s.turn();
+    s.say(&format!(
+        "Going on from turn {}. You asked: {prompt}",
+        run.turn
+    ));
+    s.end_turn(12_000, 200, 0.012);
+    s.event(
+        200,
+        RunEvent::RunEnd {
+            run: run.id.clone(),
+            parent: None,
+            stop: StopReason::Stop,
+            cost: 0.012,
+        },
+    );
+    s.steps
+}
+
 /// A demo screen by name, for `--open`.
 pub fn route(name: &str) -> Option<crate::route::Route> {
     use crate::route::Route;
@@ -736,6 +767,17 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                         fork_run(&from, turn, &prompt, &model, id.clone());
                     ws.push_run(view, cx);
                     ws.replay(id, steps, cx);
+                });
+            }
+            // A finished run goes on with one more turn.
+            WorkspaceEvent::Resume { run, prompt, .. } => {
+                let (run, prompt) = (run.clone(), prompt.clone());
+                workspace.update(cx, |ws, cx| {
+                    let Some(view) = ws.run(&run).cloned() else {
+                        return;
+                    };
+                    let steps = resume_script(&view, &prompt);
+                    ws.replay(run, steps, cx);
                 });
             }
             // Signing out leaves what else is saved in use.

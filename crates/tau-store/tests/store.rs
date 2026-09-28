@@ -39,6 +39,7 @@ struct ModelRun {
     input: i64,
     output: i64,
     cost: f64,
+    turns: i64,
     status: Status,
 }
 
@@ -144,6 +145,7 @@ fn usage(tc: TestCase) -> TurnUsage {
         output_tokens: tc.draw(gs::integers::<u32>()),
         cost_usd: tc.draw(gs::integers::<u32>().max_value(4096)) as f64
             / 1024.0,
+        turns: tc.draw(gs::integers::<u32>().max_value(1)),
     }
 }
 
@@ -155,6 +157,7 @@ enum Op {
     Append,
     AppendUnknown,
     Finish,
+    Reopen,
 }
 
 #[hegel::test(test_cases = 60)]
@@ -182,6 +185,7 @@ fn store_matches_model_body(tc: TestCase) {
                 Op::Append,
                 Op::AppendUnknown,
                 Op::Finish,
+                Op::Reopen,
             ]));
             let ids: Vec<String> = model.runs.keys().cloned().collect();
             let pick = |tc: &TestCase| -> Option<String> {
@@ -238,6 +242,7 @@ fn store_matches_model_body(tc: TestCase) {
                             input: 0,
                             output: 0,
                             cost: 0.0,
+                            turns: 0,
                             status: Status::Running,
                         },
                     );
@@ -259,6 +264,7 @@ fn store_matches_model_body(tc: TestCase) {
                     m.input += i64::from(usage.input_tokens);
                     m.output += i64::from(usage.output_tokens);
                     m.cost += usage.cost_usd;
+                    m.turns += i64::from(usage.turns);
                 }
                 Op::AppendUnknown => {
                     let entries: Vec<Entry> =
@@ -286,6 +292,22 @@ fn store_matches_model_body(tc: TestCase) {
                         .unwrap();
                     model.runs.get_mut(&run).unwrap().status = status;
                 }
+                Op::Reopen => {
+                    let Some(run) = pick(&tc) else { continue };
+                    let result = store.reopen_run(&run).await;
+                    let m = model.runs.get_mut(&run).unwrap();
+                    if m.status == Status::Running {
+                        assert!(
+                            matches!(result, Err(StoreError::StillRunning(_))),
+                            "{result:?}"
+                        );
+                    } else {
+                        let record = result.unwrap();
+                        assert_eq!(record.status, Status::Running);
+                        assert_eq!(record.result, None);
+                        m.status = Status::Running;
+                    }
+                }
             }
 
             // Every read matches the model.
@@ -311,6 +333,7 @@ fn store_matches_model_body(tc: TestCase) {
                     "{id}"
                 );
                 assert_eq!(record.cost_usd, m.cost, "{id}");
+                assert_eq!(record.turns, m.turns, "{id}");
                 assert_eq!(record.agent, m.agent);
                 assert_eq!(record.workflow_id.as_deref(), m.workflow);
             }
@@ -423,6 +446,7 @@ fn large_token_counts_add_exactly() {
             input_tokens: u32::MAX,
             output_tokens: u32::MAX,
             cost_usd: 0.0,
+            turns: 0,
         };
         for _ in 0..3 {
             store.append_turn("r", &[], usage).await.unwrap();
@@ -544,6 +568,14 @@ fn recent_runs_skip_subagents() {
         assert_eq!(ids, ["c", "a"]);
         assert!(!runs[0].created_at.is_empty());
         assert_eq!(store.recent_runs(1).await.unwrap().len(), 1);
+        // Activity in a run brings it back to the top.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        store
+            .append_turn("a", &[], TurnUsage::default())
+            .await
+            .unwrap();
+        let runs = store.recent_runs(10).await.unwrap();
+        assert_eq!(runs[0].id, "a");
     });
 }
 

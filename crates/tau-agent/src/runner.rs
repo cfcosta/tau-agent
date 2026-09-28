@@ -138,6 +138,9 @@ pub(crate) struct Runner {
     pub retry: RetryPolicy,
     /// Warm the session up before the first turn.
     pub warmup: bool,
+    /// Turns the run took before this start: a resumed run keeps
+    /// counting. Limits apply to the turns of this start alone.
+    pub turns_before: u32,
 }
 
 /// How a run ended.
@@ -196,11 +199,15 @@ impl Runner {
         self.persist(std::slice::from_ref(&first), &own).await?;
         let mut transcript = std::mem::take(&mut self.history);
         transcript.push(first);
-        let mut turn = 0;
+        let mut turn = self.turns_before;
+        // The turns of this start, for limits: a resumed run gets a
+        // fresh budget.
+        let mut taken = 0;
         let mut continuations = 0;
 
         let stop = loop {
             turn += 1;
+            taken += 1;
             self.emit(RunEvent::TurnStart {
                 run: self.run.clone(),
                 turn,
@@ -261,7 +268,7 @@ impl Runner {
 
             let mut new = vec![Message::Assistant(message.clone())];
             new.extend(results.into_iter().map(Message::ToolResult));
-            self.persist(&new, &message.usage).await?;
+            self.persist_turn(&new, &message.usage).await?;
             transcript.extend(new);
 
             let verdict = if failed {
@@ -273,7 +280,7 @@ impl Runner {
                 Some(StopReason::Cancelled)
             } else {
                 self.limits
-                    .reached(turn, &self.total(&own), started.elapsed())
+                    .reached(taken, &self.total(&own), started.elapsed())
                     .map(StopReason::Limit)
             };
             self.emit(RunEvent::TurnEnd {
@@ -420,7 +427,7 @@ impl Runner {
             body: rewrite.details.to_string(),
         }];
         entries.extend(rewrite.messages.iter().map(entry));
-        self.persist_entries(entries, &Usage::default()).await?;
+        self.persist_entries(entries, &Usage::default(), 0).await?;
         *transcript = rewrite.messages;
         self.emit(RunEvent::ContextRewritten {
             run: self.run.clone(),
@@ -470,7 +477,7 @@ impl Runner {
         );
         if unsaved != Usage::default() {
             self.store
-                .append_turn(&self.run.0, &[], turn_usage(&unsaved))
+                .append_turn(&self.run.0, &[], turn_usage(&unsaved, 0))
                 .await?;
         }
         Ok(())
@@ -876,7 +883,17 @@ impl Runner {
         messages: &[Message],
         usage: &Usage,
     ) -> Result<(), StoreError> {
-        self.persist_entries(messages.iter().map(entry).collect(), usage)
+        self.persist_entries(messages.iter().map(entry).collect(), usage, 0)
+            .await
+    }
+
+    /// Stores a turn's reply and tool results, counting the turn.
+    async fn persist_turn(
+        &mut self,
+        messages: &[Message],
+        usage: &Usage,
+    ) -> Result<(), StoreError> {
+        self.persist_entries(messages.iter().map(entry).collect(), usage, 1)
             .await
     }
 
@@ -886,6 +903,7 @@ impl Runner {
         &mut self,
         entries: Vec<Entry>,
         usage: &Usage,
+        turns: u32,
     ) -> Result<(), StoreError> {
         let mut usage = usage.clone();
         let unsaved = std::mem::take(
@@ -894,7 +912,7 @@ impl Runner {
         usage += &unsaved;
         let last = match self
             .store
-            .append_turn(&self.run.0, &entries, turn_usage(&usage))
+            .append_turn(&self.run.0, &entries, turn_usage(&usage, turns))
             .await
         {
             Ok(last) => last,
@@ -977,12 +995,13 @@ fn entry(message: &Message) -> Entry {
     }
 }
 
-fn turn_usage(usage: &Usage) -> TurnUsage {
+fn turn_usage(usage: &Usage, turns: u32) -> TurnUsage {
     let input = usage.input + usage.cache_read + usage.cache_write;
     TurnUsage {
         input_tokens: u32::try_from(input).unwrap_or(u32::MAX),
         output_tokens: u32::try_from(usage.output).unwrap_or(u32::MAX),
         cost_usd: usage.cost.total,
+        turns,
     }
 }
 

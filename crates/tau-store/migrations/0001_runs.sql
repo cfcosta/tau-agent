@@ -10,6 +10,7 @@ CREATE TABLE runs (
   input_tokens  INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
   cost_usd      REAL    NOT NULL DEFAULT 0,
+  turns         INTEGER NOT NULL DEFAULT 0,  -- model turns so far; a resumed run keeps counting
   result        TEXT,                       -- final output; JSON when typed
   error         TEXT,
   created_at    TEXT NOT NULL,

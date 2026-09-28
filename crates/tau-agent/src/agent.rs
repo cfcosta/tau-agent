@@ -396,6 +396,18 @@ impl Agent {
         }
     }
 
+    /// Goes on with `run`, a finished run of this agent, as a chat goes
+    /// on: its input follows the run's transcript, in the same run, whose
+    /// turns keep counting and whose usage keeps adding up. Limits apply
+    /// to the turns of this start alone. Fails with
+    /// [`StoreError::StillRunning`] if the run has not finished.
+    pub fn resume(&self, run: &RunId) -> Resumed {
+        Resumed {
+            agent: self.clone(),
+            run: run.clone(),
+        }
+    }
+
     /// This agent as a tool: each call starts a sub-agent run on the
     /// call's `input`, and its final text is the tool's result.
     ///
@@ -426,7 +438,10 @@ impl Agent {
 
     /// Starts a run as `launch` describes it.
     fn launch(&self, launch: Launch, input: String, store: &Store) -> Run {
-        let id = RunId(uuid::Uuid::now_v7().to_string().into());
+        let id = launch
+            .resume
+            .clone()
+            .unwrap_or_else(|| RunId(uuid::Uuid::now_v7().to_string().into()));
         let (own_tx, own_rx) = mpsc::channel(EVENT_BUFFER);
         let (events_tx, events) = match launch.events.clone() {
             Events::Own => (Some(own_tx), Some(own_rx)),
@@ -508,6 +523,32 @@ impl Forked {
     }
 }
 
+/// An agent about to go on with a finished run. See [`Agent::resume`].
+#[derive(Debug, Clone)]
+pub struct Resumed {
+    agent: Agent,
+    run: RunId,
+}
+
+impl Resumed {
+    /// Starts the run again on `input`.
+    pub fn start(&self, input: impl Into<Input>, store: &Store) -> Run {
+        let input = input.into();
+        let mut launch = Launch::root(input.workflow.as_deref());
+        launch.resume = Some(self.run.clone());
+        self.agent.launch(launch, input.text, store)
+    }
+
+    /// Runs it to the end.
+    pub async fn run(
+        self,
+        input: impl Into<Input>,
+        store: &Store,
+    ) -> Result<Outcome, AgentError> {
+        self.start(input, store).outcome().await
+    }
+}
+
 /// An agent as a tool. See [`Agent::as_tool`].
 pub struct SubAgent {
     agent: Agent,
@@ -549,6 +590,7 @@ impl AgentTool for SubAgent {
             text_format: None,
             inherit_workflow: false,
             events: Events::Forward(scope.events.clone()),
+            resume: None,
         };
         let outcome = self
             .agent
@@ -590,6 +632,8 @@ struct Launch {
     /// Whether the run joins its parent run's workflow.
     inherit_workflow: bool,
     events: Events,
+    /// Go on with this stored run instead of starting a new one.
+    resume: Option<RunId>,
 }
 
 /// Where a run's events go.
@@ -611,6 +655,7 @@ impl Launch {
             text_format: None,
             inherit_workflow: false,
             events: Events::Own,
+            resume: None,
         }
     }
 }
@@ -689,6 +734,17 @@ async fn run_task(
             },
         );
     }
+    // A resumed run is reopened as it was stored: its kind, workflow and
+    // turns.
+    let resumed = match &launch.resume {
+        Some(run) => {
+            Some(store.reopen_run(&run.0).await.map_err(AgentError::Store)?)
+        }
+        None => None,
+    };
+    let kind = resumed
+        .as_ref()
+        .map_or_else(|| launch.kind.clone(), |record| record.kind.clone());
     let mut workflow = launch.workflow.as_deref().map(str::to_owned);
     let parent_run = match &launch.kind {
         RunKind::Root => None,
@@ -706,16 +762,22 @@ async fn run_task(
         workflow = record.workflow_id;
     }
     let fork = matches!(launch.kind, RunKind::Fork { .. });
-    store
-        .create_run(&NewRun {
-            id: &id.0,
-            workflow_id: workflow.as_deref(),
-            agent: &agent.0.name,
-            kind: launch.kind.clone(),
-            model: &agent.0.model,
-        })
-        .await
-        .map_err(AgentError::Store)?;
+    match &resumed {
+        Some(record) => workflow = record.workflow_id.clone(),
+        None => store
+            .create_run(&NewRun {
+                id: &id.0,
+                workflow_id: workflow.as_deref(),
+                agent: &agent.0.name,
+                kind: launch.kind.clone(),
+                model: &agent.0.model,
+            })
+            .await
+            .map_err(AgentError::Store)?,
+    }
+    let turns_before = resumed
+        .as_ref()
+        .map_or(0, |record| u32::try_from(record.turns).unwrap_or(u32::MAX));
     let workflow: Option<Arc<str>> = workflow.map(Into::into);
 
     let shared = RunShared {
@@ -730,9 +792,9 @@ async fn run_task(
         clock: agent.0.clock.clone(),
         retry: agent.0.retry,
     };
-    // A fork starts from its inherited transcript, and from the latest
-    // context rewrite in it, if any.
-    let (history, last_rewrite) = if fork {
+    // A fork starts from its inherited transcript, a resumed run from
+    // its own, and from the latest context rewrite in it, if any.
+    let (history, last_rewrite) = if fork || resumed.is_some() {
         let entries = match store.transcript(&id.0).await {
             Ok(entries) => entries,
             Err(error) => {
@@ -753,7 +815,7 @@ async fn run_task(
         agent.0.instructions.clone(),
         agent.0.reasoning,
         agent.0.model.clone(),
-        launch.kind.clone(),
+        kind,
         workflow.clone(),
     );
     let mut plugins = Vec::with_capacity(agent.0.plugins.len());
@@ -810,6 +872,7 @@ async fn run_task(
         children: Arc::default(),
         retry: agent.0.retry,
         warmup: agent.0.warmup,
+        turns_before,
     }
     .run(first)
     .await

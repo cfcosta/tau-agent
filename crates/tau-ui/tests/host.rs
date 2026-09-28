@@ -529,3 +529,69 @@ fn github_repositories_clone_into_tau() {
     // Cloning it again lists the same repository, without fetching.
     assert_eq!(host.clone_github("cfcosta/hello").unwrap().name, "hello");
 }
+
+#[test]
+fn a_finished_run_goes_on_in_its_workspace() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.text("wrote a"))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.text("wrote b"));
+    let (host, mut events) = host_on(llm.clone(), src.path());
+    let host = host.with_project(project);
+
+    let chat = host
+        .start("write a.txt", &ModelChoice::default(), "")
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    let dir = host.workspace(&chat.id).unwrap();
+
+    host.resume(&chat.id, "now b.txt", &ModelChoice::default())
+        .unwrap();
+    let turns: Vec<u32> = until_end(&mut events)
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::TurnStart { run, turn } if run == chat.id => Some(turn),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(turns, [3, 4], "turns keep counting");
+    wait_until_done(&host, &chat.id);
+    // The same workspace, with both turns' files.
+    assert_eq!(host.workspace(&chat.id).unwrap(), dir);
+    assert!(dir.join("a.txt").exists() && dir.join("b.txt").exists());
+    // The model saw the whole chat.
+    let last = llm.requests().pop().unwrap();
+    assert!(last.transcript.len() > 4, "{}", last.transcript.len());
+
+    let history = host.history().unwrap();
+    assert_eq!(history.len(), 1, "one chat, not two");
+    let view = &history[0];
+    assert_eq!(view.id, chat.id);
+    assert_eq!(view.title, "write-a-txt");
+    assert_eq!(view.turn, 4);
+    let prompts: Vec<&str> = view
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::User(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(prompts, ["write a.txt", "now b.txt"]);
+}

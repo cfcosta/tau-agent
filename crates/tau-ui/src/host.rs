@@ -796,6 +796,7 @@ impl Host {
         &self,
         choice: &ModelChoice,
         repo: &RepoSlot,
+        workspace: Option<String>,
     ) -> anyhow::Result<(Agent, Option<String>)> {
         if self.access().is_none() {
             anyhow::bail!(
@@ -822,7 +823,7 @@ impl Host {
             let tools = CodingTools::new(Root::new(repo.path.clone()));
             return Ok((agent.plugin(tools), None));
         };
-        let name = workspace_name();
+        let name = workspace.unwrap_or_else(workspace_name);
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
         let agent = agent
             .plugin(CodingTools::new(Root::new(workspace.dir())))
@@ -913,7 +914,7 @@ impl Host {
         repo: &str,
     ) -> anyhow::Result<RunView> {
         let repo = self.slot(repo).unwrap_or_else(|| self.home_slot());
-        let (agent, workspace) = self.agent_for_run(choice, &repo)?;
+        let (agent, workspace) = self.agent_for_run(choice, &repo, None)?;
         let _guard = self.runtime.enter();
         let run = agent.start(prompt, &self.store);
         let id = self.track(run, workspace, choice, &repo.name);
@@ -945,7 +946,7 @@ impl Host {
                 anyhow::anyhow!("The run has no finished turn to fork from yet")
             }
         })?;
-        let (agent, workspace) = self.agent_for_run(choice, &repo)?;
+        let (agent, workspace) = self.agent_for_run(choice, &repo, None)?;
         let _guard = self.runtime.enter();
         let forked = agent
             .fork(&Checkpoint::at(run.clone(), seq))
@@ -955,6 +956,39 @@ impl Host {
             from: run.clone(),
             turn: link.turn,
         }))
+    }
+
+    /// Goes on with `run`, a finished chat, on `prompt`: the same run,
+    /// in the same workspace, on `choice`. Its events carry on in the
+    /// view the workspace already has.
+    pub fn resume(
+        &self,
+        run: &RunId,
+        prompt: &str,
+        choice: &ModelChoice,
+    ) -> anyhow::Result<()> {
+        if self.is_running(run) {
+            anyhow::bail!("The run is still going; steer it instead");
+        }
+        let repo = self.slot_of_run(run);
+        // The workspace its last turn worked in, which still has its
+        // files.
+        let known = self
+            .workspaces
+            .lock()
+            .expect("not poisoned")
+            .get(run)
+            .cloned();
+        let workspace = match known {
+            Some(name) => Some(name),
+            None => self.link(run, None)?.map(|(_, link)| link.workspace),
+        };
+        let (agent, workspace) =
+            self.agent_for_run(choice, &repo, workspace)?;
+        let _guard = self.runtime.enter();
+        let resumed = agent.resume(run).start(prompt, &self.store);
+        self.track(resumed, workspace, choice, &repo.name);
+        Ok(())
     }
 
     /// The link of `turn` in `run` (the latest when `None`), with the
@@ -1296,6 +1330,18 @@ impl Host {
                         )
                     }),
                 },
+                WorkspaceEvent::Resume { run, prompt, model } => {
+                    if let Err(error) = handler.resume(run, prompt, model) {
+                        workspace.update(cx, |ws, cx| {
+                            ws.resume_failed(run, cx);
+                            ws.show_alert(
+                                "Could not go on with the run",
+                                format!("{error:#}"),
+                                cx,
+                            )
+                        })
+                    }
+                }
                 WorkspaceEvent::Fork {
                     run,
                     turn,

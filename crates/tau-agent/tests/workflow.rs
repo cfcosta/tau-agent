@@ -842,3 +842,91 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
         assert_eq!(outcome.usage.cost.total, total.cost.total);
     });
 }
+
+/// A finished run goes on like a chat: the same run, the whole
+/// conversation sent again, turns that keep counting, usage that keeps
+/// adding up, and a fresh turn budget for each message.
+#[test]
+fn a_finished_run_resumes_like_a_chat() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("hi, what next?"))
+        .turn(|t| t.tool_call("echo", json!({"text": "x"})))
+        .turn(|t| t.text("done"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm.clone())
+            .tool(typed(Echo))
+            .limits(Limits::default().max_turns(3));
+        let first = agent.run("hello", &store).await.unwrap();
+
+        let mut run = agent.resume(&first.run).start("now echo x", &store);
+        assert_eq!(run.id(), first.run, "the same run");
+        let turns: Vec<u32> = run
+            .events()
+            .filter_map(|event| async move {
+                match event {
+                    RunEvent::TurnStart { turn, .. } => Some(turn),
+                    _ => None,
+                }
+            })
+            .collect()
+            .await;
+        let second = run.outcome().await.unwrap();
+        // Two more turns, numbered after the first. max_turns(3) counts
+        // this message's turns alone; counted from the start, turn 3
+        // would have hit it.
+        assert_eq!(turns, [2, 3]);
+        assert_eq!(second.stop, StopReason::Stop);
+        assert_eq!(second.text, "done");
+
+        // The model saw the conversation so far, then the new message.
+        let asked = llm.requests();
+        let users = |request: &tau_testing::scripted::Request| {
+            request
+                .transcript
+                .iter()
+                .filter_map(|message| match message {
+                    Message::User(user) => match &user.content {
+                        UserContent::Text(text) => Some(text.clone()),
+                        UserContent::Blocks(_) => None,
+                    },
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(users(&asked[1]), ["hello", "now echo x"]);
+
+        let record = store.run(&first.run.0).await.unwrap().unwrap();
+        assert_eq!(record.status, Status::Done);
+        assert_eq!(record.turns, 3);
+        assert_eq!(record.kind, RunKind::Root);
+        assert_eq!(stored(&store, &first.run.0).await.len(), 6);
+    });
+}
+
+/// Only a finished run can go on; one still going refuses.
+#[test]
+fn a_running_run_does_not_resume() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.delay(Duration::from_secs(30)).text("late"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm);
+        let mut running = agent.start("wait", &store);
+        // Its first event means it is stored and running.
+        running.events().next().await;
+        let error = agent
+            .resume(&running.id())
+            .run("more", &store)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                AgentError::Store(tau_store::StoreError::StillRunning(_))
+            ),
+            "{error:?}"
+        );
+        running.cancel();
+    });
+}

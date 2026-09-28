@@ -51,6 +51,9 @@ pub struct RunView {
     pub ledger: Vec<LedgerEntry>,
     /// The last run events, newest last, for the Events tab.
     pub log: Vec<LogLine>,
+    /// What the chat cost before its latest message: each start of a
+    /// resumed run reports only its own cost.
+    pub cost_before: f64,
 }
 
 /// One run event, as the Events tab lists it.
@@ -478,6 +481,7 @@ impl RunView {
             started: String::new(),
             ledger: Vec::new(),
             log: Vec::new(),
+            cost_before: 0.0,
         }
     }
 
@@ -780,6 +784,8 @@ impl RunView {
             RunEvent::RunStart { agent, .. } => {
                 self.agent = agent.to_string();
                 self.status = RunStatus::Running;
+                // A resumed chat starts again with what it cost so far.
+                self.cost_before = self.usage.cost;
             }
             RunEvent::TurnStart { turn, .. } => {
                 self.status = RunStatus::Running;
@@ -878,13 +884,13 @@ impl RunView {
                 body: NoteBody::None,
             }),
             RunEvent::RunEnd { stop, cost, .. } => {
-                self.usage.cost = *cost;
+                self.usage.cost = self.cost_before + cost;
                 self.status = RunStatus::Finished(stop.clone());
                 self.items.push(Item::Stop {
                     stop: stop.clone(),
                     turns: self.turn,
                     tokens: self.usage.tokens,
-                    cost: *cost,
+                    cost: self.usage.cost,
                     plugin_cost: self.usage.plugin_cost,
                 });
             }

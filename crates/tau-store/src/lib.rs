@@ -40,6 +40,8 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
     #[error("unknown run {0}")]
     UnknownRun(String),
+    #[error("run {0} is still running")]
+    StillRunning(String),
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -134,6 +136,9 @@ pub struct TurnUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub cost_usd: f64,
+    /// Model turns the write ends: 1 for a turn's reply and results, 0
+    /// for anything else.
+    pub turns: u32,
 }
 
 /// A run as stored.
@@ -148,6 +153,8 @@ pub struct RunRecord {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cost_usd: f64,
+    /// Model turns so far, across every time the run was resumed.
+    pub turns: i64,
     pub result: Option<String>,
     pub error: Option<String>,
     /// When the run started, as SQLite's `strftime` writes it
@@ -306,17 +313,20 @@ impl Store {
         self.record_wait(started.elapsed());
         let input_tokens = i64::from(usage.input_tokens);
         let output_tokens = i64::from(usage.output_tokens);
+        let turns = i64::from(usage.turns);
 
         let updated = sqlx::query!(
             "UPDATE runs SET input_tokens = input_tokens + ?2,
                              output_tokens = output_tokens + ?3,
                              cost_usd = cost_usd + ?4,
+                             turns = turns + ?5,
                              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?1",
             run,
             input_tokens,
             output_tokens,
             usage.cost_usd,
+            turns,
         )
         .execute(&mut *tx)
         .await?;
@@ -462,12 +472,34 @@ impl Store {
         Ok(())
     }
 
+    /// Opens a finished run again, to go on from where it stopped: it is
+    /// `running` again, without its result or error, and keeps its
+    /// transcript, usage and turn count. Returns it as it now is.
+    pub async fn reopen_run(&self, run: &str) -> Result<RunRecord> {
+        let updated = sqlx::query!(
+            "UPDATE runs SET status = 'running', result = NULL, error = NULL,
+                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1 AND status != 'running'",
+            run,
+        )
+        .execute(&mut *self.writer().await?)
+        .await?;
+        let record = self
+            .run(run)
+            .await?
+            .ok_or_else(|| StoreError::UnknownRun(run.to_owned()))?;
+        if updated.rows_affected() == 0 {
+            return Err(StoreError::StillRunning(run.to_owned()));
+        }
+        Ok(record)
+    }
+
     pub async fn run(&self, run: &str) -> Result<Option<RunRecord>> {
         let row = sqlx::query!(
             r#"SELECT id AS "id!: String", workflow_id, agent, kind,
                       parent_run_id, fork_seq, model, status,
-                      input_tokens, output_tokens, cost_usd, result, error,
-                      created_at
+                      input_tokens, output_tokens, cost_usd, turns, result,
+                      error, created_at
                FROM runs WHERE id = ?1"#,
             run
         )
@@ -483,21 +515,23 @@ impl Store {
             input_tokens: row.input_tokens,
             output_tokens: row.output_tokens,
             cost_usd: row.cost_usd,
+            turns: row.turns,
             result: row.result,
             error: row.error,
             created_at: row.created_at,
         }))
     }
 
-    /// The latest `limit` runs that are not sub-agents, newest first.
+    /// The latest `limit` runs that are not sub-agents, the most
+    /// recently active first: a resumed run comes back to the top.
     pub async fn recent_runs(&self, limit: u32) -> Result<Vec<RunRecord>> {
         let rows = sqlx::query!(
             r#"SELECT id AS "id!: String", workflow_id, agent, kind,
                       parent_run_id, fork_seq, model, status,
-                      input_tokens, output_tokens, cost_usd, result, error,
-                      created_at
+                      input_tokens, output_tokens, cost_usd, turns, result,
+                      error, created_at
                FROM runs WHERE kind != 'subagent'
-               ORDER BY created_at DESC, id DESC
+               ORDER BY updated_at DESC, id DESC
                LIMIT ?1"#,
             limit
         )
@@ -515,6 +549,7 @@ impl Store {
                 input_tokens: row.input_tokens,
                 output_tokens: row.output_tokens,
                 cost_usd: row.cost_usd,
+                turns: row.turns,
                 result: row.result,
                 error: row.error,
                 created_at: row.created_at,
