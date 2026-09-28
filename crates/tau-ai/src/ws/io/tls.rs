@@ -70,6 +70,9 @@ impl Connector for OpenAiConnector {
 
     async fn connect(&self) -> io::Result<Self::Stream> {
         let tcp = TcpStream::connect((OPENAI_HOST, 443)).await?;
+        // Requests are single small writes waiting on an answer: never
+        // hold one back for Nagle's algorithm.
+        tcp.set_nodelay(true)?;
         let name = ServerName::try_from(OPENAI_HOST)
             .expect("a static, valid host name");
         self.tls.connect(name, tcp).await
