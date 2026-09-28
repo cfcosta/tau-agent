@@ -20,8 +20,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tau_ai::{
     llm::Llm,
-    message::{AssistantMessage, Message, Usage},
+    message::{AssistantMessage, Message, Timestamp, Usage},
     responses::request::ReasoningEffort,
+    retry::RetryPolicy,
 };
 use tau_store::{Entry, RunKind, Store, StoreError, TurnUsage};
 use tokio_util::sync::CancellationToken;
@@ -29,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     event::{RunEvent, StopReason},
     hook::{Decision, HookCtx, RunHook, ToolCall},
-    runner::add_usage,
+    runner::{Clock, add_usage},
     tool::{AgentTool, RunId, ToolOutput},
 };
 
@@ -90,6 +91,22 @@ pub trait PluginRun: Send {
         let _ = (event, ctx);
     }
 
+    /// Offered the transcript between turns, and when a request failed
+    /// because the context overflowed. A [`Rewrite`] replaces the working
+    /// transcript: the loop checks it, stores it, and sends the next
+    /// request in full. The first plugin that rewrites wins; on an
+    /// overflow, the request is then retried once. An error is reported
+    /// as `RunEvent::PluginError` and counts as no rewrite; on an
+    /// overflow that nobody rewrote, it joins the run's error.
+    async fn rewrite_context(
+        &mut self,
+        view: &ContextView<'_>,
+        ctx: &PluginCtx,
+    ) -> anyhow::Result<Option<Rewrite>> {
+        let _ = (view, ctx);
+        Ok(None)
+    }
+
     /// Runs when the model answered with no tool calls and the run would
     /// stop. [`StopDecision::Continue`] adds its text as a user message
     /// and runs another turn, up to `Limits::max_continuations` times per
@@ -114,6 +131,43 @@ pub trait PluginRun: Send {
 /// The part in a run of a plugin that keeps no state per run.
 #[async_trait]
 impl PluginRun for () {}
+
+/// What [`PluginRun::rewrite_context`] is offered.
+#[derive(Debug, Clone, Copy)]
+pub struct ContextView<'a> {
+    pub transcript: &'a [Message],
+    /// The loop's estimate of the transcript's size
+    /// (`docs/reference/compaction.md`, "Token estimate").
+    pub tokens: u64,
+    /// The model's context window, when the model registry knows it.
+    pub window: Option<u64>,
+    pub trigger: Trigger,
+    /// The turn that just ended, or that overflowed.
+    pub turn: u32,
+}
+
+/// Why the context is offered for a rewrite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Trigger {
+    /// A turn ended, and the run goes on.
+    TurnEnd,
+    /// The last request failed because the context was too long.
+    Overflow,
+}
+
+/// A new working transcript, from [`PluginRun::rewrite_context`].
+///
+/// The loop rejects a rewrite, as a `PluginError`, unless it is not
+/// empty, ends with the message the transcript ends with (the one the
+/// next request answers), and keeps every tool call paired with its
+/// result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rewrite {
+    pub messages: Vec<Message>,
+    /// Stored with the rewrite. A fork of the run gets it back from
+    /// [`RunPlan::last_rewrite`] when the rewrite is the latest.
+    pub details: Value,
+}
 
 /// Whether a run may stop. See [`PluginRun::before_stop`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +204,7 @@ pub struct RunPlan {
     kind: RunKind,
     workflow: Option<Arc<str>>,
     records: Vec<Value>,
+    last_rewrite: Option<Value>,
 }
 
 impl RunPlan {
@@ -170,6 +225,7 @@ impl RunPlan {
             kind,
             workflow,
             records: Vec::new(),
+            last_rewrite: None,
         }
     }
 
@@ -194,8 +250,19 @@ impl RunPlan {
         &self.records
     }
 
+    /// The details of the latest context rewrite the run inherits, when
+    /// the plugin being started made it. A fork of a compacted run gets
+    /// the compaction's record here.
+    pub fn last_rewrite(&self) -> Option<&Value> {
+        self.last_rewrite.as_ref()
+    }
+
     pub(crate) fn set_records(&mut self, records: Vec<Value>) {
         self.records = records;
+    }
+
+    pub(crate) fn set_last_rewrite(&mut self, details: Option<Value>) {
+        self.last_rewrite = details;
     }
 }
 
@@ -225,6 +292,8 @@ pub struct PluginCtx {
     store: Store,
     charged: Arc<Mutex<Charged>>,
     last_seq: Arc<AtomicI64>,
+    clock: Clock,
+    retry: RetryPolicy,
 }
 
 impl std::fmt::Debug for PluginCtx {
@@ -248,6 +317,8 @@ pub(crate) struct RunShared {
     pub charged: Arc<Mutex<Charged>>,
     /// The `seq` of the run's last stored entry, -1 before the first.
     pub last_seq: Arc<AtomicI64>,
+    pub clock: Clock,
+    pub retry: RetryPolicy,
 }
 
 impl RunShared {
@@ -262,6 +333,8 @@ impl RunShared {
             store: self.store.clone(),
             charged: self.charged.clone(),
             last_seq: self.last_seq.clone(),
+            clock: self.clock.clone(),
+            retry: self.retry,
         }
     }
 }
@@ -270,6 +343,18 @@ impl PluginCtx {
     /// The plugin this context belongs to.
     pub fn plugin(&self) -> &str {
         &self.plugin
+    }
+
+    /// The run's clock, which stamps its messages: a plugin that makes
+    /// messages stamps them with it.
+    pub fn now(&self) -> Timestamp {
+        (self.clock)()
+    }
+
+    /// How the run retries failed model requests. A plugin's own
+    /// requests go through it too.
+    pub fn retry_policy(&self) -> RetryPolicy {
+        self.retry
     }
 
     /// Charges usage, cost included, to the run: it counts toward the

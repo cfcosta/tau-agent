@@ -1,8 +1,7 @@
 # Plugins
 
-- Status: in progress. `Plugin`, `RunPlan`, the tool hooks, `on_event`,
-  `before_stop`, `finish`, `charge` and `record` are implemented.
-  `rewrite_context` and the compaction port are next.
+- Status: implemented in `tau_agent::plugin`; compaction is a plugin.
+  The first four plugins are not built yet.
 - Date: 2026-09-28
 
 A plugin extends an agent from its own crate. It can add tools, shape a
@@ -84,13 +83,12 @@ pub struct RunPlan {
     pub context: Vec<String>,
     pub instructions: Option<String>,
     pub reasoning: Option<ReasoningEffort>,
-    /// Read-only facts for choosing.
-    pub model: &'static str,
-    pub kind: RunKind,            // root, fork or sub-agent
-    pub workflow: Option<Arc<str>>,
-    /// Records this plugin stored in the run's fork ancestors (see
-    /// `PluginCtx::record`), oldest first. Lets a fork resume state.
-    pub records: Vec<Value>,
+    // Read-only, through methods:
+    // model(), kind() (root, fork or sub-agent), workflow(),
+    // records(): this plugin's records along the fork chain, oldest
+    //   first (see `PluginCtx::record`);
+    // last_rewrite(): the details of the latest context rewrite the run
+    //   inherits, when this plugin made it.
 }
 ```
 
@@ -166,6 +164,12 @@ pub struct PluginCtx {
 }
 
 impl PluginCtx {
+    /// The plugin's name.
+    pub fn plugin(&self) -> &str;
+    /// The run's clock, for stamping messages a plugin makes.
+    pub fn now(&self) -> Timestamp;
+    /// The run's retry policy, for a plugin's own model requests.
+    pub fn retry_policy(&self) -> RetryPolicy;
     /// Adds usage (cost included) to the run's total, which limits
     /// check.
     pub fn charge(&self, usage: &Usage);
@@ -208,9 +212,13 @@ pub struct Rewrite {
   return a rewrite wins that boundary, and the others are not asked
   again until the next one. Each plugin decides its own threshold,
   cooldown and cost.
-- **On overflow,** plugins are asked in order until the estimate fits
-  the window. The request is then retried once, as today. Cheap
-  plugins (pruning) go before expensive ones (summarizing).
+- **On overflow,** plugins are asked in order, and the first rewrite
+  wins, as between turns. The request is then retried once. Compaction
+  always goes last, so a cheap plugin (pruning) gets the first chance;
+  one that cannot free enough should decline and leave the overflow to
+  the summary. The loop does not re-estimate after a rewrite: the
+  estimate anchors on the last reported usage, which a kept message can
+  still carry, so "fits the window" would not be reliable.
 - **The loop checks every rewrite.** Every kept tool result must have
   its call, every kept call must have its result, and the last message
   must stay (it is the one the next request answers). A rewrite that
@@ -219,9 +227,13 @@ pub struct Rewrite {
 - **Storage.** A rewrite is stored in one write, as a `context` entry
   `{ plugin, details }` followed by the new transcript's messages.
   Loading a transcript starts at the latest `context` entry. This
-  generalizes today's compaction entry, which becomes a `context` entry
-  from the `compaction` plugin whose first message is the summary.
-  Existing `compaction` rows still load.
+  generalizes the old compaction entry: compaction's rewrite is a
+  `context` entry from the `compaction` plugin whose first message is
+  the summary. Existing `compaction` rows still load, as the compaction
+  plugin's rewrite.
+- **Resuming.** A fork gets the details of the latest rewrite it
+  inherits from `RunPlan::last_rewrite`, when its plugin made it.
+  Compaction resumes its summary and file lists from there.
 - **Events.** `RunEvent::Compacted` becomes
   `ContextRewritten { run, plugin, tokens_before, tokens_after }`.
 
@@ -379,7 +391,7 @@ times.
 - **Forks** get the ledger back through `RunPlan::records` and the
   latest `context` entry.
 
-## What changes in tau-agent
+## What changed in tau-agent
 
 1. `Plugin`, `PluginRun`, `PluginCtx`, `RunPlan`, `ContextView`,
    `Rewrite` and `StopDecision` in a new `tau_agent::plugin` module.

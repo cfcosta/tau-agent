@@ -579,3 +579,301 @@ fn a_failing_before_stop_is_reported_and_stops() {
         assert_eq!(later.finished.lock().unwrap().len(), 1);
     });
 }
+
+/// How a [`Pruner`] rewrites the context it is offered.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Prune {
+    /// Drops everything before the last user message.
+    KeepLastUser,
+    /// Drops the last message, which the loop must reject.
+    DropLast,
+    /// Declines, as a pruner that cannot free enough would.
+    Decline,
+}
+
+/// A context plugin that prunes at every turn boundary and overflow.
+#[derive(Clone)]
+struct Pruner {
+    how: Prune,
+    offered: Arc<Mutex<Vec<(tau_agent::plugin::Trigger, usize)>>>,
+    resumed: Arc<Mutex<Vec<Option<Value>>>>,
+}
+
+impl Pruner {
+    fn new(how: Prune) -> Self {
+        Self {
+            how,
+            offered: Arc::default(),
+            resumed: Arc::default(),
+        }
+    }
+}
+
+#[async_trait]
+impl Plugin for Pruner {
+    fn name(&self) -> &str {
+        "pruner"
+    }
+
+    async fn start(
+        &self,
+        plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> anyhow::Result<Box<dyn PluginRun>> {
+        self.resumed
+            .lock()
+            .unwrap()
+            .push(plan.last_rewrite().cloned());
+        Ok(Box::new(self.clone()))
+    }
+}
+
+#[async_trait]
+impl PluginRun for Pruner {
+    async fn rewrite_context(
+        &mut self,
+        view: &tau_agent::plugin::ContextView<'_>,
+        _ctx: &PluginCtx,
+    ) -> anyhow::Result<Option<tau_agent::plugin::Rewrite>> {
+        self.offered
+            .lock()
+            .unwrap()
+            .push((view.trigger, view.transcript.len()));
+        let messages = match self.how {
+            Prune::Decline => return Ok(None),
+            Prune::KeepLastUser => {
+                let from = view
+                    .transcript
+                    .iter()
+                    .rposition(|m| matches!(m, Message::User(_)))
+                    .unwrap();
+                if from == 0 {
+                    return Ok(None);
+                }
+                view.transcript[from..].to_vec()
+            }
+            Prune::DropLast => {
+                view.transcript[..view.transcript.len() - 1].to_vec()
+            }
+        };
+        Ok(Some(tau_agent::plugin::Rewrite {
+            messages,
+            details: json!({"pruned_at": view.transcript.len()}),
+        }))
+    }
+}
+
+/// Collects a run's events and outcome.
+async fn run_to_end(
+    agent: &Agent,
+    store: &Store,
+    input: &str,
+    steer: Option<&str>,
+) -> (Vec<RunEvent>, tau_agent::agent::Outcome) {
+    use futures_util::StreamExt;
+    let mut run = agent.start(input, store);
+    if let Some(steer) = steer {
+        run.steer(steer);
+    }
+    let events = run.events().collect().await;
+    (events, run.outcome().await.unwrap())
+}
+
+/// A rewrite between turns replaces the working transcript: the next
+/// request sends it, the store keeps a context entry naming the plugin
+/// followed by the new messages, an event reports it, and a fork starts
+/// from it, with the plugin's details handed back.
+#[test]
+fn a_rewrite_replaces_the_transcript() {
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.tool_call("echo", json!({"text": "x"})))
+            .turn(|t| t.text("done"))
+            .turn(|t| t.text("forked"));
+        let pruner = Pruner::new(Prune::KeepLastUser);
+        let agent = Agent::new(model.clone())
+            .tool(Echo::new())
+            .plugin(pruner.clone());
+        let store = Store::memory().await.unwrap();
+        let (events, outcome) =
+            run_to_end(&agent, &store, "go", Some("then this")).await;
+        assert_grammar(&events);
+        assert_eq!(outcome.text, "done");
+
+        let requests = model.requests();
+        assert_eq!(requests[1].transcript.len(), 1);
+        assert_eq!(user_texts(&requests[1].transcript[0]), ["then this"]);
+        let rewritten: Vec<(&str, u64, u64)> = events
+            .iter()
+            .filter_map(|e| match e {
+                RunEvent::ContextRewritten {
+                    plugin,
+                    tokens_before,
+                    tokens_after,
+                    ..
+                } => Some((&**plugin, *tokens_before, *tokens_after)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rewritten.len(), 1);
+        assert_eq!(rewritten[0].0, "pruner");
+        assert!(rewritten[0].2 < rewritten[0].1, "{rewritten:?}");
+
+        let entries = store.transcript(&outcome.run.0).await.unwrap();
+        let tau_store::Entry::Context { plugin, body } = &entries[0] else {
+            panic!("{entries:?}");
+        };
+        assert_eq!(plugin, "pruner");
+        assert_eq!(body, &json!({"pruned_at": 4}).to_string());
+        assert_eq!(entries.len(), 3, "context, kept message, answer");
+
+        let fork = agent
+            .fork(&outcome.checkpoint())
+            .run("and now", &store)
+            .await
+            .unwrap();
+        assert_eq!(fork.text, "forked");
+        assert_eq!(model.requests()[2].transcript.len(), 3);
+        assert_eq!(
+            pruner.resumed.lock().unwrap().clone(),
+            [None, Some(json!({"pruned_at": 4}))]
+        );
+    });
+}
+
+/// A rewrite that drops the message the next request answers is
+/// rejected: the loop reports it and goes on with the transcript as it
+/// was, storing no context entry.
+#[test]
+fn a_bad_rewrite_is_rejected() {
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.tool_call("echo", json!({"text": "x"})))
+            .turn(|t| t.text("done"));
+        let agent = Agent::new(model.clone())
+            .tool(Echo::new())
+            .plugin(Pruner::new(Prune::DropLast));
+        let store = Store::memory().await.unwrap();
+        let (events, outcome) = run_to_end(&agent, &store, "go", None).await;
+        assert_eq!(outcome.text, "done");
+        assert_eq!(model.requests()[1].transcript.len(), 3);
+        let errors: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                RunEvent::PluginError { message, .. } => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            errors,
+            [
+                "rejected rewrite: it does not end with the transcript's last message"
+            ]
+        );
+        let entries = store.transcript(&outcome.run.0).await.unwrap();
+        assert!(
+            entries
+                .iter()
+                .all(|e| matches!(e, tau_store::Entry::Message { .. }))
+        );
+    });
+}
+
+/// On an overflow, plugins are offered the context in order, compaction
+/// last: a pruner that declines leaves it to the summary, and the turn is
+/// retried once on the summary's transcript.
+#[test]
+fn compaction_takes_an_overflow_a_pruner_declines() {
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.tool_call("echo", json!({"text": "x"})))
+            .turn(|t| t.error("context_length_exceeded", "too long"))
+            .turn(|t| t.text("summary"))
+            .turn(|t| t.text("done"));
+        let pruner = Pruner::new(Prune::Decline);
+        let agent = Agent::new(model.clone())
+            .tool(Echo::new())
+            .compaction(
+                tau_agent::compaction::Compaction::default()
+                    .context_window(u64::MAX)
+                    .keep_recent_tokens(1),
+            )
+            // Added after compaction, still offered first.
+            .plugin(pruner.clone());
+        let store = Store::memory().await.unwrap();
+        let (events, outcome) =
+            run_to_end(&agent, &store, "go", Some("then this")).await;
+        assert_eq!(outcome.text, "done");
+        model.assert_exhausted();
+        let offered = pruner.offered.lock().unwrap().clone();
+        assert!(
+            offered.contains(&(tau_agent::plugin::Trigger::Overflow, 4)),
+            "{offered:?}"
+        );
+        let by: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                RunEvent::ContextRewritten { plugin, .. } => Some(&**plugin),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(by, ["compaction"]);
+    });
+}
+
+/// A run stored before compaction was a plugin, with a `compaction`
+/// entry, still forks: the fork starts from the summary, and compaction
+/// gets its record back.
+#[test]
+fn a_legacy_compaction_row_still_forks() {
+    use tau_agent::compaction::Record;
+    use tau_store::{Entry, TurnUsage};
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.text("before"))
+            .turn(|t| t.text("forked"));
+        let agent = Agent::new(model.clone())
+            .compaction(tau_agent::compaction::Compaction::default());
+        let store = Store::memory().await.unwrap();
+        let base = agent.run("go", &store).await.unwrap();
+        let record = Record {
+            summary: "old summary".into(),
+            tokens_before: 10,
+            read_files: vec![],
+            modified_files: vec![],
+            timestamp: 1,
+        };
+        let kept =
+            tau_ai::message::Message::User(tau_ai::message::UserMessage {
+                content: UserContent::Text("kept".into()),
+                timestamp: 2,
+            });
+        let last = store
+            .append_turn(
+                &base.run.0,
+                &[
+                    Entry::Compaction {
+                        body: serde_json::to_string(&record).unwrap(),
+                    },
+                    Entry::Message {
+                        role: "user".into(),
+                        body: serde_json::to_string(&kept).unwrap(),
+                    },
+                ],
+                TurnUsage::default(),
+            )
+            .await
+            .unwrap();
+        let checkpoint =
+            tau_agent::agent::Checkpoint::at(base.run.clone(), last);
+        agent
+            .fork(&checkpoint)
+            .run("and now", &store)
+            .await
+            .unwrap();
+        let transcript = &model.requests()[1].transcript;
+        assert_eq!(transcript[0], record.message());
+        assert_eq!(transcript[1], kept);
+        assert_eq!(user_texts(&transcript[2]), ["and now"]);
+    });
+}

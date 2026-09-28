@@ -49,12 +49,14 @@ pub fn assert_grammar(events: &[RunEvent]) {
                 last_turn = *turn;
                 in_turn = None;
             }
-            // A continuation comes between turns; a plugin can fail
-            // anywhere.
+            // A continuation comes between turns. A rewrite comes between
+            // turns, or inside the turn whose context overflowed; a plugin
+            // can fail anywhere.
             RunEvent::Continued { .. } => {
                 assert!(in_turn.is_none(), "{event:?} inside a turn")
             }
-            RunEvent::PluginError { .. } => {}
+            RunEvent::ContextRewritten { .. }
+            | RunEvent::PluginError { .. } => {}
             _ => assert!(in_turn.is_some(), "{event:?} outside a turn"),
         }
     }

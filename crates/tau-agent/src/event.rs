@@ -93,9 +93,12 @@ pub enum RunEvent {
         turn: u32,
         usage: Usage,
     },
-    Compacted {
+    /// A plugin rewrote the context; the next request goes in full.
+    ContextRewritten {
         run: RunId,
+        plugin: Arc<str>,
         tokens_before: u64,
+        tokens_after: u64,
     },
     /// A response failed in a way worth retrying; attempt `attempt`
     /// starts after `delay`. Comes inside the turn it retries.

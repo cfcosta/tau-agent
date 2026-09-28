@@ -39,7 +39,10 @@ pi, a note says so.
        message and emits `Continued`, up to `Limits::max_continuations`
        times (default 3) per run. A plugin error there is reported as
        `PluginError` and counts as letting the run stop.
-   12. Check the compaction threshold.
+   12. Offer the context to each plugin's `rewrite_context`, in order
+       (compaction last). The first rewrite is checked, stored as a
+       `context` entry with its messages, and becomes the transcript;
+       the next request goes in full.
    13. Loop while the model called tools, steering added messages, or a
        plugin continued the run.
 3. Emit `RunEnd`. Set the run's status and result. Then call each
@@ -129,8 +132,10 @@ drain, and tau-agent keeps that default.
   `RunEvent::Retry { turn, attempt, delay, error }` inside the turn. A
   cancel during the backoff ends the run as cancelled. The compaction
   summary request uses the same policy.
-- **Context overflow** (`context_length_exceeded`): compact once, then
-  retry once. See [`compaction.md`](compaction.md).
+- **Context overflow** (`context_length_exceeded`): offer the context to
+  the plugins' `rewrite_context` (compaction last); after a rewrite,
+  retry once. With no rewrite, the run fails, and the plugins' errors
+  join its error. See [`compaction.md`](compaction.md).
 
 ## Events
 
@@ -145,7 +150,7 @@ pub enum RunEvent {
     ToolUpdate { run: RunId, call_id: String, partial: Arc<ToolOutput> },
     ToolEnd    { run: RunId, call_id: String, output: Arc<ToolOutput>, is_error: bool },
     TurnEnd    { run: RunId, turn: u32, usage: Usage },
-    Compacted  { run: RunId, tokens_before: u64 },
+    ContextRewritten { run: RunId, plugin: Arc<str>, tokens_before: u64, tokens_after: u64 },  // between turns, or in an overflowing turn
     Retry      { run: RunId, turn: u32, attempt: u32, delay: Duration, error: String },
     Continued  { run: RunId, plugin: Arc<str>, message: String },  // between turns
     PluginError { run: RunId, plugin: Arc<str>, message: String },

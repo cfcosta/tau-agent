@@ -184,7 +184,7 @@ fn an_overflow_code_compacts_and_the_summary_is_retried() {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, RunEvent::Compacted { .. }))
+                .any(|e| matches!(e, RunEvent::ContextRewritten { .. }))
         );
         llm.assert_exhausted();
     });

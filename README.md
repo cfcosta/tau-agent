@@ -327,8 +327,9 @@ Long runs can outgrow the model's context window. With
 `.compaction(Compaction::default())`, the loop summarizes older messages
 once the estimated context passes `context_window - reserve_tokens`, and
 keeps roughly the last `keep_recent_tokens` verbatim. It also compacts
-once if the model reports a context overflow. A `RunEvent::Compacted`
-event marks each compaction.
+once if the model reports a context overflow. Compaction is a plugin
+that runs after any other context plugin, and a
+`RunEvent::ContextRewritten` event marks each compaction.
 
 ### Coding tools
 

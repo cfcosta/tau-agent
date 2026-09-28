@@ -92,15 +92,18 @@ estimated with `chars / 4`.
 
 ## After compaction
 
-- A `messages` row is written with `kind = 'compaction'`. Its body holds
-  the summary, the token count before compaction, the file lists and a
-  timestamp. The kept messages are written again after it, in the same
-  transaction, because loading a transcript drops everything before the
-  latest compaction row.
+- Compaction is a plugin ([plugins.md](plugins.md)): its rewrite is
+  stored as a `messages` row with `kind = 'context'` and `plugin =
+'compaction'`. Its body holds the summary, the token count before
+  compaction, the file lists and a timestamp. The summary message and
+  the kept messages are written after it, in the same transaction,
+  because loading a transcript drops everything before the latest
+  context row. Rows with `kind = 'compaction'`, from before compaction
+  was a plugin, still load: each stands for its summary message.
 - The summary goes to the model as a user message, wrapped as pi wraps
   it ("The conversation history before this point was compacted into
   the following summary: <summary>…</summary>"). A later compaction
   passes it to the "update" prompt and never summarizes it again.
-- A `Compacted` event is emitted.
+- A `ContextRewritten` event from the `compaction` plugin is emitted.
 - The next turn sends a full request, because the transcript changed. The
   WebSocket continuation chain restarts from there.

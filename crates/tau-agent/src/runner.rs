@@ -31,7 +31,7 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use serde_json::Value;
 use tau_ai::{
     event::{Accumulator, AssistantEvent, ErrorReason},
-    llm::{Llm, LlmSession},
+    llm::LlmSession,
     message::{
         AssistantBlock,
         AssistantMessage,
@@ -45,7 +45,6 @@ use tau_ai::{
         UserMessage,
     },
     model,
-    responses::request::Settings,
     retry::{Class, RetryPolicy},
 };
 use tau_store::{Entry, Status, Store, StoreError, TurnUsage};
@@ -53,26 +52,20 @@ use tokio::{sync::mpsc, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    compaction::{
-        Compaction,
-        Record,
-        SUMMARIZATION_SYSTEM_PROMPT,
-        build_summary_request,
-        build_turn_prefix_summary_request,
-        check_summary,
-        estimate_context_tokens,
-        format_file_operations,
-        is_context_overflow,
-        merge_split_turn_summary,
-        plan,
-        should_compact,
-        summary_max_output_tokens,
-        turn_prefix_max_output_tokens,
-    },
+    compaction::{estimate_context_tokens, is_context_overflow},
     event::{RunEvent, StopReason},
     hook::{Decision, ToolCall},
     limits::Limits,
-    plugin::{Charged, FinishedRun, PluginCtx, PluginRun, StopDecision},
+    plugin::{
+        Charged,
+        ContextView,
+        FinishedRun,
+        PluginCtx,
+        PluginRun,
+        Rewrite,
+        StopDecision,
+        Trigger,
+    },
     tool::{
         AgentTool,
         ExecutionMode,
@@ -143,22 +136,9 @@ pub(crate) struct Runner {
     pub workflow: Option<Arc<str>>,
     /// The usage of the sub-agent runs this run's tools started.
     pub children: Arc<Mutex<Usage>>,
-    /// Makes summary requests for compaction.
-    pub llm: Arc<dyn Llm>,
-    pub compaction: Option<Compaction>,
-    /// The latest compaction, whose summary opens the transcript.
-    pub compacted: Option<Record>,
     pub retry: RetryPolicy,
     /// Warm the session up before the first turn.
     pub warmup: bool,
-}
-
-/// How a compaction attempt went.
-enum Compacted {
-    Done,
-    /// The cut kept everything.
-    Nothing,
-    Failed(String),
 }
 
 /// How a run ended.
@@ -231,20 +211,31 @@ impl Runner {
             let (mut message, class) = self.respond(&transcript, turn).await;
             let overflow = class == Class::ContextOverflow
                 || is_context_overflow(&message);
-            if self.compaction.is_some() && overflow {
-                // Compact once and retry once; a second overflow fails
+            if overflow {
+                // Rewrite once and retry once; a second overflow fails
                 // the run.
-                match self.compact(&mut transcript, &mut own).await? {
-                    Compacted::Done => {
-                        message = self.respond(&transcript, turn).await.0;
-                    }
-                    Compacted::Nothing => {}
-                    Compacted::Failed(error) => {
-                        let original =
-                            message.error_message.take().unwrap_or_default();
-                        message.error_message = Some(format!(
-                            "{original}; compaction failed: {error}"
-                        ));
+                match self
+                    .rewrite_context(&mut transcript, Trigger::Overflow, turn)
+                    .await?
+                {
+                    Ok(()) => message = self.respond(&transcript, turn).await.0,
+                    Err(failures) => {
+                        if !failures.is_empty() {
+                            let original = message
+                                .error_message
+                                .take()
+                                .unwrap_or_default();
+                            let failures: Vec<String> = failures
+                                .iter()
+                                .map(|(plugin, error)| {
+                                    format!("{plugin} failed: {error}")
+                                })
+                                .collect();
+                            message.error_message = Some(format!(
+                                "{original}; {}",
+                                failures.join("; ")
+                            ));
+                        }
                     }
                 }
             }
@@ -324,14 +315,11 @@ impl Runner {
                     .await?;
                 transcript.push(message);
             }
-            if self.over_threshold(&transcript) {
-                match self.compact(&mut transcript, &mut own).await? {
-                    Compacted::Done | Compacted::Nothing => {}
-                    // Not compacting only costs context; a real overflow
-                    // later compacts again or fails the run.
-                    Compacted::Failed(_) => self.compaction = None,
-                }
-            }
+            // Failures were reported as events; the run goes on with the
+            // transcript as it is.
+            let _ = self
+                .rewrite_context(&mut transcript, Trigger::TurnEnd, turn)
+                .await?;
         };
 
         let total = self.total(&own);
@@ -376,6 +364,75 @@ impl Runner {
         })
     }
 
+    /// Offers the transcript to each plugin, in order, until one rewrites
+    /// it; stores the rewrite and makes it the working transcript.
+    /// `Ok(Ok(()))` when a plugin rewrote it; otherwise the plugins that
+    /// failed, and why (each also reported as a `PluginError`).
+    async fn rewrite_context(
+        &mut self,
+        transcript: &mut Vec<Message>,
+        trigger: Trigger,
+        turn: u32,
+    ) -> Result<Result<(), Failures>, StoreError> {
+        let tokens = estimate_context_tokens(transcript);
+        let window = model::find(&self.session.settings().model)
+            .map(|model| model.context_window);
+        let view = ContextView {
+            transcript,
+            tokens,
+            window,
+            trigger,
+            turn,
+        };
+        let mut failures: Failures = Vec::new();
+        let mut chosen = None;
+        for plugin in &mut self.plugins {
+            let name: Arc<str> = plugin.ctx.plugin().into();
+            match plugin.run.rewrite_context(&view, &plugin.ctx).await {
+                Ok(None) => {}
+                Ok(Some(rewrite)) => {
+                    match check_rewrite(transcript, &rewrite) {
+                        Ok(()) => {
+                            chosen = Some((name, rewrite));
+                            break;
+                        }
+                        Err(problem) => failures.push((
+                            name,
+                            format!("rejected rewrite: {problem}"),
+                        )),
+                    }
+                }
+                Err(error) => failures.push((name, format!("{error:#}"))),
+            }
+        }
+        for (plugin, message) in &failures {
+            self.emit(RunEvent::PluginError {
+                run: self.run.clone(),
+                plugin: plugin.clone(),
+                message: message.clone(),
+            })
+            .await;
+        }
+        let Some((plugin, rewrite)) = chosen else {
+            return Ok(Err(failures));
+        };
+        let mut entries = vec![Entry::Context {
+            plugin: plugin.to_string(),
+            body: rewrite.details.to_string(),
+        }];
+        entries.extend(rewrite.messages.iter().map(entry));
+        self.persist_entries(entries, &Usage::default()).await?;
+        *transcript = rewrite.messages;
+        self.emit(RunEvent::ContextRewritten {
+            run: self.run.clone(),
+            plugin,
+            tokens_before: tokens,
+            tokens_after: estimate_context_tokens(transcript),
+        })
+        .await;
+        Ok(Ok(()))
+    }
+
     /// Asks each plugin, in order, whether the run may stop after
     /// `message`. Returns the first plugin that continues it, and the
     /// text to continue with.
@@ -418,174 +475,6 @@ impl Runner {
                 .await?;
         }
         Ok(())
-    }
-
-    /// Whether the transcript has grown past the compaction threshold.
-    fn over_threshold(&self, transcript: &[Message]) -> bool {
-        let Some(settings) = &self.compaction else {
-            return false;
-        };
-        let window = settings.context_window.or_else(|| {
-            model::find(&self.session.settings().model)
-                .map(|model| model.context_window)
-        });
-        window.is_some_and(|window| {
-            should_compact(
-                estimate_context_tokens(transcript),
-                window,
-                settings,
-            )
-        })
-    }
-
-    /// Replaces the transcript's older messages with a summary, stored
-    /// as a compaction record followed by the kept messages, in one
-    /// write. On failure nothing is stored and the transcript stays.
-    async fn compact(
-        &mut self,
-        transcript: &mut Vec<Message>,
-        own: &mut Usage,
-    ) -> Result<Compacted, StoreError> {
-        let Some(settings) = self.compaction else {
-            return Ok(Compacted::Nothing);
-        };
-        let summarized = usize::from(self.compacted.is_some());
-        let Some(plan) =
-            plan(transcript, summarized, settings.keep_recent_tokens)
-        else {
-            return Ok(Compacted::Nothing);
-        };
-        let tokens_before = estimate_context_tokens(transcript);
-        let model = self.session.settings().model.clone();
-        let max_output =
-            model::find(&model).map_or(0, |model| model.max_output);
-        let previous = self.compacted.as_ref().map(|r| r.summary.as_str());
-
-        let mut files = self
-            .compacted
-            .as_ref()
-            .map(Record::files)
-            .unwrap_or_default();
-        let mut usage = Usage::default();
-        let history = &transcript[plan.history.clone()];
-        files.extract_from_messages(history);
-        let mut summary = if history.is_empty() {
-            previous.unwrap_or("No prior history.").to_owned()
-        } else {
-            let request = build_summary_request(history, previous, None);
-            let budget =
-                summary_max_output_tokens(settings.reserve_tokens, max_output);
-            match self.summarize(&model, request, budget, &mut usage).await {
-                Ok(text) => text,
-                Err(error) => return Ok(Compacted::Failed(error)),
-            }
-        };
-        if let Some(prefix) = plan.turn_prefix.clone() {
-            let prefix = &transcript[prefix];
-            files.extract_from_messages(prefix);
-            let request = build_turn_prefix_summary_request(prefix);
-            let budget = turn_prefix_max_output_tokens(
-                settings.reserve_tokens,
-                max_output,
-            );
-            match self.summarize(&model, request, budget, &mut usage).await {
-                Ok(text) => summary = merge_split_turn_summary(&summary, &text),
-                Err(error) => return Ok(Compacted::Failed(error)),
-            }
-        }
-        let (read_files, modified_files) = files.file_lists();
-        summary.push_str(&format_file_operations(&read_files, &modified_files));
-        let record = Record {
-            summary,
-            tokens_before,
-            read_files,
-            modified_files,
-            timestamp: (self.clock)(),
-        };
-
-        let kept = transcript.split_off(plan.kept_from);
-        let mut entries = vec![Entry::Compaction {
-            body: serde_json::to_string(&record).expect("records serialize"),
-        }];
-        entries.extend(kept.iter().map(entry));
-        let last = self
-            .store
-            .append_turn(&self.run.0, &entries, turn_usage(&usage))
-            .await?;
-        self.last_seq.fetch_max(last, Ordering::SeqCst);
-        add_usage(own, &usage);
-        *transcript = std::iter::once(record.message()).chain(kept).collect();
-        self.compacted = Some(record);
-        self.emit(RunEvent::Compacted {
-            run: self.run.clone(),
-            tokens_before,
-        })
-        .await;
-        Ok(Compacted::Done)
-    }
-
-    /// One summary request, on a session of its own, so the run's lane
-    /// and its continuation are untouched.
-    async fn summarize(
-        &mut self,
-        model: &str,
-        request: String,
-        max_output_tokens: u64,
-        usage: &mut Usage,
-    ) -> Result<String, String> {
-        let settings = Settings {
-            model: model.to_owned(),
-            instructions: Some(SUMMARIZATION_SYSTEM_PROMPT.to_owned()),
-            reasoning: self.session.settings().reasoning,
-            max_output_tokens: Some(max_output_tokens),
-            ..Settings::default()
-        };
-        let mut session =
-            self.llm.open(settings).await.map_err(|e| e.to_string())?;
-        let input = [self.user(request)];
-        let mut attempts = 1;
-        let message = loop {
-            let timestamp = (self.clock)();
-            let mut stream = session.respond(&input, timestamp);
-            let mut accumulator = Accumulator::new();
-            let mut class = Class::Fatal;
-            loop {
-                let event = tokio::select! {
-                    biased;
-                    _ = self.cancel.cancelled() => {
-                        return Err("Summarization aborted".to_owned());
-                    }
-                    event = stream.next() => event,
-                };
-                let Some(event) = event else { break };
-                if let AssistantEvent::Error { class: failed, .. } = &event {
-                    class = *failed;
-                }
-                if accumulator.push(event).is_err() {
-                    return Err("Summarization failed: the response broke the event grammar".to_owned());
-                }
-            }
-            let message = accumulator.finish().map_err(|_| {
-                "Summarization failed: the response ended without a terminal event"
-                    .to_owned()
-            })?;
-            // The summary request goes through the run's retry policy.
-            if class != Class::Retryable || !self.retry.allows(attempts) {
-                break message;
-            }
-            add_usage(usage, &message.usage);
-            let delay = self.retry.delay(attempts, jitter());
-            attempts += 1;
-            tokio::select! {
-                biased;
-                _ = self.cancel.cancelled() => {
-                    return Err("Summarization aborted".to_owned());
-                }
-                _ = tokio::time::sleep(delay) => {}
-            }
-        };
-        add_usage(usage, &message.usage);
-        check_summary(&message).map_err(|error| error.to_string())
     }
 
     /// Asks for a response, retrying failures classified as retryable
@@ -991,7 +880,17 @@ impl Runner {
         messages: &[Message],
         usage: &Usage,
     ) -> Result<(), StoreError> {
-        let entries: Vec<Entry> = messages.iter().map(entry).collect();
+        self.persist_entries(messages.iter().map(entry).collect(), usage)
+            .await
+    }
+
+    /// Stores entries and the usage they cost in one write, with what
+    /// plugins charged since the last write.
+    async fn persist_entries(
+        &mut self,
+        entries: Vec<Entry>,
+        usage: &Usage,
+    ) -> Result<(), StoreError> {
         let mut usage = usage.clone();
         let unsaved = std::mem::take(
             &mut self.charged.lock().expect("not poisoned").unsaved,
@@ -1019,9 +918,70 @@ impl Runner {
 
 /// A uniform sample in `[0, 1)` for backoff jitter. Each `RandomState`
 /// is seeded afresh, so runs retrying together spread out.
-fn jitter() -> f64 {
+pub(crate) fn jitter() -> f64 {
     let bits = std::collections::hash_map::RandomState::new().hash_one(0u8);
     (bits >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Why a rewrite cannot replace `transcript`, if it cannot: it must not
+/// be empty, must end with the message the transcript ends with (the one
+/// the next request answers), and must keep every tool call of a
+/// completed assistant message paired with its result, calls first.
+fn check_rewrite(
+    transcript: &[Message],
+    rewrite: &Rewrite,
+) -> Result<(), String> {
+    let Some(last) = rewrite.messages.last() else {
+        return Err("it is empty".into());
+    };
+    if Some(last) != transcript.last() {
+        return Err("it does not end with the transcript's last message".into());
+    }
+    let mut open: Vec<&str> = Vec::new();
+    for message in &rewrite.messages {
+        match message {
+            Message::Assistant(assistant)
+                if !matches!(
+                    assistant.stop_reason,
+                    MessageStop::Error | MessageStop::Aborted
+                ) =>
+            {
+                if let Some(call) = open.first() {
+                    return Err(format!("tool call {call} has no result"));
+                }
+                open = assistant
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        AssistantBlock::ToolCall(call) => {
+                            Some(call.id.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+            }
+            Message::ToolResult(result) => {
+                let Some(index) =
+                    open.iter().position(|id| *id == result.tool_call_id)
+                else {
+                    return Err(format!(
+                        "tool result {} has no call before it",
+                        result.tool_call_id
+                    ));
+                };
+                open.remove(index);
+            }
+            _ => {
+                if let Some(call) = open.first() {
+                    return Err(format!("tool call {call} has no result"));
+                }
+            }
+        }
+    }
+    match open.first() {
+        Some(call) => Err(format!("tool call {call} has no result")),
+        None => Ok(()),
+    }
 }
 
 fn entry(message: &Message) -> Entry {
@@ -1039,6 +999,9 @@ fn turn_usage(usage: &Usage) -> TurnUsage {
         cost_usd: usage.cost.total,
     }
 }
+
+/// Plugins that failed at a seam, and why.
+type Failures = Vec<(Arc<str>, String)>;
 
 /// A running tool call: its index in the batch, the call, and its result.
 type ToolFuture = std::pin::Pin<
@@ -1113,6 +1076,122 @@ mod tests {
     use tau_ai::message::UsageCost;
 
     use super::*;
+
+    fn user(text: &str) -> Message {
+        Message::User(UserMessage {
+            content: UserContent::Text(text.into()),
+            timestamp: 0,
+        })
+    }
+
+    fn calls(ids: &[&str], stop: MessageStop) -> Message {
+        Message::Assistant(AssistantMessage {
+            content: ids
+                .iter()
+                .map(|id| {
+                    AssistantBlock::ToolCall(MessageToolCall {
+                        id: (*id).into(),
+                        name: "t".into(),
+                        arguments: Default::default(),
+                    })
+                })
+                .collect(),
+            api: String::new(),
+            provider: String::new(),
+            model: String::new(),
+            response_id: None,
+            usage: Usage::default(),
+            stop_reason: stop,
+            error_message: None,
+            timestamp: 0,
+        })
+    }
+
+    fn result(id: &str) -> Message {
+        Message::ToolResult(ToolResultMessage {
+            tool_call_id: id.into(),
+            tool_name: "t".into(),
+            content: Vec::new(),
+            details: None,
+            is_error: false,
+            timestamp: 0,
+        })
+    }
+
+    fn check(messages: Vec<Message>) -> Result<(), String> {
+        let transcript = vec![user("last")];
+        check_rewrite(
+            &transcript,
+            &Rewrite {
+                messages,
+                details: Value::Null,
+            },
+        )
+    }
+
+    /// A rewrite keeps every completed call paired with its result, in
+    /// any order within the batch, and ends with the transcript's last
+    /// message. A failed turn's calls need no results.
+    #[test]
+    fn rewrites_keep_calls_and_results_paired() {
+        let ok = MessageStop::ToolUse;
+        assert_eq!(
+            check(vec![
+                calls(&["a", "b"], ok),
+                result("b"),
+                result("a"),
+                user("last")
+            ]),
+            Ok(())
+        );
+        assert_eq!(
+            check(vec![calls(&["a"], MessageStop::Error), user("last")]),
+            Ok(())
+        );
+        assert_eq!(check(vec![]), Err("it is empty".into()));
+        assert_eq!(
+            check(vec![user("other")]),
+            Err("it does not end with the transcript's last message".into())
+        );
+        assert_eq!(
+            check(vec![calls(&["a", "b"], ok), result("a"), user("last")]),
+            Err("tool call b has no result".into())
+        );
+        assert_eq!(
+            check(vec![result("a"), user("last")]),
+            Err("tool result a has no call before it".into())
+        );
+        assert_eq!(
+            check(vec![
+                calls(&["a"], ok),
+                calls(&["b"], ok),
+                result("b"),
+                user("last")
+            ]),
+            Err("tool call a has no result".into())
+        );
+        let transcript = vec![calls(&["a"], ok), result("a")];
+        assert_eq!(
+            check_rewrite(
+                &transcript,
+                &Rewrite {
+                    messages: vec![calls(&["a"], ok)],
+                    details: Value::Null,
+                }
+            ),
+            Err("it does not end with the transcript's last message".into())
+        );
+        assert_eq!(
+            check_rewrite(
+                &[calls(&["a"], ok)],
+                &Rewrite {
+                    messages: vec![calls(&["a"], ok)],
+                    details: Value::Null,
+                }
+            ),
+            Err("tool call a has no result".into())
+        );
+    }
 
     /// Jitter samples are uniform-looking draws from `[0, 1)`: every one
     /// in range, and not all the same.

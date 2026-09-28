@@ -453,7 +453,7 @@ fn run_of(event: &RunEvent) -> &RunId {
         | RunEvent::ToolUpdate { run, .. }
         | RunEvent::ToolEnd { run, .. }
         | RunEvent::TurnEnd { run, .. }
-        | RunEvent::Compacted { run, .. }
+        | RunEvent::ContextRewritten { run, .. }
         | RunEvent::Retry { run, .. }
         | RunEvent::Continued { run, .. }
         | RunEvent::PluginError { run, .. }

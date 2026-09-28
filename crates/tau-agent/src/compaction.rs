@@ -5,11 +5,12 @@
 //! different feature and is not ported here). See
 //! `docs/reference/compaction.md` for the rules this module implements.
 //!
-//! Everything here is a pure function or a plain data type: no store, no
-//! LLM request, no async. A caller (the agent loop) decides when to run
-//! these, sends the summary request itself, and persists the result.
-//! Compaction is off by default; a run only reaches this module when it
-//! is configured with a [`Compaction`].
+//! Everything in this module is a pure function or a plain data type: no
+//! store, no LLM request, no async. The `run` submodule is compaction as
+//! a plugin (`docs/reference/plugins.md`): it decides when to compact,
+//! sends the summary requests, and hands the loop a context rewrite to
+//! store. Compaction is off by default; a run only compacts when its
+//! agent is configured with a [`Compaction`].
 //!
 //! ## Deviations from pi
 //!
@@ -42,6 +43,8 @@
 //!   [`FileOperations`] uses a `BTreeSet`, which keeps the same
 //!   deduplicated, sorted result without a separate sort step.
 
+mod run;
+
 use std::{collections::BTreeSet, fmt, ops::Range};
 
 use serde::{Deserialize, Serialize};
@@ -57,6 +60,8 @@ use tau_ai::message::{
     UserContent,
     UserMessage,
 };
+
+pub use self::run::NAME;
 
 /// Characters an image contributes to the `chars / 4` estimate (pi's
 /// `ESTIMATED_IMAGE_CHARS`).

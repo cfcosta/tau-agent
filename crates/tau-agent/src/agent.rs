@@ -27,7 +27,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    compaction::{Compaction, Record},
+    compaction::{self, Compaction, Record},
     event::{RunEvent, StopReason},
     hook::RunHook,
     limits::Limits,
@@ -170,6 +170,12 @@ pub struct Checkpoint {
 }
 
 impl Checkpoint {
+    /// A checkpoint at `seq` in a stored run, such as one read back from
+    /// the store: a fork from it inherits the run's entries up to `seq`.
+    pub fn at(run: RunId, seq: i64) -> Self {
+        Self { run, seq }
+    }
+
     pub fn run(&self) -> &RunId {
         &self.run
     }
@@ -733,6 +739,26 @@ async fn run_task(
         store: store.clone(),
         charged: Arc::default(),
         last_seq: Arc::new(AtomicI64::new(-1)),
+        clock: agent.0.clock.clone(),
+        retry: agent.0.retry,
+    };
+    // A fork starts from its inherited transcript, and from the latest
+    // context rewrite in it, if any.
+    let (history, last_rewrite) = if fork {
+        let entries = match store.transcript(&id.0).await {
+            Ok(entries) => entries,
+            Err(error) => {
+                return Err(fail(&store, &id, AgentError::Store(error)).await);
+            }
+        };
+        match messages(entries) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                return Err(fail(&store, &id, AgentError::Store(error)).await);
+            }
+        }
+    } else {
+        (Vec::new(), None)
     };
     let mut plan = RunPlan::new(
         input,
@@ -742,14 +768,26 @@ async fn run_task(
         launch.kind.clone(),
         workflow.clone(),
     );
-    let mut plugins = Vec::with_capacity(agent.0.plugins.len());
-    for plugin in &agent.0.plugins {
+    // Compaction goes last: it is the most expensive rewrite, and it
+    // sees the reasoning effort every other plugin settled on.
+    let compaction = agent
+        .0
+        .compaction
+        .map(|compaction| Arc::new(compaction) as Arc<dyn Plugin>);
+    let mut plugins = Vec::with_capacity(agent.0.plugins.len() + 1);
+    for plugin in agent.0.plugins.iter().chain(compaction.iter()) {
         let ctx = shared.ctx(plugin.name());
         let records = match plugin_records(&store, &id, plugin.name()).await {
             Ok(records) => records,
             Err(error) => return Err(fail(&store, &id, error).await),
         };
         plan.set_records(records);
+        plan.set_last_rewrite(
+            last_rewrite
+                .as_ref()
+                .filter(|(by, _)| by == plugin.name())
+                .map(|(_, details)| details.clone()),
+        );
         match plugin.start(&mut plan, &ctx).await {
             Ok(run) => plugins.push(ActivePlugin { run, ctx }),
             Err(error) => {
@@ -768,13 +806,6 @@ async fn run_task(
         Err(error) => {
             return Err(fail(&store, &id, AgentError::Llm(error)).await);
         }
-    };
-    let (history, compacted) = if fork {
-        let entries =
-            store.transcript(&id.0).await.map_err(AgentError::Store)?;
-        messages(entries).map_err(AgentError::Store)?
-    } else {
-        (Vec::new(), None)
     };
     let first = first_message(plan.context, plan.input);
     let result = Runner {
@@ -795,9 +826,6 @@ async fn run_task(
         charged: shared.charged,
         workflow,
         children: Arc::default(),
-        llm: agent.0.llm.clone(),
-        compaction: agent.0.compaction,
-        compacted,
         retry: agent.0.retry,
         warmup: agent.0.warmup,
     }
@@ -863,29 +891,43 @@ fn first_message(context: Vec<String>, input: String) -> UserContent {
     )
 }
 
-/// The messages of a stored transcript, and the compaction it starts
-/// with, if any: its summary stands in for everything before it.
+/// The latest context rewrite in a transcript: the plugin that made it,
+/// and its details.
+type LatestRewrite = (String, Value);
+
+/// The messages of a stored transcript, and the latest context rewrite
+/// in it, if any: the plugin that made it, and its details.
+///
+/// A context entry is followed by the messages it rewrote the transcript
+/// to. A `compaction` entry, from before compaction was a plugin, stands
+/// for its summary message, and counts as the compaction plugin's
+/// rewrite.
 fn messages(
     entries: Vec<Entry>,
-) -> Result<(Vec<Message>, Option<Record>), StoreError> {
-    let mut compacted = None;
+) -> Result<(Vec<Message>, Option<LatestRewrite>), StoreError> {
+    let mut rewrite = None;
     let mut messages = Vec::with_capacity(entries.len());
     for entry in entries {
         match entry {
             Entry::Message { body, .. } => {
                 messages.push(serde_json::from_str(&body)?);
             }
-            // `Store::transcript` leaves plugin records out, and context
-            // entries come with the loop's rewrites (not yet written).
-            Entry::Plugin { .. } | Entry::Context { .. } => {}
+            Entry::Context { plugin, body } => {
+                rewrite = Some((plugin, serde_json::from_str(&body)?));
+            }
             Entry::Compaction { body } => {
                 let record: Record = serde_json::from_str(&body)?;
                 messages.push(record.message());
-                compacted = Some(record);
+                rewrite = Some((
+                    compaction::NAME.to_owned(),
+                    serde_json::from_str(&body)?,
+                ));
             }
+            // `Store::transcript` leaves plugin records out.
+            Entry::Plugin { .. } => {}
         }
     }
-    Ok((messages, compacted))
+    Ok((messages, rewrite))
 }
 
 /// One execution of an agent.

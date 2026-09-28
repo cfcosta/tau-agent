@@ -1,0 +1,268 @@
+//! Compaction as a plugin: the part that makes requests and keeps state.
+//!
+//! The rules are the parent module's pure functions; this module asks
+//! for summaries and turns them into a [`Rewrite`]. `Agent::compaction`
+//! adds it after every other plugin, so cheaper rewrites (pruning) get
+//! the first chance.
+
+use async_trait::async_trait;
+use futures_util::StreamExt;
+use tau_ai::{
+    event::{Accumulator, AssistantEvent},
+    message::{Message, Usage, UserContent, UserMessage},
+    model,
+    responses::request::{ReasoningEffort, Settings},
+    retry::Class,
+};
+
+use super::{
+    Compaction,
+    Record,
+    SUMMARIZATION_SYSTEM_PROMPT,
+    build_summary_request,
+    build_turn_prefix_summary_request,
+    check_summary,
+    format_file_operations,
+    merge_split_turn_summary,
+    plan,
+    should_compact,
+    summary_max_output_tokens,
+    turn_prefix_max_output_tokens,
+};
+use crate::{
+    plugin::{
+        ContextView,
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        Rewrite,
+        RunPlan,
+        Trigger,
+    },
+    runner::{add_usage, jitter},
+};
+
+/// The name compaction goes by in events and stored rewrites.
+pub const NAME: &str = "compaction";
+
+#[async_trait]
+impl Plugin for Compaction {
+    fn name(&self) -> &str {
+        NAME
+    }
+
+    async fn start(
+        &self,
+        plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> anyhow::Result<Box<dyn PluginRun>> {
+        let known = model::find(plan.model());
+        let compacted = plan
+            .last_rewrite()
+            .map(|details| serde_json::from_value(details.clone()))
+            .transpose()?;
+        Ok(Box::new(CompactionRun {
+            settings: *self,
+            model: plan.model().to_owned(),
+            reasoning: plan.reasoning,
+            max_output: known.map_or(0, |model| model.max_output),
+            window: self
+                .context_window
+                .or(known.map(|model| model.context_window)),
+            compacted,
+            off: false,
+        }))
+    }
+}
+
+struct CompactionRun {
+    settings: Compaction,
+    model: String,
+    reasoning: Option<ReasoningEffort>,
+    max_output: u64,
+    /// The context window to compact against, if known. Without one,
+    /// only an overflow compacts.
+    window: Option<u64>,
+    /// The latest compaction, whose summary opens the transcript.
+    compacted: Option<Record>,
+    /// A summary past the threshold failed: the run goes on without
+    /// compacting, so a failing summary is not paid for every turn.
+    off: bool,
+}
+
+#[async_trait]
+impl PluginRun for CompactionRun {
+    async fn rewrite_context(
+        &mut self,
+        view: &ContextView<'_>,
+        ctx: &PluginCtx,
+    ) -> anyhow::Result<Option<Rewrite>> {
+        match view.trigger {
+            Trigger::TurnEnd => {
+                let due = !self.off
+                    && self.window.is_some_and(|window| {
+                        should_compact(view.tokens, window, &self.settings)
+                    });
+                if !due {
+                    return Ok(None);
+                }
+                let result = self.compact(view, ctx).await;
+                if result.is_err() {
+                    self.off = true;
+                }
+                result
+            }
+            Trigger::Overflow => self.compact(view, ctx).await,
+        }
+    }
+}
+
+impl CompactionRun {
+    /// Replaces the transcript's older messages with a summary, followed
+    /// by the kept messages. `None` when the cut keeps everything.
+    async fn compact(
+        &mut self,
+        view: &ContextView<'_>,
+        ctx: &PluginCtx,
+    ) -> anyhow::Result<Option<Rewrite>> {
+        let transcript = view.transcript;
+        // The transcript opens with the latest summary, unless another
+        // plugin's rewrite has replaced it since.
+        let summarized =
+            usize::from(self.compacted.as_ref().is_some_and(|record| {
+                transcript.first() == Some(&record.message())
+            }));
+        let Some(plan) =
+            plan(transcript, summarized, self.settings.keep_recent_tokens)
+        else {
+            return Ok(None);
+        };
+        let previous = self
+            .compacted
+            .as_ref()
+            .filter(|_| summarized == 1)
+            .map(|record| record.summary.as_str());
+        let mut files = self
+            .compacted
+            .as_ref()
+            .filter(|_| summarized == 1)
+            .map(Record::files)
+            .unwrap_or_default();
+        let history = &transcript[plan.history.clone()];
+        files.extract_from_messages(history);
+        let mut summary = if history.is_empty() {
+            previous.unwrap_or("No prior history.").to_owned()
+        } else {
+            let request = build_summary_request(history, previous, None);
+            let budget = summary_max_output_tokens(
+                self.settings.reserve_tokens,
+                self.max_output,
+            );
+            self.summarize(request, budget, ctx).await?
+        };
+        if let Some(prefix) = plan.turn_prefix.clone() {
+            let prefix = &transcript[prefix];
+            files.extract_from_messages(prefix);
+            let request = build_turn_prefix_summary_request(prefix);
+            let budget = turn_prefix_max_output_tokens(
+                self.settings.reserve_tokens,
+                self.max_output,
+            );
+            let text = self.summarize(request, budget, ctx).await?;
+            summary = merge_split_turn_summary(&summary, &text);
+        }
+        let (read_files, modified_files) = files.file_lists();
+        summary.push_str(&format_file_operations(&read_files, &modified_files));
+        let record = Record {
+            summary,
+            tokens_before: view.tokens,
+            read_files,
+            modified_files,
+            timestamp: ctx.now(),
+        };
+        let messages = std::iter::once(record.message())
+            .chain(transcript[plan.kept_from..].iter().cloned())
+            .collect();
+        let details = serde_json::to_value(&record).expect("records serialize");
+        self.compacted = Some(record);
+        Ok(Some(Rewrite { messages, details }))
+    }
+
+    /// One summary request, on a session of its own so the run's lane
+    /// and its continuation are untouched, retried under the run's
+    /// policy. Its usage is charged to the run.
+    async fn summarize(
+        &self,
+        request: String,
+        max_output_tokens: u64,
+        ctx: &PluginCtx,
+    ) -> anyhow::Result<String> {
+        let settings = Settings {
+            model: self.model.clone(),
+            instructions: Some(SUMMARIZATION_SYSTEM_PROMPT.to_owned()),
+            reasoning: self.reasoning,
+            max_output_tokens: Some(max_output_tokens),
+            ..Settings::default()
+        };
+        let mut session = ctx
+            .llm
+            .open(settings)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let input = [Message::User(UserMessage {
+            content: UserContent::Text(request),
+            timestamp: ctx.now(),
+        })];
+        let retry = ctx.retry_policy();
+        let mut usage = Usage::default();
+        let mut attempts = 1;
+        let message = loop {
+            let mut stream = session.respond(&input, ctx.now());
+            let mut accumulator = Accumulator::new();
+            let mut class = Class::Fatal;
+            loop {
+                let event = tokio::select! {
+                    biased;
+                    _ = ctx.cancel.cancelled() => {
+                        ctx.charge(&usage);
+                        anyhow::bail!("Summarization aborted");
+                    }
+                    event = stream.next() => event,
+                };
+                let Some(event) = event else { break };
+                if let AssistantEvent::Error { class: failed, .. } = &event {
+                    class = *failed;
+                }
+                if accumulator.push(event).is_err() {
+                    ctx.charge(&usage);
+                    anyhow::bail!(
+                        "Summarization failed: the response broke the event grammar"
+                    );
+                }
+            }
+            let Ok(message) = accumulator.finish() else {
+                ctx.charge(&usage);
+                anyhow::bail!(
+                    "Summarization failed: the response ended without a terminal event"
+                );
+            };
+            if class != Class::Retryable || !retry.allows(attempts) {
+                break message;
+            }
+            add_usage(&mut usage, &message.usage);
+            let delay = retry.delay(attempts, jitter());
+            attempts += 1;
+            tokio::select! {
+                biased;
+                _ = ctx.cancel.cancelled() => {
+                    ctx.charge(&usage);
+                    anyhow::bail!("Summarization aborted");
+                }
+                _ = tokio::time::sleep(delay) => {}
+            }
+        };
+        add_usage(&mut usage, &message.usage);
+        ctx.charge(&usage);
+        Ok(check_summary(&message)?)
+    }
+}
