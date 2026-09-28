@@ -38,3 +38,7 @@ unicode-normalization.workspace = true
 tau-testing.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "test-util"] }
+
+[[bench]]
+name = "grep"
+harness = false

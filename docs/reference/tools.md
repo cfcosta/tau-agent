@@ -117,9 +117,13 @@ Creates parent directories, then writes the file. Returns
 ## grep: `{ pattern, path?, glob?, ignoreCase?, literal?, context?, limit? }`
 
 - The default `limit` is 100 and the default `context` is 0.
-- Search runs natively with `grep-searcher` + `grep-regex`, walking the
-  tree with `ignore::WalkBuilder`. Hidden files are included and
-  `.gitignore` is respected.
+- Search runs natively on ripgrep's crates, `grep-searcher` +
+  `grep-regex`, walking the tree with `ignore::WalkBuilder`. Hidden
+  files are included and `.gitignore` is respected.
+- The walk and the search use every core, as ripgrep does. Files are
+  still reported in path order, and the search stops once the files
+  finished in order hold more matches than `limit`, so the output is the
+  same as a search of one file after another.
 - **Output format:**
   - a match line is `path:N: text`;
   - a context line is `path-N- text`;

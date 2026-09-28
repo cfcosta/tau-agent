@@ -136,7 +136,9 @@ fn find_needle(content: &str, ignore_case: bool) -> Option<usize> {
 /// "grep"; `docs/reference/testing.md`, "tau-tools").
 #[hegel::test(test_cases = 50)]
 fn grep_matches_a_naive_scan(tc: TestCase) {
-    let file_count = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
+    // Enough files that the search workers finish them out of order.
+    let file_count =
+        tc.draw(gs::integers::<usize>().min_value(1).max_value(40));
     let files: Vec<String> =
         (0..file_count).map(|_| tc.draw(grep_file())).collect();
     let ignore_case = tc.draw(gs::booleans());
@@ -147,7 +149,7 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
 
     let dir = tempfile::tempdir().unwrap();
     let names: Vec<String> =
-        (0..file_count).map(|i| format!("f{i}.txt")).collect();
+        (0..file_count).map(|i| format!("f{i:02}.txt")).collect();
     for (name, content) in names.iter().zip(&files) {
         std::fs::write(dir.path().join(name), content).unwrap();
     }

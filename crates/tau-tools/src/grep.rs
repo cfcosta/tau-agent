@@ -1,21 +1,29 @@
 //! `grep`: search file contents for a pattern
 //! (`docs/reference/tools.md`, "grep"), ported from pi's `grep.ts`.
 //!
-//! Search runs natively: `grep-searcher` and `grep-regex` do the
-//! matching, walking the tree with `ignore::WalkBuilder` (hidden files
-//! included, `.gitignore` respected). There is no `rg --json`
-//! subprocess.
+//! Search runs natively, on ripgrep's own crates: `grep-searcher` and
+//! `grep-regex` do the matching, and `ignore::WalkBuilder` walks the
+//! tree (hidden files included, `.gitignore` respected). There is no
+//! `rg --json` subprocess. Like ripgrep, the walk and the search run on
+//! every core; the output is still in path order, the same as a search
+//! of one file after another (see [`search_files`]).
 //!
 //! **Deliberate difference from pi:** pi drops matches on lines that
 //! contain U+2028 or U+2029 (`grep.ts:169`, an artifact of its `rg
 //! --json` parsing). Lines here are decoded straight from the file's
 //! bytes, so those matches are kept.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
-use grep_regex::RegexMatcherBuilder;
+use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
     Searcher,
     SearcherBuilder,
@@ -26,6 +34,7 @@ use grep_searcher::{
 };
 use ignore::{
     WalkBuilder,
+    WalkState,
     overrides::{Override, OverrideBuilder},
 };
 use schemars::JsonSchema;
@@ -217,19 +226,133 @@ fn files_under(
         .git_global(false)
         .git_exclude(false)
         .overrides(overrides);
-    let mut files = Vec::new();
-    for result in walk.build() {
-        if cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
-        }
-        let Ok(entry) = result else { continue };
-        if !entry.file_type().is_some_and(|t| t.is_file()) {
-            continue;
-        }
-        files.push(entry.into_path());
+    let files = Mutex::new(Vec::new());
+    walk.build_parallel().run(|| {
+        let files = &files;
+        Box::new(move |result| {
+            if cancel.is_cancelled() {
+                return WalkState::Quit;
+            }
+            if let Ok(entry) = result
+                && entry.file_type().is_some_and(|t| t.is_file())
+            {
+                files.lock().expect("not poisoned").push(entry.into_path());
+            }
+            WalkState::Continue
+        })
+    });
+    if cancel.is_cancelled() {
+        return Err(anyhow!(ABORTED));
     }
+    let mut files = files.into_inner().expect("not poisoned");
     files.sort();
     Ok(files)
+}
+
+/// The match and context lines of one file, or `None` when it cannot be
+/// read or is not UTF-8.
+fn search_file(
+    searcher: &mut Searcher,
+    matcher: &RegexMatcher,
+    file: &Path,
+) -> std::io::Result<Option<Vec<LineEntry>>> {
+    let Ok(bytes) = std::fs::read(file) else {
+        return Ok(None);
+    };
+    if std::str::from_utf8(&bytes).is_err() {
+        return Ok(None);
+    }
+    let mut collected = Vec::new();
+    searcher.search_slice(
+        matcher,
+        &bytes,
+        &mut CollectSink {
+            lines: &mut collected,
+        },
+    )?;
+    Ok(Some(collected))
+}
+
+/// Searches `files` on every core, in their order, and returns each
+/// file's lines (`None` for a file not searched).
+///
+/// Workers take files in order. Once the files finished so far, counted
+/// from the first without a gap, hold more than `limit` matches, the
+/// output is settled (it keeps `limit` matches and knows the limit was
+/// reached), so no worker starts another file. The result is the same
+/// as searching one file after another.
+fn search_files(
+    files: &[PathBuf],
+    matcher: &RegexMatcher,
+    context: usize,
+    limit: usize,
+    workers: usize,
+    cancel: &CancellationToken,
+) -> anyhow::Result<Vec<Option<Vec<LineEntry>>>> {
+    struct Progress {
+        results: Vec<Option<Vec<LineEntry>>>,
+        done: Vec<bool>,
+        /// Files `..settled` are all done.
+        settled: usize,
+        settled_matches: usize,
+    }
+    let progress = Mutex::new(Progress {
+        results: (0..files.len()).map(|_| None).collect(),
+        done: vec![false; files.len()],
+        settled: 0,
+        settled_matches: 0,
+    });
+    let next = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let workers = workers.min(files.len()).max(1);
+
+    let work = || -> std::io::Result<()> {
+        let mut searcher = SearcherBuilder::new()
+            .line_number(true)
+            .before_context(context)
+            .after_context(context)
+            .build();
+        loop {
+            if stop.load(Ordering::Relaxed) || cancel.is_cancelled() {
+                return Ok(());
+            }
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            let Some(file) = files.get(index) else {
+                return Ok(());
+            };
+            let lines = search_file(&mut searcher, matcher, file)?;
+            let mut progress = progress.lock().expect("not poisoned");
+            progress.results[index] = lines;
+            progress.done[index] = true;
+            while progress.settled < files.len()
+                && progress.done[progress.settled]
+            {
+                let settled = progress.settled;
+                let matches =
+                    progress.results[settled].as_ref().map_or(0, |lines| {
+                        lines
+                            .iter()
+                            .filter(|l| l.kind == LineKind::Match)
+                            .count()
+                    });
+                progress.settled_matches += matches;
+                progress.settled += 1;
+            }
+            if progress.settled_matches > limit {
+                stop.store(true, Ordering::Relaxed);
+            }
+        }
+    };
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers).map(|_| scope.spawn(work)).collect();
+        handles.into_iter().try_for_each(|handle| {
+            handle.join().expect("a search worker panicked")
+        })
+    })?;
+    if cancel.is_cancelled() {
+        return Err(anyhow!(ABORTED));
+    }
+    Ok(progress.into_inner().expect("not poisoned").results)
 }
 
 fn run(
@@ -268,30 +391,11 @@ fn run(
     let mut limit_reached = false;
     let mut lines_truncated = false;
 
-    'files: for file in &files {
-        if cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
-        }
-        let Ok(bytes) = std::fs::read(file) else {
-            continue;
-        };
-        let Ok(text) = String::from_utf8(bytes) else {
-            continue;
-        };
-
-        let mut collected = Vec::new();
-        let mut searcher = SearcherBuilder::new()
-            .line_number(true)
-            .before_context(context)
-            .after_context(context)
-            .build();
-        searcher.search_slice(
-            &matcher,
-            text.as_bytes(),
-            &mut CollectSink {
-                lines: &mut collected,
-            },
-        )?;
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let results =
+        search_files(&files, &matcher, context, limit, workers, cancel)?;
+    'files: for (file, collected) in files.iter().zip(results) {
+        let Some(collected) = collected else { continue };
         if collected.is_empty() {
             continue;
         }
@@ -380,4 +484,44 @@ fn push_line(
         '-'
     };
     out.push(format!("{rel}{sep}{}{sep} {text}", entry.number));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// With one worker the files are searched strictly in order, so the
+    /// search stops exactly when the output is settled: as soon as the
+    /// files so far hold more than `limit` matches, and not before (a
+    /// file past `limit` matches still decides the "limit reached"
+    /// notice).
+    #[test]
+    fn search_stops_once_the_output_is_settled() {
+        let dir = tempfile::tempdir().unwrap();
+        let files: Vec<PathBuf> = (0..4)
+            .map(|i| {
+                let path = dir.path().join(format!("f{i}.txt"));
+                std::fs::write(&path, "NEEDLE\n").unwrap();
+                path
+            })
+            .collect();
+        let matcher = RegexMatcherBuilder::new().build("NEEDLE").unwrap();
+        let searched = |limit| {
+            search_files(
+                &files,
+                &matcher,
+                0,
+                limit,
+                1,
+                &CancellationToken::new(),
+            )
+            .unwrap()
+            .iter()
+            .map(Option::is_some)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(searched(1), [true, true, false, false]);
+        assert_eq!(searched(2), [true, true, true, false]);
+        assert_eq!(searched(4), [true, true, true, true]);
+    }
 }

@@ -58,6 +58,7 @@ every test must meet. It covers:
 | `cargo mutants`                | Test strength on the core modules                                    |
 | `cargo sqlx prepare --check`   | The committed `.sqlx/` metadata matches the queries                  |
 | `trybuild`                     | Compile-fail tests for the public API                                |
+| `cargo bench`                  | Throughput benchmarks: `tau-ai` `transport`, `tau-tools` `grep`      |
 
 All of these are in the dev shell, except the crates, which come
 through Cargo. `hegeltest` is declared once in
@@ -69,6 +70,21 @@ Hegel is used rather than `proptest` because it shrinks through
 Hypothesis's engine. That engine keeps generated values valid while it
 shrinks, so generators need no custom shrink logic. Hegel also has
 stateful model testing built in.
+
+## Benchmarks
+
+Two benchmarks measure throughput. Each is a plain `main` (no harness)
+that takes its sizes from the environment and prints its results:
+
+- `cargo bench -p tau-ai --bench transport`: many concurrent sessions
+  against an in-process server on in-memory streams, each growing its
+  transcript turn by turn. It reports turns per second, turn latency
+  percentiles, and the server's count of full and delta requests.
+  `RUNS`, `TURNS`, `PAYLOAD`, `DELTAS` and `THINK_MS` set the load.
+- `cargo bench -p tau-tools --bench grep`: the `grep` tool on a
+  generated tree, sized by `FILES` and `FILE_KB`.
+
+Neither runs in CI; run them before and after a change on the hot path.
 
 ## Layers
 
