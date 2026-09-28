@@ -333,6 +333,12 @@ Context plugins are offered the context in the order they were added,
 so add compaction after any cheaper one, such as a pruner. A
 `RunEvent::ContextRewritten` event marks each compaction.
 
+`tau-fast-compaction` is a cheaper first step: it asks Jev, TypeSafe's
+System One model, which tool calls and results still matter, and drops
+or cuts the rest, keeping every text verbatim. Add it before
+`Compaction`, which then takes only what pruning cannot free. See
+[docs/reference/fast-compaction.md](docs/reference/fast-compaction.md).
+
 ### Coding tools
 
 `tau-tools` provides the seven coding tools from pi. Each is rooted at a

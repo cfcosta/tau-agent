@@ -51,6 +51,11 @@ jobs:
             --file crates/tau-agent/src/schema.rs \
             --file crates/plugins/compaction/src/lib.rs \
             --file crates/plugins/compaction/src/plugin.rs \
+            --file crates/plugins/fast-compaction/src/state.rs \
+            --file crates/plugins/fast-compaction/src/decide.rs \
+            --file crates/plugins/fast-compaction/src/ledger.rs \
+            --file crates/plugins/fast-compaction/src/lib.rs \
+            --file crates/plugins/jev/src/lib.rs \
             --file crates/plugins/tools/src/edit.rs \
             --file crates/plugins/tools/src/truncate.rs \
             --file crates/tau-store/src/lib.rs

@@ -265,7 +265,9 @@ today.
 
 Three of the four plugins ask Jev (TypeSafe's System One model) for
 decisions, so the client is its own small crate, not code copied three
-times.
+times. It is built: `crates/plugins/jev`. Plugins take an `impl Jev`
+(the trait), so tests answer with `tau_jev::fake::FakeJev` and
+production uses the HTTP client, `tau_jev::TypeSafe`.
 
 - **API.** One call: `POST https://api.typesafe.ai/v1/systemone` with
   `{ model, state, questions }`. The answers come back under the
@@ -278,15 +280,24 @@ times.
   - `Noul`: the probability that a yes/no statement is true.
     A request is a builder over a shared state, so several questions go
     in one round trip, as TypeSafe's docs recommend.
-- **Limits it enforces before sending.** 64k tokens per request, and
-  32k for the state plus the longest question. Text only.
+- **Answers are checked when read** (`Response::noul`, `choice`,
+  `score`): a missing answer, one of the wrong kind, or a probability
+  outside `[0, 1]` is an error, never a default.
+- **Limits.** The client does not estimate tokens: TypeSafe's limits
+  (64k per request, 32k for the state plus the longest question) are
+  the plugin's to respect, as fast compaction does with its own
+  budgets. Text only.
+- **Errors.** Transport errors leave the URL out, and error statuses
+  drop the body, which can echo the request.
 - **Retries.** 429, 503 and 529 are retried, honoring `retry-after`,
   under tau-ai's `RetryPolicy`.
 - **Cost.** Input tokens only; output is free. Jev 1.13 costs $0.042
   per million input tokens. The client returns `Usage` with the cost
   filled in, which a plugin passes to `ctx.charge`.
 - **Key.** Given explicitly, or read with `from_env()` from
-  `TYPESAFE_API_KEY`, as `OpenAi` does.
+  `TYPESAFE_API_KEY`, as `OpenAi` does. It never shows in `Debug`.
+- **TLS.** rustls with `ring` and Mozilla's roots, as for OpenAI: no
+  system certificate store.
 - **Confidence.** Every answer exposes `confidence` (Choice and Score)
   or its probability (Noul). Plugins take thresholds as settings and
   have a low-confidence fallback. They never act on an unsure answer
@@ -374,6 +385,9 @@ Token estimates and overflow detection, which the loop uses for
 
 ### `tau-fast-compaction`: prune stale tool history
 
+Built: `crates/plugins/fast-compaction`. Its reference is
+[fast-compaction.md](fast-compaction.md).
+
 - **Seams:** `rewrite_context` (both triggers), and `start` to restore
   its ledger.
 - **How** (after `joelhooks/pi-fast-jev-compaction`):
@@ -396,8 +410,8 @@ Token estimates and overflow detection, which the loop uses for
   per-turn view. Here the rewrite is stored once, so the next request
   is one full resend and then deltas again. The cooldown keeps full
   resends rare.
-- **Forks** get the ledger back through `RunPlan::records` and the
-  latest `context` entry.
+- **Forks** get the ledger back through `RunPlan::last_rewrite`: the
+  latest `context` entry, when fast compaction made it.
 
 ## What changed in tau-agent
 

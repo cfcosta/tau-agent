@@ -11,8 +11,10 @@ tau-agent/
 │   ├── tau-store/    # SQLite via sqlx: runs, messages, fork transcripts, migrations
 │   ├── tau-testing/  # ScriptedModel, recorded-stream replay
 │   └── plugins/
-│       ├── compaction/  # tau-compaction: summarizing compaction
-│       └── tools/       # tau-tools: read, bash, edit, write, grep, find, ls
+│       ├── compaction/       # tau-compaction: summarizing compaction
+│       ├── fast-compaction/  # tau-fast-compaction: Jev-driven pruning of tool history
+│       ├── jev/              # tau-jev: TypeSafe's Jev client, for plugins
+│       └── tools/            # tau-tools: read, bash, edit, write, grep, find, ls
 └── docs/
 ```
 

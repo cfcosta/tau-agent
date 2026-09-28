@@ -14,7 +14,8 @@ planned: memory, reasoning selection, rule checks and pruning.
 - Core crates stay in `crates/`: `tau-ai`, `tau-agent`, `tau-store` and
   `tau-testing`.
 - Each plugin is a crate in `crates/plugins/<plugin>`, named
-  `tau-<plugin>`.
+  `tau-<plugin>`. A library that only plugins use, such as the Jev
+  client `tau-jev`, lives there too.
 - Core crates never depend on a plugin. A plugin depends on `tau-agent`
   and uses only its public API, the same API a plugin outside this
   repository gets.

@@ -601,6 +601,8 @@ the workflow code around it.
 - `tau-agent`: the loop, plugins, runs (typed results, forks,
   sub-agents), coercion and the strict schema rewrite;
 - `tau-compaction`: the compaction rules and the plugin;
+- `tau-fast-compaction`: the state, the decisions, the ledger and the
+  plugin; `tau-jev`: answer checking;
 - `tau-store`: the append and transcript queries;
 - `tau-tools`: `edit`, which rewrites files, and truncation.
 
