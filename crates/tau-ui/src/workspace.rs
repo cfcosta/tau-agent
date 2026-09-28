@@ -50,10 +50,22 @@ use crate::{
         SetupStep,
         SetupUpdate,
     },
-    theme::{NARROW_MAX, PHONE_MAX, Theme, theme},
+    theme::{
+        Design as _,
+        IconSize,
+        NARROW_MAX,
+        PHONE_MAX,
+        Theme,
+        Type,
+        radius,
+        sp,
+        theme,
+        weight,
+    },
     ui::{
         self,
         chrome,
+        components::ButtonKind,
         inspector::{self, Tab},
         screens,
         transcript,
@@ -1038,10 +1050,10 @@ impl Workspace {
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .gap(px(12.))
-                    .pt(px(120.))
+                    .gap(sp(3.))
+                    .pt(sp(30.))
                     .text_color(t.muted)
-                    .child(chrome::logo(t, 40.))
+                    .child(ui::logo(t, 40.))
                     .child("A new run. Describe the task below.")
                     .into_any_element(),
             ],
@@ -1066,9 +1078,9 @@ impl Workspace {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(12.))
-                    .px(px(if compact { 16. } else { 24. }))
-                    .py(px(if compact { 16. } else { 20. }))
+                    .gap(sp(3.))
+                    .px(sp(if compact { 4. } else { 6. }))
+                    .py(sp(if compact { 4. } else { 5. }))
                     .children(items),
             )
     }
@@ -1085,10 +1097,10 @@ impl Workspace {
                 .flex_shrink_0()
                 .flex()
                 .items_center()
-                .px(px(24.))
+                .px(sp(6.))
                 .border_b_1()
                 .border_color(t.border)
-                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .font_weight(weight::STRONG)
                 .child("New run");
         };
         let (color, label) = ui::status_look(&run.status, t);
@@ -1101,14 +1113,14 @@ impl Workspace {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .gap(px(12.))
-            .px(px(24.))
+            .gap(sp(3.))
+            .px(sp(6.))
             .border_b_1()
             .border_color(t.border)
             .child(
                 div()
-                    .text_size(px(15.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .typeset(Type::LEAD)
+                    .font_weight(weight::STRONG)
                     .child(run.title.clone()),
             )
             .child(ui::pill(
@@ -1123,11 +1135,15 @@ impl Workspace {
             ))
             .child(ui::mono(
                 format!("{} · turn {}", run.agent, run.turn),
-                12.,
+                Type::CAPTION,
                 t.dim,
             ))
             .child(div().flex_1())
-            .child(ui::mono(crate::view::usd(run.usage.cost), 12., t.muted))
+            .child(ui::mono(
+                crate::view::usd(run.usage.cost),
+                Type::CAPTION,
+                t.muted,
+            ))
             .children(
                 run.children
                     .iter()
@@ -1139,7 +1155,11 @@ impl Workspace {
                         };
                         div()
                             .id("compare")
-                            .child(ui::button("Compare forks", t))
+                            .child(ui::button(
+                                "Compare forks",
+                                ButtonKind::Secondary,
+                                t,
+                            ))
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 ws.navigate(route.clone(), cx)
                             }))
@@ -1149,11 +1169,18 @@ impl Workspace {
                 header.child(
                     div()
                         .id("pull-request")
-                        .child(ui::button("Pull request", t).child(ui::icon(
-                            Icon::PullRequest,
-                            13.,
-                            t.text_soft,
-                        )))
+                        .child(
+                            ui::button(
+                                "Pull request",
+                                ButtonKind::Secondary,
+                                t,
+                            )
+                            .child(ui::icon(
+                                Icon::PullRequest,
+                                IconSize::COMPACT,
+                                t.text_soft,
+                            )),
+                        )
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             ws.open_pull_request(&id, cx)
                         })),
@@ -1162,11 +1189,14 @@ impl Workspace {
             .child(
                 div()
                     .id("fork")
-                    .child(ui::button("Fork here", t).child(ui::icon(
-                        Icon::Fork,
-                        13.,
-                        t.text_soft,
-                    )))
+                    .child(
+                        ui::button("Fork here", ButtonKind::Secondary, t)
+                            .child(ui::icon(
+                                Icon::Fork,
+                                IconSize::COMPACT,
+                                t.text_soft,
+                            )),
+                    )
                     .on_click(cx.listener(|ws, _, window, cx| {
                         ws.start_fork(window, cx)
                     })),
@@ -1175,11 +1205,7 @@ impl Workspace {
                 header.child(
                     div()
                         .id("cancel")
-                        .child(
-                            ui::button("Cancel", t)
-                                .border_color(t.red_border)
-                                .text_color(t.red),
-                        )
+                        .child(ui::button("Cancel", ButtonKind::Danger, t))
                         .on_click(cx.listener(|ws, _, _, cx| ws.cancel(cx))),
                 )
             })
@@ -1200,17 +1226,15 @@ impl Workspace {
             .id("send")
             .on_click(cx.listener(|ws, _, _, cx| ws.submit_from_button(cx)));
         let send = if compact {
-            send.size(px(44.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(22.))
-                .bg(t.accent)
-                .cursor_pointer()
-                .child(ui::icon(Icon::Send, 18., t.bg))
+            send.child(ui::round_button(
+                "phone-send",
+                Icon::Send,
+                t.accent,
+                None,
+                t,
+            ))
         } else {
-            send.child(ui::primary_button(
+            send.child(ui::button(
                 if self.forking.is_some() {
                     "Fork"
                 } else if live {
@@ -1218,6 +1242,7 @@ impl Workspace {
                 } else {
                     "Start"
                 },
+                ButtonKind::Primary,
                 t,
             ))
         };
@@ -1226,10 +1251,10 @@ impl Workspace {
             .flex_shrink_0()
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .px(px(if compact { 12. } else { 24. }))
-            .pt(px(if compact { 10. } else { 0. }))
-            .pb(px(if compact { 18. } else { 16. }))
+            .gap(sp(2.))
+            .px(sp(if compact { 3. } else { 6. }))
+            .pt(sp(if compact { 2.5 } else { 0. }))
+            .pb(sp(if compact { 4.5 } else { 4. }))
             .when(compact, |bar| bar.border_t_1().border_color(t.border))
             .when_some(self.fork_banner(t, cx), |bar, banner| bar.child(banner))
             .when_some(queued, |bar, text| {
@@ -1237,15 +1262,15 @@ impl Workspace {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.))
-                        .px(px(12.))
-                        .py(px(7.))
-                        .rounded(px(6.))
+                        .gap(sp(2.))
+                        .px(sp(3.))
+                        .py(sp(1.75))
+                        .rounded(radius::CONTROL)
                         .bg(t.blue_soft)
                         .border_1()
                         .border_color(t.blue_border)
-                        .text_size(px(12.))
-                        .child(ui::icon(Icon::Chevron, 13., t.blue))
+                        .typeset(Type::CAPTION)
+                        .child(ui::icon(Icon::Chevron, IconSize::COMPACT, t.blue))
                         .child(div().text_color(t.blue).child("Steer queued"))
                         .child(
                             div()
@@ -1262,22 +1287,17 @@ impl Workspace {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.))
+                    .gap(sp(2.5))
                     .when(compact && live, |row| {
                         row.child(
-                            div()
-                                .id("phone-cancel")
-                                .size(px(44.))
-                                .flex_shrink_0()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(22.))
-                                .border_1()
-                                .border_color(t.red_border)
-                                .cursor_pointer()
-                                .child(ui::icon(Icon::Stop, 14., t.red))
-                                .on_click(cx.listener(|ws, _, _, cx| ws.cancel(cx))),
+                            ui::round_button(
+                                "phone-cancel",
+                                Icon::Stop,
+                                t.red,
+                                Some(t.red_border),
+                                t,
+                            )
+                            .on_click(cx.listener(|ws, _, _, cx| ws.cancel(cx))),
                         )
                     })
                     .child(
@@ -1285,21 +1305,21 @@ impl Workspace {
                             .flex_1()
                             .flex()
                             .items_center()
-                            .gap(px(10.))
+                            .gap(sp(2.5))
                             .min_h(px(44.))
-                            .px(px(14.))
+                            .px(sp(3.5))
                             .border_1()
                             .border_color(t.border_strong)
-                            .rounded(px(if compact { 22. } else { 10. }))
+                            .rounded(if compact { radius::FULL } else { radius::LARGE })
                             .bg(t.panel)
                             .when(!compact, |field| {
-                                field.child(ui::icon(Icon::Paperclip, 14., t.muted))
+                                field.child(ui::icon(Icon::Paperclip, IconSize::BASE, t.muted))
                             })
                             .child(self.composer.clone())
                             .when(!compact, |field| {
                                 field.child(ui::mono(
                                     if live { "Enter steers" } else { "Enter starts" },
-                                    11.,
+                                    Type::MICRO,
                                     t.dim,
                                 ))
                             }),
@@ -1325,13 +1345,17 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(5.))
+                .rounded(radius::TAG)
                 .when(on, |button| {
                     button
                         .cursor_pointer()
                         .hover(|style| style.bg(gpui::white().opacity(0.06)))
                 })
-                .child(ui::icon(glyph, 13., if on { t.blue } else { t.dim }))
+                .child(ui::icon(
+                    glyph,
+                    IconSize::COMPACT,
+                    if on { t.blue } else { t.dim },
+                ))
                 .on_click(
                     cx.listener(move |ws, _, _, cx| ws.step_fork(delta, cx)),
                 )
@@ -1340,15 +1364,15 @@ impl Workspace {
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .px(px(12.))
-                .py(px(5.))
-                .rounded(px(6.))
+                .gap(sp(2.))
+                .px(sp(3.))
+                .py(sp(1.25))
+                .rounded(radius::CONTROL)
                 .bg(t.blue_soft)
                 .border_1()
                 .border_color(t.blue_border)
-                .text_size(px(12.))
-                .child(ui::icon(Icon::Fork, 13., t.blue))
+                .typeset(Type::CAPTION)
+                .child(ui::icon(Icon::Fork, IconSize::COMPACT, t.blue))
                 .child(div().text_color(t.blue).child("Fork"))
                 .child(
                     div()
@@ -1356,7 +1380,11 @@ impl Workspace {
                         .child(format!("{} after turn", run.title)),
                 )
                 .child(step("fork-earlier", Icon::Back, -1, *turn > 1))
-                .child(ui::mono(format!("{turn} of {last}"), 12., t.text))
+                .child(ui::mono(
+                    format!("{turn} of {last}"),
+                    Type::CAPTION,
+                    t.text,
+                ))
                 .child(step("fork-later", Icon::Chevron, 1, *turn < last))
                 .child(
                     div().flex_1().text_color(t.muted).child(
@@ -1398,8 +1426,8 @@ impl Workspace {
                     .flex_shrink_0()
                     .flex()
                     .items_end()
-                    .gap(px(18.))
-                    .px(px(16.))
+                    .gap(sp(4.5))
+                    .px(sp(4.))
                     .border_b_1()
                     .border_color(t.border)
                     .children(tabs),
@@ -1410,7 +1438,7 @@ impl Workspace {
                     .flex_1()
                     .min_h(px(0.))
                     .overflow_y_scroll()
-                    .p(px(16.))
+                    .p(sp(4.))
                     .children(self.current().map(|run| {
                         inspector::content(self, run, self.tab, t, cx)
                     })),
@@ -1588,8 +1616,8 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(8.))
-                .text_size(px(13.))
+                .rounded(radius::BOX)
+                .typeset(Type::SMALL)
                 .cursor_pointer()
                 .text_color(if active { t.text } else { t.muted })
                 .when(active, |segment| segment.bg(t.selected))
@@ -1617,20 +1645,20 @@ impl Workspace {
                     .h(gpui::relative(0.72))
                     .flex()
                     .flex_col()
-                    .gap(px(16.))
-                    .px(px(16.))
-                    .pt(px(8.))
-                    .pb(px(24.))
+                    .gap(sp(4.))
+                    .px(sp(4.))
+                    .pt(sp(2.))
+                    .pb(sp(6.))
                     .bg(t.panel)
                     .border_t_1()
                     .border_color(t.border_strong)
-                    .rounded_t(px(18.))
+                    .rounded_t(radius::SHEET)
                     .child(
                         div().flex().justify_center().child(
                             div()
                                 .w(px(40.))
                                 .h(px(4.))
-                                .rounded(px(2.))
+                                .rounded(radius::HAIRLINE)
                                 .bg(t.border_strong),
                         ),
                     )
@@ -1638,9 +1666,9 @@ impl Workspace {
                         div()
                             .grid()
                             .grid_cols(Tab::ALL.len() as u16)
-                            .gap(px(4.))
-                            .p(px(4.))
-                            .rounded(px(10.))
+                            .gap(sp(1.))
+                            .p(sp(1.))
+                            .rounded(radius::LARGE)
                             .bg(t.bg)
                             .children(segments),
                     )
@@ -1658,15 +1686,16 @@ impl Workspace {
                         div()
                             .grid()
                             .grid_cols(if live || done { 2 } else { 1 })
-                            .gap(px(8.))
+                            .gap(sp(2.))
                             .child(
                                 div()
                                     .id("sheet-fork")
-                                    .child(
-                                        ui::button("Fork here", t)
-                                            .h(px(44.))
-                                            .rounded(px(10.)),
-                                    )
+                                    .child(ui::big_button(
+                                        "Fork here",
+                                        None,
+                                        ButtonKind::Secondary,
+                                        t,
+                                    ))
                                     .on_click(cx.listener(
                                         |ws, _, window, cx| {
                                             ws.start_fork(window, cx)
@@ -1677,11 +1706,12 @@ impl Workspace {
                                 row.child(
                                     div()
                                         .id("sheet-pull-request")
-                                        .child(
-                                            ui::button("Pull request", t)
-                                                .h(px(44.))
-                                                .rounded(px(10.)),
-                                        )
+                                        .child(ui::big_button(
+                                            "Pull request",
+                                            None,
+                                            ButtonKind::Secondary,
+                                            t,
+                                        ))
                                         .on_click(cx.listener(
                                             move |ws, _, _, cx| {
                                                 ws.open_pull_request(&id, cx)
@@ -1693,13 +1723,12 @@ impl Workspace {
                                 row.child(
                                     div()
                                         .id("sheet-cancel")
-                                        .child(
-                                            ui::button("Cancel run", t)
-                                                .h(px(44.))
-                                                .rounded(px(10.))
-                                                .border_color(t.red_border)
-                                                .text_color(t.red),
-                                        )
+                                        .child(ui::big_button(
+                                            "Cancel run",
+                                            None,
+                                            ButtonKind::Danger,
+                                            t,
+                                        ))
                                         .on_click(cx.listener(
                                             |ws, _, _, cx| ws.cancel(cx),
                                         )),
@@ -1733,7 +1762,7 @@ impl Render for Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(gpui::rgb(0x0b0c0e))
+                .bg(t.backdrop)
                 .child(
                     div()
                         .w(px(390.))
@@ -1741,7 +1770,7 @@ impl Render for Workspace {
                         .max_h_full()
                         .flex_shrink_0()
                         .overflow_hidden()
-                        .rounded(px(28.))
+                        .rounded(radius::DEVICE)
                         .border_1()
                         .border_color(t.border_strong)
                         .bg(t.bg)
@@ -1751,7 +1780,7 @@ impl Render for Workspace {
         } else if let Some((width, height)) = self.frame {
             div()
                 .size_full()
-                .bg(gpui::rgb(0x0b0c0e))
+                .bg(t.backdrop)
                 .child(
                     div()
                         .w(px(width))
@@ -1787,7 +1816,7 @@ impl Render for Workspace {
             .bg(t.bg)
             .text_color(t.text)
             .font_family(crate::theme::SANS)
-            .text_size(px(if phone { 14.5 } else { 13. }))
+            .typeset(if phone { Type::PHONE } else { Type::SMALL })
             .child(body)
     }
 }

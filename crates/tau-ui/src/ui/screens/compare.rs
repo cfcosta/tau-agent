@@ -17,8 +17,17 @@ use tau_agent::tool::RunId;
 
 use crate::{
     route::Route,
-    theme::Theme,
-    ui::{self, dot, mono, pill, rich, status_look, transcript},
+    theme::{Design as _, Theme, Type, radius, sp, weight},
+    ui::{
+        self,
+        components::ButtonKind,
+        dot,
+        mono,
+        pill,
+        rich,
+        status_look,
+        transcript,
+    },
     view::{Origin, RunView, ToolBody, tokens, usd},
     workspace::Workspace,
 };
@@ -47,7 +56,7 @@ pub fn render(
     let columns = div()
         .flex()
         .when(compact, |row| row.flex_col())
-        .gap(px(16.))
+        .gap(sp(4.))
         .child(branch(ws, main, t.accent, compact, t, cx))
         .child(branch(ws, fork, t.blue, compact, t, cx));
 
@@ -57,7 +66,7 @@ pub fn render(
         div()
             .flex()
             .flex_col()
-            .gap(px(20.))
+            .gap(sp(5.))
             .child(ui::screen_title(
                 format!("{} and {}", main.title, fork.title),
                 "Every turn is stored. The fork shares everything up to its \
@@ -123,9 +132,9 @@ fn checkpoints(
             .absolute()
             .left(relative(x(turn)))
             .top(px(y - 6.))
-            .ml(px(-6.))
+            .ml(sp(-1.5))
             .size(px(12.))
-            .rounded(px(6.))
+            .rounded(radius::CONTROL)
             .border_2()
             .border_color(color)
             .bg(if filled { color } else { t.bg })
@@ -135,8 +144,8 @@ fn checkpoints(
             .absolute()
             .left(relative(x(turn)))
             .top(px(y - 9.))
-            .ml(px(14.))
-            .text_size(px(12.))
+            .ml(sp(3.5))
+            .typeset(Type::CAPTION)
             .text_color(color)
             .whitespace_nowrap()
             .child(text)
@@ -159,14 +168,14 @@ fn checkpoints(
                 .absolute()
                 .left(relative(x(turn)))
                 .top(px(0.))
-                .ml(px(-8.))
+                .ml(sp(-2.))
                 .child(mono(
                     if turn == at {
                         format!("t{turn} fork")
                     } else {
                         format!("t{turn}")
                     },
-                    11.,
+                    Type::MICRO,
                     if turn == at { t.text } else { t.dim },
                 ))
         }))
@@ -183,7 +192,7 @@ fn checkpoints(
                     .absolute()
                     .left(relative(x(at)))
                     .top(px(104.))
-                    .text_size(px(12.))
+                    .typeset(Type::CAPTION)
                     .text_color(t.dim)
                     .whitespace_nowrap()
                     .child(format!("steer: \u{201c}{steer}\u{201d}")),
@@ -225,11 +234,15 @@ fn branch(
             .bg(t.card)
             .child(
                 div()
-                    .px(px(12.))
-                    .py(px(8.))
+                    .px(sp(3.))
+                    .py(sp(2.))
                     .border_b_1()
                     .border_color(t.border)
-                    .child(mono(card.summary.clone(), 12., t.text_soft)),
+                    .child(mono(
+                        card.summary.clone(),
+                        Type::CAPTION,
+                        t.text_soft,
+                    )),
             )
             .child(transcript::diff(lines, t))
     });
@@ -239,19 +252,19 @@ fn branch(
         .min_w(px(0.))
         .flex()
         .flex_col()
-        .gap(px(14.))
-        .p(px(if compact { 0. } else { 4. }))
+        .gap(sp(3.5))
+        .p(sp(if compact { 0. } else { 1. }))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .child(dot(color, 10.))
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(15.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .typeset(Type::LEAD)
+                        .font_weight(weight::STRONG)
                         .child(run.title.clone()),
                 )
                 .child(pill(
@@ -268,7 +281,7 @@ fn branch(
             div()
                 .grid()
                 .grid_cols(4)
-                .gap(px(8.))
+                .gap(sp(2.))
                 .child(ui::stat("turns", run.turn.to_string(), t))
                 .child(ui::stat("tokens", tokens(run.usage.tokens), t))
                 .child(ui::stat("cost", usd(run.usage.cost), t))
@@ -290,11 +303,15 @@ fn branch(
         .child(
             div()
                 .flex()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .child(
                     div()
                         .id(SharedString::from(format!("keep-{}", run.id)))
-                        .child(ui::primary_button("Keep this branch", t))
+                        .child(ui::button(
+                            "Keep this branch",
+                            ButtonKind::Primary,
+                            t,
+                        ))
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             ws.keep_branch(&keep_id, cx)
                         })),
@@ -302,7 +319,11 @@ fn branch(
                 .child(
                     div()
                         .id(SharedString::from(format!("open-{}", run.id)))
-                        .child(ui::button("Open transcript", t))
+                        .child(ui::button(
+                            "Open transcript",
+                            ButtonKind::Secondary,
+                            t,
+                        ))
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             ws.navigate(Route::Run(id.clone()), cx)
                         })),
@@ -310,7 +331,7 @@ fn branch(
         )
         .when(ws.kept_branch.as_ref() == Some(&run.id), |column| {
             column.child(
-                div().text_size(px(12.)).text_color(t.green).child(
+                div().typeset(Type::CAPTION).text_color(t.green).child(
                     "Kept. The host decides what keeping a branch does.",
                 ),
             )

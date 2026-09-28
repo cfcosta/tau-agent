@@ -1,20 +1,12 @@
 //! Every stored run, filterable, with a query box for the store.
 
-use gpui::{
-    AnyElement,
-    Context,
-    FontWeight,
-    SharedString,
-    div,
-    prelude::*,
-    px,
-};
+use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
 use crate::{
     assets::Icon,
     route::Route,
-    theme::Theme,
-    ui::{self, icon, mono, status_icon, status_look},
+    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
+    ui::{self, components::ButtonKind, icon, mono, status_icon, status_look},
     view::{Origin, RunView, tokens, usd},
     workspace::Workspace,
 };
@@ -84,16 +76,16 @@ pub fn render(
     let search = div()
         .flex()
         .items_center()
-        .gap(px(8.))
+        .gap(sp(2.))
         .h(px(36.))
-        .px(px(10.))
+        .px(sp(2.5))
         .when(compact, |search| search.w_full())
         .when(!compact, |search| search.w(px(320.)))
         .border_1()
         .border_color(t.border_strong)
-        .rounded(px(6.))
-        .text_size(px(12.))
-        .child(icon(Icon::Search, 14., t.dim))
+        .rounded(radius::CONTROL)
+        .typeset(Type::CAPTION)
+        .child(icon(Icon::Search, IconSize::BASE, t.dim))
         .child(ws.history_filter.clone());
 
     let body = if compact {
@@ -109,29 +101,29 @@ pub fn render(
                     .id(SharedString::from(format!("history-{}", run.id)))
                     .flex()
                     .items_center()
-                    .gap(px(12.))
+                    .gap(sp(3.))
                     .min_h(px(56.))
-                    .pl(px(if *nested { 24. } else { 0. }))
+                    .pl(sp(if *nested { 6. } else { 0. }))
                     .border_b_1()
                     .border_color(t.border)
                     .cursor_pointer()
-                    .child(status_icon(run, t, 14.))
+                    .child(status_icon(run, t, IconSize::BASE))
                     .child(
                         div()
                             .flex_1()
                             .min_w(px(0.))
                             .flex()
                             .flex_col()
-                            .gap(px(2.))
+                            .gap(sp(0.5))
                             .child(
                                 div()
                                     .truncate()
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .font_weight(weight::EMPHASIS)
                                     .child(run.title.clone()),
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.))
+                                    .typeset(Type::CAPTION)
                                     .text_color(color)
                                     .child(format!(
                                         "{label} · {} turns",
@@ -139,7 +131,7 @@ pub fn render(
                                     )),
                             ),
                     )
-                    .child(mono(usd(run.usage.cost), 12., t.muted))
+                    .child(mono(usd(run.usage.cost), Type::CAPTION, t.muted))
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         ws.navigate(route.clone(), cx)
                     }))
@@ -151,13 +143,13 @@ pub fn render(
             |header, (label, grow, right)| {
                 header.child(
                     cell(*grow, *right)
-                        .text_size(px(11.))
+                        .typeset(Type::MICRO)
                         .child(label.to_uppercase()),
                 )
             },
         );
         let header =
-            header.child(cell(1.1, false).text_size(px(11.)).child("STOP"));
+            header.child(cell(1.1, false).typeset(Type::MICRO).child("STOP"));
         ui::card(t)
             .child(header)
             .children(rows.iter().map(|(run, nested)| {
@@ -169,13 +161,17 @@ pub fn render(
                     .cursor_pointer()
                     .when(active, |row| row.bg(t.selected))
                     .hover(|style| style.bg(gpui::white().opacity(0.03)))
-                    .child(div().w(px(20.)).child(status_icon(run, t, 12.)))
+                    .child(div().w(px(20.)).child(status_icon(
+                        run,
+                        t,
+                        IconSize::SMALL,
+                    )))
                     .child(
                         cell(2.4, false)
-                            .pl(px(if *nested { 16. } else { 0. }))
+                            .pl(sp(if *nested { 4. } else { 0. }))
                             .flex()
                             .items_center()
-                            .gap(px(6.))
+                            .gap(sp(1.5))
                             .when(*nested, |cell| {
                                 cell.child(icon(
                                     if matches!(run.origin, Origin::Fork { .. })
@@ -184,14 +180,14 @@ pub fn render(
                                     } else {
                                         Icon::SubAgent
                                     },
-                                    12.,
+                                    IconSize::SMALL,
                                     t.blue,
                                 ))
                             })
                             .child(
                                 div()
                                     .truncate()
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .font_weight(weight::EMPHASIS)
                                     .child(run.title.clone()),
                             ),
                     )
@@ -202,7 +198,7 @@ pub fn render(
                     )
                     .child(cell(1.0, false).child(mono(
                         run.model.clone(),
-                        12.,
+                        Type::CAPTION,
                         t.muted,
                     )))
                     .child(cell(1.2, false).child(mono(
@@ -211,22 +207,22 @@ pub fn render(
                         } else {
                             run.started.clone()
                         },
-                        12.,
+                        Type::CAPTION,
                         t.muted,
                     )))
                     .child(cell(0.6, true).child(mono(
                         run.turn.to_string(),
-                        12.,
+                        Type::CAPTION,
                         t.text,
                     )))
                     .child(cell(0.8, true).child(mono(
                         tokens(run.usage.tokens),
-                        12.,
+                        Type::CAPTION,
                         t.text,
                     )))
                     .child(cell(0.8, true).child(mono(
                         usd(run.usage.cost),
-                        12.,
+                        Type::CAPTION,
                         t.text,
                     )))
                     .child(cell(1.1, false).text_color(color).child(label))
@@ -241,17 +237,17 @@ pub fn render(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(12.))
-                    .px(px(16.))
-                    .py(px(12.))
+                    .gap(sp(3.))
+                    .px(sp(4.))
+                    .py(sp(3.))
                     .bg(t.panel)
                     .border_t_1()
                     .border_color(t.border)
-                    .child(mono("SQL", 11., t.dim))
+                    .child(mono("SQL", Type::MICRO, t.dim))
                     .child(
                         mono(
                             ws.catalog.store.sample_query.clone(),
-                            12.,
+                            Type::CAPTION,
                             t.text_soft,
                         )
                         .flex_1()
@@ -260,7 +256,11 @@ pub fn render(
                     .child(
                         div()
                             .id("run-query")
-                            .child(ui::button("Run query", t))
+                            .child(ui::button(
+                                "Run query",
+                                ButtonKind::Secondary,
+                                t,
+                            ))
                             .on_click(
                                 cx.listener(|ws, _, _, cx| ws.run_query(cx)),
                             ),
@@ -275,13 +275,13 @@ pub fn render(
         div()
             .flex()
             .flex_col()
-            .gap(px(16.))
+            .gap(sp(4.))
             .child(
                 div()
                     .flex()
                     .flex_wrap()
                     .items_end()
-                    .gap(px(12.))
+                    .gap(sp(3.))
                     .child(
                         div().flex_1().min_w(px(280.)).child(ui::screen_title(
                             "Run history",
@@ -300,9 +300,9 @@ fn row(t: &Theme) -> gpui::Div {
     div()
         .flex()
         .items_center()
-        .gap(px(12.))
-        .px(px(16.))
-        .py(px(10.))
+        .gap(sp(3.))
+        .px(sp(4.))
+        .py(sp(2.5))
         .border_b_1()
         .border_color(t.border)
 }

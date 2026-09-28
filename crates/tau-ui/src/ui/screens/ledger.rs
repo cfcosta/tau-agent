@@ -6,7 +6,7 @@ use tau_agent::tool::RunId;
 
 use crate::{
     route::Route,
-    theme::Theme,
+    theme::{Design as _, Theme, Type, radius, sp},
     ui::{self, bar, heading, key_values, mono},
     view::{Decision, tokens},
     workspace::Workspace,
@@ -43,11 +43,11 @@ pub fn render(
         div()
             .flex()
             .items_center()
-            .gap(px(12.))
+            .gap(sp(3.))
             .child(
                 div()
                     .w(px(56.))
-                    .text_size(px(12.))
+                    .typeset(Type::CAPTION)
                     .text_color(t.muted)
                     .child(label),
             )
@@ -72,7 +72,7 @@ pub fn render(
                     })),
             )
             .child(
-                mono(tokens(used), 12., t.text)
+                mono(tokens(used), Type::CAPTION, t.text)
                     .w(px(48.))
                     .flex()
                     .justify_end(),
@@ -99,13 +99,13 @@ pub fn render(
         let decision = div()
             .flex()
             .items_center()
-            .gap(px(6.))
-            .text_size(px(12.))
+            .gap(sp(1.5))
+            .typeset(Type::CAPTION)
             .text_color(ink)
             .child(
                 div()
                     .size(px(8.))
-                    .rounded(px(2.))
+                    .rounded(radius::HAIRLINE)
                     .bg(fill)
                     .border_1()
                     .border_color(ink),
@@ -113,7 +113,7 @@ pub fn render(
             .child(entry.decision.label());
         let input = mono(
             entry.input.clone(),
-            12.,
+            Type::CAPTION,
             if entry.decision == Decision::DropCall {
                 t.dim
             } else {
@@ -127,39 +127,39 @@ pub fn render(
             .id(SharedString::from(format!("ledger-{}", entry.call_id)))
             .flex()
             .items_center()
-            .gap(px(12.))
-            .px(px(16.))
-            .py(px(8.))
+            .gap(sp(3.))
+            .px(sp(4.))
+            .py(sp(2.))
             .border_b_1()
             .border_color(t.border)
             .cursor_pointer()
             .hover(|style| style.bg(gpui::white().opacity(0.03)))
             .when(!compact, |row| {
                 row.child(
-                    mono(format!("t{}", entry.turn), 12., t.dim).w(px(40.)),
+                    mono(format!("t{}", entry.turn), Type::CAPTION, t.dim)
+                        .w(px(40.)),
                 )
             })
-            .child(mono(entry.tool.clone(), 12., t.blue).w(px(if compact {
-                44.
-            } else {
-                88.
-            })))
+            .child(
+                mono(entry.tool.clone(), Type::CAPTION, t.blue)
+                    .w(px(if compact { 44. } else { 88. })),
+            )
             .child(input)
             .when(!compact, |row| {
                 row.child(
-                    mono(tokens(entry.tokens), 12., t.muted)
+                    mono(tokens(entry.tokens), Type::CAPTION, t.muted)
                         .w(px(64.))
                         .flex()
                         .justify_end(),
                 )
                 .child(
-                    mono(odds(entry.matters), 12., t.text)
+                    mono(odds(entry.matters), Type::CAPTION, t.text)
                         .w(px(96.))
                         .flex()
                         .justify_end(),
                 )
                 .child(
-                    mono(odds(entry.verbatim), 12., t.text)
+                    mono(odds(entry.verbatim), Type::CAPTION, t.text)
                         .w(px(96.))
                         .flex()
                         .justify_end(),
@@ -185,9 +185,9 @@ pub fn render(
             card.child(
                 div()
                     .flex()
-                    .gap(px(12.))
-                    .px(px(16.))
-                    .py(px(9.))
+                    .gap(sp(3.))
+                    .px(sp(4.))
+                    .py(sp(2.25))
                     .bg(t.panel)
                     .border_b_1()
                     .border_color(t.border)
@@ -210,31 +210,49 @@ pub fn render(
 
     let summary = key_values(
         [
-            ("plugin".into(), mono(plugin.to_owned(), 12., t.text)),
+            (
+                "plugin".into(),
+                mono(plugin.to_owned(), Type::CAPTION, t.text),
+            ),
             (
                 "pinned".into(),
-                mono(count(Decision::Pinned).to_string(), 12., t.text),
+                mono(
+                    count(Decision::Pinned).to_string(),
+                    Type::CAPTION,
+                    t.text,
+                ),
             ),
             (
                 "kept".into(),
-                mono(count(Decision::Keep).to_string(), 12., t.text),
+                mono(count(Decision::Keep).to_string(), Type::CAPTION, t.text),
             ),
             (
                 "result dropped".into(),
-                mono(count(Decision::DropResult).to_string(), 12., t.text),
+                mono(
+                    count(Decision::DropResult).to_string(),
+                    Type::CAPTION,
+                    t.text,
+                ),
             ),
             (
                 "call dropped".into(),
-                mono(count(Decision::DropCall).to_string(), 12., t.text),
+                mono(
+                    count(Decision::DropCall).to_string(),
+                    Type::CAPTION,
+                    t.text,
+                ),
             ),
-            ("next request".into(), mono("1 full resend", 12., t.text)),
+            (
+                "next request".into(),
+                mono("1 full resend", Type::CAPTION, t.text),
+            ),
         ],
         t,
     )
-    .p(px(16.))
+    .p(sp(4.))
     .border_1()
     .border_color(t.border)
-    .rounded(px(8.))
+    .rounded(radius::BOX)
     .when(!compact, |card| card.w(px(300.)).flex_shrink_0());
 
     ui::screen(
@@ -243,7 +261,7 @@ pub fn render(
         div()
             .flex()
             .flex_col()
-            .gap(px(20.))
+            .gap(sp(5.))
             .child(ui::screen_title(
                 format!("Pruned {} tokens of {}'s tool history", tokens(saved), run.title),
                 format!(
@@ -256,17 +274,17 @@ pub fn render(
                 div()
                     .flex()
                     .when(compact, |layout| layout.flex_col())
-                    .gap(px(28.))
+                    .gap(sp(7.))
                     .child(
                         div()
                             .flex_1()
                             .flex()
                             .flex_col()
-                            .gap(px(12.))
-                            .child(meter("Before", before, gpui::rgb(0x5c6b88).into()))
+                            .gap(sp(3.))
+                            .child(meter("Before", before, t.slate))
                             .child(meter("After", after, t.blue))
                             .child(
-                                div().text_size(px(12.)).text_color(t.muted).child(format!(
+                                div().typeset(Type::CAPTION).text_color(t.muted).child(format!(
                                     "Window {}.{}",
                                     tokens(window),
                                     trigger.map_or(String::new(), |trigger| format!(" Pruning starts at {:.0}%.", trigger * 100.))

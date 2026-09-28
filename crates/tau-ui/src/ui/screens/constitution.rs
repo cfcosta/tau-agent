@@ -6,8 +6,8 @@ use gpui::{AnyElement, Context, SharedString, div, prelude::*, px, relative};
 use crate::{
     assets::Icon,
     route::Route,
-    theme::Theme,
-    ui::{self, heading, icon, mono},
+    theme::{Design as _, IconSize, Theme, Type, radius, sp},
+    ui::{self, components::ButtonKind, heading, icon, mono},
     view::ToolState,
     workspace::Workspace,
 };
@@ -46,11 +46,11 @@ pub fn render(
     let queue_view = div()
         .flex()
         .flex_col()
-        .gap(px(10.))
+        .gap(sp(2.5))
         .child(heading(&format!("Review queue · {}", queue.len()), t))
         .child(
             div()
-                .text_size(px(12.))
+                .typeset(Type::CAPTION)
                 .text_color(t.dim)
                 .child("Calls that ran with a score between a rule's review and block thresholds."),
         )
@@ -65,38 +65,38 @@ pub fn render(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(10.))
-                .p(px(12.))
+                .gap(sp(2.5))
+                .p(sp(3.))
                 .border_1()
                 .border_color(t.accent_border)
-                .rounded(px(8.))
+                .rounded(radius::BOX)
                 .bg(t.card)
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.))
-                        .child(icon(Icon::Warning, 14., t.accent))
-                        .child(mono(card.tool.clone(), 12., t.blue))
-                        .child(mono(card.summary.clone(), 12., t.text_soft).flex_1().min_w(px(0.)).truncate())
-                        .child(mono(format!("{rule} {score}"), 12., t.accent)),
+                        .gap(sp(2.))
+                        .child(icon(Icon::Warning, IconSize::BASE, t.accent))
+                        .child(mono(card.tool.clone(), Type::CAPTION, t.blue))
+                        .child(mono(card.summary.clone(), Type::CAPTION, t.text_soft).flex_1().min_w(px(0.)).truncate())
+                        .child(mono(format!("{rule} {score}"), Type::CAPTION, t.accent)),
                 )
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.))
-                        .child(div().flex_1().text_size(px(12.)).text_color(t.muted).child(format!("in {}", run.title)))
+                        .gap(sp(2.))
+                        .child(div().flex_1().typeset(Type::CAPTION).text_color(t.muted).child(format!("in {}", run.title)))
                         .child(
                             div()
                                 .id(("review-open", n))
-                                .child(ui::button("Open run", t))
+                                .child(ui::button("Open run", ButtonKind::Secondary, t))
                                 .on_click(cx.listener(move |ws, _, _, cx| ws.navigate(open.clone(), cx))),
                         )
                         .child(
                             div()
                                 .id(("review-dismiss", n))
-                                .child(ui::button("Looks fine", t))
+                                .child(ui::button("Looks fine", ButtonKind::Secondary, t))
                                 .on_click(cx.listener(move |ws, _, _, cx| {
                                     ws.dismissed.insert(dismiss.clone());
                                     cx.notify();
@@ -108,18 +108,18 @@ pub fn render(
     let rules = div()
         .flex()
         .flex_col()
-        .gap(px(8.))
+        .gap(sp(2.))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .child(heading(
                     &format!("Rules · {}", constitution.rules.len()),
                     t,
                 ))
                 .child(div().flex_1())
-                .child(mono(constitution.path.clone(), 12., t.dim)),
+                .child(mono(constitution.path.clone(), Type::CAPTION, t.dim)),
         )
         .children(constitution.rules.iter().map(|rule| {
             let blocked = reviews
@@ -151,8 +151,8 @@ pub fn render(
                 .id(SharedString::from(format!("rule-{}", rule.id)))
                 .flex()
                 .flex_col()
-                .gap(px(6.))
-                .p(px(12.))
+                .gap(sp(1.5))
+                .p(sp(3.))
                 .border_1()
                 .border_color(if focused {
                     t.accent
@@ -161,14 +161,14 @@ pub fn render(
                 } else {
                     t.border
                 })
-                .rounded(px(8.))
+                .rounded(radius::BOX)
                 .cursor_pointer()
                 .child(
                     div()
                         .flex()
                         .items_start()
-                        .gap(px(8.))
-                        .child(mono(rule.id.clone(), 12., t.muted))
+                        .gap(sp(2.))
+                        .child(mono(rule.id.clone(), Type::CAPTION, t.muted))
                         .child(
                             div()
                                 .flex_1()
@@ -181,13 +181,14 @@ pub fn render(
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap(px(6.))
+                        .gap(sp(1.5))
                         .children(rule.applies_to.iter().map(|field| {
-                            mono(field.clone(), 11., t.text_soft)
-                                .px(px(6.))
-                                .py(px(2.))
-                                .rounded(px(4.))
-                                .bg(t.raised)
+                            crate::ui::tag(
+                                field.clone(),
+                                Type::MICRO,
+                                t.text_soft,
+                                t,
+                            )
                         }))
                         .child(div().flex_1())
                         .child(mono(
@@ -195,13 +196,13 @@ pub fn render(
                                 "review {:.2} · block {:.2}",
                                 rule.review, rule.block
                             ),
-                            11.,
+                            Type::MICRO,
                             t.dim,
                         )),
                 )
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .text_color(if blocked > 0 { t.red } else { t.dim })
                         .child(stat),
                 )
@@ -220,7 +221,7 @@ pub fn render(
         div()
             .flex()
             .flex_col()
-            .gap(px(20.))
+            .gap(sp(5.))
             .child(ui::screen_title(
                 "Constitution",
                 format!(
@@ -234,7 +235,7 @@ pub fn render(
                 div()
                     .flex()
                     .when(compact, |layout| layout.flex_col())
-                    .gap(px(24.))
+                    .gap(sp(6.))
                     .child(div().flex_1().min_w(px(0.)).child(rules))
                     .child(div().when(!compact, |side| side.w(px(420.)).flex_shrink_0()).child(queue_view)),
             ),

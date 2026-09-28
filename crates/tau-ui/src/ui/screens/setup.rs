@@ -7,7 +7,6 @@ use gpui::{
     ClipboardItem,
     Context,
     Div,
-    FontWeight,
     div,
     prelude::*,
     px,
@@ -18,16 +17,17 @@ use crate::{
     assets::Icon,
     route::Route,
     setup::{CloneState, DeviceCode, GitHub, ModelAccess, SetupStep},
-    theme::{MONO, Theme},
+    theme::{Design as _, IconSize, MONO, Theme, Type, radius, sp, weight},
     ui::{
         bar,
-        chrome::logo,
-        form::{
+        components::{
+            ButtonKind,
             big_button,
             checkbox,
             field,
             label,
             lead,
+            logo,
             notice,
             panel,
             phone_bar,
@@ -82,7 +82,7 @@ pub fn render(
         .size_full()
         .flex()
         .flex_col()
-        .text_size(px(14.))
+        .typeset(Type::BODY)
         .child(top_bar(ws, step, t))
         .child(
             div()
@@ -93,8 +93,8 @@ pub fn render(
                 .flex()
                 .justify_center()
                 .items_start()
-                .px(px(24.))
-                .py(px(56.))
+                .px(sp(6.))
+                .py(sp(14.))
                 .child(body),
         )
         .into_any_element()
@@ -123,15 +123,15 @@ fn top_bar(ws: &Workspace, step: SetupStep, t: &Theme) -> Div {
             t.border_strong
         };
         let mark = if done {
-            icon(Icon::Check, 12., t.green).into_any_element()
+            icon(Icon::Check, IconSize::SMALL, t.green).into_any_element()
         } else {
-            mono((n + 1).to_string(), 11., color).into_any_element()
+            mono((n + 1).to_string(), Type::MICRO, color).into_any_element()
         };
         let item = div()
             .flex()
             .items_center()
-            .gap(px(8.))
-            .text_size(px(13.))
+            .gap(sp(2.))
+            .typeset(Type::SMALL)
             .text_color(color)
             .child(
                 div()
@@ -139,7 +139,7 @@ fn top_bar(ws: &Workspace, step: SetupStep, t: &Theme) -> Div {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(11.))
+                    .rounded(radius::FULL)
                     .border(px(1.5))
                     .border_color(ring)
                     .child(mark),
@@ -160,26 +160,31 @@ fn top_bar(ws: &Workspace, step: SetupStep, t: &Theme) -> Div {
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap(px(12.))
-        .px(px(24.))
+        .gap(sp(3.))
+        .px(sp(6.))
         .bg(t.panel)
         .border_b_1()
         .border_color(t.border)
         .child(logo(t, 28.))
-        .child(div().font_weight(FontWeight::SEMIBOLD).child("tau"))
+        .child(div().font_weight(weight::STRONG).child("tau"))
         .child(div().text_color(t.dim).child("Set up"))
         .child(div().flex_1())
-        .child(div().flex().items_center().gap(px(10.)).children(stages))
+        .child(div().flex().items_center().gap(sp(2.5)).children(stages))
         .child(div().flex_1())
-        .child(mono(format!("Step {} of 4", stage + 1), 12., t.dim))
+        .child(mono(
+            format!("Step {} of 4", stage + 1),
+            Type::CAPTION,
+            t.dim,
+        ))
 }
 
 /// A column of content: fixed width on a desktop, full width on a phone.
+/// `gap` is in spacing steps.
 fn column(width: f32, gap: f32, compact: bool) -> Div {
     div()
         .flex()
         .flex_col()
-        .gap(px(gap))
+        .gap(sp(gap))
         .when(compact, |col| col.w_full())
         .when(!compact, |col| col.w_full().max_w(px(width)))
 }
@@ -188,9 +193,16 @@ fn heading_block(text: &str, sub: &str, compact: bool, t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
-        .gap(px(10.))
-        .child(title(text.to_owned(), if compact { 22. } else { 28. }))
-        .child(lead(sub, if compact { 14. } else { 15. }, t))
+        .gap(sp(2.5))
+        .child(title(
+            text.to_owned(),
+            if compact {
+                Type::HEADLINE
+            } else {
+                Type::DISPLAY
+            },
+        ))
+        .child(lead(sub, if compact { Type::BODY } else { Type::LEAD }, t))
 }
 
 fn welcome(
@@ -213,35 +225,32 @@ fn welcome(
             "Each one is cloned into tau's own storage and versioned with jj.",
         ),
     ];
-    column(560., 28., compact)
-        .when(!compact, |col| col.mt(px(40.)))
+    column(560., 7., compact)
+        .when(!compact, |col| col.mt(sp(10.)))
         .child(logo(t, 48.))
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(12.))
-                .child(title(
-                    "Tau runs coding agents on your repositories",
-                    if compact { 22. } else { 28. },
-                ))
+                .gap(sp(3.))
+                .child(title("Tau runs coding agents on your repositories", if compact { Type::HEADLINE } else { Type::DISPLAY }, ))
                 .child(lead(
                     "Sign in with GitHub so tau can clone the repositories you \
                      pick and open pull requests from finished runs. Then \
                      connect a model, and start your first run.",
-                    if compact { 14. } else { 15. },
+                    if compact { Type::BODY } else { Type::LEAD },
                     t,
                 )),
         )
-        .child(panel(20., t).gap(px(14.)).children(
+        .child(panel(5., t).gap(sp(3.5)).children(
             steps.into_iter().enumerate().map(|(n, (name, detail))| {
                 div()
                     .flex()
                     .items_start()
-                    .gap(px(12.))
+                    .gap(sp(3.))
                     .child(mono(
                         (n + 1).to_string(),
-                        14.,
+                        Type::BODY,
                         if n == 0 { t.accent } else { t.dim },
                     ))
                     .child(
@@ -250,11 +259,11 @@ fn welcome(
                             .min_w(px(0.))
                             .flex()
                             .flex_col()
-                            .gap(px(2.))
+                            .gap(sp(0.5))
                             .child(name)
                             .child(
                                 div()
-                                    .text_size(px(13.))
+                                    .typeset(Type::SMALL)
                                     .text_color(t.muted)
                                     .child(detail),
                             ),
@@ -266,24 +275,19 @@ fn welcome(
                 .flex()
                 .flex_wrap()
                 .items_center()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .child(
                     div()
                         .id("continue-github")
                         .when(compact, |button| button.w_full())
-                        .child(big_button(
-                            "Continue with GitHub",
-                            Some(Icon::Arrow),
-                            true,
-                            t,
-                        ))
+                        .child(big_button("Continue with GitHub", Some(Icon::Arrow), ButtonKind::Primary, t))
                         .on_click(
                             cx.listener(|ws, _, _, cx| ws.sign_in_github(cx)),
                         ),
                 )
                 .child(
                     div()
-                        .text_size(px(13.))
+                        .typeset(Type::SMALL)
                         .text_color(t.dim)
                         .child("Takes about a minute."),
                 ),
@@ -292,9 +296,9 @@ fn welcome(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .text_size(px(12.))
-                .child(icon(Icon::Lock, 13., t.dim))
+                .gap(sp(2.))
+                .typeset(Type::CAPTION)
+                .child(icon(Icon::Lock, IconSize::COMPACT, t.dim))
                 .child(div().flex_1().min_w(px(0.)).child(prose(
                     &format!(
                         "Tokens stay on this machine, in `{}`, readable only by you.",
@@ -321,27 +325,27 @@ fn open_device_page(code: &DeviceCode, cx: &mut gpui::App) {
     cx.open_url(&format!("https://{}", code.url));
 }
 
-fn github_status(ws: &Workspace, size: f32, t: &Theme) -> Div {
+fn github_status(ws: &Workspace, style: Type, t: &Theme) -> Div {
     match &ws.setup.github {
         GitHub::Failed(error) => {
-            notice(Icon::Warning, error.clone(), t.red, size, t)
+            notice(Icon::Warning, error.clone(), t.red, style, t)
         }
         GitHub::SignedIn { user } => notice(
             Icon::Check,
             format!("Signed in as @{user}"),
             t.green,
-            size,
+            style,
             t,
         ),
         _ => notice(
             Icon::Spinner,
-            if size < 14. {
+            if style.size < Type::BODY.size {
                 "Waiting for you to approve on GitHub…"
             } else {
                 "Waiting for approval…"
             },
             t.accent,
-            size,
+            style,
             t,
         ),
     }
@@ -375,10 +379,11 @@ fn github(
 ) -> AnyElement {
     let code = code_or_status(&ws.setup.github).ok().cloned();
     let shown = match code_or_status(&ws.setup.github) {
-        Ok(code) => mono(code.code.clone(), 40., t.text),
-        Err(status) => {
-            div().text_size(px(20.)).text_color(t.muted).child(status)
-        }
+        Ok(code) => mono(code.code.clone(), Type::CODE_HERO, t.text),
+        Err(status) => div()
+            .typeset(Type::HEADING)
+            .text_color(t.muted)
+            .child(status),
     };
     let copy = code.clone();
     let open = code.clone();
@@ -387,25 +392,25 @@ fn github(
         .min_w(px(0.))
         .flex()
         .flex_col()
-        .gap(px(20.))
-        .child(title("Sign in with GitHub", 28.))
+        .gap(sp(5.))
+        .child(title("Sign in with GitHub", Type::DISPLAY))
         .child(lead(
             "Open GitHub, enter this code, and approve the tau app. This \
              window moves on by itself once you have.",
-            15.,
+            Type::LEAD,
             t,
         ))
         .child(
-            panel(24., t).child(
+            panel(6., t).child(
                 div()
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap(px(16.))
-                    .py(px(8.))
+                    .gap(sp(4.))
+                    .py(sp(2.))
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .typeset(Type::CAPTION)
                             .text_color(t.muted)
                             .child("Your one-time code"),
                     )
@@ -413,7 +418,7 @@ fn github(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(12.))
+                            .gap(sp(3.))
                             .child(shown)
                             .when_some(copy, |row, code| {
                                 row.child(
@@ -424,13 +429,13 @@ fn github(
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .rounded(px(8.))
+                                        .rounded(radius::BOX)
                                         .border_1()
                                         .border_color(t.border_strong)
                                         .cursor_pointer()
                                         .child(icon(
                                             Icon::Copy,
-                                            16.,
+                                            IconSize::LARGE,
                                             t.text_soft,
                                         ))
                                         .on_click(move |_, _, cx| {
@@ -444,7 +449,7 @@ fn github(
                             }),
                     )
                     .children(code.as_ref().map(|code| {
-                        div().text_size(px(13.)).child(prose(
+                        div().typeset(Type::SMALL).child(prose(
                             &format!(
                                 "at `{}` · expires in {}",
                                 code.url, code.expires
@@ -458,14 +463,14 @@ fn github(
         .child(
             div()
                 .flex()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .child(
                     div()
                         .id("open-github")
                         .child(big_button(
                             "Open GitHub",
                             Some(Icon::Arrow),
-                            true,
+                            ButtonKind::Primary,
                             t,
                         ))
                         .on_click(move |_, _, cx| {
@@ -477,19 +482,24 @@ fn github(
                 .child(
                     div()
                         .id("approved")
-                        .child(big_button("I have approved it", None, false, t))
+                        .child(big_button(
+                            "I have approved it",
+                            None,
+                            ButtonKind::Secondary,
+                            t,
+                        ))
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.emit(WorkspaceEvent::GitHubCheck)
                         })),
                 ),
         )
-        .child(github_status(ws, 13., t))
+        .child(github_status(ws, Type::SMALL, t))
         .child(
             div()
                 .id("use-token")
                 .child(text_link(
                     "Use a fine-grained personal access token instead",
-                    13.,
+                    Type::SMALL,
                     t,
                 ))
                 .on_click(cx.listener(|ws, _, _, cx| {
@@ -501,34 +511,34 @@ fn github(
         div()
             .flex()
             .items_start()
-            .gap(px(12.))
-            .py(px(12.))
+            .gap(sp(3.))
+            .py(sp(3.))
             .border_b_1()
             .border_color(t.border)
-            .child(div().mt(px(2.)).child(icon(*glyph, 16., t.muted)))
+            .child(div().mt(sp(0.5)).child(icon(
+                *glyph,
+                IconSize::LARGE,
+                t.muted,
+            )))
             .child(
                 div()
                     .flex_1()
                     .min_w(px(0.))
                     .flex()
                     .flex_col()
-                    .gap(px(3.))
+                    .gap(sp(0.75))
                     .child(*name)
                     .child(
                         div()
-                            .text_size(px(13.))
+                            .typeset(Type::SMALL)
                             .line_height(relative(1.3))
                             .text_color(t.muted)
                             .child(*detail),
                     ),
             )
             .child(
-                mono(*level, 12., t.text_soft)
-                    .flex_shrink_0()
-                    .px(px(8.))
-                    .py(px(2.))
-                    .rounded(px(4.))
-                    .bg(t.raised),
+                crate::ui::tag(*level, Type::CAPTION, t.text_soft, t)
+                    .px(sp(2.)),
             )
     });
     let right = div()
@@ -536,25 +546,25 @@ fn github(
         .min_w(px(0.))
         .flex()
         .flex_col()
-        .gap(px(16.))
+        .gap(sp(4.))
         .child(heading("What tau asks for", t))
         .child(
-            panel(20., t).pt(px(8.)).children(rows).child(
+            panel(5., t).pt(sp(2.)).children(rows).child(
                 div()
                     .flex()
                     .items_start()
-                    .gap(px(12.))
-                    .pt(px(12.))
-                    .child(div().mt(px(2.)).child(icon(
+                    .gap(sp(3.))
+                    .pt(sp(3.))
+                    .child(div().mt(sp(0.5)).child(icon(
                         Icon::Lock,
-                        16.,
+                        IconSize::LARGE,
                         t.muted,
                     )))
                     .child(
                         div()
                             .flex_1()
                             .min_w(px(0.))
-                            .text_size(px(13.))
+                            .typeset(Type::SMALL)
                             .text_color(t.muted)
                             .line_height(relative(1.5))
                             .child(
@@ -571,7 +581,7 @@ fn github(
         .w_full()
         .max_w(px(960.))
         .flex()
-        .gap(px(32.))
+        .gap(sp(8.))
         .child(left)
         .child(right)
         .into_any_element()
@@ -584,15 +594,15 @@ fn phone_github(
 ) -> AnyElement {
     let code = code_or_status(&ws.setup.github).ok().cloned();
     let shown = match code_or_status(&ws.setup.github) {
-        Ok(code) => mono(code.code.clone(), 26., t.text),
+        Ok(code) => mono(code.code.clone(), Type::CODE_LARGE, t.text),
         Err(status) => {
-            div().text_size(px(17.)).text_color(t.muted).child(status)
+            div().typeset(Type::TITLE).text_color(t.muted).child(status)
         }
     };
     div()
         .flex()
         .flex_col()
-        .gap(px(18.))
+        .gap(sp(4.5))
         .child(heading_block(
             "Enter this code on GitHub",
             "Approve the tau app, then come back. This screen moves on by itself.",
@@ -600,10 +610,10 @@ fn phone_github(
             t,
         ))
         .child(
-            panel(20., t).items_center().gap(px(12.)).child(shown).children(
+            panel(5., t).items_center().gap(sp(3.)).child(shown).children(
                 code.as_ref().map(|code| {
                     div()
-                        .text_size(px(13.))
+                        .typeset(Type::SMALL)
                         .text_color(t.muted)
                         .child(format!("expires in {}", code.expires))
                 }),
@@ -612,26 +622,21 @@ fn phone_github(
         .child(
             div()
                 .id("phone-open-github")
-                .child(big_button(
-                    "Copy code and open GitHub",
-                    Some(Icon::Arrow),
-                    true,
-                    t,
-                ))
+                .child(big_button("Copy code and open GitHub", Some(Icon::Arrow), ButtonKind::Primary, t))
                 .on_click(move |_, _, cx| {
                     if let Some(code) = &code {
                         open_device_page(code, cx)
                     }
                 }),
         )
-        .child(github_status(ws, 14., t))
+        .child(github_status(ws, Type::BODY, t))
         .child(heading("tau asks for", t))
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(8.))
-                .text_size(px(14.))
+                .gap(sp(2.))
+                .typeset(Type::BODY)
                 .text_color(t.text_soft)
                 .children(PERMISSIONS.iter().map(|(_, name, _, level)| {
                     let level = level.replace('&', "and");
@@ -640,14 +645,14 @@ fn phone_github(
         )
         .child(
             div()
-                .text_size(px(13.))
+                .typeset(Type::SMALL)
                 .text_color(t.muted)
                 .child("Only on the repositories you pick next."),
         )
         .child(
             div()
                 .id("phone-use-token")
-                .child(text_link("Use a personal access token instead", 14., t))
+                .child(text_link("Use a personal access token instead", Type::BODY, t))
                 .on_click(cx.listener(|ws, _, _, cx| {
                     ws.navigate(Route::Setup(SetupStep::Token), cx)
                 })),
@@ -662,42 +667,35 @@ fn token(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let checking = ws.setup.github == GitHub::Checking;
-    column(560., 20., compact)
+    column(560., 5., compact)
         .when(!compact, |col| {
             col.child(
                 div()
                     .id("token-back")
                     .flex()
                     .items_center()
-                    .gap(px(6.))
+                    .gap(sp(1.5))
                     .cursor_pointer()
-                    .text_size(px(13.))
+                    .typeset(Type::SMALL)
                     .text_color(t.blue)
-                    .child(icon(Icon::Back, 14., t.blue))
+                    .child(icon(Icon::Back, IconSize::BASE, t.blue))
                     .child("Back to GitHub sign-in")
                     .on_click(cx.listener(|ws, _, _, cx| {
                         ws.navigate(Route::Setup(SetupStep::GitHub), cx)
                     })),
             )
         })
-        .child(title(
-            "Use a personal access token",
-            if compact { 22. } else { 28. },
-        ))
-        .child(lead(
-            "For machines where the app cannot open a browser. Create a \
-             fine-grained token limited to the repositories tau should reach.",
-            if compact { 14. } else { 15. },
-            t,
-        ))
+        .child(title("Use a personal access token", if compact { Type::HEADLINE } else { Type::DISPLAY }, ))
+        .child(lead("For machines where the app cannot open a browser. Create a \
+             fine-grained token limited to the repositories tau should reach.", if compact { Type::BODY } else { Type::LEAD }, t, ))
         .child(
-            panel(20., t)
-                .gap(px(16.))
+            panel(5., t)
+                .gap(sp(4.))
                 .child(
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(8.))
+                        .gap(sp(2.))
                         .child(label("Fine-grained token", t))
                         .child(field(&ws.github_token, true, t)),
                 )
@@ -705,14 +703,14 @@ fn token(
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(6.))
-                        .text_size(px(13.))
+                        .gap(sp(1.5))
+                        .typeset(Type::SMALL)
                         .text_color(t.muted)
                         .child("Give it these repository permissions:")
                         .child(mono(
                             "Contents: read and write · Pull requests: read and \
                              write · Metadata: read",
-                            13.,
+                            Type::SMALL,
                             t.text_soft,
                         )),
                 ),
@@ -722,19 +720,14 @@ fn token(
                 GitHub::Failed(error) => Some(error.clone()),
                 _ => None,
             },
-            |col, error| col.child(notice(Icon::Warning, error, t.red, 13., t)),
+            |col, error| col.child(notice(Icon::Warning, error, t.red, Type::SMALL, t)),
         )
         .child(
             div().flex().child(
                 div()
                     .id("check-token")
                     .when(compact, |button| button.w_full())
-                    .child(big_button(
-                        if checking { "Checking…" } else { "Check the token" },
-                        None,
-                        true,
-                        t,
-                    ))
+                    .child(big_button(if checking { "Checking…" } else { "Check the token" }, None, ButtonKind::Primary, t))
                     .on_click(cx.listener(|ws, _, _, cx| {
                         ws.submit_token_from_button(cx)
                     })),
@@ -755,9 +748,9 @@ fn option(
     div()
         .flex()
         .flex_col()
-        .gap(px(14.))
-        .p(px(20.))
-        .rounded(px(12.))
+        .gap(sp(3.5))
+        .p(sp(5.))
+        .rounded(radius::CARD)
         .border_1()
         .border_color(if selected { t.accent } else { t.border })
         .bg(if selected { t.accent_soft } else { t.panel })
@@ -765,29 +758,29 @@ fn option(
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.))
-                .child(icon(glyph, 18., t.text_soft))
+                .gap(sp(2.5))
+                .child(icon(glyph, IconSize::XLARGE, t.text_soft))
                 .child(
                     div()
                         .flex_1()
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(weight::STRONG)
                         .child(name.to_owned()),
                 )
                 .children(badge.map(|badge| {
                     div()
-                        .px(px(8.))
-                        .py(px(2.))
-                        .rounded(px(10.))
+                        .px(sp(2.))
+                        .py(sp(0.5))
+                        .rounded(radius::LARGE)
                         .border_1()
                         .border_color(t.accent_border)
-                        .text_size(px(11.))
+                        .typeset(Type::MICRO)
                         .text_color(t.accent)
                         .child(badge.to_owned())
                 })),
         )
         .child(
             div()
-                .text_size(px(13.))
+                .typeset(Type::SMALL)
                 .line_height(relative(1.55))
                 .child(prose(detail, t.muted, t)),
         )
@@ -807,9 +800,9 @@ fn model(
                 .flex()
                 .flex_col()
                 .items_center()
-                .gap(px(6.))
-                .child(mono(code.code.clone(), 22., t.text))
-                .child(div().text_size(px(13.)).child(prose(
+                .gap(sp(1.5))
+                .child(mono(code.code.clone(), Type::HEADLINE, t.text))
+                .child(div().typeset(Type::SMALL).child(prose(
                     &format!("Enter it at `{}`", code.url),
                     t.muted,
                     t,
@@ -819,11 +812,11 @@ fn model(
             Icon::Spinner,
             "Finish signing in in your browser…",
             t.accent,
-            13.,
+            Type::SMALL,
             t,
         )),
         ModelAccess::Failed(error) => {
-            Some(notice(Icon::Warning, error.clone(), t.red, 13., t))
+            Some(notice(Icon::Warning, error.clone(), t.red, Type::SMALL, t))
         }
         _ => None,
     };
@@ -840,14 +833,14 @@ fn model(
         div()
             .flex()
             .flex_col()
-            .gap(px(10.))
+            .gap(sp(2.5))
             .child(
                 div()
                     .id("codex-sign-in")
                     .child(big_button(
                         "Sign in with ChatGPT",
                         Some(Icon::Arrow),
-                        true,
+                        ButtonKind::Primary,
                         t,
                     ))
                     .on_click(
@@ -860,7 +853,7 @@ fn model(
                         .id("codex-device")
                         .child(text_link(
                             "No browser here? Use a device code",
-                            13.,
+                            Type::SMALL,
                             t,
                         ))
                         .on_click(cx.listener(|ws, _, _, cx| {
@@ -883,13 +876,18 @@ fn model(
         div()
             .flex()
             .flex_col()
-            .gap(px(10.))
+            .gap(sp(2.5))
             .child(label("API key", t))
             .child(field(&ws.api_key, true, t))
             .child(
                 div()
                     .id("use-key")
-                    .child(big_button("Use this key", None, false, t))
+                    .child(big_button(
+                        "Use this key",
+                        None,
+                        ButtonKind::Secondary,
+                        t,
+                    ))
                     .on_click(cx.listener(|ws, _, _, cx| {
                         ws.submit_api_key_from_button(cx)
                     })),
@@ -897,19 +895,19 @@ fn model(
     );
     let options = div()
         .flex()
-        .gap(px(16.))
+        .gap(sp(4.))
         .when(compact, |row| row.flex_col())
         .child(codex.flex_1().min_w(px(0.)))
         .child(api.flex_1().min_w(px(0.)));
-    column(960., 24., compact)
+    column(960., 6., compact)
         .when_some(ws.setup.user(), |col, user| {
             col.child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.))
-                    .text_size(px(13.))
-                    .child(icon(Icon::Check, 14., t.green))
+                    .gap(sp(2.5))
+                    .typeset(Type::SMALL)
+                    .child(icon(Icon::Check, IconSize::BASE, t.green))
                     .child(prose(
                         &format!("Signed in to GitHub as `@{user}`"),
                         t.green,
@@ -929,17 +927,17 @@ fn model(
             div()
                 .flex()
                 .items_start()
-                .gap(px(10.))
-                .px(px(14.))
-                .py(px(12.))
-                .rounded(px(8.))
+                .gap(sp(2.5))
+                .px(sp(3.5))
+                .py(sp(3.))
+                .rounded(radius::BOX)
                 .border_1()
                 .border_dashed()
                 .border_color(t.border_strong)
-                .text_size(px(13.))
+                .typeset(Type::SMALL)
                 .text_color(t.muted)
                 .line_height(relative(1.5))
-                .child(div().mt(px(1.)).child(icon(Icon::Info, 15., t.muted)))
+                .child(div().mt(sp(0.25)).child(icon(Icon::Info, IconSize::MEDIUM, t.muted)))
                 .child(div().flex_1().min_w(px(0.)).child(
                     "Signed in to the Codex CLI already? tau does not reuse its \
                      sign-in: refreshing a shared token would sign the CLI out. \
@@ -966,27 +964,27 @@ fn repos(
                 .id(("repo", n))
                 .flex()
                 .items_center()
-                .gap(px(14.))
+                .gap(sp(3.5))
                 .min_h(px(56.))
-                .px(px(16.))
+                .px(sp(4.))
                 .border_b_1()
                 .border_color(t.border)
                 .cursor_pointer()
                 .when(repo.selected, |row| row.bg(t.accent.opacity(0.05)))
-                .child(checkbox(repo.selected, 18., t))
-                .child(icon(Icon::Repo, 16., t.muted))
+                .child(checkbox(repo.selected, false, t))
+                .child(icon(Icon::Repo, IconSize::LARGE, t.muted))
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(0.))
                         .flex()
                         .flex_col()
-                        .gap(px(2.))
-                        .child(mono(repo.name.clone(), 13., t.text))
+                        .gap(sp(0.5))
+                        .child(mono(repo.name.clone(), Type::SMALL, t.text))
                         .when(!repo.description.is_empty(), |col| {
                             col.child(
                                 div()
-                                    .text_size(px(12.))
+                                    .typeset(Type::CAPTION)
                                     .text_color(t.muted)
                                     .child(repo.description.clone()),
                             )
@@ -996,9 +994,9 @@ fn repos(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(6.))
-                        .child(icon(Icon::Fork, 12., t.dim))
-                        .child(mono(repo.branch.clone(), 12., t.dim)),
+                        .gap(sp(1.5))
+                        .child(icon(Icon::Fork, IconSize::SMALL, t.dim))
+                        .child(mono(repo.branch.clone(), Type::CAPTION, t.dim)),
                 )
                 .on_click(
                     cx.listener(move |ws, _, _, cx| ws.toggle_repo(&name, cx)),
@@ -1013,7 +1011,7 @@ fn repos(
         .min_w(px(0.))
         .flex()
         .flex_col()
-        .gap(px(18.))
+        .gap(sp(4.5))
         .child(heading_block(
             "Pick repositories",
             "tau clones each one into its own storage. Runs work there, never \
@@ -1025,20 +1023,20 @@ fn repos(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .h(px(44.))
-                .px(px(12.))
-                .rounded(px(8.))
+                .px(sp(3.))
+                .rounded(radius::BOX)
                 .border_1()
                 .border_color(t.border_strong)
-                .child(icon(Icon::Search, 16., t.dim))
+                .child(icon(Icon::Search, IconSize::LARGE, t.dim))
                 .child(ws.repo_filter.clone()),
         )
         .child(
             div()
                 .flex()
                 .flex_col()
-                .rounded(px(12.))
+                .rounded(radius::CARD)
                 .border_1()
                 .border_color(t.border)
                 .bg(t.card)
@@ -1051,24 +1049,24 @@ fn repos(
     let right = div()
         .flex()
         .flex_col()
-        .gap(px(16.))
-        .when(!compact, |col| col.w(px(320.)).flex_shrink_0().pt(px(88.)))
+        .gap(sp(4.))
+        .when(!compact, |col| col.w(px(320.)).flex_shrink_0().pt(sp(22.)))
         .child(
-            panel(18., t)
-                .gap(px(14.))
+            panel(4.5, t)
+                .gap(sp(3.5))
                 .child(heading("Where they go", t))
                 .child(
                     div()
                         .flex()
                         .items_start()
-                        .gap(px(10.))
-                        .child(icon(Icon::Folder, 16., t.muted))
+                        .gap(sp(2.5))
+                        .child(icon(Icon::Folder, IconSize::LARGE, t.muted))
                         .child(
                             div()
                                 .flex()
                                 .flex_col()
                                 .font_family(MONO)
-                                .text_size(px(12.))
+                                .typeset(Type::CAPTION)
                                 .text_color(t.text_soft)
                                 .line_height(relative(1.6))
                                 .children(paths),
@@ -1076,7 +1074,7 @@ fn repos(
                 )
                 .child(
                     div()
-                        .text_size(px(13.))
+                        .typeset(Type::SMALL)
                         .text_color(t.muted)
                         .line_height(relative(1.55))
                         .child(
@@ -1090,21 +1088,16 @@ fn repos(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .child(
                     div()
                         .id("clone")
                         .child(
-                            big_button(
-                                match count {
+                            big_button(match count {
                                     0 => "Pick a repository".to_owned(),
                                     1 => "Clone 1 repository".to_owned(),
                                     n => format!("Clone {n} repositories"),
-                                },
-                                None,
-                                true,
-                                t,
-                            )
+                                }, None, ButtonKind::Primary, t)
                             .when(count == 0, |button| button.opacity(0.5)),
                         )
                         .on_click(cx.listener(move |ws, _, _, cx| {
@@ -1117,7 +1110,7 @@ fn repos(
                     div()
                         .flex()
                         .justify_center()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .text_color(t.dim)
                         .child("You can add more later from Settings."),
                 ),
@@ -1126,7 +1119,7 @@ fn repos(
         .w_full()
         .max_w(px(1040.))
         .flex()
-        .gap(px(28.))
+        .gap(sp(7.))
         .when(compact, |row| row.flex_col())
         .child(left)
         .child(right)
@@ -1156,19 +1149,24 @@ fn ready(
         div()
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .px(px(16.))
-            .py(px(14.))
+            .gap(sp(2.))
+            .px(sp(4.))
+            .py(sp(3.5))
             .border_b_1()
             .border_color(t.border)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.))
-                    .child(mono(clone.name.clone(), 13., t.text).flex_1())
+                    .gap(sp(2.5))
                     .child(
-                        div().text_size(px(12.)).text_color(color).child(state),
+                        mono(clone.name.clone(), Type::SMALL, t.text).flex_1(),
+                    )
+                    .child(
+                        div()
+                            .typeset(Type::CAPTION)
+                            .text_color(color)
+                            .child(state),
                     ),
             )
             .child(bar(share, 4., color, t.border))
@@ -1180,18 +1178,9 @@ fn ready(
         .map(|clone| clone.name.clone())
         .unwrap_or_else(|| ws.name.clone());
     let chip = |glyph: Icon, text: String, color| {
-        div()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .px(px(10.))
-            .py(px(5.))
-            .rounded(px(6.))
-            .bg(t.raised)
-            .child(icon(glyph, 13., color))
-            .child(mono(text, 12., color))
+        crate::ui::chip(Some(glyph), text, Type::CAPTION, color, t)
     };
-    column(760., 24., compact)
+    column(760., 6., compact)
         .child(heading_block(
             "Start your first run",
             "Describe a task. tau works on a new change in the repository, and \
@@ -1204,7 +1193,7 @@ fn ready(
                 div()
                     .flex()
                     .flex_col()
-                    .rounded(px(12.))
+                    .rounded(radius::CARD)
                     .border_1()
                     .border_color(t.border)
                     .bg(t.card)
@@ -1217,9 +1206,9 @@ fn ready(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(12.))
-                .p(px(14.))
-                .rounded(px(12.))
+                .gap(sp(3.))
+                .p(sp(3.5))
+                .rounded(radius::CARD)
                 .border_1()
                 .border_color(t.border_strong)
                 .bg(t.panel)
@@ -1228,7 +1217,7 @@ fn ready(
                         .flex()
                         .items_start()
                         .h(px(if compact { 48. } else { 64. }))
-                        .pt(px(2.))
+                        .pt(sp(0.5))
                         .child(ws.first_task.clone()),
                 )
                 .child(
@@ -1236,7 +1225,7 @@ fn ready(
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap(px(8.))
+                        .gap(sp(2.))
                         .child(chip(Icon::Repo, repo, t.text_soft))
                         .child(chip(
                             Icon::Chat,
@@ -1251,7 +1240,12 @@ fn ready(
                             div()
                                 .id("first-run")
                                 .when(compact, |button| button.w_full())
-                                .child(big_button("Start", None, true, t))
+                                .child(big_button(
+                                    "Start",
+                                    None,
+                                    ButtonKind::Primary,
+                                    t,
+                                ))
                                 .on_click(cx.listener(|ws, _, _, cx| {
                                     ws.start_first_run_from_button(cx)
                                 })),

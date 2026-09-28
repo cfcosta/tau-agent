@@ -38,6 +38,13 @@ reach into the loop.
   `tau-memory` suggests, the pruning ledger. A blocked call reaches the
   event stream as plain text today, with no sign of the plugin or the
   rule.
+- **One design language, in two files.** `src/theme.rs` holds every
+  token: colors, the type scale (`Type`), font weights, corner radii,
+  icon sizes, control heights, and spacing in steps of one unit (`sp`).
+  `src/ui/components.rs` holds the shared components (buttons by kind,
+  badges, chips, tags, cards, panels, fields, notices). Screens compose
+  them and never write their own sizes or colors; `tests/design.rs`
+  fails the build if one does.
 - **One layout per width, not per device.** Below 720 px the window
   gets a one-column phone layout with a tab bar and bottom sheets;
   below 1100 px the desktop layout drops the inspector.

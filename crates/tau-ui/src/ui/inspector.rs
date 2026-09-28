@@ -17,7 +17,7 @@ use super::{bar, heading, icon, key_values, link, mono, stop_look};
 use crate::{
     assets::Icon,
     route::Route,
-    theme::Theme,
+    theme::{Design as _, IconSize, Theme, Type, radius, sp},
     view::{ChildKind, Item, Pruned, RunStatus, RunView, tokens, usd},
     workspace::Workspace,
 };
@@ -52,7 +52,7 @@ pub fn content(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let body = div().flex().flex_col().gap(px(20.));
+    let body = div().flex().flex_col().gap(sp(5.));
     match tab {
         Tab::Run => {
             let body = run_tab(run, body, t, cx);
@@ -81,16 +81,22 @@ fn run_tab(
             let (color, label) = stop_look(stop, t);
             body.child(heading("Outcome", t)).child(key_values(
                 [
-                    ("stop".into(), mono(label, 12., color)),
-                    ("turns".into(), mono(run.turn.to_string(), 12., t.text)),
+                    ("stop".into(), mono(label, Type::CAPTION, color)),
+                    (
+                        "turns".into(),
+                        mono(run.turn.to_string(), Type::CAPTION, t.text),
+                    ),
                     (
                         "tokens".into(),
-                        mono(tokens(run.usage.tokens), 12., t.text),
+                        mono(tokens(run.usage.tokens), Type::CAPTION, t.text),
                     ),
-                    ("cost".into(), mono(usd(run.usage.cost), 12., t.text)),
+                    (
+                        "cost".into(),
+                        mono(usd(run.usage.cost), Type::CAPTION, t.text),
+                    ),
                     (
                         "plugins".into(),
-                        mono(usd(run.usage.plugin_cost), 12., t.text),
+                        mono(usd(run.usage.plugin_cost), Type::CAPTION, t.text),
                     ),
                 ],
                 t,
@@ -102,10 +108,10 @@ fn run_tab(
         let value = div()
             .flex()
             .flex_col()
-            .gap(px(2.))
+            .gap(sp(0.5))
             .child(mono(
                 field.value.clone(),
-                12.,
+                Type::CAPTION,
                 if field.set_by.is_some() {
                     t.blue
                 } else {
@@ -113,7 +119,11 @@ fn run_tab(
                 },
             ))
             .when_some(field.set_by.clone(), |value, plugin| {
-                value.child(mono(format!("set by {plugin}"), 11., t.dim))
+                value.child(mono(
+                    format!("set by {plugin}"),
+                    Type::MICRO,
+                    t.dim,
+                ))
             });
         (SharedString::from(field.name.clone()), value)
     });
@@ -141,18 +151,18 @@ fn run_tab(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(5.))
+                    .gap(sp(1.25))
                     .child(
                         div()
                             .flex()
-                            .text_size(px(12.))
+                            .typeset(Type::CAPTION)
                             .child(
                                 div()
                                     .flex_1()
                                     .text_color(t.text_soft)
                                     .child(meter.label),
                             )
-                            .child(mono(meter.value, 12., t.muted)),
+                            .child(mono(meter.value, Type::CAPTION, t.muted)),
                     )
                     .child(bar(meter.share, 4., t.text_soft, t.border))
             }))
@@ -176,18 +186,21 @@ fn run_tab(
                     }))
                     .flex()
                     .items_center()
-                    .gap(px(8.))
+                    .gap(sp(2.))
                     .child(icon(
                         match child.kind {
                             ChildKind::SubAgent => Icon::SubAgent,
                             ChildKind::Fork => Icon::Fork,
                         },
-                        12.,
+                        IconSize::SMALL,
                         t.blue,
                     ))
                     .child(div().flex_1().child(child.title.clone()))
                     .child(
-                        div().text_size(px(12.)).text_color(color).child(label),
+                        div()
+                            .typeset(Type::CAPTION)
+                            .text_color(color)
+                            .child(label),
                     )
             }),
         )
@@ -215,11 +228,11 @@ fn context_tab(
         div()
             .flex()
             .items_center()
-            .gap(px(10.))
+            .gap(sp(2.5))
             .child(
                 div()
                     .w(px(48.))
-                    .text_size(px(12.))
+                    .typeset(Type::CAPTION)
                     .text_color(t.muted)
                     .child(label),
             )
@@ -241,7 +254,7 @@ fn context_tab(
                     }),
             )
             .child(
-                mono(tokens(used), 12., t.text)
+                mono(tokens(used), Type::CAPTION, t.text)
                     .w(px(40.))
                     .flex()
                     .justify_end(),
@@ -275,7 +288,7 @@ fn context_tab(
             }),
     )
     .when_some(context.before, |body, before| {
-        body.child(row("Before", before, rgb_slate()))
+        body.child(row("Before", before, t.slate))
     })
     .child(row(
         if context.before.is_some() {
@@ -288,7 +301,7 @@ fn context_tab(
     ))
     .child(
         div()
-            .text_size(px(12.))
+            .typeset(Type::CAPTION)
             .text_color(t.dim)
             .line_height(relative(1.5))
             .child(format!(
@@ -303,20 +316,19 @@ fn context_tab(
     .when(kept + results + calls > 0, |body| {
         body.child(heading("Ledger", t)).child(key_values(
             [
-                ("kept".into(), mono(kept.to_string(), 12., t.text)),
+                ("kept".into(), mono(kept.to_string(), Type::CAPTION, t.text)),
                 (
                     "result dropped".into(),
-                    mono(results.to_string(), 12., t.text),
+                    mono(results.to_string(), Type::CAPTION, t.text),
                 ),
-                ("call dropped".into(), mono(calls.to_string(), 12., t.text)),
+                (
+                    "call dropped".into(),
+                    mono(calls.to_string(), Type::CAPTION, t.text),
+                ),
             ],
             t,
         ))
     })
-}
-
-fn rgb_slate() -> gpui::Hsla {
-    gpui::rgb(0x5c6b88).into()
 }
 
 fn plugins_tab(
@@ -330,7 +342,7 @@ fn plugins_tab(
         .child(plugin_states(ws, run, t, cx))
         .child(
             div()
-                .text_size(px(12.))
+                .typeset(Type::CAPTION)
                 .text_color(t.dim)
                 .line_height(relative(1.5))
                 .child(format!(
@@ -352,7 +364,7 @@ fn plugin_states(
         .flex_col()
         .border_1()
         .border_color(t.border)
-        .rounded(px(8.))
+        .rounded(radius::BOX)
         .overflow_hidden()
         .children(run.plugins.iter().map(|plugin| {
             let route = ws.plugin_route_named(&plugin.name, &run.id);
@@ -367,15 +379,17 @@ fn plugin_states(
                 })
                 .flex()
                 .items_center()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .min_h(px(36.))
-                .px(px(12.))
+                .px(sp(3.))
                 .border_b_1()
                 .border_color(t.border)
-                .child(mono(plugin.name.clone(), 12., t.text).flex_1())
+                .child(
+                    mono(plugin.name.clone(), Type::CAPTION, t.text).flex_1(),
+                )
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .text_color(t.tone(plugin.tone))
                         .child(plugin.state.clone()),
                 )
@@ -388,8 +402,8 @@ pub fn tab_label(tab: Tab, active: bool, t: &Theme) -> impl IntoElement {
         .h(px(48.))
         .flex()
         .items_center()
-        .px(px(2.))
-        .text_size(px(13.))
+        .px(sp(0.5))
+        .typeset(Type::SMALL)
         .cursor_pointer()
         .text_color(if active { t.text } else { t.muted })
         .when(active, |tab| tab.border_b_2().border_color(t.accent))
@@ -408,25 +422,29 @@ fn events_tab(run: &RunView, body: Div, t: &Theme) -> Div {
         div()
             .flex()
             .flex_col()
-            .gap(px(2.))
-            .p(px(12.))
-            .rounded(px(6.))
+            .gap(sp(0.5))
+            .p(sp(3.))
+            .rounded(radius::CONTROL)
             .border_1()
             .border_color(t.border)
             .bg(t.bg)
             .when(run.log.is_empty(), |log| {
-                log.child(mono("No events yet.", 11., t.dim))
+                log.child(mono("No events yet.", Type::MICRO, t.dim))
             })
             .children(run.log.iter().rev().take(60).map(|line| {
                 div()
                     .flex()
-                    .gap(px(8.))
+                    .gap(sp(2.))
                     .child(
-                        mono(format!("t{}", line.turn), 11., t.dim).w(px(24.)),
+                        mono(format!("t{}", line.turn), Type::MICRO, t.dim)
+                            .w(px(24.)),
                     )
-                    .child(mono(line.kind, 11., color(line.kind)).w(px(80.)))
                     .child(
-                        mono(line.text.clone(), 11., t.muted)
+                        mono(line.kind, Type::MICRO, color(line.kind))
+                            .w(px(80.)),
+                    )
+                    .child(
+                        mono(line.text.clone(), Type::MICRO, t.muted)
                             .flex_1()
                             .min_w(px(0.))
                             .truncate(),

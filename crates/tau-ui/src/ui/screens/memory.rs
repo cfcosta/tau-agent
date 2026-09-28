@@ -5,7 +5,6 @@
 use gpui::{
     AnyElement,
     Context,
-    FontWeight,
     Hsla,
     PathBuilder,
     SharedString,
@@ -21,8 +20,18 @@ use crate::{
     assets::Icon,
     catalog::Note,
     route::Route,
-    theme::{SANS, SERIF, Theme},
-    ui::{self, heading, icon, mono, rich_in},
+    theme::{
+        Design as _,
+        IconSize,
+        SANS,
+        SERIF,
+        Theme,
+        Type,
+        radius,
+        sp,
+        weight,
+    },
+    ui::{self, components::ButtonKind, heading, icon, mono, rich_in},
     workspace::Workspace,
 };
 
@@ -60,7 +69,7 @@ pub fn render(
                 .bg(t.panel)
                 .border_r_1()
                 .border_color(t.border)
-                .p(px(12.))
+                .p(sp(3.))
                 .child(list(ws, open.map(|note| note.id.as_str()), t, cx)),
         )
         .child(match open {
@@ -74,8 +83,8 @@ pub fn render(
                         .flex_1()
                         .min_w(px(0.))
                         .overflow_y_scroll()
-                        .px(px(48.))
-                        .py(px(32.))
+                        .px(sp(12.))
+                        .py(sp(8.))
                         .child(reader(ws, note, false, t, cx)),
                 )
                 .child(
@@ -87,7 +96,7 @@ pub fn render(
                         .bg(t.panel)
                         .border_l_1()
                         .border_color(t.border)
-                        .p(px(20.))
+                        .p(sp(5.))
                         .child(neighborhood(ws, note, t, cx)),
                 )
                 .into_any_element(),
@@ -114,20 +123,20 @@ fn list(
     div()
         .flex()
         .flex_col()
-        .gap(px(12.))
+        .gap(sp(3.))
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(sp(0.5))
                 .child(mono(
                     format!("{} · {} notes", memory.path, memory.notes.len()),
-                    11.,
+                    Type::MICRO,
                     t.dim,
                 ))
                 .child(mono(
                     format!("docbert collection {}", memory.collection),
-                    11.,
+                    Type::MICRO,
                     t.dim,
                 )),
         )
@@ -135,13 +144,13 @@ fn list(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .h(px(36.))
-                .px(px(10.))
+                .px(sp(2.5))
                 .border_1()
                 .border_color(t.border_strong)
-                .rounded(px(6.))
-                .child(icon(Icon::Search, 14., t.dim))
+                .rounded(radius::CONTROL)
+                .child(icon(Icon::Search, IconSize::BASE, t.dim))
                 .child(ws.memory_search.clone()),
         )
         .when(!pending.is_empty(), |list| {
@@ -149,16 +158,16 @@ fn list(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(8.))
-                    .p(px(12.))
-                    .rounded(px(8.))
+                    .gap(sp(2.))
+                    .p(sp(3.))
+                    .rounded(radius::BOX)
                     .bg(t.accent_soft)
                     .border_1()
                     .border_color(t.accent_border)
                     .child(
                         div()
                             .text_color(t.accent)
-                            .font_weight(FontWeight::MEDIUM)
+                            .font_weight(weight::EMPHASIS)
                             .child(format!(
                                 "{} notes suggested",
                                 pending.len()
@@ -171,18 +180,22 @@ fn list(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(8.))
+                                .gap(sp(2.))
                                 .child(
                                     div()
                                         .flex_1()
-                                        .text_size(px(12.))
+                                        .typeset(Type::CAPTION)
                                         .text_color(t.text_soft)
                                         .child(proposal.title.clone()),
                                 )
                                 .child(
                                     div()
                                         .id(("keep-suggested", n))
-                                        .child(ui::primary_button("Keep", t))
+                                        .child(ui::button(
+                                            "Keep",
+                                            ButtonKind::Primary,
+                                            t,
+                                        ))
                                         .on_click(cx.listener(
                                             move |ws, _, _, cx| {
                                                 ws.keep_note(
@@ -205,9 +218,9 @@ fn list(
                 .id(SharedString::from(format!("note-{}", note.id)))
                 .flex()
                 .flex_col()
-                .gap(px(4.))
-                .p(px(10.))
-                .rounded(px(6.))
+                .gap(sp(1.))
+                .p(sp(2.5))
+                .rounded(radius::CONTROL)
                 .cursor_pointer()
                 .when(active, |row| row.bg(t.selected))
                 .when(!active, |row| {
@@ -215,12 +228,12 @@ fn list(
                 })
                 .child(
                     div()
-                        .font_weight(FontWeight::MEDIUM)
+                        .font_weight(weight::EMPHASIS)
                         .child(note.title.clone()),
                 )
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .text_color(t.muted)
                         .line_height(relative(1.45))
                         .child(rich_in(note.snippet(), SANS, t.muted, t)),
@@ -230,7 +243,7 @@ fn list(
                         "{} links · {backlinks} backlinks",
                         note.links.len()
                     ),
-                    11.,
+                    Type::MICRO,
                     t.dim,
                 ))
                 .on_click(cx.listener(move |ws, _, _, cx| {
@@ -249,37 +262,43 @@ fn reader(
     div()
         .flex()
         .flex_col()
-        .gap(px(18.))
+        .gap(sp(4.5))
         .max_w(px(680.))
         .child(mono(
             format!(
                 "{} · {} · edited {}",
                 note.id, note.written_by, note.edited
             ),
-            12.,
+            Type::CAPTION,
             t.dim,
         ))
         .child(
             div()
                 .font_family(SERIF)
-                .text_size(px(if compact { 26. } else { 34. }))
-                .font_weight(FontWeight::MEDIUM)
+                .typeset(if compact {
+                    Type::READING_TITLE_COMPACT
+                } else {
+                    Type::READING_TITLE
+                })
+                .font_weight(weight::EMPHASIS)
                 .line_height(relative(1.2))
                 .child(note.title.clone()),
         )
         .children(note.body.iter().map(|paragraph| {
             div()
-                .text_size(px(if compact { 16. } else { 18. }))
+                .typeset(if compact {
+                    Type::READING_COMPACT
+                } else {
+                    Type::READING
+                })
                 .line_height(relative(1.65))
                 .child(rich_in(paragraph, SERIF, t.text_soft, t))
         }))
-        .child(div().flex().flex_wrap().gap(px(8.)).children(
+        .child(div().flex().flex_wrap().gap(sp(2.)).children(
             note.paths.iter().map(|path| {
-                mono(path.clone(), 12., t.muted)
-                    .px(px(8.))
-                    .py(px(3.))
-                    .rounded(px(4.))
-                    .bg(t.raised)
+                crate::ui::tag(path.clone(), Type::CAPTION, t.muted, t)
+                    .px(sp(2.))
+                    .py(sp(0.75))
             }),
         ))
         .when(compact, |reader| {
@@ -346,7 +365,7 @@ fn neighborhood(
                 .left(relative(x))
                 .top(relative(y))
                 .w(px(120.))
-                .ml(px(-60.))
+                .ml(sp(-15.))
                 .mt(px(-size / 2.))
                 .flex()
                 .flex_col()
@@ -361,10 +380,10 @@ fn neighborhood(
                 )
                 .children(label.map(|label| {
                     div()
-                        .mt(px(4.))
+                        .mt(sp(1.))
                         .max_w(px(120.))
                         .truncate()
-                        .text_size(px(11.))
+                        .typeset(Type::MICRO)
                         .text_color(t.muted)
                         .child(label)
                 }))
@@ -379,12 +398,7 @@ fn neighborhood(
             node(*spot, t.blue, 12., Some(to.title.clone()))
         }))
         .children(back.iter().zip(&back_spots).map(|((from, _), spot)| {
-            node(
-                *spot,
-                gpui::rgb(0x5c6b88).into(),
-                12.,
-                Some(from.title.clone()),
-            )
+            node(*spot, t.slate, 12., Some(from.title.clone()))
         }));
 
     let link_row = |prefix: &str,
@@ -399,8 +413,8 @@ fn neighborhood(
             .id(SharedString::from(format!("{prefix}-{index}")))
             .flex()
             .flex_col()
-            .gap(px(2.))
-            .py(px(6.))
+            .gap(sp(0.5))
+            .py(sp(1.5))
             .cursor_pointer()
             .child(
                 div()
@@ -410,7 +424,7 @@ fn neighborhood(
             )
             .child(
                 div()
-                    .text_size(px(12.))
+                    .typeset(Type::CAPTION)
                     .text_color(t.muted)
                     .child(format!("why: {why}")),
             )
@@ -432,12 +446,12 @@ fn neighborhood(
     div()
         .flex()
         .flex_col()
-        .gap(px(18.))
+        .gap(sp(4.5))
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .child(heading("Neighborhood", t))
                 .child(map),
         )
@@ -445,7 +459,7 @@ fn neighborhood(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(sp(0.5))
                 .child(heading(&format!("Links out · {}", out.len()), t))
                 .children(out_rows),
         )
@@ -453,7 +467,7 @@ fn neighborhood(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(sp(0.5))
                 .child(heading(&format!("Backlinks · {}", back.len()), t))
                 .children(back_rows),
         )
@@ -461,11 +475,11 @@ fn neighborhood(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(6.))
+                .gap(sp(1.5))
                 .child(heading("Brought into runs", t))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .text_color(t.text_soft)
                         .line_height(relative(1.5))
                         .child(format!(

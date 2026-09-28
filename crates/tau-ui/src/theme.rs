@@ -1,6 +1,29 @@
-//! Colors, type and the width where the layout switches to phone mode.
+//! The design language: every color, type size, radius, spacing step and
+//! control size the interface uses. Screens and components take their
+//! values from here and never write their own, so changing the look is a
+//! change to this file.
+//!
+//! - Colors are fields of [`Theme`], read from the app's global.
+//! - Type is a [`Type`]: size, weight, line height and face, set with
+//!   [`Design::typeset`].
+//! - Spacing is counted in steps of [`UNIT`] with [`sp`]: `sp(2.)` is two
+//!   steps. Changing the unit makes the whole interface denser or looser.
+//! - Corners come from [`radius`], icons from [`IconSize`], and the
+//!   heights of buttons and fields from [`control`].
 
-use gpui::{App, Global, Hsla, Pixels, Rgba, px, rgb, rgba};
+use gpui::{
+    App,
+    FontWeight,
+    Global,
+    Hsla,
+    Pixels,
+    Rgba,
+    Styled,
+    px,
+    relative,
+    rgb,
+    rgba,
+};
 
 use crate::view::Tone;
 
@@ -45,6 +68,22 @@ pub struct Theme {
     pub added_text: Hsla,
     pub removed_text: Hsla,
     pub scrim: Hsla,
+    /// Around the app when it is drawn in a frame (phone preview, fixed
+    /// size).
+    pub backdrop: Hsla,
+    /// A quiet border, softer than [`Self::border`] on raised surfaces.
+    pub border_soft: Hsla,
+    /// A neutral blue-grey for secondary series in charts.
+    pub slate: Hsla,
+    /// Bars in a chart that were not picked.
+    pub bar_idle: Hsla,
+    /// Behind a plugin's badge and other small info marks.
+    pub info_surface: Hsla,
+    /// Behind an informational panel, such as the run plan.
+    pub info_panel: Hsla,
+    /// Behind and around the body of a blocked call.
+    pub danger_surface: Hsla,
+    pub danger_edge: Hsla,
 }
 
 fn c(color: Rgba) -> Hsla {
@@ -79,6 +118,14 @@ impl Theme {
             added_text: c(rgb(0xa9dcb1)),
             removed_text: c(rgb(0xf3b3aa)),
             scrim: c(rgba(0x08080a99)),
+            backdrop: c(rgb(0x0b0c0e)),
+            border_soft: c(rgb(0x30323a)),
+            slate: c(rgb(0x5c6b88)),
+            bar_idle: c(rgb(0x3d4452)),
+            info_surface: c(rgb(0x1f2633)),
+            info_panel: c(rgb(0x171a21)),
+            danger_surface: c(rgb(0x1d1716)),
+            danger_edge: c(rgb(0x3a2724)),
         }
     }
 
@@ -99,4 +146,228 @@ impl Global for Theme {}
 /// The app's theme. [`crate::init`] sets it.
 pub fn theme(cx: &App) -> &Theme {
     cx.global::<Theme>()
+}
+
+/// One step of spacing. Every gap, padding and margin is a number of
+/// these.
+pub const UNIT: f32 = 4.;
+
+/// `steps` steps of spacing: `sp(2.)` is 8 px at the default unit.
+pub fn sp(steps: f32) -> Pixels {
+    px(UNIT * steps)
+}
+
+/// A text style: size, and optionally weight, line height and the mono
+/// face.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Type {
+    pub size: f32,
+    pub weight: Option<FontWeight>,
+    /// A multiple of the size.
+    pub line_height: Option<f32>,
+    pub mono: bool,
+}
+
+impl Type {
+    const fn new(size: f32) -> Self {
+        Self {
+            size,
+            weight: None,
+            line_height: None,
+            mono: false,
+        }
+    }
+
+    const fn weight(mut self, weight: FontWeight) -> Self {
+        self.weight = Some(weight);
+        self
+    }
+
+    const fn monospace(mut self) -> Self {
+        self.mono = true;
+        self
+    }
+
+    /// Small print: counters, tags, table headings.
+    pub const MICRO: Self = Self::new(11.);
+    /// Secondary lines: details, metadata, captions.
+    pub const CAPTION: Self = Self::new(12.);
+    /// Code and diffs in a block.
+    pub const CODE: Self = Self::new(12.5).monospace();
+    /// The desktop's base size, and supporting text.
+    pub const SMALL: Self = Self::new(13.);
+    /// Text in forms and task screens.
+    pub const BODY: Self = Self::new(14.);
+    /// The phone's base size.
+    pub const PHONE: Self = Self::new(14.5);
+    /// The paragraph under a big title.
+    pub const LEAD: Self = Self::new(15.);
+    /// A run's name in its header; a phone's task bar.
+    pub const SUBTITLE: Self = Self::new(16.);
+    /// The phone's screen titles.
+    pub const TITLE: Self = Self::new(17.);
+    /// A desktop screen's title.
+    pub const HEADING: Self = Self::new(20.);
+    /// A task screen's title on a phone.
+    pub const HEADLINE: Self = Self::new(22.);
+    /// A task screen's title on a desktop.
+    pub const DISPLAY: Self = Self::new(28.);
+    /// A note's title in the reader, on a phone.
+    pub const READING_TITLE_COMPACT: Self = Self::new(26.);
+    /// A note's title in the reader.
+    pub const READING_TITLE: Self = Self::new(34.);
+    /// A note's text in the reader, on a phone.
+    pub const READING_COMPACT: Self = Self::new(16.);
+    /// A note's text in the reader.
+    pub const READING: Self = Self::new(18.);
+    /// A code to read out and type, on a phone.
+    pub const CODE_LARGE: Self = Self::new(26.).monospace();
+    /// A code to read out and type, on a desktop.
+    pub const CODE_HERO: Self = Self::new(40.).monospace();
+
+    /// This style in the mono face.
+    pub const fn mono(self) -> Self {
+        self.monospace()
+    }
+
+    /// This style at another weight.
+    pub const fn weighted(self, weight: FontWeight) -> Self {
+        self.weight(weight)
+    }
+
+    /// This style with a line height, as a multiple of the size.
+    pub const fn leading(mut self, line_height: f32) -> Self {
+        self.line_height = Some(line_height);
+        self
+    }
+}
+
+/// Font weights, by what they are for.
+pub mod weight {
+    use gpui::FontWeight;
+
+    /// Names and labels that should stand out a little: the current
+    /// crumb, a row's title.
+    pub const EMPHASIS: FontWeight = FontWeight::MEDIUM;
+    /// Titles, headings and primary buttons.
+    pub const STRONG: FontWeight = FontWeight::SEMIBOLD;
+}
+
+/// Corner radii.
+pub mod radius {
+    use gpui::{Pixels, px};
+
+    /// Thin bars and meters.
+    pub const HAIRLINE: Pixels = px(2.);
+    /// The tops of chart bars.
+    pub const BAR: Pixels = px(3.);
+    /// Checkboxes, small chips.
+    pub const SMALL: Pixels = px(4.);
+    /// Icon badges and step buttons.
+    pub const TAG: Pixels = px(5.);
+    /// Buttons, inline chips, list rows.
+    pub const CONTROL: Pixels = px(6.);
+    /// Fields, cards, boxes.
+    pub const BOX: Pixels = px(8.);
+    /// Transcript bubbles and grouped rows.
+    pub const LARGE: Pixels = px(10.);
+    /// Panels on task screens.
+    pub const CARD: Pixels = px(12.);
+    /// The phone's run cards.
+    pub const TILE: Pixels = px(14.);
+    pub const BUBBLE: Pixels = px(16.);
+    /// The tops of bottom sheets.
+    pub const SHEET: Pixels = px(18.);
+    /// The phone preview's frame.
+    pub const DEVICE: Pixels = px(28.);
+    /// Fully round, for pills and circles.
+    pub const FULL: Pixels = px(9999.);
+}
+
+/// Icon sizes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IconSize(pub f32);
+
+impl IconSize {
+    pub const TINY: Self = Self(11.);
+    pub const SMALL: Self = Self(12.);
+    pub const COMPACT: Self = Self(13.);
+    pub const BASE: Self = Self(14.);
+    pub const MEDIUM: Self = Self(15.);
+    pub const LARGE: Self = Self(16.);
+    pub const XLARGE: Self = Self(18.);
+    pub const HUGE: Self = Self(20.);
+}
+
+/// The heights of controls.
+pub mod control {
+    use gpui::{Pixels, px};
+
+    /// Buttons in headers and lists.
+    pub const SMALL: Pixels = px(30.);
+    /// Rows you can tap, and small fields.
+    pub const MEDIUM: Pixels = px(36.);
+    /// Big buttons and fields; the smallest touch target on a phone.
+    pub const LARGE: Pixels = px(44.);
+}
+
+/// Setting design values on any element.
+pub trait Design: Styled + Sized {
+    /// Sets the text's size, and its weight, line height and face when
+    /// the style has them.
+    fn typeset(mut self, style: Type) -> Self {
+        self = self.text_size(px(style.size));
+        if let Some(weight) = style.weight {
+            self = self.font_weight(weight);
+        }
+        if let Some(line_height) = style.line_height {
+            self = self.line_height(relative(line_height));
+        }
+        if style.mono {
+            self = self.font_family(MONO);
+        }
+        self
+    }
+
+    /// Sets a line height as a multiple of the size.
+    fn leading(self, line_height: f32) -> Self {
+        self.line_height(relative(line_height))
+    }
+}
+
+impl<T: Styled + Sized> Design for T {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spacing_is_counted_in_units() {
+        assert_eq!(sp(0.), px(0.));
+        assert_eq!(sp(2.), px(2. * UNIT));
+        assert_eq!(sp(-1.5), px(-1.5 * UNIT));
+    }
+
+    #[test]
+    fn the_type_scale_grows_and_codes_are_mono() {
+        let scale = [
+            Type::MICRO,
+            Type::CAPTION,
+            Type::CODE,
+            Type::SMALL,
+            Type::BODY,
+            Type::PHONE,
+            Type::LEAD,
+            Type::SUBTITLE,
+            Type::TITLE,
+            Type::HEADING,
+            Type::HEADLINE,
+            Type::DISPLAY,
+        ];
+        assert!(scale.windows(2).all(|pair| pair[0].size < pair[1].size));
+        for code in [Type::CODE, Type::CODE_LARGE, Type::CODE_HERO] {
+            assert!(code.mono);
+        }
+        assert!(Type::BODY.mono().mono && !Type::BODY.mono);
+    }
 }

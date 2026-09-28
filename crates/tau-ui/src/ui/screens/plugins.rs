@@ -5,7 +5,7 @@ use gpui::{AnyElement, Context, SharedString, div, prelude::*, px, relative};
 
 use crate::{
     catalog::{PluginInfo, Seam},
-    theme::Theme,
+    theme::{Design as _, Theme, Type, radius, sp},
     ui::{self, bar, dot, heading, key_values, mono},
     view::{Item, tokens, usd},
     workspace::Workspace,
@@ -27,7 +27,7 @@ pub fn render(
                 .child(
                     div()
                         .size(px(10.))
-                        .rounded(px(5.))
+                        .rounded(radius::TAG)
                         .border_1()
                         .border_color(if used {
                             t.blue
@@ -40,21 +40,21 @@ pub fn render(
         let name = div()
             .flex()
             .flex_col()
-            .gap(px(3.))
-            .child(mono(plugin.name.clone(), 13., t.text))
+            .gap(sp(0.75))
+            .child(mono(plugin.name.clone(), Type::SMALL, t.text))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .typeset(Type::CAPTION)
                     .text_color(t.muted)
                     .child(plugin.description.clone()),
             );
         div()
             .id(SharedString::from(format!("plugin-{}", plugin.name)))
             .flex()
-            .when(compact, |row| row.flex_col().items_start().gap(px(8.)))
-            .when(!compact, |row| row.items_center().gap(px(8.)))
-            .px(px(16.))
-            .py(px(12.))
+            .when(compact, |row| row.flex_col().items_start().gap(sp(2.)))
+            .when(!compact, |row| row.items_center().gap(sp(2.)))
+            .px(sp(4.))
+            .py(sp(3.))
             .border_b_1()
             .border_color(t.border)
             .when(route.is_some(), |row| {
@@ -65,22 +65,23 @@ pub fn render(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(12.))
+                    .gap(sp(3.))
                     .when(!compact, |cell| cell.w(px(300.)).flex_shrink_0())
-                    .child(mono((index + 1).to_string(), 12., t.dim))
+                    .child(mono((index + 1).to_string(), Type::CAPTION, t.dim))
                     .child(name),
             )
             .child(
                 div()
                     .flex()
-                    .gap(px(if compact { 10. } else { 0. }))
+                    .gap(sp(if compact { 2.5 } else { 0. }))
                     .when(!compact, |cells| cells.flex_1())
                     .children(seams),
             )
             .child(
-                mono(usd(plugin.spend), 12., t.muted).when(!compact, |cell| {
-                    cell.w(px(80.)).flex().justify_end()
-                }),
+                mono(usd(plugin.spend), Type::CAPTION, t.muted)
+                    .when(!compact, |cell| {
+                        cell.w(px(80.)).flex().justify_end()
+                    }),
             )
             .when_some(route, |row, route| {
                 row.on_click(cx.listener(move |ws, _, _, cx| {
@@ -91,9 +92,9 @@ pub fn render(
     let header = div()
         .flex()
         .items_end()
-        .gap(px(8.))
-        .px(px(16.))
-        .py(px(10.))
+        .gap(sp(2.))
+        .px(sp(4.))
+        .py(sp(2.5))
         .bg(t.panel)
         .border_b_1()
         .border_color(t.border)
@@ -101,7 +102,7 @@ pub fn render(
         .child(div().flex_1().flex().children(Seam::ALL.iter().map(|seam| {
             div().flex_1().flex().justify_center().child(mono(
                 seam.label(),
-                11.,
+                Type::MICRO,
                 t.dim,
             ))
         })))
@@ -124,14 +125,14 @@ pub fn render(
     let legend = div()
         .flex()
         .flex_wrap()
-        .gap(px(16.))
-        .text_size(px(12.))
+        .gap(sp(4.))
+        .typeset(Type::CAPTION)
         .text_color(t.muted)
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.))
+                .gap(sp(1.5))
                 .child(dot(t.blue, 10.))
                 .child("uses the seam"),
         )
@@ -139,11 +140,11 @@ pub fn render(
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.))
+                .gap(sp(1.5))
                 .child(
                     div()
                         .size(px(10.))
-                        .rounded(px(5.))
+                        .rounded(radius::TAG)
                         .border_1()
                         .border_color(t.border_strong),
                 )
@@ -153,7 +154,7 @@ pub fn render(
     let facts = div()
         .grid()
         .grid_cols(if compact { 1 } else { 3 })
-        .gap(px(12.))
+        .gap(sp(3.))
         .child(fact("Settings fixed at start", "Only `start` may change settings, through the `RunPlan`. After that, every turn is a delta.", t))
         .child(fact("Context rewrites", &format!("{rewrites} stored rewrites across these runs. Each one costs a single full resend."), t))
         .child(fact("Plugins pay their own way", &format!("{} charged by plugins, counted in each run's limits.", usd(plugin_cost)), t));
@@ -163,7 +164,7 @@ pub fn render(
         .min_w(px(0.))
         .flex()
         .flex_col()
-        .gap(px(18.))
+        .gap(sp(4.5))
         .child(ui::screen_title(
             format!("Plugins on {}", catalog.agent),
             format!(
@@ -179,50 +180,67 @@ pub fn render(
     let side = div()
         .flex()
         .flex_col()
-        .gap(px(20.))
+        .gap(sp(5.))
         .when(!compact, |side| side.w(px(300.)).flex_shrink_0())
         .children(catalog.jev.as_ref().map(|jev| {
             div()
                 .flex()
                 .flex_col()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .child(heading("tau-jev", t))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.))
+                        .gap(sp(2.))
                         .child(dot(t.green, 8.))
                         .child(format!("Connected to {}", jev.model)),
                 )
                 .child(key_values(
                     [
-                        ("key".into(), mono(jev.key_env.clone(), 12., t.text)),
-                        ("price".into(), mono(jev.price.clone(), 12., t.text)),
+                        (
+                            "key".into(),
+                            mono(jev.key_env.clone(), Type::CAPTION, t.text),
+                        ),
+                        (
+                            "price".into(),
+                            mono(jev.price.clone(), Type::CAPTION, t.text),
+                        ),
                         (
                             "requests".into(),
-                            mono(jev.requests.to_string(), 12., t.text),
+                            mono(
+                                jev.requests.to_string(),
+                                Type::CAPTION,
+                                t.text,
+                            ),
                         ),
                         (
                             "input".into(),
                             mono(
                                 format!("{} tokens", tokens(jev.input_tokens)),
-                                12.,
+                                Type::CAPTION,
                                 t.text,
                             ),
                         ),
-                        ("spent".into(), mono(usd(jev.spent), 12., t.text)),
+                        (
+                            "spent".into(),
+                            mono(usd(jev.spent), Type::CAPTION, t.text),
+                        ),
                         (
                             "latency p50".into(),
                             mono(
                                 format!("{} ms", jev.latency_p50_ms),
-                                12.,
+                                Type::CAPTION,
                                 t.text,
                             ),
                         ),
                         (
                             "retried".into(),
-                            mono(jev.retried.to_string(), 12., t.text),
+                            mono(
+                                jev.retried.to_string(),
+                                Type::CAPTION,
+                                t.text,
+                            ),
                         ),
                     ],
                     t,
@@ -236,7 +254,7 @@ pub fn render(
         div()
             .flex()
             .when(compact, |layout| layout.flex_col())
-            .gap(px(28.))
+            .gap(sp(7.))
             .child(main)
             .child(side),
     )
@@ -247,14 +265,14 @@ fn fact(title: &str, body: &str, t: &Theme) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .gap(px(6.))
-        .p(px(14.))
+        .gap(sp(1.5))
+        .p(sp(3.5))
         .border_1()
         .border_color(t.border)
-        .rounded(px(8.))
+        .rounded(radius::BOX)
         .child(
             div()
-                .text_size(px(12.))
+                .typeset(Type::CAPTION)
                 .text_color(t.muted)
                 .child(title.to_owned()),
         )
@@ -273,18 +291,21 @@ fn spend(plugins: &[PluginInfo], t: &Theme) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .gap(px(10.))
+        .gap(sp(2.5))
         .child(heading("Spend by plugin", t))
         .children(sorted.into_iter().map(|plugin| {
             div()
                 .flex()
                 .flex_col()
-                .gap(px(5.))
+                .gap(sp(1.25))
                 .child(
                     div()
                         .flex()
-                        .child(mono(plugin.name.clone(), 12., t.text).flex_1())
-                        .child(mono(usd(plugin.spend), 12., t.muted)),
+                        .child(
+                            mono(plugin.name.clone(), Type::CAPTION, t.text)
+                                .flex_1(),
+                        )
+                        .child(mono(usd(plugin.spend), Type::CAPTION, t.muted)),
                 )
                 .child(bar((plugin.spend / top) as f32, 6., t.blue, t.raised))
         }))

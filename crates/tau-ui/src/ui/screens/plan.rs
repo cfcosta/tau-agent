@@ -1,22 +1,11 @@
 //! What each plugin's `start` decided before a run's session opened.
 
-use gpui::{
-    AnyElement,
-    Context,
-    Div,
-    FontWeight,
-    Hsla,
-    div,
-    prelude::*,
-    px,
-    relative,
-    rgb,
-};
+use gpui::{AnyElement, Context, Div, Hsla, div, prelude::*, px, relative};
 use tau_agent::tool::RunId;
 
 use crate::{
     assets::Icon,
-    theme::Theme,
+    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
     ui::{self, dot, heading, icon, mono, rich, transcript},
     view::{Item, NoteBody, PluginNote, RunView},
     workspace::Workspace,
@@ -67,24 +56,22 @@ pub fn render(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(12.))
-                .pb(px(18.))
+                .gap(sp(3.))
+                .pb(sp(4.5))
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap(px(10.))
-                        .child(mono(note.plugin.clone(), 13., t.text))
+                        .gap(sp(2.5))
+                        .child(mono(note.plugin.clone(), Type::SMALL, t.text))
                         .child(
                             div().text_color(t.muted).child(note.text.clone()),
                         )
                         .child(div().flex_1())
-                        .children(
-                            note.detail
-                                .clone()
-                                .map(|detail| mono(detail, 12., t.muted)),
-                        ),
+                        .children(note.detail.clone().map(|detail| {
+                            mono(detail, Type::CAPTION, t.muted)
+                        })),
                 )
                 .children(body),
             true,
@@ -97,25 +84,25 @@ pub fn render(
         .flex_col()
         .border_1()
         .border_color(t.blue_border)
-        .rounded(px(10.))
-        .bg(rgb(0x171a21))
+        .rounded(radius::LARGE)
+        .bg(t.info_panel)
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.))
-                .px(px(16.))
-                .py(px(12.))
+                .gap(sp(2.5))
+                .px(sp(4.))
+                .py(sp(3.))
                 .border_b_1()
                 .border_color(t.border)
                 .child(
                     div()
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(weight::STRONG)
                         .child("Preparing the run"),
                 )
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .text_color(t.muted)
                         .child("each plugin's start, in order"),
                 ),
@@ -124,7 +111,7 @@ pub fn render(
             div()
                 .flex()
                 .flex_col()
-                .p(px(16.))
+                .p(sp(4.))
                 .children(steps)
                 .when(notes.is_empty(), |timeline| {
                     timeline.child(ui::empty(
@@ -137,11 +124,11 @@ pub fn render(
                     div()
                         .flex()
                         .flex_wrap()
-                        .gap(px(10.))
+                        .gap(sp(2.5))
                         .child("Opening session")
                         .child(mono(
                             format!("{} · {effort}", run.model),
-                            12.,
+                            Type::CAPTION,
                             t.muted,
                         )),
                     false,
@@ -152,16 +139,16 @@ pub fn render(
     let notice = div()
         .flex()
         .items_center()
-        .gap(px(10.))
-        .px(px(14.))
-        .py(px(10.))
+        .gap(sp(2.5))
+        .px(sp(3.5))
+        .py(sp(2.5))
         .border_1()
         .border_dashed()
         .border_color(t.border_strong)
-        .rounded(px(8.))
+        .rounded(radius::BOX)
         .text_color(t.muted)
         .line_height(relative(1.5))
-        .child(icon(Icon::Warning, 14., t.muted))
+        .child(icon(Icon::Warning, IconSize::BASE, t.muted))
         .child(div().flex_1().child(
             "The effort is fixed for the whole run. If a later phase needs \
              more or less, start a new run and it is scored again.",
@@ -170,7 +157,7 @@ pub fn render(
     let side = div()
         .flex()
         .flex_col()
-        .gap(px(14.))
+        .gap(sp(3.5))
         .when(!compact, |side| side.w(px(346.)).flex_shrink_0())
         .child(heading("RunPlan after start", t))
         .child(plan_table(run, t));
@@ -180,18 +167,11 @@ pub fn render(
         .min_w(px(0.))
         .flex()
         .flex_col()
-        .gap(px(16.))
+        .gap(sp(4.))
         .children(prompt.map(|prompt| {
             div().flex().justify_end().child(
-                div()
+                ui::bubble(t)
                     .max_w(px(640.))
-                    .px(px(14.))
-                    .py(px(12.))
-                    .bg(t.raised)
-                    .border_1()
-                    .border_color(rgb(0x30323a))
-                    .rounded(px(10.))
-                    .line_height(relative(1.55))
                     .child(rich(&prompt, t.text, t)),
             )
         }))
@@ -204,7 +184,7 @@ pub fn render(
         div()
             .flex()
             .when(compact, |layout| layout.flex_col())
-            .gap(px(24.))
+            .gap(sp(6.))
             .child(main)
             .child(side),
     )
@@ -231,14 +211,14 @@ fn chart(
             .flex_col()
             .items_center()
             .justify_end()
-            .gap(px(4.))
-            .child(mono(format!("{p:.2}"), 11., ink))
+            .gap(sp(1.))
+            .child(mono(format!("{p:.2}"), Type::MICRO, ink))
             .child(
                 div()
                     .w(px(36.))
                     .h(px((p * max_bar).max(3.)))
-                    .rounded_t(px(4.))
-                    .bg(if pick { t.blue } else { rgb(0x3d4452).into() }),
+                    .rounded_t(radius::SMALL)
+                    .bg(if pick { t.blue } else { t.bar_idle }),
             )
     });
     let labels = levels.iter().enumerate().map(|(index, (name, _))| {
@@ -248,11 +228,15 @@ fn chart(
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(2.))
-            .child(mono(name.clone(), 12., if pick { t.text } else { t.muted }))
+            .gap(sp(0.5))
+            .child(mono(
+                name.clone(),
+                Type::CAPTION,
+                if pick { t.text } else { t.muted },
+            ))
             .children(hints.get(index).map(|hint| {
                 div()
-                    .text_size(px(11.))
+                    .typeset(Type::MICRO)
                     .text_color(t.dim)
                     .child(hint.clone())
             }))
@@ -260,11 +244,11 @@ fn chart(
     div()
         .flex()
         .when(compact, |chart| chart.flex_col())
-        .gap(px(20.))
-        .p(px(16.))
+        .gap(sp(5.))
+        .p(sp(4.))
         .border_1()
         .border_color(t.border)
-        .rounded(px(8.))
+        .rounded(radius::BOX)
         .bg(t.bg)
         .children(confidence.map(|(value, threshold)| {
             let verdict = if value >= threshold {
@@ -278,15 +262,15 @@ fn chart(
                 .flex()
                 .flex_col()
                 .justify_end()
-                .gap(px(6.))
+                .gap(sp(1.5))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .text_color(t.muted)
                         .child("Confidence"),
                 )
-                .child(mono(format!("{value:.2}"), 28., t.text))
-                .child(div().text_size(px(12.)).text_color(t.muted).child(
+                .child(mono(format!("{value:.2}"), Type::DISPLAY, t.text))
+                .child(div().typeset(Type::CAPTION).text_color(t.muted).child(
                     format!(
                         "threshold {threshold:.2}, so the choice {verdict}"
                     ),
@@ -297,10 +281,10 @@ fn chart(
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .text_color(t.muted)
                         .child("Probability of each effort level"),
                 )
@@ -322,24 +306,22 @@ fn plan_table(run: &RunView, t: &Theme) -> Div {
     ui::card(t).children(run.plan.iter().map(|field| {
         div()
             .flex()
-            .gap(px(12.))
-            .px(px(12.))
-            .py(px(10.))
+            .gap(sp(3.))
+            .px(sp(3.))
+            .py(sp(2.5))
             .border_b_1()
             .border_color(t.border)
-            .child(mono(field.name.clone(), 12., t.muted).w(px(96.)))
+            .child(mono(field.name.clone(), Type::CAPTION, t.muted).w(px(96.)))
             .child(
                 div()
                     .flex_1()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
-                    .child(mono(field.value.clone(), 12., t.text))
-                    .children(
-                        field.set_by.clone().map(|by| {
-                            mono(format!("set by {by}"), 11., t.blue)
-                        }),
-                    ),
+                    .gap(sp(0.5))
+                    .child(mono(field.value.clone(), Type::CAPTION, t.text))
+                    .children(field.set_by.clone().map(|by| {
+                        mono(format!("set by {by}"), Type::MICRO, t.blue)
+                    })),
             )
     }))
 }
@@ -348,7 +330,7 @@ fn plan_table(run: &RunView, t: &Theme) -> Div {
 fn step(color: Hsla, content: Div, rail: bool, t: &Theme) -> impl IntoElement {
     div()
         .flex()
-        .gap(px(12.))
+        .gap(sp(3.))
         .child(
             div()
                 .w(px(14.))
@@ -356,10 +338,10 @@ fn step(color: Hsla, content: Div, rail: bool, t: &Theme) -> impl IntoElement {
                 .flex()
                 .flex_col()
                 .items_center()
-                .child(div().mt(px(4.)).child(dot(color, 10.)))
+                .child(div().mt(sp(1.)).child(dot(color, 10.)))
                 .when(rail, |column| {
                     column
-                        .child(div().flex_1().w(px(1.)).my(px(4.)).bg(t.border))
+                        .child(div().flex_1().w(px(1.)).my(sp(1.)).bg(t.border))
                 }),
         )
         .child(div().flex_1().min_w(px(0.)).child(content))

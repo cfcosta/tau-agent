@@ -775,7 +775,10 @@ pub async fn history(store: &Store) -> anyhow::Result<Vec<RunView>> {
         // A fork's own prompt is its last user message.
         let prompt = match record.kind {
             RunKind::Fork { .. } => users.next_back(),
-            _ => users.into_iter().next(),
+            _ => {
+                let mut users = users;
+                users.next()
+            }
         }
         .unwrap_or_default();
         let mut view = RunView::from_messages(

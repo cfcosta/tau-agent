@@ -1,30 +1,22 @@
 //! A pull request from a finished run: the draft to check and send, then
 //! the opened pull request.
 
-use gpui::{
-    AnyElement,
-    Context,
-    Div,
-    FontWeight,
-    div,
-    prelude::*,
-    px,
-    relative,
-};
+use gpui::{AnyElement, Context, Div, div, prelude::*, px, relative};
 use tau_agent::tool::RunId;
 
 use crate::{
     assets::Icon,
     pull_request::{Checks, PrState, PullRequest},
     route::Route,
-    theme::{MONO, Theme},
+    theme::{Design as _, IconSize, MONO, Theme, Type, radius, sp, weight},
     ui::{
-        chrome::logo,
-        form::{
+        components::{
+            ButtonKind,
             big_button,
             checkbox,
             label,
             lead,
+            logo,
             notice,
             panel,
             phone_bar,
@@ -52,12 +44,12 @@ pub fn render(
             .flex_1()
             .flex()
             .justify_center()
-            .pt(px(80.))
+            .pt(sp(20.))
             .child(notice(
                 Icon::Spinner,
                 "Writing the pull request from the run…",
                 t.accent,
-                13.,
+                Type::SMALL,
                 t,
             ))
             .into_any_element(),
@@ -85,7 +77,7 @@ pub fn render(
         .size_full()
         .flex()
         .flex_col()
-        .text_size(px(14.))
+        .typeset(Type::BODY)
         .child(top_bar(ws, run, t, cx))
         .child(body)
         .into_any_element()
@@ -105,8 +97,8 @@ fn top_bar(
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap(px(12.))
-        .px(px(16.))
+        .gap(sp(3.))
+        .px(sp(4.))
         .bg(t.panel)
         .border_b_1()
         .border_color(t.border)
@@ -116,7 +108,7 @@ fn top_bar(
             div()
                 .flex()
                 .items_center()
-                .gap(px(12.))
+                .gap(sp(3.))
                 .child(div().text_color(t.dim).child("/"))
                 .child(
                     div()
@@ -131,24 +123,20 @@ fn top_bar(
                 )
         }))
         .child(div().text_color(t.dim).child("/"))
-        .child(div().font_weight(FontWeight::MEDIUM).child("Pull request"))
+        .child(div().font_weight(weight::EMPHASIS).child("Pull request"))
 }
 
 fn branch_chip(name: &str, t: &Theme) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .px(px(10.))
-        .py(px(6.))
-        .rounded(px(6.))
-        .bg(t.raised)
-        .child(icon(Icon::Fork, 13., t.text_soft))
-        .child(mono(name.to_owned(), 13., t.text))
+    crate::ui::chip(Some(Icon::Fork), name.to_owned(), Type::SMALL, t.text, t)
 }
 
 fn commit_counts(added: u32, removed: u32, t: &Theme) -> Div {
-    mono(format!("+{added} \u{2212}{removed}"), 12., t.green).flex_shrink_0()
+    mono(
+        format!("+{added} \u{2212}{removed}"),
+        Type::CAPTION,
+        t.green,
+    )
+    .flex_shrink_0()
 }
 
 fn create_label(pr: &PullRequest) -> &'static str {
@@ -169,17 +157,17 @@ fn draft(
         div()
             .flex()
             .items_center()
-            .gap(px(6.))
+            .gap(sp(1.5))
             .text_color(t.green)
-            .child(icon(Icon::Check, 14., t.green))
+            .child(icon(Icon::Check, IconSize::BASE, t.green))
             .child(format!("No conflicts with {}", pr.base))
     } else {
         div()
             .flex()
             .items_center()
-            .gap(px(6.))
+            .gap(sp(1.5))
             .text_color(t.red)
-            .child(icon(Icon::Warning, 14., t.red))
+            .child(icon(Icon::Warning, IconSize::BASE, t.red))
             .child(format!("Conflicts with {}", pr.base))
     };
     let left = div()
@@ -187,25 +175,25 @@ fn draft(
         .min_w(px(0.))
         .flex()
         .flex_col()
-        .gap(px(20.))
-        .px(px(40.))
-        .py(px(32.))
+        .gap(sp(5.))
+        .px(sp(10.))
+        .py(sp(8.))
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(8.))
-                .child(title("Open a pull request", 28.))
-                .child(lead(&pr.summary, 15., t)),
+                .gap(sp(2.))
+                .child(title("Open a pull request", Type::DISPLAY))
+                .child(lead(&pr.summary, Type::LEAD, t)),
         )
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.))
-                .text_size(px(13.))
+                .gap(sp(2.5))
+                .typeset(Type::SMALL)
                 .child(branch_chip(&pr.head, t))
-                .child(icon(Icon::Arrow, 14., t.dim))
+                .child(icon(Icon::Arrow, IconSize::BASE, t.dim))
                 .child(branch_chip(&pr.base, t))
                 .child(merge),
         )
@@ -213,15 +201,15 @@ fn draft(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .child(label("Title", t))
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .h(px(44.))
-                        .px(px(12.))
-                        .rounded(px(8.))
+                        .px(sp(3.))
+                        .rounded(radius::BOX)
                         .border_1()
                         .border_color(t.border_strong)
                         .bg(t.panel)
@@ -234,7 +222,7 @@ fn draft(
                 .min_h(px(0.))
                 .flex()
                 .flex_col()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .child(label("Description, written from the run", t))
                 .child(
                     div()
@@ -242,13 +230,13 @@ fn draft(
                         .flex_1()
                         .min_h(px(220.))
                         .overflow_y_scroll()
-                        .p(px(12.))
-                        .rounded(px(8.))
+                        .p(sp(3.))
+                        .rounded(radius::BOX)
                         .border_1()
                         .border_color(t.border_strong)
                         .bg(t.panel)
                         .font_family(MONO)
-                        .text_size(px(12.5))
+                        .typeset(Type::CODE)
                         .line_height(relative(1.6))
                         .text_color(t.text_soft)
                         .child(pr.body.clone()),
@@ -274,10 +262,10 @@ fn draft(
             })
             .flex()
             .items_center()
-            .gap(px(10.))
+            .gap(sp(2.5))
             .min_h(px(36.))
             .cursor_pointer()
-            .child(checkbox(checked, 18., t))
+            .child(checkbox(checked, false, t))
             .child(text)
             .on_click(cx.listener(move |ws, _, _, cx| {
                 ws.toggle_pr_option(&run, is_draft, cx)
@@ -289,9 +277,9 @@ fn draft(
         .flex_shrink_0()
         .flex()
         .flex_col()
-        .gap(px(22.))
-        .px(px(24.))
-        .py(px(32.))
+        .gap(sp(5.5))
+        .px(sp(6.))
+        .py(sp(8.))
         .bg(t.panel)
         .border_l_1()
         .border_color(t.border)
@@ -299,30 +287,30 @@ fn draft(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .child(heading("Commits", t))
                 .children(pr.commits.iter().map(|commit| {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(10.))
-                        .px(px(12.))
-                        .py(px(10.))
-                        .rounded(px(8.))
+                        .gap(sp(2.5))
+                        .px(sp(3.))
+                        .py(sp(2.5))
+                        .rounded(radius::BOX)
                         .border_1()
                         .border_color(t.border)
                         .child(
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
-                                .text_size(px(13.))
+                                .typeset(Type::SMALL)
                                 .child(commit.title.clone()),
                         )
                         .child(commit_counts(commit.added, commit.removed, t))
                 }))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .line_height(relative(1.5))
                         .child(prose(
                             "The run's turns are squashed into these commits by \
@@ -337,26 +325,26 @@ fn draft(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .child(heading("Options", t))
                 .children(options)
                 .child(
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(6.))
+                        .gap(sp(1.5))
                         .child(label("Reviewers", t))
                         .child(
                             div()
                                 .flex()
                                 .items_center()
                                 .h(px(40.))
-                                .px(px(12.))
-                                .rounded(px(8.))
+                                .px(sp(3.))
+                                .rounded(radius::BOX)
                                 .border_1()
                                 .border_color(t.border_strong)
                                 .bg(t.bg)
-                                .text_size(px(13.))
+                                .typeset(Type::SMALL)
                                 .child(ws.reviewers.clone()),
                         ),
                 ),
@@ -367,17 +355,12 @@ fn draft(
                 PrState::Failed(error) => Some(error.clone()),
                 _ => None,
             },
-            |col, error| col.child(notice(Icon::Warning, error, t.red, 13., t)),
+            |col, error| col.child(notice(Icon::Warning, error, t.red, Type::SMALL, t)),
         )
         .child(
             div()
                 .id("create-pr")
-                .child(big_button(
-                    create_label(pr),
-                    Some(Icon::PullRequest),
-                    true,
-                    t,
-                ))
+                .child(big_button(create_label(pr), Some(Icon::PullRequest), ButtonKind::Primary, t))
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.create_pull_request(&create, cx)
                 })),
@@ -411,11 +394,11 @@ fn phone_draft(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(6.))
-                .child(title(pr.title.clone(), 20.))
+                .gap(sp(1.5))
+                .child(title(pr.title.clone(), Type::HEADING))
                 .child(mono(
                     format!("{} \u{2192} {}", pr.head, pr.base),
-                    12.,
+                    Type::CAPTION,
                     t.muted,
                 )),
         )
@@ -423,8 +406,8 @@ fn phone_draft(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .text_size(px(14.))
+                .gap(sp(2.))
+                .typeset(Type::BODY)
                 .text_color(tone)
                 .child(icon(
                     if pr.mergeable {
@@ -432,22 +415,22 @@ fn phone_draft(
                     } else {
                         Icon::Warning
                     },
-                    14.,
+                    IconSize::BASE,
                     tone,
                 ))
                 .child(status),
         )
-        .child(panel(16., t).gap(px(10.)).children(pr.commits.iter().map(
+        .child(panel(4., t).gap(sp(2.5)).children(pr.commits.iter().map(
             |commit| {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.))
+                    .gap(sp(2.))
                     .child(
                         div()
                             .flex_1()
                             .min_w(px(0.))
-                            .text_size(px(14.))
+                            .typeset(Type::BODY)
                             .child(commit.title.clone()),
                     )
                     .child(commit_counts(commit.added, commit.removed, t))
@@ -457,16 +440,16 @@ fn phone_draft(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(6.))
+                .gap(sp(1.5))
                 .child(label("Description", t))
                 .child(
                     div()
-                        .p(px(12.))
-                        .rounded(px(8.))
+                        .p(sp(3.))
+                        .rounded(radius::BOX)
                         .border_1()
                         .border_color(t.border_strong)
                         .bg(t.panel)
-                        .text_size(px(13.))
+                        .typeset(Type::SMALL)
                         .line_height(relative(1.55))
                         .child(prose(&pr.short_body(), t.text_soft, t)),
                 ),
@@ -476,10 +459,10 @@ fn phone_draft(
                 .id("phone-pr-draft")
                 .flex()
                 .items_center()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .min_h(px(44.))
                 .cursor_pointer()
-                .child(checkbox(pr.draft, 20., t))
+                .child(checkbox(pr.draft, true, t))
                 .child("Open as a draft")
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.toggle_pr_option(&toggle, true, cx)
@@ -491,7 +474,9 @@ fn phone_draft(
                 PrState::Failed(error) => Some(error.clone()),
                 _ => None,
             },
-            |col, error| col.child(notice(Icon::Warning, error, t.red, 14., t)),
+            |col, error| {
+                col.child(notice(Icon::Warning, error, t.red, Type::BODY, t))
+            },
         )
         .child(
             div()
@@ -499,7 +484,7 @@ fn phone_draft(
                 .child(big_button(
                     create_label(pr),
                     Some(Icon::PullRequest),
-                    true,
+                    ButtonKind::Primary,
                     t,
                 ))
                 .on_click(cx.listener(move |ws, _, _, cx| {
@@ -539,12 +524,12 @@ fn opened(
         .when(!compact, |col| col.max_w(px(620.)))
         .flex()
         .flex_col()
-        .gap(px(22.))
+        .gap(sp(5.5))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(12.))
+                .gap(sp(3.))
                 .child(
                     div()
                         .size(px(40.))
@@ -552,38 +537,35 @@ fn opened(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(20.))
+                        .rounded(radius::FULL)
                         .bg(t.green.opacity(0.14))
-                        .child(icon(Icon::PullRequest, 20., t.green)),
+                        .child(icon(Icon::PullRequest, IconSize::HUGE, t.green)),
                 )
-                .child(title(
-                    "Pull request opened",
-                    if compact { 22. } else { 28. },
-                )),
+                .child(title("Pull request opened", if compact { Type::HEADLINE } else { Type::DISPLAY }, )),
         )
         .child(
-            panel(20., t)
-                .gap(px(12.))
+            panel(5., t)
+                .gap(sp(3.))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.))
+                        .gap(sp(2.))
                         .child(
                             div()
                                 .flex_1()
-                                .font_weight(FontWeight::SEMIBOLD)
+                                .font_weight(weight::STRONG)
                                 .child(pr.title.clone()),
                         )
                         .when(pr.draft, |row| {
                             row.child(
                                 div()
-                                    .px(px(8.))
-                                    .py(px(2.))
-                                    .rounded(px(10.))
+                                    .px(sp(2.))
+                                    .py(sp(0.5))
+                                    .rounded(radius::LARGE)
                                     .border_1()
                                     .border_color(t.border_strong)
-                                    .text_size(px(12.))
+                                    .typeset(Type::CAPTION)
                                     .text_color(t.muted)
                                     .child("Draft"),
                             )
@@ -594,17 +576,17 @@ fn opened(
                         "{}#{number} · {} \u{2192} {}",
                         pr.repo, pr.head, pr.base
                     ),
-                    13.,
+                    Type::SMALL,
                     t.text_soft,
                 ))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.))
-                        .text_size(px(13.))
+                        .gap(sp(2.))
+                        .typeset(Type::SMALL)
                         .text_color(checks_color)
-                        .child(icon(glyph, 14., checks_color))
+                        .child(icon(glyph, IconSize::BASE, checks_color))
                         .child(checks_text),
                 ),
         )
@@ -612,22 +594,17 @@ fn opened(
             div()
                 .flex()
                 .flex_wrap()
-                .gap(px(10.))
+                .gap(sp(2.5))
                 .child(
                     div()
                         .id("view-pr")
-                        .child(big_button(
-                            "View on GitHub",
-                            Some(Icon::Arrow),
-                            true,
-                            t,
-                        ))
+                        .child(big_button("View on GitHub", Some(Icon::Arrow), ButtonKind::Primary, t))
                         .on_click(move |_, _, cx| cx.open_url(&url)),
                 )
                 .child(
                     div()
                         .id("back-to-run")
-                        .child(big_button("Back to the run", None, false, t))
+                        .child(big_button("Back to the run", None, ButtonKind::Secondary, t))
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             ws.navigate(Route::Run(back.clone()), cx)
                         })),
@@ -635,7 +612,7 @@ fn opened(
         )
         .child(
             div()
-                .text_size(px(13.))
+                .typeset(Type::SMALL)
                 .line_height(relative(1.55))
                 .child(prose(
                     &if pr.keep_pushing {
@@ -665,8 +642,8 @@ fn opened(
         .flex()
         .justify_center()
         .items_start()
-        .px(px(24.))
-        .py(px(80.))
+        .px(sp(6.))
+        .py(sp(20.))
         .child(content)
         .into_any_element()
 }

@@ -6,21 +6,20 @@ use gpui::{
     AnyElement,
     Context,
     Div,
-    FontWeight,
     IntoElement,
     SharedString,
     div,
     prelude::*,
     px,
     relative,
-    rgb,
 };
 
-use super::{bar, dot, icon, link, mono, primary_button, rich, stop_look};
+use super::{bar, button, dot, icon, link, mono, rich, stop_look};
 use crate::{
     assets::Icon,
     route::Route,
-    theme::Theme,
+    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
+    ui::components::ButtonKind,
     view::{
         DiffKind,
         DiffLine,
@@ -108,10 +107,10 @@ fn item_view(
         } => div()
             .flex()
             .items_center()
-            .gap(px(8.))
-            .text_size(px(12.))
+            .gap(sp(2.))
+            .typeset(Type::CAPTION)
             .text_color(t.dim)
-            .child(icon(Icon::Warning, 12., t.accent))
+            .child(icon(Icon::Warning, IconSize::SMALL, t.accent))
             .child(format!(
                 "Retry {attempt} in {:.1}s: {error}",
                 delay.as_secs_f32()
@@ -134,12 +133,12 @@ fn item_view(
                 .flex()
                 .flex_wrap()
                 .items_center()
-                .gap(px(10.))
-                .py(px(8.))
+                .gap(sp(2.5))
+                .py(sp(2.))
                 .border_t_1()
                 .border_b_1()
                 .border_color(t.border)
-                .child(icon(glyph, 13., color))
+                .child(icon(glyph, IconSize::COMPACT, color))
                 .child(div().text_color(color).child(label))
                 .child(mono(
                     format!(
@@ -147,13 +146,13 @@ fn item_view(
                         tokens(*used),
                         usd(*cost)
                     ),
-                    12.,
+                    Type::CAPTION,
                     t.muted,
                 ))
                 .when(*plugin_cost > 0.0, |row| {
                     row.child(mono(
                         format!("plugins {}", usd(*plugin_cost)),
-                        12.,
+                        Type::CAPTION,
                         t.dim,
                     ))
                 })
@@ -164,15 +163,8 @@ fn item_view(
 
 fn user(text: &str, t: &Theme, compact: bool) -> Div {
     div().flex().justify_end().child(
-        div()
+        super::bubble(t)
             .max_w(px(if compact { 300. } else { 620. }))
-            .px(px(14.))
-            .py(px(12.))
-            .bg(t.raised)
-            .border_1()
-            .border_color(rgb(0x30323a))
-            .rounded(px(10.))
-            .line_height(relative(1.55))
             .child(rich(text, t.text, t)),
     )
 }
@@ -182,10 +174,10 @@ fn thinking(text: &str, t: &Theme) -> Div {
     div()
         .flex()
         .items_center()
-        .gap(px(8.))
-        .text_size(px(12.))
+        .gap(sp(2.))
+        .typeset(Type::CAPTION)
         .text_color(t.dim)
-        .child(icon(Icon::Chevron, 12., t.dim))
+        .child(icon(Icon::Chevron, IconSize::SMALL, t.dim))
         .child(format!("Reasoned · {words} words"))
 }
 
@@ -198,17 +190,23 @@ fn tool(
     cx: &mut Context<Workspace>,
 ) -> Div {
     let (status, border) = match &card.state {
-        ToolState::Running => {
-            (icon(Icon::Spinner, 13., t.accent), t.accent_border)
+        ToolState::Running => (
+            icon(Icon::Spinner, IconSize::COMPACT, t.accent),
+            t.accent_border,
+        ),
+        ToolState::Done { .. } => {
+            (icon(Icon::Check, IconSize::COMPACT, t.green), t.border)
         }
-        ToolState::Done { .. } => (icon(Icon::Check, 13., t.green), t.border),
-        ToolState::Failed(_) => (icon(Icon::Blocked, 14., t.red), t.red_border),
+        ToolState::Failed(_) => {
+            (icon(Icon::Blocked, IconSize::BASE, t.red), t.red_border)
+        }
         ToolState::Blocked { .. } => {
-            (icon(Icon::Blocked, 14., t.red), t.red_border)
+            (icon(Icon::Blocked, IconSize::BASE, t.red), t.red_border)
         }
-        ToolState::Flagged { .. } => {
-            (icon(Icon::Warning, 14., t.accent), t.accent_border)
-        }
+        ToolState::Flagged { .. } => (
+            icon(Icon::Warning, IconSize::BASE, t.accent),
+            t.accent_border,
+        ),
     };
     let dropped = matches!(
         card.pruned,
@@ -221,7 +219,7 @@ fn tool(
             .find(|entry| entry.call_id == card.call_id)
             .map(|entry| tokens(entry.tokens))
     });
-    let summary = mono(card.summary.clone(), 12., t.text_soft)
+    let summary = mono(card.summary.clone(), Type::CAPTION, t.text_soft)
         .flex_1()
         .min_w(px(0.))
         .truncate()
@@ -243,7 +241,7 @@ fn tool(
     let header = div()
         .flex()
         .items_center()
-        .gap(px(8.))
+        .gap(sp(2.))
         .min_h(px(if compact {
             44.
         } else if dropped {
@@ -251,21 +249,21 @@ fn tool(
         } else {
             36.
         }))
-        .px(px(12.))
+        .px(sp(3.))
         .child(status)
-        .child(mono(card.tool.clone(), 12., t.blue).flex_shrink_0())
+        .child(mono(card.tool.clone(), Type::CAPTION, t.blue).flex_shrink_0())
         .when_some(
             card.from_plugin.clone().filter(|_| !compact),
             |row, plugin| {
                 row.child(
                     div()
                         .flex_shrink_0()
-                        .px(px(6.))
-                        .py(px(1.))
+                        .px(sp(1.5))
+                        .py(sp(0.25))
                         .border_1()
                         .border_color(t.border)
-                        .rounded(px(4.))
-                        .text_size(px(11.))
+                        .rounded(radius::SMALL)
+                        .typeset(Type::MICRO)
                         .text_color(t.dim)
                         .child(plugin),
                 )
@@ -273,22 +271,24 @@ fn tool(
         )
         .child(summary)
         .when(!compact && !card.checks.is_empty(), |row| {
-            row.child(mono(card.checks.join(" · "), 11., t.dim))
+            row.child(mono(card.checks.join(" · "), Type::MICRO, t.dim))
         })
         .child(match &ledger_size {
-            Some(size) => mono(size.clone(), 11., t.dim).into_any_element(),
+            Some(size) => {
+                mono(size.clone(), Type::MICRO, t.dim).into_any_element()
+            }
             None => state_label(card, t).into_any_element(),
         })
         .when_some(card.pruned, |row, pruned| {
             row.child(
                 div()
                     .flex_shrink_0()
-                    .px(px(6.))
-                    .py(px(1.))
+                    .px(sp(1.5))
+                    .py(sp(0.25))
                     .border_1()
                     .border_color(t.border_strong)
-                    .rounded(px(4.))
-                    .text_size(px(11.))
+                    .rounded(radius::SMALL)
+                    .typeset(Type::MICRO)
                     .text_color(if pruned == Pruned::Kept {
                         t.muted
                     } else {
@@ -326,7 +326,7 @@ fn tool(
         .flex_col()
         .border_1()
         .border_color(border)
-        .rounded(px(8.))
+        .rounded(radius::BOX)
         .bg(t.card)
         .overflow_hidden()
         .when(dropped, |card| card.opacity(0.7))
@@ -358,22 +358,22 @@ fn state_label(card: &ToolCard, t: &Theme) -> Div {
             return div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .flex_shrink_0()
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .typeset(Type::CAPTION)
                         .text_color(t.accent)
                         .child("Ran · flagged for review"),
                 )
-                .child(mono(format!("{rule} {score}"), 11., t.dim));
+                .child(mono(format!("{rule} {score}"), Type::MICRO, t.dim));
         }
     };
     div()
         .flex_shrink_0()
         .max_w(px(260.))
         .truncate()
-        .text_size(px(12.))
+        .typeset(Type::CAPTION)
         .text_color(color)
         .child(text)
 }
@@ -430,18 +430,18 @@ fn blocked_body(
             .flex_shrink_0()
             .flex()
             .flex_col()
-            .gap(px(6.))
+            .gap(sp(1.5))
             .child(
                 div()
                     .flex()
-                    .text_size(px(12.))
+                    .typeset(Type::CAPTION)
                     .child(
                         div()
                             .flex_1()
                             .text_color(t.muted)
                             .child("p(violation)"),
                     )
-                    .child(mono(format!("{p:.2}"), 12., t.text)),
+                    .child(mono(format!("{p:.2}"), Type::CAPTION, t.text)),
             )
             .child(
                 div()
@@ -460,15 +460,15 @@ fn blocked_body(
                             div()
                                 .absolute()
                                 .left(relative(review))
-                                .ml(px(-20.))
-                                .child(mono("review", 11., t.dim)),
+                                .ml(sp(-5.))
+                                .child(mono("review", Type::MICRO, t.dim)),
                         )
                         .child(
                             div()
                                 .absolute()
                                 .left(relative(block))
-                                .ml(px(-16.))
-                                .child(mono("block", 11., t.dim)),
+                                .ml(sp(-4.))
+                                .child(mono("block", Type::MICRO, t.dim)),
                         ),
                 )
             })
@@ -482,28 +482,32 @@ fn blocked_body(
                 .flex()
                 .when(compact, |row| row.flex_col())
                 .items_start()
-                .gap(px(16.))
-                .px(px(12.))
-                .py(px(12.))
-                .bg(rgb(0x1d1716))
+                .gap(sp(4.))
+                .px(sp(3.))
+                .py(sp(3.))
+                .bg(t.danger_surface)
                 .border_t_1()
-                .border_color(rgb(0x3a2724))
+                .border_color(t.danger_edge)
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(0.))
                         .flex()
                         .flex_col()
-                        .gap(px(4.))
+                        .gap(sp(1.))
                         .child(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(8.))
-                                .child(mono(plugin.to_owned(), 12., t.red))
+                                .gap(sp(2.))
+                                .child(mono(
+                                    plugin.to_owned(),
+                                    Type::CAPTION,
+                                    t.red,
+                                ))
                                 .child(
                                     div()
-                                        .text_size(px(12.))
+                                        .typeset(Type::CAPTION)
                                         .text_color(t.muted)
                                         .child("Reason sent to the model"),
                                 )
@@ -530,7 +534,7 @@ fn blocked_body(
                 )
                 .children(meter)
                 .when(probability(score).is_none(), |row| {
-                    row.child(mono(score.to_owned(), 12., t.red))
+                    row.child(mono(score.to_owned(), Type::CAPTION, t.red))
                 }),
         )
 }
@@ -539,9 +543,9 @@ pub fn diff(lines: &[DiffLine], t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
-        .py(px(6.))
+        .py(sp(1.5))
         .font_family(crate::theme::MONO)
-        .text_size(px(12.))
+        .typeset(Type::CAPTION)
         .line_height(px(20.))
         .children(lines.iter().map(|line| {
             let (sign, color, bg) = match line.kind {
@@ -554,7 +558,7 @@ pub fn diff(lines: &[DiffLine], t: &Theme) -> Div {
                 DiffKind::Context => ("  ", t.dim, None),
             };
             div()
-                .px(px(12.))
+                .px(sp(3.))
                 .text_color(color)
                 .whitespace_nowrap()
                 .overflow_hidden()
@@ -567,10 +571,10 @@ pub fn output(lines: &[String], t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
-        .px(px(12.))
-        .py(px(8.))
+        .px(sp(3.))
+        .py(sp(2.))
         .font_family(crate::theme::MONO)
-        .text_size(px(12.))
+        .typeset(Type::CAPTION)
         .line_height(px(20.))
         .text_color(t.muted)
         .children(lines.iter().map(|line| {
@@ -597,7 +601,7 @@ fn plugin_note(
     let header = div()
         .flex()
         .items_center()
-        .gap(px(8.))
+        .gap(sp(2.))
         .child(
             div()
                 .size(px(20.))
@@ -605,19 +609,20 @@ fn plugin_note(
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(5.))
-                .bg(rgb(0x1f2633))
-                .child(icon(Icon::Plug, 13., t.blue)),
+                .rounded(radius::TAG)
+                .bg(t.info_surface)
+                .child(icon(Icon::Plug, IconSize::COMPACT, t.blue)),
         )
         .child(
-            mono(note.plugin.clone(), 12., t.tone(note.tone)).flex_shrink_0(),
+            mono(note.plugin.clone(), Type::CAPTION, t.tone(note.tone))
+                .flex_shrink_0(),
         )
         .when(!compact, |row| {
             row.child(div().child(rich(&note.text, t.text_soft, t)))
         })
         .child(div().flex_1())
         .when_some(note.detail.clone().filter(|_| !compact), |row, detail| {
-            row.child(mono(detail, 11., t.dim).flex_shrink_0())
+            row.child(mono(detail, Type::MICRO, t.dim).flex_shrink_0())
         })
         .when_some(
             ws.plugin_route_named(&note.plugin, &run.id),
@@ -652,7 +657,7 @@ fn plugin_note(
             ws.plugin_route_named(&note_plugin, &run.id).map(|route| {
                 div()
                     .id(SharedString::from(format!("why-{index}")))
-                    .child(link(format!("Why {level}"), t).text_size(px(13.)))
+                    .child(link(format!("Why {level}"), t).typeset(Type::SMALL))
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         ws.navigate(route.clone(), cx)
                     }))
@@ -672,7 +677,7 @@ fn plugin_note(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .children(proposals.iter().enumerate().map(|(n, proposal)| {
                     let is_kept = kept.contains(&proposal.title);
                     let run_id = run.id.clone();
@@ -681,28 +686,28 @@ fn plugin_note(
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap(px(10.))
-                        .px(px(12.))
-                        .py(px(10.))
+                        .gap(sp(2.5))
+                        .px(sp(3.))
+                        .py(sp(2.5))
                         .border_1()
                         .border_color(t.border)
-                        .rounded(px(8.))
+                        .rounded(radius::BOX)
                         .bg(t.card)
                         .child(
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(3.))
+                                .gap(sp(0.75))
                                 .flex_1()
                                 .min_w(px(180.))
                                 .child(
                                     div()
-                                        .font_weight(FontWeight::MEDIUM)
+                                        .font_weight(weight::EMPHASIS)
                                         .child(proposal.title.clone()),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(12.))
+                                        .typeset(Type::CAPTION)
                                         .text_color(t.muted)
                                         .child(proposal.detail.clone()),
                                 ),
@@ -711,10 +716,14 @@ fn plugin_note(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(6.))
-                                .text_size(px(12.))
+                                .gap(sp(1.5))
+                                .typeset(Type::CAPTION)
                                 .text_color(t.green)
-                                .child(icon(Icon::Check, 13., t.green))
+                                .child(icon(
+                                    Icon::Check,
+                                    IconSize::COMPACT,
+                                    t.green,
+                                ))
                                 .child("Kept")
                                 .into_any_element()
                         } else {
@@ -722,7 +731,7 @@ fn plugin_note(
                                 .id(SharedString::from(format!(
                                     "keep-{index}-{n}"
                                 )))
-                                .child(primary_button("Keep", t))
+                                .child(button("Keep", ButtonKind::Primary, t))
                                 .on_click(cx.listener(move |ws, _, _, cx| {
                                     ws.keep_note(&run_id, &title, cx)
                                 }))
@@ -736,10 +745,10 @@ fn plugin_note(
     div()
         .flex()
         .flex_col()
-        .gap(px(8.))
-        .px(px(12.))
-        .py(px(8.))
-        .rounded(px(8.))
+        .gap(sp(2.))
+        .px(sp(3.))
+        .py(sp(2.))
+        .rounded(radius::BOX)
         .bg(t.blue_soft)
         .border_1()
         .border_dashed()
@@ -754,7 +763,7 @@ fn plugin_note(
             )
         })
         .when_some(body, |card, body| {
-            card.child(div().pl(px(if compact { 0. } else { 28. })).child(body))
+            card.child(div().pl(sp(if compact { 0. } else { 7. })).child(body))
         })
 }
 
@@ -766,23 +775,20 @@ pub fn chips_view(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    div()
-        .flex()
-        .flex_wrap()
-        .gap(px(6.))
-        .children(chips.iter().enumerate().map(|(n, chip)| {
+    div().flex().flex_wrap().gap(sp(1.5)).children(
+        chips.iter().enumerate().map(|(n, chip)| {
             let route =
                 ws.catalog.memory.by_title(chip).map(|note| Route::Memory {
                     note: Some(note.id.clone()),
                 });
             div()
                 .id(SharedString::from(format!("chip-{index}-{n}")))
-                .px(px(9.))
-                .py(px(3.))
-                .rounded(px(12.))
+                .px(sp(2.25))
+                .py(sp(0.75))
+                .rounded(radius::CARD)
                 .border_1()
                 .border_color(t.border)
-                .text_size(px(12.))
+                .typeset(Type::CAPTION)
                 .text_color(t.text_soft)
                 .child(chip.clone())
                 .when_some(route, |chip, route| {
@@ -792,7 +798,8 @@ pub fn chips_view(
                             ws.navigate(route.clone(), cx)
                         }))
                 })
-        }))
+        }),
+    )
 }
 
 /// A probability per level, the chosen one highlighted. `height` is
@@ -813,20 +820,20 @@ pub fn distribution(
             .flex_col()
             .items_center()
             .justify_end()
-            .gap(px(3.))
+            .gap(sp(0.75))
             .w(px(if compact { 52. } else { 58. }))
-            .child(mono(format!("{p:.2}"), 11., ink))
+            .child(mono(format!("{p:.2}"), Type::MICRO, ink))
             .child(
                 div()
                     .w(px(22.))
                     .h(px((p * height).max(3.)))
-                    .rounded_t(px(3.))
-                    .bg(if pick { t.blue } else { rgb(0x3d4452).into() }),
+                    .rounded_t(radius::BAR)
+                    .bg(if pick { t.blue } else { t.bar_idle }),
             )
             .child(
-                mono(name.clone(), 11., ink)
+                mono(name.clone(), Type::MICRO, ink)
                     .w_full()
-                    .pt(px(3.))
+                    .pt(sp(0.75))
                     .border_t_1()
                     .border_color(t.border_strong)
                     .flex()
@@ -837,19 +844,19 @@ pub fn distribution(
         .flex()
         .flex_wrap()
         .items_end()
-        .gap(px(20.))
+        .gap(sp(5.))
         .child(
             div()
                 .flex()
                 .items_end()
-                .gap(px(4.))
+                .gap(sp(1.))
                 .h(px(height + 36.))
                 .children(columns),
         )
         .child(
             div()
                 .max_w(px(280.))
-                .text_size(px(12.))
+                .typeset(Type::CAPTION)
                 .text_color(t.muted)
                 .line_height(relative(1.5))
                 .child(note.to_owned()),
@@ -873,30 +880,34 @@ fn rewrite(
     div()
         .flex()
         .flex_col()
-        .gap(px(6.))
-        .py(px(4.))
+        .gap(sp(1.5))
+        .py(sp(1.))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(12.))
+                .gap(sp(3.))
                 .child(line())
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap(px(8.))
-                        .px(px(12.))
-                        .py(px(6.))
-                        .rounded(px(16.))
+                        .gap(sp(2.))
+                        .px(sp(3.))
+                        .py(sp(1.5))
+                        .rounded(radius::BUBBLE)
                         .border_1()
                         .border_dashed()
                         .border_color(t.blue_border)
                         .bg(t.blue_soft)
-                        .child(icon(Icon::Plug, 13., t.blue))
+                        .child(icon(Icon::Plug, IconSize::COMPACT, t.blue))
                         .when(!compact, |pill| {
-                            pill.child(mono(plugin.to_owned(), 12., t.blue))
+                            pill.child(mono(
+                                plugin.to_owned(),
+                                Type::CAPTION,
+                                t.blue,
+                            ))
                         })
                         .child(div().text_color(t.text_soft).child(format!(
                             "pruned {} tokens: {} to {}",
@@ -907,7 +918,11 @@ fn rewrite(
                         .when_some(
                             detail.filter(|_| !compact),
                             |pill, detail| {
-                                pill.child(mono(detail.to_owned(), 11., t.dim))
+                                pill.child(mono(
+                                    detail.to_owned(),
+                                    Type::MICRO,
+                                    t.dim,
+                                ))
                             },
                         )
                         .child(
@@ -925,8 +940,8 @@ fn rewrite(
             div()
                 .flex()
                 .justify_center()
-                .gap(px(6.))
-                .text_size(px(12.))
+                .gap(sp(1.5))
+                .typeset(Type::CAPTION)
                 .text_color(t.dim)
                 .child(dot(t.blue_border, 4.))
                 .child(

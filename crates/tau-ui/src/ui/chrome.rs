@@ -5,7 +5,6 @@ use gpui::{
     AnyElement,
     Context,
     Div,
-    FontWeight,
     IntoElement,
     SharedString,
     div,
@@ -13,49 +12,15 @@ use gpui::{
     px,
 };
 
-use super::{dot, icon, mono, status_icon, status_look};
+use super::{dot, icon, icon_button, logo, mono, status_icon, status_look};
 use crate::{
     assets::Icon,
     route::{Route, Tab},
-    theme::{MONO, Theme},
+    theme::{Design as _, IconSize, MONO, Theme, Type, radius, sp, weight},
+    ui::components::ButtonKind,
     view::{ChildKind, Origin, RunView, tokens, usd},
     workspace::Workspace,
 };
-
-pub fn logo(t: &Theme, size: f32) -> Div {
-    div()
-        .size(px(size))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(size / 4.))
-        .bg(t.accent)
-        .text_color(t.bg)
-        .font_family(MONO)
-        .text_size(px(size * 0.6))
-        .font_weight(FontWeight::MEDIUM)
-        .child("τ")
-}
-
-pub fn icon_button(
-    id: &'static str,
-    glyph: Icon,
-    size: f32,
-    t: &Theme,
-) -> gpui::Stateful<Div> {
-    div()
-        .id(id)
-        .size(px(size))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(8.))
-        .cursor_pointer()
-        .hover(|style| style.bg(gpui::white().opacity(0.05)))
-        .child(icon(glyph, 18., t.text_soft))
-}
 
 fn tab_icon(tab: Tab) -> Icon {
     match tab {
@@ -102,9 +67,9 @@ pub fn title_bar(
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap(px(10.))
-        .pl(px(12.))
-        .pr(px(12.))
+        .gap(sp(2.5))
+        .pl(sp(3.))
+        .pr(sp(3.))
         .bg(t.panel)
         .border_b_1()
         .border_color(t.border)
@@ -117,7 +82,7 @@ pub fn title_bar(
         })
         .children(crumbs.into_iter().enumerate().flat_map(|(n, crumb)| {
             let text = div()
-                .when(n == last, |crumb| crumb.font_weight(FontWeight::MEDIUM))
+                .when(n == last, |crumb| crumb.font_weight(weight::EMPHASIS))
                 .text_color(if n == last { t.text } else { t.muted })
                 .child(crumb)
                 .into_any_element();
@@ -130,37 +95,37 @@ pub fn title_bar(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .w(px(340.))
-                .px(px(10.))
-                .py(px(5.))
+                .px(sp(2.5))
+                .py(sp(1.25))
                 .border_1()
                 .border_color(t.border)
-                .rounded(px(6.))
+                .rounded(radius::CONTROL)
                 .text_color(t.dim)
-                .child(icon(Icon::Search, 14., t.dim))
+                .child(icon(Icon::Search, IconSize::BASE, t.dim))
                 .child(div().flex_1().child("Search runs, agents, commands"))
-                .child(mono("Ctrl K", 11., t.dim)),
+                .child(mono("Ctrl K", Type::MICRO, t.dim)),
         )
         .child(div().flex_1())
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.))
-                .px(px(10.))
-                .py(px(5.))
+                .gap(sp(1.5))
+                .px(sp(2.5))
+                .py(sp(1.25))
                 .bg(t.raised)
-                .rounded(px(6.))
-                .child(mono(model, 12., t.text))
-                .child(mono("·", 12., t.dim))
-                .child(mono(reasoning, 12., t.blue)),
+                .rounded(radius::CONTROL)
+                .child(mono(model, Type::CAPTION, t.text))
+                .child(mono("·", Type::CAPTION, t.dim))
+                .child(mono(reasoning, Type::CAPTION, t.blue)),
         )
         .child(
-            mono(format!("today {}", usd(total)), 12., t.accent)
-                .px(px(10.))
-                .py(px(5.))
-                .rounded(px(6.))
+            mono(format!("today {}", usd(total)), Type::CAPTION, t.accent)
+                .px(sp(2.5))
+                .py(sp(1.25))
+                .rounded(radius::CONTROL)
                 .bg(t.accent_soft),
         )
 }
@@ -209,24 +174,24 @@ pub fn sidebar(
         div()
             .flex()
             .flex_col()
-            .gap(px(2.))
+            .gap(sp(0.5))
             .children(nav.into_iter().map(|(route, glyph, label, keys)| {
                 let active = active_section(&route);
                 let badge =
                     (label == "Constitution" && reviews > 0).then(|| {
-                        mono(reviews.to_string(), 11., t.bg)
-                            .px(px(6.))
-                            .rounded(px(8.))
+                        mono(reviews.to_string(), Type::MICRO, t.bg)
+                            .px(sp(1.5))
+                            .rounded(radius::BOX)
                             .bg(t.accent)
                     });
                 div()
                     .id(label)
                     .flex()
                     .items_center()
-                    .gap(px(10.))
-                    .px(px(10.))
-                    .py(px(7.))
-                    .rounded(px(6.))
+                    .gap(sp(2.5))
+                    .px(sp(2.5))
+                    .py(sp(1.75))
+                    .rounded(radius::CONTROL)
                     .cursor_pointer()
                     .when(active, |row| row.bg(t.selected))
                     .when(!active, |row| {
@@ -234,7 +199,7 @@ pub fn sidebar(
                     })
                     .child(icon(
                         glyph,
-                        14.,
+                        IconSize::BASE,
                         if active { t.text } else { t.muted },
                     ))
                     .child(
@@ -249,7 +214,7 @@ pub fn sidebar(
                     )
                     .children(badge)
                     .when(!keys.is_empty(), |row| {
-                        row.child(mono(keys, 11., t.dim))
+                        row.child(mono(keys, Type::MICRO, t.dim))
                     })
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         ws.navigate(route.clone(), cx)
@@ -257,10 +222,10 @@ pub fn sidebar(
             }));
 
     let current = ws.current().map(|run| run.id.clone());
-    let mut list = div().flex().flex_col().gap(px(2.)).child(
+    let mut list = div().flex().flex_col().gap(sp(0.5)).child(
         div()
-            .px(px(10.))
-            .pb(px(6.))
+            .px(sp(2.5))
+            .pb(sp(1.5))
             .child(super::heading("Runs", t)),
     );
     for run in ws.runs.iter().filter(|run| run.origin == Origin::Root) {
@@ -272,27 +237,27 @@ pub fn sidebar(
                 .id(SharedString::from(format!("run-{}", run.id)))
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .px(px(10.))
-                .py(px(7.))
-                .rounded(px(6.))
+                .gap(sp(2.))
+                .px(sp(2.5))
+                .py(sp(1.75))
+                .rounded(radius::CONTROL)
                 .cursor_pointer()
                 .when(active, |row| row.bg(t.selected))
                 .when(!active, |row| {
                     row.hover(|style| style.bg(gpui::white().opacity(0.03)))
                 })
-                .child(status_icon(run, t, 12.))
+                .child(status_icon(run, t, IconSize::SMALL))
                 .child(
                     div()
                         .flex_1()
                         .truncate()
                         .text_color(if active { t.text } else { t.text_soft })
                         .when(active, |title| {
-                            title.font_weight(FontWeight::MEDIUM)
+                            title.font_weight(weight::EMPHASIS)
                         })
                         .child(run.title.clone()),
                 )
-                .child(mono(usd(run.usage.cost), 11., t.muted))
+                .child(mono(usd(run.usage.cost), Type::MICRO, t.muted))
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.navigate(route.clone(), cx)
                 })),
@@ -313,11 +278,11 @@ pub fn sidebar(
                 .id(SharedString::from(format!("child-{}", child.id)))
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .pl(px(28.))
-                .pr(px(10.))
-                .py(px(6.))
-                .rounded(px(6.))
+                .gap(sp(2.))
+                .pl(sp(7.))
+                .pr(sp(2.5))
+                .py(sp(1.5))
+                .rounded(radius::CONTROL)
                 .text_color(t.text_soft)
                 .when(active, |row| row.bg(t.selected))
                 .child(icon(
@@ -325,11 +290,13 @@ pub fn sidebar(
                         ChildKind::SubAgent => Icon::SubAgent,
                         ChildKind::Fork => Icon::Fork,
                     },
-                    12.,
+                    IconSize::SMALL,
                     t.blue,
                 ))
                 .child(div().flex_1().truncate().child(child.title.clone()))
-                .child(div().text_size(px(11.)).text_color(color).child(label))
+                .child(
+                    div().typeset(Type::MICRO).text_color(color).child(label),
+                )
                 .when_some(route, |row, route| {
                     row.cursor_pointer()
                         .hover(|style| style.bg(gpui::white().opacity(0.03)))
@@ -349,9 +316,9 @@ pub fn sidebar(
         .id("sidebar")
         .flex()
         .flex_col()
-        .gap(px(18.))
-        .px(px(8.))
-        .py(px(12.))
+        .gap(sp(4.5))
+        .px(sp(2.))
+        .py(sp(3.))
         .bg(t.panel)
         .border_r_1()
         .border_color(t.border)
@@ -361,17 +328,17 @@ pub fn sidebar(
                 .id("new-run")
                 .flex()
                 .items_center()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .h(px(36.))
-                .px(px(10.))
+                .px(sp(2.5))
                 .border_1()
                 .border_color(t.border)
                 .bg(t.raised)
-                .rounded(px(6.))
+                .rounded(radius::CONTROL)
                 .cursor_pointer()
-                .child(icon(Icon::Plus, 14., t.text))
+                .child(icon(Icon::Plus, IconSize::BASE, t.text))
                 .child(div().flex_1().child("New run"))
-                .child(mono("Ctrl N", 11., t.dim))
+                .child(mono("Ctrl N", Type::MICRO, t.dim))
                 .on_click(cx.listener(|ws, _, window, cx| {
                     ws.start_new_run(window, cx)
                 })),
@@ -382,11 +349,11 @@ pub fn sidebar(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(sp(0.5))
                 .child(
                     div()
-                        .px(px(10.))
-                        .pb(px(6.))
+                        .px(sp(2.5))
+                        .pb(sp(1.5))
                         .child(super::heading("Agents", t)),
                 )
                 .children(agents.into_iter().map(|agent| {
@@ -394,27 +361,27 @@ pub fn sidebar(
                         .id(SharedString::from(format!("agent-{agent}")))
                         .flex()
                         .items_center()
-                        .gap(px(8.))
-                        .px(px(10.))
-                        .py(px(6.))
-                        .rounded(px(6.))
+                        .gap(sp(2.))
+                        .px(sp(2.5))
+                        .py(sp(1.5))
+                        .rounded(radius::CONTROL)
                         .cursor_pointer()
                         .hover(|style| style.bg(gpui::white().opacity(0.03)))
                         .child(
                             mono(
                                 agent.chars().next().unwrap_or('?').to_string(),
-                                11.,
+                                Type::MICRO,
                                 t.blue,
                             )
                             .size(px(18.))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded(px(4.))
-                            .bg(gpui::rgb(0x2c3a52)),
+                            .rounded(radius::SMALL)
+                            .bg(t.blue_border),
                         )
                         .child(div().flex_1().child(agent.to_owned()))
-                        .child(mono("plugins", 11., t.dim))
+                        .child(mono("plugins", Type::MICRO, t.dim))
                         .on_click(cx.listener(|ws, _, _, cx| {
                             ws.navigate(Route::Plugins, cx)
                         }))
@@ -435,19 +402,19 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap(px(18.))
-        .px(px(14.))
+        .gap(sp(4.5))
+        .px(sp(3.5))
         .bg(t.panel)
         .border_t_1()
         .border_color(t.border)
         .font_family(MONO)
-        .text_size(px(11.))
+        .typeset(Type::MICRO)
         .text_color(t.muted)
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.))
+                .gap(sp(1.5))
                 .child(dot(t.green, 6.))
                 .child("tau-ui"),
         )
@@ -473,8 +440,8 @@ pub fn phone_run_bar(
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap(px(4.))
-        .px(px(6.))
+        .gap(sp(1.))
+        .px(sp(1.5))
         .bg(t.panel)
         .border_b_1()
         .border_color(t.border)
@@ -488,11 +455,11 @@ pub fn phone_run_bar(
                 .min_w(px(0.))
                 .flex()
                 .flex_col()
-                .gap(px(2.))
+                .gap(sp(0.5))
                 .child(
                     div()
-                        .text_size(px(15.))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .typeset(Type::LEAD)
+                        .font_weight(weight::STRONG)
                         .truncate()
                         .child(run.title.clone()),
                 )
@@ -500,8 +467,8 @@ pub fn phone_run_bar(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(6.))
-                        .text_size(px(12.))
+                        .gap(sp(1.5))
+                        .typeset(Type::CAPTION)
                         .text_color(t.muted)
                         .child(dot(color, 6.))
                         .child(label)
@@ -511,7 +478,7 @@ pub fn phone_run_bar(
                                 run.turn,
                                 usd(run.usage.cost)
                             ),
-                            12.,
+                            Type::CAPTION,
                             t.muted,
                         )),
                 ),
@@ -542,8 +509,8 @@ pub fn phone_header(
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap(px(4.))
-        .px(px(6.))
+        .gap(sp(1.))
+        .px(sp(1.5))
         .bg(t.panel)
         .border_b_1()
         .border_color(t.border)
@@ -554,15 +521,15 @@ pub fn phone_header(
             )
         })
         .when(ws.route.is_top_level(), |bar| {
-            bar.pl(px(16.)).child(logo(t, 28.)).child(div().w(px(6.)))
+            bar.pl(sp(4.)).child(logo(t, 28.)).child(div().w(px(6.)))
         })
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.))
                 .truncate()
-                .text_size(px(17.))
-                .font_weight(FontWeight::SEMIBOLD)
+                .typeset(Type::TITLE)
+                .font_weight(weight::STRONG)
                 .child(title),
         )
         .when(matches!(ws.route, Route::Home), |bar| {
@@ -601,29 +568,29 @@ pub fn phone_run_list(
                     .id(SharedString::from(format!("phone-run-{}", run.id)))
                     .flex()
                     .items_center()
-                    .gap(px(12.))
+                    .gap(sp(3.))
                     .min_h(px(56.))
-                    .px(px(16.))
+                    .px(sp(4.))
                     .border_b_1()
                     .border_color(t.border)
                     .cursor_pointer()
-                    .child(status_icon(run, t, 14.))
+                    .child(status_icon(run, t, IconSize::BASE))
                     .child(
                         div()
                             .flex_1()
                             .min_w(px(0.))
                             .flex()
                             .flex_col()
-                            .gap(px(2.))
+                            .gap(sp(0.5))
                             .child(
                                 div()
                                     .truncate()
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .font_weight(weight::EMPHASIS)
                                     .child(run.title.clone()),
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.))
+                                    .typeset(Type::CAPTION)
                                     .text_color(color)
                                     .child(format!(
                                         "{label} · {} turns",
@@ -631,7 +598,7 @@ pub fn phone_run_list(
                                     )),
                             ),
                     )
-                    .child(mono(usd(run.usage.cost), 12., t.muted))
+                    .child(mono(usd(run.usage.cost), Type::CAPTION, t.muted))
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         ws.navigate(route.clone(), cx)
                     }))
@@ -644,18 +611,11 @@ pub fn phone_run_list(
         .overflow_y_scroll()
         .flex()
         .flex_col()
+        .child(div().flex().flex_col().gap(sp(3.)).p(sp(4.)).children(live))
         .child(
             div()
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .p(px(16.))
-                .children(live),
-        )
-        .child(
-            div()
-                .px(px(16.))
-                .pb(px(6.))
+                .px(sp(4.))
+                .pb(sp(1.5))
                 .child(super::heading("Earlier", t)),
         )
         .children(earlier)
@@ -675,27 +635,27 @@ fn live_card(
     div()
         .flex()
         .flex_col()
-        .gap(px(12.))
-        .p(px(14.))
+        .gap(sp(3.))
+        .p(sp(3.5))
         .border_1()
         .border_color(t.accent_border)
-        .rounded(px(14.))
+        .rounded(radius::TILE)
         .bg(t.panel)
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
+                .gap(sp(2.))
                 .child(dot(t.accent, 8.))
                 .child(
                     div()
                         .flex_1()
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(weight::STRONG)
                         .child(run.title.clone()),
                 )
                 .child(mono(
                     format!("turn {} · {}", run.turn, usd(run.usage.cost)),
-                    12.,
+                    Type::CAPTION,
                     t.muted,
                 )),
         )
@@ -704,13 +664,13 @@ fn live_card(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.))
-                    .px(px(10.))
-                    .py(px(8.))
-                    .rounded(px(8.))
+                    .gap(sp(2.))
+                    .px(sp(2.5))
+                    .py(sp(2.))
+                    .rounded(radius::BOX)
                     .bg(t.red_soft)
-                    .child(icon(Icon::Blocked, 15., t.red))
-                    .child(mono(plugin.name.clone(), 12., t.red))
+                    .child(icon(Icon::Blocked, IconSize::MEDIUM, t.red))
+                    .child(mono(plugin.name.clone(), Type::CAPTION, t.red))
                     .child(
                         div()
                             .text_color(t.text_soft)
@@ -723,13 +683,13 @@ fn live_card(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(5.))
+                    .gap(sp(1.25))
                     .child(
                         div()
                             .flex()
-                            .text_size(px(12.))
+                            .typeset(Type::CAPTION)
                             .child(div().flex_1().child("Cost"))
-                            .child(mono(meter.value, 12., t.muted)),
+                            .child(mono(meter.value, Type::CAPTION, t.muted)),
                     )
                     .child(super::bar(meter.share, 4., t.text_soft, t.border)),
             )
@@ -738,9 +698,9 @@ fn live_card(
             div()
                 .id(SharedString::from(format!("open-{}", run.id)))
                 .child(
-                    super::primary_button("Open", t)
+                    super::button("Open", ButtonKind::Primary, t)
                         .h(px(44.))
-                        .rounded(px(10.)),
+                        .rounded(radius::LARGE),
                 )
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.navigate(route.clone(), cx)
@@ -771,11 +731,11 @@ pub fn phone_tab_bar(
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(px(4.))
-                .text_size(px(11.))
+                .gap(sp(1.))
+                .typeset(Type::MICRO)
                 .text_color(color)
                 .cursor_pointer()
-                .child(icon(tab_icon(tab), 20., color))
+                .child(icon(tab_icon(tab), IconSize::HUGE, color))
                 .child(tab.label())
                 .on_click(
                     cx.listener(move |ws, _, _, cx| ws.switch_tab(tab, cx)),
