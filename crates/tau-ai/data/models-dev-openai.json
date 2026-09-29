@@ -1,6 +1,6 @@
 {
   "source": "https://models.dev/api.json",
-  "fetched": "2026-09-26",
+  "fetched": "2026-09-29",
   "models": {
     "chatgpt-image-latest": {
       "id": "chatgpt-image-latest",
@@ -683,6 +683,63 @@
       },
       "limit": {
         "context": 1050000,
+        "output": 128000
+      }
+    },
+    "gpt-6.1-sol": {
+      "id": "gpt-6.1-sol",
+      "name": "GPT-6.1 Sol",
+      "reasoning": true,
+      "tool_call": true,
+      "modalities": {
+        "input": ["text", "image", "pdf"]
+      },
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cache_read": 0.1,
+        "cache_write": 2.5
+      },
+      "limit": {
+        "context": 1050000,
+        "output": 128000
+      }
+    },
+    "gpt-daybreak-blue-latest": {
+      "id": "gpt-daybreak-blue-latest",
+      "name": "Daybreak Blue",
+      "reasoning": true,
+      "tool_call": true,
+      "modalities": {
+        "input": ["text", "image", "pdf"]
+      },
+      "cost": {
+        "input": 4,
+        "output": 20,
+        "cache_read": 0.4,
+        "cache_write": 5
+      },
+      "limit": {
+        "context": 1050000,
+        "output": 128000
+      }
+    },
+    "gpt-daybreak-red-latest": {
+      "id": "gpt-daybreak-red-latest",
+      "name": "Daybreak Red",
+      "reasoning": true,
+      "tool_call": true,
+      "modalities": {
+        "input": ["text", "image"]
+      },
+      "cost": {
+        "input": 12.5,
+        "output": 75,
+        "cache_read": 1.25,
+        "cache_write": 15.625
+      },
+      "limit": {
+        "context": 400000,
         "output": 128000
       }
     },

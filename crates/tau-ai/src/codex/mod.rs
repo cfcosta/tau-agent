@@ -50,10 +50,11 @@ pub const ORIGINATOR: &str = "tau";
 pub const DEFAULT_INSTRUCTIONS: &str = "You are a helpful assistant.";
 
 /// Models the Codex endpoint serves, as pi lists them, less
-/// `gpt-5.3-codex-spark`: Codex refuses it to ChatGPT accounts. They are
-/// priced like their API versions, as pi prices them; the subscription
-/// bills differently.
-pub const MODELS: [&str; 7] = [
+/// `gpt-5.3-codex-spark`, plus `gpt-6.1-sol` (released 2026-09-29).
+/// Codex refuses `gpt-5.3-codex-spark` and the `gpt-daybreak-*` models to
+/// ChatGPT accounts. They are priced like their API versions, as pi
+/// prices them; the subscription bills differently.
+pub const MODELS: [&str; 8] = [
     "gpt-5.5",
     "gpt-5.6-luna",
     "gpt-5.6-sol",
@@ -61,6 +62,7 @@ pub const MODELS: [&str; 7] = [
     "gpt-6-astra",
     "gpt-6-sol",
     "gpt-6-luna",
+    "gpt-6.1-sol",
 ];
 
 /// Refresh this long before the access token expires.

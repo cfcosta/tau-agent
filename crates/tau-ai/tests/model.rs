@@ -237,7 +237,7 @@ fn image_input_follows_modalities() {
 
 /// Each model offers the efforts the API takes for it, as probed: no
 /// `minimal` past gpt-5, `max` only from gpt-5.6, and no `none` on
-/// gpt-6-astra.
+/// gpt-6-astra or gpt-6.1-sol.
 #[test]
 fn each_model_takes_its_own_efforts() {
     use tau_ai::responses::request::ReasoningEffort::*;
@@ -246,6 +246,9 @@ fn each_model_takes_its_own_efforts() {
     assert_eq!(efforts("gpt-5.5"), [None, Low, Medium, High, Xhigh]);
     assert_eq!(efforts("gpt-6-luna"), [None, Low, Medium, High, Xhigh, Max]);
     assert_eq!(efforts("gpt-6-astra"), [Low, Medium, High, Xhigh, Max]);
+    assert_eq!(efforts("gpt-6.1-sol"), [Low, Medium, High, Xhigh, Max]);
+    // Unprobed: Codex refuses it to ChatGPT accounts.
+    assert_eq!(efforts("gpt-daybreak-red-latest"), [Low, Medium, High]);
     assert_eq!(efforts("gpt-5-pro"), [High]);
     assert!(efforts("gpt-4.1").is_empty(), "it does not reason");
     for model in model::models() {
@@ -256,4 +259,24 @@ fn each_model_takes_its_own_efforts() {
             model.id
         );
     }
+}
+
+/// gpt-6.1-sol (released 2026-09-29) takes models.dev's price, which
+/// halves gpt-6-sol's cache read, and the same 272,000-token cap and
+/// long-context tier as the rest of the gpt-6 family.
+#[test]
+fn gpt_6_1_sol_is_capped_and_tiered_like_gpt_6() {
+    let m = get("gpt-6.1-sol");
+    assert_eq!((m.context_window, m.max_output), (272_000, 128_000));
+    assert_eq!(m.pricing.input, 2.0);
+    assert_eq!(m.pricing.output, 10.0);
+    assert_eq!(m.pricing.cache_read, 0.1);
+    assert_eq!(m.pricing.cache_write, 2.5);
+    let tier = m
+        .pricing
+        .long_context
+        .expect("gpt-6.1-sol has a long-context tier");
+    assert_eq!(tier.input_tokens_above, 272_000);
+    assert_eq!((tier.input, tier.output), (4.0, 15.0));
+    assert_eq!((tier.cache_read, tier.cache_write), (0.2, 5.0));
 }

@@ -1,5 +1,5 @@
 {
-  "source": "tau's own, not pi's. Probed on 2026-09-28 by asking each model for an effort it may not take: the Responses API rejects one with 'Supported values are: …', through both an API key and a ChatGPT sign-in (Codex), which agree wherever both serve a model. A reasoning model missing here gets `fallback`, which every probed reasoning model but the pro ones accepts.",
+  "source": "tau's own, not pi's. Probed on 2026-09-28 by asking each model for an effort it may not take: the Responses API rejects one with 'Supported values are: …', through both an API key and a ChatGPT sign-in (Codex), which agree wherever both serve a model. A reasoning model missing here gets `fallback`, which every probed reasoning model but the pro ones accepts. gpt-6.1-sol was probed on 2026-09-29 through a ChatGPT sign-in only (the API key had no credits); gpt-daybreak-blue-latest and gpt-daybreak-red-latest are not served to ChatGPT accounts and were not probed, so they get `fallback`.",
   "fallback": ["low", "medium", "high"],
   "models": {
     "gpt-5": ["minimal", "low", "medium", "high"],
@@ -22,6 +22,7 @@
     "gpt-6-astra": ["low", "medium", "high", "xhigh", "max"],
     "gpt-6-luna": ["none", "low", "medium", "high", "xhigh", "max"],
     "gpt-6-sol": ["none", "low", "medium", "high", "xhigh", "max"],
+    "gpt-6.1-sol": ["low", "medium", "high", "xhigh", "max"],
     "o1": ["low", "medium", "high"],
     "o1-pro": ["low", "medium", "high"],
     "o3": ["low", "medium", "high"],
