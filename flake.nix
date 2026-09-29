@@ -205,6 +205,7 @@
                 cargo-deny
                 cargo-mutants
                 cargo-nextest
+                cargo-watch
 
                 curl
                 jq
