@@ -102,9 +102,11 @@ had seen when it made the call ([plugins.md](plugins.md)).
    written.
 
 Whenever Jev was asked, a `PluginReport` with `kind: "output"` says how
-it went: the call, the chunks and how many stayed, the lines dropped,
-the segments, the requests, the estimated tokens before and after,
-whether the result was replaced, and the archive.
+it went: the call, the output's lines, the chunks and how many stayed,
+the lines dropped, the segments, the requests, the estimated tokens
+before and after, whether the result was replaced, and the archive. The
+same body is stored with the run as a record, so an interface can show
+it again when it reloads the run from history.
 
 ### Safeguards
 
@@ -133,6 +135,51 @@ and is reported as a `PluginError` event. The run goes on.
   ([openai-websocket.md](openai-websocket.md)): no resend.
 - The requests for one output are sent together, so a pruned call takes
   about one Jev round trip longer.
+
+### Evaluation
+
+`crates/evals/output-pruning` measures whether output pruning keeps the
+lines a task needs. Each workload is a conversation that ends in one
+long command output, generated from a seed with synthetic noise (cargo,
+npm, pip, pytest, bundler and upload logs; no network), with **needles**:
+lines the task needs, each in the output exactly once.
+
+| Workload | Needles |
+|---|---|
+| `needle-error` | one error line deep in a cargo build |
+| `needle-detail` | a bundle hash the prompt asks to remember, among hundreds like it |
+| `summary-line` | npm's totals line, with post-install noise after it |
+| `structured-json` | one service's record in a large JSON registry |
+| `all-noise` | none: pruning should cut most of it |
+| `spilled-middle` | a failed step above the 2,000-line tail `bash` keeps |
+| `multi-needle` | three failing tests far apart |
+| `earlier-requirement` | a checksum only an earlier `read` of a large runbook asks for, so the history comes in segments |
+
+The runner drives the real plugin through the agent loop, as the app
+does: a scripted model makes the workload's calls, fake tools answer,
+and the fake `bash` truncates and spills like tau's (or, with
+`--whole`, returns every output whole). Per trial it records:
+
+- **recall**: needles in the result the model saw, each as a whole line
+  (a needle only in the archive does not count), and the same for what
+  `bash` alone would have shown (**tail recall**);
+- estimated tokens before (what `bash` alone shows) and after, and the
+  **reduction**;
+- whether the result was replaced, Jev requests, input tokens, cost,
+  latency, and Jev's answers by band: confident noise (at most 0.1, the
+  only answers that let a chunk go), uncertain, and needed (0.5 or
+  more).
+
+```sh
+TYPESAFE_API_KEY=… cargo run -p tau-output-pruning-eval -- \
+  --seeds 3 --budget-usd 0.5 --json results.json
+```
+
+`--workload NAME` picks workloads, `--list` lists them, and
+`--budget-usd` stops once Jev's spend passes it. At $0.042 per million
+input tokens, a workload costs about a cent, so three seeds of all eight
+cost about $0.20. Without `TYPESAFE_API_KEY` it refuses to run. Its
+tests use fake Jevs and need no key.
 
 ### Where it differs from jev-pruner
 

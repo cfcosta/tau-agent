@@ -8441,6 +8441,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-output-pruning-eval"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-fast-compaction",
+ "tau-jev",
+ "tau-store",
+ "tau-testing",
+ "tau-tools",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "tau-reasoning"
 version = "0.1.0"
 dependencies = [
