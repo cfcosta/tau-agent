@@ -14,12 +14,12 @@ serde_json.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
 tau-jev.workspace = true
-toml.workspace = true
+tau-store.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
+hegeltest.workspace = true
 schemars.workspace = true
-tau-store.workspace = true
 tau-testing.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "time"] }

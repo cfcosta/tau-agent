@@ -6,33 +6,30 @@ Checks a run's tool calls and final answer against rules, asking Jev
 
 ## Rules
 
-A constitution is TOML:
+A constitution is a list of rules and two settings. Each repository's is
+kept in tau's SQLite store (`constitutions` and `constitution_rules`,
+[storage.md](storage.md)) and edited only through tau's UI; there is no
+file.
 
-```toml
-# What to do when Jev cannot answer: "allow" (the default) or "block".
-on_error = "allow"
-# How many times one run's final answer may be sent back.
-max_holds = 3
-
-[[rule]]
-id = "R2"
-text = "Library code returns errors. No unwrap or expect outside tests."
-on = ["edit.newText", "write.content"]
-review = 0.3   # flag for a person at this violation probability
-block = 0.8    # refuse the call at this one
-
-[[rule]]
-id = "R6"
-text = "The final answer names the tests that ran and their result."
-on = ["final answer"]
-```
-
-- `on` names where a rule applies: `tool.field` (every value under
+- **A rule** has an id (`R1`, `R2`… given when it is added), its text,
+  where it applies (`on`), and two violation probabilities: `review`
+  flags for a person, and `block` refuses the call. Review is at most
+  block, and both are between 0 and 1.
+- **`on`** names where a rule applies: `tool.field` (every value under
   that key in the call's arguments, however deep, so `edit.newText`
   covers each edit) or `final answer`.
-- `review` defaults to 0.5 and `block` to 0.8. Review is at most block.
-- A file that does not parse fails the run at start, saying why: a
-  broken constitution is never silently ignored. No file is no rules.
+- **`on_error`** decides what happens when Jev cannot answer: `allow`
+  (the default) or `block`.
+- **`max_holds`** is how many times one run's final answer may be sent
+  back (3 by default).
+- Rules are checked when added or edited, and again when read back from
+  the store. A stored constitution that does not check fails the run at
+  start, saying why: broken rules are never silently ignored. None
+  stored is no rules.
+- The plugin reads the rules at every check, through a `Live` handle the
+  host replaces when they are edited, so an edit applies from the next
+  tool call, in runs already going too. `ConstitutionPlugin::new` takes
+  rules that never change, for tests and embedders.
 
 ## What happens
 

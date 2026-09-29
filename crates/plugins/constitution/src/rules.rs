@@ -1,30 +1,21 @@
 //! A constitution: rules, where each applies, and how sure Jev must be
-//! that one is broken to review or block. Read from TOML:
+//! that one is broken to review or block. It lives in tau's store, one per
+//! repository ([`Constitution::load`], [`Constitution::save`]), and is
+//! edited only through tau's UI. Every rule is checked when it is added,
+//! replaced or read back.
 //!
-//! ```toml
-//! # What to do when Jev cannot answer: "allow" (the default) or "block".
-//! on_error = "allow"
-//! # How many times one run's final answer may be sent back.
-//! max_holds = 3
+//! A rule applies to tool arguments (`edit.newText` is every `newText` in
+//! an `edit` call's arguments) or to the run's final answer:
 //!
-//! [[rule]]
-//! id = "R2"
-//! text = "Library code returns errors. No unwrap or expect outside tests."
-//! on = ["edit.newText", "write.content"]
-//! review = 0.3   # flag for a person at this violation probability...
-//! block = 0.8    # ...and refuse the call at this one
-//!
-//! [[rule]]
-//! id = "R6"
-//! text = "The final answer names the tests that ran and their result."
-//! on = ["final answer"]
-//! ```
-
-use std::path::Path;
+//! - `R2`: "Library code returns errors. No unwrap or expect outside
+//!   tests.", on `edit.newText` and `write.content`, reviewed at a
+//!   violation probability of 0.3 and blocked at 0.8.
+//! - `R6`: "The final answer names the tests that ran and their result.",
+//!   on the final answer.
 
 use anyhow::{Context as _, bail};
-use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use tau_store::{Store, StoredConstitution, StoredRule};
 
 /// Where a rule applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,16 +68,30 @@ pub struct Rule {
 }
 
 /// What to do when Jev gives no answer.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize,
-)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OnError {
     /// Let the call run, and report the failure.
     #[default]
     Allow,
     /// Refuse the call: nothing unchecked runs.
     Block,
+}
+
+impl OnError {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Block => "block",
+        }
+    }
+
+    pub fn parse(text: &str) -> anyhow::Result<Self> {
+        match text {
+            "allow" => Ok(Self::Allow),
+            "block" => Ok(Self::Block),
+            other => bail!("`{other}` is not allow or block"),
+        }
+    }
 }
 
 /// The rules one agent (or repository) keeps.
@@ -112,33 +117,18 @@ pub const DEFAULT_MAX_HOLDS: u32 = 3;
 pub const DEFAULT_REVIEW: f64 = 0.5;
 pub const DEFAULT_BLOCK: f64 = 0.8;
 
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct File {
-    #[serde(default)]
-    on_error: OnError,
-    max_holds: Option<u32>,
-    #[serde(default, rename = "rule")]
-    rules: Vec<RuleFile>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RuleFile {
-    id: String,
-    text: String,
-    on: Vec<String>,
-    review: Option<f64>,
-    block: Option<f64>,
-}
-
 impl Constitution {
-    /// Parses a constitution, checking every rule.
-    pub fn parse(text: &str) -> anyhow::Result<Self> {
-        let file: File = toml::from_str(text)?;
-        let mut rules: Vec<Rule> = Vec::with_capacity(file.rules.len());
-        for rule in file.rules {
-            let rule = checked(rule)?;
+    /// A constitution read back from the store, every rule checked.
+    pub fn from_stored(stored: StoredConstitution) -> anyhow::Result<Self> {
+        let mut rules: Vec<Rule> = Vec::with_capacity(stored.rules.len());
+        for rule in stored.rules {
+            let rule = checked(
+                &rule.id,
+                &rule.text,
+                &rule.targets,
+                rule.review,
+                rule.block,
+            )?;
             if rules.iter().any(|known| known.id == rule.id) {
                 bail!("Two rules are called {}", rule.id);
             }
@@ -146,42 +136,48 @@ impl Constitution {
         }
         Ok(Self {
             rules,
-            on_error: file.on_error,
-            max_holds: file.max_holds.unwrap_or(DEFAULT_MAX_HOLDS),
+            on_error: OnError::parse(&stored.on_error)?,
+            max_holds: stored.max_holds,
         })
     }
 
-    /// The constitution as TOML, for [`Self::parse`] to read back.
-    pub fn to_toml(&self) -> String {
-        let file = File {
-            on_error: self.on_error,
-            max_holds: Some(self.max_holds),
+    /// The constitution as the store keeps it.
+    pub fn to_stored(&self) -> StoredConstitution {
+        StoredConstitution {
+            on_error: self.on_error.as_str().to_owned(),
+            max_holds: self.max_holds,
             rules: self
                 .rules
                 .iter()
-                .map(|rule| RuleFile {
+                .map(|rule| StoredRule {
                     id: rule.id.clone(),
                     text: rule.text.clone(),
-                    on: rule.on.iter().map(Target::label).collect(),
-                    review: Some(rule.review),
-                    block: Some(rule.block),
+                    targets: rule.on.iter().map(Target::label).collect(),
+                    review: rule.review,
+                    block: rule.block,
                 })
                 .collect(),
-        };
-        toml::to_string_pretty(&file).expect("a constitution serializes")
-    }
-
-    /// Writes the constitution to `path`, making its directory.
-    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, self.to_toml())
-            .with_context(|| format!("Cannot write {}", path.display()))
     }
 
-    /// Adds a rule, checked like one read from a file, under the next
-    /// free id (`R1`, `R2`…). Returns its id.
+    /// Repository `repo`'s constitution; none saved is no rules.
+    pub async fn load(store: &Store, repo: &str) -> anyhow::Result<Self> {
+        match store.constitution(repo).await? {
+            Some(stored) => Self::from_stored(stored).with_context(|| {
+                format!("The constitution stored for {repo} is not valid")
+            }),
+            None => Ok(Self::default()),
+        }
+    }
+
+    /// Saves this as repository `repo`'s constitution, replacing the one
+    /// before it.
+    pub async fn save(&self, store: &Store, repo: &str) -> anyhow::Result<()> {
+        Ok(store.save_constitution(repo, &self.to_stored()).await?)
+    }
+
+    /// Adds a rule, checked, under the next free id (`R1`, `R2`…).
+    /// Returns its id.
     pub fn add(
         &mut self,
         text: &str,
@@ -193,18 +189,11 @@ impl Constitution {
             .map(|n| format!("R{n}"))
             .find(|id| self.rules.iter().all(|rule| &rule.id != id))
             .expect("some id is free");
-        self.rules.push(checked(RuleFile {
-            id: id.clone(),
-            text: text.to_owned(),
-            on: on.to_vec(),
-            review: Some(review),
-            block: Some(block),
-        })?);
+        self.rules.push(checked(&id, text, on, review, block)?);
         Ok(id)
     }
 
-    /// Rewrites the rule `id` in place: same id, same position, checked
-    /// like one read from a file.
+    /// Rewrites the rule `id` in place: same id, same position, checked.
     pub fn replace(
         &mut self,
         id: &str,
@@ -218,13 +207,7 @@ impl Constitution {
             .iter()
             .position(|rule| rule.id == id)
             .with_context(|| format!("There is no rule {id}"))?;
-        self.rules[at] = checked(RuleFile {
-            id: id.to_owned(),
-            text: text.to_owned(),
-            on: on.to_vec(),
-            review: Some(review),
-            block: Some(block),
-        })?;
+        self.rules[at] = checked(id, text, on, review, block)?;
         Ok(())
     }
 
@@ -233,19 +216,6 @@ impl Constitution {
         let before = self.rules.len();
         self.rules.retain(|rule| rule.id != id);
         self.rules.len() != before
-    }
-
-    /// Reads the constitution at `path`; none there is no rules.
-    pub fn load(path: &Path) -> anyhow::Result<Self> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => Self::parse(&text)
-                .with_context(|| format!("{} is not valid", path.display())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(Self::default())
-            }
-            Err(error) => Err(error)
-                .with_context(|| format!("Cannot read {}", path.display())),
-        }
     }
 
     /// The rules for a call to `tool`, each with the arguments it is
@@ -291,27 +261,30 @@ impl Constitution {
     }
 }
 
-/// A rule as written, checked: an id, text, somewhere to apply, and
-/// thresholds that are probabilities with review at most block.
-fn checked(rule: RuleFile) -> anyhow::Result<Rule> {
-    let id = rule.id.trim().to_owned();
+/// A rule, checked: an id, text, somewhere to apply, and thresholds
+/// that are probabilities with review at most block.
+fn checked(
+    id: &str,
+    text: &str,
+    on: &[String],
+    review: f64,
+    block: f64,
+) -> anyhow::Result<Rule> {
+    let id = id.trim().to_owned();
     if id.is_empty() {
         bail!("A rule has no id");
     }
-    if rule.text.trim().is_empty() {
+    if text.trim().is_empty() {
         bail!("Rule {id} has no text");
     }
-    if rule.on.is_empty() {
-        bail!("Rule {id} applies nowhere: give it `on`");
+    if on.is_empty() {
+        bail!("Rule {id} applies nowhere: give it somewhere to apply");
     }
-    let on = rule
-        .on
+    let on = on
         .iter()
         .map(|target| Target::parse(target))
         .collect::<anyhow::Result<Vec<_>>>()
         .with_context(|| format!("Rule {id}"))?;
-    let review = rule.review.unwrap_or(DEFAULT_REVIEW);
-    let block = rule.block.unwrap_or(DEFAULT_BLOCK.max(review));
     if !(0.0..=1.0).contains(&review) || !(0.0..=1.0).contains(&block) {
         bail!("Rule {id}: review and block are probabilities, 0 to 1");
     }
@@ -320,7 +293,7 @@ fn checked(rule: RuleFile) -> anyhow::Result<Rule> {
     }
     Ok(Rule {
         id,
-        text: rule.text.trim().to_owned(),
+        text: text.trim().to_owned(),
         on,
         review,
         block,
@@ -354,61 +327,94 @@ mod tests {
 
     use super::*;
 
-    const EXAMPLE: &str = r#"
-        max_holds = 2
-        [[rule]]
-        id = "R2"
-        text = "No unwrap outside tests."
-        on = ["edit.newText", "write.content"]
-        review = 0.3
-        block = 0.8
+    fn rule(
+        id: &str,
+        text: &str,
+        on: &[&str],
+        review: f64,
+        block: f64,
+    ) -> StoredRule {
+        StoredRule {
+            id: id.into(),
+            text: text.into(),
+            targets: on.iter().map(|target| (*target).to_owned()).collect(),
+            review,
+            block,
+        }
+    }
 
-        [[rule]]
-        id = "R6"
-        text = "Name the tests that ran."
-        on = ["final answer"]
-    "#;
+    fn example() -> Constitution {
+        Constitution::from_stored(StoredConstitution {
+            on_error: "allow".into(),
+            max_holds: 2,
+            rules: vec![
+                rule(
+                    "R2",
+                    "No unwrap outside tests.",
+                    &["edit.newText", "write.content"],
+                    0.3,
+                    0.8,
+                ),
+                rule(
+                    "R6",
+                    "Name the tests that ran.",
+                    &["final answer"],
+                    0.5,
+                    0.8,
+                ),
+            ],
+        })
+        .unwrap()
+    }
 
     #[test]
-    fn a_constitution_reads_from_toml() {
-        let constitution = Constitution::parse(EXAMPLE).unwrap();
+    fn a_constitution_reads_back_from_the_store_shape() {
+        let constitution = example();
         assert_eq!(constitution.max_holds, 2);
         assert_eq!(constitution.on_error, OnError::Allow);
         let r2 = &constitution.rules[0];
         assert_eq!(r2.on[0].label(), "edit.newText");
         assert_eq!((r2.review, r2.block), (0.3, 0.8));
-        let r6 = &constitution.rules[1];
-        assert_eq!(r6.on, [Target::FinalAnswer]);
-        assert_eq!((r6.review, r6.block), (DEFAULT_REVIEW, DEFAULT_BLOCK));
+        assert_eq!(constitution.rules[1].on, [Target::FinalAnswer]);
+        assert_eq!(
+            Constitution::from_stored(constitution.to_stored()).unwrap(),
+            constitution
+        );
     }
 
     #[test]
     fn bad_constitutions_say_what_is_wrong() {
-        let bad = |text: &str| {
-            format!("{:#}", Constitution::parse(text).unwrap_err())
+        let bad = |rules: Vec<StoredRule>, on_error: &str| {
+            let stored = StoredConstitution {
+                on_error: on_error.into(),
+                max_holds: 3,
+                rules,
+            };
+            format!("{:#}", Constitution::from_stored(stored).unwrap_err())
         };
         assert!(
-            bad("[[rule]]\nid='A'\ntext='t'\non=[]")
+            bad(vec![rule("A", "t", &[], 0.5, 0.8)], "allow")
                 .contains("applies nowhere")
         );
         assert!(
-            bad("[[rule]]\nid='A'\ntext='t'\non=['bash']")
+            bad(vec![rule("A", "t", &["bash"], 0.5, 0.8)], "allow")
                 .contains("names no target")
         );
         assert!(
-            bad(
-                "[[rule]]\nid='A'\ntext='t'\non=['a.b']\nreview=0.9\nblock=0.5"
-            )
-            .contains("above block")
+            bad(vec![rule("A", "t", &["a.b"], 0.9, 0.5)], "allow")
+                .contains("above block")
         );
-        let twice = "[[rule]]\nid='A'\ntext='t'\non=['a.b']\n[[rule]]\nid='A'\ntext='u'\non=['a.b']";
-        assert!(bad(twice).contains("Two rules"));
-        assert!(bad("unknown = 1").contains("unknown"));
+        let twice = vec![
+            rule("A", "t", &["a.b"], 0.5, 0.8),
+            rule("A", "u", &["a.b"], 0.5, 0.8),
+        ];
+        assert!(bad(twice, "allow").contains("Two rules"));
+        assert!(bad(Vec::new(), "maybe").contains("not allow or block"));
     }
 
     #[test]
     fn only_the_fields_a_rule_names_are_checked() {
-        let constitution = Constitution::parse(EXAMPLE).unwrap();
+        let constitution = example();
         let args = json!({
             "path": "src/lib.rs",
             "edits": [
@@ -440,8 +446,8 @@ mod tests {
     }
 
     #[test]
-    fn rules_added_and_removed_round_trip() {
-        let mut constitution = Constitution::parse(EXAMPLE).unwrap();
+    fn rules_added_are_checked() {
+        let mut constitution = example();
         let id = constitution
             .add("Never force-push.", &["bash.command".into()], 0.2, 0.6)
             .unwrap();
@@ -449,21 +455,7 @@ mod tests {
         assert!(constitution.add("x", &[], 0.5, 0.8).is_err());
         assert!(constitution.add("x", &["bash".into()], 0.5, 0.8).is_err());
         assert!(constitution.add("x", &["a.b".into()], 0.9, 0.1).is_err());
-        let again = Constitution::parse(&constitution.to_toml()).unwrap();
-        assert_eq!(again, constitution);
         assert!(constitution.remove("R2"));
         assert!(!constitution.remove("R2"));
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a/constitution.toml");
-        constitution.save(&path).unwrap();
-        assert_eq!(Constitution::load(&path).unwrap(), constitution);
-    }
-
-    #[test]
-    fn a_missing_file_is_no_rules() {
-        let dir = tempfile::tempdir().unwrap();
-        let constitution =
-            Constitution::load(&dir.path().join("none.toml")).unwrap();
-        assert!(constitution.rules.is_empty());
     }
 }

@@ -1,7 +1,8 @@
 //! The constitution in a real run: a scripted model, a fake Jev, and the
 //! store. Calls a rule forbids are refused with the rule, doubtful ones
 //! run and are flagged, a final answer that breaks a rule goes back, and
-//! every decision is reported and recorded.
+//! every decision is reported and recorded. Edited rules apply from the
+//! next tool call, and a constitution comes back from the store as saved.
 
 use std::sync::{
     Arc,
@@ -10,6 +11,7 @@ use std::sync::{
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
+use hegel::{TestCase, generators as gs};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -23,29 +25,51 @@ use tau_constitution::{
     Check,
     Constitution,
     ConstitutionPlugin,
+    Live,
     NAME,
+    OnError,
+    Target,
     Verdict,
     VerdictKind,
 };
 use tau_jev::{JevError, fake::FakeJev};
-use tau_store::Store;
+use tau_store::{Store, StoredConstitution, StoredRule};
 use tau_testing::{block_on, scripted::ScriptedModel};
 
-const RULES: &str = r#"
-    [[rule]]
-    id = "R2"
-    text = "Library code returns errors. No unwrap or expect."
-    on = ["write.content"]
-    review = 0.3
-    block = 0.8
+fn rule(id: &str, text: &str, on: &str, review: f64, block: f64) -> StoredRule {
+    StoredRule {
+        id: id.into(),
+        text: text.into(),
+        targets: vec![on.into()],
+        review,
+        block,
+    }
+}
 
-    [[rule]]
-    id = "R6"
-    text = "The final answer names the tests that ran."
-    on = ["final answer"]
-    review = 0.4
-    block = 0.75
-"#;
+/// R2 on what `write` writes, R6 on the final answer.
+fn rules() -> Constitution {
+    Constitution::from_stored(StoredConstitution {
+        on_error: "allow".into(),
+        max_holds: 3,
+        rules: vec![
+            rule(
+                "R2",
+                "Library code returns errors. No unwrap or expect.",
+                "write.content",
+                0.3,
+                0.8,
+            ),
+            rule(
+                "R6",
+                "The final answer names the tests that ran.",
+                "final answer",
+                0.4,
+                0.75,
+            ),
+        ],
+    })
+    .unwrap()
+}
 
 /// Writes nothing; counts its calls.
 #[derive(Clone, Default)]
@@ -84,7 +108,7 @@ fn write(content: &str) -> Value {
 fn run(
     llm: &ScriptedModel,
     jev: FakeJev,
-    rules: &str,
+    rules: Constitution,
 ) -> (Vec<RunEvent>, usize, FakeJev, Vec<Value>) {
     let (events, writes, records) =
         block_on(run_with(llm, Arc::new(jev.clone()), rules));
@@ -96,13 +120,13 @@ fn run(
 async fn run_with(
     llm: &ScriptedModel,
     jev: Arc<dyn tau_jev::Jev>,
-    rules: &str,
+    rules: Constitution,
 ) -> (Vec<RunEvent>, usize, Vec<Value>) {
     let store = Store::memory().await.unwrap();
     let writes = Write::default();
-    let agent = Agent::new(llm.clone()).tool(typed(writes.clone())).plugin(
-        ConstitutionPlugin::new(jev, Constitution::parse(rules).unwrap()),
-    );
+    let agent = Agent::new(llm.clone())
+        .tool(typed(writes.clone()))
+        .plugin(ConstitutionPlugin::new(jev, rules));
     let mut run = agent.start("fix it", &store);
     let id = run.id();
     let events: Vec<RunEvent> = run.events().collect().await;
@@ -170,7 +194,7 @@ fn a_call_that_breaks_a_rule_is_refused_with_the_rule() {
             request,
         ))
     });
-    let (events, writes, jev, records) = run(&llm, jev, RULES);
+    let (events, writes, jev, records) = run(&llm, jev, rules());
 
     assert_eq!(writes, 0, "the call did not run");
     let told = results(&llm);
@@ -228,7 +252,7 @@ fn a_doubtful_call_runs_and_is_flagged() {
         .turn(|t| t.tool_call("write", write("maybe")))
         .turn(|t| t.text("Tests: cargo test, all passed."));
     let jev = FakeJev::nouls(|_| 0.5);
-    let (events, writes, _, _) = run(&llm, jev, RULES);
+    let (events, writes, _, _) = run(&llm, jev, rules());
     assert_eq!(writes, 1);
     let kinds: Vec<(VerdictKind, String)> = verdicts(&events)
         .into_iter()
@@ -260,7 +284,7 @@ fn a_final_answer_that_breaks_a_rule_goes_back_until_the_cap() {
             0.1
         }
     });
-    let (events, _, _, _) = run(&llm, jev, RULES);
+    let (events, _, _, _) = run(&llm, jev, rules());
     let held: Vec<&RunEvent> = events
         .iter()
         .filter(|event| matches!(event, RunEvent::Continued { .. }))
@@ -286,11 +310,12 @@ fn a_final_answer_that_breaks_a_rule_goes_back_until_the_cap() {
     ));
 
     // Past the cap, a broken answer stands, flagged.
-    let capped = format!("max_holds = 1\n{RULES}");
+    let mut capped = rules();
+    capped.max_holds = 1;
     let llm = ScriptedModel::new()
         .turn(|t| t.text("Done."))
         .turn(|t| t.text("Still done."));
-    let (events, _, _, _) = run(&llm, FakeJev::nouls(|_| 0.9), &capped);
+    let (events, _, _, _) = run(&llm, FakeJev::nouls(|_| 0.9), capped);
     let kinds: Vec<VerdictKind> = verdicts(&events)
         .iter()
         .map(|verdict| verdict.kind)
@@ -310,9 +335,10 @@ fn when_jev_cannot_answer_the_constitution_decides() {
     };
     // By default the call runs, and the failure is reported.
     let llm = script();
-    let rules =
-        RULES.replace("on = [\"final answer\"]", "on = [\"none.none\"]");
-    let (events, writes, _, _) = run(&llm, failing(), &rules);
+    // R6 moved somewhere no call reaches, so only the write is checked.
+    let mut rules = rules();
+    rules.rules[1].on = vec![Target::parse("none.none").unwrap()];
+    let (events, writes, _, _) = run(&llm, failing(), rules.clone());
     assert_eq!(writes, 1);
     assert!(events.iter().any(|event| matches!(
         event,
@@ -320,27 +346,120 @@ fn when_jev_cannot_answer_the_constitution_decides() {
     )));
     // `on_error = "block"` refuses what it cannot check.
     let llm = script();
-    let strict = format!("on_error = \"block\"\n{rules}");
-    let (_, writes, _, _) = run(&llm, failing(), &strict);
+    let mut strict = rules;
+    strict.on_error = OnError::Block;
+    let (_, writes, _, _) = run(&llm, failing(), strict);
     assert_eq!(writes, 0);
     assert!(results(&llm)[0].contains("cannot check"));
 }
 
+/// Writes nothing, like [`Write`], and on its first call replaces the
+/// rules with `then`: an edit made in the UI while the run goes on.
+#[derive(Clone)]
+struct EditsRules {
+    writes: Write,
+    live: Live,
+    then: Constitution,
+}
+
+#[async_trait]
+impl TypedTool for EditsRules {
+    type Args = WriteArgs;
+    const NAME: &'static str = "write";
+    const DESCRIPTION: &'static str = "Writes a file.";
+    async fn call(
+        &self,
+        args: WriteArgs,
+        ctx: ToolCtx,
+    ) -> anyhow::Result<ToolOutput> {
+        self.live.set(self.then.clone());
+        self.writes.call(args, ctx).await
+    }
+}
+
 #[test]
-fn a_broken_constitution_file_fails_the_run() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("constitution.toml");
-    std::fs::write(&path, "[[rule]]\nid = \"A\"\n").unwrap();
+fn an_edit_applies_from_the_next_tool_call() {
+    let live = Live::new(Constitution::default());
+    let tool = EditsRules {
+        writes: Write::default(),
+        live: live.clone(),
+        then: rules(),
+    };
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("x.unwrap()")))
+        .turn(|t| t.tool_call("write", write("y.unwrap()")))
+        .turn(|t| t.text("ok, ran cargo test"));
+    let jev = FakeJev::nouls(|_| 0.9);
+    let events: Vec<RunEvent> = block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm.clone())
+            .tool(typed(tool.clone()))
+            .plugin(ConstitutionPlugin::live(Arc::new(jev), live));
+        let mut run = agent.start("fix it", &store);
+        let events = run.events().collect().await;
+        run.outcome().await.unwrap();
+        events
+    });
+    // No rules at the first call: it ran unchecked. The rules it put in
+    // place checked the second, in the same run, and refused it.
+    assert_eq!(tool.writes.0.load(Ordering::SeqCst), 1);
+    let first = verdicts(&events);
+    assert_eq!(first[0].kind, VerdictKind::Blocked, "{first:?}");
+    assert_eq!(first[0].rule, "R2");
+}
+
+#[hegel::composite]
+fn constitution(tc: TestCase) -> Constitution {
+    let mut constitution = Constitution {
+        on_error: tc
+            .draw(gs::sampled_from(vec![OnError::Allow, OnError::Block])),
+        max_holds: tc.draw(gs::integers::<u32>().max_value(9)),
+        ..Constitution::default()
+    };
+    for _ in 0..tc.draw(gs::integers::<usize>().max_value(5)) {
+        let review = tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0));
+        let block =
+            tc.draw(gs::floats::<f64>().min_value(review).max_value(1.0));
+        let on: Vec<String> = tc.draw(
+            gs::vecs(gs::sampled_from(vec![
+                "write.content".to_owned(),
+                "bash.command".to_owned(),
+                "final answer".to_owned(),
+            ]))
+            .min_size(1)
+            .max_size(3),
+        );
+        let text = format!("rule {}", tc.draw(gs::text().max_size(20)));
+        constitution.add(&text, &on, review, block).unwrap();
+        // Removing one now and then leaves gaps in the ids.
+        if tc.draw(gs::booleans()) {
+            let id = constitution.rules[0].id.clone();
+            constitution.remove(&id);
+        }
+    }
+    constitution
+}
+
+/// What is saved for a repository comes back as saved, and none saved is
+/// no rules.
+#[hegel::test(test_cases = 100)]
+fn a_constitution_comes_back_from_the_store_as_saved(tc: TestCase) {
+    let constitution = tc.draw(constitution());
     block_on(async {
         let store = Store::memory().await.unwrap();
-        let agent = Agent::new(ScriptedModel::new()).plugin(
-            ConstitutionPlugin::from_file(
-                Arc::new(FakeJev::nouls(|_| 0.0)),
-                &path,
-            ),
+        assert_eq!(
+            Constitution::load(&store, "/repo").await.unwrap(),
+            Constitution::default()
         );
-        let error = agent.run("go", &store).await.unwrap_err();
-        assert!(error.to_string().contains("constitution.toml"), "{error}");
+        constitution.save(&store, "/repo").await.unwrap();
+        assert_eq!(
+            Constitution::load(&store, "/repo").await.unwrap(),
+            constitution
+        );
+        assert_eq!(
+            Constitution::load(&store, "/other").await.unwrap(),
+            Constitution::default()
+        );
     });
 }
 
@@ -356,20 +475,29 @@ fn the_real_jev_tells_a_broken_rule_from_a_kept_one() {
         .enable_all()
         .build()
         .unwrap();
-    let rules = r#"
-        [[rule]]
-        id = "R1"
-        text = "Library code never calls unwrap() or expect(); it returns errors with ?."
-        on = ["write.content"]
-    "#;
+    let rules = Constitution::from_stored(StoredConstitution {
+        on_error: "allow".into(),
+        max_holds: 3,
+        rules: vec![rule(
+            "R1",
+            "Library code never calls unwrap() or expect(); it returns errors with ?.",
+            "write.content",
+            0.5,
+            0.8,
+        )],
+    })
+    .unwrap();
     let script = |content: &'static str| {
         ScriptedModel::new()
             .turn(move |t| t.tool_call("write", write(content)))
             .turn(|t| t.text("done"))
     };
     let broken = script("pub fn port(s: &str) -> u16 { s.parse().unwrap() }");
-    let (events, writes, _) =
-        runtime.block_on(run_with(&broken, Arc::new(jev.clone()), rules));
+    let (events, writes, _) = runtime.block_on(run_with(
+        &broken,
+        Arc::new(jev.clone()),
+        rules.clone(),
+    ));
     let verdict = &verdicts(&events)[0];
     println!("broken: {:.3}", verdict.score);
     assert_eq!(verdict.kind, VerdictKind::Blocked);
@@ -391,7 +519,7 @@ fn the_real_jev_tells_a_broken_rule_from_a_kept_one() {
 
 #[test]
 fn a_rule_is_edited_in_place() {
-    let mut rules = Constitution::parse(RULES).unwrap();
+    let mut rules = rules();
     rules
         .replace(
             "R2",
@@ -408,7 +536,7 @@ fn a_rule_is_edited_in_place() {
     );
     assert_eq!((r2.review, r2.block), (0.2, 0.6));
     assert_eq!(rules.rules[1].id, "R6", "the order stays");
-    // Checked like a file: thresholds in order, somewhere to apply.
+    // Checked: thresholds in order, somewhere to apply.
     assert!(rules.replace("R2", "x", &[], 0.2, 0.6).is_err());
     assert!(
         rules
@@ -421,13 +549,13 @@ fn a_rule_is_edited_in_place() {
             .is_err()
     );
     // The round trip keeps it.
-    let again = Constitution::parse(&rules.to_toml()).unwrap();
+    let again = Constitution::from_stored(rules.to_stored()).unwrap();
     assert_eq!(again, rules);
 }
 
 #[test]
 fn a_rule_is_tried_on_what_a_check_would_show() {
-    let rules = Constitution::parse(RULES).unwrap();
+    let rules = rules();
     let jev = FakeJev::nouls(|_| 0.9);
     let calls = vec![
         ("write".to_owned(), write("x.unwrap()")),

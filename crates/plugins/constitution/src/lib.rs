@@ -18,10 +18,13 @@
 //!   review them, now and in history.
 //! - When Jev gives no answer, `on_error` decides: `allow` (the default)
 //!   lets the call run and reports it; `block` refuses it.
+//! - The rules are read again at every check, from a [`Live`] handle the
+//!   host updates when they are edited: an edit applies from the next
+//!   tool call, in runs already going too.
 
 pub mod rules;
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -111,38 +114,43 @@ impl Verdict {
     }
 }
 
-/// Where the plugin finds its constitution.
-#[derive(Debug, Clone)]
-enum Source {
-    Rules(Arc<Constitution>),
-    /// Read when each run starts, so a run sees the file as its
-    /// workspace has it.
-    File(PathBuf),
+/// A constitution that can change while runs use it. Share one per
+/// repository: [`Live::set`] replaces the rules, and every run's next
+/// check reads the new ones.
+#[derive(Debug, Clone, Default)]
+pub struct Live(Arc<RwLock<Arc<Constitution>>>);
+
+impl Live {
+    pub fn new(constitution: Constitution) -> Self {
+        Self(Arc::new(RwLock::new(Arc::new(constitution))))
+    }
+
+    /// The rules as they are now.
+    pub fn get(&self) -> Arc<Constitution> {
+        self.0.read().expect("not poisoned").clone()
+    }
+
+    pub fn set(&self, constitution: Constitution) {
+        *self.0.write().expect("not poisoned") = Arc::new(constitution);
+    }
 }
 
 /// The plugin. Share one across an agent's runs.
 #[derive(Clone)]
 pub struct ConstitutionPlugin {
     jev: Arc<dyn Jev>,
-    source: Source,
+    rules: Live,
 }
 
 impl ConstitutionPlugin {
+    /// Checks against rules that never change.
     pub fn new(jev: Arc<dyn Jev>, constitution: Constitution) -> Self {
-        Self {
-            jev,
-            source: Source::Rules(Arc::new(constitution)),
-        }
+        Self::live(jev, Live::new(constitution))
     }
 
-    /// Reads the constitution from `path` when each run starts. No file
-    /// there is no rules; a file that does not parse fails the run, so
-    /// a broken constitution is never silently ignored.
-    pub fn from_file(jev: Arc<dyn Jev>, path: impl Into<PathBuf>) -> Self {
-        Self {
-            jev,
-            source: Source::File(path.into()),
-        }
+    /// Checks against `rules` as they are at each check.
+    pub fn live(jev: Arc<dyn Jev>, rules: Live) -> Self {
+        Self { jev, rules }
     }
 }
 
@@ -157,13 +165,9 @@ impl Plugin for ConstitutionPlugin {
         _plan: &mut RunPlan,
         _ctx: &PluginCtx,
     ) -> anyhow::Result<Box<dyn PluginRun>> {
-        let constitution = match &self.source {
-            Source::Rules(rules) => rules.clone(),
-            Source::File(path) => Arc::new(Constitution::load(path)?),
-        };
         Ok(Box::new(Checks {
             jev: self.jev.clone(),
-            constitution,
+            rules: self.rules.clone(),
             holds: 0,
         }))
     }
@@ -172,7 +176,7 @@ impl Plugin for ConstitutionPlugin {
 /// A run's checks.
 struct Checks {
     jev: Arc<dyn Jev>,
-    constitution: Arc<Constitution>,
+    rules: Live,
     /// Final answers sent back so far.
     holds: u32,
 }
@@ -333,7 +337,8 @@ impl PluginRun for Checks {
         call: &mut ToolCall,
         ctx: &PluginCtx,
     ) -> anyhow::Result<Decision> {
-        let found = self.constitution.for_call(&call.name, &call.args);
+        let constitution = self.rules.get();
+        let found = constitution.for_call(&call.name, &call.args);
         if found.is_empty() {
             return Ok(Decision::Allow);
         }
@@ -369,7 +374,7 @@ impl PluginRun for Checks {
                     "tool": call.name,
                     "message": message,
                 }));
-                return Ok(match self.constitution.on_error {
+                return Ok(match constitution.on_error {
                     OnError::Allow => Decision::Allow,
                     OnError::Block => Decision::Block(format!(
                         "Blocked by {NAME}: {message}, and it blocks what it \
@@ -434,8 +439,8 @@ impl PluginRun for Checks {
         message: &AssistantMessage,
         ctx: &PluginCtx,
     ) -> anyhow::Result<StopDecision> {
-        let rules: Vec<(&Rule, String)> = self
-            .constitution
+        let constitution = self.rules.get();
+        let rules: Vec<(&Rule, String)> = constitution
             .for_final_answer()
             .into_iter()
             .map(|rule| (rule, "this final answer".to_owned()))
@@ -461,7 +466,7 @@ impl PluginRun for Checks {
         let mut held: Vec<String> = Vec::new();
         for ((rule, _), score) in rules.iter().zip(&scores) {
             let broken = *score >= rule.block;
-            let kind = if broken && self.holds < self.constitution.max_holds {
+            let kind = if broken && self.holds < constitution.max_holds {
                 VerdictKind::Held
             } else if *score >= rule.review {
                 // Broken past the cap, or only doubtful: a person looks.
@@ -487,7 +492,7 @@ impl PluginRun for Checks {
                 tool: None,
                 reason,
                 hold: held.then_some(self.holds + 1),
-                max_holds: held.then_some(self.constitution.max_holds),
+                max_holds: held.then_some(constitution.max_holds),
             };
             self.tell(&verdict, ctx).await;
         }
