@@ -26,6 +26,7 @@ use super::{
     log_card,
     mono,
     rich,
+    status_card,
     stop_look,
 };
 use crate::{
@@ -393,6 +394,13 @@ fn tool(
             t.accent_border,
         ),
     };
+    // A status with conflicts or left-out files says so on its edge.
+    let border = match &card.body {
+        ToolBody::Status(status) => {
+            status_card::border(status, t).unwrap_or(border)
+        }
+        _ => border,
+    };
     let dropped = matches!(
         card.pruned,
         Some(Pruned::ResultDropped | Pruned::CallDropped)
@@ -408,6 +416,9 @@ fn tool(
         ToolBody::Files(diff) if !dropped => diff_card::files_summary(diff, t),
         ToolBody::Commit(diff) if !dropped => {
             diff_card::commit_summary(diff, t)
+        }
+        ToolBody::Status(status) if !dropped => {
+            status_card::summary(status, t, compact)
         }
         _ => mono(card.summary.clone(), Type::CAPTION, t.text_soft)
             .flex_1()
@@ -433,7 +444,10 @@ fn tool(
     let folds = !dropped
         && matches!(
             card.body,
-            ToolBody::Log(_) | ToolBody::Files(_) | ToolBody::Commit(_)
+            ToolBody::Log(_)
+                | ToolBody::Files(_)
+                | ToolBody::Commit(_)
+                | ToolBody::Status(_)
         );
     let open = !folds || ws.card_open(&run.id, &card.call_id);
     let header = div()
@@ -544,6 +558,10 @@ fn tool(
         }),
         (_, ToolBody::Commit(diff)) => open.then(|| {
             diff_card::commit_body(ws, run, card, diff, t, compact, cx)
+                .into_any_element()
+        }),
+        (_, ToolBody::Status(status)) => open.then(|| {
+            status_card::body(ws, run, card, status, t, compact, cx)
                 .into_any_element()
         }),
         (_, ToolBody::Diff(lines)) => Some(diff(lines, t).into_any_element()),

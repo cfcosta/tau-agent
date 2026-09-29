@@ -85,11 +85,17 @@ pub fn files_body(
     compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .py(sp(1.))
-        .child(file_list(ws, run, card, diff, t, compact, cx))
+    div().flex().flex_col().py(sp(1.)).child(file_list(
+        ws,
+        run,
+        card,
+        &diff.files,
+        diff.truncated,
+        &|_| false,
+        t,
+        compact,
+        cx,
+    ))
 }
 
 /// An open show: the message, then the ids, author and parents, then
@@ -245,11 +251,17 @@ pub fn commit_body(
                     )),
             )
         })
-        .child(
-            div()
-                .pb(sp(1.))
-                .child(file_list(ws, run, card, diff, t, compact, cx)),
-        )
+        .child(div().pb(sp(1.)).child(file_list(
+            ws,
+            run,
+            card,
+            &diff.files,
+            diff.truncated,
+            &|_| false,
+            t,
+            compact,
+            cx,
+        )))
 }
 
 fn subject(change: &Change) -> String {
@@ -294,31 +306,42 @@ fn parent_line(parent: &Change, t: &Theme) -> Div {
 
 /// Each file as a row that opens to its hunks, then a note when the
 /// diff was cut.
-fn file_list(
+#[allow(clippy::too_many_arguments)]
+pub fn file_list(
     ws: &Workspace,
     run: &RunView,
     card: &ToolCard,
-    diff: &ChangeDiff,
+    files: &[FileDiff],
+    truncated: bool,
+    conflicted: &dyn Fn(&str) -> bool,
     t: &Theme,
     compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let files: Vec<Div> = diff
-        .files
+    let rows: Vec<Div> = files
         .iter()
         .map(|file| {
             let open = ws.file_open(&run.id, &card.call_id, &file.path);
             div()
                 .flex()
                 .flex_col()
-                .child(file_row(run, card, file, open, t, compact, cx))
+                .child(file_row(
+                    run,
+                    card,
+                    file,
+                    open,
+                    conflicted(&file.path),
+                    t,
+                    compact,
+                    cx,
+                ))
                 .when(open, |column| column.child(hunks(file, t, compact)))
         })
         .collect();
     div()
         .flex()
         .flex_col()
-        .when(diff.files.is_empty(), |list| {
+        .when(files.is_empty(), |list| {
             list.child(
                 div()
                     .px(sp(3.))
@@ -328,8 +351,8 @@ fn file_list(
                     .child("No changes."),
             )
         })
-        .children(files)
-        .when(diff.truncated, |list| {
+        .children(rows)
+        .when(truncated, |list| {
             list.child(
                 div()
                     .px(sp(3.))
@@ -344,11 +367,13 @@ fn file_list(
         })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn file_row(
     run: &RunView,
     card: &ToolCard,
     file: &FileDiff,
     open: bool,
+    conflicted: bool,
     t: &Theme,
     compact: bool,
     cx: &mut Context<Workspace>,
@@ -420,6 +445,9 @@ fn file_row(
                         .child(name.to_owned()),
                 ),
         )
+        .when(conflicted, |row| {
+            row.child(mono("conflict", Type::MICRO, t.red).flex_shrink_0())
+        })
         .when(file.binary, |row| {
             row.child(mono("binary", Type::MICRO, t.dim).flex_shrink_0())
         })
@@ -462,6 +490,10 @@ fn file_row(
         })
 }
 
+/// The lines jj writes around a conflict, as `diff` markers.
+const CONFLICT_MARKERS: [&str; 5] =
+    ["<<<<<<<", "%%%%%%%", r"\\\\\\\", "+++++++", ">>>>>>>"];
+
 /// A file's hunks, each under its `@@` line, with old and new line
 /// numbers; the phone leaves the numbers out.
 fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
@@ -499,7 +531,15 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
                     .child(hunk.header.clone()),
             )
             .children(hunk.lines.iter().map(|line| {
+                let marker = line.kind == DiffKind::Added
+                    && CONFLICT_MARKERS
+                        .iter()
+                        .any(|marker| line.text.starts_with(marker));
                 let (sign, color, bg) = match line.kind {
+                    // jj's conflict markers: what is left to edit out.
+                    DiffKind::Added if marker => {
+                        ("!", t.red, Some(t.red.opacity(0.22)))
+                    }
                     DiffKind::Added => {
                         ("+", t.added_text, Some(t.green.opacity(0.12)))
                     }
@@ -511,6 +551,7 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
                 div()
                     .flex()
                     .when_some(bg, |row, bg| row.bg(bg))
+                    .when(marker, |row| row.font_weight(weight::STRONG))
                     .when(!compact, |row| {
                         row.child(number(line.old)).child(number(line.new))
                     })
