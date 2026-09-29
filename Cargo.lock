@@ -8629,7 +8629,6 @@ dependencies = [
 name = "tau-vcs"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "gix",
@@ -8647,6 +8646,7 @@ dependencies = [
  "tau-testing",
  "tau-tools",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
  "tokio-util",

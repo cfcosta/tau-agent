@@ -27,6 +27,7 @@ use tau_agent::{
 
 use crate::{
     Landing,
+    error::VcsError,
     project::Project,
     run_workspace::{Pending, RunWorkspace, bookmark},
     vcs::Identity,
@@ -35,7 +36,7 @@ use crate::{
 /// Builds a sub-agent's agent around its workspace: the tools and
 /// plugins it runs with, the workspace among them.
 pub type ChildAgent =
-    Arc<dyn Fn(RunWorkspace) -> anyhow::Result<Agent> + Send + Sync>;
+    Arc<dyn Fn(RunWorkspace) -> Result<Agent, ToolError> + Send + Sync>;
 
 /// The name the model calls the tool by.
 pub const NAME: &str = "delegate";
@@ -53,7 +54,7 @@ impl Delegate {
     pub fn new(
         parent: RunWorkspace,
         identity: Identity,
-        child: impl Fn(RunWorkspace) -> anyhow::Result<Agent>
+        child: impl Fn(RunWorkspace) -> Result<Agent, ToolError>
         + Send
         + Sync
         + 'static,
@@ -88,8 +89,8 @@ fn child_name(parent: &str) -> String {
 /// Runs blocking project work off the async executor.
 async fn blocking<T: Send + 'static>(
     project: &Project,
-    work: impl FnOnce(&Project) -> anyhow::Result<T> + Send + 'static,
-) -> anyhow::Result<T> {
+    work: impl FnOnce(&Project) -> Result<T, VcsError> + Send + 'static,
+) -> Result<T, VcsError> {
     let project = project.clone();
     tokio::task::spawn_blocking(move || work(&project)).await?
 }
@@ -134,8 +135,7 @@ impl AgentTool for Delegate {
                 format!("tau: run {}, before delegating", ctx.run.0),
                 &parent_bookmark,
             )
-            .await
-            .map_err(ToolError::other)?;
+            .await?;
         if head.changed {
             self.parent.queue([Pending {
                 commit_id: head.commit_id.clone(),
@@ -145,8 +145,7 @@ impl AgentTool for Delegate {
         }
         let name = child_name(self.parent.name());
         let workspace =
-            RunWorkspace::new(project.clone(), &name, self.identity.clone())
-                .map_err(ToolError::other)?
+            RunWorkspace::new(project.clone(), &name, self.identity.clone())?
                 .with_base(head.commit_id.clone());
 
         // 2. The sub-agent, as a child run of the caller.
@@ -157,7 +156,7 @@ impl AgentTool for Delegate {
                     .call(json!({ "input": task }), ctx)
                     .await
             }
-            Err(error) => Err(ToolError::other(error)),
+            Err(error) => Err(error),
         };
         let child_bookmark = workspace.run().map(|run| bookmark(&run));
 
@@ -167,15 +166,13 @@ impl AgentTool for Delegate {
                 let landing = match child_bookmark.clone() {
                     Some(name) => {
                         match blocking(&project, move |p| p.bookmark(&name))
-                            .await
-                            .map_err(ToolError::other)?
+                            .await?
                         {
                             Some(child_head) => Some(
                                 self.parent
                                     .vcs()
                                     .land(child_head, &parent_bookmark, true)
-                                    .await
-                                    .map_err(ToolError::other)?,
+                                    .await?,
                             ),
                             None => None,
                         }
@@ -229,8 +226,7 @@ impl AgentTool for Delegate {
                     }
                     Ok(())
                 })
-                .await
-                .map_err(ToolError::other)?;
+                .await?;
                 Err(error)
             }
         };
@@ -243,8 +239,7 @@ impl AgentTool for Delegate {
             }
             Ok(())
         })
-        .await
-        .map_err(ToolError::other)?;
+        .await?;
         output
     }
 }

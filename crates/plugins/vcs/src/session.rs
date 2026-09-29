@@ -7,7 +7,6 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail};
 use jj_lib::{
     backend::CommitId,
     commit::Commit,
@@ -25,7 +24,7 @@ use jj_lib::{
 use pollster::block_on;
 use serde::{Deserialize, Serialize};
 
-use crate::vcs::Worker;
+use crate::{error::VcsError, vcs::Worker};
 
 /// The operation attribute naming the tool that wrote an operation.
 pub(crate) const TOOL_ATTRIBUTE: &str = "tau.vcs.tool";
@@ -62,7 +61,7 @@ pub struct TooLarge {
 
 /// Snapshots the working copy, one operation if files changed, and
 /// returns the repo at head.
-pub(crate) fn snapshot(worker: &mut Worker) -> anyhow::Result<Snapshot> {
+pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
     let workspace = worker.workspace()?;
     let name = workspace.workspace_name().to_owned();
     let loader = workspace.repo_loader().clone();
@@ -78,18 +77,15 @@ pub(crate) fn snapshot(worker: &mut Worker) -> anyhow::Result<Snapshot> {
 pub(crate) fn mutate<T>(
     worker: &mut Worker,
     tool: &str,
-    edit: impl FnOnce(&mut Transaction, &Commit) -> anyhow::Result<T>,
-) -> anyhow::Result<(Snapshot, T)> {
+    edit: impl FnOnce(&mut Transaction, &Commit) -> Result<T, VcsError>,
+) -> Result<(Snapshot, T), VcsError> {
     let workspace = worker.workspace()?;
     let name = workspace.workspace_name().to_owned();
     let loader = workspace.repo_loader().clone();
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
     let before = snapshot_locked(&mut locked, &loader, &name)?;
     if is_immutable(before.repo.as_ref(), before.wc.id())? {
-        bail!(
-            "The working-copy commit {} is immutable",
-            short_commit(before.wc.id())
-        );
+        return Err(VcsError::Immutable(short_commit(before.wc.id())));
     }
     let mut tx = before.repo.start_transaction();
     tx.set_workspace_name(&name);
@@ -122,7 +118,7 @@ fn snapshot_locked(
     locked: &mut LockedWorkspace<'_>,
     loader: &RepoLoader,
     name: &WorkspaceName,
-) -> anyhow::Result<Snapshot> {
+) -> Result<Snapshot, VcsError> {
     let mut repo = block_on(loader.load_at_head())?;
     let mut wc = wc_commit(&repo, name)?;
     match block_on(WorkingCopyFreshness::check_stale(
@@ -136,10 +132,9 @@ fn snapshot_locked(
             wc = wc_commit(&repo, name)?;
         }
         WorkingCopyFreshness::WorkingCopyStale
-        | WorkingCopyFreshness::SiblingOperation => bail!(
-            "The working copy is stale: another process changed this \
-             workspace's commit. Ask the user to update the workspace."
-        ),
+        | WorkingCopyFreshness::SiblingOperation => {
+            return Err(VcsError::Stale);
+        }
     }
 
     let options = SnapshotOptions {
@@ -196,7 +191,7 @@ pub(crate) fn write_commit(
     build: impl Fn(
         &mut jj_lib::repo::MutableRepo,
     ) -> jj_lib::commit_builder::CommitBuilder<'_>,
-) -> anyhow::Result<Commit> {
+) -> Result<Commit, VcsError> {
     const TRIES: i64 = 16;
     for nudge in 0..TRIES {
         let mut builder = build(tx.repo_mut());
@@ -219,11 +214,11 @@ pub(crate) fn write_commit(
 pub(crate) fn wc_commit(
     repo: &Arc<ReadonlyRepo>,
     name: &WorkspaceName,
-) -> anyhow::Result<Commit> {
+) -> Result<Commit, VcsError> {
     let id = repo
         .view()
         .get_wc_commit_id(name)
-        .ok_or_else(|| anyhow!("The workspace has no working-copy commit"))?;
+        .ok_or(VcsError::NoWorkingCopy)?;
     Ok(repo.store().get_commit(id)?)
 }
 
@@ -232,7 +227,7 @@ pub(crate) fn wc_commit(
 pub(crate) fn is_immutable(
     repo: &dyn Repo,
     id: &CommitId,
-) -> anyhow::Result<bool> {
+) -> Result<bool, VcsError> {
     if id == repo.store().root_commit_id() {
         return Ok(true);
     }
@@ -252,15 +247,9 @@ pub(crate) fn is_immutable(
 
 /// Finds the commit a change id or a commit id (or a unique prefix of
 /// either) names. Nothing else is accepted: no revsets, no names.
-pub(crate) fn resolve(repo: &dyn Repo, rev: &str) -> anyhow::Result<Commit> {
+pub(crate) fn resolve(repo: &dyn Repo, rev: &str) -> Result<Commit, VcsError> {
     let rev = rev.trim();
-    let not_an_id = || {
-        anyhow!(
-            "`{rev}` is not a change id or a commit id. Pass an id (or a \
-             unique prefix) from vcs_log or vcs_status; revsets are not \
-             accepted."
-        )
-    };
+    let not_an_id = || VcsError::NotAnId(rev.to_owned());
     if rev.is_empty() {
         return Err(not_an_id());
     }
@@ -268,19 +257,19 @@ pub(crate) fn resolve(repo: &dyn Repo, rev: &str) -> anyhow::Result<Commit> {
         let prefix =
             HexPrefix::try_from_reverse_hex(rev).ok_or_else(not_an_id)?;
         return match block_on(repo.resolve_change_id_prefix(&prefix))? {
-            PrefixResolution::NoMatch => bail!("No change matches `{rev}`"),
+            PrefixResolution::NoMatch => {
+                Err(VcsError::NoChange(rev.to_owned()))
+            }
             PrefixResolution::AmbiguousMatch => {
-                bail!("Change id prefix `{rev}` is ambiguous; give more of it")
+                Err(VcsError::AmbiguousChange(rev.to_owned()))
             }
             PrefixResolution::SingleMatch(targets) => {
                 let visible: Vec<&CommitId> =
                     targets.visible_with_offsets().map(|(_, id)| id).collect();
                 match visible.as_slice() {
-                    [] => bail!("Change `{rev}` is hidden (abandoned)"),
+                    [] => Err(VcsError::Hidden(rev.to_owned())),
                     [id] => Ok(repo.store().get_commit(id)?),
-                    _ => bail!(
-                        "Change `{rev}` is divergent; pass a commit id instead"
-                    ),
+                    _ => Err(VcsError::DivergentChange(rev.to_owned())),
                 }
             }
         };
@@ -291,9 +280,11 @@ pub(crate) fn resolve(repo: &dyn Repo, rev: &str) -> anyhow::Result<Commit> {
     {
         let prefix = HexPrefix::try_from_hex(rev).ok_or_else(not_an_id)?;
         return match block_on(repo.index().resolve_commit_id_prefix(&prefix))? {
-            PrefixResolution::NoMatch => bail!("No commit matches `{rev}`"),
+            PrefixResolution::NoMatch => {
+                Err(VcsError::NoCommit(rev.to_owned()))
+            }
             PrefixResolution::AmbiguousMatch => {
-                bail!("Commit id prefix `{rev}` is ambiguous; give more of it")
+                Err(VcsError::AmbiguousCommit(rev.to_owned()))
             }
             PrefixResolution::SingleMatch(id) => {
                 Ok(repo.store().get_commit(&id)?)
@@ -309,12 +300,12 @@ pub(crate) fn repo_path(
     workspace: &Workspace,
     given_root: &Path,
     input: &str,
-) -> anyhow::Result<RepoPathBuf> {
+) -> Result<RepoPathBuf, VcsError> {
     let path = Path::new(input.trim());
     let relative = if path.is_absolute() {
         path.strip_prefix(workspace.workspace_root())
             .or_else(|_| path.strip_prefix(given_root))
-            .map_err(|_| anyhow!("`{input}` is outside the repository"))?
+            .map_err(|_| VcsError::OutsideRepo(input.to_owned()))?
     } else {
         path
     };
@@ -326,7 +317,7 @@ pub(crate) fn repo_path(
         return Ok(RepoPathBuf::root());
     }
     RepoPathBuf::from_relative_path(&cleaned)
-        .map_err(|_| anyhow!("`{input}` is not a path inside the repository"))
+        .map_err(|_| VcsError::NotInRepo(input.to_owned()))
 }
 
 /// Matches `paths` and everything under them; everything when there are

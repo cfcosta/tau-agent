@@ -755,7 +755,7 @@ impl Host {
                 "Runs in {name} work in its checkout, which is always current"
             )
         })?;
-        match self.github_of(name) {
+        let updated = match self.github_of(name) {
             Some(full_name) => {
                 let token = github::Token::load(&self.config.credentials);
                 project.update(tau_vcs::UpdateFrom::Remote {
@@ -764,7 +764,8 @@ impl Host {
                 })
             }
             None => project.update(tau_vcs::UpdateFrom::Checkout(&slot.path)),
-        }
+        };
+        Ok(updated?)
     }
 
     /// The `owner/name` a repository was cloned from, if it came from
@@ -1539,11 +1540,11 @@ impl Host {
     /// that would conflict. Changes nothing.
     pub fn preview_landing(&self, child: &RunId) -> anyhow::Result<Landing> {
         let landing = self.landing(child)?;
-        self.runtime.block_on(landing.parent_vcs.land(
+        Ok(self.runtime.block_on(landing.parent_vcs.land(
             &landing.child_head,
             bookmark(&landing.parent),
             false,
-        ))
+        ))?)
     }
 
     /// Lands `child` on its parent (ADR 0009): restacks its changes onto
@@ -2615,12 +2616,12 @@ impl Host {
         let bodies = self
             .runtime
             .block_on(self.store.records(&run.0, WORKSPACE_PLUGIN))?;
-        project.current(
+        Ok(project.current(
             bodies
                 .iter()
                 .filter_map(|body| Link::parse(body))
                 .filter(|link| link.changed),
-        )
+        )?)
     }
 
     /// Writes a pull request draft from `run`: its changed turns as

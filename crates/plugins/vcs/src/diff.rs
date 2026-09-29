@@ -1,7 +1,6 @@
 //! Tree diffs as the tools show them: a list of changed paths, and
 //! Git-style unified diff text (`docs/reference/vcs.md`, "vcs_diff").
 
-use anyhow::Context as _;
 use futures_util::StreamExt as _;
 use jj_lib::{
     conflicts::{
@@ -18,6 +17,8 @@ use jj_lib::{
 };
 use pollster::block_on;
 use serde::{Deserialize, Serialize};
+
+use crate::error::VcsError;
 
 /// The most bytes of diff text a tool returns: 50 KiB, as `tau-tools`.
 pub const MAX_DIFF_BYTES: usize = 50 * 1024;
@@ -54,7 +55,7 @@ pub(crate) fn changed_paths(
     from: &MergedTree,
     to: &MergedTree,
     matcher: &dyn Matcher,
-) -> anyhow::Result<Vec<FileChange>> {
+) -> Result<Vec<FileChange>, VcsError> {
     block_on(async {
         let mut stream = from.diff_stream(to, matcher);
         let mut changes = Vec::new();
@@ -77,7 +78,7 @@ pub(crate) fn unified(
     from: &MergedTree,
     to: &MergedTree,
     matcher: &dyn Matcher,
-) -> anyhow::Result<(String, Vec<FileChange>)> {
+) -> Result<(String, Vec<FileChange>), VcsError> {
     let options = ConflictMaterializeOptions {
         marker_style: ConflictMarkerStyle::Diff,
         marker_len: None,
@@ -104,12 +105,18 @@ pub(crate) fn unified(
             let after =
                 materialize_tree_value(store, &path, values.after, to.labels())
                     .await?;
-            let before = git_diff_part(&path, before, &options)
-                .await
-                .with_context(|| format!("Cannot read {name}"))?;
-            let after = git_diff_part(&path, after, &options)
-                .await
-                .with_context(|| format!("Cannot read {name}"))?;
+            let before = git_diff_part(&path, before, &options).await.map_err(
+                |source| VcsError::Read {
+                    name: name.clone(),
+                    source,
+                },
+            )?;
+            let after = git_diff_part(&path, after, &options).await.map_err(
+                |source| VcsError::Read {
+                    name: name.clone(),
+                    source,
+                },
+            )?;
             file_diff(&mut text, &name, &before, &after);
             changes.push(FileChange {
                 path: name,

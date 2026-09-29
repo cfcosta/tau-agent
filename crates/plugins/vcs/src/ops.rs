@@ -4,7 +4,6 @@
 
 use std::collections::HashSet;
 
-use anyhow::{anyhow, bail};
 use futures_util::StreamExt as _;
 use jj_lib::{
     backend::CommitId,
@@ -26,6 +25,7 @@ use serde_json::{Value, json};
 
 use crate::{
     diff::{self, FileChange},
+    error::VcsError,
     session::{
         self,
         BOOKMARK_ATTRIBUTE,
@@ -74,7 +74,7 @@ impl ChangeInfo {
         repo: &dyn Repo,
         commit: &Commit,
         wc: &CommitId,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, VcsError> {
         Ok(Self {
             change_id: commit.change_id().reverse_hex(),
             commit_id: commit.id().hex(),
@@ -139,7 +139,7 @@ fn first_line(description: &str) -> &str {
 fn repo_paths(
     worker: &mut Worker,
     paths: &[String],
-) -> anyhow::Result<Vec<RepoPathBuf>> {
+) -> Result<Vec<RepoPathBuf>, VcsError> {
     let root = worker.root().to_owned();
     let workspace = worker.workspace()?;
     paths
@@ -150,17 +150,17 @@ fn repo_paths(
 
 fn workspace_name(
     worker: &mut Worker,
-) -> anyhow::Result<jj_lib::ref_name::WorkspaceNameBuf> {
+) -> Result<jj_lib::ref_name::WorkspaceNameBuf, VcsError> {
     Ok(worker.workspace()?.workspace_name().to_owned())
 }
 
-fn wc_line(snapshot: &Snapshot) -> anyhow::Result<(String, ChangeInfo)> {
+fn wc_line(snapshot: &Snapshot) -> Result<(String, ChangeInfo), VcsError> {
     let info =
         ChangeInfo::of(snapshot.repo.as_ref(), &snapshot.wc, snapshot.wc.id())?;
     Ok((format!("Working copy (@): {}", info.line()), info))
 }
 
-pub(crate) fn status(worker: &mut Worker) -> anyhow::Result<Report> {
+pub(crate) fn status(worker: &mut Worker) -> Result<Report, VcsError> {
     let settings = worker.workspace()?.settings().clone();
     let snapshot = session::snapshot(worker)?;
     let repo = snapshot.repo.as_ref();
@@ -240,7 +240,7 @@ pub(crate) fn diff(
     worker: &mut Worker,
     change: Option<String>,
     paths: Vec<String>,
-) -> anyhow::Result<Report> {
+) -> Result<Report, VcsError> {
     let paths = repo_paths(worker, &paths)?;
     let settings = worker.workspace()?.settings().clone();
     let snapshot = session::snapshot(worker)?;
@@ -278,7 +278,7 @@ pub(crate) fn diff(
     })
 }
 
-pub(crate) fn log(worker: &mut Worker, limit: u32) -> anyhow::Result<Report> {
+pub(crate) fn log(worker: &mut Worker, limit: u32) -> Result<Report, VcsError> {
     let limit = limit.clamp(1, MAX_LOG_LIMIT) as usize;
     let snapshot = session::snapshot(worker)?;
     let repo = snapshot.repo.as_ref();
@@ -319,7 +319,7 @@ pub(crate) fn log(worker: &mut Worker, limit: u32) -> anyhow::Result<Report> {
 pub(crate) fn show(
     worker: &mut Worker,
     change: String,
-) -> anyhow::Result<Report> {
+) -> Result<Report, VcsError> {
     let settings = worker.workspace()?.settings().clone();
     let snapshot = session::snapshot(worker)?;
     let repo = snapshot.repo.as_ref();
@@ -399,7 +399,7 @@ fn description(message: &str) -> String {
 pub(crate) fn describe(
     worker: &mut Worker,
     message: String,
-) -> anyhow::Result<Report> {
+) -> Result<Report, VcsError> {
     let (snapshot, ()) = session::mutate(worker, "describe", |tx, wc| {
         session::write_commit(tx, |repo| {
             repo.rewrite_commit(wc)
@@ -417,9 +417,9 @@ pub(crate) fn describe(
 pub(crate) fn commit(
     worker: &mut Worker,
     message: String,
-) -> anyhow::Result<Report> {
+) -> Result<Report, VcsError> {
     if message.trim().is_empty() {
-        bail!("The description must not be empty");
+        return Err(VcsError::EmptyDescription);
     }
     let name = workspace_name(worker)?;
     let (snapshot, committed) = session::mutate(worker, "commit", |tx, wc| {
@@ -443,7 +443,7 @@ pub(crate) fn commit(
 pub(crate) fn new(
     worker: &mut Worker,
     message: Option<String>,
-) -> anyhow::Result<Report> {
+) -> Result<Report, VcsError> {
     let name = workspace_name(worker)?;
     let (snapshot, ()) = session::mutate(worker, "new", |tx, wc| {
         let child = block_on(
@@ -486,14 +486,11 @@ pub(crate) fn checkpoint(
     worker: &mut Worker,
     message: String,
     bookmark: &str,
-) -> anyhow::Result<TurnCommit> {
+) -> Result<TurnCommit, VcsError> {
     let name = workspace_name(worker)?;
     let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, wc| {
         let turn = if block_on(wc.is_empty(tx.repo()))? {
-            let parent = wc
-                .parent_ids()
-                .first()
-                .ok_or_else(|| anyhow!("The working copy has no parent"))?;
+            let parent = wc.parent_ids().first().ok_or(VcsError::NoParent)?;
             let parent = tx.repo().store().get_commit(parent)?;
             TurnCommit {
                 commit_id: parent.id().hex(),
@@ -531,8 +528,8 @@ pub(crate) fn checkpoint(
         // The run's bookmark names its newest commit, so its work
         // stays findable after its workspace is gone. A turn that
         // changed nothing finds it there already, and writes nothing.
-        let head = CommitId::try_from_hex(&turn.commit_id)
-            .ok_or_else(|| anyhow!("A commit id is not hex"))?;
+        let head =
+            CommitId::try_from_hex(&turn.commit_id).ok_or(VcsError::NotHex)?;
         let name = RefName::new(bookmark);
         if tx.repo().view().get_local_bookmark(name).as_normal() != Some(&head)
         {
@@ -554,9 +551,9 @@ pub(crate) fn restore(
     worker: &mut Worker,
     paths: Vec<String>,
     from: Option<String>,
-) -> anyhow::Result<Report> {
+) -> Result<Report, VcsError> {
     if paths.is_empty() {
-        bail!("Name at least one path to restore (\".\" restores everything)");
+        return Err(VcsError::NoPaths);
     }
     let paths = repo_paths(worker, &paths)?;
     let matcher = session::matcher(paths);
@@ -599,14 +596,14 @@ pub(crate) fn restore(
     })
 }
 
-pub(crate) fn undo(worker: &mut Worker) -> anyhow::Result<Report> {
+pub(crate) fn undo(worker: &mut Worker) -> Result<Report, VcsError> {
     let name = workspace_name(worker)?;
     let (snapshot, undone) = session::mutate(worker, "undo", |tx, wc| {
         let base = tx.base_repo().clone();
         let target = undoable(base.operation(), &name)?;
         let parents = block_on(target.parents())?;
         let [parent] = parents.as_slice() else {
-            bail!("The operation to undo is a merge; ask the user to undo it")
+            return Err(VcsError::UndoMerge);
         };
         let bad = block_on(base.loader().load_at(&target))?;
         let good = block_on(base.loader().load_at(parent))?;
@@ -650,7 +647,7 @@ fn carry_edits(
     bad: &ReadonlyRepo,
     good: &ReadonlyRepo,
     current: &Commit,
-) -> anyhow::Result<()> {
+) -> Result<(), VcsError> {
     let (Some(bad_id), Some(good_id)) = (
         bad.view().get_wc_commit_id(name).cloned(),
         good.view().get_wc_commit_id(name).cloned(),
@@ -696,19 +693,16 @@ fn carry_edits(
 fn undoable(
     head: &Operation,
     name: &WorkspaceName,
-) -> anyhow::Result<Operation> {
+) -> Result<Operation, VcsError> {
     let mut undone: HashSet<OperationId> = HashSet::new();
     let mut op = head.clone();
     loop {
         let parents = block_on(op.parents())?;
         let [parent] = parents.as_slice() else {
             if parents.is_empty() {
-                bail!("There is nothing to undo");
+                return Err(VcsError::NothingToUndo);
             }
-            bail!(
-                "The operation log has concurrent operations here; ask the \
-                 user to undo from the operation log"
-            );
+            return Err(VcsError::ConcurrentOperations);
         };
         let metadata = op.metadata();
         if undone.remove(op.id())
@@ -726,15 +720,11 @@ fn undoable(
                 .get(TOOL_ATTRIBUTE)
                 .is_some_and(|tool| tool != CHECKPOINT);
         if !ours {
-            bail!(
-                "The last operation was not made by the vcs tools in this \
-                 workspace (\"{}\"); vcs_undo only undoes its own operations",
-                metadata.description
-            );
+            return Err(VcsError::NotOurs(metadata.description.clone()));
         }
         if let Some(target) = metadata.attributes.get(UNDO_ATTRIBUTE) {
             let target = OperationId::try_from_hex(target)
-                .ok_or_else(|| anyhow!("Bad undo record on operation"))?;
+                .ok_or(VcsError::BadUndoRecord)?;
             undone.insert(target);
             op = parent.clone();
             continue;

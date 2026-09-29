@@ -15,7 +15,6 @@ use std::{
     sync::{Arc, mpsc},
 };
 
-use anyhow::{Context as _, anyhow};
 use jj_lib::{
     config::{ConfigLayer, ConfigSource, StackedConfig},
     default_backend_factories::{
@@ -27,6 +26,8 @@ use jj_lib::{
 };
 use pollster::block_on;
 use tokio::sync::oneshot;
+
+use crate::error::VcsError;
 
 /// Who the commits and operations this crate writes are by.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +73,7 @@ impl Vcs {
     pub fn open(
         dir: impl Into<PathBuf>,
         identity: Identity,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, VcsError> {
         let vcs = Self::spawn(dir.into(), identity)?;
         vcs.call_blocking(|worker| worker.workspace().map(|_| ()))?;
         Ok(vcs)
@@ -84,10 +85,12 @@ impl Vcs {
     pub fn init(
         dir: impl Into<PathBuf>,
         identity: Identity,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, VcsError> {
         let dir = dir.into();
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("Cannot create {}", dir.display()))?;
+        std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
+            path: dir.clone(),
+            source,
+        })?;
         let vcs = Self::spawn(dir, identity)?;
         vcs.call_blocking(|worker| {
             let (workspace, _repo) = block_on(Workspace::init_internal_git(
@@ -109,7 +112,7 @@ impl Vcs {
     pub fn lazy(
         dir: impl Into<PathBuf>,
         identity: Identity,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, VcsError> {
         Self::spawn(dir.into(), identity)
     }
 
@@ -121,7 +124,7 @@ impl Vcs {
         &self,
         message: impl Into<String>,
         bookmark: impl Into<String>,
-    ) -> anyhow::Result<crate::TurnCommit> {
+    ) -> Result<crate::TurnCommit, VcsError> {
         let message = message.into();
         let bookmark = bookmark.into();
         self.call(move |worker| {
@@ -141,7 +144,7 @@ impl Vcs {
         child_head: impl Into<String>,
         bookmark: impl Into<String>,
         confirm: bool,
-    ) -> anyhow::Result<crate::Landing> {
+    ) -> Result<crate::Landing, VcsError> {
         let child_head = child_head.into();
         let bookmark = bookmark.into();
         self.call(move |worker| {
@@ -155,7 +158,7 @@ impl Vcs {
         &self.inner.root
     }
 
-    fn spawn(root: PathBuf, identity: Identity) -> anyhow::Result<Self> {
+    fn spawn(root: PathBuf, identity: Identity) -> Result<Self, VcsError> {
         let settings = settings(&identity)?;
         let (jobs, receiver) = mpsc::channel::<Job>();
         let thread_root = root.clone();
@@ -171,7 +174,7 @@ impl Vcs {
                     job(&mut worker);
                 }
             })
-            .context("Cannot start the vcs thread")?;
+            .map_err(VcsError::Thread)?;
         Ok(Self {
             inner: Arc::new(Inner { root, jobs }),
         })
@@ -179,41 +182,36 @@ impl Vcs {
 
     fn submit<T: Send + 'static>(
         &self,
-        job: impl FnOnce(&mut Worker) -> anyhow::Result<T> + Send + 'static,
-    ) -> anyhow::Result<oneshot::Receiver<anyhow::Result<T>>> {
+        job: impl FnOnce(&mut Worker) -> Result<T, VcsError> + Send + 'static,
+    ) -> Result<oneshot::Receiver<Result<T, VcsError>>, VcsError> {
         let (reply, receiver) = oneshot::channel();
         let job: Job = Box::new(move |worker| {
             let result = panic::catch_unwind(AssertUnwindSafe(|| job(worker)))
                 .unwrap_or_else(|payload| {
                     worker.workspace = None;
-                    Err(anyhow!("jj-lib panicked: {}", panic_text(&*payload)))
+                    Err(VcsError::Panicked(panic_text(&*payload)))
                 });
             let _ = reply.send(result);
         });
-        self.inner
-            .jobs
-            .send(job)
-            .map_err(|_| anyhow!("The vcs thread has stopped"))?;
+        self.inner.jobs.send(job).map_err(|_| VcsError::Stopped)?;
         Ok(receiver)
     }
 
     /// Runs `job` on the workspace's thread and waits for its result.
     pub(crate) async fn call<T: Send + 'static>(
         &self,
-        job: impl FnOnce(&mut Worker) -> anyhow::Result<T> + Send + 'static,
-    ) -> anyhow::Result<T> {
-        self.submit(job)?
-            .await
-            .map_err(|_| anyhow!("The vcs thread has stopped"))?
+        job: impl FnOnce(&mut Worker) -> Result<T, VcsError> + Send + 'static,
+    ) -> Result<T, VcsError> {
+        self.submit(job)?.await.map_err(|_| VcsError::Stopped)?
     }
 
     fn call_blocking<T: Send + 'static>(
         &self,
-        job: impl FnOnce(&mut Worker) -> anyhow::Result<T> + Send + 'static,
-    ) -> anyhow::Result<T> {
+        job: impl FnOnce(&mut Worker) -> Result<T, VcsError> + Send + 'static,
+    ) -> Result<T, VcsError> {
         self.submit(job)?
             .blocking_recv()
-            .map_err(|_| anyhow!("The vcs thread has stopped"))?
+            .map_err(|_| VcsError::Stopped)?
     }
 }
 
@@ -227,7 +225,7 @@ pub(crate) struct Worker {
 
 impl Worker {
     /// The workspace, loaded if needed.
-    pub(crate) fn workspace(&mut self) -> anyhow::Result<&mut Workspace> {
+    pub(crate) fn workspace(&mut self) -> Result<&mut Workspace, VcsError> {
         if self.workspace.is_none() {
             let workspace = Workspace::load(
                 &self.settings,
@@ -235,8 +233,9 @@ impl Worker {
                 &default_backend_factories(),
                 &default_working_copy_factories(),
             )
-            .with_context(|| {
-                format!("No jj workspace at {}", self.root.display())
+            .map_err(|source| VcsError::NoWorkspace {
+                root: self.root.clone(),
+                source,
             })?;
             self.workspace = Some(workspace);
         }
@@ -250,7 +249,7 @@ impl Worker {
 }
 
 /// jj's defaults, with `identity` as the user.
-pub(crate) fn settings(identity: &Identity) -> anyhow::Result<UserSettings> {
+pub(crate) fn settings(identity: &Identity) -> Result<UserSettings, VcsError> {
     let mut config = StackedConfig::with_defaults();
     let mut user = ConfigLayer::empty(ConfigSource::User);
     user.set_value("user.name", identity.name.as_str())?;
@@ -273,8 +272,8 @@ fn panic_text(payload: &(dyn Any + Send)) -> String {
 impl Vcs {
     /// Panics on the workspace's thread, to test that the panic is
     /// caught and the workspace reloaded.
-    pub(crate) fn panic_for_tests(&self) -> anyhow::Result<()> {
-        self.call_blocking(|_worker| -> anyhow::Result<()> { panic!("boom") })
+    pub(crate) fn panic_for_tests(&self) -> Result<(), VcsError> {
+        self.call_blocking(|_worker| -> Result<(), VcsError> { panic!("boom") })
     }
 }
 

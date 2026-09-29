@@ -27,6 +27,7 @@ use tau_agent::{
 
 use crate::{
     TurnCommit,
+    error::VcsError,
     project::Project,
     vcs::{Identity, Vcs},
 };
@@ -107,7 +108,7 @@ impl RunWorkspace {
         project: Project,
         name: impl Into<String>,
         identity: Identity,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, VcsError> {
         let name = name.into();
         let vcs = Vcs::lazy(project.workspace_dir(&name), identity)?;
         Ok(Self {
@@ -196,8 +197,7 @@ impl Plugin for RunWorkspace {
             };
             project.add_workspace(&name, &base).map(|_| ())
         })
-        .await?
-        .map_err(PluginError::other)?;
+        .await??;
         Ok(Box::new(Turns {
             vcs: self.vcs.clone(),
             name: self.name.clone(),

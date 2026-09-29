@@ -22,6 +22,7 @@ use tau_agent::{
 
 use crate::{
     ABORTED,
+    error::VcsError,
     ops::{self, DEFAULT_LOG_LIMIT, Report},
     vcs::{Vcs, Worker},
 };
@@ -30,13 +31,12 @@ use crate::{
 async fn run(
     vcs: &Vcs,
     ctx: &ToolCtx,
-    op: impl FnOnce(&mut Worker) -> anyhow::Result<Report> + Send + 'static,
+    op: impl FnOnce(&mut Worker) -> Result<Report, VcsError> + Send + 'static,
 ) -> Result<ToolOutput, ToolError> {
     if ctx.cancel.is_cancelled() {
         return Err(ABORTED.into());
     }
-    // tau-vcs still reports with anyhow.
-    let report = vcs.call(op).await.map_err(ToolError::other)?;
+    let report = vcs.call(op).await?;
     let mut output = ToolOutput::text(report.text);
     output.details = Some(report.details);
     Ok(output)

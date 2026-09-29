@@ -6,7 +6,6 @@
 
 use std::collections::HashSet;
 
-use anyhow::{anyhow, bail};
 use futures_util::StreamExt as _;
 use jj_lib::{
     backend::CommitId,
@@ -22,7 +21,7 @@ use jj_lib::{
 use pollster::block_on;
 use serde::{Deserialize, Serialize};
 
-use crate::{ChangeInfo, session, vcs::Worker};
+use crate::{ChangeInfo, error::VcsError, session, vcs::Worker};
 
 /// What landing a child did, or would do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,9 +46,9 @@ pub(crate) fn land(
     child_head: &str,
     bookmark: &str,
     confirm: bool,
-) -> anyhow::Result<Landing> {
+) -> Result<Landing, VcsError> {
     let child_head = CommitId::try_from_hex(child_head)
-        .ok_or_else(|| anyhow!("`{child_head}` is not a commit id"))?;
+        .ok_or_else(|| VcsError::NotCommitId(child_head.to_owned()))?;
     let name = worker.workspace()?.workspace_name().to_owned();
     if confirm {
         let (_, landing) = session::mutate(worker, "land", |tx, wc| {
@@ -69,18 +68,15 @@ fn restack(
     workspace: &jj_lib::ref_name::WorkspaceName,
     child_head: &CommitId,
     bookmark: &str,
-) -> anyhow::Result<Landing> {
+) -> Result<Landing, VcsError> {
     // Landing happens between turns, when the parent's work is all
     // committed; anything in its working copy would be buried.
     if !block_on(wc.is_empty(tx.repo()))? {
-        bail!(
-            "The parent's working copy has changes; land the child after \
-             the parent's turn ends"
-        );
+        return Err(VcsError::ParentChanged);
     }
     let head = match wc.parent_ids() {
         [head] => head.clone(),
-        _ => bail!("The parent's working copy is a merge"),
+        _ => return Err(VcsError::ParentMerge),
     };
 
     // The child's changes: what its head has that the parent's lacks.
@@ -117,7 +113,7 @@ fn restack(
         }
     }
     if roots.len() > 1 {
-        bail!("The child's changes do not form one stack");
+        return Err(VcsError::NotOneStack);
     }
     for root in roots {
         // A child the parent waited on already sits on the parent's
@@ -143,7 +139,7 @@ fn restack(
         .view()
         .get_wc_commit_id(workspace)
         .cloned()
-        .ok_or_else(|| anyhow!("The workspace has no working-copy commit"))?;
+        .ok_or(VcsError::NoWorkingCopy)?;
     let mut changes = Vec::new();
     for id in &moving {
         let old = tx.repo().store().get_commit(id)?;
@@ -158,17 +154,16 @@ fn restack(
 }
 
 /// The visible commit `commit`'s change names now.
-fn current(repo: &dyn Repo, commit: &Commit) -> anyhow::Result<Commit> {
+fn current(repo: &dyn Repo, commit: &Commit) -> Result<Commit, VcsError> {
     let targets = block_on(repo.resolve_change_id(commit.change_id()))?
-        .ok_or_else(|| anyhow!("A landed change went missing"))?;
+        .ok_or(VcsError::LandedMissing)?;
     let visible: Vec<&CommitId> =
         targets.visible_with_offsets().map(|(_, id)| id).collect();
     match visible.as_slice() {
         [id] => Ok(repo.store().get_commit(id)?),
-        _ => bail!(
-            "Change {} is divergent after landing",
-            commit.change_id().reverse_hex()
-        ),
+        _ => Err(VcsError::DivergentAfterLanding(
+            commit.change_id().reverse_hex(),
+        )),
     }
 }
 

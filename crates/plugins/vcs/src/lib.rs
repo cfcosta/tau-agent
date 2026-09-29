@@ -25,6 +25,7 @@
 mod clone;
 pub mod delegate;
 mod diff;
+pub mod error;
 mod land;
 mod ops;
 pub mod plugin;
@@ -34,9 +35,10 @@ mod session;
 pub mod tools;
 mod vcs;
 
-pub use clone::clone_bare;
+pub use clone::{CloneError, TransferError, clone_bare};
 pub use delegate::Delegate;
 pub use diff::{ChangeKind, FileChange, MAX_DIFF_BYTES};
+pub use error::VcsError;
 pub use land::Landing;
 pub use ops::{ChangeInfo, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT, TurnCommit};
 pub use plugin::VcsPlugin;

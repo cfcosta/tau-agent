@@ -3,7 +3,7 @@
 
 use std::{path::Path, process::Command};
 
-use tau_vcs::{Identity, Project, Vcs};
+use tau_vcs::{Identity, Project, Vcs, VcsError};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -75,7 +75,9 @@ impl Run<'_> {
     }
 }
 
-fn block<T>(future: impl std::future::Future<Output = anyhow::Result<T>>) -> T {
+fn block<T>(
+    future: impl std::future::Future<Output = Result<T, VcsError>>,
+) -> T {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

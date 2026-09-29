@@ -17,7 +17,6 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, anyhow, bail};
 use jj_lib::{
     backend::{ChangeId, CommitId},
     commit::Commit,
@@ -38,6 +37,7 @@ use pollster::block_on;
 
 use crate::{
     diff::{ChangeKind, FileChange},
+    error::VcsError,
     run_workspace::Link,
     vcs::{Identity, Vcs, settings},
 };
@@ -73,7 +73,7 @@ impl Project {
         source: &str,
         root: impl Into<PathBuf>,
         identity: Identity,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, VcsError> {
         let root = root.into();
         if root.join(MAIN).join(".jj").is_dir() {
             return Self::open(root, identity);
@@ -85,10 +85,10 @@ impl Project {
     pub fn open(
         root: impl Into<PathBuf>,
         identity: Identity,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, VcsError> {
         let root = root.into();
         if !root.join(MAIN).join(".jj").is_dir() {
-            bail!("No tau project at {}", root.display());
+            return Err(VcsError::NoProject(root));
         }
         Self::new(root, identity)
     }
@@ -101,10 +101,12 @@ impl Project {
         source: &str,
         root: impl Into<PathBuf>,
         identity: Identity,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, VcsError> {
         let root = root.into();
-        std::fs::create_dir_all(&root)
-            .with_context(|| format!("Cannot create {}", root.display()))?;
+        std::fs::create_dir_all(&root).map_err(|source| VcsError::Create {
+            path: root.clone(),
+            source,
+        })?;
         let git_dir = root.join(GIT);
         if !git_dir.is_dir() {
             copy_git_store(Path::new(source), &git_dir)?;
@@ -117,7 +119,7 @@ impl Project {
             &main,
             &git_dir,
         ))
-        .context("Cannot make the jj repository")?;
+        .map_err(VcsError::MakeRepo)?;
         let mut tx = repo.start_transaction();
         let options = GitImportOptions {
             abandon_unreachable_commits: true,
@@ -125,12 +127,12 @@ impl Project {
             remote_auto_track_bookmarks: HashMap::new(),
         };
         block_on(import_refs(tx.repo_mut(), &options))
-            .context("Cannot import the Git branches")?;
+            .map_err(VcsError::ImportBranches)?;
         block_on(tx.commit("tau: import"))?;
         Ok(project)
     }
 
-    fn new(root: PathBuf, identity: Identity) -> anyhow::Result<Self> {
+    fn new(root: PathBuf, identity: Identity) -> Result<Self, VcsError> {
         let settings = settings(&identity)?;
         Ok(Self {
             inner: Arc::new(Inner {
@@ -145,7 +147,7 @@ impl Project {
     /// or last updated: new commits, and branches where the source has
     /// them now. Runs keep their workspaces and commits; new runs start
     /// from the new trunk. Returns the trunk before and after.
-    pub fn update(&self, from: UpdateFrom<'_>) -> anyhow::Result<Updated> {
+    pub fn update(&self, from: UpdateFrom<'_>) -> Result<Updated, VcsError> {
         let before = self.trunk()?;
         let git_dir = self.inner.root.join(GIT);
         match from {
@@ -162,7 +164,7 @@ impl Project {
             remote_auto_track_bookmarks: HashMap::new(),
         };
         block_on(import_refs(tx.repo_mut(), &options))
-            .context("Cannot import the Git branches")?;
+            .map_err(VcsError::ImportBranches)?;
         block_on(tx.commit("tau: update"))?;
         Ok(Updated {
             before,
@@ -176,10 +178,15 @@ impl Project {
         &self,
         commit: &str,
         path: &str,
-    ) -> anyhow::Result<Option<(Vec<u8>, bool)>> {
+    ) -> Result<Option<(Vec<u8>, bool)>, VcsError> {
         let repo = self.git()?;
-        let id = gix::ObjectId::from_hex(commit.as_bytes())
-            .with_context(|| format!("{commit} is not a commit id"))?;
+        let id =
+            gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
+                VcsError::BadCommitHex {
+                    commit: commit.to_owned(),
+                    source,
+                }
+            })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
         let mut tree = commit.tree()?;
         let Some(entry) = tree.peel_to_entry_by_path(path)? else {
@@ -194,10 +201,15 @@ impl Project {
     }
 
     /// The first parent of `commit`, if it has one.
-    pub fn parent_of(&self, commit: &str) -> anyhow::Result<Option<String>> {
+    pub fn parent_of(&self, commit: &str) -> Result<Option<String>, VcsError> {
         let repo = self.git()?;
-        let id = gix::ObjectId::from_hex(commit.as_bytes())
-            .with_context(|| format!("{commit} is not a commit id"))?;
+        let id =
+            gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
+                VcsError::BadCommitHex {
+                    commit: commit.to_owned(),
+                    source,
+                }
+            })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
         Ok(commit.parent_ids().next().map(|id| id.to_string()))
     }
@@ -211,9 +223,12 @@ impl Project {
             .map(str::to_owned)
     }
 
-    fn git(&self) -> anyhow::Result<gix::Repository> {
-        gix::open(self.inner.root.join(GIT)).with_context(|| {
-            format!("No Git store in {}", self.inner.root.display())
+    fn git(&self) -> Result<gix::Repository, VcsError> {
+        gix::open(self.inner.root.join(GIT)).map_err(|source| {
+            VcsError::NoGitStore {
+                root: self.inner.root.clone(),
+                source: Box::new(source),
+            }
         })
     }
 
@@ -230,7 +245,7 @@ impl Project {
     /// The commit new runs start from: the source's default branch, as
     /// the clone's `HEAD` names it, or the root commit of an empty
     /// repository. A full commit id, in hex.
-    pub fn trunk(&self) -> anyhow::Result<String> {
+    pub fn trunk(&self) -> Result<String, VcsError> {
         let repo = self.load()?;
         let head =
             std::fs::read_to_string(self.inner.root.join(GIT).join("HEAD"))
@@ -263,17 +278,14 @@ impl Project {
     pub fn current(
         &self,
         links: impl IntoIterator<Item = Link>,
-    ) -> anyhow::Result<Vec<Link>> {
+    ) -> Result<Vec<Link>, VcsError> {
         let repo = self.load()?;
         links
             .into_iter()
             .map(|mut link| {
                 let change = ChangeId::try_from_reverse_hex(&link.change_id)
                     .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "`{}` is not a change id",
-                            link.change_id
-                        )
+                        VcsError::NotChangeId(link.change_id.clone())
                     })?;
                 let visible: Vec<CommitId> =
                     match block_on(repo.resolve_change_id(&change))? {
@@ -286,11 +298,12 @@ impl Project {
                 match visible.as_slice() {
                     [] => {}
                     [id] => link.commit_id = id.hex(),
-                    _ => anyhow::bail!(
-                        "Change {} of turn {} is divergent",
-                        link.change_id,
-                        link.turn
-                    ),
+                    _ => {
+                        return Err(VcsError::DivergentTurn {
+                            change: link.change_id.clone(),
+                            turn: link.turn,
+                        });
+                    }
                 }
                 Ok(link)
             })
@@ -300,7 +313,7 @@ impl Project {
     /// The commit the local bookmark `name` points at, as a full commit
     /// id in hex. `None` when there is no such bookmark, or it has
     /// conflicting targets.
-    pub fn bookmark(&self, name: &str) -> anyhow::Result<Option<String>> {
+    pub fn bookmark(&self, name: &str) -> Result<Option<String>, VcsError> {
         let repo = self.load()?;
         Ok(repo
             .view()
@@ -315,11 +328,11 @@ impl Project {
         &self,
         ancestor: &str,
         descendant: &str,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, VcsError> {
         let repo = self.load()?;
         let id = |hex: &str| {
             CommitId::try_from_hex(hex)
-                .ok_or_else(|| anyhow::anyhow!("`{hex}` is not a commit id"))
+                .ok_or_else(|| VcsError::NotCommitId(hex.to_owned()))
         };
         Ok(block_on(
             repo.index().is_ancestor(&id(ancestor)?, &id(descendant)?),
@@ -333,14 +346,14 @@ impl Project {
         &self,
         keep: &str,
         head: &str,
-    ) -> anyhow::Result<usize> {
+    ) -> Result<usize, VcsError> {
         use futures_util::StreamExt as _;
         use jj_lib::revset::ResolvedRevsetExpression;
 
         let repo = self.load()?;
         let id = |hex: &str| {
             CommitId::try_from_hex(hex)
-                .ok_or_else(|| anyhow::anyhow!("`{hex}` is not a commit id"))
+                .ok_or_else(|| VcsError::NotCommitId(hex.to_owned()))
         };
         let ids: Vec<CommitId> = {
             let revset = ResolvedRevsetExpression::commit(id(head)?)
@@ -365,7 +378,7 @@ impl Project {
     }
 
     /// The local bookmarks whose names start with `prefix`, sorted.
-    pub fn bookmarks(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
+    pub fn bookmarks(&self, prefix: &str) -> Result<Vec<String>, VcsError> {
         let repo = self.load()?;
         let mut names: Vec<String> = repo
             .view()
@@ -379,7 +392,10 @@ impl Project {
 
     /// The working-copy commit of workspace `name`, as a full commit id
     /// in hex, if the workspace exists.
-    pub fn workspace_head(&self, name: &str) -> anyhow::Result<Option<String>> {
+    pub fn workspace_head(
+        &self,
+        name: &str,
+    ) -> Result<Option<String>, VcsError> {
         let repo = self.load()?;
         Ok(repo
             .view()
@@ -389,7 +405,7 @@ impl Project {
 
     /// Removes the local bookmark `name`, if there is one. The commits it
     /// named stay.
-    pub fn remove_bookmark(&self, name: &str) -> anyhow::Result<()> {
+    pub fn remove_bookmark(&self, name: &str) -> Result<(), VcsError> {
         let repo = self.load()?;
         let name = RefName::new(name);
         if repo.view().get_local_bookmark(name).is_absent() {
@@ -407,13 +423,19 @@ impl Project {
     /// Makes run `name`'s workspace, on a new empty commit on top of
     /// `base` (a full commit id in hex), with `base`'s files checked out,
     /// and opens it. Opens it as it is if it exists already.
-    pub fn add_workspace(&self, name: &str, base: &str) -> anyhow::Result<Vcs> {
+    pub fn add_workspace(
+        &self,
+        name: &str,
+        base: &str,
+    ) -> Result<Vcs, VcsError> {
         let dir = self.workspace_dir(name);
         if dir.join(".jj").is_dir() {
             return Vcs::open(dir, self.inner.identity.clone());
         }
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("Cannot create {}", dir.display()))?;
+        std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
+            path: dir.clone(),
+            source,
+        })?;
         let main = self.main()?;
         let repo = block_on(main.repo_loader().load_at_head())?;
         let (mut workspace, repo) =
@@ -424,7 +446,7 @@ impl Project {
                 &*default_working_copy_factory(),
                 WorkspaceNameBuf::from(name),
             ))
-            .context("Cannot add the workspace")?;
+            .map_err(VcsError::AddWorkspace)?;
         let base = commit(&repo, base)?;
         let mut tx = repo.start_transaction();
         let wc = block_on(
@@ -434,13 +456,13 @@ impl Project {
         block_on(tx.repo_mut().rebase_descendants())?;
         let repo = block_on(tx.commit(format!("tau: add workspace {name}")))?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
-            .context("Cannot check out the workspace's files")?;
+            .map_err(VcsError::CheckOut)?;
         Vcs::open(dir, self.inner.identity.clone())
     }
 
     /// Removes run `name`'s workspace: jj forgets it, and its directory
     /// is deleted. Its commits stay in the repository.
-    pub fn forget_workspace(&self, name: &str) -> anyhow::Result<()> {
+    pub fn forget_workspace(&self, name: &str) -> Result<(), VcsError> {
         let repo = self.load()?;
         let name_buf = WorkspaceNameBuf::from(name);
         if repo.view().get_wc_commit_id(&name_buf).is_some() {
@@ -451,8 +473,12 @@ impl Project {
         }
         let dir = self.workspace_dir(name);
         if dir.exists() {
-            std::fs::remove_dir_all(&dir)
-                .with_context(|| format!("Cannot delete {}", dir.display()))?;
+            std::fs::remove_dir_all(&dir).map_err(|source| {
+                VcsError::Delete {
+                    path: dir.clone(),
+                    source,
+                }
+            })?;
         }
         Ok(())
     }
@@ -460,7 +486,11 @@ impl Project {
     /// How the files differ from commit `from` to commit `to` (full hex
     /// ids): one entry per changed file, in path order, with its line
     /// counts and its unified diff.
-    pub fn diff(&self, from: &str, to: &str) -> anyhow::Result<Vec<FileDiff>> {
+    pub fn diff(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<FileDiff>, VcsError> {
         let repo = self.load()?;
         let from = commit(&repo, from)?.tree();
         let to = commit(&repo, to)?.tree();
@@ -475,7 +505,7 @@ impl Project {
     }
 
     /// The names of the workspaces runs have, sorted.
-    pub fn workspaces(&self) -> anyhow::Result<Vec<String>> {
+    pub fn workspaces(&self) -> Result<Vec<String>, VcsError> {
         let repo = self.load()?;
         let mut names: Vec<String> = repo
             .view()
@@ -488,19 +518,20 @@ impl Project {
         Ok(names)
     }
 
-    fn main(&self) -> anyhow::Result<Workspace> {
+    fn main(&self) -> Result<Workspace, VcsError> {
         Workspace::load(
             &self.inner.settings,
             &self.inner.root.join(MAIN),
             &default_backend_factories(),
             &default_working_copy_factories(),
         )
-        .with_context(|| {
-            format!("No tau project at {}", self.inner.root.display())
+        .map_err(|source| VcsError::ProjectLoad {
+            root: self.inner.root.clone(),
+            source,
         })
     }
 
-    fn load(&self) -> anyhow::Result<Arc<ReadonlyRepo>> {
+    fn load(&self) -> Result<Arc<ReadonlyRepo>, VcsError> {
         let main = self.main()?;
         Ok(block_on(main.repo_loader().load_at_head())?)
     }
@@ -591,27 +622,25 @@ fn split_files(text: &str, changes: Vec<FileChange>) -> Vec<FileDiff> {
 }
 
 /// The commit a full hex id names.
-fn commit(repo: &Arc<ReadonlyRepo>, hex: &str) -> anyhow::Result<Commit> {
+fn commit(repo: &Arc<ReadonlyRepo>, hex: &str) -> Result<Commit, VcsError> {
     let id = CommitId::try_from_hex(hex.trim())
-        .ok_or_else(|| anyhow!("`{hex}` is not a commit id"))?;
+        .ok_or_else(|| VcsError::NotCommitId(hex.to_owned()))?;
     repo.store()
         .get_commit(&id)
-        .with_context(|| format!("No commit {hex}"))
+        .map_err(|source| VcsError::MissingCommit {
+            hex: hex.to_owned(),
+            source,
+        })
 }
 
 /// Makes `into` a bare copy of the Git repository at `source`, without
 /// `git`: the object files are hard-linked (copied across file systems),
 /// the refs, `HEAD` and config copied, and the config marked bare.
 /// Objects never change once written, so sharing them is safe.
-fn copy_git_store(source: &Path, into: &Path) -> anyhow::Result<()> {
-    let git_dir = git_dir(source).ok_or_else(|| {
-        anyhow!(
-            "{} is not a Git repository. Only local repositories can be \
-             imported for now",
-            source.display()
-        )
-    })?;
-    let copied = (|| -> anyhow::Result<()> {
+fn copy_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
+    let git_dir = git_dir(source)
+        .ok_or_else(|| VcsError::NotGitRepo(source.to_owned()))?;
+    let copied = (|| -> std::io::Result<()> {
         std::fs::create_dir_all(into)?;
         copy_tree(&git_dir.join("objects"), &into.join("objects"), true)?;
         copy_tree(&git_dir.join("refs"), &into.join("refs"), false)?;
@@ -629,18 +658,18 @@ fn copy_git_store(source: &Path, into: &Path) -> anyhow::Result<()> {
     if copied.is_err() {
         let _ = std::fs::remove_dir_all(into);
     }
-    copied.with_context(|| {
-        format!("Cannot copy the Git store of {}", source.display())
+    copied.map_err(|error| VcsError::CopyGitStore {
+        path: source.to_owned(),
+        source: error,
     })
 }
 
 /// Brings a copy made by [`copy_git_store`] up to date with its source:
 /// the objects it lacks (object files never change, so the ones it has
 /// are kept), and the source's branches, tags and `HEAD`.
-fn update_git_store(source: &Path, into: &Path) -> anyhow::Result<()> {
-    let git_dir = git_dir(source).ok_or_else(|| {
-        anyhow!("{} is not a Git repository any more", source.display())
-    })?;
+fn update_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
+    let git_dir = git_dir(source)
+        .ok_or_else(|| VcsError::NoLongerGitRepo(source.to_owned()))?;
     (|| -> std::io::Result<()> {
         add_missing(&git_dir.join("objects"), &into.join("objects"))?;
         // The source's branches and tags as they are: a loose ref left
@@ -660,7 +689,10 @@ fn update_git_store(source: &Path, into: &Path) -> anyhow::Result<()> {
         }
         Ok(())
     })()
-    .with_context(|| format!("Cannot update from {}", source.display()))
+    .map_err(|error| VcsError::UpdateGitStore {
+        path: source.to_owned(),
+        source: error,
+    })
 }
 
 /// Links (or copies) the files under `from` that `into` lacks.

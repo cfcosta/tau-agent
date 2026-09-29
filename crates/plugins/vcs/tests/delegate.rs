@@ -4,7 +4,7 @@
 use std::{path::Path, process::Command};
 
 use serde_json::json;
-use tau_agent::agent::Agent;
+use tau_agent::{agent::Agent, tool::ToolError};
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_tools::{path::Root, plugin::CodingTools};
@@ -56,7 +56,7 @@ fn coder(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
 fn delegating(
     llm: ScriptedModel,
     workspace: &RunWorkspace,
-    child: impl Fn(RunWorkspace) -> anyhow::Result<Agent> + Send + Sync + 'static,
+    child: impl Fn(RunWorkspace) -> Result<Agent, ToolError> + Send + Sync + 'static,
 ) -> Agent {
     coder(llm, workspace).tool(Delegate::new(
         workspace.clone(),
@@ -170,7 +170,7 @@ fn a_failed_sub_agent_is_dropped() {
             RunWorkspace::new(project.clone(), "parent", Identity::default())
                 .unwrap();
         let outcome = delegating(llm.clone(), &parent, |_| {
-            anyhow::bail!("no model for sub-agents")
+            Err("no model for sub-agents".into())
         })
         .run("delegate something", &store)
         .await
