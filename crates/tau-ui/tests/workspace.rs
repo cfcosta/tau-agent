@@ -13,7 +13,7 @@ use tau_ui::{
     route::Route,
     setup::{GitHub, ModelAccess, Setup, SetupStep, SetupUpdate},
     view::{BranchCode, CodeState, Item, RunStatus},
-    workspace::PickerTarget,
+    workspace::{LandingState, PickerTarget},
 };
 
 fn open(
@@ -1454,6 +1454,78 @@ fn a_diff_card_opens_one_file_at_a_time(cx: &mut TestAppContext) {
         assert!(!ws.file_open(&run, "show", "a.rs"), "per card");
         ws.toggle_file(&run, "diff", "a.rs", cx);
         assert!(!ws.file_open(&run, "diff", "a.rs"));
+    });
+}
+
+/// A fork lands from the compare screen: a preview first, then the
+/// landing, which leaves a card in the parent's chat, closes the fork,
+/// and opens the parent.
+#[gpui::test]
+fn a_fork_lands_on_its_parent(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let fork = demo::fork_id();
+    let parent = tau_agent::tool::RunId("rotation-jitter".into());
+    let change = serde_json::from_value::<tau_vcs::ChangeInfo>(serde_json::json!({
+        "change_id": "qlmxnpvoqlmxnpvoqlmxnpvoqlmxnpvo",
+        "commit_id": "0123456789abcdef0123456789abcdef01234567",
+        "description": "feat(tau-ai): cap the backoff at the policy's max\n",
+        "empty": false, "conflict": false, "immutable": false,
+        "working_copy": false, "divergent": false, "bookmarks": [],
+    }))
+    .unwrap();
+    let landing = tau_vcs::Landing {
+        changes: vec![change],
+        conflicts: Vec::new(),
+        head: "0123456789abcdef0123456789abcdef01234567".into(),
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        assert_eq!(ws.landing(&fork), None);
+        ws.preview_landing(&fork, cx);
+        assert_eq!(ws.landing(&fork), Some(&LandingState::Previewing));
+        ws.set_landing_preview(&fork, Ok(landing.clone()), cx);
+        ws.land(&fork, cx);
+        assert_eq!(ws.landing(&fork), Some(&LandingState::Landing));
+        ws.landed(&fork, Ok(landing), cx);
+        assert_eq!(ws.landing(&fork), None);
+        assert!(ws.is_closed(&fork), "the fork's chat closes");
+        assert_eq!(ws.route(), &Route::Run(parent.clone()));
+        let card = ws
+            .run(&parent)
+            .and_then(|view| {
+                view.items.iter().rev().find_map(|item| match item {
+                    Item::Landed(card) => Some(card.clone()),
+                    _ => None,
+                })
+            })
+            .expect("a landed card in the parent");
+        assert_eq!(card.from, fork);
+        assert_eq!(
+            card.changes[0].subject,
+            "cap the backoff at the policy's max"
+        );
+    });
+    let events = events.borrow();
+    assert!(events.iter().any(|event| matches!(event,
+        WorkspaceEvent::PreviewLanding { run } if *run == fork)));
+    assert!(events.iter().any(|event| matches!(event,
+        WorkspaceEvent::Land { run } if *run == fork)));
+}
+
+/// A landing the host refuses shows why, in place of the preview.
+#[gpui::test]
+fn a_refused_landing_says_why(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    let fork = demo::fork_id();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.land(&fork, cx);
+        ws.landed(&fork, Err("rotation-jitter is still running".into()), cx);
+        assert_eq!(
+            ws.landing(&fork),
+            Some(&LandingState::Preview(Err(
+                "rotation-jitter is still running".into()
+            )))
+        );
+        assert!(!ws.is_closed(&fork));
     });
 }
 

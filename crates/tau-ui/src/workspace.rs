@@ -35,10 +35,12 @@ use tau_agent::{
     event::{RunEvent, StopReason},
     tool::RunId,
 };
+use tau_vcs::Landing;
 
 use crate::{
     assets::Icon,
     catalog::{Catalog, PluginInfo, PluginScreen},
+    change_log::Change,
     input::{InputEvent, TextInput},
     models::{AccessKind, ModelChoice, ModelSettings},
     pull_request::{PrState, PullRequest},
@@ -77,6 +79,8 @@ use crate::{
         ChildKind,
         ChildRun,
         CodeState,
+        Item,
+        LandedCard,
         Origin,
         Proposal,
         RunStatus,
@@ -218,6 +222,14 @@ pub enum WorkspaceEvent {
     SaveModelSettings(ModelSettings),
     /// Keep this branch of a fork and drop the others.
     KeepBranch {
+        run: RunId,
+    },
+    /// Say what landing this child run on its parent would do.
+    PreviewLanding {
+        run: RunId,
+    },
+    /// Land this child run on its parent, then close it (ADR 0009).
+    Land {
         run: RunId,
     },
     /// Keep a note a memory plugin suggested.
@@ -422,6 +434,8 @@ pub struct Workspace {
     /// Flagged calls someone looked at, as `(run, call id)`.
     pub(crate) dismissed: HashSet<(RunId, String)>,
     pub(crate) kept_branch: Option<RunId>,
+    /// Child runs on their way to landing, by run.
+    landings: HashMap<RunId, LandingState>,
     pub(crate) setup: Setup,
     pub(crate) pull_requests: HashMap<RunId, PullRequest>,
     /// The code of each comparison opened, by (run, fork).
@@ -679,6 +693,7 @@ impl Workspace {
             picked_changes: HashMap::new(),
             dismissed: HashSet::new(),
             kept_branch: None,
+            landings: HashMap::new(),
             setup: Setup::default(),
             pull_requests: HashMap::new(),
             branch_code: HashMap::new(),
@@ -1215,6 +1230,81 @@ impl Workspace {
             .run(run)
             .map_or(String::new(), |view| self.repo_of(view).to_owned());
         self.navigate(Route::Constitution { repo, rule }, cx);
+    }
+
+    /// Asks what landing `run`, a child run, on its parent would do.
+    pub fn preview_landing(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        self.landings.insert(run.clone(), LandingState::Previewing);
+        cx.emit(WorkspaceEvent::PreviewLanding { run: run.clone() });
+        cx.notify();
+    }
+
+    pub fn set_landing_preview(
+        &mut self,
+        run: &RunId,
+        preview: Result<Landing, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.landings
+            .insert(run.clone(), LandingState::Preview(preview));
+        cx.notify();
+    }
+
+    /// Puts a landing preview away without landing.
+    pub fn cancel_landing(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        self.landings.remove(run);
+        cx.notify();
+    }
+
+    /// Lands `run` on its parent.
+    pub fn land(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        self.landings.insert(run.clone(), LandingState::Landing);
+        cx.emit(WorkspaceEvent::Land { run: run.clone() });
+        cx.notify();
+    }
+
+    /// What landing `run` came to. Landed, the parent's chat gets a card
+    /// for it, the child's chat closes, and the parent opens.
+    pub fn landed(
+        &mut self,
+        run: &RunId,
+        landing: Result<Landing, String>,
+        cx: &mut Context<Self>,
+    ) {
+        let landing = match landing {
+            Ok(landing) => landing,
+            Err(error) => {
+                self.landings
+                    .insert(run.clone(), LandingState::Preview(Err(error)));
+                cx.notify();
+                return;
+            }
+        };
+        self.landings.remove(run);
+        let Some(child) = self.run(run) else {
+            return;
+        };
+        let parent = match &child.origin {
+            Origin::Fork { from, .. } => from.clone(),
+            Origin::SubAgent { parent } => parent.clone(),
+            Origin::Root => return,
+        };
+        let card = LandedCard {
+            from: run.clone(),
+            title: child.title.clone(),
+            changes: landing.changes.into_iter().map(Change::new).collect(),
+            conflicts: landing.conflicts,
+        };
+        if let Some(view) = self.runs.iter_mut().find(|view| view.id == parent)
+        {
+            view.items.push(Item::Landed(card));
+        }
+        self.close_run(run, cx);
+        self.navigate(Route::Run(parent), cx);
+    }
+
+    pub fn landing(&self, run: &RunId) -> Option<&LandingState> {
+        self.landings.get(run)
     }
 
     pub fn keep_branch(&mut self, run: &RunId, cx: &mut Context<Self>) {
@@ -3142,4 +3232,15 @@ impl Render for Workspace {
             .typeset(if phone { Type::PHONE } else { Type::SMALL })
             .child(body)
     }
+}
+
+/// Where landing a child run stands.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LandingState {
+    /// Waiting for the host's preview.
+    Previewing,
+    /// What landing would do, or why it cannot.
+    Preview(Result<Landing, String>),
+    /// Landing now.
+    Landing,
 }

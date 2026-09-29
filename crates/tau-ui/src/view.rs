@@ -225,6 +225,8 @@ pub enum Item {
     Thinking(String),
     Tool(ToolCard),
     Plugin(PluginNote),
+    /// A child run's changes landed on this run (ADR 0009).
+    Landed(LandedCard),
     /// A plugin rewrote the context.
     Rewrite {
         plugin: String,
@@ -249,6 +251,18 @@ pub enum Item {
         cost: f64,
         plugin_cost: f64,
     },
+}
+
+/// A child run that landed on this run: what it brought.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LandedCard {
+    pub from: RunId,
+    /// The child's title, as the run list called it.
+    pub title: String,
+    /// Its changes on this run's stack, newest first.
+    pub changes: Vec<crate::change_log::Change>,
+    /// Paths left with conflict markers for this run's next turn.
+    pub conflicts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

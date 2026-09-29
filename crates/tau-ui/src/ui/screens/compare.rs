@@ -17,12 +17,14 @@ use tau_agent::tool::RunId;
 
 use crate::{
     assets::Icon,
+    change_log::Change,
     route::Route,
     theme::{Design as _, Theme, Type, radius, sp, weight},
     ui::{
         self,
         components::ButtonKind,
         dot,
+        log_card,
         mono,
         pill,
         rich,
@@ -39,7 +41,7 @@ use crate::{
         tokens,
         usd,
     },
-    workspace::Workspace,
+    workspace::{LandingState, Workspace},
 };
 
 pub fn render(
@@ -523,6 +525,7 @@ fn branch(
                     )
                 }),
         )
+        .children(landing(ws, run, t, compact, cx))
         .when(ws.kept_branch.as_ref() == Some(&run.id), |column| {
             column.child(
                 div().typeset(Type::CAPTION).text_color(t.green).child(
@@ -530,6 +533,134 @@ fn branch(
                 ),
             )
         })
+}
+
+/// Landing a finished fork on the run it forked (ADR 0009): a button,
+/// then the preview (what would land, and what would conflict), then
+/// Land or Cancel.
+fn landing(
+    ws: &Workspace,
+    run: &RunView,
+    t: &Theme,
+    compact: bool,
+    cx: &mut Context<Workspace>,
+) -> Option<gpui::Div> {
+    let Origin::Fork { from, .. } = &run.origin else {
+        return None;
+    };
+    if run.status.is_live() {
+        return None;
+    }
+    let parent = ws
+        .run(from)
+        .map_or_else(|| "its parent".to_owned(), |view| view.title.clone());
+    let id = run.id.clone();
+    let button = |label: String, kind: ButtonKind, key: &str| {
+        div()
+            .id(SharedString::from(format!("{key}-{}", run.id)))
+            .child(ui::button(label, kind, t))
+    };
+    let caption = |text: String, color| {
+        div().typeset(Type::CAPTION).text_color(color).child(text)
+    };
+    let body = match ws.landing(&run.id) {
+        None => div().child(
+            button(format!("Land on {parent}"), ButtonKind::Primary, "land")
+                .on_click(
+                    cx.listener(move |ws, _, _, cx| {
+                        ws.preview_landing(&id, cx)
+                    }),
+                ),
+        ),
+        Some(LandingState::Previewing) => {
+            caption("Checking what would land…".into(), t.dim)
+        }
+        Some(LandingState::Landing) => {
+            caption(format!("Landing on {parent}…"), t.dim)
+        }
+        Some(LandingState::Preview(Err(error))) => div()
+            .flex()
+            .flex_col()
+            .gap(sp(2.))
+            .child(caption(error.clone(), t.red))
+            .child(
+                button("Close".into(), ButtonKind::Secondary, "cancel-land")
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.cancel_landing(&id, cx)
+                    })),
+            ),
+        Some(LandingState::Preview(Ok(preview))) => {
+            let changes: Vec<Change> =
+                preview.changes.iter().cloned().map(Change::new).collect();
+            let summary = match changes.len() {
+                0 => format!("Nothing to land: {parent} has all of it."),
+                1 => format!(
+                    "1 change lands on {parent}, on top of its latest turn."
+                ),
+                n => format!(
+                    "{n} changes land on {parent}, on top of its latest turn."
+                ),
+            };
+            let (land_id, cancel_id) = (id.clone(), id.clone());
+            div()
+                .flex()
+                .flex_col()
+                .gap(sp(2.))
+                .child(caption(summary, t.text_soft))
+                .child(
+                    ui::card(t)
+                        .bg(t.card)
+                        .py(sp(1.5))
+                        .children(log_card::stack_rows(&changes, t, compact)),
+                )
+                .when(!preview.conflicts.is_empty(), |column| {
+                    column.child(caption(
+                        format!(
+                            "Conflicts in {}. They land as conflict markers \
+                             for {parent}'s next turn to resolve.",
+                            preview.conflicts.join(", ")
+                        ),
+                        t.red,
+                    ))
+                })
+                .child(
+                    div()
+                        .flex()
+                        .gap(sp(2.))
+                        .when(!changes.is_empty(), |row| {
+                            row.child(
+                                button(
+                                    if preview.conflicts.is_empty() {
+                                        "Land".into()
+                                    } else {
+                                        "Land with conflicts".into()
+                                    },
+                                    ButtonKind::Primary,
+                                    "confirm-land",
+                                )
+                                .on_click(
+                                    cx.listener(move |ws, _, _, cx| {
+                                        ws.land(&land_id, cx)
+                                    }),
+                                ),
+                            )
+                        })
+                        .child(
+                            button(
+                                "Cancel".into(),
+                                ButtonKind::Secondary,
+                                "cancel-land",
+                            )
+                            .on_click(cx.listener(
+                                move |ws, _, _, cx| {
+                                    ws.cancel_landing(&cancel_id, cx)
+                                },
+                            )),
+                        ),
+                )
+        }
+    };
+    Some(body)
 }
 
 /// The total in a `N tests run` summary line.

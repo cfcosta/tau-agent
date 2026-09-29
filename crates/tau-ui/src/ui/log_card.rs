@@ -9,7 +9,7 @@ use crate::{
     assets::Icon,
     change_log::{Change, ChangeLog, ScopeRun},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    view::{RunView, ToolCard},
+    view::{LandedCard, RunView, ToolCard},
     workspace::Workspace,
 };
 
@@ -381,5 +381,139 @@ fn detail(change: &Change, t: &Theme) -> Div {
         .child(field("state", state.join(" · "), t.text_soft))
         .when(!info.bookmarks.is_empty(), |panel| {
             panel.child(field("bookmarks", info.bookmarks.join(", "), t.blue))
+        })
+}
+
+/// Changes as they sit on a stack, newest first, without picking: a
+/// landing's preview and its card in the parent's chat.
+pub fn stack_rows(changes: &[Change], t: &Theme, compact: bool) -> Vec<Div> {
+    changes
+        .iter()
+        .map(|change| {
+            let color =
+                change.scope.as_deref().map_or(t.dim, |scope| t.mark(scope));
+            let (kind_color, kind_bg) = kind_colors(change.kind.as_deref(), t);
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(2.5))
+                .h(px(26.))
+                .pl(sp(3.75))
+                .pr(sp(3.))
+                .child(
+                    div()
+                        .w(px(2.))
+                        .h_full()
+                        .mr(sp(2.75))
+                        .flex_shrink_0()
+                        .bg(color.opacity(0.35)),
+                )
+                .when(!compact, |row| {
+                    row.child(
+                        mono(
+                            change.kind.clone().unwrap_or_else(|| "—".into()),
+                            Type::MICRO,
+                            kind_color,
+                        )
+                        .w(px(40.))
+                        .flex_shrink_0()
+                        .flex()
+                        .justify_center()
+                        .rounded(radius::SMALL)
+                        .bg(kind_bg),
+                    )
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .typeset(Type::SMALL)
+                        .text_color(t.text_soft)
+                        .child(if change.subject.is_empty() {
+                            "(no description set)".to_owned()
+                        } else {
+                            change.subject.clone()
+                        }),
+                )
+                .when(change.info.conflict, |row| {
+                    row.child(
+                        mono("conflict", Type::MICRO, t.red).flex_shrink_0(),
+                    )
+                })
+                .child(short_id(change, t))
+        })
+        .collect()
+}
+
+/// A child run's landing, in its parent's chat: what came, and what is
+/// left to resolve. The child's title opens its closed chat.
+pub fn landed(
+    card: &LandedCard,
+    t: &Theme,
+    compact: bool,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let from = card.from.clone();
+    let count = match card.changes.len() {
+        1 => "1 change".to_owned(),
+        n => format!("{n} changes"),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .border_1()
+        .border_color(t.border)
+        .rounded(radius::BOX)
+        .bg(t.card)
+        .overflow_hidden()
+        .child(
+            div()
+                .id(SharedString::from(format!("landed-{}", card.from.0)))
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .min_h(px(36.))
+                .px(sp(3.))
+                .cursor_pointer()
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.navigate(crate::route::Route::Run(from.clone()), cx)
+                }))
+                .child(icon(Icon::Fork, IconSize::COMPACT, t.change))
+                .child(mono("landed", Type::CAPTION, t.blue).flex_shrink_0())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .typeset(Type::SMALL)
+                        .text_color(t.text_soft)
+                        .child(card.title.clone()),
+                )
+                .child(mono(count, Type::CAPTION, t.dim).flex_shrink_0()),
+        )
+        .when(!card.changes.is_empty(), |column| {
+            column.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .py(sp(1.5))
+                    .border_t_1()
+                    .border_color(t.border)
+                    .children(stack_rows(&card.changes, t, compact)),
+            )
+        })
+        .when(!card.conflicts.is_empty(), |column| {
+            column.child(
+                div()
+                    .px(sp(3.))
+                    .pb(sp(2.))
+                    .typeset(Type::CAPTION)
+                    .text_color(t.red)
+                    .child(format!(
+                        "Conflicts in {}: the next turn resolves them.",
+                        card.conflicts.join(", ")
+                    )),
+            )
         })
 }

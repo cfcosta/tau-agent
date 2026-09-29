@@ -2254,6 +2254,19 @@ impl Host {
                         });
                     }
                 }
+                WorkspaceEvent::PreviewLanding { run } => {
+                    let preview = handler
+                        .preview_landing(run)
+                        .map_err(|error| format!("{error:#}"));
+                    workspace.update(cx, |ws, cx| {
+                        ws.set_landing_preview(run, preview, cx)
+                    });
+                }
+                WorkspaceEvent::Land { run } => {
+                    let landed =
+                        handler.land(run).map_err(|error| format!("{error:#}"));
+                    workspace.update(cx, |ws, cx| ws.landed(run, landed, cx));
+                }
                 WorkspaceEvent::KeepBranch { run } => {
                     if let Err(error) = handler.keep_branch(run) {
                         eprintln!(

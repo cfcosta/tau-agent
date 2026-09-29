@@ -124,6 +124,9 @@ fn item_view(
             plugin_note(ws, run, kept, index, note, t, compact, cx)
                 .into_any_element()
         }
+        Item::Landed(card) => {
+            log_card::landed(card, t, compact, cx).into_any_element()
+        }
         Item::Rewrite {
             plugin,
             tokens_before,
