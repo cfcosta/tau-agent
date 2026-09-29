@@ -398,6 +398,11 @@ Research and the reasons behind these choices:
 - **Staleness:** a note `about` a file is marked "may be stale" when a
   later turn's commit touches that file; the agent sees the mark and
   re-checks.
+  - The app hears of each turn's commit through `RunWorkspace::on_commit`,
+    with the paths it changed, so a change made through bash counts as
+    much as one through the edit tools.
+  - Only notes last written before the turn began are marked: a commit
+    can hold edits made before a note about that file was written.
 - **Storage:** tau's data directory, per repository, versioned so every
   change is a diff that can be reviewed or reverted; nothing lands in
   the project's history. Notes are the truth; the search index is
@@ -420,6 +425,12 @@ Research and the reasons behind these choices:
   one `MEMORY.md`, docbert over raw transcripts.
 - **Scope:** per repository, plus a user scope for preferences across
   projects; a fact lives in exactly one.
+  - In the app, a repository's notes are in `memory/` in tau's directory
+    for it, beside its constitution, and the user's in `memory/` in
+    tau's data directory. Each scope opens once and every run shares it.
+  - Plugin context sits in the run's first message as text blocks before
+    the input; the app shows only the last block as what the user
+    wrote.
 
 ### `tau-constitution`: rules checked on specific calls
 

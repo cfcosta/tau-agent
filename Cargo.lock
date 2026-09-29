@@ -8511,6 +8511,7 @@ dependencies = [
  "tau-fast-compaction",
  "tau-goal",
  "tau-jev",
+ "tau-memory",
  "tau-reasoning",
  "tau-store",
  "tau-testing",

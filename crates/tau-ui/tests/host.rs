@@ -44,7 +44,9 @@ fn host_on(
         model: Some("gpt-5.5".into()),
         root: root.to_owned(),
         store: std::env::temp_dir().join("unused.db"),
-        repos: std::env::temp_dir().join("unused-repos"),
+        // Tau's directory for repositories, where memory lives too: the
+        // test's own.
+        repos: fresh_repo_list().with_extension("repos"),
         settings: std::env::temp_dir().join("unused-models.json"),
         repo_list: fresh_repo_list(),
     };
@@ -1235,4 +1237,86 @@ fn each_message_is_scored_again() {
             "reply: a long answer",
         ]
     );
+}
+
+/// A run keeps a note in its repository's memory, the Memory screen
+/// shows it, and a later run's commit that changes the file it is about,
+/// even through bash, marks it as maybe stale.
+#[test]
+fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("a.txt"), "one\n").unwrap();
+    git(src.path(), &["add", "a.txt"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let note = serde_json::json!({
+        "type": "fact",
+        "title": "a.txt holds the count",
+        "description": "The count lives in a.txt, one number per line.",
+        "body": "Read a.txt for the count.",
+        "links": [{ "to": "a.txt", "type": "about" }],
+    });
+    let bash = serde_json::json!({ "command": "echo two > a.txt" });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("memory_write", note.clone()))
+        .turn(|t| t.text("noted"))
+        .turn(|t| t.tool_call("bash", bash.clone()))
+        .turn(|t| t.text("changed"));
+    let (host, mut events) = host_on(llm, src.path());
+    let host = host.with_project(project);
+    let memory_of = |host: &Host| {
+        let catalog = host.catalog();
+        let repo = catalog
+            .repos
+            .iter()
+            .find(|repo| {
+                Path::new(&repo.path) == src.path().canonicalize().unwrap()
+            })
+            .expect("the checkout is listed")
+            .clone();
+        repo.memory
+    };
+    assert!(memory_of(&host).notes.is_empty());
+    assert!(
+        host.catalog()
+            .plugins
+            .iter()
+            .any(|plugin| plugin.name == "tau-memory")
+    );
+
+    let first = host.start("note it", &ModelChoice::default(), "").unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &first.id);
+    let memory = memory_of(&host);
+    assert_eq!(memory.notes.len(), 1, "{memory:?}");
+    let kept = &memory.notes[0];
+    assert_eq!(kept.title, "a.txt holds the count");
+    assert_eq!(kept.paths, ["a.txt"]);
+    assert!(!kept.body[0].starts_with("May be stale"), "{:?}", kept.body);
+
+    let second = host
+        .start("change it", &ModelChoice::default(), "")
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &second.id);
+    // The mark is made off the run's thread; give it a moment.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let memory = memory_of(&host);
+        if memory.notes[0].body[0].starts_with("May be stale") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "never marked stale: {memory:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }

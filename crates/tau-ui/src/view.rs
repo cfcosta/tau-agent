@@ -662,20 +662,7 @@ impl RunView {
     fn push_message(&mut self, message: &Message) {
         let view = self;
         match message {
-            Message::User(user) => {
-                let text = match &user.content {
-                    UserContent::Text(text) => text.clone(),
-                    UserContent::Blocks(blocks) => blocks
-                        .iter()
-                        .filter_map(|block| match block {
-                            InputBlock::Text(text) => Some(text.text.as_str()),
-                            InputBlock::Image(_) => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                };
-                view.push_user(text);
-            }
+            Message::User(user) => view.push_user(user_words(&user.content)),
             Message::Assistant(reply) => {
                 // A turn is a reply and the results of its calls; the
                 // next reply starts the next one.
@@ -1805,6 +1792,23 @@ fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
         None if card.tool == "bash" => ToolBody::Output(tail(&text, 4)),
         None => ToolBody::None,
     };
+}
+
+/// What the user wrote in a user message. A run's first message carries
+/// plugins' context (memory, for one) as text blocks before the input,
+/// so the user's words are its last text block.
+pub fn user_words(content: &UserContent) -> String {
+    match content {
+        UserContent::Text(text) => text.clone(),
+        UserContent::Blocks(blocks) => blocks
+            .iter()
+            .rev()
+            .find_map(|block| match block {
+                InputBlock::Text(text) => Some(text.text.clone()),
+                InputBlock::Image(_) => None,
+            })
+            .unwrap_or_default(),
+    }
 }
 
 fn text_of(output: &ToolOutput) -> String {

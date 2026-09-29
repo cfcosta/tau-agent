@@ -50,6 +50,7 @@ pub mod goal;
 pub mod host;
 pub mod input;
 pub mod markdown;
+pub mod memory;
 pub mod metered;
 pub mod models;
 pub mod picker;

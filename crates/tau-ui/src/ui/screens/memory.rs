@@ -528,21 +528,24 @@ fn neighborhood(
                 .child(heading(&format!("Backlinks · {}", back.len()), t))
                 .children(back_rows),
         )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(1.5))
-                .child(heading("Brought into runs", t))
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.text_soft)
-                        .line_height(relative(1.5))
-                        .child(format!(
-                            "{} runs got this note at start.",
-                            note.used_by_runs
-                        )),
-                ),
-        )
+        // Only a count someone kept is worth a section.
+        .when(note.used_by_runs > 0, |panel| {
+            panel.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(1.5))
+                    .child(heading("Brought into runs", t))
+                    .child(
+                        div()
+                            .typeset(Type::CAPTION)
+                            .text_color(t.text_soft)
+                            .line_height(relative(1.5))
+                            .child(format!(
+                                "{} runs got this note at start.",
+                                note.used_by_runs
+                            )),
+                    ),
+            )
+        })
 }

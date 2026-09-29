@@ -34,7 +34,7 @@ use tau_agent::{
 use tau_ai::{
     client::OpenAi,
     codex::{CodexAuth, CodexCredentials},
-    message::{Message, UserContent},
+    message::Message,
     model::find,
 };
 use tau_compaction::Compaction;
@@ -68,6 +68,7 @@ use crate::{
         StoreInfo,
     },
     github,
+    memory::{Memories, stale_on_commit},
     models::{
         AccessInfo,
         AccessKind,
@@ -400,6 +401,8 @@ pub struct Host {
     jev: Option<Arc<dyn tau_jev::Jev>>,
     /// What every plugin's Jev requests did this session.
     jev_meter: Arc<Mutex<crate::metered::Meter>>,
+    /// Each repository's notes and the user's, shared by every run.
+    memories: Arc<Memories>,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -487,7 +490,11 @@ impl Host {
         let store = runtime.block_on(Store::open(&config.store))?;
         let agent =
             coder(&runtime, &config.access, &config.model_for(&config.access))?;
-        let (host, events) = Self::with_agent(runtime, agent, store, config);
+        let (mut host, events) =
+            Self::with_agent(runtime, agent, store, config);
+        // The app searches memory with docbert's model; hosts built
+        // elsewhere, as in tests, by keywords alone.
+        host.memories = Arc::new(Memories::semantic());
         // Copying checkouts can take a while; the window opens first.
         let listed: Vec<Listed> = host
             .list
@@ -565,6 +572,7 @@ impl Host {
             github: github::Api::default(),
             jev: None,
             jev_meter: Arc::default(),
+            memories: Arc::new(Memories::keywords()),
             store,
             choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
@@ -966,6 +974,7 @@ impl Host {
                 let mut repo =
                     Repo::new(&listed.name, listed.path.display().to_string());
                 repo.constitution = self.repo_constitution(slot);
+                repo.memory = self.memories.catalog(&self.memory_dir(slot));
                 Some(repo)
             })
             .collect();
@@ -1001,6 +1010,20 @@ impl Host {
             seams: vec![Seam::Start, Seam::AfterTool, Seam::BeforeStop],
             spend: 0.0,
             screen: None,
+        });
+        plugins.push(PluginInfo {
+            name: tau_memory::plugin::NAME.into(),
+            description: "Linked notes each repository's runs keep, and \
+                          yours across them; searched at the start of a run"
+                .into(),
+            seams: vec![
+                Seam::Start,
+                Seam::Tools,
+                Seam::AfterTool,
+                Seam::Rewrite,
+            ],
+            spend: 0.0,
+            screen: Some(PluginScreen::Memory),
         });
         Catalog {
             agent: "coder".into(),
@@ -1092,18 +1115,25 @@ impl Host {
         // The conversation's goal, checked with Jev too; after the
         // constitution, whose hold of a stop wins.
         let goal = self.jev().map(tau_goal::GoalPlugin::new);
+        let memory = self.memory_plugin(repo);
         let Some(project) = repo.project.wait() else {
             let tools = CodingTools::new(Root::new(repo.path.clone()));
-            let agent = agent.plugin(tools);
+            let agent = with_plugin(agent.plugin(tools), memory);
             let agent = with_plugin(with_plugin(agent, constitution), goal);
             return Ok((agent, None));
         };
         let name = workspace.unwrap_or_else(workspace_name);
-        let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
+        let mut workspace =
+            RunWorkspace::new(project.clone(), &name, identity())?;
+        // Notes about the files a turn's commit changed may be stale.
+        if let Some(memory) = &memory {
+            workspace = workspace.on_commit(stale_on_commit(memory.clone()));
+        }
         let agent = agent
             .plugin(CodingTools::new(Root::new(workspace.dir())))
             .plugin(VcsPlugin::new(workspace.vcs().clone()))
             .plugin(workspace);
+        let agent = with_plugin(agent, memory);
         let agent = with_plugin(with_plugin(agent, constitution), goal);
         Ok((agent, Some(name)))
     }
@@ -1138,6 +1168,35 @@ impl Host {
             spent: meter.spent,
             failed: meter.failed,
         })
+    }
+
+    /// Where a repository's memory notes are kept: in tau's directory for
+    /// it, beside its constitution, out of the repository's history.
+    fn memory_dir(&self, repo: &RepoSlot) -> PathBuf {
+        self.config.project_dir_of(&repo.path).join("memory")
+    }
+
+    /// Where the user's notes, shared by every repository, are kept.
+    fn user_memory_dir(&self) -> PathBuf {
+        self.config
+            .repos
+            .parent()
+            .unwrap_or(&self.config.repos)
+            .join("memory")
+    }
+
+    /// The memory plugin for a run in `repo`, or none when its notes
+    /// cannot be opened: the run goes on without memory.
+    fn memory_plugin(
+        &self,
+        repo: &RepoSlot,
+    ) -> Option<tau_memory::MemoryPlugin> {
+        self.memories
+            .plugin(&self.memory_dir(repo), &self.user_memory_dir())
+            .inspect_err(|error| {
+                eprintln!("tau-ui: memory is off for this run: {error:#}");
+            })
+            .ok()
     }
 
     /// Where a repository's constitution is kept: in tau's directory for
@@ -1632,6 +1691,20 @@ impl Host {
         view.plugins.push(PluginStatus {
             name: "tau-compaction".into(),
             state: "watching the window".into(),
+            tone: Tone::Quiet,
+        });
+        view.plugins.push(PluginStatus {
+            name: tau_memory::plugin::NAME.into(),
+            state: match self
+                .memories
+                .catalog(&self.memory_dir(&repo))
+                .notes
+                .len()
+            {
+                0 => "no notes yet".into(),
+                1 => "1 note".into(),
+                n => format!("{n} notes"),
+            },
             tone: Tone::Quiet,
         });
         let rules = Constitution::load(&self.constitution_path(&repo))
@@ -2825,10 +2898,7 @@ pub async fn history(
             })
             .collect();
         let mut users = messages.iter().filter_map(|message| match message {
-            Message::User(user) => Some(match &user.content {
-                UserContent::Text(text) => text.clone(),
-                UserContent::Blocks(_) => String::new(),
-            }),
+            Message::User(user) => Some(crate::view::user_words(&user.content)),
             _ => None,
         });
         // A fork's own prompt is its last user message.
