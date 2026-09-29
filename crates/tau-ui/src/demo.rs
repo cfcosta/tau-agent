@@ -1633,6 +1633,103 @@ fn lines(count: usize) -> ToolOutput {
     )
 }
 
+/// The session's `vcs_log` call.
+pub const LOG_CALL: &str = "c12";
+/// The change `--open log` picks in it: the commit with a body.
+pub const LOG_PICKED: &str = "onvkmqwosvvznnzyzztmonuszpkqvokt";
+
+/// What `vcs_log` returns at the end of the session: the run's turns
+/// and commits over trunk.
+fn change_log() -> ToolOutput {
+    let changes = [
+        (
+            "uowlmnvlqlmxxmrmxlnrlwlrlotxontp",
+            "36b3216fdaeeb975729fae923d5a4fd12aabfe22",
+            "",
+            "@",
+        ),
+        (
+            "szmltytwvkyvpnzlqtorwwzmpywsoxsx",
+            "bc74254770f58904dba41ecccc3fc1626e53a130",
+            "test(tau-ai): retry-after as seconds, as a date, capped, malformed\n",
+            "",
+        ),
+        (
+            "onvkmqwosvvznnzyzztmonuszpkqvokt",
+            "28b5b7a767c76fb008f86bebb2737f6a6f0fb23c",
+            "feat(tau-ai): honor retry-after on 429 and 503\n\nThe server's \
+          hint wins over our backoff, capped at the policy's max_delay. A \
+          header that does not parse falls back to the backoff.\n",
+            "",
+        ),
+        (
+            "qzpxumwywmppokoyozvookknoxqqksqt",
+            "7a8d41bed440e50454f31af3176813e02ea68ef7",
+            "tau: run retry-after turn 2\n",
+            "",
+        ),
+        (
+            "sqyoxnwyumrxmqtnovosoyrnwzprpxwu",
+            "d6ba2b0aee0ca923732881584d8c4fa2815d2802",
+            "tau: run retry-after turn 1\n",
+            "",
+        ),
+        (
+            "smrmsnykuxsolrnpslpqttqtypsvkslk",
+            "06f7e3dfc967a64cb14028d512c9791e558e08ba",
+            "fix(tau-ui): a message's bubble holds all its lines\n",
+            "immutable",
+        ),
+        (
+            "urltqvpkuwmzsqrkmsmowlwkttrmowuz",
+            "4941d4072014b3ce107f80e222f828767efc2f91",
+            "feat(tau-agent): plugins see the transcript a rewrite replaced\n",
+            "immutable",
+        ),
+        (
+            "qmoustokzlzsnqzttyyynqtmzktymysw",
+            "662248b483b7ffc050fec94dbca3a0aac36098b2",
+            "docs: decide tau-memory's design\n",
+            "immutable",
+        ),
+    ];
+    let text = changes
+        .iter()
+        .map(|(change, commit, description, flag)| {
+            let flags = match *flag {
+                "@" => " @ (empty)",
+                "immutable" => " (immutable)",
+                _ => "",
+            };
+            let line =
+                description.lines().next().unwrap_or("(no description set)");
+            format!("{} {}{flags} {line}", &change[..12], &commit[..12])
+        })
+        .chain([
+            "\n[Showing the newest 8 changes. Use limit=16 for more]".into()
+        ])
+        .collect::<Vec<_>>()
+        .join("\n");
+    let changes: Vec<Value> = changes
+        .iter()
+        .map(|(change, commit, description, flag)| {
+            json!({
+                "change_id": change,
+                "commit_id": commit,
+                "description": description,
+                "empty": *flag == "@",
+                "conflict": false,
+                "immutable": *flag == "immutable",
+                "working_copy": *flag == "@",
+            })
+        })
+        .collect();
+    ToolOutput {
+        details: Some(json!({ "changes": changes, "more": true })),
+        ..ToolOutput::text(text)
+    }
+}
+
 fn edit(path: &str, new_text: &str, diff: &str) -> (Value, ToolOutput) {
     (
         json!({ "path": path, "edits": [{ "oldText": "", "newText": new_text }] }),
@@ -2054,6 +2151,7 @@ pub fn script() -> Vec<Step> {
     }
     log.push_str("     Summary [3.1s] 14 tests run: 14 passed, 0 skipped");
     s.end_tool(600, "c11", ToolOutput::text(log));
+    s.tool(200, LOG_CALL, "vcs_log", json!({}), change_log());
     s.end_turn(81_000, 1_300, 0.052);
 
     s.turn();
