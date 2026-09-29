@@ -22,8 +22,6 @@
 //!
 //! [`continuation`]: super::continuation
 
-use std::fmt;
-
 use serde_json::Value;
 
 use super::continuation::{Body, Continuation, RequestKind, prepare};
@@ -83,23 +81,12 @@ pub enum Failure {
 }
 
 /// Misuse of the lane by its caller.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LaneError {
     /// A request was submitted while another is in flight.
+    #[error("a request is already in flight on this lane")]
     Busy,
 }
-
-impl fmt::Display for LaneError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Busy => {
-                f.write_str("a request is already in flight on this lane")
-            }
-        }
-    }
-}
-
-impl std::error::Error for LaneError {}
 
 /// A recovery-ladder step, for [`LaneStats`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

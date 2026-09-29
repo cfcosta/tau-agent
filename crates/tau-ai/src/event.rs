@@ -11,8 +11,6 @@
 //! then `*End`, and blocks never overlap. Block indices count up from 0 in
 //! the order blocks start.
 
-use std::fmt;
-
 use crate::{
     message::{
         API,
@@ -125,20 +123,13 @@ impl From<ErrorReason> for StopReason {
 }
 
 /// An event that breaks the stream grammar.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("event {position}: {reason}")]
 pub struct GrammarError {
     /// Position of the offending event in the stream, from 0.
     pub position: usize,
     pub reason: &'static str,
 }
-
-impl fmt::Display for GrammarError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "event {}: {}", self.position, self.reason)
-    }
-}
-
-impl std::error::Error for GrammarError {}
 
 /// Rebuilds an [`AssistantMessage`] from a stream of events, checking the
 /// stream grammar as it goes.

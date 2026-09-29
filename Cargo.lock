@@ -8295,6 +8295,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tau-testing",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",

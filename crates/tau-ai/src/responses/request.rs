@@ -17,7 +17,7 @@
 //! Every field except `input` depends only on [`Settings`], so two turns
 //! of one run differ only in `input`. The delta rule depends on that.
 
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
@@ -102,20 +102,9 @@ pub struct Settings {
 pub struct StreamId(String);
 
 /// A string that is not a valid [`StreamId`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid stream_id {0:?}: need 1-256 characters from [A-Za-z0-9_.-]")]
 pub struct InvalidStreamId(pub String);
-
-impl fmt::Display for InvalidStreamId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "invalid stream_id {:?}: need 1-256 characters from [A-Za-z0-9_.-]",
-            self.0
-        )
-    }
-}
-
-impl std::error::Error for InvalidStreamId {}
 
 impl StreamId {
     pub fn new(id: impl Into<String>) -> Result<Self, InvalidStreamId> {

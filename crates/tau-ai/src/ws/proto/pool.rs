@@ -100,23 +100,14 @@ pub enum PoolAction {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PoolError {
+    #[error("unknown lane {0}")]
     UnknownLane(LaneId),
     /// The lane already has a request submitted or in flight.
+    #[error("lane {0} already has a request")]
     Busy(LaneId),
 }
-
-impl std::fmt::Display for PoolError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnknownLane(lane) => write!(f, "unknown lane {lane}"),
-            Self::Busy(lane) => write!(f, "lane {lane} already has a request"),
-        }
-    }
-}
-
-impl std::error::Error for PoolError {}
 
 /// Counters for the whole pool. Lane counters are summed over every lane
 /// the pool has had, including closed ones; `last_delta_items` is the

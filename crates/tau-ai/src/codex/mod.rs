@@ -80,30 +80,20 @@ pub(crate) fn now_ms() -> u64 {
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CodexError {
+    // Not a `#[source]`: the message already carries it.
+    #[error("codex: {0}")]
     Io(io::Error),
     /// Signing in or refreshing failed; the message says why.
+    #[error("codex sign-in: {0}")]
     Login(String),
     /// The access token has no ChatGPT account id.
+    #[error("codex: the access token has no ChatGPT account id")]
     NoAccount,
+    #[error("codex credentials: {0}")]
     Parse(String),
 }
-
-impl fmt::Display for CodexError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "codex: {error}"),
-            Self::Login(why) => write!(f, "codex sign-in: {why}"),
-            Self::NoAccount => {
-                write!(f, "codex: the access token has no ChatGPT account id")
-            }
-            Self::Parse(why) => write!(f, "codex credentials: {why}"),
-        }
-    }
-}
-
-impl std::error::Error for CodexError {}
 
 impl From<CodexError> for io::Error {
     fn from(error: CodexError) -> Self {

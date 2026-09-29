@@ -82,16 +82,9 @@ pub struct Response {
 }
 
 /// The transport stopped before answering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the WebSocket transport stopped")]
 pub struct Stopped;
-
-impl std::fmt::Display for Stopped {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the WebSocket transport stopped")
-    }
-}
-
-impl std::error::Error for Stopped {}
 
 #[derive(Debug)]
 enum Command {

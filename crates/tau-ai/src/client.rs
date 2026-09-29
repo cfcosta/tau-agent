@@ -35,16 +35,9 @@ use crate::{
 pub const API_KEY_VAR: &str = "OPENAI_API_KEY";
 
 /// `OPENAI_API_KEY` is not set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{API_KEY_VAR} is not set")]
 pub struct MissingApiKey;
-
-impl std::fmt::Display for MissingApiKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{API_KEY_VAR} is not set")
-    }
-}
-
-impl std::error::Error for MissingApiKey {}
 
 /// A client for OpenAI's Responses WebSocket mode. Clones share one
 /// connection pool. Must be created inside a tokio runtime.

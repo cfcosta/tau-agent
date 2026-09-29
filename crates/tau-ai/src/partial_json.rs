@@ -200,43 +200,28 @@ enum ScalarEvent {
 }
 
 /// An error from [`PartialJson::finish`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum PartialJsonError {
     /// The root value is not a JSON object.
+    #[error("the root value must be a JSON object")]
     RootNotObject,
     /// Non-whitespace content followed the root object's closing `}`.
+    #[error("unexpected content after the root object")]
     TrailingGarbage,
     /// The input ended before the value was complete.
+    #[error("unexpected end of input")]
     UnexpectedEof,
     /// A character is not valid JSON syntax at this position.
+    #[error("unexpected character {0:?}")]
     UnexpectedChar(char),
     /// A number's buffered text is not a valid JSON number.
+    #[error("invalid number: {0:?}")]
     InvalidNumber(String),
     /// A `\uXXXX` high surrogate was not followed by a matching low
     /// surrogate escape.
+    #[error("unpaired surrogate in a \\u escape")]
     LoneSurrogate,
 }
-
-impl std::fmt::Display for PartialJsonError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::RootNotObject => {
-                write!(f, "the root value must be a JSON object")
-            }
-            Self::TrailingGarbage => {
-                write!(f, "unexpected content after the root object")
-            }
-            Self::UnexpectedEof => write!(f, "unexpected end of input"),
-            Self::UnexpectedChar(c) => write!(f, "unexpected character {c:?}"),
-            Self::InvalidNumber(text) => write!(f, "invalid number: {text:?}"),
-            Self::LoneSurrogate => {
-                write!(f, "unpaired surrogate in a \\u escape")
-            }
-        }
-    }
-}
-
-impl std::error::Error for PartialJsonError {}
 
 impl Default for PartialJson {
     fn default() -> Self {

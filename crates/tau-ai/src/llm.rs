@@ -10,8 +10,6 @@
 //! [`OpenAi`](crate::client::OpenAi) implements it over the WebSocket
 //! transport; `tau_testing::ScriptedModel` implements it from a script.
 
-use std::fmt;
-
 use futures_util::{
     FutureExt,
     StreamExt,
@@ -30,18 +28,11 @@ use crate::{
 pub type EventStream = BoxStream<'static, AssistantEvent>;
 
 /// A session could not be opened.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
 pub struct LlmError {
     pub message: String,
 }
-
-impl fmt::Display for LlmError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for LlmError {}
 
 /// A model provider.
 pub trait Llm: Send + Sync + 'static {
