@@ -735,10 +735,27 @@ fn plugin_note(
     compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Div {
+    // A chart's note starts closed; its header opens it. The phone
+    // links to the chart instead.
+    let folds = !compact && matches!(note.body, NoteBody::Distribution { .. });
+    let open = !folds || ws.note_open(&run.id, index);
     let header = div()
+        .id(SharedString::from(format!("note-{index}")))
         .flex()
         .items_center()
         .gap(sp(2.))
+        .when(folds, |row| {
+            let run_id = run.id.clone();
+            row.cursor_pointer()
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.toggle_note(&run_id, index, cx)
+                }))
+                .child(icon(
+                    if open { Icon::Down } else { Icon::Chevron },
+                    IconSize::SMALL,
+                    t.dim,
+                ))
+        })
         .child(
             div()
                 .size(px(20.))
@@ -773,6 +790,7 @@ fn plugin_note(
                         .id(SharedString::from(format!("details-{index}")))
                         .child(link("Details", t))
                         .on_click(cx.listener(move |ws, _, _, cx| {
+                            cx.stop_propagation();
                             ws.navigate(route.clone(), cx)
                         })),
                 )
@@ -903,8 +921,13 @@ fn plugin_note(
                     .child(rich(&note.text, t.text_soft, t)),
             )
         })
-        .when_some(body, |card, body| {
-            card.child(div().pl(sp(if compact { 0. } else { 7. })).child(body))
+        .when_some(body.filter(|_| open), |card, body| {
+            let indent = match (compact, folds) {
+                (true, _) => 0.,
+                (false, true) => 12.,
+                (false, false) => 7.,
+            };
+            card.child(div().pl(sp(indent)).child(body))
         })
 }
 

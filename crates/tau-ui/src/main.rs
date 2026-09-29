@@ -377,6 +377,12 @@ fn open_demo_screen(
             workspace.set_tab(tau_ui::ui::inspector::Tab::Plugins, cx);
             return;
         }
+        Some("note-open") => {
+            // The demo streams tau-reasoning's note in right after the
+            // task.
+            workspace.toggle_note(&demo::run_id(), 1, cx);
+            return;
+        }
         Some("search") => {
             workspace.show_search("re", cx);
             return;

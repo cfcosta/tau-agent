@@ -1397,3 +1397,17 @@ fn goal_buttons_store_changes_and_keep_going(cx: &mut TestAppContext) {
         WorkspaceEvent::Resume { run, prompt, .. }
             if run == &stopped && prompt == tau_ui::goal::KEEP_GOING)));
 }
+
+#[gpui::test]
+fn a_plugin_note_opens_and_closes(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let run = demo::run_id();
+        assert!(!ws.note_open(&run, 3), "notes start closed");
+        ws.toggle_note(&run, 3, cx);
+        assert!(ws.note_open(&run, 3));
+        assert!(!ws.note_open(&run, 4), "only that note opens");
+        ws.toggle_note(&run, 3, cx);
+        assert!(!ws.note_open(&run, 3));
+    });
+}

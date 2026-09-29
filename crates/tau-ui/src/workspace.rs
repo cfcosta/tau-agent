@@ -407,6 +407,9 @@ pub struct Workspace {
     inspector_shown: bool,
     /// Notes kept, per run, by title.
     pub(crate) kept: HashMap<RunId, HashSet<String>>,
+    /// Plugin notes opened to show their detail, as `(run, item index)`.
+    /// Notes start closed.
+    pub(crate) open_notes: HashSet<(RunId, usize)>,
     /// Flagged calls someone looked at, as `(run, call id)`.
     pub(crate) dismissed: HashSet<(RunId, String)>,
     pub(crate) kept_branch: Option<RunId>,
@@ -653,6 +656,7 @@ impl Workspace {
             model_info: false,
             inspector_shown: false,
             kept: HashMap::new(),
+            open_notes: HashSet::new(),
             dismissed: HashSet::new(),
             kept_branch: None,
             setup: Setup::default(),
@@ -1047,6 +1051,24 @@ impl Workspace {
             input.set_placeholder("Describe the task for a new run");
         });
         self.composer.read(cx).focus_handle(cx).focus(window);
+    }
+
+    /// Opens or closes the detail of the note at `index` of `run`.
+    pub fn toggle_note(
+        &mut self,
+        run: &RunId,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (run.clone(), index);
+        if !self.open_notes.remove(&key) {
+            self.open_notes.insert(key);
+        }
+        cx.notify();
+    }
+
+    pub fn note_open(&self, run: &RunId, index: usize) -> bool {
+        self.open_notes.contains(&(run.clone(), index))
     }
 
     pub fn keep_note(
