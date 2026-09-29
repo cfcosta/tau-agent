@@ -36,7 +36,6 @@ use tau_compaction::{
     Compaction,
     CutPoint,
     FileOperations,
-    Plan,
     SUMMARIZATION_PROMPT,
     TURN_PREFIX_SUMMARIZATION_PROMPT,
     UPDATE_SUMMARIZATION_PROMPT,
@@ -225,8 +224,11 @@ fn should_compact_matches_the_threshold_formula(tc: TestCase) {
 #[hegel::test(test_cases = 500)]
 fn cut_point_never_splits_a_tool_call_from_its_result(tc: TestCase) {
     let messages = tc.draw(generators::transcript());
-    let keep_recent_tokens = tc.draw(gs::integers::<u64>().max_value(50_000));
+    let keep_recent_tokens = draw_keep_recent_tokens(&tc, &messages);
     let cut = find_cut_point(&messages, keep_recent_tokens);
+    if cut.is_split_turn {
+        tc.event("split_turn");
+    }
 
     assert!(
         !matches!(messages[cut.first_kept_index], Message::ToolResult(_)),
@@ -264,26 +266,92 @@ fn cut_point_never_splits_a_tool_call_from_its_result(tc: TestCase) {
     }
 }
 
-/// The unsnapped trigger point `find_cut_point`'s own backward walk
-/// computes before it snaps to a valid boundary: the largest suffix
-/// start index whose estimated tokens already reach
-/// `keep_recent_tokens`, ignoring whether that index is itself a valid
-/// cut point. Used only to state
-/// [`kept_suffix_holds_at_least_keep_recent_tokens_unless_pulled_forward`]
-/// precisely.
-fn naive_trigger_index(messages: &[Message], keep_recent_tokens: u64) -> usize {
-    let mut accumulated = 0u64;
-    for i in (0..messages.len()).rev() {
-        let tokens = estimate_message_tokens(&messages[i]);
-        if tokens == 0 {
-            continue;
-        }
-        accumulated += tokens;
-        if accumulated >= keep_recent_tokens {
-            return i;
-        }
+/// Draws a `keep_recent_tokens` scaled to `messages`: anywhere from 0 to
+/// one more than the whole transcript's estimate, so the budget is
+/// reached somewhere inside the transcript in most cases instead of
+/// always cutting at 0.
+fn draw_keep_recent_tokens(tc: &TestCase, messages: &[Message]) -> u64 {
+    let total: u64 = messages.iter().map(estimate_message_tokens).sum();
+    tc.draw(gs::integers::<u64>().max_value(total + 1))
+}
+
+/// Where the budget is reached, stated declaratively: the largest index
+/// `i` of a message that carries tokens and whose suffix
+/// `messages[i..]` holds at least `keep_recent_tokens`. `None` when no
+/// suffix reaches the budget (the whole transcript holds fewer tokens,
+/// or every message is empty).
+fn trigger_index(
+    messages: &[Message],
+    keep_recent_tokens: u64,
+) -> Option<usize> {
+    let tokens: Vec<u64> =
+        messages.iter().map(estimate_message_tokens).collect();
+    (0..messages.len()).rev().find(|&i| {
+        tokens[i] > 0 && tokens[i..].iter().sum::<u64>() >= keep_recent_tokens
+    })
+}
+
+/// The cut `find_cut_point` should choose, stated declaratively
+/// (`docs/reference/compaction.md`, "Cut point"): the first message that
+/// is not a tool result at or after [`trigger_index`], or the last such
+/// message when none follows it; with no trigger, the first such
+/// message; with none at all, index 0. The cut splits a turn when it is
+/// not a user message and some user message precedes it.
+fn model_cut_point(messages: &[Message], keep_recent_tokens: u64) -> CutPoint {
+    let valid: Vec<usize> = (0..messages.len())
+        .filter(|&i| !matches!(messages[i], Message::ToolResult(_)))
+        .collect();
+    let first_kept_index =
+        match (valid.first(), trigger_index(messages, keep_recent_tokens)) {
+            (None, _) => 0,
+            (Some(&first), None) => first,
+            (Some(_), Some(trigger)) => valid
+                .iter()
+                .copied()
+                .find(|&v| v >= trigger)
+                .unwrap_or_else(|| *valid.last().unwrap()),
+        };
+    if messages.is_empty()
+        || matches!(messages[first_kept_index], Message::User(_))
+    {
+        return CutPoint {
+            first_kept_index,
+            turn_start_index: None,
+            is_split_turn: false,
+        };
     }
-    0
+    let turn_start_index = (0..first_kept_index)
+        .rev()
+        .find(|&i| matches!(messages[i], Message::User(_)));
+    CutPoint {
+        first_kept_index,
+        turn_start_index,
+        is_split_turn: turn_start_index.is_some(),
+    }
+}
+
+/// `find_cut_point` is exactly the declarative rule of
+/// [`model_cut_point`]: snap the point where the budget is reached to
+/// the nearest valid boundary at or after it, else the latest valid one.
+#[hegel::test(test_cases = 500)]
+fn find_cut_point_matches_the_declarative_rule(tc: TestCase) {
+    let messages = tc.draw(generators::transcript());
+    let keep_recent_tokens = draw_keep_recent_tokens(&tc, &messages);
+    let cut = find_cut_point(&messages, keep_recent_tokens);
+    match trigger_index(&messages, keep_recent_tokens) {
+        None => tc.event("budget_not_reached"),
+        Some(trigger) if cut.first_kept_index > trigger => {
+            tc.event("pulled_forward");
+        }
+        Some(trigger) if cut.first_kept_index < trigger => {
+            tc.event("fell_back");
+        }
+        Some(_) => tc.event("cut_at_trigger"),
+    }
+    if cut.is_split_turn {
+        tc.event("split_turn");
+    }
+    assert_eq!(cut, model_cut_point(&messages, keep_recent_tokens));
 }
 
 /// The kept suffix holds at least `keep_recent_tokens`, unless the whole
@@ -306,9 +374,9 @@ fn kept_suffix_holds_at_least_keep_recent_tokens_unless_pulled_forward(
     tc: TestCase,
 ) {
     let messages = tc.draw(generators::transcript());
-    let keep_recent_tokens = tc.draw(gs::integers::<u64>().max_value(50_000));
+    let keep_recent_tokens = draw_keep_recent_tokens(&tc, &messages);
     let cut = find_cut_point(&messages, keep_recent_tokens);
-    let trigger = naive_trigger_index(&messages, keep_recent_tokens);
+    let trigger = trigger_index(&messages, keep_recent_tokens).unwrap_or(0);
     let total_tokens: u64 = messages.iter().map(estimate_message_tokens).sum();
 
     if cut.first_kept_index <= trigger {
@@ -323,10 +391,11 @@ fn kept_suffix_holds_at_least_keep_recent_tokens_unless_pulled_forward(
             keep_recent_tokens.min(total_tokens)
         );
     } else {
+        tc.event("pulled_forward");
         // The cut was pulled forward past the trigger point: every
-        // message strictly between them must be an invalid boundary (a
-        // tool result), since otherwise `find_cut_point` would have
-        // chosen that nearer boundary instead.
+        // message from the trigger up to the cut must be an invalid
+        // boundary (a tool result), since otherwise `find_cut_point`
+        // would have chosen that nearer boundary instead.
         for (i, message) in messages
             .iter()
             .enumerate()
@@ -415,8 +484,11 @@ fn regression_cut_can_be_pulled_forward_below_the_budget() {
 #[hegel::test(test_cases = 500)]
 fn split_turn_names_a_turn_start_at_or_before_the_cut(tc: TestCase) {
     let messages = tc.draw(generators::transcript());
-    let keep_recent_tokens = tc.draw(gs::integers::<u64>().max_value(50_000));
+    let keep_recent_tokens = draw_keep_recent_tokens(&tc, &messages);
     let cut = find_cut_point(&messages, keep_recent_tokens);
+    if cut.is_split_turn {
+        tc.event("split_turn");
+    }
 
     if cut.is_split_turn {
         let turn_start = cut
@@ -527,11 +599,26 @@ fn tool_result_is_truncated_to_2000_characters() {
     assert_eq!(serialized, expected);
 }
 
-/// A tool result within 2,000 characters is serialized verbatim, with no
-/// truncation marker.
-#[hegel::test(test_cases = 100)]
-fn short_tool_result_is_not_truncated(tc: TestCase) {
-    let text = tc.draw(generators::text(200));
+/// A tool result's text is serialized verbatim when it holds at most
+/// 2,000 characters, and otherwise cut to its first 2,000 characters
+/// (not bytes) followed by the truncation marker naming how many were
+/// dropped (`docs/reference/compaction.md`, "Input"). Lengths reach
+/// twice the limit, sit exactly on it and one past it, and mix one- to
+/// four-byte characters.
+#[hegel::test(test_cases = 200)]
+fn tool_result_is_cut_at_2000_characters(tc: TestCase) {
+    let length = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![1999usize, 2000, 2001]),
+        gs::integers::<usize>().max_value(4000),
+    ));
+    let pattern: Vec<char> = tc.draw(
+        gs::vecs(gs::sampled_from(vec![
+            'a', '\n', 'é', '日', '🦀', 'e', '\u{301}',
+        ]))
+        .min_size(1)
+        .max_size(16),
+    );
+    let text: String = pattern.iter().cycle().take(length).collect();
     let messages = vec![Message::ToolResult(ToolResultMessage {
         tool_call_id: "call-1|fc-1".to_owned(),
         tool_name: "read".to_owned(),
@@ -544,11 +631,21 @@ fn short_tool_result_is_not_truncated(tc: TestCase) {
         timestamp: 0,
     })];
     let serialized = serialize_conversation(&messages);
-    if text.is_empty() {
-        assert_eq!(serialized, "");
+    let expected = if length == 0 {
+        tc.event("empty");
+        String::new()
+    } else if length <= 2000 {
+        tc.event("verbatim");
+        format!("[Tool result]: {text}")
     } else {
-        assert_eq!(serialized, format!("[Tool result]: {text}"));
-    }
+        tc.event("cut");
+        let head: String = text.chars().take(2000).collect();
+        format!(
+            "[Tool result]: {head}\n\n[... {} more characters truncated]",
+            length - 2000
+        )
+    };
+    assert_eq!(serialized, expected);
 }
 
 /// A tool call is rendered as `name(key=value, ...)`, with each argument
@@ -632,20 +729,41 @@ fn format_file_operations_wraps_each_list_and_is_empty_when_both_are() {
 // Summary request (testing.md: output limit, prompt variant)
 // =============================================================================
 
-/// The summary request's output limit never exceeds the model's maximum
-/// output (`docs/reference/testing.md`; `docs/reference/compaction.md`,
-/// "Output limit"). `0` means the model has no documented cap.
+/// The summary request's output limit is exactly `floor(0.8 *
+/// reserve_tokens)`, capped by the model's maximum output when it has
+/// one, and the split-turn prefix's is the same with half the reserve
+/// (`docs/reference/testing.md`; `docs/reference/compaction.md`,
+/// "Output limit"). `0` means the model has no documented cap. The
+/// reference is integer arithmetic, so float rounding cannot hide in
+/// both sides.
 #[hegel::test(test_cases = 500)]
-fn summary_output_limit_never_exceeds_model_max(tc: TestCase) {
-    let reserve_tokens = tc.draw(gs::integers::<u64>().max_value(1_000_000));
-    let model_max_output_tokens =
-        tc.draw(gs::integers::<u64>().max_value(1_000_000));
-    let limit =
-        summary_max_output_tokens(reserve_tokens, model_max_output_tokens);
-    if model_max_output_tokens > 0 {
-        assert!(limit <= model_max_output_tokens);
+fn summary_output_limit_is_the_capped_share_of_the_reserve(tc: TestCase) {
+    let reserve_tokens =
+        tc.draw(gs::integers::<u64>().max_value(1_000_000_000_000));
+    let model_max_output_tokens = tc.draw(hegel::one_of!(
+        gs::just(0u64),
+        gs::integers::<u64>().max_value(1_000_000_000_000),
+    ));
+    let cap = |budget: u64| {
+        if model_max_output_tokens == 0 {
+            budget
+        } else {
+            budget.min(model_max_output_tokens)
+        }
+    };
+    let summary = cap(reserve_tokens * 4 / 5);
+    let prefix = cap(reserve_tokens / 2);
+    if model_max_output_tokens != 0 && summary == model_max_output_tokens {
+        tc.event("capped by the model");
     }
-    assert!(limit <= (0.8 * reserve_tokens as f64).floor() as u64);
+    assert_eq!(
+        summary_max_output_tokens(reserve_tokens, model_max_output_tokens),
+        summary
+    );
+    assert_eq!(
+        turn_prefix_max_output_tokens(reserve_tokens, model_max_output_tokens),
+        prefix
+    );
 }
 
 /// With no prior summary, the request uses the initial prompt and has no
@@ -999,38 +1117,152 @@ fn summary_max_output_tokens_exact_values() {
     assert_eq!(turn_prefix_max_output_tokens(101, 40), 40);
 }
 
-/// `plan` is `find_cut_point` over the messages after an earlier
-/// summary, shifted back into place: a split turn's start is summarized
-/// with the prefix prompt and everything before it with the main one;
-/// otherwise everything before the cut is history. A cut that keeps
-/// every unsummarized message plans nothing.
+/// `plan` partitions the unsummarized messages
+/// (`docs/reference/compaction.md`, "Cut point"): the history starts
+/// right after the earlier summary, the turn prefix (if any) follows it
+/// with no gap, and the kept suffix starts where they end. The kept
+/// suffix never starts on a tool result; a turn prefix starts on a user
+/// message, holds no other user message and is followed by a non-user
+/// message; with no turn prefix the kept suffix starts on a user message
+/// or has no user message before it. It plans nothing exactly when the
+/// cut keeps every unsummarized message, and the kept suffix starts
+/// where the declarative cut rule says.
 #[hegel::test(test_cases = 300)]
-fn plan_is_the_cut_point_after_the_summary(tc: TestCase) {
+fn plan_partitions_the_unsummarized_messages(tc: TestCase) {
     let mut messages = tc.draw(generators::transcript());
     let summarized = usize::from(tc.draw(gs::booleans()));
     if summarized == 1 {
         messages.insert(0, user_text("summary"));
     }
-    let keep = tc.draw(gs::integers::<u64>().max_value(2_000));
-    let cut = find_cut_point(&messages[summarized..], keep);
-    let kept_from = summarized + cut.first_kept_index;
-    let expected = (cut.first_kept_index > 0).then(|| {
-        if cut.is_split_turn {
-            let start = summarized + cut.turn_start_index.unwrap();
-            Plan {
-                history: summarized..start,
-                turn_prefix: Some(start..kept_from),
-                kept_from,
-            }
-        } else {
-            Plan {
-                history: summarized..kept_from,
-                turn_prefix: None,
-                kept_from,
-            }
+    let keep = draw_keep_recent_tokens(&tc, &messages[summarized..]);
+    let rest = &messages[summarized..];
+    let model_kept_from =
+        summarized + model_cut_point(rest, keep).first_kept_index;
+    let Some(plan) = plan(&messages, summarized, keep) else {
+        tc.event("nothing to summarize");
+        assert_eq!(model_kept_from, summarized);
+        return;
+    };
+    let is_user = |i: usize| matches!(messages[i], Message::User(_));
+
+    assert_eq!(plan.kept_from, model_kept_from);
+    assert!(plan.kept_from > summarized);
+    assert!(plan.kept_from < messages.len());
+    assert!(!matches!(messages[plan.kept_from], Message::ToolResult(_)));
+    assert_eq!(plan.history.start, summarized);
+    match &plan.turn_prefix {
+        Some(prefix) => {
+            tc.event("split_turn");
+            assert_eq!(plan.history.end, prefix.start);
+            assert_eq!(prefix.end, plan.kept_from);
+            assert!(prefix.start < prefix.end);
+            assert!(is_user(prefix.start));
+            assert!(!(prefix.start + 1..=plan.kept_from).any(is_user));
         }
-    });
-    assert_eq!(plan(&messages, summarized, keep), expected);
+        None => {
+            assert_eq!(plan.history.end, plan.kept_from);
+            assert!(
+                is_user(plan.kept_from)
+                    || !(summarized..plan.kept_from).any(is_user)
+            );
+        }
+    }
+}
+
+/// Draws an assistant message whose tool calls touch files: each call is
+/// `read`, `write`, `edit` or an unrelated tool, over a small pool of
+/// paths so they repeat, and sometimes has no string `path` argument.
+#[hegel::composite]
+fn file_touching_message(tc: &TestCase) -> Vec<(String, Option<String>)> {
+    let calls = tc.draw(gs::integers::<usize>().max_value(4));
+    (0..calls)
+        .map(|_| {
+            let name = tc.draw(gs::sampled_from(vec![
+                "read".to_owned(),
+                "write".to_owned(),
+                "edit".to_owned(),
+                "bash".to_owned(),
+            ]));
+            let path = tc.draw(gs::optional(gs::sampled_from(vec![
+                "a.txt".to_owned(),
+                "b.txt".to_owned(),
+                "src/c.rs".to_owned(),
+                "Z.md".to_owned(),
+                "é.txt".to_owned(),
+            ])));
+            (name, path)
+        })
+        .collect()
+}
+
+/// The file lists match a set model (pi's `computeFileLists`): the
+/// modified list is every path a `write` or `edit` touched, the
+/// read-only list every path a `read` touched that is not modified, so
+/// the two are disjoint, each is sorted with no duplicates, and together
+/// they hold every path a file tool touched. Other tools and calls with
+/// no string `path` count for nothing.
+#[hegel::test(test_cases = 300)]
+fn file_lists_match_a_set_model(tc: TestCase) {
+    let turns: Vec<Vec<(String, Option<String>)>> =
+        tc.draw(gs::vecs(file_touching_message()).max_size(5));
+    let mut read = std::collections::BTreeSet::new();
+    let mut modified = std::collections::BTreeSet::new();
+    let messages: Vec<Message> = turns
+        .iter()
+        .map(|calls| {
+            let content = calls
+                .iter()
+                .map(|(name, path)| {
+                    let arguments = match path {
+                        Some(path) => {
+                            match name.as_str() {
+                                "read" => {
+                                    read.insert(path.clone());
+                                }
+                                "write" | "edit" => {
+                                    modified.insert(path.clone());
+                                }
+                                _ => {}
+                            }
+                            Map::from_iter([("path".to_owned(), json!(path))])
+                        }
+                        None => Map::from_iter([("path".to_owned(), json!(1))]),
+                    };
+                    AssistantBlock::ToolCall(ToolCall {
+                        id: "call|fc".to_owned(),
+                        name: name.clone(),
+                        arguments,
+                    })
+                })
+                .collect();
+            Message::Assistant(assistant_response(
+                StopReason::ToolUse,
+                None,
+                content,
+            ))
+        })
+        .collect();
+
+    let mut ops = FileOperations::new();
+    ops.extract_from_messages(&messages);
+    let (read_only, modified_files) = ops.file_lists();
+
+    let expected_read_only: Vec<String> =
+        read.difference(&modified).cloned().collect();
+    let expected_modified: Vec<String> = modified.iter().cloned().collect();
+    if read.intersection(&modified).next().is_some() {
+        tc.event("read then modified");
+    }
+    assert_eq!(read_only, expected_read_only);
+    assert_eq!(modified_files, expected_modified);
+    assert!(read_only.windows(2).all(|w| w[0] < w[1]));
+    assert!(modified_files.windows(2).all(|w| w[0] < w[1]));
+    assert!(read_only.iter().all(|path| !modified_files.contains(path)));
+    let together: std::collections::BTreeSet<String> =
+        read_only.iter().chain(&modified_files).cloned().collect();
+    let touched: std::collections::BTreeSet<String> =
+        read.union(&modified).cloned().collect();
+    assert_eq!(together, touched);
 }
 
 /// An overflow is a failed response that says so, in any of OpenAI's
