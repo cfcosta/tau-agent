@@ -60,34 +60,32 @@ to 500 entries or 50KB (whichever is hit first)."
     );
 }
 
-/// A set of directory entries with names unique by construction --
-/// each carries its own index, so two entries can never collide even
-/// after lowercasing, which keeps the expected sort order independent
-/// of the filesystem's own (arbitrary) `read_dir` order. Names mix
-/// case and sometimes a leading dot, to exercise case-insensitive
-/// sorting and dotfiles (`docs/reference/tools.md`, "ls").
+/// A set of directory entries whose names come from a small alphabet
+/// of letters in both cases, multi-byte ones included, and a dot, so
+/// names that differ only in case (`n` and `N`, `é` and `É`) come up
+/// often, as do dotfiles (`docs/reference/tools.md`, "ls").
 #[hegel::composite]
 fn ls_entries(tc: &TestCase) -> Vec<(String, bool)> {
-    let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(6));
-    let mut entries = Vec::new();
-    for i in 0..count {
-        let dotfile = tc.draw(gs::booleans());
-        let upper = tc.draw(gs::booleans());
-        let letter = if upper { 'N' } else { 'n' };
-        let mut name = format!("{letter}{i}");
-        if dotfile {
-            name = format!(".{name}");
-        }
-        let is_dir = tc.draw(gs::booleans());
-        entries.push((name, is_dir));
-    }
-    entries
+    let names: Vec<String> = tc.draw(
+        gs::vecs(gs::text().alphabet("nNéÉ.").min_size(1).max_size(3))
+            .unique(true)
+            .min_size(1)
+            .max_size(6),
+    );
+    names
+        .into_iter()
+        // `.` and `..` are not names a file can have.
+        .filter(|name| name != "." && name != "..")
+        .map(|name| (name, tc.draw(gs::booleans())))
+        .collect()
 }
 
-/// `ls` output is sorted case-insensitively, with a trailing `/` on
-/// directories and dotfiles included (`docs/reference/tools.md`, "ls";
+/// `ls` output is sorted case-insensitively, names equal but for case
+/// in byte order (so the listing does not depend on the order the
+/// filesystem returns them in), with a trailing `/` on directories and
+/// dotfiles included (`docs/reference/tools.md`, "ls";
 /// `docs/reference/testing.md`, "tau-tools").
-#[hegel::test(test_cases = 50)]
+#[hegel::test(test_cases = 100)]
 fn ls_matches_a_naive_listing(tc: TestCase) {
     let entries = tc.draw(ls_entries());
     let limit = tc.draw(gs::integers::<u32>().min_value(1).max_value(6));
@@ -105,7 +103,17 @@ fn ls_matches_a_naive_listing(tc: TestCase) {
     let actual = call(&root, json!({"limit": limit})).unwrap();
 
     let mut sorted = entries.clone();
-    sorted.sort_by_key(|(name, _)| name.to_lowercase());
+    sorted.sort_by(|(a, _), (b, _)| {
+        a.to_lowercase()
+            .cmp(&b.to_lowercase())
+            .then_with(|| a.cmp(b))
+    });
+    if sorted
+        .windows(2)
+        .any(|w| w[0].0.to_lowercase() == w[1].0.to_lowercase())
+    {
+        tc.event("names equal but for case");
+    }
     let mut results = Vec::new();
     let mut limit_reached = false;
     for (name, is_dir) in &sorted {
@@ -204,4 +212,18 @@ fn entry_limit_notice() {
         output.contains("[2 entries limit reached. Use limit=4 for more]"),
         "{output}"
     );
+}
+
+/// Names equal but for case list in byte order, whatever order the
+/// filesystem returns them in (a regression: the tie used to follow
+/// `read_dir`'s order; pi's comes from libuv's sorted `scandir`).
+#[test]
+fn names_equal_but_for_case_list_in_byte_order() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["n", "é", "N", "É", "nN", "Nn"] {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    let root = Root::new(dir.path());
+    let output = call(&root, json!({})).unwrap();
+    assert_eq!(output, "N\nn\nNn\nnN\nÉ\né");
 }

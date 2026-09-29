@@ -97,7 +97,15 @@ fn run(
             return Err(anyhow!("Cannot read directory: {err}"));
         }
     };
-    names.sort_by_key(|a| a.to_lowercase());
+    // Case-insensitively, and names equal but for case in byte order,
+    // as pi gets them: libuv's `scandir` returns names in `strcmp`
+    // order, which pi's stable sort keeps for ties. `read_dir`'s own
+    // order is the filesystem's, so ties need an explicit order.
+    names.sort_by(|a, b| {
+        a.to_lowercase()
+            .cmp(&b.to_lowercase())
+            .then_with(|| a.cmp(b))
+    });
 
     let mut results: Vec<String> = Vec::new();
     let mut limit_reached = false;
