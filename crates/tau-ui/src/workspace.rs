@@ -188,11 +188,6 @@ pub enum WorkspaceEvent {
         repo: String,
         id: String,
     },
-    /// Open the repository's constitution file in the user's editor,
-    /// making it first if there is none.
-    EditConstitution {
-        repo: String,
-    },
     /// Save the TypeSafe key tau-constitution checks with, or forget it.
     JevKey {
         key: Option<String>,
@@ -464,9 +459,6 @@ pub struct Workspace {
     pub(crate) rule_draft: Option<crate::rule_editor::RuleDraft>,
     pub(crate) rules_tab: crate::rule_editor::RulesTab,
     pub(crate) rule_menu: Option<String>,
-    /// Each repository's rules at the last good read of its file, to
-    /// show while the file is broken.
-    pub(crate) last_good_rules: HashMap<String, Vec<crate::catalog::Rule>>,
     /// The dialog that asks for the TypeSafe key, with its field.
     pub(crate) adding_jev_key: bool,
     pub(crate) jev_key: Entity<TextInput>,
@@ -710,7 +702,6 @@ impl Workspace {
             rule_draft: None,
             rules_tab: Default::default(),
             rule_menu: None,
-            last_good_rules: HashMap::new(),
             adding_jev_key: false,
             jev_key,
             slash_selected: 0,
@@ -745,8 +736,6 @@ impl Workspace {
             });
         });
         workspace.restore_repos();
-        let catalog = workspace.catalog.clone();
-        workspace.remember_good_rules(&catalog);
         workspace.mark_all_seen();
         workspace.sync_placeholder(cx);
         workspace
@@ -788,16 +777,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Keeps each repository's rules while its file reads.
-    fn remember_good_rules(&mut self, catalog: &Catalog) {
-        for repo in &catalog.repos {
-            if repo.constitution.error.is_none() {
-                self.last_good_rules
-                    .insert(repo.name.clone(), repo.constitution.rules.clone());
-            }
-        }
-    }
-
     pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
         self.dismissed.extend(catalog.reviewed.iter().cloned());
         // The query box starts from the store's sample, until typed in.
@@ -808,7 +787,6 @@ impl Workspace {
                 .update(cx, |input, cx| input.set_text(sample, cx));
         }
         self.closed.extend(catalog.closed_runs.iter().cloned());
-        self.remember_good_rules(&catalog);
         self.catalog = catalog;
         self.restore_repos();
         if !self.next_model_picked {
@@ -1803,12 +1781,6 @@ impl Workspace {
     pub fn rule_on_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
         self.rule_on
             .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
-    }
-
-    pub fn edit_constitution(&mut self, repo: &str, cx: &mut Context<Self>) {
-        cx.emit(WorkspaceEvent::EditConstitution {
-            repo: repo.to_owned(),
-        });
     }
 
     pub fn remove_rule(

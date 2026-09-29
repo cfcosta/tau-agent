@@ -341,19 +341,10 @@ fn open_demo_screen(
                         let rules = &mut listed.constitution;
                         if open == "rules-broken" {
                             rules.error = Some(
-                                "constitution.toml is not valid: Rule R4: review \
-                                 (0.95) is above block (0.9)"
+                                "The constitution stored for tau-agent is not \
+                                 valid: Rule R4: review (0.95) is above block (0.9)"
                                     .into(),
                             );
-                            rules.excerpt = vec![
-                                (13, "[[rule]]".into()),
-                                (14, "id = \"R4\"".into()),
-                                (15, "text = \"Comments explain why, not what.\"".into()),
-                                (16, "on = [\"edit.newText\"]".into()),
-                                (17, "review = 0.95".into()),
-                                (18, "block = 0.9".into()),
-                            ];
-                            rules.error_line = Some(14);
                             rules.rules.clear();
                         } else {
                             rules.rules.clear();

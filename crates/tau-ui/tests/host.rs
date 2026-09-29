@@ -35,6 +35,30 @@ fn host_on(
         .build()
         .unwrap();
     let store = runtime.block_on(Store::memory()).unwrap();
+    host_over(runtime, store, llm, root)
+}
+
+/// [`host_on`] over a store in the file `db`, which a test can open
+/// again to look into.
+fn host_with_store(
+    llm: ScriptedModel,
+    root: &Path,
+    db: &Path,
+) -> (Host, UnboundedReceiver<RunEvent>) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(Store::open(db)).unwrap();
+    host_over(runtime, store, llm, root)
+}
+
+fn host_over(
+    runtime: tokio::runtime::Runtime,
+    store: Store,
+    llm: ScriptedModel,
+    root: &Path,
+) -> (Host, UnboundedReceiver<RunEvent>) {
     let agent = Agent::new(llm).name("coder");
     let config = HostConfig {
         access: Access::ApiKey("sk-test".into()),
@@ -677,9 +701,24 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             )
         })
         .turn(|t| t.text("I could not write it."));
-    let (host, mut events) = host_on(llm, dir.path());
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("runs.db");
+    let (host, mut events) = host_with_store(llm, dir.path(), &db);
     let host = host
         .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.95)));
+    // What the store holds for the checkout, as a run would read it.
+    let stored = || {
+        let key = dir.path().canonicalize().unwrap().display().to_string();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let store = Store::open(&db).await.unwrap();
+                tau_constitution::Constitution::load(&store, &key).await
+            })
+            .unwrap()
+    };
     // A rule saved the way the Constitution screen saves one.
     host.edit_rules(host.home(), |rules| {
         rules
@@ -692,6 +731,12 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert_eq!(rules.rules.len(), 1);
     assert_eq!(rules.rules[0].applies_to, ["write.content"]);
     assert!(rules.error.is_none());
+    // Kept in the store, not in a file.
+    assert_eq!(stored().rules.len(), 1);
+    assert!(
+        !walk(dir.path()).any(|path| path.ends_with("constitution.toml")),
+        "no file is written"
+    );
     assert!(catalog.plugins.iter().any(|p| p.name == "tau-constitution"));
     let stats = catalog.jev.clone().expect("Jev is set up");
     assert_eq!((stats.requests, stats.failed), (0, 0));
@@ -775,14 +820,31 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     .unwrap();
     let constitution = host.catalog().repos[0].constitution.clone();
     assert!(constitution.rules.is_empty());
-    // Editing by hand opens the file, which exists once asked for.
-    let file = host.constitution_file(host.home()).unwrap();
-    assert!(file.exists());
-    assert_eq!(file.display().to_string(), constitution.path);
-    // A broken file says why, on the Constitution screen.
-    std::fs::write(&constitution.path, "[[rule]]\nid = 'A'\n").unwrap();
-    let error = host.catalog().repos[0].constitution.error.clone();
-    assert!(error.is_some_and(|error| error.contains("not valid")));
+    assert!(stored().rules.is_empty());
+    // An edit the rules would refuse is not saved.
+    assert!(
+        host.edit_rules(host.home(), |rules| rules
+            .add("x", &["write.content".into()], 0.9, 0.1)
+            .map(drop))
+            .is_err()
+    );
+    assert!(stored().rules.is_empty());
+}
+
+/// Every file under `dir`.
+fn walk(dir: &Path) -> impl Iterator<Item = std::path::PathBuf> {
+    let mut stack = vec![dir.to_owned()];
+    std::iter::from_fn(move || {
+        while let Some(path) = stack.pop() {
+            match std::fs::read_dir(&path) {
+                Ok(entries) => {
+                    stack.extend(entries.flatten().map(|entry| entry.path()))
+                }
+                Err(_) => return Some(path),
+            }
+        }
+        None
+    })
 }
 
 #[test]

@@ -246,16 +246,11 @@ pub struct Link {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Constitution {
-    pub path: String,
     pub rules: Vec<Rule>,
     pub max_continuations: u32,
-    /// Why the file could not be read, if it could not: runs fail until
-    /// it is fixed.
+    /// Why the rules could not be read from the store, if they could
+    /// not: runs fail until they can.
     pub error: Option<String>,
-    /// The file's lines around what the error is about, numbered, and
-    /// which of them it points at.
-    pub excerpt: Vec<(usize, String)>,
-    pub error_line: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

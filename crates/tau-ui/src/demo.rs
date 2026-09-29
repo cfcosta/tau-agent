@@ -1181,11 +1181,8 @@ pub fn catalog() -> Catalog {
                     ],
                 },
                 constitution: Constitution {
-                    path: "constitution.toml".into(),
                     max_continuations: 3,
                     error: None,
-                    excerpt: Vec::new(),
-                    error_line: None,
                     rules: vec![
                         rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
                         rule("D2", "Search results keep their scores; never sort them away.", &["edit.newText"], 0.40, 0.85),
@@ -1327,11 +1324,8 @@ fn tau_agent_memory(note: NoteFn<'_>, link: LinkFn<'_>) -> Memory {
 /// tau-agent's rules.
 fn tau_agent_rules(rule: RuleFn<'_>) -> Constitution {
     Constitution {
-        path: "constitution.toml".into(),
         max_continuations: 3,
         error: None,
-        excerpt: Vec::new(),
-        error_line: None,
         rules: vec![
             rule(
                 "R1",

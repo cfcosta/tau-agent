@@ -41,16 +41,13 @@ pub fn render(
         .flex_col()
         .gap(sp(4.5))
         .child(header(repo, empty, compact, t, cx))
-        .when_some(broken(&constitution, repo, t, cx), |screen, banner| {
+        .when_some(broken(&constitution, repo, t), |screen, banner| {
             screen.child(banner)
         })
         .when(!jev && constitution.error.is_none(), |screen| {
             screen.child(no_key(compact, t, cx))
         })
         .when(empty, |screen| screen.child(nothing_yet(repo, t, cx)))
-        .when(constitution.error.is_some(), |screen| {
-            screen.children(last_good(ws, repo, compact, t))
-        })
         .when(!empty && constitution.error.is_none(), |screen| {
             screen
                 .child(stat_tiles(&stats, compact, t))
@@ -95,8 +92,7 @@ pub fn render(
         .into_any_element()
 }
 
-/// The title, the repository, and what can be done: edit the file, add
-/// a rule.
+/// The title, the repository, and what can be done: add a rule.
 fn header(
     repo: &str,
     empty: bool,
@@ -104,7 +100,7 @@ fn header(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let (file_repo, new_repo) = (repo.to_owned(), repo.to_owned());
+    let new_repo = repo.to_owned();
     div()
         .flex()
         .items_start()
@@ -137,26 +133,13 @@ fn header(
                 .when(!compact, |title| {
                     title.child(ui::text(
                         "Rules Jev checks on what the model writes: tool calls \
-                         and final answers. Changes apply to the next run.",
+                         and final answers. An edit applies from the next tool \
+                         call, in runs already going too.",
                         Type::BODY,
                         t.muted,
                     ))
                 }),
         )
-        .when(!compact, |row| {
-            row.child(
-                div()
-                    .id("edit-constitution")
-                    .child(ui::button(
-                        "constitution.toml",
-                        ButtonKind::Secondary,
-                        t,
-                    ))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.edit_constitution(&file_repo, cx)
-                    })),
-            )
-        })
         .when(!empty, |row| {
             row.child(
                 div()
@@ -169,27 +152,9 @@ fn header(
         })
 }
 
-/// A constitution that does not read: why, where, and what to do.
-fn broken(
-    constitution: &Constitution,
-    repo: &str,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Option<Div> {
+/// Rules that cannot be read from the store: why, and what it means.
+fn broken(constitution: &Constitution, repo: &str, t: &Theme) -> Option<Div> {
     let error = constitution.error.clone()?;
-    let repo = repo.to_owned();
-    let lines = constitution.excerpt.iter().map(|(n, line)| {
-        let at = constitution.error_line == Some(*n);
-        div()
-            .flex()
-            .gap(sp(3.))
-            .child(mono(format!("{n:>3}"), Type::CAPTION, t.dim))
-            .child(mono(
-                line.clone(),
-                Type::CAPTION,
-                if at { t.red } else { t.text_soft },
-            ))
-    });
     Some(
         div()
             .flex()
@@ -207,110 +172,10 @@ fn broken(
                     .flex()
                     .flex_col()
                     .gap(sp(2.))
-                    .child(
-                        div()
-                            .font_weight(weight::STRONG)
-                            .child(format!(
-                                "constitution.toml doesn't read, so runs in {repo} fail at start"
-                            )),
-                    )
-                    .child(ui::text(error, Type::SMALL, t.text_soft))
-                    .when(!constitution.excerpt.is_empty(), |banner| {
-                        banner.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(sp(0.5))
-                                .px(sp(3.5))
-                                .py(sp(2.5))
-                                .rounded(radius::CONTROL)
-                                .bg(t.bg)
-                                .children(lines),
-                        )
-                    })
-                    .child(
-                        div().flex().gap(sp(2.)).child(
-                            div()
-                                .id("open-constitution")
-                                .child(ui::button(
-                                    "Open constitution.toml",
-                                    ButtonKind::Primary,
-                                    t,
-                                ))
-                                .on_click(cx.listener(move |ws, _, _, cx| {
-                                    ws.edit_constitution(&repo, cx)
-                                })),
-                        ),
-                    ),
-            ),
-    )
-}
-
-/// While the file is broken: the rules as they were at its last good
-/// read, dimmed, for reference.
-fn last_good(
-    ws: &Workspace,
-    repo: &str,
-    compact: bool,
-    t: &Theme,
-) -> Option<Div> {
-    let rules = ws
-        .last_good_rules
-        .get(repo)
-        .filter(|rules| !rules.is_empty())?;
-    Some(
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(2.5))
-            .child(ui::text(
-                "The rules as they were at the last good read, for reference.",
-                Type::SMALL,
-                t.dim,
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .opacity(0.5)
-                    .rounded(radius::BOX)
-                    .border_1()
-                    .border_color(t.border)
-                    .bg(t.card)
-                    .children(rules.iter().map(|rule| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(sp(4.))
-                            .px(sp(4.))
-                            .py(sp(3.))
-                            .border_b_1()
-                            .border_color(t.border)
-                            .child(
-                                mono(rule.id.clone(), Type::CAPTION, t.muted)
-                                    .w(px(36.)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .child(rule.text.clone()),
-                            )
-                            .when(!compact, |row| {
-                                row.child(
-                                    div()
-                                        .w(px(250.))
-                                        .flex()
-                                        .flex_wrap()
-                                        .gap(sp(1.5))
-                                        .children(
-                                            rule.applies_to
-                                                .iter()
-                                                .map(|at| place(at, t)),
-                                        ),
-                                )
-                            })
-                    })),
+                    .child(div().font_weight(weight::STRONG).child(format!(
+                        "The rules for {repo} can't be read, so runs in {repo} fail at start"
+                    )))
+                    .child(ui::text(error, Type::SMALL, t.text_soft)),
             ),
     )
 }
@@ -356,7 +221,7 @@ fn no_key(compact: bool, t: &Theme, cx: &mut Context<Workspace>) -> Div {
 
 /// No rules: what a rule is, and how to write one.
 fn nothing_yet(repo: &str, t: &Theme, cx: &mut Context<Workspace>) -> Div {
-    let (new_repo, file_repo) = (repo.to_owned(), repo.to_owned());
+    let new_repo = repo.to_owned();
     div().flex().justify_center().py(sp(12.)).child(
         div()
             .w(px(520.))
@@ -404,18 +269,7 @@ fn nothing_yet(repo: &str, t: &Theme, cx: &mut Context<Workspace>) -> Div {
                                 ws.open_rule_editor(&new_repo, None, cx)
                             })),
                     )
-                    .child(
-                        div()
-                            .id("write-constitution")
-                            .child(ui::button(
-                                "Write constitution.toml",
-                                ButtonKind::Secondary,
-                                t,
-                            ))
-                            .on_click(cx.listener(move |ws, _, _, cx| {
-                                ws.edit_constitution(&file_repo, cx)
-                            })),
-                    ),
+
             ),
     )
 }
@@ -1423,10 +1277,15 @@ fn editor(
                         match (shown_problem, &draft.editing) {
                             (Some(problem), _) => problem.to_owned(),
                             (None, Some(id)) => {
-                                format!("Saves over {id} in constitution.toml")
+                                format!(
+                                    "Saves over {id}; runs check with it from \
+                                     their next tool call"
+                                )
                             }
                             (None, None) => {
-                                "Adds it to constitution.toml".to_owned()
+                                "Adds it; runs check with it from their next \
+                                 tool call"
+                                    .to_owned()
                             }
                         },
                         Type::CAPTION,

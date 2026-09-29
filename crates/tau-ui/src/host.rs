@@ -38,7 +38,7 @@ use tau_ai::{
     model::find,
 };
 use tau_compaction::Compaction;
-use tau_constitution::{Constitution, ConstitutionPlugin};
+use tau_constitution::{Constitution, ConstitutionPlugin, Live};
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store};
 use tau_tools::{path::Root, plugin::CodingTools};
@@ -403,6 +403,10 @@ pub struct Host {
     jev_meter: Arc<Mutex<crate::metered::Meter>>,
     /// Each repository's notes and the user's, shared by every run.
     memories: Arc<Memories>,
+    /// Each repository's rules as runs check them, by
+    /// [`Host::constitution_key`]: an edit replaces them here, and every
+    /// run's next check reads the new ones.
+    constitutions: Mutex<HashMap<String, Live>>,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -573,6 +577,7 @@ impl Host {
             jev: None,
             jev_meter: Arc::default(),
             memories: Arc::new(Memories::keywords()),
+            constitutions: Mutex::default(),
             store,
             choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
@@ -1109,9 +1114,13 @@ impl Host {
         }
         let agent = agent.plugin(compaction).plugin(RepoTag(repo.name.clone()));
         // The repository's rules, checked with Jev when there is a key.
-        let constitution = jev.map(|jev| {
-            ConstitutionPlugin::from_file(jev, self.constitution_path(repo))
-        });
+        // Rules that cannot be read fail the run: they are never skipped.
+        let constitution = match jev {
+            Some(jev) => {
+                Some(ConstitutionPlugin::live(jev, self.constitution(repo)?))
+            }
+            None => None,
+        };
         // The conversation's goal, checked with Jev too; after the
         // constitution, whose hold of a stop wins.
         let goal = self.jev().map(tau_goal::GoalPlugin::new);
@@ -1199,29 +1208,38 @@ impl Host {
             .ok()
     }
 
-    /// Where a repository's constitution is kept: in tau's directory for
-    /// it, so it is edited from tau and applies to the next run, without
-    /// a commit in the repository.
-    fn constitution_path(&self, repo: &RepoSlot) -> PathBuf {
-        self.config
-            .project_dir_of(&repo.path)
-            .join("constitution.toml")
+    /// What a repository's constitution is stored under: its checkout,
+    /// as the repository list keeps it.
+    fn constitution_key(repo: &RepoSlot) -> String {
+        canonical(&repo.path).display().to_string()
+    }
+
+    /// Repository `repo`'s rules as runs check them, read from the store
+    /// the first time.
+    fn constitution(&self, repo: &RepoSlot) -> anyhow::Result<Live> {
+        let key = Self::constitution_key(repo);
+        let mut open = self.constitutions.lock().expect("not poisoned");
+        if let Some(live) = open.get(&key) {
+            return Ok(live.clone());
+        }
+        let loaded = self
+            .runtime
+            .block_on(Constitution::load(&self.store, &key))?;
+        let live = Live::new(loaded);
+        open.insert(key, live.clone());
+        Ok(live)
     }
 
     /// The constitution of repository `name`, for its screen.
     fn repo_constitution(&self, slot: &RepoSlot) -> CatalogConstitution {
-        let path = self.constitution_path(slot);
-        let (loaded, error) = match Constitution::load(&path) {
-            Ok(loaded) => (loaded, None),
-            Err(error) => (Constitution::default(), Some(format!("{error:#}"))),
+        let (loaded, error) = match self.constitution(slot) {
+            Ok(live) => (live.get(), None),
+            Err(error) => (
+                Arc::new(Constitution::default()),
+                Some(format!("{error:#}")),
+            ),
         };
-        let (excerpt, error_line) = error
-            .as_deref()
-            .zip(std::fs::read_to_string(&path).ok())
-            .map(|(error, text)| error_excerpt(error, &text))
-            .unwrap_or_default();
         CatalogConstitution {
-            path: path.display().to_string(),
             rules: loaded
                 .rules
                 .iter()
@@ -1235,26 +1253,12 @@ impl Host {
                 .collect(),
             max_continuations: loaded.max_holds,
             error,
-            excerpt,
-            error_line,
         }
     }
 
-    /// A repository's constitution file, made with no rules if there is
-    /// none, for editing by hand.
-    pub fn constitution_file(&self, repo: &str) -> anyhow::Result<PathBuf> {
-        let slot = self
-            .slot(repo)
-            .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
-        let path = self.constitution_path(&slot);
-        if !path.exists() {
-            Constitution::default().save(&path)?;
-        }
-        Ok(path)
-    }
-
-    /// Adds a rule to a repository's constitution (review and block at
-    /// their defaults), or removes one, and saves it.
+    /// Changes a repository's constitution with `edit`, which checks
+    /// what it adds, and saves it. Runs going on check with the new rules
+    /// from their next tool call.
     pub fn edit_rules(
         &self,
         repo: &str,
@@ -1263,10 +1267,14 @@ impl Host {
         let slot = self
             .slot(repo)
             .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
-        let path = self.constitution_path(&slot);
-        let mut constitution = Constitution::load(&path)?;
+        let live = self.constitution(&slot)?;
+        let mut constitution = (*live.get()).clone();
         edit(&mut constitution)?;
-        constitution.save(&path)
+        self.runtime.block_on(
+            constitution.save(&self.store, &Self::constitution_key(&slot)),
+        )?;
+        live.set(constitution);
+        Ok(())
     }
 
     /// What runs reach models with, if anything.
@@ -1707,8 +1715,9 @@ impl Host {
             },
             tone: Tone::Quiet,
         });
-        let rules = Constitution::load(&self.constitution_path(&repo))
-            .map_or(0, |constitution| constitution.rules.len());
+        let rules = self
+            .constitution(&repo)
+            .map_or(0, |live| live.get().rules.len());
         view.plugins.push(PluginStatus {
             name: tau_constitution::NAME.into(),
             state: match (self.config.credentials.jev_key(), rules) {
@@ -2006,18 +2015,6 @@ impl Host {
                             .update(cx, |ws, cx| ws.set_query_result(result, cx));
                     })
                     .detach();
-                }
-                WorkspaceEvent::EditConstitution { repo } => {
-                    match handler.constitution_file(repo) {
-                        Ok(path) => cx.open_with_system(&path),
-                        Err(error) => workspace.update(cx, |ws, cx| {
-                            ws.show_alert(
-                                "Could not open the constitution",
-                                format!("{error:#}"),
-                                cx,
-                            )
-                        }),
-                    }
                 }
                 WorkspaceEvent::RemoveRule { repo, id } => {
                     let removed = handler.edit_rules(repo, |rules| {
@@ -3088,41 +3085,6 @@ fn clone_into_tau(
     .detach();
 }
 
-/// The lines of a constitution file an error is about: the line a TOML
-/// error names, or the rule a check names (`Rule R4: ...`), with two
-/// lines around it, and the line to point at.
-pub fn error_excerpt(
-    error: &str,
-    text: &str,
-) -> (Vec<(usize, String)>, Option<usize>) {
-    let lines: Vec<&str> = text.lines().collect();
-    let named_line = error.split("line ").nth(1).and_then(|rest| {
-        rest.split(|c: char| !c.is_ascii_digit())
-            .next()?
-            .parse()
-            .ok()
-    });
-    let rule_line = || {
-        let id = error.split("Rule ").nth(1)?.split([':', ' ']).next()?;
-        let wanted = format!("\"{id}\"");
-        lines
-            .iter()
-            .position(|line| {
-                line.trim_start().starts_with("id") && line.contains(&wanted)
-            })
-            .map(|at| at + 1)
-    };
-    let Some(line) = named_line.or_else(rule_line) else {
-        return (Vec::new(), None);
-    };
-    let first = line.saturating_sub(2).max(1);
-    let last = (line + 3).min(lines.len());
-    let excerpt = (first..=last)
-        .filter_map(|n| lines.get(n - 1).map(|text| (n, (*text).to_owned())))
-        .collect();
-    (excerpt, Some(line))
-}
-
 /// A short run title from the prompt: its first words, or its goal's.
 pub fn title(prompt: &str) -> String {
     let goal = tau_goal::set_message(prompt);
@@ -3142,23 +3104,6 @@ pub fn title(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn constitution_errors_point_at_their_lines() {
-        let text = "[[rule]]\nid = \"R1\"\ntext = \"a\"\non = [\"x.y\"]\n\n[[rule]]\nid = \"R4\"\ntext = \"b\"\non = [\"x.y\"]\nreview = 0.95\nblock = 0.9\n";
-        let (lines, at) = error_excerpt(
-            "x is not valid: Rule R4: review (0.95) is above block (0.9)",
-            text,
-        );
-        assert_eq!(at, Some(7));
-        assert_eq!(lines.first().map(|l| l.0), Some(5));
-        assert!(lines.iter().any(|(_, line)| line.contains("review = 0.95")));
-        let (lines, at) =
-            error_excerpt("TOML parse error at line 3, column 8", text);
-        assert_eq!(at, Some(3));
-        assert_eq!(lines.len(), 6);
-        assert_eq!(error_excerpt("Cannot read it", text), (Vec::new(), None));
-    }
 
     #[test]
     fn titles_come_from_the_first_words() {
