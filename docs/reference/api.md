@@ -111,6 +111,9 @@ A tool's error is a `ToolError` (`tau_agent::error`, re-exported from
 `tool`). `?` converts io, JSON and `JoinError`s, a sub-agent's error,
 and a `String` or `&str` message into it; anything else goes in with
 `ToolError::other`. The model reads its `Display` as the tool result.
+`ToolError::output(ToolOutput)` fails with a whole output: its text is
+the error the model reads, and its `details` stay on the result, as
+`bash` does for a command that exits non-zero.
 Plugins and hooks return a `PluginError` the same way, which also
 converts store errors and `PluginCtx::ask`'s `AskError`; the loop
 reports it as `RunEvent::PluginError`, with its chain of sources.

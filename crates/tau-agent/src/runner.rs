@@ -726,6 +726,7 @@ impl Runner {
                     }
                     let (mut output, is_error) = match result {
                         Ok(output) => (output, false),
+                        Err(ToolError::Output(output)) => (*output, true),
                         Err(error) => (ToolOutput::text(error.to_string()), true),
                     };
                     let view = ToolResultView {

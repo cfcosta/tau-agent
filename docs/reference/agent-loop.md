@@ -69,7 +69,10 @@ pi, a note says so.
   runs; `ToolEnd` in completion order.
 - **Result messages** are appended in source order.
 - **Errors:** a tool that returns `Err` produces a result with
-  `is_error = true`. Its text is the error message.
+  `is_error = true`. Its text is the error message. A
+  `ToolError::Output` carries a whole output instead: the result is
+  that output, content and `details`, with `is_error = true` (a failed
+  `bash` command keeps its terminal this way).
 - **After each tool:** `after_tool` hooks may patch the output field by
   field.
 - **Updates after completion:** a tool that sends updates after its

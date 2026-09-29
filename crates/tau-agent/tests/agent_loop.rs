@@ -791,6 +791,77 @@ fn unknown_tool_is_an_error_result() {
     });
 }
 
+/// A tool that fails with output of its own.
+struct FailsWithOutput(Value);
+
+#[async_trait]
+impl AgentTool for FailsWithOutput {
+    fn name(&self) -> &str {
+        "fails"
+    }
+    fn description(&self) -> &str {
+        "Fails, keeping its output."
+    }
+    fn parameters(&self) -> &Value {
+        &self.0
+    }
+    async fn call(
+        &self,
+        _args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let mut output =
+            ToolOutput::text("partial\n\nCommand exited with code 2");
+        output.details = Some(json!({"terminal": {"exitCode": 2}}));
+        Err(ToolError::output(output))
+    }
+}
+
+/// A failure that carries output is an error result with that output's
+/// text and its details, in the `ToolEnd` event and in the store
+/// (`docs/reference/agent-loop.md`, "Tool execution").
+#[test]
+fn a_failure_with_output_keeps_its_details() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("fails", json!({})))
+        .turn(|t| t.text("ok"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let recorder = Recorder::default();
+        let run = Agent::new(llm)
+            .tool(FailsWithOutput(json!({"type": "object"})))
+            .hook(recorder.clone())
+            .start("go", &store);
+        let id = run.id();
+        run.outcome().await.unwrap();
+
+        let details = json!({"terminal": {"exitCode": 2}});
+        let end = recorder
+            .events()
+            .into_iter()
+            .find_map(|event| match event {
+                RunEvent::ToolEnd {
+                    output, is_error, ..
+                } => Some((output, is_error)),
+                _ => None,
+            })
+            .expect("the call ended");
+        assert!(end.1);
+        assert_eq!(end.0.details, Some(details.clone()));
+
+        let transcript = stored(&store, &id.0).await;
+        let Message::ToolResult(result) = &transcript[2] else {
+            panic!("{transcript:?}")
+        };
+        assert!(result.is_error);
+        assert_eq!(result.details, Some(details));
+        let InputBlock::Text(text) = &result.content[0] else {
+            panic!()
+        };
+        assert_eq!(text.text, "partial\n\nCommand exited with code 2");
+    });
+}
+
 /// A failed model response ends the run with its error.
 #[test]
 fn model_error_ends_the_run() {
