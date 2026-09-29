@@ -476,6 +476,9 @@ pub fn render(
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutputStats {
     pub call_id: String,
+    /// Lines of the whole output, a line over [`MAX_LINE_CHARS`]
+    /// counting once per piece, as `dropped_lines` does.
+    pub lines: usize,
     pub chunks: usize,
     pub kept: usize,
     pub dropped_lines: usize,

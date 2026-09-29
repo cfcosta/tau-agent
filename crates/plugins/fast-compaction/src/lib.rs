@@ -329,7 +329,7 @@ impl PluginRun for FastCompactionRun {
 /// renders what stays, and writes the archive when `bash` did not spill
 /// the output already. The pruned text, when it saves at least
 /// `min_reduction_ratio` of what the model would otherwise see. Reports
-/// how it went whenever Jev was asked.
+/// how it went whenever Jev was asked, and records it with the run.
 async fn prune_output(
     jev: &dyn Jev,
     settings: &Settings,
@@ -387,6 +387,7 @@ async fn prune_output(
     }
     let stats = OutputStats {
         call_id: view.call.id.clone(),
+        lines: lines.len(),
         chunks: planned.chunks.len(),
         kept: asked.keep.iter().filter(|kept| **kept).count(),
         dropped_lines,
@@ -399,7 +400,10 @@ async fn prune_output(
     };
     let mut report = serde_json::to_value(&stats).expect("stats serialize");
     report["kind"] = "output".into();
-    ctx.report(report);
+    ctx.report(report.clone());
+    // History reads it back; a failed write loses only what the card
+    // says.
+    let _ = ctx.record(&report).await;
     Ok(pruned.then_some(text))
 }
 

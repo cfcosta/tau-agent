@@ -264,6 +264,41 @@ fn a_large_output_reaches_the_model_pruned() {
         assert_eq!(reports[0].archive.as_deref(), Some(archive.as_str()));
         assert!(reports[0].tokens_after < reports[0].tokens_before);
         assert!(reports[0].dropped_lines > 0);
+        assert_eq!(reports[0].lines, 3000);
+    });
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The report is also stored with the run, for history to read back.
+#[test]
+fn the_report_is_recorded() {
+    let dir = scratch("recorded");
+    let model = one_build();
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(model.clone())
+            .tool(Bash::new(build_log(3000), Answering::Whole))
+            .plugin(
+                FastCompaction::new(keeps_errors()).settings(settings(&dir)),
+            );
+        let mut run = agent.start("fix the build", &store);
+        let id = run.id();
+        let events: Vec<RunEvent> = run.events().collect().await;
+        run.outcome().await.unwrap();
+        let reports = output_reports(&events);
+        let records: Vec<OutputStats> = store
+            .records(&id.0, NAME)
+            .await
+            .unwrap()
+            .iter()
+            .map(|body| {
+                let body: Value = serde_json::from_str(body).unwrap();
+                assert_eq!(body["kind"], "output");
+                serde_json::from_value(body).unwrap()
+            })
+            .collect();
+        assert_eq!(records, reports);
+        assert!(records[0].pruned);
     });
     std::fs::remove_dir_all(&dir).unwrap();
 }
