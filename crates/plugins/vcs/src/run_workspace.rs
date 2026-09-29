@@ -47,6 +47,10 @@ pub struct Link {
     pub change_id: String,
     /// The turn changed files.
     pub changed: bool,
+    /// The child run whose landing put this change on the run's stack
+    /// (ADR 0009); none for the run's own turns. A landing stores one
+    /// link per change it brought, all with the run's latest turn.
+    pub from: Option<String>,
 }
 
 impl Link {
@@ -185,6 +189,7 @@ impl PluginRun for Turns {
                     commit_id: commit.commit_id,
                     change_id: commit.change_id,
                     changed: commit.changed,
+                    from: None,
                 })
                 .unwrap_or_default()
             }

@@ -280,7 +280,14 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   `Link` record under the plugin name `workspace`:
 
   ```json
-  { "turn": 2, "workspace": "0192…", "commit_id": "…", "change_id": "…", "changed": true }
+  {
+    "turn": 2,
+    "workspace": "0192…",
+    "commit_id": "…",
+    "change_id": "…",
+    "changed": true,
+    "from": null
+  }
   ```
 
   A turn that changed nothing links to the commit before it.
@@ -312,6 +319,11 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   it) is not rewritten.
 - It refuses while the parent's working copy holds changes: landing is
   between the parent's turns.
+- The host's `Host::land` records each landed change as a `Link` in
+  the parent, at the parent's latest turn, with `from` naming the
+  child, so forks, the compare view and pull requests read them as the
+  parent's own. Then it closes the child: its workspace is forgotten
+  and its bookmark removed. Both runs must be idle.
 - With `confirm` off, nothing changes. The `Landing` it returns says
   what would happen: the changes as they would be (`changes`, newest
   first), the paths that would hold conflict markers in the new head

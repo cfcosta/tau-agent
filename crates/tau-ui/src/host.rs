@@ -40,17 +40,18 @@ use tau_ai::{
 use tau_compaction::Compaction;
 use tau_constitution::{Constitution, ConstitutionPlugin, Live};
 use tau_jev::TypeSafe;
-use tau_store::{Entry, RunKind, Status, Store};
+use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
     ChangeKind,
     FileDiff,
     Identity,
+    Landing,
     Link,
     Project,
     RunWorkspace,
     VcsPlugin,
-    run_workspace::PLUGIN as WORKSPACE_PLUGIN,
+    run_workspace::{PLUGIN as WORKSPACE_PLUGIN, bookmark},
 };
 use tokio::{runtime::Runtime, sync::mpsc};
 
@@ -1491,6 +1492,130 @@ impl Host {
         })
     }
 
+    /// What landing `child` on its parent would do (ADR 0009): its
+    /// changes as they would sit on the parent's stack, and the files
+    /// that would conflict. Changes nothing.
+    pub fn preview_landing(&self, child: &RunId) -> anyhow::Result<Landing> {
+        let landing = self.landing(child)?;
+        self.runtime.block_on(landing.parent_vcs.land(
+            &landing.child_head,
+            bookmark(&landing.parent),
+            false,
+        ))
+    }
+
+    /// Lands `child` on its parent (ADR 0009): restacks its changes onto
+    /// the parent's newest commit, records them as links in the parent,
+    /// and closes the child: its workspace goes, and so does its
+    /// bookmark. Both runs must be idle.
+    pub fn land(&self, child: &RunId) -> anyhow::Result<Landing> {
+        let plan = self.landing(child)?;
+        let landing = self.runtime.block_on(plan.parent_vcs.land(
+            &plan.child_head,
+            bookmark(&plan.parent),
+            true,
+        ))?;
+        // The landed changes join the parent's links, oldest first, at
+        // the parent's latest turn, so forks, the compare view and pull
+        // requests see them as the parent's own.
+        let turn = self
+            .link(&plan.parent, None)?
+            .map_or(0, |(_, link)| link.turn);
+        let entries = landing
+            .changes
+            .iter()
+            .rev()
+            .map(|change| {
+                let link = Link {
+                    turn,
+                    workspace: plan.parent_workspace.clone(),
+                    commit_id: change.commit_id.clone(),
+                    change_id: change.change_id.clone(),
+                    changed: true,
+                    from: Some(child.0.to_string()),
+                };
+                Ok(Entry::Plugin {
+                    plugin: WORKSPACE_PLUGIN.to_owned(),
+                    body: serde_json::to_string(&link)?,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        self.runtime.block_on(self.store.append_turn(
+            &plan.parent.0,
+            &entries,
+            TurnUsage::default(),
+        ))?;
+        // The child's changes live on the parent's stack now.
+        plan.project.forget_workspace(&plan.child_workspace)?;
+        plan.project.remove_bookmark(&bookmark(child))?;
+        self.workspaces.lock().expect("not poisoned").remove(child);
+        Ok(landing)
+    }
+
+    /// Everything landing `child` needs, once both runs are idle.
+    fn landing(&self, child: &RunId) -> anyhow::Result<LandingPlan> {
+        let record = self
+            .runtime
+            .block_on(self.store.run(&child.0))?
+            .ok_or_else(|| anyhow::anyhow!("No run {}", child.0))?;
+        let parent = match record.kind {
+            RunKind::Fork { parent, .. } | RunKind::Subagent { parent } => {
+                RunId(parent.into())
+            }
+            RunKind::Root => {
+                anyhow::bail!("{} has no parent to land on", child.0)
+            }
+        };
+        for run in [child, &parent] {
+            if self.is_running(run) {
+                anyhow::bail!("{} is still running; land once it stops", run.0);
+            }
+        }
+        let project = self
+            .slot_of_run(child)
+            .project
+            .wait()
+            .ok_or_else(|| anyhow::anyhow!("The runs have no project"))?;
+        let workspace_of = |run: &RunId| -> anyhow::Result<String> {
+            let known = self
+                .workspaces
+                .lock()
+                .expect("not poisoned")
+                .get(run)
+                .cloned();
+            match known {
+                Some(name) => Ok(name),
+                None => self
+                    .link(run, None)?
+                    .map(|(_, link)| link.workspace)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("{} has not finished a turn", run.0)
+                    }),
+            }
+        };
+        let parent_workspace = workspace_of(&parent)?;
+        let child_workspace = workspace_of(child)?;
+        // Opening a workspace that is gone would make a new one on
+        // trunk; landing there would lose the parent's work.
+        if !project.workspaces()?.contains(&parent_workspace) {
+            anyhow::bail!("The parent's workspace is gone");
+        }
+        let child_head =
+            project.bookmark(&bookmark(child))?.ok_or_else(|| {
+                anyhow::anyhow!("{} has no changes to land", child.0)
+            })?;
+        let parent_vcs =
+            project.add_workspace(&parent_workspace, &project.trunk()?)?;
+        Ok(LandingPlan {
+            parent,
+            project,
+            parent_workspace,
+            child_workspace,
+            child_head,
+            parent_vcs,
+        })
+    }
+
     /// Keeps `run`, a branch of a fork, and removes the workspaces of the
     /// other branches that are not running: the run it was forked from,
     /// and its other forks. Their commits stay in the project.
@@ -2753,6 +2878,18 @@ fn refresh_when_imported(
         let _ = workspace.update(cx, |ws, cx| ws.set_catalog(catalog, cx));
     })
     .detach();
+}
+
+/// What [`Host::land`] and [`Host::preview_landing`] work with.
+struct LandingPlan {
+    parent: RunId,
+    project: Project,
+    parent_workspace: String,
+    child_workspace: String,
+    /// The child's newest commit, from its bookmark.
+    child_head: String,
+    /// The parent's workspace, where the landing runs.
+    parent_vcs: tau_vcs::Vcs,
 }
 
 /// The latest link in `entries`, up to `seq` when given.

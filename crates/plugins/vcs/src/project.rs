@@ -309,6 +309,23 @@ impl Project {
             .map(|id| id.hex()))
     }
 
+    /// Removes the local bookmark `name`, if there is one. The commits it
+    /// named stay.
+    pub fn remove_bookmark(&self, name: &str) -> anyhow::Result<()> {
+        let repo = self.load()?;
+        let name = RefName::new(name);
+        if repo.view().get_local_bookmark(name).is_absent() {
+            return Ok(());
+        }
+        let mut tx = repo.start_transaction();
+        tx.repo_mut().set_local_bookmark_target(
+            name,
+            jj_lib::op_store::RefTarget::absent(),
+        );
+        block_on(tx.commit(format!("tau: remove bookmark {}", name.as_str())))?;
+        Ok(())
+    }
+
     /// Makes run `name`'s workspace, on a new empty commit on top of
     /// `base` (a full commit id in hex), with `base`'s files checked out,
     /// and opens it. Opens it as it is if it exists already.

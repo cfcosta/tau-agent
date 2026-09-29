@@ -302,6 +302,83 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     assert!(fork_dir.exists());
 }
 
+/// A fork lands on the run it forked (ADR 0009): its change restacks
+/// onto the run's newest turn, and the fork closes.
+#[test]
+fn a_fork_lands_on_its_parent_and_closes() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.tool_call("write", write("c.txt")))
+        .turn(|t| t.text("forked"));
+    let (host, mut events) = host_on(llm, src.path());
+    let host = host.with_project(project.clone());
+
+    let main = host
+        .start("write two files", &ModelChoice::default(), "")
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main.id);
+    let main_dir = host.workspace(&main.id).unwrap();
+    let fork = host
+        .fork(
+            &main.id,
+            Some(1),
+            "write c instead",
+            &ModelChoice::default(),
+        )
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &fork.id);
+    let fork_dir = host.workspace(&fork.id).unwrap();
+    assert!(fork_dir.join("c.txt").exists());
+    assert!(!fork_dir.join("b.txt").exists(), "forked before turn 2");
+
+    // A root run has nothing to land on.
+    assert!(host.land(&main.id).is_err());
+
+    let preview = host.preview_landing(&fork.id).unwrap();
+    assert_eq!(preview.changes.len(), 1);
+    assert!(preview.conflicts.is_empty());
+    assert!(
+        !main_dir.join("c.txt").exists(),
+        "a preview changes nothing"
+    );
+
+    let landed = host.land(&fork.id).unwrap();
+    assert_eq!(landed.changes.len(), 1);
+    // The main run has both its own files and the fork's.
+    for file in ["a.txt", "b.txt", "c.txt"] {
+        assert!(main_dir.join(file).exists(), "{file}");
+    }
+    // The fork is closed: no workspace, no bookmark.
+    assert!(!fork_dir.exists());
+    let fork_bookmark = format!("tau/{}", fork.id.0);
+    assert_eq!(project.bookmark(&fork_bookmark).unwrap(), None);
+    assert_eq!(
+        project.bookmark(&format!("tau/{}", main.id.0)).unwrap(),
+        Some(landed.head.clone())
+    );
+    // Landing again finds nothing to land.
+    assert!(host.land(&fork.id).is_err());
+}
+
 #[test]
 fn runs_come_back_under_their_repository() {
     let other = tempfile::tempdir().unwrap();

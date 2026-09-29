@@ -637,6 +637,7 @@ fn links_follow_their_change() {
         commit_id: turn.commit_id.clone(),
         change_id: turn.change_id.clone(),
         changed: true,
+        from: None,
     };
     assert_eq!(project.current([link.clone()]).unwrap()[0], link);
 
