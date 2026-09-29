@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE runs SET status = 'running', result = NULL, error = NULL,\n                             model = ?2,\n                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\n             WHERE id = ?1 AND status != 'running'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "bacf0258f362d6167565fc4c30dfd5901e66d6ed1f46ca7fa53c0a9394ecc541"
+}

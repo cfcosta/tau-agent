@@ -551,15 +551,22 @@ impl Store {
         Ok(())
     }
 
-    /// Opens a finished run again, to go on from where it stopped: it is
-    /// `running` again, without its result or error, and keeps its
-    /// transcript, usage and turn count. Returns it as it now is.
-    pub async fn reopen_run(&self, run: &str) -> Result<RunRecord> {
+    /// Opens a finished run again, to go on from where it stopped on
+    /// `model`: it is `running` again, without its result or error, and
+    /// keeps its transcript, usage and turn count. Returns it as it now
+    /// is.
+    pub async fn reopen_run(
+        &self,
+        run: &str,
+        model: &str,
+    ) -> Result<RunRecord> {
         let updated = sqlx::query!(
             "UPDATE runs SET status = 'running', result = NULL, error = NULL,
+                             model = ?2,
                              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?1 AND status != 'running'",
             run,
+            model,
         )
         .execute(&mut *self.writer().await?)
         .await?;

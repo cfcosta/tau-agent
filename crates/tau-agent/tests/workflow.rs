@@ -828,6 +828,41 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
     });
 }
 
+/// A finished chat can go on on another model: the same run and
+/// conversation, the next requests on the new model, and the store
+/// records it.
+#[test]
+fn a_run_resumes_on_another_model() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("hi"))
+        .turn(|t| t.text("still here"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let first = Agent::new(llm.clone())
+            .model("gpt-5.5")
+            .run("hello", &store)
+            .await
+            .unwrap();
+        let mut run = Agent::new(llm.clone())
+            .model("gpt-6-sol")
+            .resume(&first.run)
+            .start("go on", &store);
+        assert_eq!(run.id(), first.run, "the same run");
+        run.events().for_each(|_| async {}).await;
+        run.outcome().await.unwrap();
+        let asked = llm.requests();
+        assert_eq!(asked[0].settings.model, "gpt-5.5");
+        assert_eq!(asked[1].settings.model, "gpt-6-sol");
+        assert_eq!(
+            asked[1].transcript.len(),
+            3,
+            "the conversation so far, then the message"
+        );
+        let record = store.run(&first.run.0).await.unwrap().unwrap();
+        assert_eq!(record.model, "gpt-6-sol");
+    });
+}
+
 /// A finished run goes on like a chat: the same run, the whole
 /// conversation sent again, turns that keep counting, usage that keeps
 /// adding up, and a fresh turn budget for each message.

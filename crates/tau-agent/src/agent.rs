@@ -750,11 +750,14 @@ async fn run_task(
         );
     }
     // A resumed run is reopened as it was stored: its kind, workflow and
-    // turns.
+    // turns. It goes on on this agent's model, which may be another.
     let resumed = match &launch.resume {
-        Some(run) => {
-            Some(store.reopen_run(&run.0).await.map_err(AgentError::Store)?)
-        }
+        Some(run) => Some(
+            store
+                .reopen_run(&run.0, &agent.0.model)
+                .await
+                .map_err(AgentError::Store)?,
+        ),
         None => None,
     };
     let kind = resumed

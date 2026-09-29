@@ -41,6 +41,7 @@ struct ModelRun {
     cost: f64,
     turns: i64,
     status: Status,
+    model: &'static str,
 }
 
 #[derive(Default)]
@@ -245,6 +246,7 @@ fn store_matches_model_body(tc: TestCase) {
                             cost: 0.0,
                             turns: 0,
                             status: Status::Running,
+                            model: "gpt-5.5",
                         },
                     );
                 }
@@ -295,7 +297,9 @@ fn store_matches_model_body(tc: TestCase) {
                 }
                 Op::Reopen => {
                     let Some(run) = pick(&tc) else { continue };
-                    let result = store.reopen_run(&run).await;
+                    let on =
+                        tc.draw(gs::sampled_from(vec!["gpt-5.5", "gpt-6-sol"]));
+                    let result = store.reopen_run(&run, on).await;
                     let m = model.runs.get_mut(&run).unwrap();
                     if m.status == Status::Running {
                         assert!(
@@ -306,7 +310,12 @@ fn store_matches_model_body(tc: TestCase) {
                         let record = result.unwrap();
                         assert_eq!(record.status, Status::Running);
                         assert_eq!(record.result, None);
+                        assert_eq!(
+                            record.model, on,
+                            "it goes on on the new model"
+                        );
                         m.status = Status::Running;
+                        m.model = on;
                     }
                 }
             }
@@ -336,6 +345,7 @@ fn store_matches_model_body(tc: TestCase) {
                 assert_eq!(record.cost_usd, m.cost, "{id}");
                 assert_eq!(record.turns, m.turns, "{id}");
                 assert_eq!(record.agent, m.agent);
+                assert_eq!(record.model, m.model, "{id}");
                 assert_eq!(record.workflow_id.as_deref(), m.workflow);
             }
             for workflow in ["wf_1", "wf_2"] {
