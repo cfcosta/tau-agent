@@ -1,0 +1,20 @@
+[package]
+name = "tau-memory"
+description = "Long-term memory for tau agents: a Zettelkasten of typed, linked Markdown notes, as a plugin."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+hegeltest.workspace = true
+tempfile.workspace = true

@@ -7685,6 +7685,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tempfile",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "tau-reasoning"
 version = "0.1.0"
 dependencies = [
