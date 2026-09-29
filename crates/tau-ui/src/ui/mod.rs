@@ -7,6 +7,7 @@
 pub mod chrome;
 pub mod components;
 pub mod inspector;
+pub mod log_card;
 pub mod screens;
 pub mod transcript;
 

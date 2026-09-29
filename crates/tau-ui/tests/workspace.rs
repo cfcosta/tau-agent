@@ -1415,6 +1415,34 @@ fn a_plugin_note_opens_and_closes(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_log_card_opens_and_picks_one_change(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let run = demo::run_id();
+        assert!(!ws.log_open(&run, "log"), "logs start closed");
+        ws.toggle_log(&run, "log", cx);
+        assert!(ws.log_open(&run, "log"));
+        assert!(!ws.log_open(&run, "other"), "only that card opens");
+
+        assert_eq!(ws.picked_change(&run, "log"), None);
+        ws.pick_change(&run, "log", "qpvuntsm", cx);
+        assert_eq!(ws.picked_change(&run, "log"), Some("qpvuntsm"));
+        ws.pick_change(&run, "log", "rlvkpnrz", cx);
+        assert_eq!(ws.picked_change(&run, "log"), Some("rlvkpnrz"));
+        assert_eq!(ws.picked_change(&run, "other"), None);
+        ws.pick_change(&run, "log", "rlvkpnrz", cx);
+        assert_eq!(
+            ws.picked_change(&run, "log"),
+            None,
+            "a second click puts it back"
+        );
+
+        ws.toggle_log(&run, "log", cx);
+        assert!(!ws.log_open(&run, "log"));
+    });
+}
+
+#[gpui::test]
 fn the_picker_offers_the_models_own_efforts(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_with_models(cx);
     workspace.update(&mut cx, |ws, cx| {

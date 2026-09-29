@@ -416,6 +416,10 @@ pub struct Workspace {
     /// Plugin notes opened to show their detail, as `(run, item index)`.
     /// Notes start closed.
     pub(crate) open_notes: HashSet<(RunId, usize)>,
+    /// `vcs_log` cards opened, as `(run, call id)`. They start closed.
+    open_logs: HashSet<(RunId, String)>,
+    /// The change picked in each `vcs_log` card, by full change id.
+    picked_changes: HashMap<(RunId, String), String>,
     /// Flagged calls someone looked at, as `(run, call id)`.
     pub(crate) dismissed: HashSet<(RunId, String)>,
     pub(crate) kept_branch: Option<RunId>,
@@ -671,6 +675,8 @@ impl Workspace {
             inspector_shown: false,
             kept: HashMap::new(),
             open_notes: HashSet::new(),
+            open_logs: HashSet::new(),
+            picked_changes: HashMap::new(),
             dismissed: HashSet::new(),
             kept_branch: None,
             setup: Setup::default(),
@@ -1100,6 +1106,50 @@ impl Workspace {
 
     pub fn note_open(&self, run: &RunId, index: usize) -> bool {
         self.open_notes.contains(&(run.clone(), index))
+    }
+
+    /// Opens or closes the `vcs_log` card of `call_id` in `run`.
+    pub fn toggle_log(
+        &mut self,
+        run: &RunId,
+        call_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (run.clone(), call_id.to_owned());
+        if !self.open_logs.remove(&key) {
+            self.open_logs.insert(key);
+        }
+        cx.notify();
+    }
+
+    pub fn log_open(&self, run: &RunId, call_id: &str) -> bool {
+        self.open_logs.contains(&(run.clone(), call_id.to_owned()))
+    }
+
+    /// Picks a change in a `vcs_log` card to show its detail, or puts
+    /// it back when it is already the one picked.
+    pub fn pick_change(
+        &mut self,
+        run: &RunId,
+        call_id: &str,
+        change_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (run.clone(), call_id.to_owned());
+        if self.picked_changes.get(&key).map(String::as_str) == Some(change_id)
+        {
+            self.picked_changes.remove(&key);
+        } else {
+            self.picked_changes.insert(key, change_id.to_owned());
+        }
+        cx.notify();
+    }
+
+    /// The change picked in a `vcs_log` card, by full change id.
+    pub fn picked_change(&self, run: &RunId, call_id: &str) -> Option<&str> {
+        self.picked_changes
+            .get(&(run.clone(), call_id.to_owned()))
+            .map(String::as_str)
     }
 
     pub fn keep_note(

@@ -77,6 +77,8 @@ pub struct Theme {
     pub slate: Hsla,
     /// Bars in a chart that were not picked.
     pub bar_idle: Hsla,
+    /// Change ids, in the magenta jj writes them in.
+    pub change: Hsla,
     /// Behind a plugin's badge and other small info marks.
     pub info_surface: Hsla,
     /// Behind an informational panel, such as the run plan.
@@ -124,6 +126,7 @@ impl Theme {
             border_soft: c(rgb(0x30323a)),
             slate: c(rgb(0x5c6b88)),
             bar_idle: c(rgb(0x3d4452)),
+            change: c(rgb(0xc49bf0)),
             info_surface: c(rgb(0x1f2633)),
             info_panel: c(rgb(0x171a21)),
             danger_surface: c(rgb(0x1d1716)),

@@ -16,7 +16,7 @@ use gpui::{
     relative,
 };
 
-use super::{bar, button, dot, icon, link, mono, rich, stop_look};
+use super::{bar, button, dot, icon, link, log_card, mono, rich, stop_look};
 use crate::{
     assets::Icon,
     route::Route,
@@ -409,7 +409,14 @@ fn tool(
             }))
     });
 
+    // A log starts closed; its header opens it.
+    let log = match &card.body {
+        ToolBody::Log(log) if !dropped => Some(log.as_ref()),
+        _ => None,
+    };
+    let open = log.is_none() || ws.log_open(&run.id, &card.call_id);
     let header = div()
+        .id(SharedString::from(format!("tool-{}", card.call_id)))
         .flex()
         .items_center()
         .gap(sp(2.))
@@ -468,7 +475,21 @@ fn tool(
                     .child(pruned.label()),
             )
         })
-        .children(review);
+        .children(review)
+        .when_some(log, |row, log| {
+            let run_id = run.id.clone();
+            let call_id = card.call_id.clone();
+            row.cursor_pointer()
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.toggle_log(&run_id, &call_id, cx)
+                }))
+                .when(!compact, |row| row.child(log_card::bars(log, t)))
+                .child(icon(
+                    if open { Icon::Down } else { Icon::Chevron },
+                    IconSize::SMALL,
+                    t.dim,
+                ))
+        });
 
     let body: Option<AnyElement> = match (&card.state, &card.body) {
         (
@@ -485,6 +506,10 @@ fn tool(
         ),
         (ToolState::Flagged { .. }, _) => None,
         _ if dropped => None,
+        (_, ToolBody::Log(log)) => open.then(|| {
+            log_card::body(ws, run, card, log, t, compact, cx)
+                .into_any_element()
+        }),
         (_, ToolBody::Diff(lines)) => Some(diff(lines, t).into_any_element()),
         (_, ToolBody::Output(lines)) if !lines.is_empty() => {
             Some(output(lines, t).into_any_element())
