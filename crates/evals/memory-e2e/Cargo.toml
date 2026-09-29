@@ -1,0 +1,33 @@
+[package]
+name = "tau-memory-e2e"
+description = "The end-to-end evaluation of tau-memory: coding tasks that need an earlier run, with and without memory."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Memory and transcript search with docbert's ColBERT model, as the app
+# searches; without it, BM25.
+docbert = ["tau-memory/docbert"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+tau-compaction.workspace = true
+tau-memory.workspace = true
+tau-store.workspace = true
+tau-tools.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+hegeltest.workspace = true
+tau-testing.workspace = true

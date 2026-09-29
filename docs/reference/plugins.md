@@ -496,7 +496,33 @@ tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
     `crates/plugins/memory/eval/harbor.toml`, synthetic facts about a
     made-up service. Every level holds the same number of notes, so only
     the near-duplicates per answer change.
-  - The end-to-end tasks are not built yet.
+  - The end-to-end tasks run with `cargo run --release -p tau-memory-e2e`
+    (`--features docbert` to search as the app does; BM25 without it).
+    They make real model calls, which cost money: `--budget-usd` stops
+    the run once that much is spent, and `--scenario`, `--arm`,
+    `--variant` and `--trials N` pick what runs. `--help` lists the rest.
+    - The key is `OPENAI_API_KEY`, or tau's ChatGPT sign-in or saved
+      key; the model defaults to tau-ui's for that access. Without any,
+      nothing runs.
+    - Five scenarios in `crates/evals/memory-e2e`, each a small bash
+      repository made in a temporary directory. The first run finds a
+      fact by doing a task (the suite needs an environment variable,
+      code is generated, settings keys take a prefix, a release touches
+      three files, commands are registered in a list); the second run
+      needs it for another task, and a check on the repository decides
+      success.
+    - In the changed variant a commit between the runs changes the fact,
+      and memory marks the notes about the changed files stale, as the
+      app does. A second run that uses the old fact is counted.
+    - Arms: `none`; `memory_md` (the agent keeps `MEMORY.md`, and the
+      second run starts with it); `transcripts` (the best chunks of the
+      first run's transcript for the second task); `memory`; and
+      `memory_consolidate`. The memory arms share a fresh scope between
+      a trial's two runs.
+    - Per run: success, tool calls, input, output and cached tokens,
+      cost, wall time; per trial, whether the old fact was used and
+      whether the second run read memory. It prints the means per arm
+      and variant; `--json PATH` writes every trial.
 - **Scope:** per repository, plus a user scope for preferences across
   projects; a fact lives in exactly one.
   - In the app, a repository's notes are in `memory/` in tau's directory

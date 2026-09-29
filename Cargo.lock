@@ -8419,6 +8419,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-memory-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "hegeltest",
+ "regex",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-compaction",
+ "tau-memory",
+ "tau-store",
+ "tau-testing",
+ "tau-tools",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "tau-reasoning"
 version = "0.1.0"
 dependencies = [

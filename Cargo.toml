@@ -1,6 +1,7 @@
 [workspace]
-# Core crates, then plugins (docs/decisions/0006-plugin-crates.md).
-members = ["crates/tau-*", "crates/plugins/*"]
+# Core crates, then plugins (docs/decisions/0006-plugin-crates.md), then
+# evaluations that run agents end to end.
+members = ["crates/tau-*", "crates/plugins/*", "crates/evals/*"]
 resolver = "3"
 
 [workspace.package]
