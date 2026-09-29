@@ -105,9 +105,9 @@ fn pool_keeps_limits_and_order(tc: TestCase) {
 }
 
 /// [`pool_keeps_limits_and_order`] with more cases, for the nightly tier.
-#[hegel::test(test_cases = 5000)]
-#[ignore = "extended"]
-fn pool_keeps_limits_and_order_extended(tc: TestCase) {
+#[hegel::test(profile = "nightly_slow")]
+#[ignore = "nightly"]
+fn pool_keeps_limits_and_order_nightly(tc: TestCase) {
     pool_keeps_limits_and_order_body(tc)
 }
 

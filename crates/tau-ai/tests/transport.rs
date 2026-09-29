@@ -189,9 +189,9 @@ fn run_over_transport(tc: TestCase) {
 }
 
 /// [`run_over_transport`] with more cases, for the nightly tier.
-#[hegel::test(test_cases = 500)]
-#[ignore = "extended"]
-fn run_over_transport_extended(tc: TestCase) {
+#[hegel::test(profile = "nightly_slow")]
+#[ignore = "nightly"]
+fn run_over_transport_nightly(tc: TestCase) {
     run_over_transport_body(tc)
 }
 

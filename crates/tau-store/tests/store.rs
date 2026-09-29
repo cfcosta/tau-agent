@@ -192,9 +192,9 @@ fn store_matches_model(tc: TestCase) {
 }
 
 /// [`store_matches_model`] with more cases, for the nightly tier.
-#[hegel::test(test_cases = 1000)]
-#[ignore = "extended"]
-fn store_matches_model_extended(tc: TestCase) {
+#[hegel::test(profile = "nightly_slow")]
+#[ignore = "nightly"]
+fn store_matches_model_nightly(tc: TestCase) {
     store_matches_model_body(tc)
 }
 

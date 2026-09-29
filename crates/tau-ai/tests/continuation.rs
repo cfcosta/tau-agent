@@ -93,9 +93,9 @@ fn delta_reconstructs_full_input(tc: TestCase) {
 }
 
 /// [`delta_reconstructs_full_input`] with more cases, for the nightly tier.
-#[hegel::test(test_cases = 10000)]
-#[ignore = "extended"]
-fn delta_reconstructs_full_input_extended(tc: TestCase) {
+#[hegel::test(profile = "nightly")]
+#[ignore = "nightly"]
+fn delta_reconstructs_full_input_nightly(tc: TestCase) {
     delta_reconstructs_full_input_body(tc)
 }
 
@@ -117,9 +117,9 @@ fn settings_change_forces_full_resend(tc: TestCase) {
 }
 
 /// [`settings_change_forces_full_resend`] with more cases, for the nightly tier.
-#[hegel::test(test_cases = 10000)]
-#[ignore = "extended"]
-fn settings_change_forces_full_resend_extended(tc: TestCase) {
+#[hegel::test(profile = "nightly")]
+#[ignore = "nightly"]
+fn settings_change_forces_full_resend_nightly(tc: TestCase) {
     settings_change_forces_full_resend_body(tc)
 }
 
@@ -158,9 +158,9 @@ fn baseline_change_forces_full_resend(tc: TestCase) {
 }
 
 /// [`baseline_change_forces_full_resend`] with more cases, for the nightly tier.
-#[hegel::test(test_cases = 10000)]
-#[ignore = "extended"]
-fn baseline_change_forces_full_resend_extended(tc: TestCase) {
+#[hegel::test(profile = "nightly")]
+#[ignore = "nightly"]
+fn baseline_change_forces_full_resend_nightly(tc: TestCase) {
     baseline_change_forces_full_resend_body(tc)
 }
 

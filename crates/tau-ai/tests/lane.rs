@@ -59,9 +59,9 @@ fn lane_against_simulated_server(tc: TestCase) {
 }
 
 /// [`lane_against_simulated_server`] with more cases, for the nightly tier.
-#[hegel::test(test_cases = 5000)]
-#[ignore = "extended"]
-fn lane_against_simulated_server_extended(tc: TestCase) {
+#[hegel::test(profile = "nightly_slow")]
+#[ignore = "nightly"]
+fn lane_against_simulated_server_nightly(tc: TestCase) {
     lane_against_simulated_server_body(tc)
 }
 

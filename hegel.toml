@@ -1,0 +1,18 @@
+# Hegel settings for every crate's property tests (hegeltest reads the
+# workspace root's hegel.toml). The shipped profiles apply as they are:
+# `development` locally, `ci` on CI (no example database, fixed seeds).
+#
+# Deeper runs are `#[ignore = "nightly"]` twins of a property that select
+# one of the profiles below, and run with `cargo test -- --ignored`. They
+# draw fresh seeds even on CI, so each nightly run explores new cases.
+
+# Pure properties: cheap per case.
+[profiles.nightly]
+test_cases = 10000
+derandomize = false
+
+# Properties that run a simulated server, a store or an agent loop per
+# case.
+[profiles.nightly_slow]
+test_cases = 1000
+derandomize = false

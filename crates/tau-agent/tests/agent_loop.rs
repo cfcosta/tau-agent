@@ -185,9 +185,9 @@ fn loop_over_generated_scripts(tc: TestCase) {
 }
 
 /// [`loop_over_generated_scripts`] with more cases, for the nightly tier.
-#[hegel::test(test_cases = 1000)]
-#[ignore = "extended"]
-fn loop_over_generated_scripts_extended(tc: TestCase) {
+#[hegel::test(profile = "nightly_slow")]
+#[ignore = "nightly"]
+fn loop_over_generated_scripts_nightly(tc: TestCase) {
     loop_over_generated_scripts_body(tc)
 }
 

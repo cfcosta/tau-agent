@@ -158,12 +158,20 @@ fn delta_reconstructs_full_input(tc: TestCase) {
 | Default                                | 100 (Hegel's own) |
 | Model test, or one that touches SQLite | 50–100            |
 | Filesystem (`tau-tools`)               | 50                |
-| Extended variant (nightly only)        | 5,000–10,000      |
+| Nightly variant                        | from `hegel.toml` |
 
-An extended variant is a second test with the same body, a higher
-count, and `#[ignore = "extended"]`. The nightly job runs it with
+A nightly variant is a second test with the same body,
+`#[ignore = "nightly"]`, and `#[hegel::test(profile = "nightly")]` (pure
+properties, 10,000 cases) or `profile = "nightly_slow"` (a simulated
+server, a store or an agent loop per case, 1,000 cases). The profiles
+live in the workspace's `hegel.toml`, and draw fresh seeds even on CI,
+so each nightly run explores new cases. The nightly job runs them with
 `cargo nextest run --run-ignored only`. Put the body in a plain function
 so both tests share it.
+
+A count written in the test (`test_cases = 500`) beats a profile and
+`HEGEL_TEST_CASES`. Write one only where the test needs a count of its
+own.
 
 ### Generators
 
@@ -272,9 +280,13 @@ loop:
 - Each `#[invariant]` checks a rule that must hold after every step.
 - Guard a rule with `tc.assume` only for preconditions such as "the pool
   has a free lane". Such rules must still apply in most states.
-- Use `hegel::stateful::Variables` for handles created earlier in the
-  run, such as run ids, lanes and checkpoints.
-- Raise `stateful_step_count` only in extended variants.
+- Use `hegel::stateful::Pool` for handles created earlier in the run,
+  such as run ids, lanes and checkpoints, and draw from it with
+  `values_reusable()` or `values_consumed()` so the choice shrinks.
+- Run a machine with `hegel::stateful::machine(m).steps(n).run(tc)`;
+  raise `n` only in nightly variants.
+- `#[invariant(always_run)]` checks every step; a plain `#[invariant]`
+  is sampled between steps.
 
 ### Failures and regressions
 
@@ -343,7 +355,7 @@ list is a floor, not a ceiling.
 | Cost is additive: `cost(a + b) == cost(a) + cost(b)` for usages of the same model and tier                                                                                          | Algebraic    |
 
 The delta rule is the riskiest code in the project. Its model test must
-also run in the nightly extended tier and under `cargo mutants`.
+also run in the nightly tier and under `cargo mutants`.
 
 ### `tau-agent`
 
@@ -615,11 +627,11 @@ missing assertion, or record why the mutant is equivalent in
 | Tier    | When       | Runs                                                                                                                             |
 | ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run`, `cargo sqlx prepare --check`, `cargo deny check` |
-| Nightly | once a day | everything in Check, plus `cargo nextest run --run-ignored only` (extended properties) and `cargo mutants` on the modules above  |
+| Nightly | once a day | everything in Check, plus `cargo nextest run --run-ignored only` (nightly properties) and `cargo mutants` on the modules above  |
 | Live    | nightly    | the [live tests](#live-tests) with a budget cap; also run by hand to record new fixtures when the protocol changes               |
 
 The Check tier must stay under five minutes. If it grows past that,
-move cases to extended variants rather than lowering the default counts.
+move cases to nightly variants rather than lowering the default counts.
 
 ## Anti-patterns
 
@@ -659,7 +671,7 @@ move cases to extended variants rather than lowering the default counts.
 - [ ] A shrunk counterexample is short enough to read.
 - [ ] The test is deterministic: paused time, injected ids, no network.
 - [ ] Case counts follow [Case counts](#case-counts); slow cases are in
-      an extended variant.
+      a nightly variant.
 - [ ] Each fixed bug has a regression case, and relevant
       [known cases](#known-cases) are wired in.
 - [ ] Protocol rules are tested on `ws::proto` directly; driver changes
