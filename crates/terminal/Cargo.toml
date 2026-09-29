@@ -1,0 +1,24 @@
+[package]
+name = "tau-terminal"
+description = "A terminal for tool output: libghostty-vt emulation, a PTY command runner, plain text, styled snapshots and a GPUI view."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# No other tau crate: this one is reusable on its own
+# (docs/decisions/0010-terminal-rendering.md).
+[dependencies]
+# The same spec as tau-ui's.
+gpui = "0.2.2"
+libc.workspace = true
+libghostty-vt.workspace = true
+libghostty-vt-sys.workspace = true
+rustix.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "process"] }
+
+[dev-dependencies]
+hegeltest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }

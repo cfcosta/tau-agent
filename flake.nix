@@ -9,10 +9,19 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # libghostty-vt, the terminal emulator behind tau-tools' `terminal`
+    # feature (docs/decisions/0010-terminal-rendering.md). Pinned at the
+    # Ghostty commit that `libghostty-vt-sys` 0.2.2 builds against
+    # (GHOSTTY_COMMIT in its build.rs). The two must move together: a
+    # crate bump that pins a new commit needs this input bumped in the
+    # same change. Its own nixpkgs is kept, so its Zig build matches
+    # what Ghostty tests.
+    ghostty.url = "github:ghostty-org/ghostty/a887df42c56f6de86c0fe6da9c4eeca37931e083";
   };
 
   outputs =
     {
+      ghostty,
       nixpkgs,
       rust-overlay,
       treefmt-nix,
@@ -56,6 +65,11 @@
                 ]
               );
 
+              # Found through pkg-config by `libghostty-vt-sys`'s
+              # `pkg-config` feature, so cargo never runs git or Zig. Its
+              # `dev` output holds the static library and the `.pc` files.
+              libghostty-vt = ghostty.packages.${system}.libghostty-vt;
+
               rustPlatform = pkgs.makeRustPlatform {
                 cargo = rust;
                 rustc = rust;
@@ -94,7 +108,7 @@
                   pkgs.pkg-config
                   pkgs.makeWrapper
                 ];
-                buildInputs = guiLibs;
+                buildInputs = guiLibs ++ [ libghostty-vt ];
                 # The tests make fixture repositories with git; the app
                 # itself does not need it.
                 nativeCheckInputs = [ pkgs.git ];
@@ -156,6 +170,7 @@
               inherit
                 formatter
                 guiLibs
+                libghostty-vt
                 pkgs
                 rust
                 system
@@ -192,6 +207,7 @@
           rust,
           formatter,
           guiLibs,
+          libghostty-vt,
           ...
         }:
         {
@@ -214,7 +230,8 @@
                 jq
                 sqlx-cli
               ]
-              ++ guiLibs;
+              ++ guiLibs
+              ++ [ libghostty-vt ];
 
             nativeBuildInputs = [ pkgs.pkg-config ];
 

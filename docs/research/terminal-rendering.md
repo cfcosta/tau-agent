@@ -1,6 +1,8 @@
 # Research: rendering tool output as a terminal
 
-- Status: research, no decision yet
+- Status: decided in
+  [0010](../decisions/0010-terminal-rendering.md): libghostty-vt,
+  against this note's recommendation
 - Date: 2026-09-28
 
 ## Question

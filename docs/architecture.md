@@ -10,6 +10,8 @@ tau-agent/
 │   │                 # limits, sub-agents, forks, context estimate
 │   ├── tau-store/    # SQLite via sqlx: runs, messages, fork transcripts, migrations
 │   ├── tau-testing/  # ScriptedModel, recorded-stream replay
+│   ├── terminal/     # tau-terminal: libghostty-vt terminal, PTY command runner,
+│   │                 # plain text, styled snapshots, GPUI view; no tau deps
 │   └── plugins/
 │       ├── compaction/       # tau-compaction: summarizing compaction
 │       ├── fast-compaction/  # tau-fast-compaction: Jev-driven pruning of tool history
@@ -22,6 +24,9 @@ Dependency direction:
 
 - `tau-agent` depends on `tau-ai` and `tau-store`.
 - `tau-testing` depends on `tau-ai`.
+- `tau-terminal` depends on no tau crate. `tau-tools` uses it for
+  `bash` only with its `terminal` feature, which `tau-ui` turns on
+  ([0010](decisions/0010-terminal-rendering.md)).
 - Plugins, under `crates/plugins/`, depend on `tau-agent` (and
   `tau-ai` for message types). Core crates never depend on a plugin
   ([0006](decisions/0006-plugin-crates.md)).
