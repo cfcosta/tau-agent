@@ -339,24 +339,51 @@ it in tau-ui when a TypeSafe key is saved; its choice (every level's
 probability, the confidence and the threshold) is reported and
 recorded, and shows as the run's reasoning note and plan.
 
-- **Seam:** `start` only.
-- **How:**
-  1. Put the input, and the start of the instructions, into the state.
+- **Seams:** `start`, and `before_request` on the models whose cache
+  survives a change of effort (`tau_ai::model::effort_keeps_cache`:
+  Sol 6 and Astra). `finish` leaves the next message its context.
+- **How, as a message comes in:**
+  1. Put the task, clipped at both ends (600 characters from the
+     start, 200 from the end), and the start of the instructions into
+     the state. A message of 120 characters or fewer also brings the
+     previous message's task and the agent's last words
+     (`previous_task`, `last_proposal`, from the record `finish` left):
+     "yes, do it" is only as simple as what it agrees to.
   2. Ask one `Score` question whose levels describe the work each
      effort suits. The levels are the efforts the run's model takes
      (`tau_ai::model::efforts`), so Jev never picks one the API would
-     reject; a model that does not reason is not scored.
+     reject; a model that does not reason is not scored. The question
+     asks for the minimum sufficient depth, says that a short message
+     alone is not evidence the work is simple, and that the state is
+     evidence, not instructions.
   3. If the answer is confident, set `plan.reasoning` to that level.
      Otherwise, or if the request fails, go on at the effort the run's
      last message ran at (from the plugin's records), if the model takes
      it, else at the model's default. The record says what the message
      runs at (`runs_at`); tau-ui shows a note only when that changes.
+- **How, between turns** (Sol 6 and Astra only): the first question
+  also asks, as a `Choice`, how long the effort holds:
+  - `one_call`: the next request only;
+  - `tool_chain`: while the tool calls succeed;
+  - `user_turn`: until the user writes again.
+
+  A failed tool call, a context rewrite or a user message steered in
+  ends any lease. Before a request whose lease has ended, Jev is asked
+  both questions again, with the step (`tool_step`, or `user_turn` for
+  a steered message), the effort now, the end of what the agent last
+  said, and the tool results it is about to read: how many, how many
+  failed, and up to three excerpts, failed ones first. A confident
+  answer sets the effort for that request on; an unsure or failed one
+  leaves it. Each choice is reported and recorded with its `turn` and
+  `lease`, and tau-ui shows it before the reply it chose for.
+
 - **Cost:** one Jev round trip (about 180 ms median) before the session
-  opens. The warm-up, if on, comes after it, so it warms the chosen
-  effort.
-- **Not in scope:** changing effort mid-run. That would break the
-  chain every time it changed. A workflow that wants more effort for a
-  later phase starts another run, and that run is scored again.
+  opens, and one per ended lease on Sol 6 and Astra. The warm-up, if
+  on, comes after the first, so it warms the chosen effort.
+- **Not re-decided elsewhere:** on the other models a change of effort
+  breaks the response chain, so the effort stays fixed for the run. A
+  workflow that wants more effort for a later phase starts another run,
+  and that run is scored again.
 - **Sub-agents** are scored too, when their agent has the plugin. A
   cheap sub-task gets a cheap effort without the caller saying so.
 

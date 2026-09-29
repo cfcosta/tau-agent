@@ -676,10 +676,19 @@ impl RunView {
         };
         for entry in timeline {
             match entry {
+                // A choice made as a message came in shows after that
+                // message; one made between turns, where it was made.
+                Stored::Record { plugin, body }
+                    if plugin == tau_reasoning::NAME
+                        && body["turn"].is_null() =>
+                {
+                    starting.push(body);
+                }
                 Stored::Record { plugin, body }
                     if plugin == tau_reasoning::NAME =>
                 {
-                    starting.push(body);
+                    flush(&mut view, &mut during);
+                    view.report(plugin, body);
                 }
                 // A child landed between turns: its card follows the
                 // turn it came after.
@@ -1531,6 +1540,12 @@ impl RunView {
             return;
         };
         let chose = choice.kind == "chose";
+        // A choice between turns is for the agent's next step.
+        let what = if choice.turn.is_some() {
+            "this step"
+        } else {
+            "this message"
+        };
         // What the message runs at: the pick, else what the last one ran
         // at (a record from before `runs_at` was kept has only the pick).
         let runs_at = choice
@@ -1580,17 +1595,17 @@ impl RunView {
         };
         let text = match &before {
             None if chose => {
-                format!("picked {} reasoning for this message", name(&runs_at))
+                format!("picked {} reasoning for {what}", name(&runs_at))
             }
             _ => format!("reasoning {} → {}", name(&before), name(&runs_at)),
         };
         let comparison = if chose { "above" } else { "below" };
         let outcome = match &runs_at {
             Some(effort) if chose => {
-                format!("so this message runs at {effort}.")
+                format!("so {what} runs at {effort}.")
             }
-            Some(effort) => format!("so this message stays at {effort}."),
-            None => "so this message runs at the model's default.".to_owned(),
+            Some(effort) => format!("so {what} stays at {effort}."),
+            None => format!("so {what} runs at the model's default."),
         };
         self.push_note(PluginNote {
             plugin: plugin.to_owned(),
@@ -2641,7 +2656,8 @@ mod tests {
 
     #[test]
     fn a_reasoning_note_shows_only_when_the_effort_changes() {
-        let mut view = RunView::new(RunId("r".into()), "t", "coder", "gpt-5.5");
+        let mut view =
+            RunView::new(RunId("r".into()), "t", "coder", "gpt-6-sol");
         let notes = |view: &RunView| -> Vec<String> {
             view.items
                 .iter()
@@ -2736,5 +2752,69 @@ mod tests {
             .collect();
         assert_eq!(markers, [1, 2]);
         assert_eq!(view.turn, 2);
+    }
+
+    /// A choice made as a message came in shows after the message; one
+    /// made between turns shows where it was made, before the reply it
+    /// chose for.
+    #[test]
+    fn stored_reasoning_choices_show_where_they_were_made() {
+        let user: Message = serde_json::from_value(json!({
+            "role": "user", "content": "go", "timestamp": 0
+        }))
+        .unwrap();
+        let reply = |text: &str| -> Message {
+            serde_json::from_value(json!({
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}],
+                "api": "responses", "provider": "openai", "model": "m",
+                "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
+                          "totalTokens": 0,
+                          "cost": {"input": 0, "output": 0, "cacheRead": 0,
+                                   "cacheWrite": 0, "total": 0}},
+                "stopReason": "stop", "timestamp": 0
+            }))
+            .unwrap()
+        };
+        let record = |body: Value| Stored::Record {
+            plugin: tau_reasoning::NAME.into(),
+            body,
+        };
+        let mut step = choice("chose", "low", Some("low"));
+        step["step"] = "tool_step".into();
+        step["turn"] = 2.into();
+        let view = RunView::from_timeline(
+            run(),
+            "t",
+            "a",
+            "gpt-6-sol",
+            &[
+                record(choice("chose", "high", Some("high"))),
+                Stored::Message(user),
+                Stored::Message(reply("one")),
+                record(step),
+                Stored::Message(reply("two")),
+                record(json!({"kind": "context", "task": "go",
+                              "proposal": "two"})),
+            ],
+        );
+        let order: Vec<String> = view
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Plugin(note) => Some(note.text.clone()),
+                Item::Text(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "picked **high** reasoning for this message",
+                "one",
+                "reasoning **high** → **low**",
+                "two",
+            ]
+        );
     }
 }

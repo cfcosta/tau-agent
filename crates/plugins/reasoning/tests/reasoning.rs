@@ -1,13 +1,19 @@
 //! The effort a run gets: Jev's, when it is sure; the default when it
-//! is not, fails, or someone chose one.
+//! is not, fails, or someone chose one. On the models whose cache
+//! survives a change of effort, Jev picks again when its lease ends.
 
 use std::{collections::BTreeMap, sync::Arc};
 
+use async_trait::async_trait;
 use futures_util::StreamExt;
-use serde_json::Value;
-use tau_agent::{agent::Agent, event::RunEvent};
+use serde_json::{Value, json};
+use tau_agent::{
+    agent::Agent,
+    event::RunEvent,
+    tool::{AgentTool, ToolCtx, ToolOutput},
+};
 use tau_ai::responses::request::ReasoningEffort;
-use tau_jev::{Answer, JevError, fake::FakeJev};
+use tau_jev::{Answer, JevError, Request, fake::FakeJev};
 use tau_reasoning::{Choice, NAME, Reasoning};
 use tau_store::Store;
 use tau_testing::{block_on, scripted::ScriptedModel};
@@ -123,8 +129,8 @@ fn the_levels_are_the_models_efforts() {
             .collect::<Vec<_>>()
     };
     assert_eq!(
-        efforts("gpt-5.5"),
-        ["none", "low", "medium", "high", "xhigh"]
+        efforts("gpt-6-sol"),
+        ["none", "low", "medium", "high", "xhigh", "max"]
     );
     assert_eq!(
         efforts("gpt-6-astra"),
@@ -279,4 +285,228 @@ fn an_unsure_message_goes_on_as_the_last_one() {
     assert_eq!(unsure.runs_at.as_deref(), Some("high"));
     assert_eq!(reports[1]["kind"], "error");
     assert_eq!(reports[1]["runs_at"], "high");
+}
+
+/// A Jev that answers each request with the next of `answers`: sure of
+/// the level at that index, for the lease named.
+fn scripted(answers: Vec<(usize, &'static str)>) -> FakeJev {
+    let answers = Arc::new(std::sync::Mutex::new(answers.into_iter()));
+    FakeJev::new(move |request| {
+        let (level, lease) =
+            answers.lock().unwrap().next().expect("an answer left");
+        let mut answers = BTreeMap::from([(
+            "effort".to_owned(),
+            Answer::Score {
+                score: level as f64,
+                probabilities: BTreeMap::from([(level.to_string(), 1.0)]),
+                confidence: 0.9,
+            },
+        )]);
+        if request.questions.contains_key("lease") {
+            answers.insert(
+                "lease".into(),
+                Answer::Choice {
+                    choice: lease.into(),
+                    probabilities: BTreeMap::from([(lease.into(), 1.0)]),
+                    confidence: 0.9,
+                },
+            );
+        }
+        Ok(tau_jev::fake::response(answers, request))
+    })
+}
+
+/// Fails when its `text` is "fail", and echoes it otherwise.
+struct Probe {
+    schema: Value,
+}
+
+impl Probe {
+    fn new() -> Self {
+        Self {
+            schema: json!({
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            }),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for Probe {
+    fn name(&self) -> &str {
+        "probe"
+    }
+    fn description(&self) -> &str {
+        "Echoes its text, or fails on \"fail\"."
+    }
+    fn parameters(&self) -> &Value {
+        &self.schema
+    }
+    async fn call(
+        &self,
+        args: Value,
+        _ctx: ToolCtx,
+    ) -> anyhow::Result<ToolOutput> {
+        match args["text"].as_str().unwrap_or_default() {
+            "fail" => anyhow::bail!("the build failed: 3 errors"),
+            text => Ok(ToolOutput::text(text)),
+        }
+    }
+}
+
+/// Runs "fix the lane race" on `model` with one probe call per entry of
+/// `calls`, then a final answer. Returns the effort of each request,
+/// what Jev was asked, and the plugin's reports.
+fn tool_run(
+    model: &str,
+    jev: FakeJev,
+    calls: &[&'static str],
+) -> (Vec<Option<ReasoningEffort>>, Vec<Request>, Vec<Value>) {
+    let mut llm = ScriptedModel::new();
+    for text in calls {
+        llm = llm.turn(|t| {
+            t.text(format!("Next I run the probe on {text}."))
+                .tool_call("probe", json!({"text": text}))
+        });
+    }
+    let llm = llm.turn(|t| t.text("done"));
+    let events: Vec<RunEvent> = block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm.clone())
+            .model(model)
+            .tool(Probe::new())
+            .plugin(Reasoning::new(Arc::new(jev.clone())));
+        let mut run = agent.start("fix the lane race", &store);
+        let events = run.events().collect().await;
+        run.outcome().await.unwrap();
+        events
+    });
+    let reports = events
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::PluginReport { plugin, body, .. } if &*plugin == NAME => {
+                Some(body)
+            }
+            _ => None,
+        })
+        .collect();
+    let efforts = llm
+        .requests()
+        .iter()
+        .map(|request| request.settings.reasoning)
+        .collect();
+    (efforts, jev.requests(), reports)
+}
+
+/// On Sol 6, a `one_call` lease has Jev pick again before the next
+/// request, and a `tool_chain` lease holds while the tools succeed.
+/// Each pick is reported and says the turn it is for.
+#[test]
+fn a_lease_says_when_jev_picks_again() {
+    use ReasoningEffort::{High, Low};
+    // gpt-6-sol's levels: none, low, medium, high, xhigh, max.
+    let jev = scripted(vec![(3, "one_call"), (1, "tool_chain")]);
+    let (efforts, asked, reports) =
+        tool_run("gpt-6-sol", jev, &["a", "b", "c"]);
+    assert_eq!(efforts, [Some(High), Some(Low), Some(Low), Some(Low)]);
+    assert_eq!(asked.len(), 2);
+    assert!(asked[0].questions.contains_key("lease"));
+    let step = &asked[1].state;
+    assert_eq!(step["step"], "tool_step");
+    assert_eq!(step["effort_now"], "high");
+    assert_eq!(step["agent_said"], "Next I run the probe on a.");
+    assert_eq!(step["tool_results"]["calls"], 1);
+    assert_eq!(step["tool_results"]["failed"], 0);
+    let picks: Vec<Choice> = reports
+        .iter()
+        .map(|body| Choice::parse(body).unwrap())
+        .collect();
+    assert_eq!(
+        picks
+            .iter()
+            .map(|c| (c.step.as_str(), c.turn, c.lease.as_deref()))
+            .collect::<Vec<_>>(),
+        [
+            ("user_turn", None, Some("one_call")),
+            ("tool_step", Some(2), Some("tool_chain")),
+        ]
+    );
+    assert_eq!(picks[1].runs_at.as_deref(), Some("low"));
+}
+
+/// A failed tool call ends even a `user_turn` lease, and Jev sees the
+/// failure first among the results.
+#[test]
+fn a_failed_tool_ends_the_lease() {
+    use ReasoningEffort::{Medium, Xhigh};
+    let jev = scripted(vec![(2, "user_turn"), (4, "tool_chain")]);
+    let (efforts, asked, _) = tool_run("gpt-6-sol", jev, &["ok", "fail", "ok"]);
+    assert_eq!(
+        efforts,
+        [Some(Medium), Some(Medium), Some(Xhigh), Some(Xhigh)]
+    );
+    assert_eq!(asked.len(), 2);
+    let results = &asked[1].state["tool_results"];
+    assert_eq!(results["failed"], 1);
+    assert_eq!(results["excerpts"][0]["failed"], true);
+    assert_eq!(results["excerpts"][0]["tool"], "probe");
+    assert!(
+        results["excerpts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("3 errors")
+    );
+}
+
+/// Where a change of effort would cost the cache, Jev is asked once, with
+/// no lease, and the effort holds for the whole run.
+#[test]
+fn models_that_lose_the_cache_keep_one_effort() {
+    let jev = scripted(vec![(1, "one_call")]);
+    let (efforts, asked, _) = tool_run("gpt-5.6-terra", jev, &["a", "fail"]);
+    assert_eq!(efforts, [Some(ReasoningEffort::Low); 3]);
+    assert_eq!(asked.len(), 1);
+    assert!(!asked[0].questions.contains_key("lease"));
+}
+
+/// A short message brings the task before it and what the agent last
+/// proposed; a long one stands on its own.
+#[test]
+fn a_short_ask_brings_the_task_it_answers() {
+    let jev = scripted(vec![(3, "user_turn"); 3]);
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("I propose moving the lease into the lane."))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.text("done"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm.clone())
+            .model("gpt-6-sol")
+            .plugin(Reasoning::new(Arc::new(jev.clone())));
+        let first = agent
+            .run("Design where retry leases live", &store)
+            .await
+            .unwrap();
+        for message in ["yes, do it", &"now write the docs ".repeat(8)] {
+            agent
+                .resume(&first.run)
+                .start(message, &store)
+                .outcome()
+                .await
+                .unwrap();
+        }
+    });
+    let asked = jev.requests();
+    assert_eq!(asked[0].state.get("previous_task"), None);
+    assert_eq!(
+        asked[1].state["previous_task"],
+        "Design where retry leases live"
+    );
+    assert_eq!(
+        asked[1].state["last_proposal"],
+        "I propose moving the lease into the lane."
+    );
+    assert_eq!(asked[2].state.get("previous_task"), None);
 }
