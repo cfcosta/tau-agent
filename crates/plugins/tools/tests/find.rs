@@ -105,7 +105,7 @@ enum GitignoreCase {
 
 #[derive(Debug, hegel::PrettyPrintable)]
 struct FindCase {
-    present: Vec<bool>,
+    present: Vec<&'static str>,
     gitignore: GitignoreCase,
     pattern: &'static str,
     limit: u32,
@@ -113,8 +113,7 @@ struct FindCase {
 
 #[hegel::composite]
 fn find_case(tc: &TestCase) -> FindCase {
-    let present: Vec<bool> =
-        CANDIDATES.iter().map(|_| tc.draw(gs::booleans())).collect();
+    let present = tc.draw(gs::subsequences(CANDIDATES));
     let gitignore = tc.draw(gs::sampled_from(vec![
         GitignoreCase::None,
         GitignoreCase::ByExt,
@@ -196,10 +195,7 @@ fn find_matches_a_naive_walk(tc: TestCase) {
     let case = tc.draw(find_case());
 
     let dir = tempfile::tempdir().unwrap();
-    for (candidate, present) in CANDIDATES.iter().zip(&case.present) {
-        if !present {
-            continue;
-        }
+    for candidate in &case.present {
         let path = dir.path().join(candidate);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();

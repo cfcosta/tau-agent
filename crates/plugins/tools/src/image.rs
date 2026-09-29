@@ -315,6 +315,82 @@ mod tests {
         assert!(low.len() < high.len(), "{} vs {}", low.len(), high.len());
     }
 
+    /// `fit` keeps an image within the maximum as it is; a larger one
+    /// gets its long side at exactly the maximum and its short side
+    /// scaled by the same factor, to within one pixel (it is rounded,
+    /// twice when both sides were over), never below 1.
+    #[hegel::test(test_cases = 1000)]
+    fn fit_scales_the_long_side_to_the_maximum(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let side = || {
+            hegel::one_of!(
+                gs::integers::<u32>().min_value(1).max_value(2_100),
+                gs::integers::<u32>().min_value(1).max_value(50_000),
+            )
+        };
+        let (width, height) = (tc.draw(side()), tc.draw(side()));
+        let (w, h) = fit(width, height);
+        if width <= MAX_DIMENSION && height <= MAX_DIMENSION {
+            assert_eq!((w, h), (width, height));
+            return;
+        }
+        tc.event(if width > MAX_DIMENSION && height > MAX_DIMENSION {
+            "both sides over"
+        } else {
+            "one side over"
+        });
+        let (long, short, long_out, short_out) = if width >= height {
+            (width, height, w, h)
+        } else {
+            (height, width, h, w)
+        };
+        assert_eq!(long_out, MAX_DIMENSION, "{width}x{height} -> {w}x{h}");
+        assert!((1..=MAX_DIMENSION).contains(&short_out));
+        let exact =
+            f64::from(short) * f64::from(MAX_DIMENSION) / f64::from(long);
+        assert!(
+            (f64::from(short_out) - exact).abs() <= 1.0
+                || (short_out == 1 && exact < 1.0),
+            "{width}x{height} -> {w}x{h}, exact short side {exact}"
+        );
+    }
+
+    /// `shrink` takes each side down to three quarters (rounded down,
+    /// at least 1), so the area strictly falls, and repeating it from
+    /// any fitted size reaches 1×1 and then stops.
+    #[hegel::test(test_cases = 1000)]
+    fn shrinking_always_reaches_one_by_one(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let side =
+            || gs::integers::<u32>().min_value(1).max_value(MAX_DIMENSION);
+        let (mut w, mut h) = (tc.draw(side()), tc.draw(side()));
+        let mut steps = 0;
+        while let Some((next_w, next_h)) = shrink(w, h) {
+            for (old, new) in [(w, next_w), (h, next_h)] {
+                assert!(new >= 1 && new <= old);
+                assert!(old == 1 || new < old);
+                assert!(4 * new <= 3 * old || new == 1);
+                assert!(4 * (new + 1) > 3 * old);
+            }
+            assert!(
+                u64::from(next_w) * u64::from(next_h)
+                    < u64::from(w) * u64::from(h)
+            );
+            (w, h) = (next_w, next_h);
+            steps += 1;
+            assert!(steps <= 64, "no end in sight at {w}x{h}");
+        }
+        assert_eq!((w, h), (1, 1));
+    }
+
+    /// `base64_len` is the length of the actual base64 encoding.
+    #[hegel::test(test_cases = 500)]
+    fn base64_len_is_the_encoded_length(tc: hegel::TestCase) {
+        let bytes =
+            tc.draw(hegel::generators::integers::<usize>().max_value(5_000));
+        assert_eq!(base64_len(bytes), STANDARD.encode(vec![0u8; bytes]).len());
+    }
+
     /// Base64 takes four characters per three bytes, rounded up; the
     /// limit is strict, as pi's `<`.
     #[test]

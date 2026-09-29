@@ -146,20 +146,13 @@ fn unique_lines(tc: &TestCase, n: usize) -> Vec<String> {
 
 /// A non-empty, sorted, duplicate-free subset of `0..n`.
 fn pick_indices(tc: &TestCase, n: usize) -> Vec<usize> {
-    let k = tc.draw(gs::integers::<usize>().min_value(1).max_value(n));
-    let mut indices: Vec<usize> = tc.draw(
-        gs::vecs(gs::integers::<usize>().min_value(0).max_value(n - 1))
-            .min_size(k)
-            .max_size(k)
-            .unique(true),
-    );
-    indices.sort_unstable();
-    indices
+    tc.draw(gs::subsequences((0..n).collect::<Vec<_>>()).min_size(1))
 }
 
-/// An exact-match case: unique lines, a subset replaced by exact
-/// `oldText`. Returns the original content and the `edits` JSON.
-fn exact_case(tc: &TestCase) -> (String, Vec<Value>) {
+/// A line-based case: unique whole lines, a subset replaced by exact
+/// `oldText`, every line ending in `\n` (what [`apply_unified_diff`]
+/// can apply). Returns the original content and the `edits` JSON.
+fn line_case(tc: &TestCase) -> (String, Vec<Value>) {
     let n = tc.draw(gs::integers::<usize>().min_value(2).max_value(8));
     let lines = tc.draw(unique_lines(n));
     let original: String = lines.concat();
@@ -171,58 +164,188 @@ fn exact_case(tc: &TestCase) -> (String, Vec<Value>) {
     (original, edits)
 }
 
-/// A fuzzy-match case: every line has trailing spaces the model didn't
-/// type, so every edit needs fuzzy matching; the untouched lines keep
-/// their padding.
+/// An exact-match case: the original content and its edits as
+/// `(oldText, newText)` pairs.
+#[derive(Debug, hegel::PrettyPrintable)]
+struct ExactCase {
+    original: String,
+    edits: Vec<(String, String)>,
+}
+
+impl ExactCase {
+    fn edits_json(&self) -> Vec<Value> {
+        self.edits
+            .iter()
+            .map(|(old, new)| json!({"oldText": old, "newText": new}))
+            .collect()
+    }
+}
+
+/// Content built from segments `filler #i# filler`, where the filler
+/// has newlines and multi-byte characters but no `#` or digit, so any
+/// text holding a whole marker occurs exactly once. Each chosen segment
+/// gets an edit whose `oldText` is any span of it (cut at character
+/// boundaries) holding its marker: part of a line, several lines, or
+/// the file's last line with no `\n`. `newText` is any text, empty
+/// included (a deletion); it never holds a `#`, so every edit changes
+/// the file.
+#[hegel::composite]
+fn exact_case(tc: &TestCase) -> ExactCase {
+    let filler = || gs::text().alphabet("ab \né😀").max_size(8);
+    let n = tc.draw(gs::integers::<usize>().min_value(1).max_value(6));
+    let mut original = String::new();
+    // (segment start, marker start, marker end, segment end)
+    let mut segments = Vec::with_capacity(n);
+    for i in 0..n {
+        let start = original.len();
+        original.push_str(&tc.draw(filler()));
+        let marker_start = original.len();
+        original.push_str(&format!("#{i}#"));
+        let marker_end = original.len();
+        original.push_str(&tc.draw(filler()));
+        segments.push((start, marker_start, marker_end, original.len()));
+    }
+    let boundaries = |from: usize, to: usize| -> Vec<usize> {
+        (from..=to)
+            .filter(|&b| original.is_char_boundary(b))
+            .collect()
+    };
+    let chosen = pick_indices(tc, n);
+    let edits = chosen
+        .into_iter()
+        .map(|i| {
+            let (start, marker_start, marker_end, end) = segments[i];
+            let from =
+                tc.draw(gs::sampled_from(boundaries(start, marker_start)));
+            let to = tc.draw(gs::sampled_from(boundaries(marker_end, end)));
+            let new_text: String =
+                tc.draw(gs::text().alphabet("xyé\n").max_size(6));
+            (original[from..to].to_owned(), new_text)
+        })
+        .collect();
+    ExactCase { original, edits }
+}
+
+/// Characters `edit`'s fuzzy matching reads as the ASCII character they
+/// stand for: smart quotes, Unicode dashes and spaces, and compatibility
+/// forms NFKC folds (fullwidth letters, a superscript digit). Most take
+/// more bytes than the character they replace.
+fn look_alikes(c: char) -> &'static [&'static str] {
+    match c {
+        '\'' => &["\u{2018}", "\u{2019}", "\u{201A}", "\u{201B}"],
+        '"' => &["\u{201C}", "\u{201D}", "\u{201E}", "\u{201F}"],
+        '-' => &[
+            "\u{2010}", "\u{2011}", "\u{2012}", "\u{2013}", "\u{2014}",
+            "\u{2015}", "\u{2212}",
+        ],
+        ' ' => &[
+            "\u{00A0}", "\u{2002}", "\u{2003}", "\u{2009}", "\u{200A}",
+            "\u{202F}", "\u{205F}", "\u{3000}",
+        ],
+        'A' => &["\u{FF21}"],
+        'x' => &["\u{FF58}"],
+        '1' => &["\u{FF11}", "\u{00B9}"],
+        _ => &[],
+    }
+}
+
+/// A fuzzy-match case: each line is `L{i}:` and a few ASCII words, and
+/// the file holds it with some characters swapped for look-alikes, the
+/// `fi` ligature for `fi`, and trailing whitespace the model didn't
+/// type. The edits' `oldText` are the plain ASCII lines, so an edit on
+/// a changed line needs fuzzy matching; the untouched lines keep their
+/// bytes. Returns the original, its lines, the edited line indices and
+/// the `edits` JSON.
 fn fuzzy_case(tc: &TestCase) -> (String, Vec<String>, Vec<usize>, Vec<Value>) {
+    const WORDS: &[&str] = &["it's", "\"q\"", "a-b", "x y", "fi", "A1", "z"];
     let n = tc.draw(gs::integers::<usize>().min_value(2).max_value(6));
     let mut full_lines = Vec::with_capacity(n);
-    let mut trimmed_lines = Vec::with_capacity(n);
+    let mut ascii_lines = Vec::with_capacity(n);
     for i in 0..n {
-        let pad = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
-        full_lines.push(format!("line-{i}{}\n", " ".repeat(pad)));
-        trimmed_lines.push(format!("line-{i}\n"));
+        let words: Vec<&str> =
+            tc.draw(gs::vecs(gs::sampled_from(WORDS)).max_size(4));
+        let ascii = std::iter::once(format!("L{i}:"))
+            .chain(words.iter().map(|w| (*w).to_owned()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut on_disk = format!("L{i}:");
+        for word in &words {
+            on_disk.push_str(&mutate(tc, " "));
+            if *word == "fi" && tc.draw(gs::booleans()) {
+                on_disk.push('\u{FB01}');
+            } else {
+                on_disk.push_str(&mutate(tc, word));
+            }
+        }
+        let pad: Vec<&str> = tc.draw(
+            gs::vecs(gs::sampled_from(vec![" ", "\t", "\u{00A0}", "\u{3000}"]))
+                .max_size(3),
+        );
+        on_disk.push_str(&pad.concat());
+        full_lines.push(format!("{on_disk}\n"));
+        ascii_lines.push(format!("{ascii}\n"));
     }
     let original: String = full_lines.concat();
     let indices = pick_indices(tc, n);
     let edits = indices
         .iter()
-        .map(|&i| json!({"oldText": trimmed_lines[i], "newText": format!("REPLACED-{i}\n")}))
+        .map(|&i| json!({"oldText": ascii_lines[i], "newText": format!("REPLACED-{i}\n")}))
         .collect();
     (original, full_lines, indices, edits)
 }
 
+/// `word` with each character that has look-alikes sometimes swapped
+/// for one.
+fn mutate(tc: &TestCase, word: &str) -> String {
+    word.chars()
+        .map(|c| {
+            let options = look_alikes(c);
+            if !options.is_empty() && tc.draw(gs::weighted_booleans(0.4)) {
+                tc.draw(gs::sampled_from(options)).to_owned()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
 /// `edit` with exact, unique, non-overlapping edits equals a naive
 /// reference that splices them into the original string
-/// (`testing.md`, "tau-tools" property table).
-#[hegel::test(test_cases = 50)]
+/// (`testing.md`, "tau-tools" property table): whatever the spans --
+/// part of a line, several lines, multi-byte characters, a last line
+/// with no `\n` -- and whatever the replacement, empty included.
+#[hegel::test(test_cases = 100)]
 fn exact_edits_equal_a_naive_reference(tc: TestCase) {
-    let (original, edits) = exact_case(&tc);
-    let naive_edits: Vec<(String, String)> = edits
-        .iter()
-        .map(|e| {
-            (
-                e["oldText"].as_str().unwrap().to_owned(),
-                e["newText"].as_str().unwrap().to_owned(),
-            )
-        })
-        .collect();
+    let case = tc.draw(exact_case());
+    if case.edits.iter().any(|(_, new)| new.is_empty()) {
+        tc.event("a deletion");
+    }
+    if case.edits.iter().any(|(old, _)| old.contains('\n')) {
+        tc.event("an edit spanning lines");
+    }
+    if !case.original.ends_with('\n') {
+        tc.event("no trailing newline");
+    }
 
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f.txt");
-    std::fs::write(&file, &original).unwrap();
+    std::fs::write(&file, &case.original).unwrap();
     let edit = new_edit(dir.path());
-    call(&edit, json!({"path": "f.txt", "edits": edits})).unwrap();
+    call(&edit, json!({"path": "f.txt", "edits": case.edits_json()})).unwrap();
 
     let written = std::fs::read_to_string(&file).unwrap();
-    assert_eq!(written, naive_apply(&original, &naive_edits));
+    assert_eq!(written, naive_apply(&case.original, &case.edits));
 }
 
 /// An edit on a CRLF file equals the LF edit with CRLF restored
-/// (`tools.md`, "edit", step 7; metamorphic).
+/// (`tools.md`, "edit", step 7; metamorphic). A file with no line
+/// ending at all is not CRLF, so the case has at least one.
 #[hegel::test(test_cases = 50)]
 fn crlf_edit_equals_the_lf_edit_with_endings_restored(tc: TestCase) {
-    let (lf_content, edits) = exact_case(&tc);
+    let case = tc.draw(exact_case());
+    tc.assume(case.original.contains('\n'));
+    let edits = case.edits_json();
+    let lf_content = case.original;
     let crlf_content = lf_content.replace('\n', "\r\n");
 
     let dir = tempfile::tempdir().unwrap();
@@ -244,7 +367,9 @@ fn crlf_edit_equals_the_lf_edit_with_endings_restored(tc: TestCase) {
 /// the BOM restored (`tools.md`, "edit", step 7; metamorphic).
 #[hegel::test(test_cases = 50)]
 fn bom_is_preserved_across_the_edit(tc: TestCase) {
-    let (plain_content, edits) = exact_case(&tc);
+    let case = tc.draw(exact_case());
+    let edits = case.edits_json();
+    let plain_content = case.original;
     let bom_content = format!("\u{FEFF}{plain_content}");
 
     let dir = tempfile::tempdir().unwrap();
@@ -262,13 +387,65 @@ fn bom_is_preserved_across_the_edit(tc: TestCase) {
     assert_eq!(bom_result, format!("\u{FEFF}{plain_result}"));
 }
 
-/// In fuzzy mode, lines no edit touches keep their original bytes
-/// (`tools.md`, "edit", step 6).
+/// Lines no edit touches keep their bytes, line endings included: a
+/// lone `\r` inside a line, and an LF line in a file whose first line
+/// ends in CRLF.
+///
+/// Ignored: it does not hold. `edit` normalizes every `\r\n` and lone
+/// `\r` to `\n` and writes the file back with the first line's ending
+/// throughout (pi's `normalizeToLF` and `restoreLineEndings`, ported
+/// as they are), so a lone `\r` becomes a line break and mixed endings
+/// become uniform. Whether to part from pi is a product decision.
 #[hegel::test(test_cases = 50)]
+#[ignore = "pi's edit normalizes lone \\r and mixed line endings; product decision"]
+fn untouched_lines_keep_their_line_endings(tc: TestCase) {
+    let n = tc.draw(gs::integers::<usize>().min_value(2).max_value(6));
+    let endings: Vec<&str> = (0..n)
+        .map(|_| tc.draw(gs::sampled_from(vec!["\n", "\r\n", "\n"])))
+        .collect();
+    let lone_cr: Vec<bool> = (0..n)
+        .map(|_| tc.draw(gs::weighted_booleans(0.3)))
+        .collect();
+    let lines: Vec<String> = (0..n)
+        .map(|i| {
+            let body = if lone_cr[i] {
+                format!("line-{i}\ra")
+            } else {
+                format!("line-{i}")
+            };
+            format!("{body}{}", endings[i])
+        })
+        .collect();
+    let target = tc.draw(gs::integers::<usize>().max_value(n - 1));
+    tc.assume(!lone_cr[target]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("f.txt");
+    std::fs::write(&file, lines.concat()).unwrap();
+    let edit = new_edit(dir.path());
+    call(
+        &edit,
+        json!({"path": "f.txt", "edits": [{"oldText": format!("line-{target}"), "newText": "CHANGED"}]}),
+    )
+    .unwrap();
+
+    let mut expected = lines.clone();
+    expected[target] = format!("CHANGED{}", endings[target]);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), expected.concat());
+}
+
+/// In fuzzy mode, lines no edit touches keep their original bytes, and
+/// the edited lines are replaced whole, however their look-alike
+/// characters and trailing whitespace changed their length
+/// (`tools.md`, "edit", steps 3 and 6).
+#[hegel::test(test_cases = 100)]
 fn fuzzy_mode_keeps_untouched_lines_byte_for_byte(tc: TestCase) {
     let (original, full_lines, indices, edits) = fuzzy_case(&tc);
     let mut expected = full_lines.clone();
     for &i in &indices {
+        if !original.contains(edits_old(&edits, i, &indices)) {
+            tc.event("fuzzy match needed");
+        }
         expected[i] = format!("REPLACED-{i}\n");
     }
 
@@ -282,11 +459,21 @@ fn fuzzy_mode_keeps_untouched_lines_byte_for_byte(tc: TestCase) {
     assert_eq!(written, expected.concat());
 }
 
+/// The `oldText` of the edit on line `line` of a [`fuzzy_case`].
+fn edits_old<'a>(
+    edits: &'a [Value],
+    line: usize,
+    indices: &[usize],
+) -> &'a str {
+    let at = indices.iter().position(|&i| i == line).unwrap();
+    edits[at]["oldText"].as_str().unwrap()
+}
+
 /// Applying the returned diff to the original content gives exactly
 /// the bytes written, in exact mode (round trip).
 #[hegel::test(test_cases = 50)]
 fn exact_mode_diff_round_trips_to_the_written_bytes(tc: TestCase) {
-    let (original, edits) = exact_case(&tc);
+    let (original, edits) = line_case(&tc);
 
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f.txt");
@@ -316,27 +503,162 @@ fn fuzzy_mode_diff_round_trips_to_the_written_bytes(tc: TestCase) {
     assert_eq!(apply_unified_diff(&original, &diff), written);
 }
 
+/// Ways an otherwise valid set of edits can be made to fail.
+#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
+enum Failure {
+    /// One `oldText` does not occur.
+    NotFound,
+    /// One `oldText` occurs twice (a copy is appended to the file).
+    Duplicate,
+    /// An extra edit targets a region inside another edit's.
+    Overlap,
+    /// Every `newText` equals its `oldText`.
+    NoChange,
+    /// One `oldText` is empty.
+    Empty,
+}
+
 /// A failed edit leaves the file byte-for-byte unchanged: edits are
-/// all applied, or none are (`tools.md`, "edit", step 8).
-#[hegel::test(test_cases = 50)]
+/// all applied, or none are (`tools.md`, "edit", step 8), whichever
+/// check fails, and the error names that check.
+#[hegel::test(test_cases = 100)]
 fn a_failed_edit_leaves_the_file_unchanged(tc: TestCase) {
-    let (original, mut edits) = exact_case(&tc);
-    let bad = tc.draw(
-        gs::integers::<usize>()
-            .min_value(0)
-            .max_value(edits.len() - 1),
-    );
-    edits[bad]["oldText"] =
-        json!("this text does not occur anywhere in the file\n");
+    let mut case = tc.draw(exact_case());
+    let failure = tc.draw(gs::sampled_from(vec![
+        Failure::NotFound,
+        Failure::Duplicate,
+        Failure::Overlap,
+        Failure::NoChange,
+        Failure::Empty,
+    ]));
+    let bad = tc.draw(gs::integers::<usize>().max_value(case.edits.len() - 1));
+    let expected = match failure {
+        Failure::NotFound => {
+            case.edits[bad].0 = "#none#".to_owned();
+            "Could not find"
+        }
+        Failure::Duplicate => {
+            let copy = case.edits[bad].0.clone();
+            case.original.push_str(&copy);
+            "occurrences"
+        }
+        Failure::Overlap => {
+            let old = &case.edits[bad].0;
+            let marker_start = old.find('#').unwrap();
+            let marker_end = marker_start
+                + 1
+                + old[marker_start + 1..].find('#').unwrap()
+                + 1;
+            let marker = old[marker_start..marker_end].to_owned();
+            case.edits.push((marker, "Z".to_owned()));
+            "overlap"
+        }
+        Failure::NoChange => {
+            for (old, new) in &mut case.edits {
+                new.clone_from(old);
+            }
+            "No changes made"
+        }
+        Failure::Empty => {
+            case.edits[bad].0 = String::new();
+            "must not be empty"
+        }
+    };
+    tc.event(format!("{failure:?}"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("f.txt");
+    std::fs::write(&file, &case.original).unwrap();
+    let edit = new_edit(dir.path());
+    let error =
+        call(&edit, json!({"path": "f.txt", "edits": case.edits_json()}))
+            .unwrap_err();
+
+    assert!(error.to_string().contains(expected), "{failure:?}: {error}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), case.original);
+}
+
+/// Two edits on a file whose characters are all distinct (so any span
+/// is unique) are rejected as overlapping exactly when their ranges
+/// intersect; ranges that only touch are accepted and both applied
+/// (`tools.md`, "edit", "overlap"). The error names the edit that
+/// starts first (on a tie, the first given).
+#[hegel::test(test_cases = 200)]
+fn edits_overlap_exactly_when_their_ranges_intersect(tc: TestCase) {
+    let letters: Vec<char> = "abcdefghijklmnop".chars().collect();
+    let shuffled = tc.draw(gs::permutations(letters));
+    let len = tc.draw(gs::integers::<usize>().min_value(2).max_value(16));
+    let original: String = shuffled[..len].iter().collect();
+    let range = || {
+        let start = tc.draw(gs::integers::<usize>().max_value(len - 1));
+        let end = tc
+            .draw(gs::integers::<usize>().min_value(start + 1).max_value(len));
+        (start, end)
+    };
+    let (first, second) = (range(), range());
+    let edits = vec![
+        (original[first.0..first.1].to_owned(), "1".to_owned()),
+        (original[second.0..second.1].to_owned(), "2".to_owned()),
+    ];
+    let intersect = first.0 < second.1 && second.0 < first.1;
 
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f.txt");
     std::fs::write(&file, &original).unwrap();
     let edit = new_edit(dir.path());
-    let result = call(&edit, json!({"path": "f.txt", "edits": edits}));
+    let args = json!({"path": "f.txt", "edits": edits
+        .iter()
+        .map(|(old, new)| json!({"oldText": old, "newText": new}))
+        .collect::<Vec<_>>()});
+    let result = call(&edit, args);
 
-    assert!(result.is_err());
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    if intersect {
+        tc.event("intersecting");
+        let (a, b) = if second.0 < first.0 { (1, 0) } else { (0, 1) };
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "edits[{a}] and edits[{b}] overlap in f.txt. Merge them into one edit or target disjoint regions."
+            )
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    } else {
+        if first.1 == second.0 || second.1 == first.0 {
+            tc.event("touching");
+        }
+        result.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            naive_apply(&original, &edits)
+        );
+    }
+}
+
+/// The result's `firstChangedLine` is the 1-based number of the first
+/// line where the new file differs from the old: one past the lines
+/// the two share from the start (`tools.md`, "edit", "Result details").
+#[hegel::test(test_cases = 100)]
+fn first_changed_line_is_one_past_the_shared_leading_lines(tc: TestCase) {
+    let case = tc.draw(exact_case());
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("f.txt");
+    std::fs::write(&file, &case.original).unwrap();
+    let edit = new_edit(dir.path());
+    let output =
+        call(&edit, json!({"path": "f.txt", "edits": case.edits_json()}))
+            .unwrap();
+
+    let written = std::fs::read_to_string(&file).unwrap();
+    let shared = lines_with_newlines(&case.original)
+        .into_iter()
+        .zip(lines_with_newlines(&written))
+        .take_while(|(old, new)| old == new)
+        .count();
+    if shared > 0 {
+        tc.event("change after the first line");
+    }
+    assert_eq!(output.details.unwrap()["firstChangedLine"], shared + 1);
 }
 
 /// An `oldText` repeated `copies` times, in exact space, is rejected

@@ -63,42 +63,51 @@ file paths and line numbers. Respects .gitignore. Output is truncated to \
     );
 }
 
-/// A file's content: a handful of short lines built from a narrow
-/// alphabet (so "NEEDLE"/"needle" can never appear by accident), with
-/// at most one line carrying the search token -- in either case, and
-/// sometimes split by a U+2028 or U+2029 character rather than a
-/// newline, which pi's `rg --json` parsing drops the match line for
-/// (`grep.ts:169`) but a native scan must not
+/// The pieces a generated line is built from: the search tokens in
+/// either case, the look-alike `NEEXLE` (matched by the regex `NEE.LE`
+/// but not by the literal), runs of `a`/`b` for `a+b`, a multi-byte
+/// letter in both cases, and U+2028, which pi's `rg --json` parsing
+/// drops the match line for (`grep.ts:169`) but a native scan must not
 /// (`docs/reference/tools.md`, "grep").
+const TOKENS: &[&str] = &[
+    "NEEDLE", "needle", "NEE.LE", "nee.le", "NEEXLE", "a", "b", "ab", "aab",
+    "X", "é", "É", " ", "\t", "\u{2028}", "\u{2029}",
+];
+
+/// The patterns searched for. Each is tried both as a regex and as a
+/// literal, which differ for `NEE.LE` and `a+b`.
+const PATTERNS: &[&str] = &["NEEDLE", "NEE.LE", "a+b", "é"];
+
+/// One line: a few tokens, sometimes followed by a run of several
+/// hundred characters (one or two bytes each), so a line can go past
+/// the 500-character cut and the output past 50 KB.
 #[hegel::composite]
-fn grep_file(tc: &TestCase) -> String {
-    let line_count = tc.draw(gs::integers::<usize>().min_value(0).max_value(5));
-    let needle_at = if line_count > 0 && tc.draw(gs::booleans()) {
-        Some(
-            tc.draw(
-                gs::integers::<usize>()
-                    .min_value(0)
-                    .max_value(line_count - 1),
-            ),
-        )
-    } else {
-        None
-    };
-    let mut lines = Vec::new();
-    for i in 0..line_count {
-        let base = tc
-            .draw(gs::text().alphabet("ab \tXY\u{2028}\u{2029}").max_size(10));
-        let line = if Some(i) == needle_at {
-            let upper = tc.draw(gs::booleans());
-            let sep =
-                tc.draw(gs::sampled_from(vec!["", "\u{2028}", "\u{2029}"]));
-            format!("{base}{sep}{}", if upper { "NEEDLE" } else { "needle" })
-        } else {
-            base
-        };
-        lines.push(line);
+fn grep_line(tc: &TestCase, long_lines: bool) -> String {
+    let tokens: Vec<&str> =
+        tc.draw(gs::vecs(gs::sampled_from(TOKENS)).max_size(6));
+    let mut line = tokens.concat();
+    let p = if long_lines { 0.8 } else { 0.05 };
+    if tc.draw(gs::weighted_booleans(p)) {
+        let filler = tc.draw(gs::sampled_from(vec!["a", "é", "x"]));
+        let count =
+            tc.draw(gs::integers::<usize>().min_value(400).max_value(700));
+        line.push_str(&filler.repeat(count));
     }
-    lines.join("\n")
+    line
+}
+
+/// A file's content: up to a dozen lines, any of which may match, so
+/// matches share a file, context windows meet and the limit can be
+/// reached in the middle of a file.
+#[hegel::composite]
+fn grep_file(tc: &TestCase, long_lines: bool) -> String {
+    let lines: Vec<String> =
+        tc.draw(gs::vecs(grep_line(long_lines)).max_size(12));
+    let mut content = lines.join("\n");
+    if !content.is_empty() && tc.draw(gs::booleans()) {
+        content.push('\n');
+    }
+    content
 }
 
 /// `content`'s lines the way line-oriented tools count them: none for
@@ -116,87 +125,179 @@ fn lines_of(content: &str) -> Vec<&str> {
     lines
 }
 
-/// A naive, independent scan of `content`'s lines for the literal
-/// "NEEDLE" (case-insensitively when `ignore_case`), returning the
-/// 0-based index of the one line that can hold it (the generator never
-/// places more than one).
-fn find_needle(content: &str, ignore_case: bool) -> Option<usize> {
-    let re = RegexBuilder::new(&regex::escape("NEEDLE"))
-        .case_insensitive(ignore_case)
-        .build()
-        .unwrap();
-    lines_of(content)
-        .into_iter()
-        .position(|line| re.is_match(line))
+/// How a line shows up in `grep`'s output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    Match,
+    /// Within `context` lines after an earlier match.
+    After,
+    /// Within `context` lines before a later match, and not after one.
+    Before,
 }
 
-/// `grep` over a generated tree equals a naive regex scan of each
-/// file's lines, including the match limit, the context window and the
-/// exact `path:N:`/`path-N-` formatting (`docs/reference/tools.md`,
-/// "grep"; `docs/reference/testing.md`, "tau-tools").
-#[hegel::test(test_cases = 50)]
+/// Each shown line of a file, by index, from the definition of a
+/// context window: a matching line is a match; any other line is shown
+/// when a match lies within `context` lines of it, as after-context when
+/// that match comes first, else as before-context. Every line is shown
+/// at most once, so overlapping windows merge.
+fn shown_lines(matches: &[bool], context: usize) -> Vec<(usize, Shown)> {
+    let n = matches.len();
+    (0..n)
+        .filter_map(|k| {
+            if matches[k] {
+                return Some((k, Shown::Match));
+            }
+            let before = k.saturating_sub(context)..k;
+            if matches[before].iter().any(|&m| m) {
+                return Some((k, Shown::After));
+            }
+            let after = (k + 1).min(n)..(k + context + 1).min(n);
+            matches[after]
+                .iter()
+                .any(|&m| m)
+                .then_some((k, Shown::Before))
+        })
+        .collect()
+}
+
+/// A line cut to 500 characters, marked, and whether it was cut.
+fn cut_line(line: &str) -> (String, bool) {
+    if line.chars().count() <= 500 {
+        (line.to_owned(), false)
+    } else {
+        let kept: String = line.chars().take(500).collect();
+        (format!("{kept}... [truncated]"), true)
+    }
+}
+
+/// `grep` over a generated tree (files at several depths) equals a
+/// naive regex scan of each file's lines, in path order: the same
+/// matches, context windows merged where they meet, the match limit
+/// reached possibly in the middle of a file (a rejected match shows
+/// none of its own before-context), lines cut at 500 characters, the
+/// output cut at 50 KB, and the exact `path:N:`/`path-N-` formatting and
+/// notices (`docs/reference/tools.md`, "grep";
+/// `docs/reference/testing.md`, "tau-tools").
+#[hegel::test(test_cases = 80)]
 fn grep_matches_a_naive_scan(tc: TestCase) {
+    // Sometimes a bulk case: many files of mostly long lines, wide
+    // context and a high limit, so the output can pass 50 KB.
+    let bulk = tc.draw(gs::weighted_booleans(0.2));
     // Enough files that the search workers finish them out of order.
-    let file_count =
-        tc.draw(gs::integers::<usize>().min_value(1).max_value(40));
-    let files: Vec<String> =
-        (0..file_count).map(|_| tc.draw(grep_file())).collect();
+    let file_count = tc.draw(
+        gs::integers::<usize>()
+            .min_value(if bulk { 20 } else { 1 })
+            .max_value(40),
+    );
+    let long_lines = bulk;
+    let files: Vec<String> = (0..file_count)
+        .map(|_| tc.draw(grep_file(long_lines)))
+        .collect();
+    let dirs: Vec<&str> = (0..file_count)
+        .map(|_| {
+            tc.draw(gs::sampled_from(vec!["", "d/", "d/e/", "d.x/", "D/"]))
+        })
+        .collect();
+    let pattern = tc.draw(gs::sampled_from(PATTERNS));
     let ignore_case = tc.draw(gs::booleans());
     let literal = tc.draw(gs::booleans());
-    let context = tc.draw(gs::integers::<usize>().min_value(0).max_value(2));
-    let limit = tc.draw(gs::integers::<u32>().min_value(1).max_value(6));
+    let (context, limit) = if bulk {
+        (3, 200)
+    } else {
+        (
+            tc.draw(gs::integers::<usize>().min_value(0).max_value(3)),
+            tc.draw(gs::one_of(vec![
+                gs::integers::<u32>().min_value(1).max_value(6),
+                gs::integers::<u32>().min_value(1).max_value(200),
+            ])),
+        )
+    };
     let only_first = tc.draw(gs::booleans());
 
     let dir = tempfile::tempdir().unwrap();
-    let names: Vec<String> =
-        (0..file_count).map(|i| format!("f{i:02}.txt")).collect();
+    let names: Vec<String> = (0..file_count)
+        .map(|i| format!("{}f{i:02}.txt", dirs[i]))
+        .collect();
     for (name, content) in names.iter().zip(&files) {
-        std::fs::write(dir.path().join(name), content).unwrap();
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
     }
     let root = Root::new(dir.path());
 
     let mut args = json!({
-        "pattern": "NEEDLE",
+        "pattern": pattern,
         "ignoreCase": ignore_case,
         "literal": literal,
         "context": context,
         "limit": limit,
     });
     if only_first {
-        args["glob"] = json!(names[0]);
+        // A bare name matches at any depth; the names are unique.
+        args["glob"] = json!("f00.txt");
     }
     let actual = call(&root, args).unwrap();
 
-    // Oracle: an independent scan, using `regex` (not `grep-regex`).
-    let mut out_lines: Vec<String> = Vec::new();
-    let mut match_count = 0u32;
-    let mut limit_reached = false;
-    let candidates: Vec<usize> = if only_first {
+    // Oracle: an independent scan, using `regex` (not `grep-regex`),
+    // over the files in path order (component by component).
+    let re = RegexBuilder::new(&if literal {
+        regex::escape(pattern)
+    } else {
+        pattern.to_owned()
+    })
+    .case_insensitive(ignore_case)
+    .build()
+    .unwrap();
+    let mut order: Vec<usize> = if only_first {
         vec![0]
     } else {
         (0..file_count).collect()
     };
-    'files: for &fi in &candidates {
-        let content = &files[fi];
-        let Some(i) = find_needle(content, ignore_case) else {
-            continue;
-        };
-        if match_count >= limit {
-            limit_reached = true;
-            break 'files;
+    order.sort_by_key(|&i| names[i].split('/').collect::<Vec<_>>());
+
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut match_count = 0u32;
+    let mut limit_reached = false;
+    let mut lines_cut = false;
+    'files: for &fi in &order {
+        let lines = lines_of(&files[fi]);
+        let matches: Vec<bool> =
+            lines.iter().map(|line| re.is_match(line)).collect();
+        if matches.iter().filter(|&&m| m).count() > 1 {
+            tc.event("several matches in a file");
         }
-        match_count += 1;
-        let lines = lines_of(content);
-        let start = i.saturating_sub(context);
-        let end = (i + context).min(lines.len() - 1);
-        for (k, line) in lines.iter().enumerate().take(end + 1).skip(start) {
-            let sep = if k == i { ':' } else { '-' };
-            out_lines.push(format!(
-                "{}{sep}{}{sep} {}",
-                names[fi],
-                k + 1,
-                line
-            ));
+        let shown = shown_lines(&matches, context);
+        if context > 0
+            && shown.windows(2).any(|w| {
+                w[0].1 == Shown::After
+                    && w[1].0 == w[0].0 + 1
+                    && matches!(w[1].1, Shown::Before | Shown::Match)
+            })
+        {
+            tc.event("context windows merged");
+        }
+        let mut push = |k: usize, sep: char, out: &mut Vec<String>| {
+            let (text, cut) = cut_line(lines[k]);
+            lines_cut |= cut;
+            out.push(format!("{}{sep}{}{sep} {text}", names[fi], k + 1));
+        };
+        let mut pending = Vec::new();
+        for (k, kind) in shown {
+            match kind {
+                Shown::Before => pending.push(k),
+                Shown::Match => {
+                    if match_count >= limit {
+                        limit_reached = true;
+                        break 'files;
+                    }
+                    match_count += 1;
+                    for before in pending.drain(..) {
+                        push(before, '-', &mut out_lines);
+                    }
+                    push(k, ':', &mut out_lines);
+                }
+                Shown::After => push(k, '-', &mut out_lines),
+            }
         }
     }
 
@@ -209,13 +310,22 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
         let mut text = truncation.content;
         let mut notices = Vec::new();
         if limit_reached {
+            tc.event("match limit reached");
             notices.push(format!(
                 "{limit} matches limit reached. Use limit={} for more, or refine pattern",
                 limit * 2
             ));
         }
         if truncated {
+            tc.event("output cut at 50 KB");
             notices.push(format!("{} limit reached", format_size(MAX_BYTES)));
+        }
+        if lines_cut {
+            tc.event("a line cut at 500 characters");
+            notices.push(
+                "Some lines truncated to 500 chars. Use read tool to see full lines"
+                    .to_owned(),
+            );
         }
         if !notices.is_empty() {
             text.push_str(&format!("\n\n[{}]", notices.join(". ")));
@@ -225,7 +335,7 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
 
     assert_eq!(
         actual, expected,
-        "files = {files:?}, context = {context}, limit = {limit}"
+        "pattern = {pattern:?}, literal = {literal}, context = {context}, limit = {limit}"
     );
 }
 

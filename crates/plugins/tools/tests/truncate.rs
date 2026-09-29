@@ -54,6 +54,13 @@ fn limits(tc: &TestCase) -> (usize, usize) {
 fn head_keeps_the_longest_prefix_of_whole_lines(tc: TestCase) {
     let text = tc.draw(text());
     let (max_lines, max_bytes) = limits(&tc);
+    // Sometimes one byte short of the whole text, which is where only a
+    // trailing newline is over the limit.
+    let max_bytes = if tc.draw(gs::weighted_booleans(0.2)) {
+        text.len().saturating_sub(1).max(1)
+    } else {
+        max_bytes
+    };
     let result = truncate_head(&text, max_lines, max_bytes);
     let all = lines(&text);
     if !result.truncated() {
@@ -81,6 +88,11 @@ fn head_keeps_the_longest_prefix_of_whole_lines(tc: TestCase) {
             Limit::Bytes
         };
         assert_eq!(result.by, Some(by));
+    } else {
+        // Every line kept: only the trailing newline was over the byte
+        // limit, which pi reports as a cut by lines.
+        tc.event("only the trailing newline cut");
+        assert_eq!(result.by, Some(Limit::Lines));
     }
 }
 
@@ -102,7 +114,10 @@ fn tail_keeps_the_longest_suffix(tc: TestCase) {
     assert!(result.output_lines <= max_lines);
     assert!(result.content.len() <= max_bytes);
     assert_eq!(result.output_bytes, result.content.len());
+    assert_eq!(result.total_lines, all.len());
+    assert_eq!(result.total_bytes, text.len());
     if result.last_line_partial {
+        tc.event("partial last line");
         let last = all.last().unwrap();
         assert!(last.len() > max_bytes);
         assert!(last.ends_with(&result.content));
@@ -125,6 +140,15 @@ fn tail_keeps_the_longest_suffix(tc: TestCase) {
             let longer = all[all.len() - k - 1..].join("\n");
             assert!(k + 1 > max_lines || longer.len() > max_bytes);
         }
+        // Reaching the line limit, or keeping every line (only the
+        // trailing newline was over), reports `Lines`; otherwise a line
+        // was left out for its bytes.
+        let by = if k >= max_lines || k == all.len() {
+            Limit::Lines
+        } else {
+            Limit::Bytes
+        };
+        assert_eq!(result.by, Some(by));
     }
 }
 
@@ -159,6 +183,68 @@ fn lines_are_cut_by_characters() {
     assert_eq!(
         truncate_line(&long, GREP_MAX_LINE),
         (format!("{short}... [truncated]"), true)
+    );
+}
+
+/// `truncate_line` keeps a line of at most `max_chars` characters as it
+/// is, and cuts a longer one to its first `max_chars` characters (never
+/// inside a character) followed by the marker.
+#[hegel::test(test_cases = 500)]
+fn truncate_line_keeps_the_first_characters(tc: TestCase) {
+    let line = tc.draw(gs::text().alphabet("aé€😀 ").max_size(20));
+    let max_chars = tc.draw(gs::integers::<usize>().max_value(25));
+    let (out, cut) = truncate_line(&line, max_chars);
+    let count = line.chars().count();
+    assert_eq!(cut, count > max_chars);
+    if cut {
+        tc.event("cut");
+        let kept: String = line.chars().take(max_chars).collect();
+        assert_eq!(out, format!("{kept}... [truncated]"));
+    } else {
+        assert_eq!(out, line);
+    }
+}
+
+/// `format_size` prints bytes below 1 KiB as an integer count, then
+/// KiB below 1 MiB, then MiB, each to one decimal and within half a
+/// tenth of the exact value.
+#[hegel::test(test_cases = 500)]
+fn format_size_is_the_size_to_one_decimal(tc: TestCase) {
+    let bytes = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![
+            0usize,
+            1023,
+            1024,
+            1024 * 1024 - 1,
+            1024 * 1024
+        ]),
+        gs::integers::<usize>().max_value(2048),
+        gs::integers::<usize>().max_value(8 * 1024 * 1024),
+    ));
+    let text = format_size(bytes);
+    let (number, unit) = if let Some(n) = text.strip_suffix("MB") {
+        (n, 1024.0 * 1024.0)
+    } else if let Some(n) = text.strip_suffix("KB") {
+        (n, 1024.0)
+    } else {
+        let n = text.strip_suffix('B').expect("a unit");
+        assert_eq!(n, bytes.to_string());
+        assert!(bytes < 1024);
+        return;
+    };
+    let expected_unit = if bytes < 1024 * 1024 {
+        1024.0
+    } else {
+        1024.0 * 1024.0
+    };
+    assert!(bytes >= 1024);
+    assert_eq!(unit, expected_unit, "{text}");
+    let (_, decimals) = number.split_once('.').expect("one decimal");
+    assert_eq!(decimals.len(), 1, "{text}");
+    let value: f64 = number.parse().unwrap();
+    assert!(
+        (value - bytes as f64 / unit).abs() <= 0.05 + 1e-9,
+        "{bytes} printed as {text}"
     );
 }
 

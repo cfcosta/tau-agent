@@ -1,7 +1,7 @@
 //! Path resolution (`tau_tools::path`), on a real directory
 //! (`docs/reference/testing.md`, "tau-tools").
 
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 
 use hegel::{TestCase, generators as gs};
 use tau_tools::path::Root;
@@ -55,6 +55,10 @@ fn macos_variants_are_found_from_the_typed_name(tc: TestCase) {
         Variant::Curly => curly(&typed),
         Variant::NfdCurly => curly(&typed.nfd().collect::<String>()),
     };
+    // A name the variant leaves as typed (no marker, accent or
+    // apostrophe) is found as itself, which says nothing about variants.
+    tc.assume(on_disk != typed);
+    tc.event(format!("{variant:?}"));
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join(&on_disk), b"x").unwrap();
     let root = Root::new(dir.path());
@@ -63,6 +67,61 @@ fn macos_variants_are_found_from_the_typed_name(tc: TestCase) {
         dir.path().join(&on_disk),
         "{variant:?}"
     );
+}
+
+/// A path as a model may type it: segments that are names, `.`, `..`,
+/// empty (a doubled `/`), a literal `~`, or hold unicode spaces, joined
+/// by `/`, with an optional prefix (`/`, `@`, `~/`, `file://`).
+#[hegel::composite]
+fn typed_path(tc: &TestCase) -> String {
+    let segments: Vec<&str> = tc.draw(
+        gs::vecs(gs::sampled_from(vec![
+            "a",
+            "b.rs",
+            ".",
+            "..",
+            "",
+            "~",
+            "~x",
+            "@y",
+            "é",
+            "a\u{00A0}b",
+        ]))
+        .max_size(6),
+    );
+    let prefix =
+        tc.draw(gs::sampled_from(vec!["", "/", "@", "~/", "file:///", "./"]));
+    format!("{prefix}{}", segments.join("/"))
+}
+
+/// Whatever is typed, `resolve` gives an absolute path with no `.` or
+/// `..` left in it.
+#[hegel::test(test_cases = 300)]
+fn resolved_paths_are_absolute_and_normal(tc: TestCase) {
+    let typed = tc.draw(typed_path());
+    let (_dir, root) = root();
+    let resolved = root.resolve(&typed);
+    assert!(resolved.is_absolute(), "{typed:?} -> {resolved:?}");
+    assert!(
+        resolved
+            .components()
+            .all(|c| !matches!(c, Component::CurDir | Component::ParentDir)),
+        "{typed:?} -> {resolved:?}"
+    );
+    if typed.contains("..") {
+        tc.event("parent components");
+    }
+}
+
+/// Resolving is idempotent: a resolved path, typed again, resolves to
+/// itself.
+#[hegel::test(test_cases = 300)]
+fn resolving_a_resolved_path_changes_nothing(tc: TestCase) {
+    let typed = tc.draw(typed_path());
+    let (_dir, root) = root();
+    let resolved = root.resolve(&typed);
+    let again = root.resolve(resolved.to_str().unwrap());
+    assert_eq!(again, resolved, "{typed:?}");
 }
 
 fn root() -> (tempfile::TempDir, Root) {

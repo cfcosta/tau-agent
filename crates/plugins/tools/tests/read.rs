@@ -104,40 +104,61 @@ fn pi_read(
 
 /// A text file with lines drawn from a few lengths, some long enough
 /// that the byte limit or a first line over it comes up, and enough of
-/// them that the line limit does.
+/// them that the line limit does. Some lines end in `\r` (CRLF), carry
+/// a byte that is not UTF-8 or a multi-byte sequence cut short, and the
+/// file may start with a byte order mark.
 #[hegel::composite]
-fn file(tc: &TestCase) -> String {
+fn file(tc: &TestCase) -> Vec<u8> {
     let lengths = || gs::sampled_from(vec![0usize, 1, 7, 40, 300, 60_000]);
     let count = tc.draw(gs::integers::<usize>().max_value(2_600));
     let chars = ["a", "é", "€", "😀"];
-    let mut lines = Vec::with_capacity(count);
+    let extras: [&[u8]; 6] =
+        [b"", b"\r", b"\xff", b"\xc3", b"\xe2\x82", b"\x80\r"];
+    let dirty = tc.draw(gs::weighted_booleans(0.6));
+    let mut text = Vec::new();
+    if tc.draw(gs::weighted_booleans(0.2)) {
+        text.extend_from_slice("\u{FEFF}".as_bytes());
+    }
     for i in 0..count {
+        if i > 0 {
+            text.push(b'\n');
+        }
         let len = if i % 97 == 0 {
             tc.draw(lengths())
         } else {
             i % 13
         };
-        lines.push(chars[i % chars.len()].repeat(len));
+        text.extend_from_slice(chars[i % chars.len()].repeat(len).as_bytes());
+        if dirty && i % 7 == 0 {
+            text.extend_from_slice(tc.draw(gs::sampled_from(&extras[..])));
+        }
     }
-    let mut text = lines.join("\n");
     if tc.draw(gs::booleans()) {
-        text.push('\n');
+        text.push(b'\n');
     }
     text
 }
 
 /// `read` with any `offset` and `limit` equals pi's read of the same
-/// file held whole in memory: the same lines, the same truncation and
-/// the same notices, or the same error.
+/// file held whole in memory and decoded as UTF-8 (invalid bytes
+/// replaced, `\r` and a byte order mark kept): the same lines, the same
+/// truncation and the same notices, or the same error.
 #[hegel::test(test_cases = 50)]
 fn read_equals_pis_whole_file_read(tc: TestCase) {
-    let content = tc.draw(file());
+    let bytes = tc.draw(file());
+    let content = String::from_utf8_lossy(&bytes).into_owned();
+    if std::str::from_utf8(&bytes).is_err() {
+        tc.event("not valid UTF-8");
+    }
+    if content.contains('\r') {
+        tc.event("CRLF lines");
+    }
     let total = content.split('\n').count() as u64;
     let offset =
         tc.draw(gs::optional(gs::integers::<u64>().max_value(total + 2)));
     let limit = tc.draw(gs::optional(gs::integers::<u64>().max_value(2_500)));
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), &content).unwrap();
+    std::fs::write(dir.path().join("f.txt"), &bytes).unwrap();
     let root = Root::new(dir.path());
     let mut args = json!({"path": "f.txt"});
     if let Some(offset) = offset {
