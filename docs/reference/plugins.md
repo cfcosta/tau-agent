@@ -114,6 +114,16 @@ pub trait PluginRun: Send {
     async fn after_tool(&mut self, call: &ToolCall, output: &mut ToolOutput,
         ctx: &PluginCtx) {}
 
+    /// `after_tool` with a view: the call, whether it failed, the
+    /// transcript before its turn and the assistant message that made
+    /// it. The loop calls this one; by default it calls `after_tool`.
+    /// An error is reported as a `PluginError`.
+    async fn after_tool_result(&mut self, view: &ToolResultView<'_>,
+        output: &mut ToolOutput, ctx: &PluginCtx) -> anyhow::Result<()> {
+        self.after_tool(view.call, output, ctx).await;
+        Ok(())
+    }
+
     /// Every run event, in order.
     async fn on_event(&mut self, event: &RunEvent, ctx: &PluginCtx) {}
 
@@ -569,8 +579,9 @@ Built: `crates/plugins/constitution`. Its reference is
 Built: `crates/plugins/fast-compaction`. Its reference is
 [fast-compaction.md](fast-compaction.md).
 
-- **Seams:** `rewrite_context` (both triggers), and `start` to restore
-  its ledger.
+- **Seams:** `rewrite_context` (both triggers), `start` to restore
+  its ledger, and `after_tool_result` to prune a large `bash` output
+  before the model first sees it.
 - **How** (after `joelhooks/pi-fast-jev-compaction`):
   1. Past a share of the window (default 60%), and outside a token
      cooldown, build a state of the history: tool names, inputs,

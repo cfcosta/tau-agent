@@ -89,6 +89,22 @@ pub trait PluginRun: Send {
         let _ = (call, output, ctx);
     }
 
+    /// Runs after a tool call, with whether it failed and what the model
+    /// had seen when it made the call, and may change its output. An
+    /// error is reported as `RunEvent::PluginError`, and the output goes
+    /// on as the plugin left it. The loop calls this one; by default it
+    /// calls [`after_tool`](Self::after_tool), so a plugin implements
+    /// whichever it needs.
+    async fn after_tool_result(
+        &mut self,
+        view: &ToolResultView<'_>,
+        output: &mut ToolOutput,
+        ctx: &PluginCtx,
+    ) -> anyhow::Result<()> {
+        self.after_tool(view.call, output, ctx).await;
+        Ok(())
+    }
+
     /// Sees every run event, in order.
     async fn on_event(&mut self, event: &RunEvent, ctx: &PluginCtx) {
         let _ = (event, ctx);
@@ -174,6 +190,18 @@ pub struct ContextView<'a> {
     pub trigger: Trigger,
     /// The turn that just ended, or that overflowed.
     pub turn: u32,
+}
+
+/// What [`PluginRun::after_tool_result`] is offered.
+#[derive(Debug, Clone, Copy)]
+pub struct ToolResultView<'a> {
+    pub call: &'a ToolCall,
+    /// Whether the call failed; its output is then the error.
+    pub is_error: bool,
+    /// The working transcript before the turn that made the call.
+    pub transcript: &'a [Message],
+    /// The assistant message that made the call.
+    pub message: &'a AssistantMessage,
 }
 
 /// What [`PluginRun::before_request`] is offered.

@@ -64,6 +64,7 @@ use crate::{
         RequestView,
         Rewrite,
         StopDecision,
+        ToolResultView,
         Trigger,
     },
     tool::{
@@ -267,7 +268,7 @@ impl Runner {
             } else if message.stop_reason == MessageStop::Length {
                 self.fail_truncated(&calls).await
             } else {
-                self.execute(&calls).await
+                self.execute(&calls, &transcript, &message).await
             };
 
             let mut new = vec![Message::Assistant(message.clone())];
@@ -683,6 +684,8 @@ impl Runner {
     async fn execute(
         &mut self,
         calls: &[MessageToolCall],
+        transcript: &[Message],
+        message: &AssistantMessage,
     ) -> Vec<ToolResultMessage> {
         let mut outcomes: Vec<Option<(ToolOutput, bool)>> =
             vec![None; calls.len()];
@@ -724,8 +727,25 @@ impl Runner {
                         Ok(output) => (output, false),
                         Err(error) => (ToolOutput::text(error.to_string()), true),
                     };
+                    let view = ToolResultView {
+                        call: &call,
+                        is_error,
+                        transcript,
+                        message,
+                    };
+                    let mut failures: Failures = Vec::new();
                     for plugin in &mut self.plugins {
-                        plugin.run.after_tool(&call, &mut output, &plugin.ctx).await;
+                        if let Err(error) = plugin.run.after_tool_result(&view, &mut output, &plugin.ctx).await {
+                            failures.push((plugin.ctx.plugin().into(), format!("{error:#}")));
+                        }
+                    }
+                    for (plugin, message) in failures {
+                        self.emit(RunEvent::PluginError {
+                            run: self.run.clone(),
+                            plugin,
+                            message,
+                        })
+                        .await;
                     }
                     self.emit_end(&call.id, &output, is_error).await;
                     outcomes[index] = Some((output, is_error));
