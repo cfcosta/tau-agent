@@ -16,7 +16,6 @@ use tau_memory::{
         LEVELS,
         Leg,
         Outcome,
-        RRF_K,
         corpus,
         evaluate,
         index_all,
@@ -70,12 +69,17 @@ fn the_background_grows_by_extension(tc: TestCase) {
 
 /// Every level holds the same number of notes; every query's answer is
 /// a current note, and its older version, from level 1, a superseded one.
-#[hegel::test(test_cases = 6)]
-fn every_level_builds_to_one_size(tc: TestCase) {
+#[test]
+fn every_level_builds_to_one_size() {
     let fixture = fixture();
-    let k = tc.draw(gs::sampled_from(LEVELS.to_vec()));
+    for k in LEVELS {
+        level_builds_to_one_size(&fixture, k);
+    }
+}
+
+fn level_builds_to_one_size(fixture: &Fixture, k: usize) {
     let dir = tempfile::tempdir().unwrap();
-    let corpus = corpus(dir.path(), &fixture, k).unwrap();
+    let corpus = corpus(dir.path(), fixture, k).unwrap();
     assert_eq!(corpus.notes.len(), fixture.facts.len() * per_fact());
     assert!(corpus.notes.unreadable().is_empty());
 
@@ -231,34 +235,121 @@ fn a_run_reports_every_leg_at_every_level() {
     }
 }
 
-#[hegel::test(test_cases = 200)]
-fn rrf_is_its_formula(tc: TestCase) {
-    let ids = vec!["a", "b", "c", "d", "e"];
-    let lists: Vec<Vec<String>> = (0..tc
-        .draw(gs::integers::<usize>().min_value(1).max_value(3)))
-        .map(|_| {
-            // A ranking: distinct ids in drawn order.
-            let mut pool = ids.clone();
-            let mut list = Vec::new();
-            for _ in 0..tc.draw(gs::integers::<usize>().max_value(5)) {
-                let at =
-                    tc.draw(gs::integers::<usize>().max_value(pool.len() - 1));
-                list.push(pool.remove(at).to_owned());
+/// A ranking: distinct ids, best first.
+#[hegel::composite]
+fn ranking(tc: &TestCase) -> Vec<String> {
+    let mut ids = tc.draw(gs::permutations(vec!["a", "b", "c", "d", "e"]));
+    ids.truncate(tc.draw(gs::integers::<usize>().max_value(5)));
+    ids.into_iter().map(str::to_owned).collect()
+}
+
+fn order(fused: &[(String, f32)]) -> Vec<&str> {
+    fused.iter().map(|(id, _)| id.as_str()).collect()
+}
+
+/// Fusion as laws, not its formula: each id listed anywhere once, best
+/// first with ties by id; the order of the lists does not matter; one
+/// list fuses to itself; an id first everywhere is first; and a list
+/// more raises its own ids and nothing else.
+/// Three ids at the same ranks, in turn: a true tie, whatever order
+/// the sums are taken in.
+fn rotations() -> Vec<Vec<String>> {
+    [["a", "b", "c"], ["c", "a", "b"], ["b", "c", "a"]]
+        .iter()
+        .map(|list| list.iter().map(|id| (*id).to_owned()).collect())
+        .collect()
+}
+
+#[hegel::test(test_cases = 300)]
+#[hegel::explicit_test_case(
+    lists = rotations(),
+    shuffled = rotations(),
+    first = "a",
+    extra = Vec::<String>::new()
+)]
+fn rrf_fuses_by_rank(tc: TestCase) {
+    let lists: Vec<Vec<String>> =
+        tc.draw(gs::vecs(ranking()).min_size(1).max_size(4));
+    let fused = rrf(&lists);
+    let listed: BTreeSet<&String> = lists.iter().flatten().collect();
+    assert_eq!(fused.len(), listed.len());
+    assert!(
+        fused
+            .iter()
+            .all(|(id, score)| listed.contains(id) && *score > 0.0)
+    );
+    for pair in fused.windows(2) {
+        let ((a, x), (b, y)) = (&pair[0], &pair[1]);
+        assert!(x > y || (x == y && a < b), "{fused:?}");
+    }
+    // Ids at the same ranks, in whichever lists, tie.
+    let ranks = |id: &str| -> Vec<usize> {
+        let mut ranks: Vec<usize> = lists
+            .iter()
+            .filter_map(|list| list.iter().position(|other| other == id))
+            .collect();
+        ranks.sort();
+        ranks
+    };
+    for (a, x) in &fused {
+        for (b, y) in &fused {
+            if ranks(a) == ranks(b) {
+                assert_eq!(x, y, "{a} and {b} in {lists:?}");
             }
+        }
+    }
+
+    let shuffled = tc.draw(gs::permutations(lists.clone()));
+    assert_eq!(order(&rrf(&shuffled)), order(&fused), "{shuffled:?}");
+
+    let alone = rrf(&lists[..1]);
+    assert_eq!(order(&alone), lists[0]);
+
+    let first = tc.draw(gs::sampled_from(vec!["a", "b", "c"]));
+    let led: Vec<Vec<String>> = lists
+        .iter()
+        .map(|list| {
+            let mut list: Vec<String> =
+                list.iter().filter(|id| *id != first).cloned().collect();
+            list.insert(0, first.to_owned());
             list
         })
         .collect();
-    let fused = rrf(&lists);
-    let mut want: BTreeMap<String, f32> = BTreeMap::new();
-    for list in &lists {
-        for (rank, id) in list.iter().enumerate() {
-            *want.entry(id.clone()).or_default() +=
-                1.0 / (RRF_K + rank as f32 + 1.0);
+    assert_eq!(rrf(&led)[0].0, first, "{led:?}");
+
+    let extra = tc.draw(ranking());
+    let more: BTreeMap<String, f32> =
+        rrf(&[lists.clone(), vec![extra.clone()]].concat())
+            .into_iter()
+            .collect();
+    let before: BTreeMap<String, f32> = fused.into_iter().collect();
+    for (id, score) in &more {
+        match before.get(id) {
+            Some(was) if extra.contains(id) => assert!(score > was, "{id}"),
+            Some(was) => assert_eq!(score, was, "{id}"),
+            None => assert!(extra.contains(id), "{id}"),
         }
     }
-    assert_eq!(fused.len(), want.len());
-    for (id, score) in &fused {
-        assert!((score - want[id]).abs() < 1e-6);
-    }
-    assert!(fused.windows(2).all(|pair| pair[0].1 >= pair[1].1));
+}
+
+/// MRR is the mean of one over each answer's rank, a missed answer
+/// counting nothing.
+#[hegel::test(test_cases = 200)]
+fn mrr_is_the_mean_reciprocal_rank(tc: TestCase) {
+    let n = tc.draw(gs::integers::<usize>().min_value(1).max_value(30));
+    let outcomes: Vec<Outcome> = (0..n).map(|_| outcome(&tc)).collect();
+    let reciprocal =
+        |outcome: &Outcome| outcome.rank.map_or(0.0, |r| 1.0 / r as f64);
+    let want = outcomes.iter().map(reciprocal).sum::<f64>() / n as f64;
+    assert!(
+        (f64::from(mrr(&outcomes)) - want).abs() < 1e-5,
+        "{outcomes:?}"
+    );
+    // One answer more, found first, never lowers it.
+    let mut better = outcomes.clone();
+    better.push(Outcome {
+        rank: Some(1),
+        ..outcomes[0]
+    });
+    assert!(mrr(&better) >= mrr(&outcomes) - 1e-6);
 }

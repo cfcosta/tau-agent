@@ -505,14 +505,25 @@ pub const RRF_K: f32 = 60.0;
 /// Fuses ranked lists: each id scores `1 / (RRF_K + rank)` in every list
 /// it is in, summed. Best first, ties by id.
 pub fn rrf(lists: &[Vec<String>]) -> Vec<(String, f32)> {
-    let mut scores: BTreeMap<String, f32> = BTreeMap::new();
+    let mut ranks: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for list in lists {
         for (rank, id) in list.iter().enumerate() {
-            *scores.entry(id.clone()).or_default() +=
-                1.0 / (RRF_K + rank as f32 + 1.0);
+            ranks.entry(id.clone()).or_default().push(rank);
         }
     }
-    let mut fused: Vec<(String, f32)> = scores.into_iter().collect();
+    // Summed in rank order, not list order: ids at the same ranks get
+    // the same score to the bit, so they tie and fall back to their ids.
+    let mut fused: Vec<(String, f32)> = ranks
+        .into_iter()
+        .map(|(id, mut ranks)| {
+            ranks.sort_unstable();
+            let score = ranks
+                .into_iter()
+                .map(|rank| 1.0 / (RRF_K + rank as f32 + 1.0))
+                .sum();
+            (id, score)
+        })
+        .collect();
     fused.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     fused
 }
