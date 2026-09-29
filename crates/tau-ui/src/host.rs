@@ -2296,16 +2296,22 @@ struct Pushing {
 
 impl Host {
     /// The turns `run` took that changed files, its own and the ones it
-    /// inherits as a fork, in order.
-    fn changed_turns(&self, run: &RunId) -> anyhow::Result<Vec<Link>> {
+    /// inherits as a fork, in order, each at the commit its change has
+    /// now.
+    fn changed_turns(
+        &self,
+        run: &RunId,
+        project: &Project,
+    ) -> anyhow::Result<Vec<Link>> {
         let bodies = self
             .runtime
             .block_on(self.store.records(&run.0, WORKSPACE_PLUGIN))?;
-        Ok(bodies
-            .iter()
-            .filter_map(|body| Link::parse(body))
-            .filter(|link| link.changed)
-            .collect())
+        project.current(
+            bodies
+                .iter()
+                .filter_map(|body| Link::parse(body))
+                .filter(|link| link.changed),
+        )
     }
 
     /// Writes a pull request draft from `run`: its changed turns as
@@ -2329,7 +2335,7 @@ impl Host {
             .project
             .wait()
             .ok_or_else(|| anyhow::anyhow!("{} has no project", slot.name))?;
-        let links = self.changed_turns(run)?;
+        let links = self.changed_turns(run, &project)?;
         let (Some(first), Some(last)) = (links.first(), links.last()) else {
             anyhow::bail!(
                 "The run changed no files, so there is nothing to propose"
@@ -2494,7 +2500,7 @@ impl Host {
             .project
             .wait()
             .ok_or_else(|| anyhow::anyhow!("{} has no project", slot.name))?;
-        let all = self.changed_turns(run)?;
+        let all = self.changed_turns(run, &project)?;
         let first = all
             .first()
             .ok_or_else(|| anyhow::anyhow!("The run changed no files"))?;
@@ -2784,22 +2790,26 @@ async fn branch_code(
         &store.plugin_entries(&parent, WORKSPACE_PLUGIN).await?,
         Some(fork_seq),
     )
-    .ok_or_else(|| anyhow::anyhow!("The fork point has no commit"))?
-    .commit_id;
+    .ok_or_else(|| anyhow::anyhow!("The fork point has no commit"))?;
     let head = |run: &RunId| {
         let store = store.clone();
         let run = run.0.to_string();
         let base = base.clone();
         async move {
             let entries = store.plugin_entries(&run, WORKSPACE_PLUGIN).await?;
-            anyhow::Ok(
-                last_link(&entries, None).map_or(base, |link| link.commit_id),
-            )
+            anyhow::Ok(last_link(&entries, None).unwrap_or(base))
         }
     };
     let main_head = head(&main).await?;
     let fork_head = head(&fork).await?;
     tokio::task::spawn_blocking(move || {
+        // Each at the commit its change has now.
+        let [base, main_head, fork_head]: [Link; 3] = project
+            .current([base, main_head, fork_head])?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Three links went in"))?;
+        let (base, main_head, fork_head) =
+            (base.commit_id, main_head.commit_id, fork_head.commit_id);
         let stats = |from: &str, to: &str| -> anyhow::Result<Vec<FileStat>> {
             Ok(project.diff(from, to)?.iter().map(file_stat).collect())
         };

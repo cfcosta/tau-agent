@@ -136,8 +136,9 @@ impl Plugin for RunWorkspace {
         let project = self.project.clone();
         let name = self.name.clone();
         tokio::task::spawn_blocking(move || {
+            // The turn's change may have been restacked since.
             let base = match inherited {
-                Some(link) => link.commit_id,
+                Some(link) => project.current([link])?.remove(0).commit_id,
                 None => project.trunk()?,
             };
             project.add_workspace(&name, &base).map(|_| ())

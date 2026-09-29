@@ -19,7 +19,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail};
 use jj_lib::{
-    backend::CommitId,
+    backend::{ChangeId, CommitId},
     commit::Commit,
     default_backend_factories::{
         default_backend_factories,
@@ -38,6 +38,7 @@ use pollster::block_on;
 
 use crate::{
     diff::{ChangeKind, FileChange},
+    run_workspace::Link,
     vcs::{Identity, Vcs, settings},
 };
 
@@ -251,6 +252,49 @@ impl Project {
         let id =
             target.unwrap_or_else(|| repo.store().root_commit_id().clone());
         Ok(id.hex())
+    }
+
+    /// `links` with each `commit_id` moved to where its change is now.
+    /// A change keeps its id when it is rewritten (a restack, a
+    /// describe), so the stored commit may be hidden while its change
+    /// lives on. A change no longer visible anywhere (abandoned) keeps
+    /// its last known commit; a divergent one is an error, since its
+    /// change id names more than one commit.
+    pub fn current(
+        &self,
+        links: impl IntoIterator<Item = Link>,
+    ) -> anyhow::Result<Vec<Link>> {
+        let repo = self.load()?;
+        links
+            .into_iter()
+            .map(|mut link| {
+                let change = ChangeId::try_from_reverse_hex(&link.change_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "`{}` is not a change id",
+                            link.change_id
+                        )
+                    })?;
+                let visible: Vec<CommitId> =
+                    match block_on(repo.resolve_change_id(&change))? {
+                        Some(targets) => targets
+                            .visible_with_offsets()
+                            .map(|(_, id)| id.clone())
+                            .collect(),
+                        None => Vec::new(),
+                    };
+                match visible.as_slice() {
+                    [] => {}
+                    [id] => link.commit_id = id.hex(),
+                    _ => anyhow::bail!(
+                        "Change {} of turn {} is divergent",
+                        link.change_id,
+                        link.turn
+                    ),
+                }
+                Ok(link)
+            })
+            .collect()
     }
 
     /// The commit the local bookmark `name` points at, as a full commit

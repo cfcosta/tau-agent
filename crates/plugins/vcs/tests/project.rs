@@ -574,3 +574,102 @@ fn check_diff_counts(fixture: &DiffFixture, files: &[Sides]) {
         .collect();
     assert_eq!(counted, expected);
 }
+
+/// Loads the project's jj repository at `root`, as the host would, to
+/// rewrite commits behind the tools' backs.
+fn repo_at(root: &Path) -> std::sync::Arc<jj_lib::repo::ReadonlyRepo> {
+    use jj_lib::{
+        config::{ConfigLayer, ConfigSource, StackedConfig},
+        default_backend_factories::{
+            default_backend_factories,
+            default_working_copy_factories,
+        },
+        settings::UserSettings,
+        workspace::Workspace,
+    };
+    let mut config = StackedConfig::with_defaults();
+    let mut user = ConfigLayer::empty(ConfigSource::User);
+    user.set_value("user.name", "host").unwrap();
+    user.set_value("user.email", "host@localhost").unwrap();
+    config.add_layer(user);
+    let settings = UserSettings::from_config(config).unwrap();
+    let workspace = Workspace::load(
+        &settings,
+        &root.join("main"),
+        &default_backend_factories(),
+        &default_working_copy_factories(),
+    )
+    .unwrap();
+    pollster::block_on(workspace.repo_loader().load_at_head()).unwrap()
+}
+
+/// A link follows its change when the commit is rewritten, and refuses
+/// a divergent one.
+#[test]
+fn links_follow_their_change() {
+    use jj_lib::{
+        backend::CommitId,
+        object_id::ObjectId as _,
+        repo::Repo as _,
+    };
+
+    let src = tempfile::tempdir().unwrap();
+    let head = source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join("p");
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        &root,
+        Identity::default(),
+    )
+    .unwrap();
+    let vcs = project.add_workspace("w", &head).unwrap();
+    std::fs::write(project.workspace_dir("w").join("a.txt"), "a\n").unwrap();
+    let turn = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(vcs.checkpoint("turn 1", "tau/r1"))
+        .unwrap();
+    let link = Link {
+        turn: 1,
+        workspace: "w".into(),
+        commit_id: turn.commit_id.clone(),
+        change_id: turn.change_id.clone(),
+        changed: true,
+    };
+    assert_eq!(project.current([link.clone()]).unwrap()[0], link);
+
+    // Rewrite the turn's commit: the change stays, the commit moves.
+    let repo = repo_at(&root);
+    let old = repo
+        .store()
+        .get_commit(&CommitId::try_from_hex(&turn.commit_id).unwrap())
+        .unwrap();
+    let mut tx = repo.start_transaction();
+    let new = pollster::block_on(
+        tx.repo_mut()
+            .rewrite_commit(&old)
+            .set_description("turn 1, restacked")
+            .write(),
+    )
+    .unwrap();
+    pollster::block_on(tx.repo_mut().rebase_descendants()).unwrap();
+    let repo = pollster::block_on(tx.commit("rewrite turn 1")).unwrap();
+    let moved = project.current([link.clone()]).unwrap().remove(0);
+    assert_eq!(moved.commit_id, new.id().hex());
+    assert_eq!(moved.change_id, link.change_id);
+
+    // A second visible commit with the same change id: divergent.
+    let mut tx = repo.start_transaction();
+    pollster::block_on(
+        tx.repo_mut()
+            .new_commit(vec![repo.store().root_commit_id().clone()], new.tree())
+            .set_change_id(new.change_id().clone())
+            .write(),
+    )
+    .unwrap();
+    pollster::block_on(tx.commit("diverge")).unwrap();
+    let err = project.current([link]).unwrap_err().to_string();
+    assert!(err.contains("divergent"), "{err}");
+}

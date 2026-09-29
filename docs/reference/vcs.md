@@ -283,7 +283,11 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   { "turn": 2, "workspace": "0192…", "commit_id": "…", "change_id": "…", "changed": true }
   ```
 
-  A turn that changed nothing links to the commit before it. A failed
+  A turn that changed nothing links to the commit before it.
+  `Project::current` moves a link to where its change is now, since
+  rewriting a commit (restacking it, say) keeps its change id but not
+  its commit id. Forks, pull requests and the compare view read links
+  through it. A failed
   commit stores `{ "turn": n, "error": "…" }` and the run goes on.
 
 - **Forking at a turn**: read the run's links with
