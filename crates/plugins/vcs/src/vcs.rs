@@ -93,8 +93,8 @@ impl Vcs {
             let (workspace, _repo) = block_on(Workspace::init_internal_git(
                 &worker.settings,
                 &worker.root,
-                // jj-lib's own gix's kind, which may be older than ours;
-                // its default is SHA-1.
+                // jj-lib's gix's kind, SHA-1 by default: named this way,
+                // the call builds even when our gix is not jj-lib's.
                 Default::default(),
             ))?;
             worker.workspace = Some(workspace);

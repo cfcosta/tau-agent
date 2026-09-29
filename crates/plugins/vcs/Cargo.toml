@@ -15,8 +15,6 @@ futures-util.workspace = true
 gix = { workspace = true, features = [
   "blocking-http-transport-reqwest",
   "blocking-network-client",
-  # gix 0.88 builds no hash without a feature for one; git repos use SHA-1.
-  "sha1",
 ] }
 reqwest.workspace = true
 tokio-rustls.workspace = true

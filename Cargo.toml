@@ -23,10 +23,10 @@ futures-util = { version = "0.3.34", default-features = false, features = [
   "std",
 ] }
 base64 = "0.23.1"
-# tau-vcs's own git work: cloning a source and reading its blobs. Newer
-# than the gix jj-lib 0.45.1 builds on (^0.87.1), so the tree carries
-# both until jj-lib moves; nothing passes a gix value to jj-lib.
-gix = { version = "0.88.0", default-features = false }
+# tau-vcs's own git work: cloning a source and reading its blobs. Kept
+# at the gix jj-lib builds on, so the two share one copy; move it only
+# when jj-lib does.
+gix = { version = "0.87.1", default-features = false }
 globset = "0.4.20"
 grep-matcher = "0.1.9"
 grep-regex = "0.1.14"
