@@ -370,12 +370,17 @@ fn with_stream_id(mut frame: Value, stream_id: &Option<Value>) -> Value {
     frame
 }
 
+/// An error as the server sends it: the details nested in `error`.
 fn error_frame(stream_id: &Option<Value>, code: &str) -> Value {
     with_stream_id(
         json!({
             "type": "error",
-            "code": code,
-            "message": format!("fake error: {code}"),
+            "status": 400,
+            "error": {
+                "type": "invalid_request_error",
+                "code": code,
+                "message": format!("fake error: {code}"),
+            },
         }),
         stream_id,
     )
