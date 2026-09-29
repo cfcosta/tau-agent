@@ -123,7 +123,8 @@ pub enum Entry {
         body: String,
     },
     /// A record `plugin` keeps with the run. It is never part of the
-    /// transcript; [`Store::records`] reads it back.
+    /// transcript; [`Store::records`] reads it back, and
+    /// [`Store::timeline`] shows it in place.
     Plugin {
         plugin: String,
         body: String,
@@ -456,6 +457,17 @@ impl Store {
     /// then its own, from the latest context entry onward.
     /// Plugin records are not part of it.
     pub async fn transcript(&self, run: &str) -> Result<Vec<Entry>> {
+        self.entries(run, false).await
+    }
+
+    /// [`Store::transcript`] with the plugin records in place among the
+    /// messages, in the order they were written: what an interface needs
+    /// to show a stored run as it happened.
+    pub async fn timeline(&self, run: &str) -> Result<Vec<Entry>> {
+        self.entries(run, true).await
+    }
+
+    async fn entries(&self, run: &str, records: bool) -> Result<Vec<Entry>> {
         let rows = sqlx::query!(
             r#"WITH RECURSIVE chain(run_id, cutoff, depth) AS (
                    SELECT id, NULL, 0 FROM runs WHERE id = ?1
@@ -468,9 +480,10 @@ impl Store {
                       m.plugin AS "plugin?: String", m.body AS "body!: String"
                FROM chain JOIN messages m ON m.run_id = chain.run_id
                WHERE (chain.cutoff IS NULL OR m.seq <= chain.cutoff)
-                 AND m.kind != 'plugin'
+                 AND (m.kind != 'plugin' OR ?2)
                ORDER BY chain.depth DESC, m.seq"#,
-            run
+            run,
+            records
         )
         .fetch_all(&self.reader)
         .await?;
@@ -485,6 +498,11 @@ impl Store {
             .map(|row| match row.kind.as_str() {
                 "context" => Entry::Context {
                     // The loop sets a plugin on every context row.
+                    plugin: row.plugin.unwrap_or_default(),
+                    body: row.body,
+                },
+                "plugin" => Entry::Plugin {
+                    // The schema sets a plugin on every plugin row.
                     plugin: row.plugin.unwrap_or_default(),
                     body: row.body,
                 },

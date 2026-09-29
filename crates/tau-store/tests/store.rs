@@ -92,6 +92,17 @@ impl Model {
         chain[start..].to_vec()
     }
 
+    /// The transcript with the records in place: the chain from its
+    /// latest context entry.
+    fn timeline(&self, run: &str) -> Vec<Entry> {
+        let chain = self.chain(run);
+        let start = chain
+            .iter()
+            .rposition(|e| matches!(e, Entry::Context { .. }))
+            .unwrap_or(0);
+        chain[start..].to_vec()
+    }
+
     /// `plugin`'s records along the chain, oldest first.
     fn records(&self, run: &str, plugin: &str) -> Vec<String> {
         self.chain(run)
@@ -326,6 +337,11 @@ fn store_matches_model_body(tc: TestCase) {
                     store.transcript(id).await.unwrap(),
                     model.transcript(id),
                     "transcript of {id}"
+                );
+                assert_eq!(
+                    store.timeline(id).await.unwrap(),
+                    model.timeline(id),
+                    "timeline of {id}"
                 );
                 for plugin in ["memory", "prune"] {
                     assert_eq!(

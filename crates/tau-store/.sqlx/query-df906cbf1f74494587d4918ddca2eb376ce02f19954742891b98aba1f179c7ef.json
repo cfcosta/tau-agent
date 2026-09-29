@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "WITH RECURSIVE chain(run_id, cutoff, depth) AS (\n                   SELECT id, NULL, 0 FROM runs WHERE id = ?1\n                   UNION ALL\n                   SELECT r.parent_run_id, r.fork_seq, chain.depth + 1\n                   FROM chain JOIN runs r ON r.id = chain.run_id\n                   WHERE r.kind = 'fork'\n               )\n               SELECT m.kind AS \"kind!: String\", m.role AS \"role?: String\",\n                      m.plugin AS \"plugin?: String\", m.body AS \"body!: String\"\n               FROM chain JOIN messages m ON m.run_id = chain.run_id\n               WHERE (chain.cutoff IS NULL OR m.seq <= chain.cutoff)\n                 AND m.kind != 'plugin'\n               ORDER BY chain.depth DESC, m.seq",
+  "query": "WITH RECURSIVE chain(run_id, cutoff, depth) AS (\n                   SELECT id, NULL, 0 FROM runs WHERE id = ?1\n                   UNION ALL\n                   SELECT r.parent_run_id, r.fork_seq, chain.depth + 1\n                   FROM chain JOIN runs r ON r.id = chain.run_id\n                   WHERE r.kind = 'fork'\n               )\n               SELECT m.kind AS \"kind!: String\", m.role AS \"role?: String\",\n                      m.plugin AS \"plugin?: String\", m.body AS \"body!: String\"\n               FROM chain JOIN messages m ON m.run_id = chain.run_id\n               WHERE (chain.cutoff IS NULL OR m.seq <= chain.cutoff)\n                 AND (m.kind != 'plugin' OR ?2)\n               ORDER BY chain.depth DESC, m.seq",
   "describe": {
     "columns": [
       {
@@ -49,7 +49,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "dd4b08a4de8b227a279ad7da13eb74a2f38da11285cabcf88b4cd6c8496aff26"
+  "hash": "df906cbf1f74494587d4918ddca2eb376ce02f19954742891b98aba1f179c7ef"
 }
