@@ -618,6 +618,17 @@ mod tests {
         assert_eq!(to_base36(u32::MAX), "1z141z3");
     }
 
+    /// `to_base36` writes any `u32` in base 36, with lowercase digits
+    /// and no leading zero: reading it back gives the number.
+    #[hegel::test]
+    fn to_base36_round_trips(tc: hegel::TestCase) {
+        let n = tc.draw(hegel::generators::integers::<u32>());
+        let text = to_base36(n);
+        assert_eq!(u32::from_str_radix(&text, 36), Ok(n));
+        assert_eq!(text, text.to_lowercase());
+        assert!(n == 0 || !text.starts_with('0'), "{text}");
+    }
+
     #[test]
     fn short_hash_pins_known_values() {
         assert_eq!(short_hash(""), "k4n83c7h0j2b");

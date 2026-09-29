@@ -117,6 +117,24 @@ fn bodies_follow_websocket_rules(tc: TestCase) {
         body.get("instructions"),
         settings.instructions.as_ref().map(|i| json!(i)).as_ref()
     );
+    // Every tool, in order, as a function; no `tools` at all without any.
+    let tools: Vec<Value> = settings
+        .tools
+        .iter()
+        .map(|tool| {
+            json!({
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+                "strict": tool.strict,
+            })
+        })
+        .collect();
+    assert_eq!(
+        body.get("tools"),
+        (!tools.is_empty()).then(|| Value::Array(tools)).as_ref()
+    );
 }
 
 /// Reasoning models always ask for encrypted reasoning, so a full resend
@@ -171,6 +189,34 @@ fn wire_limits_are_clamped(tc: TestCase) {
             .map(|f| json!({"format": f}))
             .as_ref()
     );
+}
+
+/// A stream id is accepted exactly when it is 1 to 256 characters from
+/// `[A-Za-z0-9_.-]`, and kept as given; anything else is rejected with
+/// the rule in the message.
+#[hegel::test(test_cases = 300)]
+#[hegel::explicit_test_case(id = "a".repeat(256))]
+#[hegel::explicit_test_case(id = "a".repeat(257))]
+#[hegel::explicit_test_case(id = String::new())]
+fn stream_id_is_valid_exactly_by_the_rule(tc: TestCase) {
+    let id: String = tc.draw(hegel::one_of!(
+        gs::from_regex("[A-Za-z0-9_.-]{1,256}"),
+        gs::text().max_size(300),
+        gs::text().alphabet("ab_.-/ é").max_size(8),
+    ));
+    let allowed = |c: char| c.is_ascii_alphanumeric() || "_.-".contains(c);
+    let valid =
+        (1..=256).contains(&id.chars().count()) && id.chars().all(allowed);
+    match StreamId::new(id.clone()) {
+        Ok(stream_id) => {
+            assert!(valid, "{id:?} was accepted");
+            assert_eq!(stream_id.as_str(), id);
+        }
+        Err(error) => {
+            assert!(!valid, "{id:?} was rejected");
+            assert!(error.to_string().contains("1-256 characters"));
+        }
+    }
 }
 
 /// Stream ids outside `[A-Za-z0-9_.-]{1,256}` are rejected.

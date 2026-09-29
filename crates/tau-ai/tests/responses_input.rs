@@ -6,7 +6,10 @@
 //! `crates/tau-ai/src/responses/input.rs` and in
 //! `docs/reference/testing.md`'s `tau-ai` property inventory.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use hegel::{TestCase, generators as gs};
 use serde_json::{Map, Value, json};
@@ -542,7 +545,8 @@ fn split_tool_call_id_keeps_extra_pipes_unlike_pi() {
 /// (determinism), checked here since it is cheap.
 #[hegel::test(test_cases = 300)]
 fn function_calls_and_outputs_pair_one_to_one(tc: TestCase) {
-    let messages = tc.draw(generators::damaged_transcript());
+    let messages =
+        shared_call_ids(&tc, tc.draw(generators::damaged_transcript()));
     let items = to_input(&messages);
     assert_eq!(
         to_input(&messages),
@@ -584,22 +588,53 @@ fn function_calls_and_outputs_pair_one_to_one(tc: TestCase) {
     );
 }
 
-/// The reasoning pairing rule: a kept reasoning item is never the last
-/// item of the converted input. Because groups are flattened in order
-/// with intra-group order kept (see the module docs), this is exactly
-/// "every reasoning item is immediately followed by the output item it
-/// belongs to".
+/// The reasoning pairing rule: every kept reasoning item is followed,
+/// possibly after more reasoning items of its own message, by an
+/// assistant `message` or `function_call` item of that same message.
+/// Each assistant item is tagged with its message's position first (a
+/// reasoning, text and call item id of `rs_`/`msg_`/`fc_{message}_{block}`),
+/// so the check can tell which message an item came from.
+///
+/// Consecutive reasoning items are allowed: the rule trims only the
+/// reasoning left trailing by a dropped call, as pi never drops
+/// reasoning between two kept items.
 #[hegel::test(test_cases = 300)]
 fn no_reasoning_item_is_left_dangling(tc: TestCase) {
-    let messages = tc.draw(generators::damaged_transcript());
+    let mut messages =
+        shared_call_ids(&tc, tc.draw(generators::damaged_transcript()));
+    tag_assistant_items(&mut messages);
     let items = to_input(&messages);
     for (i, item) in items.iter().enumerate() {
-        if item["type"] == "reasoning" {
-            assert!(
-                i + 1 < items.len(),
-                "reasoning item at {i} has nothing after it: {item}"
-            );
+        if item["type"] != "reasoning" {
+            continue;
         }
+        tc.event("a reasoning item was kept");
+        let origin = item_origin(item).expect("a tagged reasoning item");
+        let mut next = i + 1;
+        while next < items.len() && items[next]["type"] == "reasoning" {
+            assert_eq!(
+                item_origin(&items[next]),
+                Some(origin),
+                "reasoning at {i} is followed by another message's \
+                 reasoning at {next}"
+            );
+            next += 1;
+        }
+        let Some(follower) = items.get(next) else {
+            panic!("reasoning item at {i} has nothing after it: {item}");
+        };
+        let is_output = (follower["type"] == "message"
+            && follower["role"] == "assistant")
+            || follower["type"] == "function_call";
+        assert!(
+            is_output,
+            "reasoning at {i} is followed by {follower}, not an output item"
+        );
+        assert_eq!(
+            item_origin(follower),
+            Some(origin),
+            "reasoning at {i} is followed by another message's item"
+        );
     }
 }
 
@@ -610,7 +645,7 @@ fn no_reasoning_item_is_left_dangling(tc: TestCase) {
 /// of the transcript finds it.
 #[hegel::test(test_cases = 300)]
 fn undamaged_transcript_drops_nothing(tc: TestCase) {
-    let messages = tc.draw(generators::transcript());
+    let messages = shared_call_ids(&tc, tc.draw(generators::transcript()));
     let items = to_input(&messages);
 
     let expected_calls: usize = messages
@@ -660,6 +695,22 @@ fn function_call_id_round_trips(tc: TestCase) {
     assert_eq!(format!("{call_id}|{item_id}"), call.id);
 }
 
+/// `split_tool_call_id` loses nothing, whatever the id holds: the
+/// `call_id` has no `|`, the `item_id` is there exactly when the id has
+/// a `|`, and joining the halves back with `|` gives the id.
+#[hegel::test]
+fn split_tool_call_id_rejoins_to_the_id(tc: TestCase) {
+    let id: String = tc.draw(gs::text().alphabet("ab|").max_size(8));
+    let (call_id, item_id) = split_tool_call_id(&id);
+    assert!(!call_id.contains('|'), "{call_id:?}");
+    assert_eq!(item_id.is_some(), id.contains('|'));
+    let rejoined = match item_id {
+        Some(item_id) => format!("{call_id}|{item_id}"),
+        None => call_id.to_owned(),
+    };
+    assert_eq!(rejoined, id);
+}
+
 /// The delta rule needs `response_items` to give the same items
 /// `to_input` would give for that message once every one of its tool
 /// calls has a result (see `response_items`'s own docs). For an
@@ -670,7 +721,7 @@ fn function_call_id_round_trips(tc: TestCase) {
 /// own output at the position a simple item-count walk predicts.
 #[hegel::test(test_cases = 300)]
 fn response_items_matches_to_input_for_undamaged_transcripts(tc: TestCase) {
-    let messages = tc.draw(generators::transcript());
+    let messages = shared_call_ids(&tc, tc.draw(generators::transcript()));
     let actual = to_input(&messages);
 
     let mut cursor = 0;
@@ -715,7 +766,7 @@ fn response_items_matches_to_input_for_undamaged_transcripts(tc: TestCase) {
 fn undamaged_prefix_after_a_completed_turn_is_a_prefix_of_the_full_input(
     tc: TestCase,
 ) {
-    let messages = tc.draw(generators::transcript());
+    let messages = shared_call_ids(&tc, tc.draw(generators::transcript()));
     let full = to_input(&messages);
     for len in safe_prefix_lengths(&messages) {
         let prefix = to_input(&messages[..len]);
@@ -731,7 +782,7 @@ fn undamaged_prefix_after_a_completed_turn_is_a_prefix_of_the_full_input(
 /// altogether (a compaction, a fork).
 #[hegel::test(test_cases = 300)]
 fn the_cache_converts_like_to_input(tc: TestCase) {
-    let base = tc.draw(generators::damaged_transcript());
+    let base = shared_call_ids(&tc, tc.draw(generators::damaged_transcript()));
     let steps = tc.draw(gs::integers::<usize>().min_value(1).max_value(5));
     let mut cache = InputCache::new();
     for step in 0..steps {
@@ -739,7 +790,7 @@ fn the_cache_converts_like_to_input(tc: TestCase) {
             let len = tc.draw(gs::integers::<usize>().max_value(base.len()));
             base[..len].to_vec()
         } else {
-            tc.draw(generators::damaged_transcript())
+            shared_call_ids(&tc, tc.draw(generators::damaged_transcript()))
         };
         let cached: Vec<Value> = cache
             .input(&messages)
@@ -755,7 +806,7 @@ fn the_cache_converts_like_to_input(tc: TestCase) {
 /// pointer.
 #[hegel::test(test_cases = 300)]
 fn the_cache_shares_the_items_of_earlier_turns(tc: TestCase) {
-    let messages = tc.draw(generators::transcript());
+    let messages = shared_call_ids(&tc, tc.draw(generators::transcript()));
     let mut cache = InputCache::new();
     let mut previous: Vec<Arc<Value>> = Vec::new();
     for len in safe_prefix_lengths(&messages) {
@@ -920,4 +971,98 @@ fn safe_prefix_lengths(messages: &[Message]) -> Vec<usize> {
         }
     }
     lengths
+}
+
+/// The call ids transcripts draw from: few enough that calls in
+/// different turns share one, as they can in a long run, which is where
+/// pairing by `call_id` (and pi's orphan bug) gets interesting.
+const CALL_IDS: [&str; 3] = ["call_a", "call_b", "call_c"];
+
+/// `messages` with each tool call's `call_id` redrawn from [`CALL_IDS`].
+/// A result keeps answering the call it answered (the first call with
+/// its old id not yet answered); a result that answered none may now
+/// claim one.
+fn shared_call_ids(tc: &TestCase, mut messages: Vec<Message>) -> Vec<Message> {
+    let mut renamed: HashMap<String, VecDeque<String>> = HashMap::new();
+    let pool = || gs::sampled_from(CALL_IDS.to_vec());
+    for message in &mut messages {
+        match message {
+            Message::Assistant(assistant) => {
+                for block in &mut assistant.content {
+                    if let AssistantBlock::ToolCall(call) = block {
+                        let call_id = tc.draw(pool());
+                        let id = match split_tool_call_id(&call.id).1 {
+                            Some(item_id) => format!("{call_id}|{item_id}"),
+                            None => call_id.to_owned(),
+                        };
+                        renamed
+                            .entry(call.id.clone())
+                            .or_default()
+                            .push_back(id.clone());
+                        call.id = id;
+                    }
+                }
+            }
+            Message::ToolResult(result) => {
+                if let Some(id) = renamed
+                    .get_mut(&result.tool_call_id)
+                    .and_then(VecDeque::pop_front)
+                {
+                    result.tool_call_id = id;
+                } else if tc.draw(gs::booleans()) {
+                    result.tool_call_id = tc.draw(pool()).to_owned();
+                }
+            }
+            Message::User(_) => {}
+        }
+    }
+    messages
+}
+
+/// Gives every assistant item an id naming its message and block:
+/// `rs_{message}_{block}` for reasoning (when its signature parses),
+/// `msg_...` for text and `fc_...` as a tool call's item id. Changes no
+/// pairing: `call_id`s stay as they are.
+fn tag_assistant_items(messages: &mut [Message]) {
+    for (m, message) in messages.iter_mut().enumerate() {
+        let Message::Assistant(assistant) = message else {
+            continue;
+        };
+        for (b, block) in assistant.content.iter_mut().enumerate() {
+            match block {
+                AssistantBlock::Thinking(thinking) => {
+                    let parses =
+                        thinking.thinking_signature.as_deref().is_some_and(
+                            |s| serde_json::from_str::<Value>(s).is_ok(),
+                        );
+                    if parses {
+                        thinking.thinking_signature = Some(
+                            json!({
+                                "type": "reasoning",
+                                "id": format!("rs_{m}_{b}"),
+                                "summary": [],
+                            })
+                            .to_string(),
+                        );
+                    }
+                }
+                AssistantBlock::Text(text) => {
+                    text.text_signature = Some(format!("msg_{m}_{b}"));
+                }
+                AssistantBlock::ToolCall(call) => {
+                    let call_id = split_tool_call_id(&call.id).0.to_owned();
+                    call.id = format!("{call_id}|fc_{m}_{b}");
+                }
+            }
+        }
+    }
+}
+
+/// The message an item tagged by [`tag_assistant_items`] came from.
+fn item_origin(item: &Value) -> Option<usize> {
+    let id = item.get("id")?.as_str()?;
+    let rest = ["rs_", "msg_", "fc_"]
+        .iter()
+        .find_map(|prefix| id.strip_prefix(prefix))?;
+    rest.split('_').next()?.parse().ok()
 }
