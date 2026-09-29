@@ -69,6 +69,33 @@ fn agrees_with_serde_json_for_any_chunking(tc: TestCase) {
     );
 }
 
+/// A strict prefix of an object's text, however it is chunked, is not a
+/// complete object: `finish` fails, as `serde_json` does on the same
+/// text, and the partial view is still consistent with the final value.
+#[hegel::test(test_cases = 500)]
+fn strict_prefix_fails_to_finish(tc: TestCase) {
+    let value = Value::Object(tc.draw(generators::json_object(3)));
+    let text = if tc.draw(gs::booleans()) {
+        serde_json::to_string_pretty(&value)
+            .expect("a JSON value always serializes")
+    } else {
+        serde_json::to_string(&value).expect("a JSON value always serializes")
+    };
+    let chars = text.chars().count();
+    let cut = tc.draw(gs::integers::<usize>().max_value(chars - 1));
+    let prefix: String = text.chars().take(cut).collect();
+    tc.note(&prefix);
+    let chunks = tc.draw(generators::char_chunks(prefix.clone()));
+
+    let mut parser = PartialJson::new();
+    for chunk in &chunks {
+        parser.push(chunk);
+    }
+    assert!(le(parser.value(), &value), "{}", parser.value());
+    assert!(serde_json::from_str::<Value>(&prefix).is_err());
+    assert!(parser.finish().is_err(), "{prefix:?} finished");
+}
+
 /// Each partial parse is consistent with the final value: no field seen
 /// early is later changed or dropped.
 #[hegel::test(test_cases = 500)]

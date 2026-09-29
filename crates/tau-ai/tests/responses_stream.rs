@@ -11,9 +11,9 @@ use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_ai::{
     event::{Accumulator, AssistantEvent, DoneReason, ErrorReason},
-    message::{StopReason, Usage},
+    message::{AssistantBlock, StopReason, Usage},
     responses::stream::StreamProcessor,
-    retry::Class,
+    retry::{self, Class, Failure},
 };
 use tau_testing::openai::{
     draw_response_frames,
@@ -87,6 +87,11 @@ fn unknown_frames_anywhere_do_not_change_the_result(tc: TestCase) {
 /// way (including the ones `close()` produces) satisfies the
 /// [`Accumulator`] grammar. `docs/reference/testing.md`: "Every strict
 /// prefix of a valid event stream ends in error, never in done."
+///
+/// What was streamed is kept as a prefix of the message: every block but
+/// the last is the message's own, and the last is the message's or a
+/// partial of it. The error is retryable exactly when no block had
+/// started, so nothing but `Start` went out.
 #[hegel::test(test_cases = 500)]
 fn strict_prefix_closed_always_ends_in_error(tc: TestCase) {
     let message = tc.draw(wire_assistant_message());
@@ -104,13 +109,51 @@ fn strict_prefix_closed_always_ends_in_error(tc: TestCase) {
         }
     }
     assert!(!processor.is_finished());
-    for event in processor.close() {
+    let events = processor.close();
+    for event in events.iter().cloned() {
         acc.push(event)
             .expect("close() events must satisfy the grammar");
     }
     assert!(processor.is_finished());
     let result = acc.finish().expect("close() always terminates the stream");
     assert_eq!(result.stop_reason, StopReason::Error);
+
+    let content = &result.content;
+    assert!(content.len() <= message.content.len(), "{content:?}");
+    if let Some((last, closed)) = content.split_last() {
+        assert_eq!(closed, &message.content[..closed.len()]);
+        let full = &message.content[closed.len()];
+        if last != full {
+            tc.event("cut inside a block");
+            match (last, full) {
+                (AssistantBlock::Text(got), AssistantBlock::Text(full)) => {
+                    assert!(full.text.starts_with(&got.text), "{got:?}");
+                }
+                (
+                    AssistantBlock::Thinking(got),
+                    AssistantBlock::Thinking(full),
+                ) => {
+                    assert!(full.thinking.starts_with(&got.thinking));
+                }
+                (
+                    AssistantBlock::ToolCall(got),
+                    AssistantBlock::ToolCall(full),
+                ) => {
+                    assert_eq!((&got.id, &got.name), (&full.id, &full.name));
+                }
+                _ => panic!("block kind changed: {last:?} vs {full:?}"),
+            }
+        }
+    }
+    let Some(AssistantEvent::Error { class, .. }) = events.last() else {
+        panic!("close() ends in an error");
+    };
+    assert_eq!(
+        *class == Class::Retryable,
+        content.is_empty(),
+        "{class:?} with {} blocks out",
+        content.len()
+    );
 }
 
 /// Frames pushed after the terminal event are ignored: they produce no
@@ -933,4 +976,74 @@ fn failures_carry_their_retry_class() {
         ),
         Class::Fatal
     );
+}
+
+/// The codes and types `retry::classify` knows, as either field, and one
+/// it does not.
+const ERROR_NAMES: [&str; 12] = [
+    "rate_limit_exceeded",
+    "server_error",
+    "context_length_exceeded",
+    "insufficient_quota",
+    "billing_not_active",
+    "billing_hard_limit_reached",
+    "account_deactivated",
+    "invalid_api_key",
+    "api_error",
+    "invalid_request_error",
+    "mystery",
+    "",
+];
+
+/// An `error` frame (its details at the top or nested in `error`, as the
+/// server sends them) or a `response.failed` frame ends in an `Error`
+/// whose class is `retry::classify` of the frame's code, type and (for
+/// an `error` frame) status, whatever those are. With the details at the
+/// top, the type is the frame's own, `error`, which no table names.
+#[hegel::test]
+fn failure_frames_are_classified_like_retry_classify(tc: TestCase) {
+    let name = || gs::optional(gs::sampled_from(ERROR_NAMES.to_vec()));
+    let code = tc.draw(name());
+    let kind = tc.draw(name());
+    let status = tc.draw(gs::optional(
+        gs::integers::<u16>().min_value(100).max_value(599),
+    ));
+    let failed = tc.draw(gs::booleans());
+    let nested = tc.draw(gs::booleans());
+
+    let mut details = serde_json::Map::new();
+    details.insert("message".into(), json!("m"));
+    if let Some(code) = code {
+        details.insert("code".into(), json!(code));
+    }
+    if let Some(kind) = kind {
+        details.insert("type".into(), json!(kind));
+    }
+    let (frame, kind, status) = if failed {
+        let frame = json!({
+            "type": "response.failed",
+            "response": { "error": details },
+        });
+        // A failed response carries no HTTP status.
+        (frame, kind, None)
+    } else {
+        let (mut frame, kind) = if nested {
+            (json!({ "type": "error", "error": details }), kind)
+        } else {
+            // At the top, the frame's own `type` is the error's type.
+            let mut frame = details;
+            frame.insert("type".into(), json!("error"));
+            (serde_json::Value::Object(frame), Some("error"))
+        };
+        if let Some(status) = status {
+            frame["status"] = json!(status);
+        }
+        (frame, kind, status)
+    };
+    let events = StreamProcessor::new("gpt-5-mini".to_owned(), 0).push(&frame);
+    let Some(AssistantEvent::Error { class, .. }) = events.last() else {
+        panic!("expected an error, got {events:?}");
+    };
+    let expected = retry::classify(&Failure::Api { code, kind, status });
+    assert_eq!(*class, expected, "{frame}");
 }

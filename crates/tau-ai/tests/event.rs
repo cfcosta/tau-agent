@@ -2,10 +2,70 @@
 
 use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_ai::{
-    event::{Accumulator, AssistantEvent, DoneReason},
-    message::{AssistantBlock, AssistantMessage, StopReason, Usage},
+    event::{Accumulator, AssistantEvent, DoneReason, ErrorReason},
+    message::{
+        AssistantBlock,
+        AssistantMessage,
+        StopReason,
+        TextContent,
+        ThinkingContent,
+        ToolCall,
+        Usage,
+    },
 };
 use tau_testing::{generators, stream};
+
+/// [`stream::draw_stream`] with edge shapes it never makes on its own:
+/// empty deltas mid-block, and blocks with no delta at all (an empty
+/// delta dropped).
+fn draw_stream(
+    tc: &TestCase,
+    message: &AssistantMessage,
+) -> Vec<AssistantEvent> {
+    let mut events = Vec::new();
+    for event in stream::draw_stream(tc, message) {
+        let empty = match &event {
+            AssistantEvent::TextStart { index }
+            | AssistantEvent::TextDelta { index, .. } => {
+                Some(AssistantEvent::TextDelta {
+                    index: *index,
+                    delta: String::new(),
+                })
+            }
+            AssistantEvent::ThinkingStart { index }
+            | AssistantEvent::ThinkingDelta { index, .. } => {
+                Some(AssistantEvent::ThinkingDelta {
+                    index: *index,
+                    delta: String::new(),
+                })
+            }
+            AssistantEvent::ToolCallStart { index, .. }
+            | AssistantEvent::ToolCallDelta { index, .. } => {
+                Some(AssistantEvent::ToolCallDelta {
+                    index: *index,
+                    delta: String::new(),
+                })
+            }
+            _ => None,
+        };
+        let is_empty_delta = matches!(
+            &event,
+            AssistantEvent::TextDelta { delta, .. }
+                | AssistantEvent::ThinkingDelta { delta, .. }
+                | AssistantEvent::ToolCallDelta { delta, .. }
+                if delta.is_empty()
+        );
+        if !(is_empty_delta && tc.draw(gs::booleans())) {
+            events.push(event);
+        }
+        if let Some(empty) = empty
+            && tc.draw(gs::weighted_booleans(0.1))
+        {
+            events.push(empty);
+        }
+    }
+    events
+}
 
 fn accumulate(
     events: impl IntoIterator<Item = AssistantEvent>,
@@ -22,7 +82,7 @@ fn accumulate(
 #[hegel::test(test_cases = 500)]
 fn accumulate_render_round_trip(tc: TestCase) {
     let message = tc.draw(generators::assistant_message());
-    let events = stream::draw_stream(&tc, &message);
+    let events = draw_stream(&tc, &message);
     assert_eq!(accumulate(events), message);
 }
 
@@ -31,7 +91,7 @@ fn accumulate_render_round_trip(tc: TestCase) {
 #[hegel::test(test_cases = 500)]
 fn partial_text_is_growing_prefix(tc: TestCase) {
     let message = tc.draw(generators::assistant_message());
-    let events = stream::draw_stream(&tc, &message);
+    let events = draw_stream(&tc, &message);
     let mut acc = Accumulator::new();
     let mut previous = vec![String::new(); message.content.len()];
     for event in events {
@@ -62,7 +122,7 @@ fn partial_text_is_growing_prefix(tc: TestCase) {
 #[hegel::test]
 fn partial_arguments_concatenate_deltas(tc: TestCase) {
     let message = tc.draw(generators::assistant_message());
-    let events = stream::draw_stream(&tc, &message);
+    let events = draw_stream(&tc, &message);
     let mut acc = Accumulator::new();
     let mut expected = String::new();
     for event in events {
@@ -88,13 +148,15 @@ fn partial_arguments_concatenate_deltas(tc: TestCase) {
 }
 
 /// An error in the middle of a block ends the stream: the message keeps
-/// the blocks so far, the cut-off block holds a prefix of its text, and
-/// the stop reason and error text come from the error.
+/// the blocks closed so far exactly, the cut-off block holds the
+/// concatenation of its deltas so far (a tool call its id and name, with
+/// no arguments), and the stop reason, error text and usage come from
+/// the error.
 #[hegel::test]
 fn error_mid_block_keeps_partial_content(tc: TestCase) {
     let mut message = tc.draw(generators::assistant_message());
     message.stop_reason = StopReason::Stop;
-    let events = stream::draw_stream(&tc, &message);
+    let events = draw_stream(&tc, &message);
     // Cut before the terminal event, at any point after Start.
     let cut = tc.draw(
         gs::integers::<usize>()
@@ -102,42 +164,108 @@ fn error_mid_block_keeps_partial_content(tc: TestCase) {
             .max_value(events.len() - 1),
     );
     let error = tc.draw(generators::text(20));
+    let reason = tc.draw(
+        gs::sampled_from(vec![ErrorReason::Error, ErrorReason::Aborted])
+            .print_as_debug(),
+    );
+    let usage = tc.draw(generators::usage());
+    let kept = &events[..cut];
+
+    // The oracle: blocks that ended are the message's own; an open one
+    // is what its deltas spelled so far.
+    let closed = kept
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AssistantEvent::TextEnd { .. }
+                    | AssistantEvent::ThinkingEnd { .. }
+                    | AssistantEvent::ToolCallEnd { .. }
+            )
+        })
+        .count();
+    let started = kept
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AssistantEvent::TextStart { .. }
+                    | AssistantEvent::ThinkingStart { .. }
+                    | AssistantEvent::ToolCallStart { .. }
+            )
+        })
+        .count();
+    let mut expected = message.content[..closed].to_vec();
+    if started > closed {
+        tc.event("cut inside a block");
+        let spelled: String = kept
+            .iter()
+            .filter_map(|e| match e {
+                AssistantEvent::TextDelta { index, delta }
+                | AssistantEvent::ThinkingDelta { index, delta }
+                    if *index == closed =>
+                {
+                    Some(delta.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        expected.push(match &message.content[closed] {
+            AssistantBlock::Text(_) => AssistantBlock::Text(TextContent {
+                text: spelled,
+                text_signature: None,
+            }),
+            AssistantBlock::Thinking(_) => {
+                AssistantBlock::Thinking(ThinkingContent {
+                    thinking: spelled,
+                    thinking_signature: None,
+                    redacted: None,
+                })
+            }
+            AssistantBlock::ToolCall(call) => {
+                AssistantBlock::ToolCall(ToolCall {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: Default::default(),
+                })
+            }
+        });
+    }
+    let response_id = match &events[0] {
+        AssistantEvent::Start { response_id, .. } => response_id.clone(),
+        other => panic!("the stream starts with {other:?}"),
+    };
+
     let mut acc = Accumulator::new();
-    for event in events.into_iter().take(cut) {
+    for event in kept.iter().cloned() {
         acc.push(event).unwrap();
     }
     acc.push(AssistantEvent::Error {
-        reason: tau_ai::event::ErrorReason::Error,
+        reason,
         message: error.clone(),
-        usage: Usage::default(),
+        usage: usage.clone(),
         class: tau_ai::retry::Class::Fatal,
     })
     .unwrap();
     let result = acc.finish().unwrap();
-    assert_eq!(result.stop_reason, StopReason::Error);
-    assert_eq!(result.error_message, Some(error));
-    assert!(result.content.len() <= message.content.len());
-    for (got, full) in result.content.iter().zip(&message.content) {
-        match (got, full) {
-            (AssistantBlock::Text(g), AssistantBlock::Text(f)) => {
-                assert!(f.text.starts_with(&g.text))
-            }
-            (AssistantBlock::Thinking(g), AssistantBlock::Thinking(f)) => {
-                assert!(f.thinking.starts_with(&g.thinking))
-            }
-            (AssistantBlock::ToolCall(g), AssistantBlock::ToolCall(f)) => {
-                assert_eq!((&g.id, &g.name), (&f.id, &f.name))
-            }
-            _ => panic!("block kind changed"),
+    assert_eq!(
+        result,
+        AssistantMessage {
+            content: expected,
+            response_id,
+            usage,
+            stop_reason: reason.into(),
+            error_message: Some(error),
+            ..message
         }
-    }
+    );
 }
 
 /// Any event after the terminal event is rejected.
 #[hegel::test]
 fn events_after_terminal_are_rejected(tc: TestCase) {
     let message = tc.draw(generators::assistant_message());
-    let events = stream::draw_stream(&tc, &message);
+    let events = draw_stream(&tc, &message);
     let extra = tc.draw(gs::sampled_from(events.clone()).print_as_debug());
     let mut acc = Accumulator::new();
     for event in events {
@@ -249,7 +377,7 @@ fn grammar_violations_are_rejected() {
 #[hegel::test]
 fn finished_exactly_at_terminal(tc: TestCase) {
     let message = tc.draw(generators::assistant_message());
-    let events = stream::draw_stream(&tc, &message);
+    let events = draw_stream(&tc, &message);
     let last = events.len() - 1;
     let mut acc = Accumulator::new();
     for (i, event) in events.into_iter().enumerate() {
