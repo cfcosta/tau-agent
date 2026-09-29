@@ -200,13 +200,14 @@ pub fn prose(text: &str, color: Hsla, t: &Theme) -> StyledText {
     marked(text, SANS, color, false, t)
 }
 
-fn marked(
+/// The text [`rich`] draws and its runs.
+fn marked_runs(
     text: &str,
     family: &'static str,
     color: Hsla,
     chips: bool,
     t: &Theme,
-) -> StyledText {
+) -> (String, Vec<TextRun>) {
     let spans: Vec<(String, Mark)> = spans(text)
         .into_iter()
         .map(|(span, mark)| match mark {
@@ -245,7 +246,42 @@ fn marked(
         })
         .filter(|run| run.len > 0)
         .collect();
+    (plain, runs)
+}
+
+fn marked(
+    text: &str,
+    family: &'static str,
+    color: Hsla,
+    chips: bool,
+    t: &Theme,
+) -> StyledText {
+    let (plain, runs) = marked_runs(text, family, color, chips, t);
     StyledText::new(plain).with_runs(runs)
+}
+
+/// How wide [`rich`] draws `text` on one line, at the window's current
+/// text size: the widest of its lines.
+///
+/// For a box that shrinks to its text: given this width, GPUI measures
+/// the text at the width it draws it. Left to find the width itself, it
+/// can size the box for fewer lines than it then draws.
+pub fn rich_width(
+    text: &str,
+    t: &Theme,
+    window: &gpui::Window,
+) -> gpui::Pixels {
+    let size = window.text_style().font_size.to_pixels(window.rem_size());
+    text.split('\n')
+        .map(|line| {
+            let (plain, runs) = marked_runs(line, SANS, t.text, true, t);
+            window
+                .text_system()
+                .shape_line(plain.into(), size, &runs, None)
+                .width
+        })
+        .fold(px(0.), gpui::Pixels::max)
+        .ceil()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

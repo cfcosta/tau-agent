@@ -7,7 +7,9 @@ use gpui::{
     Context,
     Div,
     IntoElement,
+    Pixels,
     SharedString,
+    Window,
     div,
     prelude::*,
     px,
@@ -47,6 +49,7 @@ pub fn item(
     index: usize,
     t: &Theme,
     compact: bool,
+    window: &Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let Some(item) = run.items.get(index) else {
@@ -55,11 +58,16 @@ pub fn item(
     let empty = HashSet::new();
     let kept = ws.kept.get(&run.id).unwrap_or(&empty);
     let edge = sp(if compact { 4. } else { 5. });
+    let side = sp(if compact { 4. } else { 6. });
+    // What an item can take: the transcript less its sides.
+    let room = ws.transcript_width().map(|width| width - side * 2.);
     div()
-        .px(sp(if compact { 4. } else { 6. }))
+        .px(side)
         .pt(if index == 0 { edge } else { sp(3.) })
         .when(index + 1 == run.items.len(), |item| item.pb(edge))
-        .child(item_view(ws, run, kept, index, item, t, compact, cx))
+        .child(item_view(
+            ws, run, kept, index, item, t, compact, room, window, cx,
+        ))
         .into_any_element()
 }
 
@@ -72,10 +80,14 @@ fn item_view(
     item: &Item,
     t: &Theme,
     compact: bool,
+    room: Option<Pixels>,
+    window: &Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     match item {
-        Item::User(text) => user(text, t, compact).into_any_element(),
+        Item::User(text) => {
+            user(text, t, compact, room, window).into_any_element()
+        }
         Item::Goal(condition) => {
             goal_set(run, condition, t, compact).into_any_element()
         }
@@ -184,16 +196,29 @@ fn item_view(
     }
 }
 
-fn user(text: &str, t: &Theme, compact: bool) -> Div {
+fn user(
+    text: &str,
+    t: &Theme,
+    compact: bool,
+    room: Option<Pixels>,
+    window: &Window,
+) -> Div {
     // Attached files show as their names, not their content.
     let (said, files) = split_attachments(text);
+    let widest = px(if compact { 300. } else { 620. });
+    let widest = room.map_or(widest, |room| widest.min(room));
+    // The bubble's padding and border, on both sides.
+    let frame = sp(3.5) * 2. + px(2.);
+    // A set width, as wide as the text or the widest the bubble gets, so
+    // the text is measured at the width it is drawn at.
+    let width = super::rich_width(said, t, window).min(widest - frame);
     div().flex().justify_end().child(
         super::bubble(t)
-            .max_w(px(if compact { 300. } else { 620. }))
+            .max_w(widest)
             .flex()
             .flex_col()
             .gap(sp(2.))
-            .child(rich(said, t.text, t))
+            .child(div().w(width).child(rich(said, t.text, t)))
             .when(!files.is_empty(), |bubble| {
                 bubble.child(div().flex().flex_wrap().gap(sp(1.5)).children(
                     files.into_iter().map(|name| {

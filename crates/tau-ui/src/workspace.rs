@@ -475,6 +475,9 @@ pub struct Workspace {
     transcript: ListState,
     /// The run and item count `transcript` was last told about.
     listed: Option<(RunId, usize)>,
+    /// The transcript's width at its last layout, read before each frame:
+    /// the list cannot be asked while it lays items out.
+    transcript_width: Option<gpui::Pixels>,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
     /// turns it off; scrolling back down turns it on.
     follow: bool,
@@ -703,6 +706,7 @@ impl Workspace {
             goal_budget,
             transcript: ListState::new(0, ListAlignment::Top, px(600.)),
             listed: None,
+            transcript_width: None,
             follow: true,
             focus: cx.focus_handle(),
             replays: Vec::new(),
@@ -2117,18 +2121,23 @@ impl Workspace {
         let theme = t.clone();
         gpui::list(
             self.transcript.clone(),
-            cx.processor(move |ws, index: usize, _, cx| {
+            cx.processor(move |ws, index: usize, window, cx| {
                 let Some(run) =
                     ws.current().filter(|_| ws.route != Route::NewRun)
                 else {
                     return div().into_any_element();
                 };
-                transcript::item(ws, run, index, &theme, compact, cx)
+                transcript::item(ws, run, index, &theme, compact, window, cx)
             }),
         )
         .flex_1()
         .min_h(px(0.))
         .into_any_element()
+    }
+
+    /// How wide the transcript was last laid out; `None` before it was.
+    pub(crate) fn transcript_width(&self) -> Option<gpui::Pixels> {
+        self.transcript_width
     }
 
     /// Takes the focus back from an overlay's field once the overlay is
@@ -2153,6 +2162,8 @@ impl Workspace {
     /// laid out again every frame, so one that grows as it streams needs
     /// no telling.
     fn sync_transcript(&mut self) {
+        let width = self.transcript.viewport_bounds().size.width;
+        self.transcript_width = (width > px(0.)).then_some(width);
         let now = self
             .current()
             .filter(|_| self.route != Route::NewRun)
