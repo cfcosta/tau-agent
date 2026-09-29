@@ -3325,6 +3325,16 @@ pub async fn history(
         .collect();
     for (parent, child) in forks {
         if let Some(view) = views.iter_mut().find(|view| view.id == parent) {
+            // A finished fork that has not landed waits in its parent's
+            // chat; a dropped one is closed, and the chat leaves it out.
+            let landed = view.items.iter().any(|item| {
+                matches!(item, crate::view::Item::Landed(card) if card.from == child.id)
+            });
+            if !landed && !child.status.is_live() {
+                view.items.push(crate::view::Item::ForkReady {
+                    fork: child.id.clone(),
+                });
+            }
             view.children.push(child);
         }
     }

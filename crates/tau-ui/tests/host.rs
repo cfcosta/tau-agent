@@ -357,6 +357,18 @@ fn a_fork_lands_on_its_parent_and_closes() {
 
     // A root run has nothing to land on.
     assert!(host.land(&main.id).is_err());
+    // From history, the finished fork waits in the main run's chat.
+    let waiting = |host: &Host| {
+        host.history()
+            .unwrap()
+            .iter()
+            .find(|view| view.id == main.id)
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::ForkReady { fork: f } if *f == fork.id))
+    };
+    assert!(waiting(&host));
 
     let preview = host.preview_landing(&fork.id).unwrap();
     assert_eq!(preview.changes.len(), 1);
@@ -402,6 +414,7 @@ fn a_fork_lands_on_its_parent_and_closes() {
     );
     assert_eq!(card.from, fork.id);
     assert_eq!(card.title, "write-c-instead");
+    assert!(!waiting(&host), "landed, it no longer waits");
     assert_eq!(card.changes.len(), 1);
 }
 

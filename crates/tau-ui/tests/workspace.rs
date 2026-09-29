@@ -1478,7 +1478,23 @@ fn a_fork_lands_on_its_parent(cx: &mut TestAppContext) {
         conflicts: Vec::new(),
         head: "0123456789abcdef0123456789abcdef01234567".into(),
     };
+    let waiting = |ws: &Workspace| {
+        ws.run(&parent).unwrap().items.iter().any(
+            |item| matches!(item, Item::ForkReady { fork: f } if *f == fork),
+        )
+    };
     workspace.update(&mut cx, |ws, cx| {
+        // The fork finishes: it waits in its parent's chat.
+        ws.apply_event(
+            &tau_agent::event::RunEvent::RunEnd {
+                run: fork.clone(),
+                parent: None,
+                stop: StopReason::Stop,
+                cost: 0.0,
+            },
+            cx,
+        );
+        assert!(waiting(ws), "the fork waits in its parent's chat");
         assert_eq!(ws.landing(&fork), None);
         ws.preview_landing(&fork, cx);
         assert_eq!(ws.landing(&fork), Some(&LandingState::Previewing));
@@ -1503,6 +1519,7 @@ fn a_fork_lands_on_its_parent(cx: &mut TestAppContext) {
             card.changes[0].subject,
             "cap the backoff at the policy's max"
         );
+        assert!(!waiting(ws), "landed, it no longer waits");
     });
     let events = events.borrow();
     assert!(events.iter().any(|event| matches!(event,

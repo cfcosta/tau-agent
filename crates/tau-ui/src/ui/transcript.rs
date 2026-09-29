@@ -128,6 +128,9 @@ fn item_view(
         Item::Landed(card) => {
             log_card::landed(card, t, compact, cx).into_any_element()
         }
+        Item::ForkReady { fork } => {
+            fork_ready(ws, run, fork, t, compact, cx).into_any_element()
+        }
         Item::Rewrite {
             plugin,
             tokens_before,
@@ -611,6 +614,100 @@ fn tool(
             }),
         )
         .children(body)
+}
+
+/// A finished fork, waiting in its parent's chat: what it is, and Land
+/// or Drop. A closed fork (landed or dropped) shows nothing.
+fn fork_ready(
+    ws: &Workspace,
+    run: &RunView,
+    fork: &tau_agent::tool::RunId,
+    t: &Theme,
+    compact: bool,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let Some(view) = ws.run(fork).filter(|_| !ws.is_closed(fork)) else {
+        return div();
+    };
+    let (open, compare) = (fork.clone(), fork.clone());
+    let main = run.id.clone();
+    div()
+        .flex()
+        .flex_col()
+        .border_1()
+        .border_color(t.border)
+        .rounded(radius::BOX)
+        .bg(t.card)
+        .overflow_hidden()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .min_h(px(36.))
+                .px(sp(3.))
+                .child(icon(Icon::Fork, IconSize::COMPACT, t.change))
+                .child(mono("fork", Type::CAPTION, t.blue).flex_shrink_0())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .typeset(Type::SMALL)
+                        .text_color(t.text_soft)
+                        .child(view.title.clone()),
+                )
+                .child(
+                    mono(
+                        format!("finished · turn {}", view.turn),
+                        Type::CAPTION,
+                        t.dim,
+                    )
+                    .flex_shrink_0(),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(sp(2.))
+                .px(sp(3.))
+                .py(sp(2.5))
+                .border_t_1()
+                .border_color(t.border)
+                .children(super::landing::controls(ws, view, t, compact, cx))
+                .child(
+                    div()
+                        .flex()
+                        .gap(sp(4.))
+                        .child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "fork-chat-{fork}"
+                                )))
+                                .child(link("Open its chat", t))
+                                .on_click(cx.listener(move |ws, _, _, cx| {
+                                    ws.navigate(Route::Run(open.clone()), cx)
+                                })),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "fork-compare-{fork}"
+                                )))
+                                .child(link("Compare", t))
+                                .on_click(cx.listener(move |ws, _, _, cx| {
+                                    ws.navigate(
+                                        Route::Compare {
+                                            main: main.clone(),
+                                            fork: compare.clone(),
+                                        },
+                                        cx,
+                                    )
+                                })),
+                        ),
+                ),
+        )
 }
 
 fn state_label(card: &ToolCard, t: &Theme) -> Div {

@@ -8,6 +8,7 @@ pub mod chrome;
 pub mod components;
 pub mod diff_card;
 pub mod inspector;
+pub mod landing;
 pub mod log_card;
 pub mod screens;
 pub mod status_card;

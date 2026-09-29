@@ -228,6 +228,10 @@ pub enum Item {
     Plugin(PluginNote),
     /// A child run's changes landed on this run (ADR 0009).
     Landed(LandedCard),
+    /// A fork of this run finished and waits to land or be dropped.
+    ForkReady {
+        fork: RunId,
+    },
     /// A plugin rewrote the context.
     Rewrite {
         plugin: String,

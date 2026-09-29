@@ -899,6 +899,19 @@ impl Workspace {
         for run in &mut self.runs {
             run.apply(event);
         }
+        // A fork that finishes waits in its parent's chat, to land or
+        // be dropped.
+        if let RunEvent::RunEnd { run, .. } = event
+            && let Some(Origin::Fork { from, .. }) =
+                self.run(run).map(|view| view.origin.clone())
+            && let Some(parent) =
+                self.runs.iter_mut().find(|view| view.id == from)
+            && !parent.items.iter().any(
+                |item| matches!(item, Item::ForkReady { fork } if fork == run),
+            )
+        {
+            parent.items.push(Item::ForkReady { fork: run.clone() });
+        }
         // A sub-agent closes once its parent's call returns: landed, or
         // dropped.
         if let RunEvent::ToolEnd { run, call_id, .. } = event
@@ -1363,6 +1376,9 @@ impl Workspace {
         });
         if let Some(view) = self.runs.iter_mut().find(|view| view.id == parent)
         {
+            view.items.retain(
+                |item| !matches!(item, Item::ForkReady { fork } if fork == run),
+            );
             view.items.push(Item::Landed(card));
         }
         self.close_run(run, cx);
@@ -1402,6 +1418,13 @@ impl Workspace {
             Origin::SubAgent { parent } => Some(parent.clone()),
             Origin::Root => None,
         });
+        if let Some(view) = parent.as_ref().and_then(|parent| {
+            self.runs.iter_mut().find(|view| &view.id == parent)
+        }) {
+            view.items.retain(
+                |item| !matches!(item, Item::ForkReady { fork } if fork == run),
+            );
+        }
         self.close_run(run, cx);
         if let Some(parent) = parent {
             self.navigate(Route::Run(parent), cx);
