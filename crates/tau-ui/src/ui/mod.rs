@@ -373,7 +373,68 @@ pub fn status_icon(
 
 #[cfg(test)]
 mod tests {
+    use hegel::generators as gs;
+
     use super::*;
+
+    /// Spans written back with their marks, the chips' padding taken
+    /// off, are the text they came from.
+    fn rewrite(spans: &[(String, Mark)]) -> String {
+        spans
+            .iter()
+            .map(|(text, mark)| match mark {
+                Mark::Plain => text.clone(),
+                Mark::Bold => format!("**{text}**"),
+                Mark::Code => {
+                    let inner = text
+                        .strip_prefix('\u{2009}')
+                        .and_then(|text| text.strip_suffix('\u{2009}'))
+                        .expect("a code chip is padded");
+                    format!("`{inner}`")
+                }
+            })
+            .collect()
+    }
+
+    /// Any text splits into spans that write back to it: no text is
+    /// lost or added, no span is empty but a mark's, a bold span holds
+    /// no `**` and a code span no backtick, and two plain spans never
+    /// sit side by side.
+    #[hegel::test(test_cases = 500)]
+    fn spans_write_back_to_their_text(tc: hegel::TestCase) {
+        let text: String = tc
+            .draw(
+                gs::vecs(gs::sampled_from(vec![
+                    "a", "b c", "*", "**", "`", " ", "\u{2009}", "é",
+                ]))
+                .max_size(16),
+            )
+            .concat();
+        let found = spans(&text);
+        assert_eq!(rewrite(&found), text);
+        for (body, mark) in &found {
+            match mark {
+                Mark::Plain => assert!(!body.is_empty(), "{found:?}"),
+                Mark::Bold => assert!(!body.contains("**"), "{found:?}"),
+                Mark::Code => assert!(!body.contains('`'), "{found:?}"),
+            }
+        }
+        assert!(
+            found
+                .windows(2)
+                .all(|pair| !(pair[0].1 == Mark::Plain
+                    && pair[1].1 == Mark::Plain)),
+            "{found:?}"
+        );
+    }
+
+    /// Text with no backtick and no `**` is one plain span.
+    #[hegel::test]
+    fn unmarked_text_is_one_plain_span(tc: hegel::TestCase) {
+        let text: String = tc.draw(gs::text().min_size(1).max_size(40));
+        tc.assume(!text.contains('`') && !text.contains("**"));
+        assert_eq!(spans(&text), [(text.clone(), Mark::Plain)]);
+    }
 
     #[test]
     fn marks_split_into_spans() {

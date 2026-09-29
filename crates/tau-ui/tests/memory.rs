@@ -12,7 +12,7 @@ use hegel::{
 use tau_memory::{
     Memory,
     index::Bm25,
-    memory::Draft,
+    memory::{Draft, WriteError},
     note::{By, Link, LinkType, NoteType, Source},
 };
 use tau_ui::memory::{Memories, ago, catalog, now, stale_on_commit};
@@ -106,7 +106,11 @@ fn the_screen_shows_current_notes_as_they_are(tc: TestCase) {
             draft.supersedes = Some(tc.draw(gs::sampled_from(existing)));
         }
         // A title taken without a target is refused; that is fine here.
-        let _ = memory.write(draft, clock);
+        match memory.write(draft, clock) {
+            Ok(_) => tc.event("written"),
+            Err(WriteError::Refused(_)) => tc.event("refused"),
+            Err(other) => panic!("{other}"),
+        }
         if tc.draw(gs::booleans()) {
             clock += 1;
             let path = tc.draw(gs::sampled_from(PATHS.to_vec())).to_owned();
@@ -137,14 +141,26 @@ fn the_screen_shows_current_notes_as_they_are(tc: TestCase) {
             .chain(note.source.files.iter().map(String::as_str))
             .collect();
         assert_eq!(entry.paths, paths.into_iter().collect::<Vec<_>>());
-        assert!(
-            entry
-                .links
-                .iter()
-                .all(|link| !PATHS.contains(&link.to.as_str())),
-            "{:?}",
-            entry.links
-        );
+        // Links to notes, listed or bare in the body, with why, or
+        // their type when no reason was given; paths are not links.
+        let links: Vec<(String, String)> = note
+            .all_links()
+            .into_iter()
+            .filter(|link| link.kind != LinkType::About)
+            .map(|link| {
+                let why = link
+                    .why
+                    .unwrap_or_else(|| link.kind.as_str().replace('_', " "));
+                (link.to, why)
+            })
+            .collect();
+        let shown: Vec<(String, String)> = entry
+            .links
+            .iter()
+            .map(|link| (link.to.clone(), link.why.clone()))
+            .collect();
+        assert_eq!(shown, links);
+        assert!(shown.iter().all(|(to, _)| !PATHS.contains(&to.as_str())));
         assert_eq!(
             entry
                 .body
@@ -169,29 +185,39 @@ fn ago_names_the_largest_whole_unit(tc: TestCase) {
     let a = tc.draw(gs::integers::<u64>().max_value(1 << 36));
     let b = tc.draw(gs::integers::<u64>().max_value(1 << 36));
     let (short, long) = (a.min(b), a.max(b));
-    let rank = |text: &str| -> (usize, u64) {
+    // Each unit, in seconds, and the next unit's size: the count stays
+    // below it, but for years.
+    const UNITS: [(&str, u64, u64); 5] = [
+        ("minute", 60, 60),
+        ("hour", 3_600, 24),
+        ("day", 86_400, 30),
+        ("month", 2_592_000, 13),
+        ("year", 31_536_000, u64::MAX),
+    ];
+    let rank = |elapsed_ms: u64| -> (usize, u64) {
+        let text = ago(then + elapsed_ms, then);
+        let elapsed = elapsed_ms / 1000;
         if text == "just now" {
+            assert!(elapsed < 60, "{text} after {elapsed}s");
             return (0, 0);
         }
         let mut words = text.split(' ');
         let count: u64 = words.next().unwrap().parse().unwrap();
         let word = words.next().unwrap();
+        assert_eq!(words.collect::<Vec<_>>(), ["ago"], "{text}");
         let unit = word.trim_end_matches('s');
-        let at = ["minute", "hour", "day", "month", "year"]
-            .iter()
-            .position(|u| *u == unit)
-            .unwrap();
-        let seconds = [60, 3_600, 86_400, 2_592_000, 31_536_000][at];
-        let elapsed = long / 1000;
-        if text == ago(then + long, then) {
-            assert!(
-                count * seconds <= elapsed && elapsed < (count + 1) * seconds
-            );
-            assert_eq!(word.ends_with('s'), count != 1);
-        }
+        tc.event(unit);
+        let at = UNITS.iter().position(|(u, _, _)| *u == unit).unwrap();
+        let (_, seconds, next) = UNITS[at];
+        assert!(
+            count * seconds <= elapsed && elapsed < (count + 1) * seconds,
+            "{text} after {elapsed}s"
+        );
+        assert!((1..next).contains(&count), "{text}");
+        assert_eq!(word.ends_with('s'), count != 1, "{text}");
         (at + 1, count)
     };
-    assert!(rank(&ago(then + short, then)) <= rank(&ago(then + long, then)));
+    assert!(rank(short) <= rank(long));
     assert_eq!(ago(then, then + long), "just now", "a future time is now");
 }
 

@@ -7,7 +7,15 @@ use tau_ui::markdown::{Align, Block, Span, blocks, plain};
 /// A cell as written, and the text it shows: plain, marked, empty, and
 /// pipes, escaped as GitHub's tables need even inside code.
 fn cell(tc: &TestCase) -> (String, String) {
-    tc.draw(gs::sampled_from(vec![
+    tc.draw(hegel::one_of!(
+        gs::from_regex("[A-Za-z0-9]{1,8}").map(|text| (text.clone(), text)),
+        marked(),
+    ))
+}
+
+/// A cell with marks, escapes or nothing in it.
+fn marked() -> impl hegel::generators::PrintableGenerator<(String, String)> {
+    gs::sampled_from(vec![
         (String::new(), String::new()),
         ("a".into(), "a".into()),
         ("two words".into(), "two words".into()),
@@ -17,7 +25,7 @@ fn cell(tc: &TestCase) -> (String, String) {
         ("`x\\|y`".into(), "x|y".into()),
         ("a \\| b".into(), "a | b".into()),
         ("[docs](https://example.com/a_b)".into(), "docs".into()),
-    ]))
+    ])
 }
 
 /// What a block shows, without styles: enough to compare.
@@ -64,13 +72,21 @@ fn table(tc: &TestCase) -> (String, Shape) {
             )
         })
         .collect();
-    let row = |tc: &TestCase| -> Vec<(String, String)> {
-        (0..width).map(|_| cell(tc)).collect()
+    let row = |tc: &TestCase, cells: usize| -> Vec<(String, String)> {
+        (0..cells).map(|_| cell(tc)).collect()
     };
-    let head = row(tc);
+    let head = row(tc, width);
     let count = tc.draw(gs::integers::<usize>().max_value(3));
-    let rows: Vec<Vec<(String, String)>> =
-        (0..count).map(|_| row(tc)).collect();
+    // Body rows may be ragged: a short one reads padded with empty
+    // cells, a long one cut to the head's width.
+    let rows: Vec<Vec<(String, String)>> = (0..count)
+        .map(|_| {
+            let cells = tc.draw(
+                gs::integers::<usize>().min_value(1).max_value(width + 1),
+            );
+            row(tc, cells)
+        })
+        .collect();
     let line = |cells: &[(String, String)]| {
         let written: Vec<&str> = cells.iter().map(|c| c.0.as_str()).collect();
         format!("| {} |", written.join(" | "))
@@ -86,7 +102,10 @@ fn table(tc: &TestCase) -> (String, Shape) {
     let mut lines = vec![line(&head), format!("|{}|", delimiter.join("|"))];
     lines.extend(rows.iter().map(|cells| line(cells)));
     let shows = |cells: &[(String, String)]| {
-        cells.iter().map(|c| c.1.clone()).collect::<Vec<_>>()
+        let mut shown: Vec<String> =
+            cells.iter().take(width).map(|c| c.1.clone()).collect();
+        shown.resize(width, String::new());
+        shown
     };
     let shape = Shape::Table {
         align,
@@ -116,13 +135,7 @@ fn paragraph(tc: &TestCase) -> (String, Shape) {
 fn written_blocks_read_back(tc: TestCase) {
     let count = tc.draw(gs::integers::<usize>().max_value(5));
     let parts: Vec<(String, Shape)> = (0..count)
-        .map(|_| {
-            if tc.draw(gs::booleans()) {
-                tc.draw(table())
-            } else {
-                tc.draw(paragraph())
-            }
-        })
+        .map(|_| tc.draw(hegel::one_of!(table(), paragraph())))
         .collect();
     let text: Vec<&str> = parts.iter().map(|(text, _)| text.as_str()).collect();
     let expected: Vec<Shape> = parts.iter().map(|(_, s)| s.clone()).collect();

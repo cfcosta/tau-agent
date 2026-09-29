@@ -900,6 +900,33 @@ mod tests {
         assert_eq!(base64(&[0xff, 0xfe]), "//4=");
     }
 
+    /// Every value encodes to unreserved characters and `%XX` escapes
+    /// only, and decodes back to itself.
+    #[hegel::test(test_cases = 300)]
+    fn a_form_value_decodes_to_itself(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let value: String = tc.draw(gs::text().max_size(40));
+        let encoded = encode(&value);
+        let mut bytes = Vec::new();
+        let mut rest = encoded.as_bytes();
+        while let Some((&byte, tail)) = rest.split_first() {
+            if byte == b'%' {
+                let hex = std::str::from_utf8(&tail[..2]).unwrap();
+                assert_eq!(hex, hex.to_uppercase(), "{encoded}");
+                bytes.push(u8::from_str_radix(hex, 16).unwrap());
+                rest = &tail[2..];
+            } else {
+                assert!(
+                    byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte),
+                    "{encoded}"
+                );
+                bytes.push(byte);
+                rest = tail;
+            }
+        }
+        assert_eq!(String::from_utf8(bytes).unwrap(), value);
+    }
+
     #[test]
     fn form_values_are_encoded() {
         assert_eq!(
