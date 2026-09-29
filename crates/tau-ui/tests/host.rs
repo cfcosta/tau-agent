@@ -400,6 +400,69 @@ fn a_fork_lands_on_its_parent_and_closes() {
     assert_eq!(card.changes.len(), 1);
 }
 
+/// A child with an open child of its own cannot land (ADR 0009) until
+/// that one lands or is dropped; dropping abandons its own changes.
+#[test]
+fn a_child_lands_after_its_children() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.text("forked"))
+        .turn(|t| t.tool_call("write", write("c.txt")))
+        .turn(|t| t.text("forked again"));
+    let (host, mut events) = host_on(llm, src.path());
+    let host = host.with_project(project.clone());
+    let choice = ModelChoice::default();
+
+    let main = host.start("write a", &choice, "").unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main.id);
+    let child = host.fork(&main.id, Some(1), "write b", &choice).unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &child.id);
+    // The child's own turn 2 wrote b.txt; its fork starts there.
+    let grandchild = host.fork(&child.id, Some(2), "write c", &choice).unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &grandchild.id);
+    let grandchild_dir = host.workspace(&grandchild.id).unwrap();
+    assert!(grandchild_dir.join("c.txt").exists());
+
+    let err = host.land(&child.id).unwrap_err().to_string();
+    assert!(err.contains("have not landed"), "{err}");
+    assert!(err.contains(&*grandchild.id.0), "{err}");
+
+    host.drop_child(&grandchild.id).unwrap();
+    assert!(!grandchild_dir.exists());
+    assert_eq!(
+        project
+            .bookmark(&format!("tau/{}", grandchild.id.0))
+            .unwrap(),
+        None
+    );
+
+    let landed = host.land(&child.id).unwrap();
+    assert_eq!(landed.changes.len(), 1, "b.txt only, not c.txt");
+    let main_dir = host.workspace(&main.id).unwrap();
+    assert!(main_dir.join("b.txt").exists());
+    assert!(!main_dir.join("c.txt").exists());
+}
+
 #[test]
 fn runs_come_back_under_their_repository() {
     let other = tempfile::tempdir().unwrap();

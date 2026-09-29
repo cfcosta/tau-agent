@@ -564,14 +564,75 @@ fn landing(
         div().typeset(Type::CAPTION).text_color(color).child(text)
     };
     let body = match ws.landing(&run.id) {
-        None => div().child(
-            button(format!("Land on {parent}"), ButtonKind::Primary, "land")
-                .on_click(
-                    cx.listener(move |ws, _, _, cx| {
-                        ws.preview_landing(&id, cx)
-                    }),
-                ),
-        ),
+        None => {
+            let drop_id = id.clone();
+            div()
+                .flex()
+                .gap(sp(2.))
+                .child(
+                    button(
+                        format!("Land on {parent}"),
+                        ButtonKind::Primary,
+                        "land",
+                    )
+                    .on_click(cx.listener(
+                        move |ws, _, _, cx| ws.preview_landing(&id, cx),
+                    )),
+                )
+                .child(
+                    button(
+                        "Drop this fork".into(),
+                        ButtonKind::Secondary,
+                        "drop",
+                    )
+                    .on_click(cx.listener(
+                        move |ws, _, _, cx| ws.ask_drop(&drop_id, cx),
+                    )),
+                )
+        }
+        Some(LandingState::ConfirmDrop) => {
+            let (drop_id, cancel_id) = (id.clone(), id.clone());
+            div()
+                .flex()
+                .flex_col()
+                .gap(sp(2.))
+                .child(caption(
+                    format!(
+                        "Drop {}? Its own changes are abandoned and it \
+                         closes. The operation log still has them.",
+                        run.title
+                    ),
+                    t.text_soft,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .gap(sp(2.))
+                        .child(
+                            button(
+                                "Drop".into(),
+                                ButtonKind::Primary,
+                                "confirm-drop",
+                            )
+                            .on_click(cx.listener(
+                                move |ws, _, _, cx| ws.drop_child(&drop_id, cx),
+                            )),
+                        )
+                        .child(
+                            button(
+                                "Cancel".into(),
+                                ButtonKind::Secondary,
+                                "cancel-drop",
+                            )
+                            .on_click(cx.listener(
+                                move |ws, _, _, cx| {
+                                    ws.cancel_landing(&cancel_id, cx)
+                                },
+                            )),
+                        ),
+                )
+        }
+        Some(LandingState::Dropping) => caption("Dropping…".into(), t.dim),
         Some(LandingState::Previewing) => {
             caption("Checking what would land…".into(), t.dim)
         }

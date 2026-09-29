@@ -232,6 +232,10 @@ pub enum WorkspaceEvent {
     Land {
         run: RunId,
     },
+    /// Drop this child run: abandon its own changes and close it.
+    DropChild {
+        run: RunId,
+    },
     /// Keep a note a memory plugin suggested.
     KeepNote {
         run: RunId,
@@ -1300,6 +1304,45 @@ impl Workspace {
         }
         self.close_run(run, cx);
         self.navigate(Route::Run(parent), cx);
+    }
+
+    /// Asks before dropping `run`, a child run.
+    pub fn ask_drop(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        self.landings.insert(run.clone(), LandingState::ConfirmDrop);
+        cx.notify();
+    }
+
+    /// Drops `run`: its own changes are abandoned, and it closes.
+    pub fn drop_child(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        self.landings.insert(run.clone(), LandingState::Dropping);
+        cx.emit(WorkspaceEvent::DropChild { run: run.clone() });
+        cx.notify();
+    }
+
+    /// What dropping `run` came to. Dropped, its chat closes and its
+    /// parent opens.
+    pub fn dropped(
+        &mut self,
+        run: &RunId,
+        result: Result<(), String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = result {
+            self.landings
+                .insert(run.clone(), LandingState::Preview(Err(error)));
+            cx.notify();
+            return;
+        }
+        self.landings.remove(run);
+        let parent = self.run(run).and_then(|child| match &child.origin {
+            Origin::Fork { from, .. } => Some(from.clone()),
+            Origin::SubAgent { parent } => Some(parent.clone()),
+            Origin::Root => None,
+        });
+        self.close_run(run, cx);
+        if let Some(parent) = parent {
+            self.navigate(Route::Run(parent), cx);
+        }
     }
 
     pub fn landing(&self, run: &RunId) -> Option<&LandingState> {
@@ -3242,4 +3285,8 @@ pub enum LandingState {
     Preview(Result<Landing, String>),
     /// Landing now.
     Landing,
+    /// Asking before dropping the child.
+    ConfirmDrop,
+    /// Dropping now.
+    Dropping,
 }

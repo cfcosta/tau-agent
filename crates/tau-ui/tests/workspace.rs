@@ -1511,6 +1511,27 @@ fn a_fork_lands_on_its_parent(cx: &mut TestAppContext) {
         WorkspaceEvent::Land { run } if *run == fork)));
 }
 
+/// Dropping asks first, then closes the fork and opens its parent.
+#[gpui::test]
+fn a_fork_is_dropped_after_asking(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let fork = demo::fork_id();
+    let parent = tau_agent::tool::RunId("rotation-jitter".into());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.ask_drop(&fork, cx);
+        assert_eq!(ws.landing(&fork), Some(&LandingState::ConfirmDrop));
+        assert!(events.borrow().is_empty(), "asking sends nothing");
+        ws.drop_child(&fork, cx);
+        assert_eq!(ws.landing(&fork), Some(&LandingState::Dropping));
+        ws.dropped(&fork, Ok(()), cx);
+        assert_eq!(ws.landing(&fork), None);
+        assert!(ws.is_closed(&fork));
+        assert_eq!(ws.route(), &Route::Run(parent.clone()));
+    });
+    assert!(events.borrow().iter().any(|event| matches!(event,
+        WorkspaceEvent::DropChild { run } if *run == fork)));
+}
+
 /// A landing the host refuses shows why, in place of the preview.
 #[gpui::test]
 fn a_refused_landing_says_why(cx: &mut TestAppContext) {

@@ -1565,6 +1565,104 @@ impl Host {
         Ok(landing)
     }
 
+    /// Drops `child`: abandons its own changes, the ones its parent does
+    /// not have, and closes it like a landing does (ADR 0009). Both runs
+    /// must be idle. The operation log keeps what was abandoned.
+    pub fn drop_child(&self, child: &RunId) -> anyhow::Result<()> {
+        let parent = self.parent_of(child)?;
+        for run in [child, &parent] {
+            if self.is_running(run) {
+                anyhow::bail!(
+                    "{} is still running; drop it once it stops",
+                    run.0
+                );
+            }
+        }
+        let project = self
+            .slot_of_run(child)
+            .project
+            .wait()
+            .ok_or_else(|| anyhow::anyhow!("The runs have no project"))?;
+        self.no_open_children(child, &project)?;
+        if let Some(head) = project.bookmark(&bookmark(child))? {
+            let keep = match project.bookmark(&bookmark(&parent))? {
+                Some(keep) => keep,
+                None => project.trunk()?,
+            };
+            project.abandon_between(&keep, &head)?;
+        }
+        let workspace = self
+            .workspaces
+            .lock()
+            .expect("not poisoned")
+            .remove(child)
+            .or(self.link(child, None)?.map(|(_, link)| link.workspace));
+        if let Some(name) = workspace {
+            project.forget_workspace(&name)?;
+        }
+        project.remove_bookmark(&bookmark(child))?;
+        Ok(())
+    }
+
+    /// The run `child` was forked from or called by.
+    fn parent_of(&self, child: &RunId) -> anyhow::Result<RunId> {
+        let record = self
+            .runtime
+            .block_on(self.store.run(&child.0))?
+            .ok_or_else(|| anyhow::anyhow!("No run {}", child.0))?;
+        match record.kind {
+            RunKind::Fork { parent, .. } | RunKind::Subagent { parent } => {
+                Ok(RunId(parent.into()))
+            }
+            RunKind::Root => anyhow::bail!("{} has no parent", child.0),
+        }
+    }
+
+    /// Refuses when `run` has children still open: running, or holding
+    /// changes `run` does not have. They land or are dropped first.
+    fn no_open_children(
+        &self,
+        run: &RunId,
+        project: &Project,
+    ) -> anyhow::Result<()> {
+        let children: Vec<String> = self
+            .runtime
+            .block_on(self.store.recent_runs(1000))?
+            .into_iter()
+            .filter(|other| match &other.kind {
+                RunKind::Fork { parent, .. } | RunKind::Subagent { parent } => {
+                    parent.as_str() == &*run.0
+                }
+                RunKind::Root => false,
+            })
+            .map(|other| other.id)
+            .collect();
+        let head = project.bookmark(&bookmark(run))?;
+        let mut open = Vec::new();
+        for id in children {
+            let child = RunId(id.clone().into());
+            let unlanded = match (project.bookmark(&bookmark(&child))?, &head) {
+                (None, _) => false,
+                (Some(_), None) => true,
+                (Some(theirs), Some(ours)) => {
+                    !project.is_ancestor(&theirs, ours)?
+                }
+            };
+            if self.is_running(&child) || unlanded {
+                open.push(id);
+            }
+        }
+        if !open.is_empty() {
+            anyhow::bail!(
+                "{} has children that have not landed ({}); land or drop \
+                 them first",
+                run.0,
+                open.join(", ")
+            );
+        }
+        Ok(())
+    }
+
     /// The words `run` was started with, from its stored transcript.
     fn stored_prompt(&self, run: &RunId) -> anyhow::Result<String> {
         self.runtime.block_on(async {
@@ -1591,18 +1689,7 @@ impl Host {
 
     /// Everything landing `child` needs, once both runs are idle.
     fn landing(&self, child: &RunId) -> anyhow::Result<LandingPlan> {
-        let record = self
-            .runtime
-            .block_on(self.store.run(&child.0))?
-            .ok_or_else(|| anyhow::anyhow!("No run {}", child.0))?;
-        let parent = match record.kind {
-            RunKind::Fork { parent, .. } | RunKind::Subagent { parent } => {
-                RunId(parent.into())
-            }
-            RunKind::Root => {
-                anyhow::bail!("{} has no parent to land on", child.0)
-            }
-        };
+        let parent = self.parent_of(child)?;
         for run in [child, &parent] {
             if self.is_running(run) {
                 anyhow::bail!("{} is still running; land once it stops", run.0);
@@ -1630,6 +1717,7 @@ impl Host {
                     }),
             }
         };
+        self.no_open_children(child, &project)?;
         let parent_workspace = workspace_of(&parent)?;
         let child_workspace = workspace_of(child)?;
         // Opening a workspace that is gone would make a new one on
@@ -2303,6 +2391,12 @@ impl Host {
                     let landed =
                         handler.land(run).map_err(|error| format!("{error:#}"));
                     workspace.update(cx, |ws, cx| ws.landed(run, landed, cx));
+                }
+                WorkspaceEvent::DropChild { run } => {
+                    let dropped = handler
+                        .drop_child(run)
+                        .map_err(|error| format!("{error:#}"));
+                    workspace.update(cx, |ws, cx| ws.dropped(run, dropped, cx));
                 }
                 WorkspaceEvent::KeepBranch { run } => {
                     if let Err(error) = handler.keep_branch(run) {

@@ -309,6 +309,61 @@ impl Project {
             .map(|id| id.hex()))
     }
 
+    /// Whether `ancestor` is `descendant` or one of its ancestors. Both
+    /// are full commit ids in hex.
+    pub fn is_ancestor(
+        &self,
+        ancestor: &str,
+        descendant: &str,
+    ) -> anyhow::Result<bool> {
+        let repo = self.load()?;
+        let id = |hex: &str| {
+            CommitId::try_from_hex(hex)
+                .ok_or_else(|| anyhow::anyhow!("`{hex}` is not a commit id"))
+        };
+        Ok(block_on(
+            repo.index().is_ancestor(&id(ancestor)?, &id(descendant)?),
+        )?)
+    }
+
+    /// Abandons what `head` has that `keep` lacks (both full commit ids
+    /// in hex): a dropped child run's own changes. Returns how many
+    /// commits went. The operation log keeps them.
+    pub fn abandon_between(
+        &self,
+        keep: &str,
+        head: &str,
+    ) -> anyhow::Result<usize> {
+        use futures_util::StreamExt as _;
+        use jj_lib::revset::ResolvedRevsetExpression;
+
+        let repo = self.load()?;
+        let id = |hex: &str| {
+            CommitId::try_from_hex(hex)
+                .ok_or_else(|| anyhow::anyhow!("`{hex}` is not a commit id"))
+        };
+        let ids: Vec<CommitId> = {
+            let revset = ResolvedRevsetExpression::commit(id(head)?)
+                .ancestors()
+                .minus(&ResolvedRevsetExpression::commit(id(keep)?).ancestors())
+                .evaluate(repo.as_ref())?;
+            block_on(revset.stream().collect::<Vec<_>>())
+                .into_iter()
+                .collect::<Result<_, _>>()?
+        };
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut tx = repo.start_transaction();
+        for id in &ids {
+            let commit = repo.store().get_commit(id)?;
+            tx.repo_mut().record_abandoned_commit(&commit);
+        }
+        block_on(tx.repo_mut().rebase_descendants())?;
+        block_on(tx.commit(format!("tau: abandon {} changes", ids.len())))?;
+        Ok(ids.len())
+    }
+
     /// Removes the local bookmark `name`, if there is one. The commits it
     /// named stay.
     pub fn remove_bookmark(&self, name: &str) -> anyhow::Result<()> {

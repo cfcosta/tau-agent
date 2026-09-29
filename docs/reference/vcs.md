@@ -324,6 +324,13 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   child, so forks, the compare view and pull requests read them as the
   parent's own. Then it closes the child: its workspace is forgotten
   and its bookmark removed. Both runs must be idle.
+- `Host::drop_child` closes a child without landing it: its own
+  changes (what its head has that its parent's lacks) are abandoned
+  with `Project::abandon_between`, and its workspace and bookmark go.
+  The operation log keeps what was abandoned.
+- A child cannot land or be dropped while it has children still open:
+  running, or holding changes it does not have. They land or are
+  dropped first, one level at a time.
 - With `confirm` off, nothing changes. The `Landing` it returns says
   what would happen: the changes as they would be (`changes`, newest
   first), the paths that would hold conflict markers in the new head
