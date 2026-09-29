@@ -7691,6 +7691,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "hegeltest",
+ "regex",
  "serde",
  "serde_json",
  "tau-agent",

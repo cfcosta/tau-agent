@@ -5,4 +5,5 @@
 pub mod index;
 pub mod note;
 pub mod recall;
+pub mod safety;
 pub mod store;
