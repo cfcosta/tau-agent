@@ -391,6 +391,17 @@ pub fn efforts(id: &str) -> Vec<ReasoningEffort> {
     find(id).map_or_else(|| efforts_of(id, true), |model| model.efforts.clone())
 }
 
+/// Models that keep a conversation's cache when only the reasoning
+/// effort changes between requests: a request may continue the previous
+/// response at another effort. Only the models this has been checked on.
+const EFFORT_KEEPS_CACHE: [&str; 2] = ["gpt-6-sol", "gpt-6-astra"];
+
+/// Whether `id` keeps a conversation's cache across a change of
+/// reasoning effort alone. See [`EFFORT_KEEPS_CACHE`].
+pub fn effort_keeps_cache(id: &str) -> bool {
+    EFFORT_KEEPS_CACHE.contains(&id)
+}
+
 /// Looks up a model by id.
 pub fn find(id: &str) -> Option<&'static Model> {
     MODELS.iter().find(|m| m.id == id)

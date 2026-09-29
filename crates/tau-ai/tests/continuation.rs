@@ -153,6 +153,38 @@ fn settings_change_forces_full_resend_body(tc: TestCase) {
     }
 }
 
+/// On a model that keeps its cache across efforts, a new reasoning
+/// effort still continues; on any other model it resends in full.
+#[hegel::test(test_cases = 200)]
+fn an_effort_change_continues_only_where_the_cache_survives(tc: TestCase) {
+    let history = tc.draw(generators::lane::lane_history());
+    let at =
+        tc.draw(gs::integers::<usize>().max_value(history.turns.len() - 1));
+    let model = tc.draw(gs::sampled_from(vec![
+        "gpt-6-sol",
+        "gpt-6-astra",
+        "gpt-5.6-terra",
+        "gpt-6-luna",
+    ]));
+    let kinds = run_lane(&history, |i, body| {
+        body.insert("model".into(), json!(model));
+        let effort = if i >= at { "high" } else { "low" };
+        body.insert(
+            "reasoning".into(),
+            json!({ "effort": effort, "summary": "auto" }),
+        );
+    });
+    let keeps = tau_ai::model::effort_keeps_cache(model);
+    for (i, kind) in kinds.iter().enumerate() {
+        let expected = if i == 0 || (i == at && !keeps) {
+            RequestKind::Full
+        } else {
+            RequestKind::Delta
+        };
+        assert_eq!(*kind, expected, "turn {i} on {model}");
+    }
+}
+
 /// A lane history with two turns or more: [`lane_history`], with a turn
 /// added when it drew only one.
 #[hegel::composite]

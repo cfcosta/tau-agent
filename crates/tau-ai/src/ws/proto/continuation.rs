@@ -11,7 +11,9 @@
 //! items, tool outputs excluded), and the response id. The next request
 //! may send only the items after the baseline, with
 //! `previous_response_id`, if its fields are otherwise identical and its
-//! input starts with the baseline. Otherwise it is sent in full.
+//! input starts with the baseline. Otherwise it is sent in full. On a
+//! model that keeps its cache across efforts, the reasoning setting may
+//! differ: a run can change its effort per request and still continue.
 //!
 //! Items and fields are compared as JSON values, so the order of keys
 //! inside an object does not matter, as it does not to the server.
@@ -40,6 +42,9 @@ const PREVIOUS_RESPONSE_ID: &str = "previous_response_id";
 /// A warm-up's `generate: false` switches one request off, not a setting
 /// of the lane, so a real turn may continue from a warm-up.
 const GENERATE: &str = "generate";
+const MODEL: &str = "model";
+/// The effort, with its summary setting.
+const REASONING: &str = "reasoning";
 
 /// A `response.create` request. Cloning one copies no item.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -185,14 +190,28 @@ impl Continuation {
     }
 }
 
-/// Whether two sets of fields match, `generate` aside.
+/// Whether two sets of fields match, `generate` aside. On a model that
+/// keeps its cache across efforts
+/// ([`effort_keeps_cache`](crate::model::effort_keeps_cache)), the
+/// reasoning setting is left out too: a new effort may continue.
 fn same_fields(a: &Arc<Fields>, b: &Arc<Fields>) -> bool {
-    fn compared(fields: &Fields) -> impl Iterator<Item = (&String, &Value)> {
-        fields.iter().filter(|(key, _)| key.as_str() != GENERATE)
+    if Arc::ptr_eq(a, b) {
+        return true;
     }
-    Arc::ptr_eq(a, b)
-        || (compared(a).count() == compared(b).count()
-            && compared(a).all(|(key, value)| b.get(key) == Some(value)))
+    let model = a.get(MODEL).and_then(Value::as_str);
+    let any_effort = model.is_some_and(crate::model::effort_keeps_cache)
+        && a.get(MODEL) == b.get(MODEL);
+    fn compared(
+        fields: &Fields,
+        any_effort: bool,
+    ) -> impl Iterator<Item = (&String, &Value)> {
+        fields.iter().filter(move |(key, _)| {
+            key.as_str() != GENERATE
+                && !(any_effort && key.as_str() == REASONING)
+        })
+    }
+    compared(a, any_effort).count() == compared(b, any_effort).count()
+        && compared(a, any_effort).all(|(key, value)| b.get(key) == Some(value))
 }
 
 /// A request ready to send, and whether it continues a previous response.
