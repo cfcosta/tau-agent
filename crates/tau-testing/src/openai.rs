@@ -141,6 +141,7 @@ fn wire_assistant_message_unprinted(tc: &TestCase) -> AssistantMessage {
         };
         content.push(block);
     }
+    generators::CallIds::default().make_unique(&mut content);
     // `StreamProcessor` always encodes a `response.failed`/`error` frame's
     // fields as `format!("Error Code {code}: {message}")`
     // (`crates/tau-ai/src/responses/stream.rs`, from pi's
@@ -452,23 +453,21 @@ fn draw_unknown_frame(tc: &TestCase) -> Value {
 }
 
 /// Inserts [`draw_unknown_frame`]s at random points in `frames`, for
-/// testing that `StreamProcessor` ignores them wherever they land. Never
-/// inserts after the last frame, so a caller relying on the last frame
-/// being the terminal frame (e.g. to compute a strict prefix) still can.
+/// testing that `StreamProcessor` ignores them wherever they land,
+/// before the first frame included (`codex.rate_limits` arrives before
+/// `response.created`). Never inserts after the last frame, so a caller
+/// relying on the last frame being the terminal frame (e.g. to compute a
+/// strict prefix) still can.
 pub fn interleave_unknown_frames(
     tc: &TestCase,
     frames: Vec<Value>,
 ) -> Vec<Value> {
     let mut result = Vec::with_capacity(frames.len() * 2);
-    let last = frames.len().saturating_sub(1);
-    for (i, frame) in frames.into_iter().enumerate() {
-        if i > 0 && tc.draw(gs::booleans()) {
+    for frame in frames {
+        if tc.draw(gs::booleans()) {
             result.push(draw_unknown_frame(tc));
         }
         result.push(frame);
-        if i < last && tc.draw(gs::booleans()) {
-            result.push(draw_unknown_frame(tc));
-        }
     }
     result
 }

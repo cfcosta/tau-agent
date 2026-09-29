@@ -6,25 +6,18 @@ use tau_ai::{
     message::{AssistantBlock, AssistantMessage, StopReason},
 };
 
+use crate::generators;
+
 /// Splits `text` into chunks at char boundaries drawn by the test case.
-/// Chunks may be empty; concatenating them gives `text` back.
+/// Chunks may be empty (a server may send an empty delta); concatenating
+/// them gives `text` back. Shrinks toward one chunk.
 pub fn draw_split(tc: &TestCase, text: &str) -> Vec<String> {
-    let boundaries: Vec<usize> = text
-        .char_indices()
-        .map(|(i, _)| i)
-        .skip(1)
-        .chain(std::iter::once(text.len()))
-        .collect();
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    for &end in &boundaries {
-        if end == text.len() || tc.draw(gs::booleans()) {
-            chunks.push(text[start..end].to_owned());
-            start = end;
-        }
-    }
-    if chunks.is_empty() {
-        chunks.push(String::new());
+    let cuts: Vec<usize> =
+        tc.draw(gs::subsequences(generators::inner_boundaries(text)));
+    let mut chunks = generators::split_at_cuts(text, &cuts);
+    if tc.draw(gs::weighted_booleans(0.1)) {
+        let at = tc.draw(gs::integers::<usize>().max_value(chunks.len()));
+        chunks.insert(at, String::new());
     }
     chunks
 }

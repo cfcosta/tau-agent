@@ -3,7 +3,7 @@
 //! Every generator builds valid values directly and stays small, so a
 //! shrunk counterexample is short enough to read.
 
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use hegel::{
     TestCase,
@@ -68,42 +68,34 @@ pub fn json_number(tc: &TestCase) -> Number {
     }
 }
 
-/// Any JSON value, nested at most `depth` levels.
-#[hegel::composite]
-pub fn json_value(tc: &TestCase, depth: u32) -> Value {
-    draw_json_value(tc, depth)
+/// Any JSON value, nested at most `depth` levels: arrays and objects of
+/// at most four entries, whose strings and keys lean on
+/// [`SPECIAL_CHARS`].
+pub fn json_value(depth: u32) -> impl PrintableGenerator<Value> {
+    gs::recursive(
+        hegel::one_of!(
+            gs::just(Value::Null),
+            gs::booleans().map(Value::Bool),
+            json_number().map(Value::Number),
+            text(16).map(Value::String),
+        ),
+        |values| {
+            hegel::one_of!(
+                gs::vecs(values.clone()).max_size(4).map(Value::Array),
+                gs::vecs(hegel::tuples!(text(8), values)).max_size(4).map(
+                    |entries| Value::Object(entries.into_iter().collect())
+                ),
+            )
+        },
+    )
+    .max_depth(depth as usize)
 }
 
 /// A JSON object, nested at most `depth` levels below its fields.
-#[hegel::composite]
-pub fn json_object(tc: &TestCase, depth: u32) -> Map<String, Value> {
-    draw_json_object(tc, depth)
-}
-
-// The recursion lives in plain functions: a composite that draws itself
-// would have an opaque type that contains itself.
-fn draw_json_value(tc: &TestCase, depth: u32) -> Value {
-    let kinds = if depth == 0 { 4 } else { 6 };
-    match tc.draw(gs::integers::<u32>().max_value(kinds - 1)) {
-        0 => Value::Null,
-        1 => Value::Bool(tc.draw(gs::booleans())),
-        2 => Value::Number(tc.draw(json_number())),
-        3 => Value::String(tc.draw(text(16))),
-        4 => {
-            let len = tc.draw(gs::integers::<usize>().max_value(4));
-            Value::Array(
-                (0..len).map(|_| draw_json_value(tc, depth - 1)).collect(),
-            )
-        }
-        _ => Value::Object(draw_json_object(tc, depth - 1)),
-    }
-}
-
-fn draw_json_object(tc: &TestCase, depth: u32) -> Map<String, Value> {
-    let len = tc.draw(gs::integers::<usize>().max_value(4));
-    (0..len)
-        .map(|_| (tc.draw(text(8)), draw_json_value(tc, depth)))
-        .collect()
+pub fn json_object(depth: u32) -> impl PrintableGenerator<Map<String, Value>> {
+    gs::vecs(hegel::tuples!(text(8), json_value(depth)))
+        .max_size(4)
+        .map(|entries| entries.into_iter().collect::<Map<String, Value>>())
 }
 
 pub fn usage() -> impl PrintableGenerator<Usage> {
@@ -226,13 +218,11 @@ pub fn input_block() -> impl PrintableGenerator<InputBlock> {
     input_block_unprinted().print_as_debug()
 }
 
-#[hegel::composite]
-fn input_block_unprinted(tc: &TestCase) -> InputBlock {
-    if tc.draw(gs::booleans()) {
-        InputBlock::Text(tc.draw(text_content()))
-    } else {
-        InputBlock::Image(tc.draw(image_content()))
-    }
+fn input_block_unprinted() -> impl Generator<InputBlock> {
+    hegel::one_of!(
+        text_content().map(InputBlock::Text),
+        image_content().map(InputBlock::Image),
+    )
 }
 
 pub fn assistant_block() -> impl PrintableGenerator<AssistantBlock> {
@@ -240,13 +230,12 @@ pub fn assistant_block() -> impl PrintableGenerator<AssistantBlock> {
     assistant_block_unprinted().print_as_debug()
 }
 
-#[hegel::composite]
-fn assistant_block_unprinted(tc: &TestCase) -> AssistantBlock {
-    match tc.draw(gs::integers::<u8>().max_value(2)) {
-        0 => AssistantBlock::Text(tc.draw(text_content())),
-        1 => AssistantBlock::Thinking(tc.draw(thinking_content())),
-        _ => AssistantBlock::ToolCall(tc.draw(tool_call())),
-    }
+fn assistant_block_unprinted() -> impl Generator<AssistantBlock> {
+    hegel::one_of!(
+        text_content().map(AssistantBlock::Text),
+        thinking_content().map(AssistantBlock::Thinking),
+        tool_call().map(AssistantBlock::ToolCall),
+    )
 }
 
 pub fn user_message() -> impl PrintableGenerator<UserMessage> {
@@ -276,8 +265,11 @@ pub fn assistant_message() -> impl PrintableGenerator<AssistantMessage> {
 fn assistant_message_unprinted(tc: &TestCase) -> AssistantMessage {
     let stop_reason = tc.draw(stop_reason());
     let failed = matches!(stop_reason, StopReason::Error | StopReason::Aborted);
+    let mut content: Vec<AssistantBlock> =
+        tc.draw(gs::vecs(assistant_block()).max_size(4));
+    CallIds::default().make_unique(&mut content);
     AssistantMessage {
-        content: tc.draw(gs::vecs(assistant_block()).max_size(4)),
+        content,
         api: API.to_owned(),
         provider: PROVIDER.to_owned(),
         model: tc.draw(gs::sampled_from(vec![
@@ -318,13 +310,12 @@ pub fn message() -> impl PrintableGenerator<Message> {
     message_unprinted().print_as_debug()
 }
 
-#[hegel::composite]
-fn message_unprinted(tc: &TestCase) -> Message {
-    match tc.draw(gs::integers::<u8>().max_value(2)) {
-        0 => Message::User(tc.draw(user_message())),
-        1 => Message::Assistant(tc.draw(assistant_message())),
-        _ => Message::ToolResult(tc.draw(tool_result_message())),
-    }
+fn message_unprinted() -> impl Generator<Message> {
+    hegel::one_of!(
+        user_message().map(Message::User),
+        assistant_message().map(Message::Assistant),
+        tool_result_message().map(Message::ToolResult),
+    )
 }
 
 /// Milliseconds since the Unix epoch, within the next few centuries.
@@ -382,31 +373,75 @@ fn usage_with_max_tokens_unprinted(tc: &TestCase, max_tokens: u64) -> Usage {
 /// Splits `text` into a random sequence of chunks at character
 /// boundaries, for feeding an incremental parser one arbitrary piece at
 /// a time. Concatenating the result always reproduces `text` exactly:
-/// the chunking can be a single chunk, one chunk per character, or
-/// anything in between, since each internal character boundary is cut
-/// or not independently.
+/// the chunking can be a single chunk (what it shrinks toward), one
+/// chunk per character, or anything in between. No chunk is empty,
+/// unless `text` is.
 #[hegel::composite]
 pub fn char_chunks(tc: &TestCase, text: String) -> Vec<String> {
-    let boundaries: Vec<usize> = text
-        .char_indices()
-        .map(|(i, _)| i)
-        .chain(std::iter::once(text.len()))
-        .collect();
-    let cut_candidates: &[usize] = if boundaries.len() >= 2 {
-        &boundaries[1..boundaries.len() - 1]
-    } else {
-        &[]
-    };
-    let mut chunks = Vec::new();
+    let cuts: Vec<usize> = tc.draw(gs::subsequences(inner_boundaries(&text)));
+    split_at_cuts(&text, &cuts)
+}
+
+/// The char boundaries of `text` strictly inside it.
+pub(crate) fn inner_boundaries(text: &str) -> Vec<usize> {
+    text.char_indices().map(|(i, _)| i).skip(1).collect()
+}
+
+/// `text` cut at `cuts` (increasing char boundaries inside it).
+pub(crate) fn split_at_cuts(text: &str, cuts: &[usize]) -> Vec<String> {
+    let mut chunks = Vec::with_capacity(cuts.len() + 1);
     let mut start = 0;
-    for &boundary in cut_candidates {
-        if tc.draw(gs::booleans()) {
-            chunks.push(text[start..boundary].to_owned());
-            start = boundary;
-        }
+    for &cut in cuts {
+        chunks.push(text[start..cut].to_owned());
+        start = cut;
     }
     chunks.push(text[start..].to_owned());
     chunks
+}
+
+/// Tool call and item ids already used, so a message or transcript can
+/// give each call its own.
+#[derive(Default)]
+pub(crate) struct CallIds {
+    calls: HashSet<String>,
+    items: HashSet<String>,
+}
+
+impl CallIds {
+    /// Renames the tool calls in `blocks` whose `call_id` or `item_id`
+    /// half was already used, by appending a number to that half. Drawn
+    /// ids are short and shrink toward each other, so without this a
+    /// message or transcript would often hold two calls with one id.
+    pub(crate) fn make_unique(&mut self, blocks: &mut [AssistantBlock]) {
+        for block in blocks {
+            let AssistantBlock::ToolCall(call) = block else {
+                continue;
+            };
+            call.id = match call.id.split_once('|') {
+                Some((call_id, item_id)) => format!(
+                    "{}|{}",
+                    fresh(&mut self.calls, call_id),
+                    fresh(&mut self.items, item_id)
+                ),
+                None => fresh(&mut self.calls, &call.id),
+            };
+        }
+    }
+}
+
+/// `id`, or `id` with the smallest number appended that `used` does not
+/// hold yet; either way, now in `used`.
+fn fresh(used: &mut HashSet<String>, id: &str) -> String {
+    let unique = if used.contains(id) {
+        (2..)
+            .map(|n| format!("{id}{n}"))
+            .find(|candidate| !used.contains(candidate))
+            .expect("some number is free")
+    } else {
+        id.to_owned()
+    };
+    used.insert(unique.clone());
+    unique
 }
 
 pub mod lane;
@@ -443,11 +478,11 @@ pub fn thinking_content_for_transcript()
 
 #[hegel::composite]
 fn thinking_content_for_transcript_unprinted(tc: &TestCase) -> ThinkingContent {
-    let signature = match tc.draw(gs::integers::<u8>().max_value(2)) {
-        0 => None,
-        1 => Some(tc.draw(text(10))),
-        _ => Some(tc.draw(reasoning_item_json())),
-    };
+    let signature = tc.draw(hegel::one_of!(
+        gs::just(None),
+        text(10).map(Some),
+        reasoning_item_json().map(Some),
+    ));
     ThinkingContent {
         thinking: tc.draw(text(40)),
         thinking_signature: signature,
@@ -464,15 +499,13 @@ pub fn assistant_block_for_transcript()
     assistant_block_for_transcript_unprinted().print_as_debug()
 }
 
-#[hegel::composite]
-fn assistant_block_for_transcript_unprinted(tc: &TestCase) -> AssistantBlock {
-    match tc.draw(gs::integers::<u8>().max_value(2)) {
-        0 => AssistantBlock::Text(tc.draw(text_content())),
-        1 => {
-            AssistantBlock::Thinking(tc.draw(thinking_content_for_transcript()))
-        }
-        _ => AssistantBlock::ToolCall(tc.draw(tool_call())),
-    }
+fn assistant_block_for_transcript_unprinted() -> impl Generator<AssistantBlock>
+{
+    hegel::one_of!(
+        text_content().map(AssistantBlock::Text),
+        thinking_content_for_transcript().map(AssistantBlock::Thinking),
+        tool_call().map(AssistantBlock::ToolCall),
+    )
 }
 
 /// One assistant turn of a [`transcript`]: `stop_reason` is always
@@ -486,11 +519,12 @@ pub fn assistant_step() -> impl PrintableGenerator<AssistantMessage> {
 
 #[hegel::composite]
 fn assistant_step_unprinted(tc: &TestCase) -> AssistantMessage {
-    let content: Vec<AssistantBlock> = tc.draw(
+    let mut content: Vec<AssistantBlock> = tc.draw(
         gs::vecs(assistant_block_for_transcript())
             .min_size(1)
             .max_size(4),
     );
+    CallIds::default().make_unique(&mut content);
     let has_tool_call = content
         .iter()
         .any(|b| matches!(b, AssistantBlock::ToolCall(_)));
@@ -544,9 +578,9 @@ fn tool_result_for_call_unprinted(
 
 /// A realistic, valid-by-construction transcript: one or more `user ->
 /// assistant (-> tool results -> assistant)*` turns. Every tool call has
-/// exactly one matching result, and no assistant message ever errors or
-/// aborts, so converting it with `tau_ai::responses::input::to_input`
-/// drops nothing.
+/// its own id and exactly one matching result, and no assistant message
+/// ever errors or aborts, so converting it with
+/// `tau_ai::responses::input::to_input` drops nothing.
 pub fn transcript() -> impl PrintableGenerator<Vec<Message>> {
     // Vec<Message> is tau's own type, so its drawn values print through Debug.
     transcript_unprinted().print_as_debug()
@@ -556,12 +590,14 @@ pub fn transcript() -> impl PrintableGenerator<Vec<Message>> {
 fn transcript_unprinted(tc: &TestCase) -> Vec<Message> {
     let turns = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
     let mut messages = Vec::new();
+    let mut ids = CallIds::default();
     for _ in 0..turns {
         messages.push(Message::User(tc.draw(user_message())));
         let max_rounds =
             tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
         for round in 0..max_rounds {
-            let step = tc.draw(assistant_step());
+            let mut step = tc.draw(assistant_step());
+            ids.make_unique(&mut step.content);
             let calls: Vec<ToolCall> = step
                 .content
                 .iter()
@@ -586,7 +622,9 @@ fn transcript_unprinted(tc: &TestCase) -> Vec<Message> {
 
 /// A [`transcript`] with damage applied: some tool results dropped
 /// (orphaning their calls), stray tool results inserted (matching no
-/// call), a random assistant turn flipped to `Error`/`Aborted` (while
+/// call, or claiming a real call's id wherever they land), an existing
+/// result moved out of place (before its call, or after the next user
+/// message), a random assistant turn flipped to `Error`/`Aborted` (while
 /// its already-recorded tool results stay put, pi's orphan bug from
 /// `transform-messages.ts:201`), and sometimes a synthetic turn that
 /// aborts holding only reasoning (pi's known case,
@@ -613,12 +651,60 @@ fn damaged_transcript_unprinted(tc: &TestCase) -> Vec<Message> {
         .filter_map(|(m, keep)| keep.then_some(m))
         .collect();
 
-    // Insert a few stray tool results that answer no call.
+    // Insert a few stray tool results: most answer no call, some claim
+    // the id of a real call, which then has two results.
+    let call_ids: Vec<String> = messages
+        .iter()
+        .flat_map(|m| match m {
+            Message::Assistant(a) => a
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    AssistantBlock::ToolCall(call) => Some(call.id.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect();
     let stray_count = tc.draw(gs::integers::<usize>().max_value(2));
     for _ in 0..stray_count {
-        let stray = tc.draw(tool_result_message());
+        let mut stray = tc.draw(tool_result_message());
+        if !call_ids.is_empty() && tc.draw(gs::weighted_booleans(0.3)) {
+            stray.tool_call_id = tc.draw(gs::sampled_from(call_ids.clone()));
+        }
         let at = tc.draw(gs::integers::<usize>().max_value(messages.len()));
         messages.insert(at, Message::ToolResult(stray));
+    }
+
+    // Move one result out of place: before the message holding its call,
+    // or past the next user message.
+    let results: Vec<usize> = (0..messages.len())
+        .filter(|&i| matches!(messages[i], Message::ToolResult(_)))
+        .collect();
+    if !results.is_empty() && tc.draw(gs::weighted_booleans(0.3)) {
+        let from = tc.draw(gs::sampled_from(results));
+        let Message::ToolResult(result) = messages.remove(from) else {
+            unreachable!("a result position")
+        };
+        let call_at = messages[..from].iter().rposition(|m| match m {
+            Message::Assistant(a) => a.content.iter().any(|b| {
+                matches!(b, AssistantBlock::ToolCall(c) if c.id == result.tool_call_id)
+            }),
+            _ => false,
+        });
+        let after_user = messages[from..]
+            .iter()
+            .position(|m| matches!(m, Message::User(_)))
+            .map(|i| from + i + 1);
+        let targets: Vec<usize> =
+            call_at.into_iter().chain(after_user).collect();
+        let to = if targets.is_empty() {
+            from
+        } else {
+            tc.draw(gs::sampled_from(targets))
+        };
+        messages.insert(to, Message::ToolResult(result));
     }
 
     // Turn a random assistant message into an aborted/errored turn,
@@ -945,87 +1031,170 @@ pub fn strict_schema_with_value(tc: &TestCase, depth: u32) -> (Value, Value) {
     draw_object_schema_case(tc, depth)
 }
 
-/// A JSON schema that `tau_agent::schema::to_strict` must reject, built
-/// from exactly one failure case: pi's documented ones
-/// (`constrained-sampling.ts` / `constrained-sampling.test.ts`) minus
-/// object unions, which tau-agent accepts, plus a recursive `$ref`. That
-/// is an unsupported keyword (with `$defs` nested, since root ones are
-/// inlined), a tuple `items`, a schema-valued or `true`
-/// `additionalProperties`, a recursive `$ref`, an empty `anyOf`, a
-/// non-object root, `properties` without `type: "object"`, `required`
-/// naming an unknown property or holding a non-string, or a boolean
-/// (`true`/`false`) schema node.
+/// A JSON schema that `tau_agent::schema::to_strict` must reject; the
+/// schema half of [`unsupported_schema_with_reason`].
 #[hegel::composite]
 pub fn unsupported_schema(tc: &TestCase) -> Value {
-    match tc.draw(gs::integers::<u8>().max_value(10)) {
-        0 => {
-            let key = tc.draw(gs::sampled_from(vec![
-                "$ref",
-                "$defs",
-                "definitions",
-                "allOf",
-                "oneOf",
-                "patternProperties",
-                "dependentSchemas",
-                "dependencies",
-                "unevaluatedProperties",
-                "propertyNames",
-                "contains",
-                "prefixItems",
-                "not",
-                "if",
-                "then",
-                "else",
-            ]));
-            let mut schema = Map::new();
-            schema
-                .insert("type".to_owned(), Value::String("object".to_owned()));
-            schema.insert(key.to_owned(), serde_json::json!({}));
-            if matches!(key, "$defs" | "definitions") {
-                // Root definitions are inlined away; only nested ones
-                // are unsupported.
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {"a": schema},
-                    "required": ["a"],
-                })
-            } else {
-                Value::Object(schema)
-            }
-        }
-        1 => {
-            serde_json::json!({"type": "array", "items": [{"type": "string"}, {"type": "number"}]})
-        }
-        2 => {
-            serde_json::json!({"type": "object", "additionalProperties": true})
-        }
-        3 => {
-            serde_json::json!({"type": "object", "additionalProperties": {"type": "string"}})
-        }
-        4 => serde_json::json!({
-            "type": "object",
-            "properties": {"a": {"$ref": "#/$defs/Node"}},
-            "required": ["a"],
-            "$defs": {"Node": {
-                "type": "object",
-                "properties": {"next": {"$ref": "#/$defs/Node"}},
-            }},
-        }),
-        5 => {
-            serde_json::json!({"type": "object", "properties": {"a": {"anyOf": []}}, "required": ["a"]})
-        }
-        6 => serde_json::json!({"type": "string"}),
-        7 => {
-            serde_json::json!({"type": "string", "properties": {"a": {"type": "string"}}})
-        }
-        8 => {
-            serde_json::json!({"type": "object", "required": ["missing"], "properties": {}})
-        }
-        9 => {
-            serde_json::json!({"type": "object", "required": [1], "properties": {}})
-        }
-        _ => Value::Bool(tc.draw(gs::booleans())),
+    tc.draw(unsupported_schema_with_reason()).0
+}
+
+/// Schema keywords pi's strict rewrite does not support
+/// (`constrained-sampling.ts` `UNSUPPORTED_STRICT_SCHEMA_KEYS`).
+const UNSUPPORTED_KEYS: &[&str] = &[
+    "$ref",
+    "$defs",
+    "definitions",
+    "allOf",
+    "oneOf",
+    "patternProperties",
+    "dependentSchemas",
+    "dependencies",
+    "unevaluatedProperties",
+    "propertyNames",
+    "contains",
+    "prefixItems",
+    "not",
+    "if",
+    "then",
+    "else",
+];
+
+/// A JSON schema that `tau_agent::schema::to_strict` must reject, and the
+/// reason it must give: a [`strict_schema`] with exactly one bad node put
+/// at a drawn position (the root, a property, array items or an `anyOf`
+/// variant), so detection is exercised at depth. The bad node is one of
+/// pi's documented failure cases (`constrained-sampling.ts` /
+/// `constrained-sampling.test.ts`) minus object unions, which tau-agent
+/// accepts, plus a recursive `$ref`: an unsupported keyword (`$defs` and
+/// `definitions` only below the root, since root ones are inlined), a
+/// tuple `items`, a schema-valued or `true` `additionalProperties`, a
+/// recursive `$ref`, an empty `anyOf`, `properties` that are not a map or
+/// sit without `type: "object"`, `required` naming an unknown property or
+/// holding a non-string, a boolean (`true`/`false`) schema node, or a
+/// non-object root.
+#[hegel::composite]
+pub fn unsupported_schema_with_reason(tc: &TestCase) -> (Value, String) {
+    let mut schema = draw_object_schema_case(tc, 2).0;
+    let mut slots = Vec::new();
+    subschema_pointers(&schema, String::new(), &mut slots);
+    let at: String = tc.draw(gs::sampled_from(slots));
+    let at_root = at.is_empty();
+    let mut kinds = vec![
+        "keyword",
+        "tuple items",
+        "open additionalProperties",
+        "empty anyOf",
+        "properties without object",
+        "properties not a map",
+        "unknown required",
+        "non-string required",
+    ];
+    if at_root {
+        kinds.push("non-object root");
+    } else {
+        kinds.extend(["recursive $ref", "boolean"]);
     }
+    let (bad, reason) = match tc.draw(gs::sampled_from(kinds)) {
+        "keyword" => {
+            let keys: Vec<&str> = UNSUPPORTED_KEYS
+                .iter()
+                .copied()
+                .filter(|key| !at_root || !matches!(*key, "$defs" | "definitions"))
+                .collect();
+            let key = tc.draw(gs::sampled_from(keys));
+            let mut node = Map::new();
+            node.insert("type".to_owned(), Value::String("object".to_owned()));
+            node.insert(key.to_owned(), serde_json::json!({}));
+            (Value::Object(node), format!("{key} schemas are unsupported"))
+        }
+        "tuple items" => (
+            serde_json::json!({"type": "array", "items": [{"type": "string"}, {"type": "number"}]}),
+            "tuple schemas are unsupported".to_owned(),
+        ),
+        "open additionalProperties" => (
+            serde_json::json!({
+                "type": "object",
+                "additionalProperties": tc.draw(gs::sampled_from(vec![
+                    Value::Bool(true),
+                    serde_json::json!({"type": "string"}),
+                ])),
+            }),
+            "schema-valued or true additionalProperties is unsupported"
+                .to_owned(),
+        ),
+        "empty anyOf" => (
+            serde_json::json!({"anyOf": []}),
+            "anyOf must contain at least one schema".to_owned(),
+        ),
+        "properties without object" => (
+            serde_json::json!({"type": "string", "properties": {"a": {"type": "string"}}}),
+            "properties require type object".to_owned(),
+        ),
+        "properties not a map" => (
+            serde_json::json!({"type": "object", "properties": []}),
+            "object properties must be a schema map".to_owned(),
+        ),
+        "unknown required" => (
+            serde_json::json!({"type": "object", "required": ["missing"], "properties": {}}),
+            "required contains an unknown property".to_owned(),
+        ),
+        "non-string required" => (
+            serde_json::json!({"type": "object", "required": [1], "properties": {}}),
+            "object required must be a string array".to_owned(),
+        ),
+        "non-object root" => (
+            tc.draw(gs::sampled_from(vec![
+                serde_json::json!({"type": "string"}),
+                serde_json::json!({"type": "array", "items": {"type": "string"}}),
+                Value::Bool(true),
+                Value::Bool(false),
+            ])),
+            "root schema must have type object".to_owned(),
+        ),
+        "recursive $ref" => {
+            schema.as_object_mut().expect("the root is an object").insert(
+                "$defs".to_owned(),
+                serde_json::json!({"Node": {
+                    "type": "object",
+                    "properties": {"next": {"$ref": "#/$defs/Node"}},
+                }}),
+            );
+            (
+                serde_json::json!({"$ref": "#/$defs/Node"}),
+                "recursive $ref schemas are unsupported".to_owned(),
+            )
+        }
+        _ => (
+            Value::Bool(tc.draw(gs::booleans())),
+            "boolean schemas are unsupported".to_owned(),
+        ),
+    };
+    *schema
+        .pointer_mut(&at)
+        .expect("a pointer collected from the schema") = bad;
+    (schema, reason)
+}
+
+/// JSON pointers to `schema` and every schema node below it: property
+/// schemas, `items` and `anyOf` variants. Property names are drawn by
+/// [`draw_object_schema_case`] as `p<n>`, so they need no escaping.
+fn subschema_pointers(schema: &Value, at: String, out: &mut Vec<String>) {
+    if let Some(properties) =
+        schema.get("properties").and_then(Value::as_object)
+    {
+        for (key, property) in properties {
+            subschema_pointers(property, format!("{at}/properties/{key}"), out);
+        }
+    }
+    if let Some(items) = schema.get("items") {
+        subschema_pointers(items, format!("{at}/items"), out);
+    }
+    if let Some(variants) = schema.get("anyOf").and_then(Value::as_array) {
+        for (i, variant) in variants.iter().enumerate() {
+            subschema_pointers(variant, format!("{at}/anyOf/{i}"), out);
+        }
+    }
+    out.push(at);
 }
 
 // =============================================================================

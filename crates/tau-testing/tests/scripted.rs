@@ -4,7 +4,10 @@
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use hegel::{TestCase, generators as gs, generators::Generator as _};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _, PrintableGenerator},
+};
 use serde_json::{Map, Value};
 use tau_ai::{
     event::{Accumulator, AssistantEvent, ErrorReason, GrammarError},
@@ -97,16 +100,16 @@ enum GenBlock {
     ToolCall(String, Map<String, Value>),
 }
 
-#[hegel::composite]
-fn gen_block(tc: &TestCase) -> GenBlock {
-    match tc.draw(gs::integers::<u8>().max_value(2)) {
-        0 => GenBlock::Text(tc.draw(tau_testing::generators::text(20))),
-        1 => GenBlock::Thinking(tc.draw(tau_testing::generators::text(20))),
-        _ => GenBlock::ToolCall(
-            tc.draw(tau_testing::generators::id("tool_")),
-            tc.draw(tau_testing::generators::json_object(1)),
-        ),
-    }
+fn gen_block() -> impl PrintableGenerator<GenBlock> {
+    hegel::one_of!(
+        tau_testing::generators::text(20).map(GenBlock::Text),
+        tau_testing::generators::text(20).map(GenBlock::Thinking),
+        hegel::tuples!(
+            tau_testing::generators::id("tool_"),
+            tau_testing::generators::json_object(1),
+        )
+        .map(|(name, arguments)| GenBlock::ToolCall(name, arguments)),
+    )
 }
 
 #[derive(Clone, Debug, hegel::PrettyPrintable)]
@@ -511,6 +514,85 @@ fn cache_simulation_matches_pi_faux_formula() {
         assert_eq!(message3.usage.cache_write, 4); // ceil(13 / 4)
         assert_eq!(message3.usage.input, 4); // ceil(13 / 4) - cache_read(0)
         assert_eq!(message3.usage.output, 1);
+    });
+}
+
+/// `ceil(chars / 4)`: pi's `estimateTokens`, in Unicode scalar values.
+fn tokens_of(chars: usize) -> u64 {
+    (chars as u64).div_ceil(4)
+}
+
+/// pi's `serializeContext` for a transcript of user texts:
+/// `"user:{text}"` per message, joined by a blank line.
+fn serialized_users(texts: &[String]) -> String {
+    texts
+        .iter()
+        .map(|text| format!("user:{text}"))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// The cache simulation over drawn user transcripts, against pi's faux
+/// formula: a session's first request reads nothing from the cache and
+/// writes its whole prompt; the next one reads the characters it shares
+/// with the first as a prefix (all of the first prompt when it extends
+/// that transcript), writes the rest, and pays `input` for the prompt
+/// less what it read. Every count is `ceil(chars / 4)`.
+#[hegel::test(test_cases = 200)]
+fn cache_simulation_follows_pi_faux_formula(tc: TestCase) {
+    let text = || tau_testing::generators::text(12);
+    let first: Vec<String> = tc.draw(gs::vecs(text()).min_size(1).max_size(3));
+    let extends = tc.draw(gs::booleans());
+    let second: Vec<String> = if extends {
+        let more: Vec<String> = tc.draw(gs::vecs(text()).max_size(3));
+        first.iter().cloned().chain(more).collect()
+    } else {
+        tc.draw(gs::vecs(text()).min_size(1).max_size(3))
+    };
+    let (prompt1, prompt2) =
+        (serialized_users(&first), serialized_users(&second));
+    let shared = prompt1
+        .chars()
+        .zip(prompt2.chars())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let (length1, length2) = (prompt1.chars().count(), prompt2.chars().count());
+    if extends {
+        tc.event("the second request extends the first");
+        assert_eq!(shared, length1);
+    }
+    let messages = |texts: &[String]| {
+        texts.iter().map(|t| user_message(t)).collect::<Vec<_>>()
+    };
+    tau_testing::block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.text("ok"))
+            .turn(|t| t.text("ok"));
+        let mut session = model.open(settings("gpt-test")).await.unwrap();
+        let one = accumulate(session.respond(&messages(&first), 0))
+            .await
+            .unwrap();
+        assert_eq!(
+            (one.usage.cache_read, one.usage.cache_write, one.usage.input),
+            (0, tokens_of(length1), tokens_of(length1)),
+            "first request"
+        );
+        let two = accumulate(session.respond(&messages(&second), 0))
+            .await
+            .unwrap();
+        assert_eq!(two.usage.cache_read, tokens_of(shared), "cache read");
+        assert_eq!(
+            two.usage.cache_write,
+            tokens_of(length2 - shared),
+            "cache write"
+        );
+        assert_eq!(
+            two.usage.cache_read + two.usage.input,
+            tokens_of(length2),
+            "the prompt, read or paid"
+        );
+        // "ok" is two characters.
+        assert_eq!((one.usage.output, two.usage.output), (1, 1));
     });
 }
 
