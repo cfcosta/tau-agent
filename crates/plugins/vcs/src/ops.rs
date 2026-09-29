@@ -428,6 +428,8 @@ pub struct TurnCommit {
     pub change_id: String,
     /// The turn changed files, so a new commit was made for it.
     pub changed: bool,
+    /// The paths the turn added, changed or removed.
+    pub paths: Vec<String>,
 }
 
 /// Ends a turn: snapshots the working copy and, if it changed anything,
@@ -451,6 +453,7 @@ pub(crate) fn checkpoint(
                 commit_id: parent.id().hex(),
                 change_id: parent.change_id().reverse_hex(),
                 changed: false,
+                paths: Vec::new(),
             });
         }
         let text = if wc.description().trim().is_empty() {
@@ -458,6 +461,15 @@ pub(crate) fn checkpoint(
         } else {
             wc.description().to_owned()
         };
+        let parent_tree = block_on(wc.parent_tree(tx.repo()))?;
+        let paths = diff::changed_paths(
+            &parent_tree,
+            &wc.tree(),
+            &jj_lib::matchers::EverythingMatcher,
+        )?
+        .into_iter()
+        .map(|change| change.path)
+        .collect();
         let committed = block_on(
             tx.repo_mut()
                 .rewrite_commit(wc)
@@ -470,6 +482,7 @@ pub(crate) fn checkpoint(
             commit_id: committed.id().hex(),
             change_id: committed.change_id().reverse_hex(),
             changed: true,
+            paths,
         })
     })?;
     Ok(turn)

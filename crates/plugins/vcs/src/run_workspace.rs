@@ -6,8 +6,11 @@
 //! from. After each turn it commits what the turn changed and stores a
 //! [`Link`] from the turn to that commit. A fork of the run at a turn
 //! inherits the links up to that turn, so it starts on that turn's code.
+//! Whoever else cares what a turn changed, such as memory marking notes
+//! about those files stale, hears of each commit through
+//! [`RunWorkspace::on_commit`].
 
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,9 +20,13 @@ use tau_agent::{
 };
 
 use crate::{
+    TurnCommit,
     project::Project,
     vcs::{Identity, Vcs},
 };
+
+/// Hears of each turn's commit.
+pub type CommitObserver = Arc<dyn Fn(&TurnCommit) + Send + Sync>;
 
 /// The name the plugin stores its links under.
 pub const PLUGIN: &str = "workspace";
@@ -45,11 +52,23 @@ impl Link {
 
 /// A run's workspace, as a plugin. Build one per run, with a workspace
 /// name of its own, and point the run's other tools at [`Self::dir`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RunWorkspace {
     project: Project,
     name: String,
     vcs: Vcs,
+    observers: Vec<CommitObserver>,
+}
+
+impl fmt::Debug for RunWorkspace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunWorkspace")
+            .field("project", &self.project)
+            .field("name", &self.name)
+            .field("vcs", &self.vcs)
+            .field("observers", &self.observers.len())
+            .finish()
+    }
 }
 
 impl RunWorkspace {
@@ -60,7 +79,21 @@ impl RunWorkspace {
     ) -> anyhow::Result<Self> {
         let name = name.into();
         let vcs = Vcs::lazy(project.workspace_dir(&name), identity)?;
-        Ok(Self { project, name, vcs })
+        Ok(Self {
+            project,
+            name,
+            vcs,
+            observers: Vec::new(),
+        })
+    }
+
+    /// Calls `observer` with each turn's commit, after it is made.
+    pub fn on_commit(
+        mut self,
+        observer: impl Fn(&TurnCommit) + Send + Sync + 'static,
+    ) -> Self {
+        self.observers.push(Arc::new(observer));
+        self
     }
 
     /// Where the run's files are, once it has started.
@@ -107,6 +140,7 @@ impl Plugin for RunWorkspace {
         Ok(Box::new(Turns {
             vcs: self.vcs.clone(),
             name: self.name.clone(),
+            observers: self.observers.clone(),
         }))
     }
 }
@@ -114,6 +148,7 @@ impl Plugin for RunWorkspace {
 struct Turns {
     vcs: Vcs,
     name: String,
+    observers: Vec<CommitObserver>,
 }
 
 #[async_trait]
@@ -130,14 +165,19 @@ impl PluginRun for Turns {
             .checkpoint(format!("tau: run {} turn {turn}", ctx.run.0))
             .await
         {
-            Ok(commit) => serde_json::to_value(Link {
-                turn: *turn,
-                workspace: self.name.clone(),
-                commit_id: commit.commit_id,
-                change_id: commit.change_id,
-                changed: commit.changed,
-            })
-            .unwrap_or_default(),
+            Ok(commit) => {
+                for observer in &self.observers {
+                    observer(&commit);
+                }
+                serde_json::to_value(Link {
+                    turn: *turn,
+                    workspace: self.name.clone(),
+                    commit_id: commit.commit_id,
+                    change_id: commit.change_id,
+                    changed: commit.changed,
+                })
+                .unwrap_or_default()
+            }
             // Not fatal to the run: a turn without a link cannot be
             // forked from, and the next turn's commit holds its files.
             Err(error) => serde_json::json!({

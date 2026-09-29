@@ -2,7 +2,11 @@
 //! imported into a project, a workspace per run, a commit per turn, and
 //! a fork that starts from one turn's code.
 
-use std::{path::Path, process::Command};
+use std::{
+    path::Path,
+    process::Command,
+    sync::{Arc, Mutex},
+};
 
 use serde_json::json;
 use tau_agent::agent::{Agent, Checkpoint};
@@ -272,10 +276,18 @@ fn turns_are_commits_and_forks_start_from_one() {
     runtime.block_on(async {
         let store = Store::memory().await.unwrap();
 
-        // Two turns that each write a file, and a turn that only talks.
+        // Two turns that each write a file, and a turn that only talks;
+        // an observer hears what each turn's commit changed.
+        let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
         let first =
             RunWorkspace::new(project.clone(), "first", Identity::default())
-                .unwrap();
+                .unwrap()
+                .on_commit({
+                    let heard = heard.clone();
+                    move |commit| {
+                        heard.lock().unwrap().push(commit.paths.clone())
+                    }
+                });
         let llm = ScriptedModel::new()
             .turn(|t| t.tool_call("write", write("a.txt", "one\n")))
             .turn(|t| t.tool_call("write", write("a.txt", "two\n")))
@@ -298,6 +310,10 @@ fn turns_are_commits_and_forks_start_from_one() {
             .map(|(_, link)| (link.turn, link.changed))
             .collect();
         assert_eq!(changed, [(1, true), (2, true), (3, false)]);
+        assert_eq!(
+            *heard.lock().unwrap(),
+            [vec!["a.txt".to_owned()], vec!["a.txt".to_owned()], vec![]]
+        );
         // A turn that changed nothing points at the commit before it.
         assert_eq!(turns[2].1.commit_id, turns[1].1.commit_id);
         assert_ne!(turns[0].1.commit_id, turns[1].1.commit_id);
@@ -354,6 +370,7 @@ fn diffs_between_commits_count_lines_per_file() {
         .block_on(vcs.checkpoint("turn 1"))
         .unwrap();
     assert!(turn.changed);
+    assert_eq!(turn.paths, ["README.md", "new.txt"]);
 
     let files = project.diff(&head, &turn.commit_id).unwrap();
     let summary: Vec<(&str, usize, usize)> = files
