@@ -11,7 +11,10 @@ use tau_ai::{
     event::{AssistantEvent, DoneReason},
     message::{Message, StopReason, Usage, UserContent, UserMessage},
     model::{ServiceTier, find},
-    responses::{input::response_items, request::Settings},
+    responses::{
+        input::response_items,
+        request::{ReasoningEffort, Settings},
+    },
     ws::{
         io::{
             connection::Connector,
@@ -387,4 +390,77 @@ fn llm_error_displays_its_message() {
         message: "transport stopped".into(),
     };
     assert_eq!(error.to_string(), "transport stopped");
+}
+
+/// Two turns on `model`: the first at the model's default effort, the
+/// second at `high`, set on the session between them. Returns the
+/// request bodies the fake saw, and the lane's full and delta counts.
+fn two_turns_changing_effort(
+    tc: &TestCase,
+    model: &str,
+) -> (Vec<serde_json::Value>, u64, u64) {
+    let mut first = tc.draw(openai::wire_assistant_message());
+    first.stop_reason = StopReason::Stop;
+    first.error_message = None;
+    first
+        .content
+        .retain(|b| !matches!(b, tau_ai::message::AssistantBlock::ToolCall(_)));
+    first.response_id = Some("resp_1".into());
+    let mut second = first.clone();
+    second.response_id = Some("resp_2".into());
+    let fake = FakeOpenAi::new(vec![
+        Reply::Respond {
+            frames: openai::draw_response_frames(tc, &first),
+            response_id: "resp_1".into(),
+            output_items: response_items(&first),
+        },
+        Reply::Respond {
+            frames: openai::draw_response_frames(tc, &second),
+            response_id: "resp_2".into(),
+            output_items: response_items(&second),
+        },
+    ]);
+    let counts = Rc::new(RefCell::new((0, 0)));
+    let seen = counts.clone();
+    let model = model.to_owned();
+    let mut sim = turmoil::Builder::new().build();
+    fake.install(&mut sim, "api");
+    sim.client("client", async move {
+        let client = OpenAi::with_connector(SimConnector, Limits::default());
+        let settings = Settings {
+            model,
+            ..Settings::default()
+        };
+        let mut session = client.session(settings).await.unwrap();
+        let mut response = session.respond(&hello(), 0);
+        while response.next().await.is_some() {}
+        tau_ai::llm::LlmSession::set_reasoning(
+            &mut session,
+            Some(ReasoningEffort::High),
+        );
+        let mut transcript = hello();
+        transcript.push(Message::Assistant(first));
+        transcript.push(Message::User(UserMessage {
+            content: UserContent::Text("again".into()),
+            timestamp: 0,
+        }));
+        let mut response = session.respond(&transcript, 0);
+        while response.next().await.is_some() {}
+        let stats = client.stats().await.unwrap();
+        *seen.borrow_mut() =
+            (stats.lanes.full_requests, stats.lanes.delta_requests);
+        Ok(())
+    });
+    sim.run().unwrap();
+    let (full, delta) = *counts.borrow();
+    let bodies = fake.received().into_iter().map(|r| r.body).collect();
+    (bodies, full, delta)
+}
+
+/// An effort set on a session goes with the requests after it.
+#[hegel::test(test_cases = 5)]
+fn a_session_takes_a_new_effort_between_requests(tc: TestCase) {
+    let (bodies, _, _) = two_turns_changing_effort(&tc, "gpt-6-sol");
+    assert!(bodies[0].get("reasoning").is_none(), "the model's default");
+    assert_eq!(bodies[1]["reasoning"]["effort"], json!("high"));
 }

@@ -16,7 +16,7 @@ use crate::{
     model::{Model, ServiceTier, find},
     responses::{
         input::InputCache,
-        request::{Settings, fields},
+        request::{ReasoningEffort, Settings, fields},
     },
     ws::{
         io::{
@@ -201,6 +201,17 @@ impl Session {
 
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    /// Sets the reasoning effort of the requests that follow. The fields
+    /// are built again only when it changes, so requests at one effort
+    /// still share them.
+    pub fn set_reasoning(&mut self, effort: Option<ReasoningEffort>) {
+        if self.settings.reasoning == effort {
+            return;
+        }
+        self.settings.reasoning = effort;
+        self.fields = Arc::new(fields(&self.settings, None));
     }
 }
 

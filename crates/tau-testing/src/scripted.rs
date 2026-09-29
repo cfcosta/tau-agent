@@ -453,6 +453,13 @@ impl LlmSession for ScriptedSession {
         &self.settings
     }
 
+    fn set_reasoning(
+        &mut self,
+        effort: Option<tau_ai::responses::request::ReasoningEffort>,
+    ) {
+        self.settings.reasoning = effort;
+    }
+
     fn respond(
         &mut self,
         transcript: &[Message],

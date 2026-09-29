@@ -1,7 +1,8 @@
 //! The model interface the agent loop runs against.
 //!
 //! [`Llm`] opens one [`LlmSession`] per run, fixed to that run's
-//! [`Settings`]. A session answers a transcript with a stream of
+//! [`Settings`], save the reasoning effort, which
+//! [`LlmSession::set_reasoning`] may change between requests. A session answers a transcript with a stream of
 //! [`AssistantEvent`]s that follows the grammar in
 //! [`event`](crate::event). Dropping the stream before its terminal
 //! event cancels the request.
@@ -22,7 +23,7 @@ use crate::{
     client::{OpenAi, Session},
     event::AssistantEvent,
     message::{Message, Timestamp, Usage},
-    responses::request::Settings,
+    responses::request::{ReasoningEffort, Settings},
 };
 
 /// The events of one response.
@@ -55,6 +56,10 @@ pub trait Llm: Send + Sync + 'static {
 pub trait LlmSession: Send + 'static {
     /// The run's settings, as the provider will send them.
     fn settings(&self) -> &Settings;
+
+    /// Sets the reasoning effort of the requests that follow; `None`
+    /// leaves it to the model. The other settings stay as they are.
+    fn set_reasoning(&mut self, effort: Option<ReasoningEffort>);
 
     /// Asks for the next response to `transcript`. `timestamp` becomes
     /// the response's timestamp.
@@ -98,6 +103,10 @@ impl Llm for OpenAi {
 impl LlmSession for Session {
     fn settings(&self) -> &Settings {
         Session::settings(self)
+    }
+
+    fn set_reasoning(&mut self, effort: Option<ReasoningEffort>) {
+        Session::set_reasoning(self, effort);
     }
 
     fn respond(
@@ -148,6 +157,10 @@ mod tests {
     impl LlmSession for Plain {
         fn settings(&self) -> &Settings {
             &self.0
+        }
+
+        fn set_reasoning(&mut self, effort: Option<ReasoningEffort>) {
+            self.0.reasoning = effort;
         }
 
         fn respond(&mut self, _: &[Message], _: Timestamp) -> EventStream {
