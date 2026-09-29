@@ -37,6 +37,8 @@ pub struct Change {
     /// The conventional commit type (`feat`), when the first line has
     /// one.
     pub kind: Option<String>,
+    /// The commit scope, else its type (`docs: …`), else none.
+    pub scope: Option<String>,
     /// The first line without its prefix. Empty when the change has no
     /// description.
     pub subject: String,
@@ -60,12 +62,7 @@ impl ChangeLog {
             more: details.more,
         };
         for info in details.changes {
-            let (kind, scope, subject) = conventional(&info.description);
-            let change = Change {
-                kind,
-                subject,
-                info,
-            };
+            let change = Change::new(info);
             if change.info.working_copy {
                 log.working_copy = Some(change);
                 continue;
@@ -76,9 +73,11 @@ impl ChangeLog {
                 &mut log.stack
             };
             match runs.last_mut() {
-                Some(run) if run.scope == scope => run.changes.push(change),
+                Some(run) if run.scope == change.scope => {
+                    run.changes.push(change)
+                }
                 _ => runs.push(ScopeRun {
-                    scope,
+                    scope: change.scope.clone(),
                     changes: vec![change],
                 }),
             }
@@ -121,6 +120,25 @@ impl ChangeLog {
     pub fn change(&self, change_id: &str) -> Option<&Change> {
         self.changes()
             .find(|change| change.info.change_id == change_id)
+    }
+}
+
+impl Change {
+    /// Reads the first line's conventional commit prefix.
+    pub fn new(info: ChangeInfo) -> Self {
+        let (kind, scope, subject) = conventional(&info.description);
+        Self {
+            info,
+            kind,
+            scope,
+            subject,
+        }
+    }
+
+    /// The first eight letters of the change id, enough to pass back.
+    pub fn short_id(&self) -> &str {
+        let id = &self.info.change_id;
+        &id[..id.len().min(8)]
     }
 }
 

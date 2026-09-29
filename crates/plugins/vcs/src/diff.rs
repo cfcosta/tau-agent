@@ -17,13 +17,13 @@ use jj_lib::{
     tree_merge::MergeOptions,
 };
 use pollster::block_on;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The most bytes of diff text a tool returns: 50 KiB, as `tau-tools`.
 pub const MAX_DIFF_BYTES: usize = 50 * 1024;
 
 /// How a path changed between two trees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChangeKind {
     Added,
@@ -43,7 +43,7 @@ impl ChangeKind {
 }
 
 /// One changed path.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileChange {
     pub path: String,
     pub kind: ChangeKind,

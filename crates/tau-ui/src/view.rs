@@ -22,7 +22,10 @@ use tau_ai::message::{
     UserContent,
 };
 
-use crate::change_log::{self, ChangeLog};
+use crate::{
+    change_diff::{self, ChangeDiff},
+    change_log::{self, ChangeLog},
+};
 
 /// One run, as the transcript, the inspector and the run list show it.
 #[derive(Debug, Clone, PartialEq)]
@@ -316,6 +319,10 @@ pub enum ToolBody {
     Output(Vec<String>),
     /// A `vcs_log` result, shown as the stack over trunk.
     Log(Box<ChangeLog>),
+    /// A `vcs_diff` result: the files, each opening to its hunks.
+    Files(Box<ChangeDiff>),
+    /// A `vcs_show` result: the message, ids and parent, then the files.
+    Commit(Box<ChangeDiff>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1756,6 +1763,22 @@ fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
         card.state = ToolState::Failed(first_line(&text));
         return;
     }
+    let vcs = [change_diff::DIFF_TOOL, change_diff::SHOW_TOOL]
+        .contains(&card.tool.as_str())
+        .then_some(output.details.as_ref())
+        .flatten()
+        .and_then(ChangeDiff::parse);
+    if let Some(diff) = vcs {
+        card.state = ToolState::Done {
+            summary: Some(diff.stat()),
+        };
+        card.body = if card.tool == change_diff::SHOW_TOOL {
+            ToolBody::Commit(Box::new(diff))
+        } else {
+            ToolBody::Files(Box::new(diff))
+        };
+        return;
+    }
     let diff = output
         .details
         .as_ref()
@@ -2281,6 +2304,58 @@ mod tests {
         };
         assert_eq!(log.stack[0].changes[0].subject, "a card");
         assert_eq!(log.trunk[0].scope.as_deref(), Some("docs"));
+    }
+
+    #[test]
+    fn a_show_reads_as_a_commit_and_a_diff_as_files() {
+        let mut view = view();
+        let change = json!({
+            "change_id": "onvkmqwo", "commit_id": "28b5b7a7",
+            "description": "feat(tau-ai): honor retry-after\n",
+            "empty": false, "conflict": false, "immutable": false,
+            "working_copy": false,
+        });
+        let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n\
+                    @@ -1 +1,2 @@\n-old\n+new\n+more\n";
+        for (id, tool) in [("c1", "vcs_show"), ("c2", "vcs_diff")] {
+            view.apply(&RunEvent::ToolStart {
+                run: run(),
+                call_id: id.into(),
+                tool: Arc::from(tool),
+                args: json!({ "change": "onvkmqwo" }),
+            });
+            view.apply(&RunEvent::ToolEnd {
+                run: run(),
+                call_id: id.into(),
+                output: Arc::new(ToolOutput {
+                    details: Some(json!({
+                        "change": change,
+                        "parents": [],
+                        "author": { "name": "tau", "email": "tau@localhost" },
+                        "files": [{ "path": "a.rs", "kind": "modified" }],
+                        "diff": diff,
+                        "truncated": false,
+                    })),
+                    ..ToolOutput::text(diff)
+                }),
+                is_error: false,
+            });
+        }
+        let show = view.tool("c1").expect("card");
+        assert_eq!(
+            show.state,
+            ToolState::Done {
+                summary: Some("+2 −1".into())
+            }
+        );
+        let ToolBody::Commit(commit) = &show.body else {
+            panic!("expected a commit, got {:?}", show.body);
+        };
+        assert_eq!(commit.change.subject, "honor retry-after");
+        assert!(matches!(
+            &view.tool("c2").expect("card").body,
+            ToolBody::Files(files) if files.files[0].hunks[0].lines.len() == 3
+        ));
     }
 
     #[test]

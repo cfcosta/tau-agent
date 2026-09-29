@@ -306,11 +306,9 @@ fn change_row(
         .child(short_id(change, t))
 }
 
-/// The first eight letters of the change id, enough to pass back.
-fn short_id(change: &Change, t: &Theme) -> Div {
-    let id = &change.info.change_id;
-    mono(id[..id.len().min(8)].to_owned(), Type::CAPTION, t.change)
-        .flex_shrink_0()
+/// The change's short id, in the change color.
+pub fn short_id(change: &Change, t: &Theme) -> Div {
+    mono(change.short_id().to_owned(), Type::CAPTION, t.change).flex_shrink_0()
 }
 
 /// The picked change: its whole description, ids and state.
