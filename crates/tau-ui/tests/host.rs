@@ -1145,6 +1145,88 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert!(stored().rules.is_empty());
 }
 
+/// A large `bash` output reaches the model pruned, with the whole of it
+/// archived in tau's directory for the repository, readable only by the
+/// user; the call's card says what was kept, live and from history.
+#[test]
+fn a_large_output_is_pruned_into_tau_s_archive() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    // Under bash's 2,000 lines and 50 KB, so nothing spills, and over
+    // output pruning's 10,000 estimated tokens.
+    let command = "for i in $(seq 1 1200); do \
+                   echo \"::::::::::::::::::::::::: line $i\"; done";
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("bash", serde_json::json!({ "command": command }))
+        })
+        .turn(|t| t.text("built"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(Store::memory()).unwrap();
+    let (host, mut events) = Host::with_agent(
+        runtime,
+        Agent::new(llm).name("coder"),
+        store,
+        config_on(dir.path(), data.path()),
+    );
+    // Jev finds every chunk it is asked about disposable: the first
+    // and last stay anyway.
+    let host = host
+        .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.0)));
+    let status = host
+        .catalog()
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.name == tau_fast_compaction::NAME)
+        .expect("fast compaction runs with Jev");
+    assert!(status.description.contains("bash outputs"), "{status:?}");
+
+    let mut view = host.start("build it", &ModelChoice::default(), "").unwrap();
+    for event in until_end(&mut events) {
+        view.apply(&event);
+    }
+    wait_until_done(&host, &view.id);
+    let cut_of = |view: &tau_ui::view::RunView| {
+        view.items.iter().find_map(|item| match item {
+            Item::Tool(card) if card.tool == "bash" => card.cut.clone(),
+            _ => None,
+        })
+    };
+    let cut = cut_of(&view).expect("the card says what was cut");
+    // And the empty one after the last newline.
+    assert_eq!(cut.lines, 1201);
+    assert!(cut.kept < cut.lines / 10, "{cut:?}");
+    let archive = Path::new(&cut.archive);
+    assert!(
+        archive.starts_with(data.path().join("repos")),
+        "{} is not in tau's directory",
+        archive.display()
+    );
+    assert!(archive.parent().unwrap().ends_with("archive"));
+    let mode = |path: &Path| {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    };
+    assert_eq!(mode(archive), 0o600);
+    assert_eq!(mode(archive.parent().unwrap()), 0o700);
+    let whole = std::fs::read_to_string(archive).unwrap();
+    assert!(whole.contains(":: line 600\n"));
+    assert!(
+        view.plugins
+            .iter()
+            .any(|plugin| plugin.name == tau_fast_compaction::NAME
+                && plugin.state.contains("large outputs")),
+        "{:?}",
+        view.plugins
+    );
+
+    let history = host.history().unwrap();
+    assert_eq!(cut_of(&history[0]), Some(cut));
+}
+
 /// Every file under `dir`.
 fn walk(dir: &Path) -> impl Iterator<Item = std::path::PathBuf> {
     let mut stack = vec![dir.to_owned()];

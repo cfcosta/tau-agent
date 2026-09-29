@@ -1141,7 +1141,7 @@ pub fn catalog() -> Catalog {
             plugin("tau-reasoning", "Scores the job and picks the reasoning effort", &[Seam::Start], 0.004, Some(PluginScreen::Plan)),
             plugin("tau-memory", "Zettelkasten notes on docbert", &[Seam::Start, Seam::Tools, Seam::Finish], 0.212, Some(PluginScreen::Memory)),
             plugin("tau-constitution", "6 rules on edit, write, bash and the final answer", &[Seam::BeforeTool, Seam::BeforeStop], 0.031, Some(PluginScreen::Constitution)),
-            plugin("tau-fast-compaction", "Prunes stale tool history with Jev", &[Seam::Start, Seam::Rewrite], 0.046, Some(PluginScreen::Ledger)),
+            plugin("tau-fast-compaction", "Prunes large bash outputs as they arrive, and stale tool history, with Jev", &[Seam::Start, Seam::Rewrite], 0.046, Some(PluginScreen::Ledger)),
             plugin("tau-compaction", "Summarizes when pruning is not enough", &[Seam::Start, Seam::Rewrite], 0.061, Some(PluginScreen::Ledger)),
             plugin("tau-tools", "read bash edit write grep find ls", &[Seam::Tools], 0.0, None),
         ],
@@ -2201,12 +2201,34 @@ pub fn script() -> Vec<Step> {
     );
 
     s.turn();
-    s.tool(
-        800,
+    // Output pruning trims the test run's log before the model sees it.
+    s.start_tool(
         "c7",
         "bash",
         json!({ "command": "cargo nextest run -p tau-ai" }),
-        lines(40),
+    );
+    let archive = "/home/you/.local/share/tau/repos/tau-agent-3f2a91c0/\
+                   archive/tau-output-41822-1790716482-0.txt";
+    s.report(
+        tau_fast_compaction::NAME,
+        json!({
+            "kind": "output", "call_id": "c7", "lines": 4810,
+            "chunks": 200, "kept": 9, "dropped_lines": 4598,
+            "segments": 1, "requests": 2, "tokens_before": 14_200,
+            "tokens_after": 1_100, "pruned": true, "archive": archive,
+        }),
+    );
+    s.end_tool(
+        800,
+        "c7",
+        ToolOutput::text(format!(
+            "{}\n    Starting 212 tests across 9 binaries\n\
+             [4598 lines omitted]\n\
+             \x20       PASS [   0.004s] tau-ai retry::tests::server_hint_parses_dates\n\
+             \x20    Summary [  41.207s] 212 tests run: 212 passed, 0 skipped\n\n\
+             [full output: {archive} (read or grep it if needed)]",
+            tau_fast_compaction::output::HEADER
+        )),
     );
     s.tool(
         300,

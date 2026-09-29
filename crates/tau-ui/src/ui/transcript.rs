@@ -599,6 +599,49 @@ fn tool(
         _ => None,
     };
 
+    // What output pruning cut from the result, and the file that holds
+    // the whole output, which opens with the system's application.
+    let cut = card.cut.as_ref().filter(|_| !dropped).map(|cut| {
+        let path = std::path::PathBuf::from(&cut.archive);
+        div()
+            .flex()
+            .items_center()
+            .gap(sp(2.))
+            .min_w(px(0.))
+            .px(sp(3.))
+            .py(sp(1.5))
+            .border_t_1()
+            .border_color(t.border)
+            .child(
+                mono(
+                    format!("{} · full output", cut.label()),
+                    Type::MICRO,
+                    t.dim,
+                )
+                .flex_shrink_0(),
+            )
+            .when(!compact, |row| {
+                row.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "archive-{}",
+                            card.call_id
+                        )))
+                        .flex_1()
+                        .min_w(px(0.))
+                        .cursor_pointer()
+                        .hover(|style| style.underline())
+                        .child(
+                            mono(cut.archive.clone(), Type::MICRO, t.blue)
+                                .truncate(),
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.open_with_system(&path)
+                        })),
+                )
+            })
+    });
+
     div()
         .flex()
         .flex_col()
@@ -614,6 +657,7 @@ fn tool(
             }),
         )
         .children(body)
+        .children(cut)
 }
 
 /// A finished fork, waiting in its parent's chat: what it is, and Land

@@ -316,8 +316,30 @@ pub struct ToolCard {
     pub checks: Vec<String>,
     /// What context pruning did to this call, if anything.
     pub pruned: Option<Pruned>,
+    /// What output pruning cut from the call's result, when it did.
+    pub cut: Option<OutputCut>,
     /// Characters the call's arguments and result take in the context.
     pub size: usize,
+}
+
+/// A result fast compaction pruned as it arrived: the lines the model
+/// saw of the whole output, and the file holding the whole of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputCut {
+    pub kept: usize,
+    pub lines: usize,
+    pub archive: String,
+}
+
+impl OutputCut {
+    /// `kept 212 of 4,810 lines`.
+    pub fn label(&self) -> String {
+        format!(
+            "kept {} of {} lines",
+            grouped(self.kept),
+            grouped(self.lines)
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -780,6 +802,7 @@ impl RunView {
                                 from_plugin: None,
                                 checks: Vec::new(),
                                 pruned: None,
+                                cut: None,
                                 size: 0,
                             }))
                         }
@@ -1088,6 +1111,7 @@ impl RunView {
                 from_plugin: None,
                 checks: Vec::new(),
                 pruned: None,
+                cut: None,
                 size: 0,
             })),
             RunEvent::ToolUpdate {
@@ -1403,7 +1427,11 @@ impl RunView {
             return;
         }
         if plugin == tau_fast_compaction::NAME {
-            self.ledger_report(body);
+            if body["kind"] == "output" {
+                self.output_report(body);
+            } else {
+                self.ledger_report(body);
+            }
             return;
         }
         if plugin == tau_goal::NAME {
@@ -1634,6 +1662,26 @@ impl RunView {
                     .collect(),
             },
         });
+    }
+
+    /// Output pruning's report on one call: when it replaced the result,
+    /// the call's card says what it kept and where the whole output is.
+    fn output_report(&mut self, body: &Value) {
+        let Ok(stats) = serde_json::from_value::<
+            tau_fast_compaction::OutputStats,
+        >(body.clone()) else {
+            return;
+        };
+        let Some(archive) = stats.archive.filter(|_| stats.pruned) else {
+            return;
+        };
+        if let Some(card) = self.tool_mut(&stats.call_id) {
+            card.cut = Some(OutputCut {
+                kept: stats.lines.saturating_sub(stats.dropped_lines),
+                lines: stats.lines,
+                archive,
+            });
+        }
     }
 
     /// The pruning plugin's ledger: each tool call in the run, with what
@@ -2033,6 +2081,19 @@ pub fn diff_stat(lines: &[DiffLine]) -> String {
     format!("+{added} −{removed}")
 }
 
+/// `4810` as `4,810`.
+pub fn grouped(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 /// `184000` as `184k`.
 pub fn tokens(count: u64) -> String {
     match count {
@@ -2163,6 +2224,125 @@ mod tests {
         view.apply_goal(&Record::Cleared);
         assert!(view.goal.is_none());
         assert!(view.plugins.iter().all(|s| s.name != tau_goal::NAME));
+    }
+
+    /// fast-compaction's report on a pruned `bash` output, as it
+    /// reports and records it.
+    fn output_report(pruned: bool) -> Value {
+        json!({
+            "kind": "output", "call_id": "c1", "lines": 4810, "chunks": 200,
+            "kept": 9, "dropped_lines": 4598, "segments": 1, "requests": 2,
+            "tokens_before": 12000, "tokens_after": 900, "pruned": pruned,
+            "archive": pruned.then_some("/data/tau/repos/app/archive/tau-output-1.txt")
+        })
+    }
+
+    #[test]
+    fn a_pruned_output_shows_on_its_card() {
+        let mut view = view();
+        view.apply(&RunEvent::ToolStart {
+            run: run(),
+            call_id: "c1".into(),
+            tool: "bash".into(),
+            args: json!({"command": "cargo build"}),
+        });
+        view.apply(&RunEvent::PluginReport {
+            run: run(),
+            plugin: tau_fast_compaction::NAME.into(),
+            body: output_report(true),
+        });
+        view.apply(&RunEvent::ToolEnd {
+            run: run(),
+            call_id: "c1".into(),
+            output: Arc::new(ToolOutput::text("pruned")),
+            is_error: false,
+        });
+        let Some(Item::Tool(card)) = view.items.last() else {
+            panic!("a card")
+        };
+        let cut = card.cut.clone().unwrap();
+        assert_eq!(cut.label(), "kept 212 of 4,810 lines");
+        assert_eq!(cut.archive, "/data/tau/repos/app/archive/tau-output-1.txt");
+        // Neither the ledger nor the card's context pruning changed.
+        assert!(view.ledger.is_empty());
+        assert_eq!(card.pruned, None);
+
+        // Jev looked, but the result stayed: nothing to say on the card.
+        let mut view = self::view();
+        view.apply(&RunEvent::ToolStart {
+            run: run(),
+            call_id: "c1".into(),
+            tool: "bash".into(),
+            args: json!({"command": "cargo build"}),
+        });
+        view.apply(&RunEvent::PluginReport {
+            run: run(),
+            plugin: tau_fast_compaction::NAME.into(),
+            body: output_report(false),
+        });
+        let Some(Item::Tool(card)) = view.items.last() else {
+            panic!("a card")
+        };
+        assert_eq!(card.cut, None);
+    }
+
+    #[test]
+    fn a_pruned_output_shows_on_its_card_from_history() {
+        let message = |value: Value| -> Message {
+            serde_json::from_value(value).unwrap()
+        };
+        let usage = json!({"input": 0, "output": 0, "cacheRead": 0,
+            "cacheWrite": 0, "totalTokens": 0,
+            "cost": {"input": 0, "output": 0, "cacheRead": 0,
+                     "cacheWrite": 0, "total": 0}});
+        let assistant = |content: Value, stop: &str| {
+            message(json!({
+                "role": "assistant", "content": content, "api": "responses",
+                "provider": "openai", "model": "m", "usage": usage,
+                "stopReason": stop, "timestamp": 0
+            }))
+        };
+        // The record is written as the tool runs, before the turn's
+        // messages.
+        let view = RunView::from_timeline(
+            run(),
+            "t",
+            "a",
+            "gpt-6-sol",
+            &[
+                Stored::Message(message(json!({
+                    "role": "user", "content": "fix the build", "timestamp": 0
+                }))),
+                Stored::Record {
+                    plugin: tau_fast_compaction::NAME.into(),
+                    body: output_report(true),
+                },
+                Stored::Message(assistant(
+                    json!([{"type": "toolCall", "id": "c1", "name": "bash",
+                            "arguments": {"command": "cargo build"}}]),
+                    "toolUse",
+                )),
+                Stored::Message(message(json!({
+                    "role": "toolResult", "toolCallId": "c1",
+                    "toolName": "bash",
+                    "content": [{"type": "text", "text": "pruned"}],
+                    "isError": false, "timestamp": 0
+                }))),
+                Stored::Message(assistant(
+                    json!([{"type": "text", "text": "done"}]),
+                    "stop",
+                )),
+            ],
+        );
+        let cut = view
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Tool(card) => card.cut.clone(),
+                _ => None,
+            })
+            .expect("the card says what was cut");
+        assert_eq!(cut.label(), "kept 212 of 4,810 lines");
     }
 
     #[test]
@@ -2700,6 +2880,10 @@ mod tests {
     #[test]
     fn numbers_read_the_way_the_mockups_write_them() {
         assert_eq!(tokens(184_000), "184k");
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(212), "212");
+        assert_eq!(grouped(4_810), "4,810");
+        assert_eq!(grouped(1_234_567), "1,234,567");
         assert_eq!(usd(0.184), "$0.184");
         assert_eq!(usd(2.0), "$2.00");
         assert_eq!(clock(Duration::from_secs(192)), "3:12");

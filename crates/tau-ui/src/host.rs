@@ -924,7 +924,9 @@ impl Host {
         if self.jev().is_some() {
             plugins.push(PluginInfo {
                 name: tau_fast_compaction::NAME.into(),
-                description: "Prunes stale tool history with Jev".into(),
+                description: "Prunes large bash outputs as they arrive, and \
+                              stale tool history, with Jev"
+                    .into(),
                 seams: vec![Seam::Start, Seam::Rewrite],
                 spend: 0.0,
                 screen: Some(PluginScreen::Ledger),
@@ -1109,6 +1111,7 @@ impl Host {
             let settings = tau_fast_compaction::Settings {
                 context_window: find(&choice.model)
                     .map(|model| model.context_window),
+                archive_dir: self.archive_dir(repo),
                 ..tau_fast_compaction::Settings::default()
             };
             agent = agent.plugin(
@@ -1201,6 +1204,21 @@ impl Host {
             spent: meter.spent,
             failed: meter.failed,
         })
+    }
+
+    /// Where fast compaction archives what it prunes, for the model to
+    /// read back: in tau's directory for the repository, only the user
+    /// can open it, so archives outlive the temporary directory's
+    /// cleanups and stay private. Made on first use; one that cannot be
+    /// made fails only the archiving, which leaves the output whole.
+    fn archive_dir(&self, repo: &RepoSlot) -> PathBuf {
+        use std::os::unix::fs::DirBuilderExt as _;
+        let dir = self.config.project_dir_of(&repo.path).join("archive");
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir);
+        dir
     }
 
     /// Where a repository's memory notes are kept: in tau's directory for
@@ -1963,7 +1981,7 @@ impl Host {
         if self.jev().is_some() {
             view.plugins.push(PluginStatus {
                 name: tau_fast_compaction::NAME.into(),
-                state: "watching the window".into(),
+                state: "pruning large outputs · watching the window".into(),
                 tone: Tone::Quiet,
             });
         }
@@ -3192,6 +3210,15 @@ async fn stored_view(
             {
                 serde_json::from_str(&body)
                     .ok()
+                    .map(|body| Stored::Record { plugin, body })
+            }
+            // What output pruning cut, for the call's card.
+            Entry::Plugin { plugin, body }
+                if plugin == tau_fast_compaction::NAME =>
+            {
+                serde_json::from_str::<serde_json::Value>(&body)
+                    .ok()
+                    .filter(|body| body["kind"] == "output")
                     .map(|body| Stored::Record { plugin, body })
             }
             _ => None,
