@@ -14,31 +14,20 @@ use tau_ai::responses::request::ReasoningEffort;
 pub enum Effort {
     /// The model's default, or what a reasoning plugin picks.
     Auto,
+    None,
     Minimal,
     Low,
     Medium,
     High,
     Xhigh,
+    Max,
 }
 
 impl Effort {
-    pub const ALL: [Self; 6] = [
-        Self::Auto,
-        Self::Minimal,
-        Self::Low,
-        Self::Medium,
-        Self::High,
-        Self::Xhigh,
-    ];
-
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Minimal => "minimal",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Xhigh => "xhigh",
+        match self.reasoning() {
+            Some(effort) => effort.as_str(),
+            None => "auto",
         }
     }
 
@@ -46,11 +35,41 @@ impl Effort {
     pub fn reasoning(self) -> Option<ReasoningEffort> {
         match self {
             Self::Auto => None,
+            Self::None => Some(ReasoningEffort::None),
             Self::Minimal => Some(ReasoningEffort::Minimal),
             Self::Low => Some(ReasoningEffort::Low),
             Self::Medium => Some(ReasoningEffort::Medium),
             Self::High => Some(ReasoningEffort::High),
             Self::Xhigh => Some(ReasoningEffort::Xhigh),
+            Self::Max => Some(ReasoningEffort::Max),
+        }
+    }
+
+    fn of(effort: ReasoningEffort) -> Self {
+        match effort {
+            ReasoningEffort::None => Self::None,
+            ReasoningEffort::Minimal => Self::Minimal,
+            ReasoningEffort::Low => Self::Low,
+            ReasoningEffort::Medium => Self::Medium,
+            ReasoningEffort::High => Self::High,
+            ReasoningEffort::Xhigh => Self::Xhigh,
+            ReasoningEffort::Max => Self::Max,
+        }
+    }
+
+    /// What `model` can run at: auto, then the efforts it takes, lowest
+    /// first. Only auto when it does not reason.
+    pub fn offered(model: &str) -> Vec<Self> {
+        std::iter::once(Self::Auto)
+            .chain(tau_ai::model::efforts(model).into_iter().map(Self::of))
+            .collect()
+    }
+
+    /// The effort named `label`, as [`Self::label`] spells it.
+    pub fn parse(label: &str) -> Option<Self> {
+        match label {
+            "auto" => Some(Self::Auto),
+            _ => ReasoningEffort::parse(label).map(Self::of),
         }
     }
 }
@@ -67,6 +86,17 @@ impl ModelChoice {
         Self {
             model: model.into(),
             effort,
+        }
+    }
+
+    /// The same choice, at auto when the model does not take its
+    /// effort: a switch of model, or a saved default, can leave one the
+    /// API would reject.
+    pub fn fitted(self) -> Self {
+        if Effort::offered(&self.model).contains(&self.effort) {
+            self
+        } else {
+            Self::new(self.model, Effort::Auto)
         }
     }
 

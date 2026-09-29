@@ -1672,7 +1672,7 @@ pub fn script() -> Vec<Step> {
             "kind": "chose", "effort": "high", "confidence": 0.84,
             "threshold": 0.7, "cost": 0.00002,
             "levels": [
-                { "effort": "minimal", "suits": "lookups", "p": 0.01 },
+                { "effort": "none", "suits": "no thought", "p": 0.01 },
                 { "effort": "low", "suits": "small edits", "p": 0.02 },
                 { "effort": "medium", "suits": "routine code", "p": 0.09 },
                 { "effort": "high", "suits": "refactors", "p": 0.84 },

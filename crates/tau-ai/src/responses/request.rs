@@ -39,7 +39,7 @@ pub struct ToolDefinition {
     pub strict: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ReasoningEffort {
     None,
     Minimal,
@@ -51,6 +51,22 @@ pub enum ReasoningEffort {
 }
 
 impl ReasoningEffort {
+    /// Every effort, lowest first.
+    pub const ALL: [Self; 7] = [
+        Self::None,
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::Xhigh,
+        Self::Max,
+    ];
+
+    /// The effort named `name`, as [`Self::as_str`] spells it.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|effort| effort.as_str() == name)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",

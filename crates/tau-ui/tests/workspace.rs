@@ -1411,3 +1411,37 @@ fn a_plugin_note_opens_and_closes(cx: &mut TestAppContext) {
         assert!(!ws.note_open(&run, 3));
     });
 }
+
+#[gpui::test]
+fn the_picker_offers_the_models_own_efforts(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_with_models(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::NewRun, cx);
+        ws.show_picker(PickerTarget::Next, cx);
+        ws.pick_model("gpt-6-sol", cx);
+        ws.show_picker(PickerTarget::Next, cx);
+        ws.pick_effort(Effort::Max, cx);
+        assert_eq!(
+            ws.next_model(),
+            &ModelChoice::new("gpt-6-sol", Effort::Max)
+        );
+        // gpt-5.5 stops at xhigh, so max gives way to auto.
+        ws.pick_model("gpt-5.5", cx);
+        // It costs more than the demo asks about.
+        ws.confirm_dialog(cx);
+        assert_eq!(ws.next_model(), &ModelChoice::new("gpt-5.5", Effort::Auto));
+    });
+    assert_eq!(
+        Effort::offered("gpt-6-sol"),
+        [
+            Effort::Auto,
+            Effort::None,
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::Xhigh,
+            Effort::Max
+        ]
+    );
+    assert_eq!(Effort::offered("gpt-4.1"), [Effort::Auto]);
+}

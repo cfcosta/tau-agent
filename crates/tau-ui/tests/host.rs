@@ -1127,3 +1127,18 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     assert_eq!(goal.max_continuations, 1);
     llm.assert_exhausted();
 }
+
+#[test]
+fn an_effort_the_model_does_not_take_runs_at_auto() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new().turn(|t| t.text("ok"));
+    let (host, mut events) = host_on(llm.clone(), dir.path());
+    // gpt-5.5 stops at xhigh; the API would reject max.
+    let max = ModelChoice::new("gpt-5.5", Effort::Max);
+    let run = host.start("rename a variable", &max, "").unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &run.id);
+    assert_eq!(llm.requests()[0].settings.reasoning, None);
+    let reasoning = run.plan.iter().find(|field| field.name == "reasoning");
+    assert_eq!(reasoning.unwrap().value, "auto");
+}

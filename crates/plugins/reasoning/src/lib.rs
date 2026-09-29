@@ -40,30 +40,35 @@ pub struct Level {
     pub suits: String,
 }
 
-/// The efforts Codex models support, lowest first.
-pub fn default_levels() -> Vec<Level> {
-    [
-        (
-            ReasoningEffort::Minimal,
-            "lookups, and answers that need no code",
-        ),
-        (ReasoningEffort::Low, "small, clear edits in one place"),
-        (ReasoningEffort::Medium, "routine code across a few files"),
-        (
-            ReasoningEffort::High,
-            "bugs to track down, refactors, designs across many files",
-        ),
-        (
-            ReasoningEffort::Xhigh,
-            "audits, proofs, subtle concurrency or invariants",
-        ),
-    ]
-    .into_iter()
-    .map(|(effort, suits)| Level {
-        effort,
-        suits: suits.to_owned(),
-    })
-    .collect()
+/// What each effort suits, in words Jev reads, lowest first.
+fn suits(effort: ReasoningEffort) -> &'static str {
+    match effort {
+        ReasoningEffort::None => "answers that need no thought",
+        ReasoningEffort::Minimal => "lookups, and answers that need no code",
+        ReasoningEffort::Low => "small, clear edits in one place",
+        ReasoningEffort::Medium => "routine code across a few files",
+        ReasoningEffort::High => {
+            "bugs to track down, refactors, designs across many files"
+        }
+        ReasoningEffort::Xhigh => {
+            "audits, proofs, subtle concurrency or invariants"
+        }
+        ReasoningEffort::Max => {
+            "the hardest problems, where more thought still pays"
+        }
+    }
+}
+
+/// The efforts `model` takes, lowest first, each with the work it
+/// suits.
+pub fn levels_for(model: &str) -> Vec<Level> {
+    tau_ai::model::efforts(model)
+        .into_iter()
+        .map(|effort| Level {
+            effort,
+            suits: suits(effort).to_owned(),
+        })
+        .collect()
 }
 
 /// What Jev answered, as the plugin reports and records it.
@@ -108,7 +113,8 @@ impl Choice {
 #[derive(Clone)]
 pub struct Reasoning {
     jev: Arc<dyn Jev>,
-    levels: Vec<Level>,
+    /// The efforts to choose from; `None` takes the run's model's.
+    levels: Option<Vec<Level>>,
     threshold: f64,
 }
 
@@ -116,15 +122,15 @@ impl Reasoning {
     pub fn new(jev: Arc<dyn Jev>) -> Self {
         Self {
             jev,
-            levels: default_levels(),
+            levels: None,
             threshold: DEFAULT_THRESHOLD,
         }
     }
 
-    /// The efforts to choose from, lowest first: those the model
-    /// supports.
+    /// The efforts to choose from, lowest first, in place of those the
+    /// run's model takes.
     pub fn levels(mut self, levels: Vec<Level>) -> Self {
-        self.levels = levels;
+        self.levels = Some(levels);
         self
     }
 
@@ -136,6 +142,7 @@ impl Reasoning {
     async fn choose(
         &self,
         plan: &RunPlan,
+        levels: &[Level],
         ctx: &PluginCtx,
     ) -> Result<(Choice, ReasoningEffort), String> {
         let instructions: String = plan
@@ -154,7 +161,7 @@ impl Reasoning {
             Question::score(
                 "How much reasoning does this task need from a coding \
                  agent? Pick the least that does it well.",
-                self.levels.iter().map(|level| level.suits.clone()),
+                levels.iter().map(|level| level.suits.clone()),
             ),
         );
         let response =
@@ -172,10 +179,10 @@ impl Reasoning {
         let p = |n: usize| {
             probabilities.get(&n.to_string()).copied().unwrap_or(0.0)
         };
-        let best = (0..self.levels.len())
+        let best = (0..levels.len())
             .max_by(|a, b| p(*a).total_cmp(&p(*b)))
             .ok_or("no levels to choose from")?;
-        let effort = self.levels[best].effort;
+        let effort = levels[best].effort;
         let choice = Choice {
             kind: if *confidence >= self.threshold {
                 "chose".into()
@@ -185,8 +192,7 @@ impl Reasoning {
             effort: effort.as_str().into(),
             confidence: *confidence,
             threshold: self.threshold,
-            levels: self
-                .levels
+            levels: levels
                 .iter()
                 .enumerate()
                 .map(|(n, level)| Scored {
@@ -216,7 +222,15 @@ impl Plugin for Reasoning {
         if plan.reasoning.is_some() {
             return Ok(Box::new(()));
         }
-        match self.choose(plan, ctx).await {
+        let levels = self
+            .levels
+            .clone()
+            .unwrap_or_else(|| levels_for(plan.model()));
+        // A model that does not reason has nothing to choose.
+        if levels.is_empty() {
+            return Ok(Box::new(()));
+        }
+        match self.choose(plan, &levels, ctx).await {
             Ok((choice, effort)) => {
                 if choice.kind == "chose" {
                     plan.reasoning = Some(effort);

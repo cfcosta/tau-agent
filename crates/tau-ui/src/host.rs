@@ -1281,6 +1281,8 @@ impl Host {
         repo: &str,
     ) -> anyhow::Result<RunView> {
         let repo = self.slot(repo).unwrap_or_else(|| self.home_slot());
+        // An effort the model does not take falls back to auto.
+        let choice = &choice.clone().fitted();
         let (agent, workspace) = self.agent_for_run(choice, &repo, None)?;
         let _guard = self.runtime.enter();
         let run = agent.start(prompt, &self.store);
@@ -1314,6 +1316,8 @@ impl Host {
                     "The run has no finished turn to fork from yet"
                 ),
             })?;
+        // An effort the model does not take falls back to auto.
+        let choice = &choice.clone().fitted();
         let (agent, workspace) = self.agent_for_run(choice, &repo, None)?;
         let _guard = self.runtime.enter();
         let forked = agent
@@ -1378,6 +1382,8 @@ impl Host {
             Some(name) => Some(name),
             None => self.link(run, None)?.map(|(_, link)| link.workspace),
         };
+        // An effort the model does not take falls back to auto.
+        let choice = &choice.clone().fitted();
         let (agent, workspace) =
             self.agent_for_run(choice, &repo, workspace)?;
         let _guard = self.runtime.enter();

@@ -324,7 +324,9 @@ recorded, and shows as the run's reasoning note and plan.
 - **How:**
   1. Put the input, and the start of the instructions, into the state.
   2. Ask one `Score` question whose levels describe the work each
-     effort suits. Keep the levels to the efforts the model supports.
+     effort suits. The levels are the efforts the run's model takes
+     (`tau_ai::model::efforts`), so Jev never picks one the API would
+     reject; a model that does not reason is not scored.
   3. If the answer is confident, set `plan.reasoning` to that level.
      Otherwise keep the agent's own setting, or a configured floor.
 - **Cost:** one Jev round trip (about 180 ms median) before the session

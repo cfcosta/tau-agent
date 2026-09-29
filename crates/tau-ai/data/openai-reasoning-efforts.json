@@ -1,0 +1,32 @@
+{
+  "source": "tau's own, not pi's. Probed on 2026-09-28 by asking each model for an effort it may not take: the Responses API rejects one with 'Supported values are: …', through both an API key and a ChatGPT sign-in (Codex), which agree wherever both serve a model. A reasoning model missing here gets `fallback`, which every probed reasoning model but the pro ones accepts.",
+  "fallback": ["low", "medium", "high"],
+  "models": {
+    "gpt-5": ["minimal", "low", "medium", "high"],
+    "gpt-5-mini": ["minimal", "low", "medium", "high"],
+    "gpt-5-nano": ["minimal", "low", "medium", "high"],
+    "gpt-5-pro": ["high"],
+    "gpt-5.1": ["none", "low", "medium", "high"],
+    "gpt-5.2": ["none", "low", "medium", "high", "xhigh"],
+    "gpt-5.2-pro": ["medium", "high", "xhigh"],
+    "gpt-5.3-codex": ["none", "low", "medium", "high", "xhigh"],
+    "gpt-5.4": ["none", "low", "medium", "high", "xhigh"],
+    "gpt-5.4-mini": ["none", "low", "medium", "high", "xhigh"],
+    "gpt-5.4-nano": ["none", "low", "medium", "high", "xhigh"],
+    "gpt-5.4-pro": ["medium", "high", "xhigh"],
+    "gpt-5.5": ["none", "low", "medium", "high", "xhigh"],
+    "gpt-5.5-pro": ["medium", "high", "xhigh"],
+    "gpt-5.6-luna": ["none", "low", "medium", "high", "xhigh", "max"],
+    "gpt-5.6-sol": ["none", "low", "medium", "high", "xhigh", "max"],
+    "gpt-5.6-terra": ["none", "low", "medium", "high", "xhigh", "max"],
+    "gpt-6-astra": ["low", "medium", "high", "xhigh", "max"],
+    "gpt-6-luna": ["none", "low", "medium", "high", "xhigh", "max"],
+    "gpt-6-sol": ["none", "low", "medium", "high", "xhigh", "max"],
+    "o1": ["low", "medium", "high"],
+    "o1-pro": ["low", "medium", "high"],
+    "o3": ["low", "medium", "high"],
+    "o3-mini": ["low", "medium", "high"],
+    "o3-pro": ["low", "medium", "high"],
+    "o4-mini": ["low", "medium", "high"]
+  }
+}

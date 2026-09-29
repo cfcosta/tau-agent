@@ -234,3 +234,26 @@ fn image_input_follows_modalities() {
     assert!(!images("o3-mini"));
     assert!(!images("gpt-4"));
 }
+
+/// Each model offers the efforts the API takes for it, as probed: no
+/// `minimal` past gpt-5, `max` only from gpt-5.6, and no `none` on
+/// gpt-6-astra.
+#[test]
+fn each_model_takes_its_own_efforts() {
+    use tau_ai::responses::request::ReasoningEffort::*;
+    let efforts = |id: &str| model::find(id).unwrap().efforts.clone();
+    assert_eq!(efforts("gpt-5"), [Minimal, Low, Medium, High]);
+    assert_eq!(efforts("gpt-5.5"), [None, Low, Medium, High, Xhigh]);
+    assert_eq!(efforts("gpt-6-luna"), [None, Low, Medium, High, Xhigh, Max]);
+    assert_eq!(efforts("gpt-6-astra"), [Low, Medium, High, Xhigh, Max]);
+    assert_eq!(efforts("gpt-5-pro"), [High]);
+    assert!(efforts("gpt-4.1").is_empty(), "it does not reason");
+    for model in model::models() {
+        assert_eq!(model.reasoning, !model.efforts.is_empty(), "{}", model.id);
+        assert!(
+            model.efforts.windows(2).all(|pair| pair[0] < pair[1]),
+            "{} lists its efforts lowest first",
+            model.id
+        );
+    }
+}

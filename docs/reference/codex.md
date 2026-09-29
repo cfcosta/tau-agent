@@ -113,10 +113,41 @@ and a two-turn run with a tool call continued on the same connection.
 
 ## Models
 
-`codex::MODELS` lists the models pi offers on Codex: `gpt-5.5`,
-`gpt-5.3-codex-spark`, `gpt-5.6-{luna,sol,terra}` and
+`codex::MODELS` lists the models pi offers on Codex, less
+`gpt-5.3-codex-spark`, which Codex refuses to ChatGPT accounts ("not
+supported when using Codex with a ChatGPT account", checked on
+2026-09-28): `gpt-5.5`, `gpt-5.6-{luna,sol,terra}` and
 `gpt-6-{astra,sol,luna}`. Their costs come from the API model table, as
 pi prices them; the subscription bills differently.
+
+## Reasoning efforts
+
+Each model takes its own efforts, and the server rejects any other
+with `unsupported_value`. `data/openai-reasoning-efforts.json` holds
+them, probed through both an API key and Codex on 2026-09-28; the two
+agree on every model they share. `Model::efforts` carries them, lowest
+first:
+
+| Models                                       | Efforts                             |
+| -------------------------------------------- | ----------------------------------- |
+| `gpt-5`, `gpt-5-mini`, `gpt-5-nano`          | minimal, low, medium, high          |
+| `gpt-5.1`                                    | none, low, medium, high             |
+| `gpt-5.2` to `gpt-5.5`, and their minis      | none, low, medium, high, xhigh      |
+| `gpt-5.6-{luna,sol,terra}`, `gpt-6-{luna,sol}` | none, low, medium, high, xhigh, max |
+| `gpt-6-astra`                                | low, medium, high, xhigh, max       |
+| the `-pro` models from `gpt-5.2`             | medium, high, xhigh                 |
+| `gpt-5-pro`                                  | high                                |
+| `o1`, `o3`, `o4-mini` and their variants     | low, medium, high                   |
+
+Codex's own model list (`GET /backend-api/codex/models`) leaves out
+`none`, which its server takes, and adds `ultra`, which it never sends:
+Codex turns `ultra` into the model's `max` (or its
+`multi_agent_reasoning_effort`) and has the model delegate to
+sub-agents on its own (`codex-rs/protocol/src/openai_models/reasoning_effort.rs`).
+tau offers no `ultra` until it has sub-agents to delegate to.
+
+An `error` frame from the server nests its `code` and `message` under
+`error`; pi's tests send them at the top. The stream reads either.
 
 ## Not ported
 

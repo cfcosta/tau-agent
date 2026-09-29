@@ -49,12 +49,12 @@ pub const ORIGINATOR: &str = "tau";
 /// without them.
 pub const DEFAULT_INSTRUCTIONS: &str = "You are a helpful assistant.";
 
-/// Models the Codex endpoint serves, as pi lists them. They are priced
-/// like their API versions, as pi prices them; the subscription bills
-/// differently.
-pub const MODELS: [&str; 8] = [
+/// Models the Codex endpoint serves, as pi lists them, less
+/// `gpt-5.3-codex-spark`: Codex refuses it to ChatGPT accounts. They are
+/// priced like their API versions, as pi prices them; the subscription
+/// bills differently.
+pub const MODELS: [&str; 7] = [
     "gpt-5.5",
-    "gpt-5.3-codex-spark",
     "gpt-5.6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",

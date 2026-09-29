@@ -25,12 +25,16 @@
 //!    models, replacing the base rate with the pinned `standardCosts`
 //!    entry when one exists.
 //! 6. Apply one-off `maxOutputFixes`.
+//! 7. Give each reasoning model the efforts it takes, from tau's own
+//!    `data/openai-reasoning-efforts.json`.
 //!
 //! Excluded ids are simply absent from [`models()`].
 
 use std::{collections::HashMap, sync::LazyLock};
 
 use serde::Deserialize;
+
+use crate::responses::request::ReasoningEffort;
 
 /// The vendored models.dev snapshot: `openai` provider models, reduced to
 /// the fields this module reads.
@@ -40,6 +44,10 @@ const VENDORED_MODELS_JSON: &str =
 /// pi's OpenAI-specific corrections on top of the models.dev snapshot.
 const OVERRIDES_JSON: &str = include_str!("../data/openai-overrides.json");
 
+/// The reasoning efforts each model takes, as probed against the API.
+const EFFORTS_JSON: &str =
+    include_str!("../data/openai-reasoning-efforts.json");
+
 /// One OpenAI model tau-agent can talk to over the Responses API.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model {
@@ -47,6 +55,9 @@ pub struct Model {
     pub name: String,
     /// Whether the model accepts a `reasoning` effort.
     pub reasoning: bool,
+    /// The efforts it takes, lowest first; empty when it does not
+    /// reason. Any other is rejected.
+    pub efforts: Vec<ReasoningEffort>,
     /// Whether the model accepts image input.
     pub images: bool,
     pub context_window: u64,
@@ -249,6 +260,33 @@ fn overrides() -> &'static Overrides {
     &OVERRIDES
 }
 
+#[derive(Debug, Deserialize)]
+struct Efforts {
+    fallback: Vec<String>,
+    models: HashMap<String, Vec<String>>,
+}
+
+fn efforts_of(id: &str, reasoning: bool) -> Vec<ReasoningEffort> {
+    static EFFORTS: LazyLock<Efforts> = LazyLock::new(|| {
+        serde_json::from_str(EFFORTS_JSON).expect(
+            "crates/tau-ai/data/openai-reasoning-efforts.json is malformed",
+        )
+    });
+    if !reasoning {
+        return Vec::new();
+    }
+    EFFORTS
+        .models
+        .get(id)
+        .unwrap_or(&EFFORTS.fallback)
+        .iter()
+        .map(|name| {
+            ReasoningEffort::parse(name)
+                .unwrap_or_else(|| panic!("unknown effort {name} for {id}"))
+        })
+        .collect()
+}
+
 fn build_models() -> Vec<Model> {
     let catalog: VendoredCatalog = serde_json::from_str(VENDORED_MODELS_JSON)
         .expect("crates/tau-ai/data/models-dev-openai.json is malformed");
@@ -322,6 +360,7 @@ fn build_model(id: String, raw: VendoredModel, overrides: &Overrides) -> Model {
     }
 
     Model {
+        efforts: efforts_of(&id, raw.reasoning),
         id,
         name: raw.name,
         reasoning: raw.reasoning,
@@ -344,6 +383,12 @@ static MODELS: LazyLock<Vec<Model>> = LazyLock::new(build_models);
 /// (see `data/openai-overrides.json`) are absent.
 pub fn models() -> &'static [Model] {
     &MODELS
+}
+
+/// The efforts `id` takes, lowest first: the table's, or for a model
+/// it does not know, the efforts every reasoning model takes.
+pub fn efforts(id: &str) -> Vec<ReasoningEffort> {
+    find(id).map_or_else(|| efforts_of(id, true), |model| model.efforts.clone())
 }
 
 /// Looks up a model by id.

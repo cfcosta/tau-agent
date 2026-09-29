@@ -34,11 +34,7 @@ impl Workspace {
             .plan
             .iter()
             .find(|field| field.name == "reasoning")
-            .and_then(|field| {
-                Effort::ALL
-                    .into_iter()
-                    .find(|effort| effort.label() == field.value)
-            })
+            .and_then(|field| Effort::parse(&field.value))
             .unwrap_or(Effort::Auto);
         ModelChoice::new(run.model.clone(), effort)
     }
@@ -119,7 +115,8 @@ impl Workspace {
         let choice = ModelChoice {
             model: option.id.clone(),
             ..self.choice_for(&target)
-        };
+        }
+        .fitted();
         if self.catalog.models.needs_confirm(id) {
             let limit =
                 self.catalog.models.settings.ask_above.unwrap_or_default();
@@ -340,7 +337,9 @@ impl Workspace {
         });
         let rows: Vec<AnyElement> = rows.collect();
         let empty = rows.is_empty();
-        let efforts = Effort::ALL.into_iter().map(|effort| {
+        let offered = Effort::offered(&choice.model);
+        let columns = if phone { 4 } else { offered.len() as u16 };
+        let efforts = offered.into_iter().map(|effort| {
             let on = effort == choice.effort;
             div()
                 .id(SharedString::from(format!("effort-{}", effort.label())))
@@ -465,7 +464,7 @@ impl Workspace {
                     .child(
                         div()
                             .grid()
-                            .grid_cols(if phone { 3 } else { 6 })
+                            .grid_cols(columns)
                             .gap(sp(1.))
                             .p(sp(1.))
                             .rounded(radius::BOX)

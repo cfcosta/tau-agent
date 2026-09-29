@@ -14,7 +14,7 @@ use tau_testing::{block_on, scripted::ScriptedModel};
 
 /// A Jev that scores every task with `probabilities` (one per level,
 /// lowest first) at `confidence`.
-fn jev(probabilities: [f64; 5], confidence: f64) -> FakeJev {
+fn jev<const N: usize>(probabilities: [f64; N], confidence: f64) -> FakeJev {
     FakeJev::new(move |request| {
         let probabilities: BTreeMap<String, f64> = probabilities
             .iter()
@@ -39,9 +39,17 @@ fn jev(probabilities: [f64; 5], confidence: f64) -> FakeJev {
     })
 }
 
-/// Runs a one-turn task and returns the effort the model was asked at,
-/// the plugin's reports, and what Jev was asked.
+/// Runs a one-turn task on gpt-6-sol and returns the effort the model
+/// was asked at, the plugin's reports, and what Jev was asked.
 fn run(
+    jev: FakeJev,
+    set: Option<ReasoningEffort>,
+) -> (Option<ReasoningEffort>, Vec<Value>, usize) {
+    run_on("gpt-6-sol", jev, set)
+}
+
+fn run_on(
+    model: &str,
     jev: FakeJev,
     set: Option<ReasoningEffort>,
 ) -> (Option<ReasoningEffort>, Vec<Value>, usize) {
@@ -49,6 +57,7 @@ fn run(
     let events: Vec<RunEvent> = block_on(async {
         let store = Store::memory().await.unwrap();
         let mut agent = Agent::new(llm.clone())
+            .model(model)
             .instructions("You are a coding agent.")
             .plugin(Reasoning::new(Arc::new(jev.clone())));
         if let Some(effort) = set {
@@ -75,21 +84,22 @@ fn run(
 #[test]
 fn a_confident_score_sets_the_effort() {
     let (asked, reports, calls) =
-        run(jev([0.01, 0.02, 0.09, 0.84, 0.04], 0.84), None);
+        run(jev([0.0, 0.01, 0.02, 0.84, 0.09, 0.04], 0.84), None);
     assert_eq!(asked, Some(ReasoningEffort::High));
     assert_eq!(calls, 1);
     let choice = Choice::parse(&reports[0]).unwrap();
     assert_eq!(choice.kind, "chose");
     assert_eq!(choice.effort, "high");
     assert_eq!(choice.chosen(), 3);
-    assert_eq!(choice.levels.len(), 5);
+    assert_eq!(choice.levels.len(), 6, "gpt-6-sol takes none to max");
     assert_eq!(choice.levels[3].p, 0.84);
     assert!(choice.cost > 0.0);
 }
 
 #[test]
 fn an_unsure_score_keeps_the_default() {
-    let (asked, reports, _) = run(jev([0.2, 0.2, 0.3, 0.2, 0.1], 0.3), None);
+    let (asked, reports, _) =
+        run(jev([0.1, 0.2, 0.3, 0.2, 0.1, 0.1], 0.3), None);
     assert_eq!(asked, None);
     let choice = Choice::parse(&reports[0]).unwrap();
     assert_eq!(
@@ -98,10 +108,45 @@ fn an_unsure_score_keeps_the_default() {
     );
 }
 
+/// Jev chooses among the efforts the run's model takes, and never one
+/// it would reject.
+#[test]
+fn the_levels_are_the_models_efforts() {
+    let efforts = |model: &str| {
+        let (_, reports, _) =
+            run_on(model, jev([1.0, 0.0, 0.0, 0.0, 0.0], 1.0), None);
+        Choice::parse(&reports[0])
+            .unwrap()
+            .levels
+            .into_iter()
+            .map(|level| level.effort)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        efforts("gpt-5.5"),
+        ["none", "low", "medium", "high", "xhigh"]
+    );
+    assert_eq!(
+        efforts("gpt-6-astra"),
+        ["low", "medium", "high", "xhigh", "max"]
+    );
+    let (asked, _, _) =
+        run_on("gpt-6-astra", jev([1.0, 0.0, 0.0, 0.0, 0.0], 1.0), None);
+    assert_eq!(asked, Some(ReasoningEffort::Low), "its lowest is low");
+}
+
+#[test]
+fn a_model_that_does_not_reason_is_not_scored() {
+    let (asked, reports, calls) =
+        run_on("gpt-4.1", jev([1.0, 0.0, 0.0], 1.0), None);
+    assert_eq!((asked, calls), (None, 0));
+    assert!(reports.is_empty());
+}
+
 #[test]
 fn a_chosen_effort_stands() {
     let (asked, reports, calls) = run(
-        jev([0.0, 0.0, 0.0, 1.0, 0.0], 1.0),
+        jev([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], 1.0),
         Some(ReasoningEffort::Low),
     );
     assert_eq!(asked, Some(ReasoningEffort::Low));
