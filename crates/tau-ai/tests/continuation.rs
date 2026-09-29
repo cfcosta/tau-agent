@@ -6,7 +6,10 @@ use std::collections::HashMap;
 use hegel::{TestCase, generators as gs};
 use serde_json::{Map, Value, json};
 use tau_ai::ws::proto::continuation::{self, Body, Continuation, RequestKind};
-use tau_testing::generators::{self, lane::LaneHistory};
+use tau_testing::generators::{
+    self,
+    lane::{LaneHistory, Turn, item, lane_history},
+};
 
 /// A request prepared from a JSON body, as a JSON body again.
 struct Prepared {
@@ -150,6 +153,22 @@ fn settings_change_forces_full_resend_body(tc: TestCase) {
     }
 }
 
+/// A lane history with two turns or more: [`lane_history`], with a turn
+/// added when it drew only one.
+#[hegel::composite]
+fn at_least_two_turns(tc: &TestCase) -> LaneHistory {
+    let mut history = tc.draw(lane_history());
+    if history.turns.len() < 2 {
+        let response_id = format!("{}_next", history.turns[0].response_id);
+        history.turns.push(Turn {
+            new_items: tc.draw(gs::vecs(item()).min_size(1).max_size(3)),
+            output_items: tc.draw(gs::vecs(item()).max_size(3)),
+            response_id,
+        });
+    }
+    history
+}
+
 /// Changing an item the server already holds (in the baseline) forces a
 /// full resend; the server still sees the full input.
 #[hegel::test(test_cases = 500)]
@@ -165,8 +184,7 @@ fn baseline_change_forces_full_resend_nightly(tc: TestCase) {
 }
 
 fn baseline_change_forces_full_resend_body(tc: TestCase) {
-    let history = tc.draw(generators::lane::lane_history());
-    tc.assume(history.turns.len() > 1); // one turn in six-sized histories
+    let history = tc.draw(at_least_two_turns());
     let at = tc.draw(
         gs::integers::<usize>()
             .min_value(1)

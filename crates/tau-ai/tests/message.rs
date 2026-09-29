@@ -2,11 +2,23 @@
 
 use hegel::TestCase;
 use serde_json::json;
-use tau_ai::message::{AssistantBlock, Message, StopReason};
+use tau_ai::message::{AssistantBlock, Message, StopReason, ToolResultMessage};
 use tau_testing::generators;
 
-/// Any message survives a JSON round trip unchanged.
+/// Any message survives a JSON round trip unchanged. The pinned case is
+/// a regression: an explicit `null` in `details` came back as an absent
+/// field.
 #[hegel::test(test_cases = 500)]
+#[hegel::explicit_test_case(
+    message = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "call_0".into(),
+        tool_name: "tool_0".into(),
+        content: vec![],
+        details: Some(serde_json::Value::Null),
+        is_error: false,
+        timestamp: 0,
+    }),
+)]
 fn message_json_round_trip(tc: TestCase) {
     let message = tc.draw(generators::message());
     let json = serde_json::to_string(&message).unwrap();

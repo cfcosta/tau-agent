@@ -841,6 +841,11 @@ fn lost_connection_ends_the_skip(tc: TestCase) {
 #[hegel::test(test_cases = 15)]
 fn concurrent_runs_stay_within_the_server_limits(tc: TestCase) {
     let lanes = tc.draw(gs::integers::<usize>().min_value(1).max_value(40));
+    if lanes <= 32 {
+        tc.event("over one connection");
+    } else {
+        tc.event("over two connections");
+    }
     let mut replies = Vec::new();
     for i in 0..lanes {
         let (_, reply) = respond(&tc, &format!("resp_{i}"));
