@@ -1912,9 +1912,13 @@ pub fn tokens(count: u64) -> String {
     }
 }
 
+/// Dollars to the cent, or to a tenth of one under a dollar: `$0.042`,
+/// `$1.00`, `$12.34`. The choice is made on the rounded amount, so
+/// `0.9996` reads `$1.00`, never `$1.000`.
 pub fn usd(amount: f64) -> String {
-    if amount < 1.0 {
-        format!("${amount:.3}")
+    let fine = format!("{amount:.3}");
+    if fine.parse::<f64>().is_ok_and(|rounded| rounded < 1.0) {
+        format!("${fine}")
     } else {
         format!("${amount:.2}")
     }
@@ -2196,6 +2200,80 @@ mod tests {
             body: serde_json::json!({"kind": "blocked"}),
         });
         assert_eq!(view.items.len(), before);
+    }
+
+    /// An amount shows three decimals exactly when it reads under a
+    /// dollar, and two otherwise, and is what it rounds to.
+    #[hegel::test(test_cases = 500)]
+    fn usd_shows_cents_from_a_dollar_up(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let amount = tc.draw(hegel::one_of!(
+            gs::floats::<f64>().min_value(0.0).max_value(2.0),
+            gs::floats::<f64>().min_value(0.99).max_value(1.0),
+            gs::floats::<f64>().min_value(0.0).max_value(1e6),
+        ));
+        let text = usd(amount);
+        let number = text.strip_prefix('$').expect("a dollar sign");
+        let (_, decimals) = number.split_once('.').expect("decimals");
+        let shown: f64 = number.parse().unwrap();
+        if shown < 1.0 {
+            assert_eq!(decimals.len(), 3, "{amount} as {text}");
+            assert!((shown - amount).abs() <= 0.0005 + 1e-9, "{text}");
+        } else {
+            assert_eq!(decimals.len(), 2, "{amount} as {text}");
+            assert!((shown - amount).abs() <= 0.005 + 1e-9, "{text}");
+        }
+    }
+
+    #[test]
+    fn usd_rounds_up_to_a_dollar_with_cents() {
+        assert_eq!(usd(0.9996), "$1.00");
+        assert_eq!(usd(0.9994), "$0.999");
+        assert_eq!(usd(1.0), "$1.00");
+        assert_eq!(usd(0.042), "$0.042");
+    }
+
+    /// Text however it streams in, split anywhere, shows as the text in
+    /// one delta would: pieces join until something else happens.
+    #[hegel::test]
+    fn text_split_anywhere_shows_as_one_delta(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        // Text, or a tool starting (`None`).
+        let parts: Vec<Option<String>> = tc
+            .draw(gs::vecs(gs::optional(gs::text().max_size(12))).max_size(6));
+        let tool = |n: usize| RunEvent::ToolStart {
+            run: run(),
+            call_id: format!("c{n}"),
+            tool: Arc::from("read"),
+            args: json!({ "path": "src/lib.rs" }),
+        };
+        let text = |delta: &str| RunEvent::TextDelta {
+            run: run(),
+            parent: None,
+            delta: delta.into(),
+        };
+        let (mut whole, mut split) = (view(), view());
+        for (n, part) in parts.iter().enumerate() {
+            let Some(part) = part else {
+                whole.apply(&tool(n));
+                split.apply(&tool(n));
+                continue;
+            };
+            whole.apply(&text(part));
+            // Cut at char boundaries, some pieces empty.
+            let bounds: Vec<usize> = (0..=part.len())
+                .filter(|at| part.is_char_boundary(*at))
+                .collect();
+            let mut cuts =
+                tc.draw(gs::vecs(gs::sampled_from(bounds)).max_size(4));
+            cuts.sort();
+            let mut from = 0;
+            for cut in cuts.into_iter().chain([part.len()]) {
+                split.apply(&text(&part[from..cut]));
+                from = cut;
+            }
+        }
+        assert_eq!(split.items, whole.items);
     }
 
     #[test]
