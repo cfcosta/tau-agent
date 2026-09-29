@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use common::pool_note;
 use hegel::{TestCase, generators as gs};
 use tau_memory::{
-    index::{B, Bm25, Index, K1, index_text},
+    index::{B, Bm25, Index, IndexError, K1, index_text},
     note::{By, Note, NoteType, Source},
     recall::{SUPERSEDED_WEIGHT, linked, recall},
     store::Notes,
@@ -229,11 +229,11 @@ fn recall_keeps_its_budget_and_follows_links(tc: TestCase) {
 struct Scored(Vec<(String, f32)>);
 
 impl Index for Scored {
-    fn upsert(&mut self, _: &str, _: &str) -> anyhow::Result<()> {
+    fn upsert(&mut self, _: &str, _: &str) -> Result<(), IndexError> {
         Ok(())
     }
 
-    fn remove(&mut self, _: &str) -> anyhow::Result<()> {
+    fn remove(&mut self, _: &str) -> Result<(), IndexError> {
         Ok(())
     }
 
@@ -241,7 +241,7 @@ impl Index for Scored {
         &self,
         _: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<(String, f32)>> {
+    ) -> Result<Vec<(String, f32)>, IndexError> {
         let mut hits = self.0.clone();
         hits.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         hits.truncate(limit);

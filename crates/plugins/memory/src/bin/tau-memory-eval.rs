@@ -10,17 +10,44 @@
 //! `--json` also writes every row to `PATH`. Embeddings are cached in
 //! `$XDG_CACHE_HOME/tau/memory-eval`, so a second run encodes nothing.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, process::ExitCode};
 
-use anyhow::{Context as _, bail};
 use tau_memory::{
     colbert::{Colbert, Shared},
     docbert::Docbert,
-    eval::{self, Hybrid, Leg},
+    eval::{self, EvalError, Hybrid, Leg},
     index::Bm25,
 };
 
-fn main() -> anyhow::Result<()> {
+/// Why the evaluation did not run, or stopped.
+#[derive(Debug, thiserror::Error)]
+enum CliError {
+    #[error("--json takes a path")]
+    NoPath,
+    #[error("unknown argument {0:?}; see the source's header")]
+    Unknown(String),
+    #[error(transparent)]
+    Eval(#[from] EvalError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("cannot write {}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("tau-memory-eval: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), CliError> {
     let mut keywords = false;
     let mut json = None;
     let mut args = std::env::args().skip(1);
@@ -28,13 +55,9 @@ fn main() -> anyhow::Result<()> {
         match arg.as_str() {
             "--keywords" => keywords = true,
             "--json" => {
-                json = Some(PathBuf::from(
-                    args.next().context("--json takes a path")?,
-                ))
+                json = Some(PathBuf::from(args.next().ok_or(CliError::NoPath)?))
             }
-            other => {
-                bail!("unknown argument {other:?}; see the source's header")
-            }
+            other => return Err(CliError::Unknown(other.to_owned())),
         }
     }
 
@@ -66,7 +89,7 @@ fn main() -> anyhow::Result<()> {
     print!("{}", eval::table(&report));
     if let Some(path) = json {
         std::fs::write(&path, serde_json::to_string_pretty(&report)?)
-            .with_context(|| format!("cannot write {}", path.display()))?;
+            .map_err(|source| CliError::Write { path, source })?;
     }
     Ok(())
 }

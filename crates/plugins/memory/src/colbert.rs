@@ -21,7 +21,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::index::Index;
+use crate::index::{Index, IndexError};
 
 /// One text as token vectors, each L2-normalized: `tokens × dim` values,
 /// row by row.
@@ -41,10 +41,26 @@ impl Tokens {
     }
 }
 
+/// Why an encoder could not embed text: its model would not load, or a
+/// tensor would not read back. Only docbert's model fails; without it
+/// there is no way to build one.
+#[derive(Debug, thiserror::Error)]
+pub enum EncoderError {
+    #[cfg(feature = "docbert")]
+    #[error(transparent)]
+    Model(#[from] docbert_pylate::ColbertError),
+    #[cfg(feature = "docbert")]
+    #[error(transparent)]
+    Tensor(#[from] candle_core::Error),
+}
+
 /// Turns text into ColBERT token vectors.
 pub trait Encoder: Send {
-    fn documents(&mut self, texts: &[String]) -> anyhow::Result<Vec<Tokens>>;
-    fn query(&mut self, text: &str) -> anyhow::Result<Tokens>;
+    fn documents(
+        &mut self,
+        texts: &[String],
+    ) -> Result<Vec<Tokens>, EncoderError>;
+    fn query(&mut self, text: &str) -> Result<Tokens, EncoderError>;
     /// Names the model, so a cache from another model is not reused.
     fn model(&self) -> &str;
 }
@@ -75,11 +91,14 @@ impl<E> Clone for Shared<E> {
 }
 
 impl<E: Encoder> Encoder for Shared<E> {
-    fn documents(&mut self, texts: &[String]) -> anyhow::Result<Vec<Tokens>> {
+    fn documents(
+        &mut self,
+        texts: &[String],
+    ) -> Result<Vec<Tokens>, EncoderError> {
         self.inner.lock().expect("not poisoned").documents(texts)
     }
 
-    fn query(&mut self, text: &str) -> anyhow::Result<Tokens> {
+    fn query(&mut self, text: &str) -> Result<Tokens, EncoderError> {
         self.inner.lock().expect("not poisoned").query(text)
     }
 
@@ -147,7 +166,7 @@ impl<E: Encoder> Colbert<E> {
         Some(dir.join(format!("{id}.{key:016x}.emb")))
     }
 
-    fn embed(&mut self, id: &str, text: &str) -> anyhow::Result<Tokens> {
+    fn embed(&mut self, id: &str, text: &str) -> Result<Tokens, IndexError> {
         let path = self.cache_path(id, text);
         if let Some(path) = &path
             && let Ok(tokens) = read_tokens(path)
@@ -157,7 +176,7 @@ impl<E: Encoder> Colbert<E> {
         let tokens = self
             .with_encoder(|encoder| encoder.documents(&[text.to_owned()]))?
             .pop()
-            .ok_or_else(|| anyhow::anyhow!("the encoder returned nothing"))?;
+            .ok_or(IndexError::NoTokens)?;
         if let Some(path) = path {
             // Older versions of this note's cache go; a failed write only
             // costs an encode next time.
@@ -172,13 +191,13 @@ impl<E: Encoder> Colbert<E> {
 }
 
 impl<E: Encoder> Index for Colbert<E> {
-    fn upsert(&mut self, id: &str, text: &str) -> anyhow::Result<()> {
+    fn upsert(&mut self, id: &str, text: &str) -> Result<(), IndexError> {
         let tokens = self.embed(id, text)?;
         self.embeddings.insert(id.to_owned(), tokens);
         Ok(())
     }
 
-    fn remove(&mut self, id: &str) -> anyhow::Result<()> {
+    fn remove(&mut self, id: &str) -> Result<(), IndexError> {
         self.embeddings.remove(id);
         if let Some(dir) = &self.cache {
             forget_cached(dir, id);
@@ -190,7 +209,7 @@ impl<E: Encoder> Index for Colbert<E> {
         &self,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<(String, f32)>> {
+    ) -> Result<Vec<(String, f32)>, IndexError> {
         self.semantic(query, limit)
     }
 }
@@ -201,7 +220,7 @@ impl<E: Encoder> Colbert<E> {
         &self,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<(String, f32)>> {
+    ) -> Result<Vec<(String, f32)>, IndexError> {
         if self.embeddings.is_empty() || query.trim().is_empty() {
             return Ok(Vec::new());
         }

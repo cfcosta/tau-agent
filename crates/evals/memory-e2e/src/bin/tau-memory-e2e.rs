@@ -3,11 +3,20 @@
 //!
 //! See [`USAGE`] for the flags.
 
-use std::{path::PathBuf, process::ExitCode, sync::Arc};
+use std::{
+    num::{ParseFloatError, ParseIntError},
+    path::PathBuf,
+    process::ExitCode,
+    sync::Arc,
+};
 
-use anyhow::{Context as _, bail};
-use tau_ai::{client::OpenAi, codex::CodexAuth, llm::Llm};
+use tau_ai::{
+    client::OpenAi,
+    codex::{CodexAuth, CodexError},
+    llm::Llm,
+};
 use tau_memory_e2e::{
+    E2eError,
     access::{self, Access},
     arm::{self, Arm},
     metrics::{self, Trial},
@@ -62,7 +71,48 @@ struct Options {
     help: bool,
 }
 
-fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Options> {
+/// Why the evaluation did not run, or stopped.
+#[derive(Debug, thiserror::Error)]
+enum CliError {
+    #[error("{0} takes a value; see --help")]
+    NoValue(String),
+    #[error("--trials takes a count: {0}")]
+    Trials(#[source] ParseIntError),
+    #[error("--max-turns takes a count: {0}")]
+    MaxTurns(#[source] ParseIntError),
+    #[error("--budget-usd takes dollars: {0}")]
+    Budget(#[from] ParseFloatError),
+    #[error("--budget-usd must be more than zero")]
+    NoBudget,
+    #[error("unknown argument {0:?}; see --help")]
+    Unknown(String),
+    #[error("no scenario is called {0:?}; see --list")]
+    NoScenario(String),
+    #[error("no arm is called {0:?}")]
+    NoArm(String),
+    #[error("{0:?} is not a variant: stable or changed")]
+    NoVariant(String),
+    #[error(
+        "no model access: set OPENAI_API_KEY, pass --codex PATH, or sign in \
+         with tau first. Nothing was run."
+    )]
+    NoAccess,
+    #[error("cannot read the sign-in at {}: {source}", path.display())]
+    SignIn { path: PathBuf, source: CodexError },
+    #[error("cannot write {}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Eval(#[from] E2eError),
+}
+
+fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, CliError> {
     let mut options = Options {
         scenarios: Vec::new(),
         arms: Vec::new(),
@@ -79,10 +129,8 @@ fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Options> {
         help: false,
     };
     while let Some(arg) = args.next() {
-        let mut value = || {
-            args.next()
-                .with_context(|| format!("{arg} takes a value; see --help"))
-        };
+        let mut value =
+            || args.next().ok_or_else(|| CliError::NoValue(arg.clone()));
         let split = |text: String| -> Vec<String> {
             text.split(',').map(|part| part.trim().to_owned()).collect()
         };
@@ -91,15 +139,13 @@ fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Options> {
             "--arm" => options.arms.extend(split(value()?)),
             "--variant" => options.variants.extend(split(value()?)),
             "--trials" => {
-                options.trials =
-                    value()?.parse().context("--trials takes a count")?
+                options.trials = value()?.parse().map_err(CliError::Trials)?
             }
             "--model" => options.model = Some(value()?),
             "--budget-usd" => {
-                let usd: f64 =
-                    value()?.parse().context("--budget-usd takes dollars")?;
+                let usd: f64 = value()?.parse()?;
                 if usd.is_nan() || usd <= 0.0 {
-                    bail!("--budget-usd must be more than zero");
+                    return Err(CliError::NoBudget);
                 }
                 options.budget = Some(usd);
             }
@@ -107,13 +153,13 @@ fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Options> {
             "--codex" => options.codex = Some(value()?.into()),
             "--max-turns" => {
                 options.max_turns =
-                    value()?.parse().context("--max-turns takes a count")?
+                    value()?.parse().map_err(CliError::MaxTurns)?
             }
             "--work" => options.work = Some(value()?.into()),
             "--keywords" => options.keywords = true,
             "--list" => options.list = true,
             "--help" | "-h" => options.help = true,
-            other => bail!("unknown argument {other:?}; see --help"),
+            other => return Err(CliError::Unknown(other.to_owned())),
         }
     }
     Ok(options)
@@ -123,13 +169,14 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("tau-memory-e2e: {error:#}");
+            // Every message carries its cause already.
+            eprintln!("tau-memory-e2e: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run() -> anyhow::Result<()> {
+fn run() -> Result<(), CliError> {
     let options = parse(std::env::args().skip(1))?;
     if options.help {
         print!("{USAGE}");
@@ -151,32 +198,29 @@ fn run() -> anyhow::Result<()> {
             .scenarios
             .iter()
             .map(|name| {
-                scenario::find(name).with_context(|| {
-                    format!("no scenario is called {name:?}; see --list")
-                })
+                scenario::find(name)
+                    .ok_or_else(|| CliError::NoScenario(name.clone()))
             })
-            .collect::<anyhow::Result<_>>()?;
+            .collect::<Result<_, _>>()?;
     }
     if !options.arms.is_empty() {
         config.arms = options
             .arms
             .iter()
             .map(|name| {
-                Arm::parse(name)
-                    .with_context(|| format!("no arm is called {name:?}"))
+                Arm::parse(name).ok_or_else(|| CliError::NoArm(name.clone()))
             })
-            .collect::<anyhow::Result<_>>()?;
+            .collect::<Result<_, _>>()?;
     }
     if !options.variants.is_empty() {
         config.variants = options
             .variants
             .iter()
             .map(|name| {
-                Variant::parse(name).with_context(|| {
-                    format!("{name:?} is not a variant: stable or changed")
-                })
+                Variant::parse(name)
+                    .ok_or_else(|| CliError::NoVariant(name.clone()))
             })
-            .collect::<anyhow::Result<_>>()?;
+            .collect::<Result<_, _>>()?;
     }
     config.trials = options.trials;
     config.max_turns = options.max_turns;
@@ -187,10 +231,7 @@ fn run() -> anyhow::Result<()> {
         std::env::var("OPENAI_API_KEY").ok(),
         access::config_dir().as_deref(),
     ) else {
-        bail!(
-            "no model access: set OPENAI_API_KEY, pass --codex PATH, or \
-             sign in with tau first. Nothing was run."
-        );
+        return Err(CliError::NoAccess);
     };
     config.model = options
         .model
@@ -211,11 +252,14 @@ fn run() -> anyhow::Result<()> {
         // Clients must be created inside the runtime.
         let _guard = runtime.enter();
         match &access {
-            Access::Codex(path) => Arc::new(OpenAi::codex(
-                CodexAuth::from_file(path).with_context(|| {
-                    format!("cannot read the sign-in at {}", path.display())
-                })?,
-            )),
+            Access::Codex(path) => {
+                Arc::new(OpenAi::codex(CodexAuth::from_file(path).map_err(
+                    |source| CliError::SignIn {
+                        path: path.clone(),
+                        source,
+                    },
+                )?))
+            }
             Access::ApiKey(key) => Arc::new(OpenAi::new(key.clone())),
         }
     };
@@ -268,8 +312,12 @@ fn run() -> anyhow::Result<()> {
         println!("stopped early: {why}");
     }
     if let Some(path) = &options.json {
-        std::fs::write(path, serde_json::to_string_pretty(&report)?)
-            .with_context(|| format!("cannot write {}", path.display()))?;
+        std::fs::write(path, serde_json::to_string_pretty(&report)?).map_err(
+            |source| CliError::Write {
+                path: path.clone(),
+                source,
+            },
+        )?;
     }
     Ok(())
 }

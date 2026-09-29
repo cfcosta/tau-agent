@@ -6,7 +6,7 @@
 use candle_core::Device;
 use docbert_pylate::ColBERT;
 
-use crate::colbert::{Encoder, Tokens};
+use crate::colbert::{Encoder, EncoderError, Tokens};
 
 /// docbert's default model.
 pub const MODEL: &str = "lightonai/GTE-ModernColBERT-v1";
@@ -28,7 +28,7 @@ impl Docbert {
         }
     }
 
-    fn model(&mut self) -> anyhow::Result<&mut ColBERT> {
+    fn model(&mut self) -> Result<&mut ColBERT, EncoderError> {
         if self.model.is_none() {
             let model: ColBERT = ColBERT::from(&self.model_id)
                 .with_device(Device::Cpu)
@@ -47,7 +47,10 @@ impl Default for Docbert {
 }
 
 impl Encoder for Docbert {
-    fn documents(&mut self, texts: &[String]) -> anyhow::Result<Vec<Tokens>> {
+    fn documents(
+        &mut self,
+        texts: &[String],
+    ) -> Result<Vec<Tokens>, EncoderError> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -73,7 +76,7 @@ impl Encoder for Docbert {
             .collect())
     }
 
-    fn query(&mut self, text: &str) -> anyhow::Result<Tokens> {
+    fn query(&mut self, text: &str) -> Result<Tokens, EncoderError> {
         let tensor = self.model()?.encode(&[text.to_owned()], true)?;
         let rows = tensor.squeeze(0)?.to_vec2::<f32>()?;
         Ok(Tokens {

@@ -9,14 +9,23 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::note::Note;
+use crate::{colbert::EncoderError, note::Note};
+
+/// Why an index could not take a note or answer a query.
+#[derive(Debug, thiserror::Error)]
+pub enum IndexError {
+    #[error(transparent)]
+    Encoder(#[from] EncoderError),
+    #[error("the encoder returned nothing")]
+    NoTokens,
+}
 
 /// Finds notes by what they say.
 pub trait Index: Send {
     /// Adds a note's text, or replaces it.
-    fn upsert(&mut self, id: &str, text: &str) -> anyhow::Result<()>;
+    fn upsert(&mut self, id: &str, text: &str) -> Result<(), IndexError>;
 
-    fn remove(&mut self, id: &str) -> anyhow::Result<()>;
+    fn remove(&mut self, id: &str) -> Result<(), IndexError>;
 
     /// Up to `limit` note ids for `query`, best first, with a score that
     /// only orders hits within one answer.
@@ -24,7 +33,7 @@ pub trait Index: Send {
         &self,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<(String, f32)>>;
+    ) -> Result<Vec<(String, f32)>, IndexError>;
 }
 
 /// What an index holds for a note: its title, description, tags and
@@ -82,7 +91,7 @@ impl Bm25 {
 }
 
 impl Index for Bm25 {
-    fn upsert(&mut self, id: &str, text: &str) -> anyhow::Result<()> {
+    fn upsert(&mut self, id: &str, text: &str) -> Result<(), IndexError> {
         self.forget(id);
         let mut counts: HashMap<String, u32> = HashMap::new();
         let mut len = 0;
@@ -98,7 +107,7 @@ impl Index for Bm25 {
         Ok(())
     }
 
-    fn remove(&mut self, id: &str) -> anyhow::Result<()> {
+    fn remove(&mut self, id: &str) -> Result<(), IndexError> {
         self.forget(id);
         Ok(())
     }
@@ -107,7 +116,7 @@ impl Index for Bm25 {
         &self,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<(String, f32)>> {
+    ) -> Result<Vec<(String, f32)>, IndexError> {
         let n = self.docs.len() as f32;
         if n == 0.0 {
             return Ok(Vec::new());

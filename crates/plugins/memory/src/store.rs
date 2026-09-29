@@ -8,7 +8,6 @@
 
 use std::{
     collections::BTreeMap,
-    fmt,
     fs,
     io,
     path::{Path, PathBuf},
@@ -19,39 +18,18 @@ use crate::note::{Link, LinkType, Note, NoteError, NoteType, is_id};
 const HISTORY: &str = ".history";
 
 /// Why a store operation failed.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum StoreError {
-    Io(io::Error),
-    Note(NoteError),
+    #[error("notes: {0}")]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Note(#[from] NoteError),
     /// No note has this id.
+    #[error("no note is called {0:?}")]
     Missing(String),
     /// A note with this id exists; writing it again needs an update.
+    #[error("a note is already called {0:?}")]
     Exists(String),
-}
-
-impl fmt::Display for StoreError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "notes: {error}"),
-            Self::Note(error) => write!(f, "{error}"),
-            Self::Missing(id) => write!(f, "no note is called {id:?}"),
-            Self::Exists(id) => write!(f, "a note is already called {id:?}"),
-        }
-    }
-}
-
-impl std::error::Error for StoreError {}
-
-impl From<io::Error> for StoreError {
-    fn from(error: io::Error) -> Self {
-        Self::Io(error)
-    }
-}
-
-impl From<NoteError> for StoreError {
-    fn from(error: NoteError) -> Self {
-        Self::Note(error)
-    }
 }
 
 /// A file in the notes directory that did not read as a note.

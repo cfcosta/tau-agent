@@ -7,7 +7,7 @@
 //! lower and are labelled, never hidden: history is often the answer.
 
 use crate::{
-    index::Index,
+    index::{Index, IndexError},
     note::{LinkType, NoteType},
     store::Notes,
 };
@@ -52,7 +52,7 @@ pub fn recall(
     index: &dyn Index,
     query: &str,
     budget: usize,
-) -> anyhow::Result<Vec<Hit>> {
+) -> Result<Vec<Hit>, IndexError> {
     recall_with(notes, index, query, budget, true)
 }
 
@@ -65,7 +65,7 @@ pub fn recall_with(
     query: &str,
     budget: usize,
     hops: bool,
-) -> anyhow::Result<Vec<Hit>> {
+) -> Result<Vec<Hit>, IndexError> {
     if budget == 0 {
         return Ok(Vec::new());
     }

@@ -17,14 +17,13 @@ use std::{
     path::Path,
 };
 
-use anyhow::{Context as _, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     Memory,
     colbert::{Colbert, Encoder},
-    index::{Bm25, Index, index_text},
-    memory::Draft,
+    index::{Bm25, Index, IndexError, index_text},
+    memory::{Draft, OpenError, WriteError},
     note::{By, LinkType, NoteType, Source},
     recall::recall_with,
     store::Notes,
@@ -82,8 +81,37 @@ pub struct Fact {
     pub indirect: Option<String>,
 }
 
-pub fn fixture() -> anyhow::Result<Fixture> {
-    let file = toml::from_str::<File>(FIXTURE).context("eval/harbor.toml")?;
+/// Why the evaluation could not build its corpus, or run.
+#[derive(Debug, thiserror::Error)]
+pub enum EvalError {
+    #[error("eval/harbor.toml: {0}")]
+    Fixture(#[from] toml::de::Error),
+    #[error("no note type {0:?}")]
+    NoteType(String),
+    /// A fact's template did not make a note.
+    #[error("{fact}: {source}")]
+    Fact {
+        fact: String,
+        source: Box<EvalError>,
+    },
+    #[error("the background has fewer than {0} notes")]
+    Background(usize),
+    #[error("{title:?}: {source}")]
+    Write { title: String, source: WriteError },
+    #[error("no fact is called {0:?}")]
+    NoFact(String),
+    #[error("{fact}: {source}")]
+    Link { fact: String, source: WriteError },
+    #[error(transparent)]
+    Open(#[from] OpenError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Index(#[from] IndexError),
+}
+
+pub fn fixture() -> Result<Fixture, EvalError> {
+    let file = toml::from_str::<File>(FIXTURE)?;
     Ok(Fixture {
         facts: file.fact,
         background: file.background,
@@ -110,9 +138,9 @@ fn draft(
     [title, description, body]: [&str; 3],
     subject: &str,
     value: &str,
-) -> anyhow::Result<Draft> {
+) -> Result<Draft, EvalError> {
     let kind = NoteType::parse(kind)
-        .ok_or_else(|| anyhow!("no note type {kind:?}"))?;
+        .ok_or_else(|| EvalError::NoteType(kind.to_owned()))?;
     Ok(Draft {
         kind,
         title: fill(title, subject, value),
@@ -147,7 +175,7 @@ fn pairs(
 impl Fixture {
     /// The first `n` background notes, taking a pair from each template
     /// in turn.
-    pub fn background(&self, n: usize) -> anyhow::Result<Vec<Draft>> {
+    pub fn background(&self, n: usize) -> Result<Vec<Draft>, EvalError> {
         let mut each: Vec<_> = self
             .background
             .iter()
@@ -176,7 +204,7 @@ impl Fixture {
                 }
             }
             if drafts.len() == before {
-                anyhow::bail!("the background has fewer than {n} notes");
+                return Err(EvalError::Background(n));
             }
         }
         Ok(drafts)
@@ -199,14 +227,21 @@ pub fn identifier(subject: &str) -> String {
 
 impl Fact {
     /// The note this fact's template makes of `subject` and `value`.
-    pub fn draft(&self, subject: &str, value: &str) -> anyhow::Result<Draft> {
+    pub fn draft(
+        &self,
+        subject: &str,
+        value: &str,
+    ) -> Result<Draft, EvalError> {
         draft(
             &self.kind,
             [&self.title, &self.description, &self.body],
             subject,
             value,
         )
-        .with_context(|| self.id.clone())
+        .map_err(|error| EvalError::Fact {
+            fact: self.id.clone(),
+            source: Box::new(error),
+        })
     }
 
     /// The subjects and values of this fact's `k` near-duplicates: its
@@ -273,7 +308,7 @@ pub fn corpus(
     dir: &Path,
     fixture: &Fixture,
     k: usize,
-) -> anyhow::Result<Corpus> {
+) -> Result<Corpus, EvalError> {
     let facts = &fixture.facts;
     let mut memory = Memory::open(dir, Box::new(Bm25::new()))?;
     let mut clock = 0;
@@ -283,7 +318,7 @@ pub fn corpus(
         memory
             .write(draft, clock)
             .map(|written| written.id)
-            .map_err(|error| anyhow!("{title:?}: {error}"))
+            .map_err(|source| EvalError::Write { title, source })
     };
     let mut answers = HashMap::new();
     let mut olders = HashMap::new();
@@ -313,7 +348,7 @@ pub fn corpus(
         answers
             .get(id)
             .cloned()
-            .ok_or_else(|| anyhow!("no fact is called {id:?}"))
+            .ok_or_else(|| EvalError::NoFact(id.to_owned()))
     };
     let mut queries = Vec::new();
     for fact in facts {
@@ -339,7 +374,10 @@ pub fn corpus(
                     fact.why.clone(),
                     clock + 1,
                 )
-                .map_err(|error| anyhow!("{}: {error}", fact.id))?;
+                .map_err(|source| EvalError::Link {
+                    fact: fact.id.clone(),
+                    source,
+                })?;
             if let Some(text) = &fact.indirect {
                 queries.push(Query {
                     fact: fact.id.clone(),
@@ -358,7 +396,10 @@ pub fn corpus(
 }
 
 /// Puts every note of `notes` into `index`, as a scope's open does.
-pub fn index_all(index: &mut dyn Index, notes: &Notes) -> anyhow::Result<()> {
+pub fn index_all(
+    index: &mut dyn Index,
+    notes: &Notes,
+) -> Result<(), IndexError> {
     for note in notes.iter() {
         index.upsert(&note.id, &index_text(note))?;
     }
@@ -382,7 +423,7 @@ pub fn evaluate(
     corpus: &Corpus,
     index: &dyn Index,
     hops: bool,
-) -> anyhow::Result<Vec<Outcome>> {
+) -> Result<Vec<Outcome>, IndexError> {
     corpus
         .queries
         .iter()
@@ -549,12 +590,12 @@ impl<E: Encoder> Hybrid<E> {
 }
 
 impl<E: Encoder> Index for Hybrid<E> {
-    fn upsert(&mut self, id: &str, text: &str) -> anyhow::Result<()> {
+    fn upsert(&mut self, id: &str, text: &str) -> Result<(), IndexError> {
         self.bm25.upsert(id, text)?;
         self.colbert.upsert(id, text)
     }
 
-    fn remove(&mut self, id: &str) -> anyhow::Result<()> {
+    fn remove(&mut self, id: &str) -> Result<(), IndexError> {
         self.bm25.remove(id)?;
         self.colbert.remove(id)
     }
@@ -563,7 +604,7 @@ impl<E: Encoder> Index for Hybrid<E> {
         &self,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<(String, f32)>> {
+    ) -> Result<Vec<(String, f32)>, IndexError> {
         let ids = |hits: Vec<(String, f32)>| -> Vec<String> {
             hits.into_iter().map(|(id, _)| id).collect()
         };
@@ -583,7 +624,7 @@ pub fn run(
     legs: &[Leg<'_>],
     work: &Path,
     mut progress: impl FnMut(usize),
-) -> anyhow::Result<Vec<Row>> {
+) -> Result<Vec<Row>, EvalError> {
     let mut report = Vec::new();
     for k in LEVELS {
         progress(k);

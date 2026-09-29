@@ -16,8 +16,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, bail};
 use serde::Serialize;
+
+use crate::E2eError;
 
 /// One task: what the agent is asked, how success is checked, and a
 /// solution by hand, which the tests hold the check to.
@@ -93,7 +94,7 @@ impl Variant {
 
 impl Scenario {
     /// Writes the repository into `dir`, which must be empty or absent.
-    pub fn setup(&self, dir: &Path) -> anyhow::Result<()> {
+    pub fn setup(&self, dir: &Path) -> Result<(), E2eError> {
         std::fs::create_dir_all(dir)?;
         for (path, text) in self.files {
             let path = dir.join(path);
@@ -101,14 +102,18 @@ impl Scenario {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&path, text)
-                .with_context(|| format!("cannot write {}", path.display()))?;
+                .map_err(|source| E2eError::Write { path, source })?;
         }
         run_script(dir, self.init)
     }
 
     /// What lies between the runs: build outputs go, as in a fresh
     /// checkout, and in the changed variant the fact changes.
-    pub fn between(&self, dir: &Path, variant: Variant) -> anyhow::Result<()> {
+    pub fn between(
+        &self,
+        dir: &Path,
+        variant: Variant,
+    ) -> Result<(), E2eError> {
         for output in self.outputs {
             let path = dir.join(output);
             if path.is_dir() {
@@ -124,12 +129,12 @@ impl Scenario {
     }
 
     /// Whether the second task is done in `dir`.
-    pub fn second_done(&self, dir: &Path) -> anyhow::Result<bool> {
+    pub fn second_done(&self, dir: &Path) -> Result<bool, E2eError> {
         check(dir, self.second.check)
     }
 
     /// Whether the first task is done in `dir`.
-    pub fn first_done(&self, dir: &Path) -> anyhow::Result<bool> {
+    pub fn first_done(&self, dir: &Path) -> Result<bool, E2eError> {
         check(dir, self.first.check)
     }
 
@@ -151,26 +156,27 @@ pub fn find(name: &str) -> Option<&'static Scenario> {
 pub const SCRIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Runs a bash script in `dir`; fails with its output unless it exits 0.
-pub fn run_script(dir: &Path, script: &str) -> anyhow::Result<()> {
+pub fn run_script(dir: &Path, script: &str) -> Result<(), E2eError> {
     let (ok, output) = bash(dir, script)?;
     if !ok {
-        bail!(
-            "the script failed in {}:\n{script}\n{output}",
-            dir.display()
-        );
+        return Err(E2eError::Script {
+            dir: dir.to_owned(),
+            script: script.to_owned(),
+            output,
+        });
     }
     Ok(())
 }
 
 /// Whether a check script exits 0 in `dir`.
-pub fn check(dir: &Path, script: &str) -> anyhow::Result<bool> {
+pub fn check(dir: &Path, script: &str) -> Result<bool, E2eError> {
     Ok(bash(dir, script)?.0)
 }
 
 /// Runs `script` with bash in `dir`, in a bare environment (only `PATH`
 /// and `HOME` kept, the C locale), for at most [`SCRIPT_TIMEOUT`].
 /// Returns whether it exited 0, and what it printed.
-fn bash(dir: &Path, script: &str) -> anyhow::Result<(bool, String)> {
+fn bash(dir: &Path, script: &str) -> Result<(bool, String), E2eError> {
     let mut command = Command::new("bash");
     command
         .arg("-c")
@@ -186,7 +192,7 @@ fn bash(dir: &Path, script: &str) -> anyhow::Result<(bool, String)> {
             command.env(kept, value);
         }
     }
-    let mut child = command.spawn().context("cannot run bash")?;
+    let mut child = command.spawn().map_err(E2eError::Bash)?;
     // Read both pipes while waiting, so a chatty script cannot block.
     let mut stdout = child.stdout.take().expect("piped");
     let mut stderr = child.stderr.take().expect("piped");

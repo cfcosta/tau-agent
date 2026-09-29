@@ -6,7 +6,7 @@
 use std::{fmt, path::PathBuf};
 
 use crate::{
-    index::{Index, index_text},
+    index::{Index, IndexError, index_text},
     note::{Link, LinkType, Note, NoteType, Source, is_id, slug},
     recall::{Hit, recall},
     safety,
@@ -58,30 +58,31 @@ pub struct Written {
     pub nearest: Vec<Hit>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum WriteError {
     /// The write was not made; the text says why and what to do instead.
+    #[error("{0}")]
     Refused(String),
+    #[error(transparent)]
     Store(StoreError),
-    Index(anyhow::Error),
+    #[error("index: {0}")]
+    Index(#[from] IndexError),
 }
-
-impl fmt::Display for WriteError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Refused(why) => f.write_str(why),
-            Self::Store(error) => write!(f, "{error}"),
-            Self::Index(error) => write!(f, "index: {error:#}"),
-        }
-    }
-}
-
-impl std::error::Error for WriteError {}
 
 impl From<WriteError> for tau_agent::tool::ToolError {
     fn from(error: WriteError) -> Self {
         Self::other(error)
     }
+}
+
+/// Why a scope's memory could not open: its notes would not read, or
+/// would not index.
+#[derive(Debug, thiserror::Error)]
+pub enum OpenError {
+    #[error(transparent)]
+    Notes(#[from] std::io::Error),
+    #[error(transparent)]
+    Index(#[from] IndexError),
 }
 
 impl From<StoreError> for WriteError {
@@ -120,7 +121,7 @@ impl Memory {
     pub fn open(
         dir: impl Into<PathBuf>,
         mut index: Box<dyn Index>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, OpenError> {
         let notes = Notes::open(dir)?;
         for note in notes.iter() {
             index.upsert(&note.id, &index_text(note))?;
@@ -261,20 +262,15 @@ impl Memory {
             }
         };
         let written = self.notes.get(&target).expect("just written").clone();
-        self.index
-            .upsert(&target, &index_text(&written))
-            .map_err(WriteError::Index)?;
+        self.index.upsert(&target, &index_text(&written))?;
         if let Some(old) = &supersedes
             && let Some(old) = self.notes.get(old)
         {
-            self.index
-                .upsert(&old.id, &index_text(old))
-                .map_err(WriteError::Index)?;
+            self.index.upsert(&old.id, &index_text(old))?;
         }
         let query = format!("{} {}", written.title, written.description);
         let nearest =
-            recall(&self.notes, self.index.as_ref(), &query, NEAREST + 1)
-                .map_err(WriteError::Index)?
+            recall(&self.notes, self.index.as_ref(), &query, NEAREST + 1)?
                 .into_iter()
                 .filter(|hit| hit.id != target)
                 .take(NEAREST)
@@ -328,7 +324,7 @@ impl Memory {
         &self,
         query: &str,
         budget: usize,
-    ) -> anyhow::Result<Vec<Hit>> {
+    ) -> Result<Vec<Hit>, IndexError> {
         recall(&self.notes, self.index.as_ref(), query, budget)
     }
 

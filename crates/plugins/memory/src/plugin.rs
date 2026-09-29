@@ -9,14 +9,21 @@
 
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tau_agent::{
-    error::{PluginError, ToolError},
-    plugin::{FinishedRun, Plugin, PluginCtx, PluginRun, Rewrite, RunPlan},
+    error::{PluginError, ToolError, describe},
+    plugin::{
+        AskError,
+        FinishedRun,
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        Rewrite,
+        RunPlan,
+    },
     tool::{AgentTool, ToolCtx, ToolOutput, TypedTool, typed},
 };
 use tau_ai::{
@@ -25,9 +32,11 @@ use tau_ai::{
 };
 
 use crate::{
-    memory::{Action, Draft, Memory, Reading, Written},
+    index::IndexError,
+    memory::{Action, Draft, Memory, Reading, WriteError, Written},
     note::{By, Link, LinkType, NoteType, Source},
     recall::Hit,
+    store::StoreError,
 };
 
 /// The name the plugin goes by in events and records.
@@ -38,6 +47,37 @@ pub const START_HITS: usize = 3;
 
 /// The prefix of ids from the user's scope.
 pub const USER: &str = "user:";
+
+/// Why the plugin, or one of its tools, could not do what it was asked.
+#[derive(Debug, thiserror::Error)]
+pub enum MemoryError {
+    #[error("there is no user scope; drop the {} prefix", USER)]
+    NoUserScope,
+    #[error("the memory task stopped: {0}")]
+    Stopped(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    Index(#[from] IndexError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error(transparent)]
+    Write(#[from] WriteError),
+    #[error(transparent)]
+    Ask(#[from] AskError),
+    #[error("{0:?} is not a link type")]
+    LinkType(String),
+}
+
+impl From<MemoryError> for ToolError {
+    fn from(error: MemoryError) -> Self {
+        Self::other(error)
+    }
+}
+
+impl From<MemoryError> for PluginError {
+    fn from(error: MemoryError) -> Self {
+        Self::other(error)
+    }
+}
 
 /// A scope, shared by the plugin, its tools and every run.
 pub type Scope = Arc<Mutex<Memory>>;
@@ -71,13 +111,16 @@ impl Scopes {
     }
 
     /// The scope an id names, and the id within it.
-    fn resolve<'a>(&self, id: &'a str) -> anyhow::Result<(&Scope, &'a str)> {
+    fn resolve<'a>(
+        &self,
+        id: &'a str,
+    ) -> Result<(&Scope, &'a str), MemoryError> {
         match id.strip_prefix(USER) {
-            Some(bare) => {
-                self.user.as_ref().map(|user| (user, bare)).ok_or_else(|| {
-                    anyhow!("there is no user scope; drop the {USER} prefix")
-                })
-            }
+            Some(bare) => self
+                .user
+                .as_ref()
+                .map(|user| (user, bare))
+                .ok_or(MemoryError::NoUserScope),
             None => Ok((&self.repo, id)),
         }
     }
@@ -87,14 +130,13 @@ impl Scopes {
     async fn with<T: Send + 'static>(
         scope: &Scope,
         op: impl FnOnce(&mut Memory) -> T + Send + 'static,
-    ) -> anyhow::Result<T> {
+    ) -> Result<T, MemoryError> {
         let scope = scope.clone();
-        tokio::task::spawn_blocking(move || {
+        Ok(tokio::task::spawn_blocking(move || {
             let mut memory = scope.lock().expect("not poisoned");
             op(&mut memory)
         })
-        .await
-        .context("the memory task stopped")
+        .await?)
     }
 
     /// Up to `limit` hits across both scopes: the repository's first,
@@ -103,7 +145,7 @@ impl Scopes {
         &self,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<Hit>> {
+    ) -> Result<Vec<Hit>, MemoryError> {
         let owned = query.to_owned();
         let mut hits =
             Self::with(&self.repo, move |memory| memory.search(&owned, limit))
@@ -150,7 +192,7 @@ impl MemoryPlugin {
         paths: &[String],
         why: &str,
         written_by: u64,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>, StoreError> {
         let now = (self.scopes.clock)();
         let mut marked = self
             .scopes
@@ -203,13 +245,11 @@ impl Plugin for MemoryPlugin {
         let repo = Scopes::with(&scopes.repo, |m| {
             m.index_note().map(|n| n.body.clone())
         })
-        .await
-        .map_err(PluginError::other)?;
+        .await?;
         let user = match &scopes.user {
             Some(user) => {
                 Scopes::with(user, |m| m.index_note().map(|n| n.body.clone()))
-                    .await
-                    .map_err(PluginError::other)?
+                    .await?
             }
             None => None,
         };
@@ -308,7 +348,7 @@ impl PluginRun for MemoryRun {
         _rewrite: &Rewrite,
         ctx: &PluginCtx,
     ) -> Result<(), PluginError> {
-        distill(
+        Ok(distill(
             &self.plugin,
             &self.model,
             replaced,
@@ -316,8 +356,7 @@ impl PluginRun for MemoryRun {
             By::Agent,
             ctx,
         )
-        .await
-        .map_err(PluginError::other)
+        .await?)
     }
 
     async fn finish(&mut self, run: &FinishedRun<'_>, ctx: &PluginCtx) {
@@ -377,7 +416,7 @@ async fn distill(
     prompt: &str,
     by: By,
     ctx: &PluginCtx,
-) -> anyhow::Result<()> {
+) -> Result<(), MemoryError> {
     let tools = plugin.tool_list();
     let settings = Settings {
         model: model.to_owned(),
@@ -425,9 +464,8 @@ async fn distill(
         match tool.call(args, tool_ctx).await {
             Ok(output) => saved
                 .push(json!({ "tool": call.name, "details": output.details })),
-            Err(error) => saved.push(
-                json!({ "tool": call.name, "error": format!("{error:#}") }),
-            ),
+            Err(error) => saved
+                .push(json!({ "tool": call.name, "error": describe(&error) })),
         }
     }
     if !saved.is_empty() {
@@ -576,9 +614,9 @@ pub struct WriteArgs {
 
 pub struct WriteTool(pub Scopes);
 
-fn parse_link(link: LinkArg) -> anyhow::Result<Link> {
+fn parse_link(link: LinkArg) -> Result<Link, MemoryError> {
     let kind = LinkType::parse(&link.kind)
-        .ok_or_else(|| anyhow!("{:?} is not a link type", link.kind))?;
+        .ok_or_else(|| MemoryError::LinkType(link.kind.clone()))?;
     Ok(Link {
         to: link.to,
         kind,
@@ -604,8 +642,7 @@ impl TypedTool for WriteTool {
             .unwrap_or_default()
             .into_iter()
             .map(parse_link)
-            .collect::<anyhow::Result<Vec<_>>>()
-            .map_err(ToolError::other)?;
+            .collect::<Result<Vec<_>, _>>()?;
         let by = match args.by.as_deref() {
             Some("inferred") => By::Inferred,
             Some("user") => By::User,
@@ -650,8 +687,7 @@ impl TypedTool for WriteTool {
         let now = (self.0.clock)();
         let written =
             Scopes::with(scope, move |memory| memory.write(draft, now))
-                .await
-                .map_err(ToolError::other)??;
+                .await??;
         let prefix = if user { USER } else { "" };
         let mut output = ToolOutput::text(render_written(&written, prefix));
         output.details = Some(json!({
@@ -728,11 +764,7 @@ impl TypedTool for SearchTool {
         _ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
         let limit = args.limit.unwrap_or(8).clamp(1, 20);
-        let hits = self
-            .0
-            .search(&args.query, limit)
-            .await
-            .map_err(ToolError::other)?;
+        let hits = self.0.search(&args.query, limit).await?;
         let text = if hits.is_empty() {
             "No notes match.".to_owned()
         } else {
@@ -766,12 +798,10 @@ impl TypedTool for ReadTool {
         args: ReadArgs,
         _ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
-        let (scope, bare) =
-            self.0.resolve(&args.id).map_err(ToolError::other)?;
+        let (scope, bare) = self.0.resolve(&args.id)?;
         let bare = bare.to_owned();
         let reading = Scopes::with(scope, move |memory| memory.read(&bare))
-            .await
-            .map_err(ToolError::other)?
+            .await?
             .ok_or_else(|| format!("no note is called {:?}", args.id))?;
         let prefix = if args.id.starts_with(USER) { USER } else { "" };
         Ok(ToolOutput::text(render_reading(&reading, prefix)))
@@ -835,8 +865,7 @@ impl TypedTool for LinkTool {
     ) -> Result<ToolOutput, ToolError> {
         let kind = LinkType::parse(&args.kind)
             .ok_or_else(|| format!("{:?} is not a link type", args.kind))?;
-        let (scope, from) =
-            self.0.resolve(&args.from).map_err(ToolError::other)?;
+        let (scope, from) = self.0.resolve(&args.from)?;
         let from = from.to_owned();
         let to = args.to.trim_start_matches(USER).to_owned();
         let now = (self.0.clock)();
@@ -845,8 +874,7 @@ impl TypedTool for LinkTool {
         Scopes::with(scope, move |memory| {
             memory.link(&from_c, &to_c, kind, why, now)
         })
-        .await
-        .map_err(ToolError::other)??;
+        .await??;
         Ok(ToolOutput::text(format!(
             "Linked `{from}` {} `{to}`.",
             kind.as_str()

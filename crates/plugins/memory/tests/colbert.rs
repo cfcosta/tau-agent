@@ -12,6 +12,7 @@ use tau_memory::{
     colbert::{
         Colbert,
         Encoder,
+        EncoderError,
         Shared,
         Tokens,
         max_sim,
@@ -58,12 +59,15 @@ fn tokens(text: &str) -> Tokens {
 }
 
 impl Encoder for Fake {
-    fn documents(&mut self, texts: &[String]) -> anyhow::Result<Vec<Tokens>> {
+    fn documents(
+        &mut self,
+        texts: &[String],
+    ) -> Result<Vec<Tokens>, EncoderError> {
         *self.encoded.lock().unwrap() += texts.len();
         Ok(texts.iter().map(|text| tokens(text)).collect())
     }
 
-    fn query(&mut self, text: &str) -> anyhow::Result<Tokens> {
+    fn query(&mut self, text: &str) -> Result<Tokens, EncoderError> {
         Ok(tokens(text))
     }
 

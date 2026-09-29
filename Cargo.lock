@@ -8442,7 +8442,6 @@ dependencies = [
 name = "tau-memory"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "candle-core",
  "docbert-pylate",
@@ -8457,6 +8456,7 @@ dependencies = [
  "tau-store",
  "tau-testing",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "toml 1.1.6+spec-1.1.0",
@@ -8466,7 +8466,6 @@ dependencies = [
 name = "tau-memory-e2e"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "hegeltest",
@@ -8481,6 +8480,7 @@ dependencies = [
  "tau-testing",
  "tau-tools",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
 ]
 

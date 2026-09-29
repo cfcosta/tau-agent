@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_memory::{
-    colbert::{Colbert, Encoder, Tokens},
+    colbert::{Colbert, Encoder, EncoderError, Tokens},
     eval::{
         self,
         Distance,
@@ -190,11 +190,14 @@ fn vector(word: &str) -> Vec<f32> {
 }
 
 impl Encoder for Fake {
-    fn documents(&mut self, texts: &[String]) -> anyhow::Result<Vec<Tokens>> {
+    fn documents(
+        &mut self,
+        texts: &[String],
+    ) -> Result<Vec<Tokens>, EncoderError> {
         Ok(texts.iter().map(|text| self.query(text).unwrap()).collect())
     }
 
-    fn query(&mut self, text: &str) -> anyhow::Result<Tokens> {
+    fn query(&mut self, text: &str) -> Result<Tokens, EncoderError> {
         Ok(Tokens {
             dim: 8,
             values: words(text).flat_map(|word| vector(&word)).collect(),

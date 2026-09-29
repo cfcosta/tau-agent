@@ -31,6 +31,8 @@ use tau_compaction::Compaction;
 use tau_memory::{Memory, MemoryPlugin, Scopes, index::Index};
 use tau_tools::{path::Root, plugin::CodingTools};
 
+use crate::E2eError;
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize,
 )]
@@ -201,7 +203,7 @@ pub fn semantic_index() -> IndexFactory {
 pub fn memory_plugin(
     dir: &Path,
     index: &IndexFactory,
-) -> anyhow::Result<MemoryPlugin> {
+) -> Result<MemoryPlugin, E2eError> {
     let cache = dir.with_file_name("memory-embeddings");
     let memory = Memory::open(dir, index(&cache))?;
     Ok(MemoryPlugin::new(Scopes::new(memory, None, Arc::new(now))))
@@ -278,7 +280,7 @@ pub fn transcript_context(
     chunks: &[String],
     task: &str,
     mut index: Box<dyn Index>,
-) -> anyhow::Result<Option<String>> {
+) -> Result<Option<String>, E2eError> {
     for (n, chunk) in chunks.iter().enumerate() {
         index.upsert(&format!("chunk-{n}"), chunk)?;
     }

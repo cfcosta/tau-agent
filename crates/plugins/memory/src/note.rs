@@ -234,37 +234,21 @@ pub struct Note {
 }
 
 /// Why a note or its file is not valid.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NoteError {
     /// Not an id: see [`is_id`].
+    #[error("{0:?} is not a note id: use a-z, 0-9 and -, 1 to 64 long")]
     BadId(String),
     /// A field that must be one line held a line break, or was empty.
+    #[error("the {0} must be one line, and not empty")]
     BadLine(&'static str),
     /// The file has no `+++` front matter.
+    #[error("the file does not start with +++ front matter")]
     NoFrontMatter,
     /// The front matter did not read as a note.
+    #[error("bad front matter: {0}")]
     FrontMatter(String),
 }
-
-impl fmt::Display for NoteError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BadId(id) => write!(
-                f,
-                "{id:?} is not a note id: use a-z, 0-9 and -, 1 to 64 long"
-            ),
-            Self::BadLine(field) => {
-                write!(f, "the {field} must be one line, and not empty")
-            }
-            Self::NoFrontMatter => {
-                f.write_str("the file does not start with +++ front matter")
-            }
-            Self::FrontMatter(why) => write!(f, "bad front matter: {why}"),
-        }
-    }
-}
-
-impl std::error::Error for NoteError {}
 
 /// Whether `id` can name a note.
 pub fn is_id(id: &str) -> bool {

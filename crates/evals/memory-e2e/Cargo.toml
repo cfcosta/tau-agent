@@ -13,7 +13,6 @@ default = []
 docbert = ["tau-memory/docbert"]
 
 [dependencies]
-anyhow.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 regex.workspace = true
@@ -26,6 +25,7 @@ tau-memory.workspace = true
 tau-store.workspace = true
 tau-tools.workspace = true
 tempfile.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
 
 [dev-dependencies]

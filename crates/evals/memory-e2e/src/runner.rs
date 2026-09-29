@@ -8,7 +8,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context as _;
 use futures_util::StreamExt;
 use regex::Regex;
 use serde::Serialize;
@@ -18,6 +17,7 @@ use tau_memory::{MemoryPlugin, plugin::START_HITS};
 use tau_store::Store;
 
 use crate::{
+    E2eError,
     arm::{self, Arm, IndexFactory, MAX_TURNS, RunSetup, Transcript},
     metrics::{self, Meter, RunMetrics, Trial},
     scenario::{Scenario, Variant},
@@ -136,7 +136,7 @@ pub async fn evaluate(
     config: &Config,
     models: &(dyn Fn(&RunKey) -> Arc<dyn Llm> + Sync),
     done: &mut (dyn FnMut(&Trial) + Send),
-) -> anyhow::Result<Report> {
+) -> Result<Report, E2eError> {
     let mut budget = config.budget.clone();
     let mut trials = Vec::new();
     let mut stopped = None;
@@ -163,13 +163,14 @@ pub async fn evaluate(
                         &mut budget,
                     )
                     .await
-                    .with_context(|| {
-                        format!(
+                    .map_err(|error| E2eError::Trial {
+                        trial: format!(
                             "{} {} {} #{trial}",
                             scenario.name,
                             variant.name(),
                             arm.name()
-                        )
+                        ),
+                        source: Box::new(error),
                     })?;
                     match run {
                         Some(result) => {
@@ -212,7 +213,7 @@ async fn run_trial(
     key: RunKey,
     models: &(dyn Fn(Stage) -> Arc<dyn Llm> + Sync),
     budget: &mut Budget,
-) -> anyhow::Result<Option<Trial>> {
+) -> Result<Option<Trial>, E2eError> {
     let dir = tempfile::Builder::new()
         .prefix(&format!("{}-{}-", scenario.name, key.arm.name()))
         .tempdir_in(&config.work)?;
@@ -338,10 +339,14 @@ async fn run_trial(
 pub fn mark_changed(
     plugin: &MemoryPlugin,
     paths: &[&str],
-) -> anyhow::Result<Vec<String>> {
+) -> Result<Vec<String>, E2eError> {
     let paths: Vec<String> =
         paths.iter().map(|path| (*path).to_owned()).collect();
-    plugin.mark_stale(&paths, "commit between runs changed it", plugin.now())
+    Ok(plugin.mark_stale(
+        &paths,
+        "commit between runs changed it",
+        plugin.now(),
+    )?)
 }
 
 /// Whether a run on `task` starts with memory in its context: the index
@@ -349,7 +354,7 @@ pub fn mark_changed(
 fn starts_with_memory(
     plugin: &MemoryPlugin,
     task: &str,
-) -> anyhow::Result<bool> {
+) -> Result<bool, E2eError> {
     let memory = plugin.scopes().repo.lock().expect("not poisoned");
     Ok(memory.index_note().is_some()
         || !memory.search(task, START_HITS)?.is_empty())
@@ -372,7 +377,7 @@ async fn run_once(
     setup: RunSetup<'_>,
     prompt: &str,
     store: &Store,
-) -> anyhow::Result<(RunMetrics, Vec<metrics::Call>)> {
+) -> Result<(RunMetrics, Vec<metrics::Call>), E2eError> {
     let agent = arm::agent(setup);
     let started = Instant::now();
     let mut meter = Meter::new();
@@ -391,10 +396,8 @@ async fn run_once(
 /// Runs `f` on the repository off the async workers: scripts block.
 async fn on_blocking<T: Send + 'static>(
     repo: &Path,
-    f: impl FnOnce(&Path) -> anyhow::Result<T> + Send + 'static,
-) -> anyhow::Result<T> {
+    f: impl FnOnce(&Path) -> Result<T, E2eError> + Send + 'static,
+) -> Result<T, E2eError> {
     let repo = repo.to_owned();
-    tokio::task::spawn_blocking(move || f(&repo))
-        .await
-        .context("the check stopped")?
+    tokio::task::spawn_blocking(move || f(&repo)).await?
 }
