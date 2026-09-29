@@ -75,35 +75,48 @@ impl Command {
     /// Reads `/goal [--continuations N] [--budget USD] <condition>` or
     /// `/goal clear`. Anything else is not a command, a budget that is
     /// not a finite amount of at least zero included.
+    ///
+    /// A condition is its words joined by single spaces, unless it is
+    /// one quoted string, `"..."`: that is read exactly as written, with
+    /// `\"`, `\\`, `\n` and `\r` for a quote, a backslash, a line feed
+    /// and a carriage return. `/goal "clear"` sets the goal `clear`.
     pub fn parse(input: &str) -> Option<Self> {
         let rest = input.trim().strip_prefix("/goal")?;
         if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
             return None;
         }
-        let mut words = rest.split_whitespace().peekable();
+        let mut rest = rest.trim_start();
         let mut continuations = DEFAULT_CONTINUATIONS;
         let mut budget = DEFAULT_BUDGET;
         loop {
-            match words.peek().copied() {
-                Some("--continuations") => {
-                    words.next();
-                    continuations = words.next()?.parse().ok()?;
+            let (word, after) = next_word(rest);
+            match word {
+                "--continuations" => {
+                    let (n, after) = next_word(after);
+                    continuations = n.parse().ok()?;
+                    rest = after;
                 }
-                Some("--budget") => {
-                    words.next();
-                    budget = words
-                        .next()?
-                        .trim_start_matches('$')
-                        .parse()
-                        .ok()
-                        .filter(|budget: &f64| {
-                            budget.is_finite() && *budget >= 0.0
-                        })?;
+                "--budget" => {
+                    let (usd, after) = next_word(after);
+                    budget = usd.trim_start_matches('$').parse().ok().filter(
+                        |budget: &f64| budget.is_finite() && *budget >= 0.0,
+                    )?;
+                    rest = after;
                 }
                 _ => break,
             }
         }
-        let condition = words.collect::<Vec<_>>().join(" ");
+        if let Some(condition) = unquote(rest) {
+            if condition.trim().is_empty() {
+                return None;
+            }
+            return Some(Self::Set {
+                condition,
+                continuations,
+                budget,
+            });
+        }
+        let condition = rest.split_whitespace().collect::<Vec<_>>().join(" ");
         match condition.as_str() {
             "" => None,
             "clear" => Some(Self::Clear),
@@ -116,10 +129,61 @@ impl Command {
     }
 }
 
+/// The first whitespace-separated word of `text`, and what follows it,
+/// its leading whitespace gone.
+fn next_word(text: &str) -> (&str, &str) {
+    let end = text.find(char::is_whitespace).unwrap_or(text.len());
+    (&text[..end], text[end..].trim_start())
+}
+
+/// What a quoted string says, when `text` is exactly one: `"`, then
+/// characters with `\"`, `\\`, `\n` and `\r` escaped, then `"`.
+fn unquote(text: &str) -> Option<String> {
+    let mut chars = text.strip_prefix('"')?.chars();
+    let mut out = String::new();
+    loop {
+        match chars.next()? {
+            '"' => return chars.as_str().is_empty().then_some(out),
+            '\\' => out.push(match chars.next()? {
+                '"' => '"',
+                '\\' => '\\',
+                'n' => '\n',
+                'r' => '\r',
+                _ => return None,
+            }),
+            c => out.push(c),
+        }
+    }
+}
+
+/// `condition` as a quoted string [`unquote`] reads back.
+fn quote(condition: &str) -> String {
+    let mut out = String::from("\"");
+    for c in condition.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// The input the model gets for a goal: the condition, then how goals
 /// work. Interfaces read the condition back with [`set_message`].
+///
+/// The condition is written as is when it reads back that way, and
+/// quoted otherwise: when it would read as `clear` or as limits, spans
+/// lines, has runs of whitespace or is itself one quoted string.
 pub fn set_input(condition: &str) -> String {
-    format!("/goal {condition}\n\n{INSTRUCTIONS}")
+    let plain = format!("/goal {condition}\n\n{INSTRUCTIONS}");
+    if set_message(&plain).as_deref() == Some(condition) {
+        return plain;
+    }
+    format!("/goal {}\n\n{INSTRUCTIONS}", quote(condition))
 }
 
 /// The condition of a message that set a goal: `/goal ...`, as typed or

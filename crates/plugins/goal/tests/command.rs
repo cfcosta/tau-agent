@@ -127,20 +127,68 @@ fn a_set_condition_reads_back_from_the_models_input(tc: TestCase) {
     assert_eq!(set_message(&set_input(&condition)), Some(condition));
 }
 
-/// Any condition reads back from the input the model gets for it.
-///
-/// Fails today, and which way to fix it is not decided: `set_input`
-/// writes the condition as is, and `set_message` reads only the first
-/// line and parses it as a command, so a multi-line condition, `clear`,
-/// a condition starting with `--budget 5`, or one with repeated
-/// whitespace does not read back as written. Every caller passes a
-/// condition [`Command::parse`] produced, which does read back (the
-/// property above), so this only matters if `set_input` gets other
-/// conditions.
+/// Any condition reads back from the input the model gets for it: one
+/// that would not read back written as is is quoted.
 #[hegel::test]
-#[ignore = "product decision: the canonical form of a goal's condition in the model's input"]
 fn any_condition_reads_back_from_the_models_input(tc: TestCase) {
     let condition = tc.draw(gs::text());
     tc.assume(!condition.trim().is_empty());
     assert_eq!(set_message(&set_input(&condition)), Some(condition));
+}
+
+/// An ordinary condition is written as is, as a person would type it,
+/// quotes that are not one valid quoted string included.
+#[test]
+fn an_ordinary_condition_is_written_as_is() {
+    for condition in ["cargo test passes", r#""a" and "b""#, r#""a\b""#] {
+        let input = set_input(condition);
+        assert_eq!(
+            input.lines().next(),
+            Some(format!("/goal {condition}").as_str()),
+        );
+    }
+}
+
+/// Each condition that would not read back as written is quoted, and
+/// reads back exactly.
+#[test]
+fn a_colliding_condition_is_quoted() {
+    for (condition, first_line) in [
+        ("clear", r#"/goal "clear""#),
+        ("--budget 5 tests pass", r#"/goal "--budget 5 tests pass""#),
+        ("--continuations 3 x", r#"/goal "--continuations 3 x""#),
+        ("tests\npass", r#"/goal "tests\npass""#),
+        ("a\r\nb", r#"/goal "a\r\nb""#),
+        ("tests  pass", r#"/goal "tests  pass""#),
+        (" tests pass", r#"/goal " tests pass""#),
+        (r#""quoted""#, r#"/goal "\"quoted\"""#),
+        (r#""a\\b""#, r#"/goal "\"a\\\\b\"""#),
+    ] {
+        let input = set_input(condition);
+        assert_eq!(input.lines().next(), Some(first_line), "{condition:?}");
+        assert_eq!(set_message(&input).as_deref(), Some(condition));
+    }
+}
+
+/// A quoted condition is read exactly, after any limits; one that is
+/// not a whole quoted string reads as words, quotes included.
+#[test]
+fn a_quoted_condition_reads_exactly() {
+    assert_eq!(
+        Command::parse(r#"/goal --budget 3 "clear""#),
+        Some(Command::Set {
+            condition: "clear".into(),
+            continuations: DEFAULT_CONTINUATIONS,
+            budget: 3.0,
+        }),
+    );
+    assert_eq!(
+        Command::parse(r#"/goal "a" and  "b""#),
+        Some(Command::Set {
+            condition: r#""a" and "b""#.into(),
+            continuations: DEFAULT_CONTINUATIONS,
+            budget: DEFAULT_BUDGET,
+        }),
+    );
+    assert_eq!(Command::parse(r#"/goal "  ""#), None);
 }

@@ -15,12 +15,22 @@ A run's input sets it:
 ```
 
 - The condition is plain words, checkable from what the model runs:
-  "cargo nextest run -p tau-ai passes and clippy is clean".
+  "cargo nextest run -p tau-ai passes and clippy is clean". Its words
+  are joined by single spaces, so line breaks and runs of spaces go.
+- A condition written as one quoted string, `"..."`, is read exactly:
+  `\"` is a quote, `\\` a backslash, `\n` a line feed and `\r` a
+  carriage return. So `/goal "clear"` sets the goal `clear`, and
+  `/goal "--budget 5 is spent"` a goal that starts with `--budget`.
+  Quotes that do not wrap the whole condition are plain characters.
 - `--continuations` (default 10) is how many times the goal may send
   the model back. `--budget` (default $2.00) caps what the goal costs:
   the run's turns and the checks, from when it was set.
 - The model does not see the command. Its input is `/goal <condition>`
-  and a paragraph on how goals work (`tau_goal::INSTRUCTIONS`).
+  and a paragraph on how goals work (`tau_goal::INSTRUCTIONS`). The
+  condition is written as is when it reads back as itself, and quoted
+  when it does not (it is `clear`, starts with a limit, spans lines,
+  has runs of whitespace, or is itself one quoted string), so an
+  interface reads every condition back exactly.
 - A goal belongs to the conversation. Resuming the run keeps it, and a
   new `/goal` replaces it. `/goal clear` removes it.
 
