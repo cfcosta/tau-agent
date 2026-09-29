@@ -392,8 +392,9 @@ A proposal to argue with, not a decision.
 - The notes directory is versioned (a jj repository, like the
   project's), which gives history, diffs of what a pass changed, and
   restore.
-- Small collections use exhaustive MaxSim; PLAID starts past a size
-  threshold and updates in place per note.
+- Every note is scored with exhaustive MaxSim. PLAID is out for now: a
+  scope is small, and in-place updates encode new notes with centroids
+  trained on old ones.
 
 ### Reading
 

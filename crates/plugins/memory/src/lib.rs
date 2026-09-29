@@ -3,6 +3,8 @@
 //! research behind it is `docs/research/memory.md`).
 
 pub mod colbert;
+#[cfg(feature = "docbert")]
+pub mod docbert;
 pub mod index;
 pub mod memory;
 pub mod note;

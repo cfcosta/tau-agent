@@ -256,3 +256,39 @@ fn an_embedding_file_reads_back(tc: TestCase) {
     write_tokens(&path, &tokens).unwrap();
     assert_eq!(read_tokens(&path).unwrap(), tokens);
 }
+
+/// docbert's model itself: unit-length token vectors, and a paraphrase
+/// ranked above an unrelated note. Downloads the model when it is not
+/// cached, so it runs only when asked:
+/// `cargo test -p tau-memory --features docbert -- --ignored`.
+#[cfg(feature = "docbert")]
+#[test]
+#[ignore = "loads docbert's model"]
+fn docbert_encodes_unit_tokens_and_finds_a_paraphrase() {
+    use tau_memory::docbert::Docbert;
+
+    let mut encoder = Docbert::new();
+    let texts = vec![
+        "the build is slow when the cache is cold".to_owned(),
+        String::new(),
+    ];
+    for doc in encoder.documents(&texts).unwrap() {
+        for row in 0..doc.count() {
+            let norm: f32 =
+                doc.row(row).iter().map(|x| x * x).sum::<f32>().sqrt();
+            assert!((norm - 1.0).abs() < 1e-3, "{norm}");
+        }
+    }
+    let mut index = Colbert::new(encoder);
+    index
+        .upsert(
+            "slow-build",
+            "compiling takes ages until the cache warms up",
+        )
+        .unwrap();
+    index
+        .upsert("lanes", "each session lane drains its queue in order")
+        .unwrap();
+    let hits = index.semantic("why is the build slow", 2).unwrap();
+    assert_eq!(hits[0].0, "slow-build", "{hits:?}");
+}

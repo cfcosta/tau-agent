@@ -8,7 +8,8 @@
 //! The model is behind [`Encoder`]: docbert's in the app (the `docbert`
 //! feature), a deterministic stand-in in tests. Embeddings are cached on
 //! disk by the text they encode, so reopening a scope encodes only what
-//! changed.
+//! changed. Every note is scored against the query: a scope is small
+//! enough that this is fast, and it is exact.
 
 use std::{
     collections::BTreeMap,
@@ -84,7 +85,7 @@ pub fn rrf(lists: &[Vec<String>]) -> Vec<(String, f32)> {
 }
 
 /// How many candidates each leg ranks before fusion.
-const LEG: usize = 100;
+pub const LEG: usize = 100;
 
 /// BM25 and late interaction over a scope's notes, fused.
 pub struct Colbert<E: Encoder> {
@@ -180,7 +181,11 @@ impl<E: Encoder> Index for Colbert<E> {
             .into_iter()
             .map(|(id, _)| id)
             .collect();
-        let semantic = self.semantic(query)?;
+        let semantic = self
+            .semantic(query, LEG)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         let mut fused = rrf(&[lexical, semantic]);
         fused.truncate(limit);
         Ok(fused)
@@ -188,23 +193,24 @@ impl<E: Encoder> Index for Colbert<E> {
 }
 
 impl<E: Encoder> Colbert<E> {
-    /// Note ids by MaxSim against `query`, best first.
-    fn semantic(&self, query: &str) -> anyhow::Result<Vec<String>> {
+    /// Up to `limit` notes by MaxSim against `query`, best first.
+    pub fn semantic(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(String, f32)>> {
         if self.embeddings.is_empty() || query.trim().is_empty() {
             return Ok(Vec::new());
         }
         let tokens = self.with_encoder(|encoder| encoder.query(query))?;
-        let mut scored: Vec<(&String, f32)> = self
+        let mut scored: Vec<(String, f32)> = self
             .embeddings
             .iter()
-            .map(|(id, doc)| (id, max_sim(&tokens, doc)))
+            .map(|(id, doc)| (id.clone(), max_sim(&tokens, doc)))
             .collect();
-        scored.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
-        Ok(scored
-            .into_iter()
-            .take(LEG)
-            .map(|(id, _)| id.clone())
-            .collect())
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        scored.truncate(limit);
+        Ok(scored)
     }
 }
 

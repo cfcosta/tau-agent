@@ -400,15 +400,15 @@ Research and the reasons behind these choices:
   re-checks.
 - **Storage:** tau's data directory, per repository, versioned so every
   change is a diff that can be reviewed or reverted; nothing lands in
-  the project's history. Notes are the truth; docbert's collection and
-  the link table are derived and rebuilt from them, recording the model
-  they were built with.
-  - `docbert-core` is synchronous and loads a ColBERT model on first
-    use. `Memory::open` loads it once, and every call runs through
-    `spawn_blocking` behind a mutex on the model manager.
-  - Small collections score every note with MaxSim; PLAID starts past a
-    size threshold and is updated in place per note
-    (`plaid::update_index_from_embedding_db`).
+  the project's history. Notes are the truth; the search index is
+  derived and rebuilt from them on open.
+  - The index is BM25 fused with ColBERT MaxSim by reciprocal rank
+    fusion, as docbert fuses them. The `docbert` feature encodes with
+    docbert's model through `docbert-pylate`, loaded on first use.
+  - Embeddings are cached on disk by model and text, so reopening a
+    scope encodes only notes that changed.
+  - Every note is scored exhaustively: a scope is small, and MaxSim over
+    all of it is exact. PLAID is out for now.
 - **Safety:** secrets are redacted before a note is written, writes are
   scanned for prompt injection, and memory never stands in for rules
   (those belong in `AGENTS.md` or the constitution).
@@ -418,10 +418,6 @@ Research and the reasons behind these choices:
   the hybrid (does late interaction escape the interference "The Price
   of Meaning" proves?); calls, tokens and latency. Baselines: no memory,
   one `MEMORY.md`, docbert over raw transcripts.
-- **Needed upstream in docbert:** a one-call "upsert this note"
-  (Tantivy, chunks, embeddings, PLAID update) and "delete this note".
-  Today a caller has to copy that sequence out of `docbert-web`'s and
-  the CLI's private functions, and web ingest skips the PLAID update.
 - **Scope:** per repository, plus a user scope for preferences across
   projects; a fact lives in exactly one.
 

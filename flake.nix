@@ -74,7 +74,10 @@
                   ];
                 };
 
-                cargoLock.lockFile = ./Cargo.lock;
+                cargoLock = {
+                  lockFile = ./Cargo.lock;
+                  outputHashes."docbert-pylate-1.0.0" = "sha256-Wp/raPgyXbaWaGHJIF6aVDLoVqgcA5636GaLHiXKrHc=";
+                };
                 cargoBuildFlags = [
                   "--package"
                   "tau-ui"
