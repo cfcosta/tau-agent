@@ -2,6 +2,7 @@
 //! Markdown notes (`docs/reference/plugins.md`, `tau-memory`; the
 //! research behind it is `docs/research/memory.md`).
 
+pub mod colbert;
 pub mod index;
 pub mod memory;
 pub mod note;
