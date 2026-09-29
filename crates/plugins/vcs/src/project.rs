@@ -672,12 +672,10 @@ fn add_missing(from: &Path, into: &Path) -> std::io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let target = into.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        if is_dir(&entry)? {
             add_missing(&entry.path(), &target)?;
-        } else if !target.exists()
-            && std::fs::hard_link(entry.path(), &target).is_err()
-        {
-            std::fs::copy(entry.path(), &target)?;
+        } else if !target.exists() {
+            link_or_copy(&entry, &target)?;
         }
     }
     Ok(())
@@ -744,18 +742,78 @@ fn copy_tree(from: &Path, into: &Path, link: bool) -> std::io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let target = into.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        if is_dir(&entry)? {
             copy_tree(&entry.path(), &target, link)?;
-        } else if !link || std::fs::hard_link(entry.path(), &target).is_err() {
-            std::fs::copy(entry.path(), &target)?;
+        } else if link {
+            link_or_copy(&entry, &target)?;
+        } else {
+            copy(&entry, &target)?;
         }
     }
     Ok(())
 }
 
+/// Whether `entry` is a directory; one that went away is not.
+fn is_dir(entry: &std::fs::DirEntry) -> std::io::Result<bool> {
+    match entry.file_type() {
+        Ok(kind) => Ok(kind.is_dir()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Hard-links `entry` to `target`, or copies it when linking fails.
+fn link_or_copy(
+    entry: &std::fs::DirEntry,
+    target: &Path,
+) -> std::io::Result<()> {
+    if skipped(entry) || std::fs::hard_link(entry.path(), target).is_ok() {
+        return Ok(());
+    }
+    copy(entry, target)
+}
+
+/// Copies `entry` to `target`. Git may be working in the store as it is
+/// copied, as background maintenance does after a commit: its lock
+/// files are skipped, and a file that goes away before it is copied was
+/// one of git's own temporary files.
+fn copy(entry: &std::fs::DirEntry, target: &Path) -> std::io::Result<()> {
+    if skipped(entry) {
+        return Ok(());
+    }
+    match std::fs::copy(entry.path(), target) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Git's lock files, which belong to whatever git process holds them.
+fn skipped(entry: &std::fs::DirEntry) -> bool {
+    entry.file_name().to_string_lossy().ends_with(".lock")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Git's lock files are left out of a copy of its store: they belong
+    /// to a git process that may be working in the source.
+    #[test]
+    fn a_copy_leaves_out_git_lock_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        std::fs::create_dir_all(from.join("ab")).unwrap();
+        std::fs::write(from.join("ab").join("cdef"), "object").unwrap();
+        std::fs::write(from.join("maintenance.lock"), "").unwrap();
+        let into = dir.path().join("into");
+        copy_tree(&from, &into, true).unwrap();
+        assert!(into.join("ab").join("cdef").exists());
+        assert!(!into.join("maintenance.lock").exists());
+        let again = dir.path().join("again");
+        add_missing(&from, &again).unwrap();
+        assert!(!again.join("maintenance.lock").exists());
+    }
 
     #[test]
     fn bare_config_sets_bare_and_drops_the_worktree() {
