@@ -89,8 +89,13 @@ fn fresh_repo_list() -> std::path::PathBuf {
 }
 
 /// Receives until `RunEnd`, with a timeout so a hang fails the test.
+/// How long a test waits for what a run does. Each wait ends as soon as
+/// the thing happens; the bound is generous because a run's turn ends
+/// with jj work, and the tests share the machine with every other test.
+const WAIT: Duration = Duration::from_secs(60);
+
 fn until_end(events: &mut UnboundedReceiver<RunEvent>) -> Vec<RunEvent> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + WAIT;
     let mut seen = Vec::new();
     while std::time::Instant::now() < deadline {
         match events.try_recv() {
@@ -104,7 +109,7 @@ fn until_end(events: &mut UnboundedReceiver<RunEvent>) -> Vec<RunEvent> {
             Err(_) => std::thread::sleep(Duration::from_millis(5)),
         }
     }
-    panic!("no RunEnd within 10 s: {seen:?}");
+    panic!("no RunEnd within {WAIT:?}: {seen:?}");
 }
 
 #[test]
@@ -124,7 +129,7 @@ fn a_run_streams_into_its_view() {
     assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
     assert_eq!(view.last_text(), Some("Hello from tau"));
     // The run leaves the host's table once its outcome is in.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT;
     while host.is_running(&view.id) && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -165,7 +170,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn wait_until_done(host: &Host, run: &tau_agent::tool::RunId) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + WAIT;
     while host.is_running(run) && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -1609,7 +1614,7 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     until_end(&mut events);
     wait_until_done(&host, &second.id);
     // The mark is made off the run's thread; give it a moment.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + WAIT;
     loop {
         let memory = memory_of(&host);
         if memory.notes[0].body[0].starts_with("May be stale") {
