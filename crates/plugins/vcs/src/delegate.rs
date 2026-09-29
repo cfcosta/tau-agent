@@ -163,7 +163,9 @@ impl AgentTool for Delegate {
             Ok(output) => {
                 let landing = match child_bookmark.clone() {
                     Some(name) => {
-                        match blocking(&project, move |p| p.bookmark(&name)).await? {
+                        match blocking(&project, move |p| p.bookmark(&name))
+                            .await?
+                        {
                             Some(child_head) => Some(
                                 self.parent
                                     .vcs()
@@ -181,13 +183,14 @@ impl AgentTool for Delegate {
                     head: head.commit_id.clone(),
                 });
                 let from = workspace.run().map(|run| run.0.to_string());
-                self.parent.queue(landing.changes.iter().rev().map(|change| {
-                    Pending {
-                        commit_id: change.commit_id.clone(),
-                        change_id: change.change_id.clone(),
-                        from: from.clone(),
-                    }
-                }));
+                self.parent
+                    .queue(landing.changes.iter().rev().map(|change| {
+                        Pending {
+                            commit_id: change.commit_id.clone(),
+                            change_id: change.change_id.clone(),
+                            from: from.clone(),
+                        }
+                    }));
                 let note = match landing.changes.len() {
                     0 => "[It changed no files.]".to_owned(),
                     1 => "[Its 1 change landed on top of yours.]".to_owned(),

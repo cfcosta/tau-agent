@@ -107,7 +107,10 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
         // Its answer came back, with what landed.
         let result = format!("{:?}", llm.requests()[5].transcript);
         assert!(result.contains("child.txt is written"), "{result}");
-        assert!(result.contains("Its 1 change landed on top of yours"), "{result}");
+        assert!(
+            result.contains("Its 1 change landed on top of yours"),
+            "{result}"
+        );
 
         // The caller has both files, and the sub-agent is closed.
         for file in ["parent.txt", "child.txt"] {
@@ -130,7 +133,12 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
             .collect();
         assert_eq!(
             shape,
-            [(1, true, false), (2, true, true), (2, false, false), (3, false, false)]
+            [
+                (1, true, false),
+                (2, true, true),
+                (2, false, false),
+                (3, false, false)
+            ]
         );
         let child = links[1].from.clone().unwrap();
         let child_bookmark = format!("tau/{child}");
