@@ -463,6 +463,56 @@ fn a_child_lands_after_its_children() {
     assert!(!main_dir.join("c.txt").exists());
 }
 
+/// A run delegates to a sub-agent (ADR 0009): the sub-agent works in a
+/// workspace of its own, its change lands on the run, and it closes.
+#[test]
+fn a_run_delegates_and_the_sub_agent_lands() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "delegate",
+                serde_json::json!({ "task": "write c.txt" }),
+            )
+        })
+        .turn(|t| {
+            t.tool_call(
+                "write",
+                serde_json::json!({ "path": "c.txt", "content": "c\n" }),
+            )
+        })
+        .turn(|t| t.text("wrote c.txt"))
+        .turn(|t| t.text("done"));
+    let (host, mut events) = host_on(llm, src.path());
+    let host = host.with_project(project.clone());
+    let main = host
+        .start("delegate c.txt", &ModelChoice::default(), "")
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main.id);
+
+    let dir = host.workspace(&main.id).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
+    // The sub-agent is closed: one workspace, one run bookmark.
+    assert_eq!(project.workspaces().unwrap().len(), 1);
+    assert_eq!(
+        project.bookmarks("tau/").unwrap(),
+        [format!("tau/{}", main.id.0)]
+    );
+}
+
 #[test]
 fn runs_come_back_under_their_repository() {
     let other = tempfile::tempdir().unwrap();

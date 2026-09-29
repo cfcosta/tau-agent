@@ -44,6 +44,7 @@ use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
     ChangeKind,
+    Delegate,
     FileDiff,
     Identity,
     Landing,
@@ -1135,19 +1136,39 @@ impl Host {
             return Ok((agent, None));
         };
         let name = workspace.unwrap_or_else(workspace_name);
-        let mut workspace =
-            RunWorkspace::new(project.clone(), &name, identity())?;
-        // Notes about the files a turn's commit changed may be stale.
-        if let Some(memory) = &memory {
-            workspace = workspace.on_commit(stale_on_commit(memory.clone()));
-        }
-        let agent = agent
-            .plugin(CodingTools::new(Root::new(workspace.dir())))
-            .plugin(VcsPlugin::new(workspace.vcs().clone()))
-            .plugin(workspace);
-        let agent = with_plugin(agent, memory);
-        let agent = with_plugin(with_plugin(agent, constitution), goal);
-        Ok((agent, Some(name)))
+        // A run and its sub-agents work the same way, each in its own
+        // workspace: tools, memory and the repository's rules. Only the
+        // run itself keeps the conversation's goal and can delegate, so
+        // sub-agents do not nest.
+        let on_workspace = {
+            let memory = memory.clone();
+            let constitution = constitution.clone();
+            move |agent: Agent, workspace: RunWorkspace| {
+                // Notes about the files a turn's commit changed may be
+                // stale.
+                let workspace = match &memory {
+                    Some(memory) => {
+                        workspace.on_commit(stale_on_commit(memory.clone()))
+                    }
+                    None => workspace,
+                };
+                let agent = agent
+                    .plugin(CodingTools::new(Root::new(workspace.dir())))
+                    .plugin(VcsPlugin::new(workspace.vcs().clone()))
+                    .plugin(workspace);
+                let agent = with_plugin(agent, memory.clone());
+                with_plugin(agent, constitution.clone())
+            }
+        };
+        let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
+        let delegate = {
+            let (base, on_workspace) = (agent.clone(), on_workspace.clone());
+            Delegate::new(workspace.clone(), identity(), move |child| {
+                Ok(on_workspace(base.clone(), child))
+            })
+        };
+        let agent = on_workspace(agent.tool(delegate), workspace);
+        Ok((with_plugin(agent, goal), Some(name)))
     }
 
     /// Jev, when there is a TypeSafe key (or one given for tests).
