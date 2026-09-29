@@ -16,7 +16,18 @@ use gpui::{
     relative,
 };
 
-use super::{bar, button, dot, icon, link, log_card, mono, rich, stop_look};
+use super::{
+    bar,
+    button,
+    diff_card,
+    dot,
+    icon,
+    link,
+    log_card,
+    mono,
+    rich,
+    stop_look,
+};
 use crate::{
     assets::Icon,
     route::Route,
@@ -390,13 +401,19 @@ fn tool(
             .find(|entry| entry.call_id == card.call_id)
             .map(|entry| tokens(entry.tokens))
     });
-    let summary = mono(card.summary.clone(), Type::CAPTION, t.text_soft)
-        .flex_1()
-        .min_w(px(0.))
-        .truncate()
-        .when(card.pruned == Some(Pruned::CallDropped), |s| {
-            s.line_through().text_color(t.muted)
-        });
+    let summary = match &card.body {
+        ToolBody::Files(diff) if !dropped => diff_card::files_summary(diff, t),
+        ToolBody::Commit(diff) if !dropped => {
+            diff_card::commit_summary(diff, t)
+        }
+        _ => mono(card.summary.clone(), Type::CAPTION, t.text_soft)
+            .flex_1()
+            .min_w(px(0.))
+            .truncate()
+            .when(card.pruned == Some(Pruned::CallDropped), |s| {
+                s.line_through().text_color(t.muted)
+            }),
+    };
 
     let review = matches!(card.state, ToolState::Flagged { .. }).then(|| {
         let run_id = run.id.clone();
@@ -409,12 +426,13 @@ fn tool(
             }))
     });
 
-    // A log starts closed; its header opens it.
-    let log = match &card.body {
-        ToolBody::Log(log) if !dropped => Some(log.as_ref()),
-        _ => None,
-    };
-    let open = log.is_none() || ws.log_open(&run.id, &card.call_id);
+    // A log, diff or show starts closed; its header opens it.
+    let folds = !dropped
+        && matches!(
+            card.body,
+            ToolBody::Log(_) | ToolBody::Files(_) | ToolBody::Commit(_)
+        );
+    let open = !folds || ws.card_open(&run.id, &card.call_id);
     let header = div()
         .id(SharedString::from(format!("tool-{}", card.call_id)))
         .flex()
@@ -476,14 +494,21 @@ fn tool(
             )
         })
         .children(review)
-        .when_some(log, |row, log| {
+        .when(folds, |row| {
             let run_id = run.id.clone();
             let call_id = card.call_id.clone();
+            let shape = match &card.body {
+                ToolBody::Log(log) => Some(log_card::bars(log, t)),
+                ToolBody::Files(diff) | ToolBody::Commit(diff) => {
+                    Some(diff_card::blocks(diff, t))
+                }
+                _ => None,
+            };
             row.cursor_pointer()
                 .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.toggle_log(&run_id, &call_id, cx)
+                    ws.toggle_card(&run_id, &call_id, cx)
                 }))
-                .when(!compact, |row| row.child(log_card::bars(log, t)))
+                .when(!compact, |row| row.children(shape))
                 .child(icon(
                     if open { Icon::Down } else { Icon::Chevron },
                     IconSize::SMALL,
@@ -508,6 +533,14 @@ fn tool(
         _ if dropped => None,
         (_, ToolBody::Log(log)) => open.then(|| {
             log_card::body(ws, run, card, log, t, compact, cx)
+                .into_any_element()
+        }),
+        (_, ToolBody::Files(diff)) => open.then(|| {
+            diff_card::files_body(ws, run, card, diff, t, compact, cx)
+                .into_any_element()
+        }),
+        (_, ToolBody::Commit(diff)) => open.then(|| {
+            diff_card::commit_body(ws, run, card, diff, t, compact, cx)
                 .into_any_element()
         }),
         (_, ToolBody::Diff(lines)) => Some(diff(lines, t).into_any_element()),

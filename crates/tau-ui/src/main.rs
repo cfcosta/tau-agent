@@ -265,7 +265,7 @@ fn open_demo_screen(
         Some("log") => {
             let run = demo::run_id();
             workspace.navigate(Route::Run(run.clone()), cx);
-            workspace.toggle_log(&run, demo::LOG_CALL, cx);
+            workspace.toggle_card(&run, demo::LOG_CALL, cx);
             workspace.pick_change(&run, demo::LOG_CALL, demo::LOG_PICKED, cx);
             return;
         }

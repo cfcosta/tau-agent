@@ -416,8 +416,12 @@ pub struct Workspace {
     /// Plugin notes opened to show their detail, as `(run, item index)`.
     /// Notes start closed.
     pub(crate) open_notes: HashSet<(RunId, usize)>,
-    /// `vcs_log` cards opened, as `(run, call id)`. They start closed.
-    open_logs: HashSet<(RunId, String)>,
+    /// Tool cards that fold, opened, as `(run, call id)`. They start
+    /// closed.
+    open_cards: HashSet<(RunId, String)>,
+    /// Files opened to their hunks in a diff or show card, as `(run,
+    /// call id, path)`.
+    open_files: HashSet<(RunId, String, String)>,
     /// The change picked in each `vcs_log` card, by full change id.
     picked_changes: HashMap<(RunId, String), String>,
     /// Flagged calls someone looked at, as `(run, call id)`.
@@ -675,7 +679,8 @@ impl Workspace {
             inspector_shown: false,
             kept: HashMap::new(),
             open_notes: HashSet::new(),
-            open_logs: HashSet::new(),
+            open_cards: HashSet::new(),
+            open_files: HashSet::new(),
             picked_changes: HashMap::new(),
             dismissed: HashSet::new(),
             kept_branch: None,
@@ -1108,22 +1113,46 @@ impl Workspace {
         self.open_notes.contains(&(run.clone(), index))
     }
 
-    /// Opens or closes the `vcs_log` card of `call_id` in `run`.
-    pub fn toggle_log(
+    /// Opens or closes the folding card (a log, diff or show) of
+    /// `call_id` in `run`.
+    pub fn toggle_card(
         &mut self,
         run: &RunId,
         call_id: &str,
         cx: &mut Context<Self>,
     ) {
         let key = (run.clone(), call_id.to_owned());
-        if !self.open_logs.remove(&key) {
-            self.open_logs.insert(key);
+        if !self.open_cards.remove(&key) {
+            self.open_cards.insert(key);
         }
         cx.notify();
     }
 
-    pub fn log_open(&self, run: &RunId, call_id: &str) -> bool {
-        self.open_logs.contains(&(run.clone(), call_id.to_owned()))
+    pub fn card_open(&self, run: &RunId, call_id: &str) -> bool {
+        self.open_cards.contains(&(run.clone(), call_id.to_owned()))
+    }
+
+    /// Opens or closes one file's hunks in a diff or show card.
+    pub fn toggle_file(
+        &mut self,
+        run: &RunId,
+        call_id: &str,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (run.clone(), call_id.to_owned(), path.to_owned());
+        if !self.open_files.remove(&key) {
+            self.open_files.insert(key);
+        }
+        cx.notify();
+    }
+
+    pub fn file_open(&self, run: &RunId, call_id: &str, path: &str) -> bool {
+        self.open_files.contains(&(
+            run.clone(),
+            call_id.to_owned(),
+            path.to_owned(),
+        ))
     }
 
     /// Picks a change in a `vcs_log` card to show its detail, or puts

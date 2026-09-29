@@ -1419,10 +1419,10 @@ fn a_log_card_opens_and_picks_one_change(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
         let run = demo::run_id();
-        assert!(!ws.log_open(&run, "log"), "logs start closed");
-        ws.toggle_log(&run, "log", cx);
-        assert!(ws.log_open(&run, "log"));
-        assert!(!ws.log_open(&run, "other"), "only that card opens");
+        assert!(!ws.card_open(&run, "log"), "logs start closed");
+        ws.toggle_card(&run, "log", cx);
+        assert!(ws.card_open(&run, "log"));
+        assert!(!ws.card_open(&run, "other"), "only that card opens");
 
         assert_eq!(ws.picked_change(&run, "log"), None);
         ws.pick_change(&run, "log", "qpvuntsm", cx);
@@ -1437,8 +1437,23 @@ fn a_log_card_opens_and_picks_one_change(cx: &mut TestAppContext) {
             "a second click puts it back"
         );
 
-        ws.toggle_log(&run, "log", cx);
-        assert!(!ws.log_open(&run, "log"));
+        ws.toggle_card(&run, "log", cx);
+        assert!(!ws.card_open(&run, "log"));
+    });
+}
+
+#[gpui::test]
+fn a_diff_card_opens_one_file_at_a_time(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let run = demo::run_id();
+        assert!(!ws.file_open(&run, "diff", "a.rs"), "files start closed");
+        ws.toggle_file(&run, "diff", "a.rs", cx);
+        assert!(ws.file_open(&run, "diff", "a.rs"));
+        assert!(!ws.file_open(&run, "diff", "b.rs"));
+        assert!(!ws.file_open(&run, "show", "a.rs"), "per card");
+        ws.toggle_file(&run, "diff", "a.rs", cx);
+        assert!(!ws.file_open(&run, "diff", "a.rs"));
     });
 }
 

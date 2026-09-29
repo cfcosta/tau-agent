@@ -253,11 +253,7 @@ fn change_row(
     t: &Theme,
     compact: bool,
 ) -> Stateful<Div> {
-    let (kind_color, kind_bg) = match change.kind.as_deref() {
-        Some("feat") => (t.blue, t.blue.opacity(0.1)),
-        Some("fix") => (t.red, t.red.opacity(0.1)),
-        _ => (t.muted, t.raised),
-    };
+    let (kind_color, kind_bg) = kind_colors(change.kind.as_deref(), t);
     row.h(px(26.))
         .pl(sp(3.75))
         .pr(sp(3.))
@@ -304,6 +300,15 @@ fn change_row(
             row.child(mono("empty", Type::MICRO, t.dim).flex_shrink_0())
         })
         .child(short_id(change, t))
+}
+
+/// A conventional commit type's badge colors: text, then ground.
+pub fn kind_colors(kind: Option<&str>, t: &Theme) -> (Hsla, Hsla) {
+    match kind {
+        Some("feat") => (t.blue, t.blue.opacity(0.1)),
+        Some("fix") => (t.red, t.red.opacity(0.1)),
+        _ => (t.muted, t.raised),
+    }
 }
 
 /// The change's short id, in the change color.
