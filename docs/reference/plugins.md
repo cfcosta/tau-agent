@@ -121,6 +121,12 @@ pub trait PluginRun: Send {
     async fn rewrite_context(&mut self, view: &ContextView<'_>,
         ctx: &PluginCtx) -> anyhow::Result<Option<Rewrite>> { Ok(None) }
 
+    /// Called on every plugin once a rewrite replaced the transcript,
+    /// with the transcript it replaced: the last chance to keep what it
+    /// dropped (tau-memory saves notes here).
+    async fn rewritten(&mut self, replaced: &[Message], rewrite: &Rewrite,
+        ctx: &PluginCtx) -> anyhow::Result<()> { Ok(()) }
+
     /// Called when the model has answered with no tool calls and the run
     /// would stop. `Continue(text)` adds `text` as a user message and
     /// runs another turn, at most `Limits::max_continuations` times per
@@ -257,7 +263,7 @@ start run
        ├─ store the turn
        ├─ no calls? before_stop (each) → Continue(text) adds a user message
        ├─ limits / cancel / steering
-       └─ rewrite_context(TurnEnd)       → store, next request goes in full
+       └─ rewrite_context(TurnEnd)       → store, rewritten (each), next request goes in full
   ├─ store the outcome
   └─ PluginRun::finish (each)
 ```
@@ -346,8 +352,8 @@ recorded, and shows as the run's reasoning note and plan.
 Research and the reasons behind these choices:
 [research/memory.md](../research/memory.md). Decided 2026-09-29.
 
-- **Seams:** tools, `start`, and a turn before compaction (tau-agent has
-  no seam there yet).
+- **Seams:** tools, `start`, and `rewritten`, for a memory-only turn
+  over what compaction dropped.
 - **Notes:** one idea per Markdown file at `<type>/<slug>.md`, the title
   stating the claim, the body in full prose with exact versions, flags,
   paths and error strings.
@@ -383,8 +389,9 @@ Research and the reasons behind these choices:
 - **start:** puts the index note into `plan.context`, frozen for the
   run, then the top few docbert hits for the input (about three), both
   fenced as untrusted data.
-- **Before compaction:** one turn with only the memory tools, since
-  compaction is where details are lost.
+- **At compaction:** in `rewritten`, one model request (`ctx.ask`) over
+  the replaced transcript with only the memory tools, since compaction
+  is where details are lost.
 - **After a run:** a background consolidation pass (signal gate,
   faithful to the transcript, search before write, one reviewable
   commit) exists but is **off** until the evaluation shows it helps.

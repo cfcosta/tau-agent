@@ -430,6 +430,24 @@ impl Runner {
         }];
         entries.extend(rewrite.messages.iter().map(entry));
         self.persist_entries(entries, &Usage::default(), 0).await?;
+        // Every plugin sees what the rewrite dropped before it is gone.
+        let mut failures = Vec::new();
+        for other in &mut self.plugins {
+            if let Err(error) =
+                other.run.rewritten(transcript, &rewrite, &other.ctx).await
+            {
+                failures
+                    .push((other.ctx.plugin().into(), format!("{error:#}")));
+            }
+        }
+        for (plugin, message) in failures {
+            self.emit(RunEvent::PluginError {
+                run: self.run.clone(),
+                plugin,
+                message,
+            })
+            .await;
+        }
         *transcript = rewrite.messages;
         self.emit(RunEvent::ContextRewritten {
             run: self.run.clone(),

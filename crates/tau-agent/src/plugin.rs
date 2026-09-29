@@ -109,6 +109,20 @@ pub trait PluginRun: Send {
         Ok(None)
     }
 
+    /// Runs, for every plugin, once a rewrite from any plugin replaced the
+    /// working transcript, with the transcript it replaced: the last
+    /// chance to keep what the rewrite dropped, before the next request.
+    /// An error is reported as `RunEvent::PluginError`.
+    async fn rewritten(
+        &mut self,
+        replaced: &[Message],
+        rewrite: &Rewrite,
+        ctx: &PluginCtx,
+    ) -> anyhow::Result<()> {
+        let _ = (replaced, rewrite, ctx);
+        Ok(())
+    }
+
     /// Runs when the model answered with no tool calls and the run would
     /// stop. [`StopDecision::Continue`] adds its text as a user message
     /// and runs another turn, up to `Limits::max_continuations` times per

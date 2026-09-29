@@ -942,3 +942,64 @@ fn a_hook_changes_tool_output() {
         );
     });
 }
+
+/// Watches rewrites: records the length of each transcript a rewrite
+/// replaced, and of the rewrite.
+#[derive(Clone, Default)]
+struct Watcher {
+    seen: Arc<Mutex<Vec<(usize, usize)>>>,
+}
+
+#[async_trait]
+impl Plugin for Watcher {
+    fn name(&self) -> &str {
+        "watcher"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> anyhow::Result<Box<dyn PluginRun>> {
+        Ok(Box::new(self.clone()))
+    }
+}
+
+#[async_trait]
+impl PluginRun for Watcher {
+    async fn rewritten(
+        &mut self,
+        replaced: &[Message],
+        rewrite: &tau_agent::plugin::Rewrite,
+        _ctx: &PluginCtx,
+    ) -> anyhow::Result<()> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((replaced.len(), rewrite.messages.len()));
+        Ok(())
+    }
+}
+
+/// Every plugin, the rewriter included, is handed the transcript a
+/// rewrite replaced, whole, before the next request goes out.
+#[test]
+fn plugins_see_what_a_rewrite_replaced() {
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.tool_call("echo", json!({"text": "x"})))
+            .turn(|t| t.text("done"));
+        let watcher = Watcher::default();
+        let agent = Agent::new(model.clone())
+            .tool(Echo::new())
+            .plugin(Pruner::new(Prune::KeepLastUser))
+            .plugin(watcher.clone());
+        let store = Store::memory().await.unwrap();
+        let (events, _) =
+            run_to_end(&agent, &store, "go", Some("then this")).await;
+        assert_grammar(&events);
+        // The four messages before the rewrite, and the one it kept.
+        assert_eq!(watcher.seen.lock().unwrap().clone(), [(4, 1)]);
+        assert_eq!(model.requests()[1].transcript.len(), 1);
+    });
+}
