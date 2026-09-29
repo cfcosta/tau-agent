@@ -13,9 +13,54 @@
 //! - `R6`: "The final answer names the tests that ran and their result.",
 //!   on the final answer.
 
-use anyhow::{Context as _, bail};
 use serde_json::{Map, Value};
-use tau_store::{Store, StoredConstitution, StoredRule};
+use tau_store::{Store, StoreError, StoredConstitution, StoredRule};
+
+/// A rule, or part of one, that does not check out. The UI shows the
+/// message as it is.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum RuleError {
+    #[error(
+        "`{0}` names no target: write `tool.field` (such as `edit.newText`) \
+         or `final answer`"
+    )]
+    NoTarget(String),
+    #[error("`{0}` is not allow or block")]
+    NotOnError(String),
+    #[error("A rule has no id")]
+    NoId,
+    #[error("Rule {0} has no text")]
+    NoText(String),
+    #[error("Rule {0} applies nowhere: give it somewhere to apply")]
+    Nowhere(String),
+    #[error("Rule {id}: {target}")]
+    Target {
+        id: String,
+        #[source]
+        target: Box<RuleError>,
+    },
+    #[error("Rule {0}: review and block are probabilities, 0 to 1")]
+    NotProbabilities(String),
+    #[error("Rule {id}: review ({review}) is above block ({block})")]
+    ReviewAboveBlock { id: String, review: f64, block: f64 },
+    #[error("Two rules are called {0}")]
+    Duplicate(String),
+    #[error("There is no rule {0}")]
+    Unknown(String),
+}
+
+/// A constitution that could not be loaded or saved.
+#[derive(Debug, thiserror::Error)]
+pub enum ConstitutionError {
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error("The constitution stored for {repo} is not valid: {rule}")]
+    Invalid {
+        repo: String,
+        #[source]
+        rule: RuleError,
+    },
+}
 
 /// Where a rule applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +73,7 @@ pub enum Target {
 }
 
 impl Target {
-    pub fn parse(text: &str) -> anyhow::Result<Self> {
+    pub fn parse(text: &str) -> Result<Self, RuleError> {
         let text = text.trim();
         if text.eq_ignore_ascii_case("final answer") {
             return Ok(Self::FinalAnswer);
@@ -40,10 +85,7 @@ impl Target {
                     field: field.to_owned(),
                 })
             }
-            _ => bail!(
-                "`{text}` names no target: write `tool.field` (such as \
-                 `edit.newText`) or `final answer`"
-            ),
+            _ => Err(RuleError::NoTarget(text.to_owned())),
         }
     }
 
@@ -85,11 +127,11 @@ impl OnError {
         }
     }
 
-    pub fn parse(text: &str) -> anyhow::Result<Self> {
+    pub fn parse(text: &str) -> Result<Self, RuleError> {
         match text {
             "allow" => Ok(Self::Allow),
             "block" => Ok(Self::Block),
-            other => bail!("`{other}` is not allow or block"),
+            other => Err(RuleError::NotOnError(other.to_owned())),
         }
     }
 }
@@ -119,7 +161,7 @@ pub const DEFAULT_BLOCK: f64 = 0.8;
 
 impl Constitution {
     /// A constitution read back from the store, every rule checked.
-    pub fn from_stored(stored: StoredConstitution) -> anyhow::Result<Self> {
+    pub fn from_stored(stored: StoredConstitution) -> Result<Self, RuleError> {
         let mut rules: Vec<Rule> = Vec::with_capacity(stored.rules.len());
         for rule in stored.rules {
             let rule = checked(
@@ -130,7 +172,7 @@ impl Constitution {
                 rule.block,
             )?;
             if rules.iter().any(|known| known.id == rule.id) {
-                bail!("Two rules are called {}", rule.id);
+                return Err(RuleError::Duplicate(rule.id));
             }
             rules.push(rule);
         }
@@ -161,10 +203,16 @@ impl Constitution {
     }
 
     /// Repository `repo`'s constitution; none saved is no rules.
-    pub async fn load(store: &Store, repo: &str) -> anyhow::Result<Self> {
+    pub async fn load(
+        store: &Store,
+        repo: &str,
+    ) -> Result<Self, ConstitutionError> {
         match store.constitution(repo).await? {
-            Some(stored) => Self::from_stored(stored).with_context(|| {
-                format!("The constitution stored for {repo} is not valid")
+            Some(stored) => Self::from_stored(stored).map_err(|rule| {
+                ConstitutionError::Invalid {
+                    repo: repo.to_owned(),
+                    rule,
+                }
             }),
             None => Ok(Self::default()),
         }
@@ -172,7 +220,11 @@ impl Constitution {
 
     /// Saves this as repository `repo`'s constitution, replacing the one
     /// before it.
-    pub async fn save(&self, store: &Store, repo: &str) -> anyhow::Result<()> {
+    pub async fn save(
+        &self,
+        store: &Store,
+        repo: &str,
+    ) -> Result<(), ConstitutionError> {
         Ok(store.save_constitution(repo, &self.to_stored()).await?)
     }
 
@@ -184,7 +236,7 @@ impl Constitution {
         on: &[String],
         review: f64,
         block: f64,
-    ) -> anyhow::Result<String> {
+    ) -> Result<String, RuleError> {
         let id = (1..)
             .map(|n| format!("R{n}"))
             .find(|id| self.rules.iter().all(|rule| &rule.id != id))
@@ -201,12 +253,12 @@ impl Constitution {
         on: &[String],
         review: f64,
         block: f64,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), RuleError> {
         let at = self
             .rules
             .iter()
             .position(|rule| rule.id == id)
-            .with_context(|| format!("There is no rule {id}"))?;
+            .ok_or_else(|| RuleError::Unknown(id.to_owned()))?;
         self.rules[at] = checked(id, text, on, review, block)?;
         Ok(())
     }
@@ -269,27 +321,35 @@ fn checked(
     on: &[String],
     review: f64,
     block: f64,
-) -> anyhow::Result<Rule> {
+) -> Result<Rule, RuleError> {
     let id = id.trim().to_owned();
     if id.is_empty() {
-        bail!("A rule has no id");
+        return Err(RuleError::NoId);
     }
     if text.trim().is_empty() {
-        bail!("Rule {id} has no text");
+        return Err(RuleError::NoText(id));
     }
     if on.is_empty() {
-        bail!("Rule {id} applies nowhere: give it somewhere to apply");
+        return Err(RuleError::Nowhere(id));
     }
-    let on = on
+    let on = match on
         .iter()
         .map(|target| Target::parse(target))
-        .collect::<anyhow::Result<Vec<_>>>()
-        .with_context(|| format!("Rule {id}"))?;
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(on) => on,
+        Err(target) => {
+            return Err(RuleError::Target {
+                id,
+                target: Box::new(target),
+            });
+        }
+    };
     if !(0.0..=1.0).contains(&review) || !(0.0..=1.0).contains(&block) {
-        bail!("Rule {id}: review and block are probabilities, 0 to 1");
+        return Err(RuleError::NotProbabilities(id));
     }
     if review > block {
-        bail!("Rule {id}: review ({review}) is above block ({block})");
+        return Err(RuleError::ReviewAboveBlock { id, review, block });
     }
     Ok(Rule {
         id,

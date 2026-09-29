@@ -39,7 +39,7 @@ use tau_ai::{
     model::find,
 };
 use tau_compaction::Compaction;
-use tau_constitution::{Constitution, ConstitutionPlugin, Live};
+use tau_constitution::{Constitution, ConstitutionPlugin, Live, RuleError};
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools::{path::Root, plugin::CodingTools};
@@ -829,8 +829,8 @@ impl Host {
         let on = on
             .iter()
             .map(|place| tau_constitution::rules::Target::parse(place))
-            .collect::<anyhow::Result<Vec<_>>>()
-            .map_err(|error| format!("{error:#}"))?;
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
         let rule = tau_constitution::Rule {
             id: "new".into(),
             text: text.to_owned(),
@@ -1305,7 +1305,7 @@ impl Host {
     pub fn edit_rules(
         &self,
         repo: &str,
-        edit: impl FnOnce(&mut Constitution) -> anyhow::Result<()>,
+        edit: impl FnOnce(&mut Constitution) -> Result<(), RuleError>,
     ) -> anyhow::Result<()> {
         let slot = self
             .slot(repo)

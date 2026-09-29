@@ -23,6 +23,7 @@ use tau_jev::{Jev, NoulCriteria, Question, Request};
 
 use crate::{
     OutputPruning,
+    PruneError,
     history::{CallRecord, Record, ResultRecord, split_history},
     plan::{self, Item, Tally},
     state::{Entry, block_text, estimate_tokens, json_tenths},
@@ -505,7 +506,7 @@ pub async fn ask(
     planned: &Planned,
     threshold: f64,
     charge: impl Fn(&Usage),
-) -> anyhow::Result<Asked> {
+) -> Result<Asked, PruneError> {
     let responses = join_all(
         planned
             .requests

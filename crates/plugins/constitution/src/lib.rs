@@ -37,7 +37,14 @@ use tau_agent::{
 use tau_ai::message::{AssistantBlock, AssistantMessage};
 use tau_jev::{Jev, NoulCriteria, Question, Request};
 
-pub use crate::rules::{Constitution, OnError, Rule, Target};
+pub use crate::rules::{
+    Constitution,
+    ConstitutionError,
+    OnError,
+    Rule,
+    RuleError,
+    Target,
+};
 
 /// The name the plugin goes by in events, reports and records.
 pub const NAME: &str = "tau-constitution";

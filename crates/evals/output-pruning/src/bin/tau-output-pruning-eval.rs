@@ -4,15 +4,54 @@
 //!
 //! See [`USAGE`] for the flags.
 
-use std::{path::PathBuf, process::ExitCode, sync::Arc};
+use std::{
+    num::{ParseFloatError, ParseIntError},
+    path::PathBuf,
+    process::ExitCode,
+    sync::Arc,
+};
 
-use anyhow::{Context as _, bail};
-use tau_jev::{Jev, TypeSafe};
+use tau_jev::{Jev, MissingApiKey, TypeSafe};
 use tau_output_pruning_eval::{
     metrics::{self, Trial},
-    runner::{self, Config},
+    runner::{self, Config, EvalError},
     workload::Kind,
 };
+
+/// Why the evaluation did not run, or stopped.
+#[derive(Debug, thiserror::Error)]
+enum CliError {
+    #[error("{0} takes a value; see --help")]
+    NoValue(String),
+    #[error("--seeds takes a count: {0}")]
+    Seeds(#[from] ParseIntError),
+    #[error("--seeds must be at least 1")]
+    NoSeeds,
+    #[error("--budget-usd takes dollars: {0}")]
+    Budget(#[from] ParseFloatError),
+    #[error("--budget-usd must be more than zero")]
+    NoBudget,
+    #[error("unknown argument {0:?}; see --help")]
+    Unknown(String),
+    #[error("no workload is called {0:?}; see --list")]
+    NoWorkload(String),
+    #[error(
+        "TYPESAFE_API_KEY is not set: the evaluation asks the real Jev. Set \
+         it to a TypeSafe key and run again. Nothing was run."
+    )]
+    NoKey(#[from] MissingApiKey),
+    #[error("cannot write {}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Eval(#[from] EvalError),
+}
 
 const USAGE: &str = "\
 tau-output-pruning-eval: how well fast compaction's output pruning keeps
@@ -49,7 +88,7 @@ struct Options {
     help: bool,
 }
 
-fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Options> {
+fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, CliError> {
     let mut options = Options {
         workloads: Vec::new(),
         seeds: 1,
@@ -61,26 +100,22 @@ fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Options> {
         help: false,
     };
     while let Some(arg) = args.next() {
-        let mut value = || {
-            args.next()
-                .with_context(|| format!("{arg} takes a value; see --help"))
-        };
+        let mut value =
+            || args.next().ok_or_else(|| CliError::NoValue(arg.clone()));
         match arg.as_str() {
             "--workload" => options
                 .workloads
                 .extend(value()?.split(',').map(|name| name.trim().to_owned())),
             "--seeds" => {
-                options.seeds =
-                    value()?.parse().context("--seeds takes a count")?;
+                options.seeds = value()?.parse()?;
                 if options.seeds == 0 {
-                    bail!("--seeds must be at least 1");
+                    return Err(CliError::NoSeeds);
                 }
             }
             "--budget-usd" => {
-                let usd: f64 =
-                    value()?.parse().context("--budget-usd takes dollars")?;
+                let usd: f64 = value()?.parse()?;
                 if usd.is_nan() || usd <= 0.0 {
-                    bail!("--budget-usd must be more than zero");
+                    return Err(CliError::NoBudget);
                 }
                 options.budget = Some(usd);
             }
@@ -89,7 +124,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Options> {
             "--whole" => options.whole = true,
             "--list" => options.list = true,
             "--help" | "-h" => options.help = true,
-            other => bail!("unknown argument {other:?}; see --help"),
+            other => return Err(CliError::Unknown(other.to_owned())),
         }
     }
     Ok(options)
@@ -99,13 +134,14 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("tau-output-pruning-eval: {error:#}");
+            // Every message carries its cause already.
+            eprintln!("tau-output-pruning-eval: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run() -> anyhow::Result<()> {
+fn run() -> Result<(), CliError> {
     let options = parse(std::env::args().skip(1))?;
     if options.help {
         print!("{USAGE}");
@@ -124,11 +160,10 @@ fn run() -> anyhow::Result<()> {
             .workloads
             .iter()
             .map(|name| {
-                Kind::parse(name).with_context(|| {
-                    format!("no workload is called {name:?}; see --list")
-                })
+                Kind::parse(name)
+                    .ok_or_else(|| CliError::NoWorkload(name.clone()))
             })
-            .collect::<anyhow::Result<_>>()?
+            .collect::<Result<_, _>>()?
     };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -137,12 +172,7 @@ fn run() -> anyhow::Result<()> {
     let jev: Arc<dyn Jev> = {
         // The client must be created inside the runtime.
         let _guard = runtime.enter();
-        Arc::new(TypeSafe::from_env().map_err(|_| {
-            anyhow::anyhow!(
-                "TYPESAFE_API_KEY is not set: the evaluation asks the real Jev. \
-                 Set it to a TypeSafe key and run again. Nothing was run."
-            )
-        })?)
+        Arc::new(TypeSafe::from_env()?)
     };
 
     let scratch = match &options.work {
@@ -217,8 +247,12 @@ fn run() -> anyhow::Result<()> {
         println!("stopped early: {why}");
     }
     if let Some(path) = &options.json {
-        std::fs::write(path, serde_json::to_string_pretty(&report)?)
-            .with_context(|| format!("cannot write {}", path.display()))?;
+        std::fs::write(path, serde_json::to_string_pretty(&report)?).map_err(
+            |source| CliError::Write {
+                path: path.clone(),
+                source,
+            },
+        )?;
     }
     Ok(())
 }

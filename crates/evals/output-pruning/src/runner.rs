@@ -39,6 +39,21 @@ use crate::{
     workload::{Kind, Workload, generate},
 };
 
+/// Why a trial could not run to its end.
+#[derive(Debug, thiserror::Error)]
+pub enum EvalError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Store(#[from] tau_store::StoreError),
+    #[error(transparent)]
+    Agent(#[from] tau_agent::agent::AgentError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("the model never saw the command's result")]
+    NoResult,
+}
+
 /// The name of the file the fake `bash` spills to: tau's `bash` names
 /// its `tau-bash-<hex>.log`, which is what the gate reads.
 pub const SPILL_NAME: &str = "tau-bash-0e7a1c0de.log";
@@ -191,7 +206,7 @@ pub async fn run(
     mut settings: Settings,
     work: &Path,
     bash: Bash,
-) -> anyhow::Result<Trial> {
+) -> Result<Trial, EvalError> {
     settings.archive_dir = work.to_owned();
     let chunk_lines = settings.output.chunk_lines;
     let spill = work.join(SPILL_NAME);
@@ -263,9 +278,7 @@ pub async fn run(
             ),
             _ => None,
         })
-        .ok_or_else(|| {
-            anyhow::anyhow!("the model never saw the command's result")
-        })?;
+        .ok_or(EvalError::NoResult)?;
 
     let mut stats: Option<OutputStats> = None;
     let mut error = None;
@@ -418,7 +431,7 @@ pub async fn evaluate(
     config: &Config,
     jev: Arc<dyn Jev>,
     progress: &mut dyn FnMut(&Trial),
-) -> anyhow::Result<Report> {
+) -> Result<Report, EvalError> {
     let mut trials = Vec::new();
     let mut spent = 0.0;
     let mut stopped = None;

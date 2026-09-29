@@ -8352,7 +8352,6 @@ dependencies = [
 name = "tau-compaction"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "hegeltest",
@@ -8363,6 +8362,7 @@ dependencies = [
  "tau-ai",
  "tau-store",
  "tau-testing",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
@@ -8370,7 +8370,6 @@ dependencies = [
 name = "tau-constitution"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "hegeltest",
@@ -8383,6 +8382,7 @@ dependencies = [
  "tau-store",
  "tau-testing",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
@@ -8390,7 +8390,6 @@ dependencies = [
 name = "tau-fast-compaction"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "hegeltest",
@@ -8402,6 +8401,7 @@ dependencies = [
  "tau-jev",
  "tau-store",
  "tau-testing",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
@@ -8409,7 +8409,6 @@ dependencies = [
 name = "tau-goal"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "hegeltest",
@@ -8489,7 +8488,6 @@ dependencies = [
 name = "tau-output-pruning-eval"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "hegeltest",
@@ -8503,6 +8501,7 @@ dependencies = [
  "tau-testing",
  "tau-tools",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
@@ -8510,7 +8509,6 @@ dependencies = [
 name = "tau-reasoning"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "serde",

@@ -64,7 +64,37 @@ use tau_agent::{
     tool::ToolOutput,
 };
 use tau_ai::message::{InputBlock, Message, TextContent};
-use tau_jev::Jev;
+use tau_jev::{Jev, JevError};
+
+/// Why a pass or an output pruning failed; the plugin reports it and
+/// leaves the transcript as it was.
+#[derive(Debug, thiserror::Error)]
+pub enum PruneError {
+    /// The requests could not be built: the state does not fit them.
+    #[error("{0}")]
+    Plan(String),
+    #[error(transparent)]
+    Jev(#[from] JevError),
+    /// A rewrite's archive could not be written, so the rewrite is not
+    /// made: the model could not read back what it cut.
+    #[error("cannot archive to {}: {source}", path.display())]
+    Archive {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+impl From<String> for PruneError {
+    fn from(why: String) -> Self {
+        Self::Plan(why)
+    }
+}
+
+impl From<PruneError> for PluginError {
+    fn from(error: PruneError) -> Self {
+        Self::other(error)
+    }
+}
 
 pub use crate::{
     decide::{Action, Decision},
@@ -290,7 +320,7 @@ impl PluginRun for FastCompactionRun {
         tokio::select! {
             biased;
             _ = ctx.cancel.cancelled() => return Err("the pass was cancelled".into()),
-            rewrite = self.pass(view, ctx) => rewrite.map_err(PluginError::other),
+            rewrite = self.pass(view, ctx) => Ok(rewrite?),
         }
     }
 
@@ -315,7 +345,7 @@ impl PluginRun for FastCompactionRun {
         let pruned = tokio::select! {
             biased;
             _ = ctx.cancel.cancelled() => return Err("output pruning was cancelled".into()),
-            pruned = prune_output(&*self.jev, &self.settings, view, gated, ctx) => pruned.map_err(PluginError::other)?,
+            pruned = prune_output(&*self.jev, &self.settings, view, gated, ctx) => pruned?,
         };
         if let Some(text) = pruned {
             output.content = vec![InputBlock::Text(TextContent {
@@ -339,7 +369,7 @@ async fn prune_output(
     view: &ToolResultView<'_>,
     gated: output::Gated,
     ctx: &PluginCtx,
-) -> anyhow::Result<Option<String>> {
+) -> Result<Option<String>, PruneError> {
     let pruning = &settings.output;
     let mut transcript = state::entries(view.transcript);
     transcript
@@ -349,8 +379,7 @@ async fn prune_output(
     let command = view.call.args["command"].as_str().unwrap_or_default();
     let lines = output::lines(&gated.full);
     let Some(planned) =
-        output::plan_requests(&lines, &records, &task, command, pruning)
-            .map_err(anyhow::Error::msg)?
+        output::plan_requests(&lines, &records, &task, command, pruning)?
     else {
         return Ok(None);
     };
@@ -389,8 +418,11 @@ async fn prune_output(
         && tokens_after as f64
             <= tokens_full as f64 * (1.0 - pruning.min_reduction_ratio);
     if pruned && gated.spill.is_none() {
-        archive::write(&archive, &gated.full).map_err(|error| {
-            anyhow::anyhow!("cannot archive to {}: {error}", archive.display())
+        archive::write(&archive, &gated.full).map_err(|source| {
+            PruneError::Archive {
+                path: archive.clone(),
+                source,
+            }
         })?;
     }
     let stats = OutputStats {
@@ -433,7 +465,7 @@ impl FastCompactionRun {
         &mut self,
         view: &ContextView<'_>,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Option<Rewrite>> {
+    ) -> Result<Option<Rewrite>, PruneError> {
         let settings = &self.settings;
         let preserve = settings.preserve_recent.max(1);
         let entries = state::entries(view.transcript);
@@ -474,8 +506,11 @@ impl FastCompactionRun {
         // cannot be written fails the pass rather than cut a result the
         // model could not read back.
         for (path, text) in &archives {
-            archive::write(path, text).map_err(|error| {
-                anyhow::anyhow!("cannot archive to {}: {error}", path.display())
+            archive::write(path, text).map_err(|source| {
+                PruneError::Archive {
+                    path: path.clone(),
+                    source,
+                }
             })?;
         }
         let count = |action| {

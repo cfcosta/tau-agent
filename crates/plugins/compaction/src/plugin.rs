@@ -26,6 +26,7 @@ use tau_ai::{
 
 use crate::{
     Compaction,
+    CompactionError,
     Record,
     SUMMARIZATION_SYSTEM_PROMPT,
     build_summary_request,
@@ -103,16 +104,13 @@ impl PluginRun for CompactionRun {
                 if !due {
                     return Ok(None);
                 }
-                let result =
-                    self.compact(view, ctx).await.map_err(PluginError::other);
+                let result = self.compact(view, ctx).await;
                 if result.is_err() {
                     self.off = true;
                 }
-                result
+                Ok(result?)
             }
-            Trigger::Overflow => {
-                self.compact(view, ctx).await.map_err(PluginError::other)
-            }
+            Trigger::Overflow => Ok(self.compact(view, ctx).await?),
         }
     }
 }
@@ -124,7 +122,7 @@ impl CompactionRun {
         &mut self,
         view: &ContextView<'_>,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Option<Rewrite>> {
+    ) -> Result<Option<Rewrite>, CompactionError> {
         let transcript = view.transcript;
         // The transcript opens with the latest summary, unless another
         // plugin's rewrite has replaced it since.
@@ -195,7 +193,7 @@ impl CompactionRun {
         request: String,
         max_output_tokens: u64,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<String> {
+    ) -> Result<String, CompactionError> {
         let settings = Settings {
             model: self.model.clone(),
             instructions: Some(SUMMARIZATION_SYSTEM_PROMPT.to_owned()),
@@ -207,9 +205,7 @@ impl CompactionRun {
             content: UserContent::Text(request),
             timestamp: ctx.now(),
         })];
-        let message = ctx.ask(settings, &input).await.map_err(|error| {
-            anyhow::anyhow!("Summarization failed: {error}")
-        })?;
-        Ok(check_summary(&message)?)
+        let message = ctx.ask(settings, &input).await?;
+        check_summary(&message)
     }
 }

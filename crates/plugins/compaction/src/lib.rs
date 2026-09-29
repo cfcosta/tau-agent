@@ -47,11 +47,15 @@
 
 mod plugin;
 
-use std::{collections::BTreeSet, fmt, ops::Range};
+use std::{collections::BTreeSet, ops::Range};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tau_agent::context::estimate_message_tokens;
+use tau_agent::{
+    context::estimate_message_tokens,
+    error::PluginError,
+    plugin::AskError,
+};
 use tau_ai::message::{
     AssistantBlock,
     AssistantMessage,
@@ -651,18 +655,31 @@ fn capped_budget(share: f64, reserve_tokens: u64, model_max: u64) -> u64 {
 // Rejected summaries
 // ============================================================================
 
-/// Why a summarization response could not become a checkpoint
+/// Why a compaction pass wrote no checkpoint: the summary request got
+/// no response, or the response is not a usable summary
 /// (`docs/reference/compaction.md`, "Rejected summaries").
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompactionError(String);
-
-impl fmt::Display for CompactionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum CompactionError {
+    #[error("Summarization failed: {0}")]
+    Ask(#[from] AskError),
+    /// The response stopped with an error; its message, or a
+    /// placeholder.
+    #[error("Summarization failed: {0}")]
+    Failed(String),
+    #[error(
+        "Summarization failed: generation hit the token cap and the summary \
+         is incomplete"
+    )]
+    Truncated,
+    #[error("Summarization attempted to call a tool")]
+    ToolCall,
 }
 
-impl std::error::Error for CompactionError {}
+impl From<CompactionError> for PluginError {
+    fn from(error: CompactionError) -> Self {
+        Self::other(error)
+    }
+}
 
 /// Validates a summarization response and extracts its text
 /// (`docs/reference/compaction.md`, "Rejected summaries"; pi's
@@ -676,16 +693,10 @@ pub fn check_summary(
         StopReason::Error => {
             let message =
                 response.error_message.as_deref().unwrap_or("Unknown error");
-            return Err(CompactionError(format!(
-                "Summarization failed: {message}"
-            )));
+            return Err(CompactionError::Failed(message.to_owned()));
         }
         StopReason::Length => {
-            return Err(CompactionError(
-                "Summarization failed: generation hit the token cap and \
-                 the summary is incomplete"
-                    .to_owned(),
-            ));
+            return Err(CompactionError::Truncated);
         }
         StopReason::Stop | StopReason::ToolUse | StopReason::Aborted => {}
     }
@@ -695,9 +706,7 @@ pub fn check_summary(
         .iter()
         .any(|block| matches!(block, AssistantBlock::ToolCall(_)))
     {
-        return Err(CompactionError(
-            "Summarization attempted to call a tool".to_owned(),
-        ));
+        return Err(CompactionError::ToolCall);
     }
 
     let text: Vec<&str> = response

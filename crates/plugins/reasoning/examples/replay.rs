@@ -18,11 +18,9 @@ use tau_reasoning::{
 };
 use tau_store::Store;
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let path = args
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("usage: replay <runs.db> [runs]"))?;
+    let path = args.next().ok_or("usage: replay <runs.db> [runs]")?;
     let limit: u32 = args.next().map_or(Ok(20), |n| n.parse())?;
     let jev = Arc::new(tau_jev::TypeSafe::from_env()?);
     let reasoning = Reasoning::new(jev);
@@ -102,6 +100,6 @@ fn main() -> anyhow::Result<()> {
         for ((from, to), count) in moves {
             println!("  {from:<8} → {to:<8} {count}");
         }
-        anyhow::Ok(())
+        Ok::<_, Box<dyn std::error::Error>>(())
     })
 }

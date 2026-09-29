@@ -14,6 +14,7 @@ use tau_ai::message::Usage;
 use tau_jev::{Jev, Question, Request};
 
 use crate::{
+    PruneError,
     Settings,
     history::split_history,
     plan::{self, Item, Tally},
@@ -274,15 +275,14 @@ pub async fn decide(
     calls: &[Call],
     settings: &Settings,
     charge: impl Fn(&Usage),
-) -> anyhow::Result<Decided> {
+) -> Result<Decided, PruneError> {
     let planned = requests(
         entries,
         calls,
         settings.goal.as_deref(),
         settings.max_state_tokens,
         settings.max_request_tokens,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     let responses = join_all(
         planned
             .requests
