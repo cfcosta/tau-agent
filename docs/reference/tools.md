@@ -87,6 +87,83 @@ seven, for `Agent::tools`. `bash`, and so both, is unix-only.
   example `Command exited with code N`.
 - **Progress:** partial output is sent as `ToolUpdate`, throttled.
 
+### bash: terminal mode (the `terminal` feature)
+
+With tau-tools' `terminal` feature (tau-ui turns it on), `bash` runs
+commands under a pseudo-terminal by default
+([0010](../decisions/0010-terminal-rendering.md));
+`Bash::with_terminal(false)` goes back to the pipes above. Everything
+above holds, except as follows.
+
+- **The terminal:** 120 columns by 40 rows, fixed, so the text never
+  depends on a window. stdout and stderr are the terminal; stdin stays
+  `/dev/null`. The command leads its own session (and process group),
+  with the terminal as its controlling terminal. It starts with
+  `SIGHUP` ignored, so a background job outlives the shell as it does
+  with pipes.
+- **Environment:** `TERM=xterm-256color`, `PAGER=cat`,
+  `GIT_PAGER=cat`, `MANPAGER=cat`, `LESS=-FRX`.
+- **Prompts:** reading stdin gets end of file. Reading `/dev/tty` gets
+  end of file once too (an EOF character waits in the terminal's input),
+  so a password prompt fails at once instead of waiting.
+- **The model's text** is the terminal's plain text (tau-terminal,
+  libghostty-vt): each row once, in order, as it scrolls off, then what
+  is left on screen, down to the cursor. It goes through the same
+  accumulator as with pipes: the same `truncate_tail` limits, and the
+  same spill file, holding this plain text. So:
+  - output with no control characters but newlines reads exactly as
+    it does with pipes (a property test holds this);
+  - the terminal's `\r\n` line ends read as `\n`, and soft-wrapped
+    lines are joined back;
+  - a `\r` redraw (a progress bar) leaves only its last frame;
+  - escape sequences are applied, never shown; a tab becomes the spaces
+    up to the next tab stop;
+  - what a program draws on the alternate screen is gone once it leaves
+    it.
+- **Progress updates** carry the text so far as their content, as with
+  pipes, and the raw output in their details:
+
+  ```json
+  { "term": { "seq": 0, "bytes": "<base64>" } }
+  ```
+
+  `seq` counts from 0 with no gaps. The chunks, decoded and joined in
+  order, are every byte the command wrote, escape sequences included
+  (with the terminal's `\r\n` line ends). Chunks are coalesced (at most
+  16 ms or 64 KiB waiting) and never dropped, and the last one is sent
+  before the tool returns. An update without details carries only new
+  text.
+
+- **Result details**, on success and on failure (a failed result is a
+  `ToolError::Output`, which keeps them):
+
+  ```json
+  {
+    "term": {
+      "cols": 120,
+      "rows": 40,
+      "status": "exited",
+      "exitCode": 0,
+      "chunks": 12,
+      "outputBytes": 5120,
+      "replay": "stream",
+      "bytes": "<base64>"
+    }
+  }
+  ```
+
+  - `status`: `exited`, `timedOut` or `cancelled`. `exitCode`: the
+    exit code, 128 + N for signal N; `null` on a timeout or a cancel.
+  - `chunks` and `outputBytes`: how many chunks the updates carried,
+    and how many bytes.
+  - `replay`: `stream` when `bytes` is the whole raw output (up to
+    4 MiB), `snapshot` when it is larger and `bytes` is the final
+    screen and scrollback as VT sequences instead. Either way, `bytes`
+    written to a new `cols` by `rows` terminal shows the finished
+    command.
+  - The details are stored with the tool result, so a reopened run
+    rebuilds its terminal from the store.
+
 ## edit: `{ path, edits: [{ oldText, newText }] }`
 
 - **Argument repair** (`prepare_arguments`) fixes common model mistakes:

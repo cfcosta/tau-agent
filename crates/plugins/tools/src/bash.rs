@@ -18,6 +18,13 @@
 //!
 //! Real process I/O (spawning, the process group, signals) lives only in
 //! [`Bash::run`], which wires the pure pieces together.
+//!
+//! With the `terminal` feature, commands run under a pseudo-terminal
+//! instead (`docs/decisions/0010-terminal-rendering.md`): see
+//! `bash::terminal`, which adapts tau-terminal's runner to this tool.
+
+#[cfg(feature = "terminal")]
+pub mod terminal;
 
 use std::{
     future::Future,
@@ -80,6 +87,9 @@ pub struct Bash {
     root: Root,
     shell: Option<PathBuf>,
     parameters: Value,
+    /// Whether commands run under a pseudo-terminal.
+    #[cfg(feature = "terminal")]
+    terminal: bool,
 }
 
 impl Bash {
@@ -90,7 +100,17 @@ impl Bash {
             root,
             shell: None,
             parameters,
+            #[cfg(feature = "terminal")]
+            terminal: true,
         }
+    }
+
+    /// Runs commands under a pseudo-terminal (the default with the
+    /// `terminal` feature), or with pipes as without it.
+    #[cfg(feature = "terminal")]
+    pub fn with_terminal(mut self, on: bool) -> Self {
+        self.terminal = on;
+        self
     }
 
     /// Uses `path` as the shell instead of the default search order.
@@ -444,6 +464,21 @@ impl Accumulator {
         }
     }
 
+    /// What the model would see if `rest` came next and the output
+    /// ended: [`truncate::truncate_tail`] of the rolling tail followed by
+    /// `rest`, for a progress update. Leaves the accumulator as it is.
+    pub fn preview(&self, rest: &str) -> String {
+        let mut text = self.tail.clone();
+        text.push_str(rest);
+        truncate::truncate_cut_tail(
+            &text,
+            !self.tail_starts_at_line_boundary,
+            self.max_lines,
+            self.max_bytes,
+        )
+        .content
+    }
+
     /// Where the full output was spilled, once truncation required it.
     pub fn spill_path(&self) -> Option<&Path> {
         self.spill.as_ref().map(|(path, _)| path.as_path())
@@ -626,6 +661,7 @@ fn exit_code_of(status: std::process::ExitStatus) -> i32 {
 }
 
 /// What ended the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
     /// The command exited (or its output finished draining) on its own.
     Done,
@@ -646,6 +682,11 @@ impl Bash {
         }
 
         let shell = self.resolve_shell();
+        #[cfg(feature = "terminal")]
+        if self.terminal {
+            return terminal::run(&shell, self.root.dir(), &args, timeout, ctx)
+                .await;
+        }
         let mut command = tokio::process::Command::new(&shell);
         command
             .arg("-c")
@@ -716,40 +757,68 @@ impl Bash {
             outcome
         };
 
-        acc.finish();
-        let snapshot = acc.snapshot();
-        let truncated = snapshot.truncated();
-        let mut content = snapshot.content;
-        if truncated && let Some(path) = acc.spill_path() {
-            content.push_str(&format!("\n\nFull output: {}", path.display()));
-        }
+        let exit_code = match outcome {
+            Outcome::Done => Some(code_rx.await.unwrap_or(1)),
+            Outcome::Cancelled | Outcome::TimedOut => None,
+        };
+        finish(acc, outcome, exit_code, args.timeout, None)
+    }
+}
 
-        match outcome {
-            Outcome::Cancelled => {
-                Err(ToolError::from(append_status(&content, "Command aborted")))
-            }
-            Outcome::TimedOut => {
-                // Report the value the caller gave us, not one recovered
-                // from the `Duration` (`bash.ts:361`: pi reports the
-                // input number verbatim).
-                let secs =
-                    args.timeout.expect("timed out implies a timeout was set");
-                Err(ToolError::from(append_status(
-                    &content,
-                    format!("Command timed out after {secs} seconds"),
+/// The tool's result once the output is read: `acc`'s
+/// [`truncate::truncate_tail`] with the spill notice, then the status
+/// `outcome` and `exit_code` call for (`docs/reference/tools.md`,
+/// "bash", "Error strings"). `details`, when given, stay on the result,
+/// failed or not.
+fn finish(
+    mut acc: Accumulator,
+    outcome: Outcome,
+    exit_code: Option<i32>,
+    timeout: Option<f64>,
+    details: Option<Value>,
+) -> Result<ToolOutput, ToolError> {
+    acc.finish();
+    let snapshot = acc.snapshot();
+    let truncated = snapshot.truncated();
+    let mut content = snapshot.content;
+    if truncated && let Some(path) = acc.spill_path() {
+        content.push_str(&format!("\n\nFull output: {}", path.display()));
+    }
+
+    let failed = |text: String| match &details {
+        Some(details) => ToolError::output(ToolOutput {
+            details: Some(details.clone()),
+            ..ToolOutput::text(text)
+        }),
+        None => ToolError::from(text),
+    };
+    match outcome {
+        Outcome::Cancelled => {
+            Err(failed(append_status(&content, "Command aborted")))
+        }
+        Outcome::TimedOut => {
+            // Report the value the caller gave us, not one recovered
+            // from the `Duration` (`bash.ts:361`: pi reports the input
+            // number verbatim).
+            let secs = timeout.expect("timed out implies a timeout was set");
+            Err(failed(append_status(
+                &content,
+                format!("Command timed out after {secs} seconds"),
+            )))
+        }
+        Outcome::Done => {
+            let exit_code = exit_code.unwrap_or(1);
+            let display = or_no_output(content);
+            if exit_code == 0 {
+                Ok(ToolOutput {
+                    details,
+                    ..ToolOutput::text(display)
+                })
+            } else {
+                Err(failed(append_status(
+                    &display,
+                    format!("Command exited with code {exit_code}"),
                 )))
-            }
-            Outcome::Done => {
-                let exit_code = code_rx.await.unwrap_or(1);
-                let display = or_no_output(content);
-                if exit_code == 0 {
-                    Ok(ToolOutput::text(display))
-                } else {
-                    Err(ToolError::from(append_status(
-                        &display,
-                        format!("Command exited with code {exit_code}"),
-                    )))
-                }
             }
         }
     }

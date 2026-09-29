@@ -7,6 +7,12 @@
 //!
 //! [`plugin::CodingTools`] adds them to an agent as a plugin:
 //! `Agent::plugin(CodingTools::new(root))`.
+//!
+//! The `terminal` feature runs `bash` under a pseudo-terminal, through
+//! tau-terminal (libghostty-vt), and streams its raw output in the
+//! results' details (`bash::terminal`;
+//! `docs/decisions/0010-terminal-rendering.md`). Without it, `bash` uses
+//! pipes and neither is built.
 
 /// Unix only: it runs commands in their own process group.
 #[cfg(unix)]

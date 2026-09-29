@@ -6,6 +6,14 @@ edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# `bash` runs commands under a pseudo-terminal, with tau-terminal
+# (libghostty-vt) turning the output into the model's text, and streams
+# the raw bytes in its details for a terminal view
+# (docs/decisions/0010-terminal-rendering.md). Off, `bash` uses pipes
+# and pulls in neither.
+terminal = ["dep:tau-terminal"]
+
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
@@ -23,6 +31,7 @@ serde_json.workspace = true
 similar.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
+tau-terminal = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "process"] }
 tokio-util.workspace = true

@@ -428,6 +428,7 @@ cases do not share state.
 | `bash` output re-chunked at any byte boundary, including inside a multi-byte character, gives the same result                                                                          | Metamorphic  |
 | `bash` keeps `truncate_tail` of the full output, and the spill file holds the full output, whether the limit hit was lines or bytes                                                    | Differential |
 | `bash` progress updates stay under a fixed bound however many chunks arrive                                                                                                            | Invariant    |
+| Terminal mode: plain output (no escapes, no `\r`), in reads of any size, gives the model the text, the "was it cut" flag, the totals and the spill that pipes give                     | Differential |
 
 `bash` also has example tests:
 
@@ -436,6 +437,26 @@ cases do not share state.
 - `kill -KILL $$` and `kill -TERM $$` report exit codes 137 and 143, and
   keep the output printed before the kill;
 - a grandchild process is killed with its group on cancel and timeout.
+
+In terminal mode (the `terminal` feature), example tests cover the byte
+stream (every byte once, in `seq` order, before the tool returns), the
+result's details on success, failure, timeout and cancel, and their
+round trip through the store.
+
+### `tau-terminal`
+
+| Property                                                                                                                 | Oracle     |
+| ------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| Plain output with `\r\n` line ends, chunked anywhere, reads back from `Terminal::text` as itself with `\n` line ends     | Round trip |
+| With recording on, all the recorded text then `text` is the whole plain output, whatever the chunking and the scrollback | Round trip |
+
+Example tests cover `\r` redraws, SGR colors and wide characters in the
+snapshot, the scrollback cap, VT replay, the alternate screen and
+resizing. The PTY runner's tests run real processes: stdout and stderr
+are a terminal and stdin is not, the size and environment, the
+controlling terminal, prompts that read stdin or `/dev/tty` end at
+once, every byte arrives in order, the exit status, killing the process
+group, and late output from a grandchild.
 
 Every string in the error table of [`tools.md`](tools.md#error-strings)
 has an example test. Tests that rely on `chmod` skip themselves when
@@ -627,7 +648,7 @@ missing assertion, or record why the mutant is equivalent in
 | Tier    | When       | Runs                                                                                                                             |
 | ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run`, `cargo sqlx prepare --check`, `cargo deny check` |
-| Nightly | once a day | everything in Check, plus `cargo nextest run --run-ignored only` (nightly properties) and `cargo mutants` on the modules above  |
+| Nightly | once a day | everything in Check, plus `cargo nextest run --run-ignored only` (nightly properties) and `cargo mutants` on the modules above   |
 | Live    | nightly    | the [live tests](#live-tests) with a budget cap; also run by hand to record new fixtures when the protocol changes               |
 
 The Check tier must stay under five minutes. If it grows past that,
