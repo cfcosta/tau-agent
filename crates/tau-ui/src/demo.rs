@@ -1734,7 +1734,8 @@ fn change_log() -> ToolOutput {
 pub const SHOW_CALL: &str = "c13";
 /// The session's `vcs_diff` call, on the commit that adds the tests.
 pub const DIFF_CALL: &str = "c14";
-/// The file `--open show` and `--open diff` open in their cards.
+/// The files `--open status`, `--open show` and `--open diff` open in
+/// their cards.
 pub const SHOW_FILE: &str = "crates/tau-ai/src/retry.rs";
 pub const DIFF_FILE: &str = "crates/tau-ai/tests/retry_after.rs";
 
@@ -1767,12 +1768,10 @@ fn diff_files(diff: &str) -> Vec<Value> {
         .collect()
 }
 
-fn change_show() -> ToolOutput {
-    let description = "feat(tau-ai): honor retry-after on 429 and 503\n\n\
-                       The server's hint wins over our backoff, capped at the \
-                       policy's max_delay. A header that does not parse falls \
-                       back to the backoff.\n";
-    let diff = "\
+/// The change that honors `retry-after`: what `vcs_status` finds in
+/// `@` right after the edit, and what `vcs_show` shows once it is
+/// described.
+const HONOR_RETRY_AFTER: &str = "\
 diff --git a/crates/tau-ai/src/backoff.rs b/crates/tau-ai/src/backoff.rs
 deleted file mode 100644
 --- a/crates/tau-ai/src/backoff.rs
@@ -1839,6 +1838,61 @@ diff --git a/crates/tau-ai/src/retry.rs b/crates/tau-ai/src/retry.rs
          self.attempts
      }
 ";
+
+/// The session's `vcs_status` call, right after the edit: `@` holds the
+/// change that later becomes the one that honors `retry-after`, not yet
+/// described. jj keeps its change id through the describe.
+pub const STATUS_CALL: &str = "c15";
+
+fn change_status() -> ToolOutput {
+    let parent = vcs_change(
+        "qzpxumwywmppokoyozvookknoxqqksqt",
+        "7a8d41bed440e50454f31af3176813e02ea68ef7",
+        "tau: run retry-after turn 2\n",
+    );
+    let mut working_copy =
+        vcs_change(LOG_PICKED, "5e0c93f1b27a4d86c2f0e9b1a37d58c46f21e0b9", "");
+    working_copy["working_copy"] = json!(true);
+    let files = diff_files(HONOR_RETRY_AFTER);
+    let text = format!(
+        "Working copy (@): onvkmqwosvvz 5e0c93f1b27a @ (no description set)\n\
+         Parent (@-):      qzpxumwywmpp 7a8d41bed440 tau: run retry-after turn 2\n\
+         Working copy changes:\n{}",
+        files
+            .iter()
+            .map(|file| {
+                let letter = match file["kind"].as_str() {
+                    Some("added") => "A",
+                    Some("removed") => "D",
+                    _ => "M",
+                };
+                format!(
+                    "{letter} {}",
+                    file["path"].as_str().unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    ToolOutput {
+        details: Some(json!({
+            "working_copy": working_copy,
+            "parents": [parent],
+            "changes": files,
+            "conflicts": [],
+            "too_large": [],
+            "diff": HONOR_RETRY_AFTER,
+            "truncated": false,
+        })),
+        ..ToolOutput::text(text)
+    }
+}
+
+fn change_show() -> ToolOutput {
+    let description = "feat(tau-ai): honor retry-after on 429 and 503\n\n\
+                       The server's hint wins over our backoff, capped at the \
+                       policy's max_delay. A header that does not parse falls \
+                       back to the backoff.\n";
     let head = format!(
         "Change ID: {LOG_PICKED}\nCommit ID: 28b5b7a767c76fb008f86bebb2737f6a6f0fb23c\n\
          Author: tau <tau@localhost>\n\
@@ -1851,7 +1905,7 @@ diff --git a/crates/tau-ai/src/retry.rs b/crates/tau-ai/src/retry.rs
     );
     vcs_output(
         &head,
-        diff,
+        HONOR_RETRY_AFTER,
         json!({
             "change": vcs_change(
                 LOG_PICKED,
@@ -2321,6 +2375,7 @@ pub fn script() -> Vec<Step> {
          +    .unwrap_or_else(|| self.policy.delay(attempt));\n",
     );
     s.tool(450, "c10", "edit", args, output);
+    s.tool(150, STATUS_CALL, "vcs_status", json!({}), change_status());
     s.start_tool(
         "c11",
         "bash",
@@ -2495,6 +2550,12 @@ mod tests {
         assert_eq!(diff.files[0].path, DIFF_FILE);
         assert_eq!(diff.files[0].kind, tau_vcs::ChangeKind::Added);
         assert_eq!(diff.files[0].added, 21);
+        let ToolBody::Status(status) = body(STATUS_CALL) else {
+            panic!("{:?}", body(STATUS_CALL));
+        };
+        assert_eq!(status.working_copy.info.change_id, LOG_PICKED);
+        assert_eq!(status.files.len(), show.files.len());
+        assert!(status.files.iter().all(|file| !file.hunks.is_empty()));
     }
 
     #[test]
