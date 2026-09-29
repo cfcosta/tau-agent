@@ -828,25 +828,23 @@ pub fn strictness(
 }
 
 /// A table from a model's reply: a header row on a raised band, rows
-/// split by hairlines, each cell's text set by `cell` (inline marks) and
-/// lined up as its column says. Columns share the width; long cells
-/// wrap.
+/// split by hairlines, each cell lined up as its column says. Columns
+/// share the width; long cells wrap.
 pub fn table(
     align: &[crate::markdown::Align],
-    head: &[String],
-    rows: &[Vec<String>],
+    head: Vec<AnyElement>,
+    rows: Vec<Vec<AnyElement>>,
     t: &Theme,
-    cell: impl Fn(&str, Hsla) -> AnyElement,
 ) -> Div {
     use crate::markdown::Align;
-    let row = |cells: &[String], header: bool| {
+    let row = |cells: Vec<AnyElement>, header: bool| {
         div()
             .flex()
             .w_full()
             .when(!header, |row| row.border_t_1().border_color(t.border))
-            .when(header, |row| row.bg(t.raised).font_weight(weight::EMPHASIS))
-            .children(cells.iter().enumerate().map(|(n, text)| {
-                let lined = div()
+            .when(header, |row| row.bg(t.raised).text_color(t.text))
+            .children(cells.into_iter().enumerate().map(|(n, content)| {
+                let cell = div()
                     .flex_1()
                     .min_w(px(0.))
                     .px(sp(3.))
@@ -854,15 +852,12 @@ pub fn table(
                     .when(n > 0, |cell| {
                         cell.border_l_1().border_color(t.border)
                     });
-                let lined = match align.get(n) {
-                    Some(Align::Right) => lined.text_right(),
-                    Some(Align::Center) => lined.text_center(),
-                    _ => lined,
+                let cell = match align.get(n) {
+                    Some(Align::Right) => cell.text_right(),
+                    Some(Align::Center) => cell.text_center(),
+                    _ => cell,
                 };
-                lined.child(cell(
-                    text,
-                    if header { t.text } else { t.text_soft },
-                ))
+                cell.child(content)
             }))
     };
     div()
@@ -875,5 +870,82 @@ pub fn table(
         .overflow_hidden()
         .typeset(Type::SMALL)
         .child(row(head, true))
-        .children(rows.iter().map(|cells| row(cells, false)))
+        .children(rows.into_iter().map(|cells| row(cells, false)))
+}
+
+/// A fenced block of code from a reply, in the monospace face, with its
+/// language in the corner.
+pub fn code_block(lang: Option<&str>, text: &str, t: &Theme) -> Div {
+    div()
+        .relative()
+        .w_full()
+        .px(sp(3.5))
+        .py(sp(3.))
+        .rounded(radius::BOX)
+        .bg(t.card)
+        .border_1()
+        .border_color(t.border)
+        .child(mono(text.to_owned(), Type::SMALL, t.text_soft))
+        .children(lang.map(|lang| {
+            div().absolute().top(sp(1.5)).right(sp(2.5)).child(mono(
+                lang.to_owned(),
+                Type::MICRO,
+                t.dim,
+            ))
+        }))
+}
+
+/// Quoted blocks, set off by a bar on the left.
+pub fn quote(children: Vec<AnyElement>, t: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(2.))
+        .pl(sp(3.5))
+        .border_l_2()
+        .border_color(t.border_strong)
+        .text_color(t.muted)
+        .children(children)
+}
+
+/// A list item: its bullet or number, then its blocks.
+pub fn list_item(marker: String, children: Vec<AnyElement>, t: &Theme) -> Div {
+    div()
+        .flex()
+        .gap(sp(2.))
+        .child(
+            div()
+                .flex_shrink_0()
+                .min_w(sp(4.))
+                .text_color(t.dim)
+                .child(marker),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .gap(sp(1.5))
+                .children(children),
+        )
+}
+
+/// A heading in a reply: 1 is largest; from 3 on, body size in bold.
+pub fn md_heading(level: u8, content: AnyElement, t: &Theme) -> Div {
+    div()
+        .pt(sp(1.))
+        .text_color(t.text)
+        .font_weight(weight::STRONG)
+        .typeset(match level {
+            1 => Type::HEADING,
+            2 => Type::LEAD,
+            _ => Type::BODY,
+        })
+        .child(content)
+}
+
+/// A thematic break in a reply.
+pub fn rule(t: &Theme) -> Div {
+    div().w_full().h(px(1.)).my(sp(1.)).bg(t.border)
 }

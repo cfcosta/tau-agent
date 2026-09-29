@@ -77,7 +77,12 @@ fn item_view(
             .w_full()
             .text_color(t.text_soft)
             .line_height(relative(1.6))
-            .child(super::markdown(text, t.text_soft, t))
+            .child(super::markdown(
+                &format!("{}-{index}", run.id.0),
+                text,
+                t.text_soft,
+                t,
+            ))
             .into_any_element(),
         Item::Thinking(text) => thinking(text, t).into_any_element(),
         Item::TurnEnd { turn } => {

@@ -38,6 +38,9 @@ image = { version = "0.25.10", default-features = false, features = [
 jj-lib = "=0.45.1"
 jsonschema = { version = "0.58.1", default-features = false }
 pollster = "1.0.1"
+# Model replies are CommonMark with GitHub's tables; only the parser, no
+# HTML output (tau-ui).
+pulldown-cmark = { version = "0.13.4", default-features = false }
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = [
   "rustls-no-provider",

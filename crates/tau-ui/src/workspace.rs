@@ -2418,20 +2418,6 @@ impl Workspace {
                                     .py(sp(0.75))
                                     .child(self.composer.clone()),
                             )
-                            // Only while empty: text needs the room.
-                            .when(!compact && self.composer.read(cx).text().is_empty(), |field| {
-                                field.child(ui::mono(
-                                    if live {
-                                        "Enter steers"
-                                    } else if continues {
-                                        "Enter sends"
-                                    } else {
-                                        "Enter starts"
-                                    },
-                                    Type::MICRO,
-                                    t.dim,
-                                ))
-                            })
                             .when_some(
                                 self.composer_target().filter(|_| !compact),
                                 |field, target| {

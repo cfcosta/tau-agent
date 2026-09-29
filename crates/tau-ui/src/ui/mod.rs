@@ -36,26 +36,152 @@ pub fn rich(text: &str, color: Hsla, t: &Theme) -> StyledText {
     rich_in(text, SANS, color, t)
 }
 
-/// A model's reply: its prose with [`rich`] marks, and its pipe tables
-/// drawn as tables.
-pub fn markdown(text: &str, color: Hsla, t: &Theme) -> gpui::Div {
-    use crate::markdown::{Block, blocks};
-    div().flex().flex_col().gap(crate::theme::sp(3.)).children(
-        blocks(text).into_iter().filter_map(|block| match block {
-            Block::Prose(prose) if prose.trim().is_empty() => None,
-            Block::Prose(prose) => Some(
-                div()
-                    .child(rich(prose.trim_matches('\n'), color, t))
+/// A model's reply, drawn from its markdown: paragraphs, headings, lists,
+/// quotes, code blocks, tables and rules, with bold, italics, code,
+/// strikethrough and links that open in the browser. `id` tells this
+/// reply's links apart from other replies'.
+pub fn markdown(id: &str, text: &str, color: Hsla, t: &Theme) -> gpui::Div {
+    let blocks = crate::markdown::blocks(text);
+    div()
+        .flex()
+        .flex_col()
+        .gap(crate::theme::sp(3.))
+        .children(draw_blocks(id, &blocks, color, t))
+}
+
+fn draw_blocks(
+    id: &str,
+    blocks: &[crate::markdown::Block],
+    color: Hsla,
+    t: &Theme,
+) -> Vec<gpui::AnyElement> {
+    use crate::markdown::Block;
+    blocks
+        .iter()
+        .enumerate()
+        .map(|(n, block)| {
+            let id = format!("{id}.{n}");
+            match block {
+                Block::Paragraph(inline) => styled_spans(&id, inline, color, t),
+                Block::Heading(level, inline) => {
+                    md_heading(*level, styled_spans(&id, inline, t.text, t), t)
+                        .into_any_element()
+                }
+                Block::Code { lang, text } => {
+                    code_block(lang.as_deref(), text, t).into_any_element()
+                }
+                Block::List { start, items } => div()
+                    .flex()
+                    .flex_col()
+                    .gap(crate::theme::sp(1.5))
+                    .children(items.iter().enumerate().map(|(k, item)| {
+                        let marker = match start {
+                            Some(first) => format!("{}.", first + k as u64),
+                            None => "•".to_owned(),
+                        };
+                        let id = format!("{id}.{k}");
+                        list_item(marker, draw_blocks(&id, item, color, t), t)
+                    }))
                     .into_any_element(),
-            ),
-            Block::Table { align, head, rows } => Some(
-                table(&align, &head, &rows, t, |text, color| {
-                    rich(text, color, t).into_any_element()
-                })
-                .into_any_element(),
-            ),
-        }),
-    )
+                Block::Quote(quoted) => {
+                    quote(draw_blocks(&id, quoted, t.muted, t), t)
+                        .into_any_element()
+                }
+                Block::Table { align, head, rows } => {
+                    let cell = |at: String, inline| {
+                        styled_spans(&at, inline, color, t)
+                    };
+                    table(
+                        align,
+                        head.iter()
+                            .enumerate()
+                            .map(|(k, inline)| {
+                                cell(format!("{id}.h{k}"), inline)
+                            })
+                            .collect(),
+                        rows.iter()
+                            .enumerate()
+                            .map(|(r, row)| {
+                                row.iter()
+                                    .enumerate()
+                                    .map(|(k, inline)| {
+                                        cell(format!("{id}.{r}.{k}"), inline)
+                                    })
+                                    .collect()
+                            })
+                            .collect(),
+                        t,
+                    )
+                    .into_any_element()
+                }
+                Block::Rule => rule(t).into_any_element(),
+            }
+        })
+        .collect()
+}
+
+/// Styled spans as one wrapping text: bold and italics in the body
+/// face, code on a chip in the monospace face, links in blue, underlined,
+/// opening in the browser.
+fn styled_spans(
+    id: &str,
+    inline: &[crate::markdown::Span],
+    color: Hsla,
+    t: &Theme,
+) -> gpui::AnyElement {
+    let mut text = String::new();
+    let mut runs = Vec::new();
+    let mut links: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    for span in inline {
+        // Code chips get a thin space of padding on each side.
+        let body = if span.code {
+            format!("\u{2009}{}\u{2009}", span.text)
+        } else {
+            span.text.clone()
+        };
+        let start = text.len();
+        text.push_str(&body);
+        let mut face = font(if span.code { MONO } else { SANS });
+        if span.bold {
+            face.weight = weight::STRONG;
+        }
+        if span.italic {
+            face.style = gpui::FontStyle::Italic;
+        }
+        let tint = if span.link.is_some() {
+            t.blue
+        } else if span.code || span.bold {
+            t.text
+        } else {
+            color
+        };
+        runs.push(TextRun {
+            len: body.len(),
+            font: face,
+            color: tint,
+            background_color: span.code.then_some(t.raised),
+            underline: span.link.as_ref().map(|_| gpui::UnderlineStyle {
+                color: Some(t.blue),
+                thickness: px(1.),
+                wavy: false,
+            }),
+            strikethrough: span.strike.then_some(gpui::StrikethroughStyle {
+                color: Some(color),
+                thickness: px(1.),
+            }),
+        });
+        if let Some(url) = &span.link {
+            links.push((start..text.len(), url.clone()));
+        }
+    }
+    let styled = StyledText::new(text).with_runs(runs);
+    if links.is_empty() {
+        return styled.into_any_element();
+    }
+    let (ranges, urls): (Vec<_>, Vec<_>) = links.into_iter().unzip();
+    gpui::InteractiveText::new(SharedString::from(id.to_owned()), styled)
+        .on_click(ranges, move |at, _, cx| cx.open_url(&urls[at]))
+        .into_any_element()
 }
 
 /// [`rich`] in another body face, such as the serif of a note.

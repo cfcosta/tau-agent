@@ -229,10 +229,14 @@ impl AssetSource for Assets {
 
 /// Geist and Geist Mono (SIL Open Font License, `assets/fonts/OFL.txt`),
 /// and Newsreader for reading notes (`assets/fonts/OFL-Newsreader.txt`).
-const FONTS: [&[u8]; 7] = [
+const FONTS: [&[u8]; 10] = [
     include_bytes!("../assets/fonts/Geist-Regular.ttf"),
     include_bytes!("../assets/fonts/Geist-Medium.ttf"),
     include_bytes!("../assets/fonts/Geist-SemiBold.ttf"),
+    // Italics for the emphasis in replies, from the same release (v1.7.2).
+    include_bytes!("../assets/fonts/Geist-Italic.ttf"),
+    include_bytes!("../assets/fonts/Geist-MediumItalic.ttf"),
+    include_bytes!("../assets/fonts/Geist-SemiBoldItalic.ttf"),
     include_bytes!("../assets/fonts/GeistMono-Regular.ttf"),
     include_bytes!("../assets/fonts/GeistMono-Medium.ttf"),
     include_bytes!("../assets/fonts/Newsreader-Regular.ttf"),

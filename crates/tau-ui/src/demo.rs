@@ -2092,7 +2092,11 @@ pub fn script() -> Vec<Step> {
          | `honors_seconds` | `retry-after: 3` | 3 s |\n\
          | `honors_http_date` | an HTTP date | until then |\n\
          | `caps_at_max_delay` | `retry-after: 600` | 30 s |\n\
-         | `ignores_malformed_header` | `retry-after: soon` | backoff |",
+         | `ignores_malformed_header` | `retry-after: soon` | backoff |\n\n\
+         The header's rules are in [RFC 9110, section 10.2.3]\
+         (https://www.rfc-editor.org/rfc/rfc9110#section-10.2.3). Still open:\n\n\
+         1. *Jitter* on top of the hint, so clients don't retry in step.\n\
+         2. Logging a malformed header ~~every time~~ once per run.",
     );
     s.end_turn(82_600, 300, 0.012);
     s.checked(None, &[("R6", 0.04)]);
