@@ -1,12 +1,18 @@
 //! The memory notes: search and suggestions on the left, the open note in
-//! the middle, its links on the right. The phone shows the list, then the
+//! the middle, its links on the right when there is room for them, and
+//! under the note when there is not. The phone shows the list, then the
 //! note on its own.
+//!
+//! Every column gets a width worked out from the window's. Left to size
+//! the note's text itself, GPUI can measure it at one width and draw it
+//! at another, and paragraphs then overlap.
 
 use gpui::{
     AnyElement,
     Context,
     Hsla,
     PathBuilder,
+    Pixels,
     SharedString,
     canvas,
     div,
@@ -35,6 +41,45 @@ use crate::{
     workspace::Workspace,
 };
 
+/// The list's width, when the window allows it.
+const LIST: f32 = 320.;
+/// The narrowest the list gets.
+const LIST_MIN: f32 = 240.;
+/// The links column's width.
+const LINKS: f32 = 320.;
+/// The narrowest the note's column gets with the links beside it.
+const NOTE_MIN: f32 = 560.;
+/// The widest a note's text runs: a comfortable line.
+const MEASURE: f32 = 680.;
+
+/// How the screen is split, from the width it has.
+struct Columns {
+    list: Pixels,
+    /// The links column, when it fits beside the note.
+    links: Option<Pixels>,
+    /// The note's side padding.
+    pad: Pixels,
+    /// The note's text width.
+    text: Pixels,
+}
+
+impl Columns {
+    fn for_width(width: Pixels) -> Self {
+        let width = f32::from(width);
+        let list = (width * 0.4).clamp(LIST_MIN, LIST);
+        let beside = width - list - LINKS >= NOTE_MIN;
+        let note = width - list - if beside { LINKS } else { 0. };
+        let pad = if note >= NOTE_MIN { 12. } else { 5. };
+        let text = (note - 2. * f32::from(sp(pad))).clamp(120., MEASURE);
+        Self {
+            list: px(list),
+            links: beside.then_some(px(LINKS)),
+            pad: sp(pad),
+            text: px(text),
+        }
+    }
+}
+
 pub fn render(
     ws: &Workspace,
     repo: &str,
@@ -48,11 +93,13 @@ pub fn render(
         .and_then(|id| memory.note(id))
         .or_else(|| (!compact).then(|| memory.notes.first()).flatten());
     if compact {
+        // The phone's screen padding on each side.
+        let text = (ws.screen_width() - sp(4.) * 2.).min(px(MEASURE));
         return match open {
             Some(note) => ui::screen(
                 "memory-note",
                 true,
-                reader(ws, repo, note, true, t, cx),
+                reader(ws, repo, note, true, text, true, t, cx),
             )
             .into_any_element(),
             None => {
@@ -61,6 +108,7 @@ pub fn render(
             }
         };
     }
+    let columns = Columns::for_width(ws.screen_width());
     div()
         .flex_1()
         .min_h(px(0.))
@@ -68,7 +116,7 @@ pub fn render(
         .child(
             div()
                 .id("memory-list")
-                .w(px(320.))
+                .w(columns.list)
                 .flex_shrink_0()
                 .overflow_y_scroll()
                 .bg(t.panel)
@@ -94,22 +142,33 @@ pub fn render(
                         .flex_1()
                         .min_w(px(0.))
                         .overflow_y_scroll()
-                        .px(sp(12.))
+                        .px(columns.pad)
                         .py(sp(8.))
-                        .child(reader(ws, repo, note, false, t, cx)),
+                        .child(reader(
+                            ws,
+                            repo,
+                            note,
+                            false,
+                            columns.text,
+                            columns.links.is_none(),
+                            t,
+                            cx,
+                        )),
                 )
-                .child(
-                    div()
-                        .id("memory-links")
-                        .w(px(320.))
-                        .flex_shrink_0()
-                        .overflow_y_scroll()
-                        .bg(t.panel)
-                        .border_l_1()
-                        .border_color(t.border)
-                        .p(sp(5.))
-                        .child(neighborhood(ws, repo, note, t, cx)),
-                )
+                .when_some(columns.links, |row, width| {
+                    row.child(
+                        div()
+                            .id("memory-links")
+                            .w(width)
+                            .flex_shrink_0()
+                            .overflow_y_scroll()
+                            .bg(t.panel)
+                            .border_l_1()
+                            .border_color(t.border)
+                            .p(sp(5.))
+                            .child(neighborhood(ws, repo, note, t, cx)),
+                    )
+                })
                 .into_any_element(),
             None => ui::empty("No notes yet.", t).flex_1().into_any_element(),
         })
@@ -306,11 +365,16 @@ fn list(
         }))
 }
 
+/// A note, its text `width` wide; with its links under it when `links`
+/// is set.
+#[allow(clippy::too_many_arguments)]
 fn reader(
     ws: &Workspace,
     repo: &str,
     note: &Note,
     compact: bool,
+    width: Pixels,
+    links: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
@@ -318,7 +382,8 @@ fn reader(
         .flex()
         .flex_col()
         .gap(sp(4.5))
-        .max_w(px(680.))
+        .w(width)
+        .flex_shrink_0()
         .child(mono(
             format!(
                 "{} · {} · edited {}",
@@ -356,7 +421,7 @@ fn reader(
                     .py(sp(0.75))
             }),
         ))
-        .when(compact, |reader| {
+        .when(links, |reader| {
             reader.child(neighborhood(ws, repo, note, t, cx))
         })
 }

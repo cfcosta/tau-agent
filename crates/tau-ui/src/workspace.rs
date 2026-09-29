@@ -497,6 +497,9 @@ pub struct Workspace {
     /// Lay out at exactly this size, pinned to the top left: for
     /// comparing screens against their designs.
     frame: Option<(f32, f32)>,
+    /// The window's width at the last frame, for screens that size
+    /// their columns to it.
+    width: gpui::Pixels,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -723,6 +726,7 @@ impl Workspace {
             replays: Vec::new(),
             phone_preview: false,
             frame: None,
+            width: NARROW_MAX,
             _subscriptions: subscriptions,
         };
         // Scrolling up stops following new output; back at the bottom,
@@ -2802,7 +2806,7 @@ impl Workspace {
                     .flex()
                     .child(
                         chrome::sidebar(self, t, cx)
-                            .w(px(if wide { 264. } else { 232. }))
+                            .w(sidebar_width(wide))
                             .flex_shrink_0(),
                     )
                     .child(
@@ -3022,6 +3026,23 @@ impl Workspace {
     }
 }
 
+/// The desktop sidebar's width: wider on a wide window.
+fn sidebar_width(wide: bool) -> gpui::Pixels {
+    px(if wide { 264. } else { 232. })
+}
+
+impl Workspace {
+    /// How wide a screen beside the sidebar is drawn: the window less
+    /// the sidebar, or the whole window on a phone.
+    pub fn screen_width(&self) -> gpui::Pixels {
+        if self.phone_preview || self.width < PHONE_MAX {
+            self.width
+        } else {
+            self.width - sidebar_width(self.width >= NARROW_MAX)
+        }
+    }
+}
+
 impl Render for Workspace {
     fn render(
         &mut self,
@@ -3036,6 +3057,7 @@ impl Render for Workspace {
             None => window.viewport_size().width,
         };
         let phone = self.phone_preview || width < PHONE_MAX;
+        self.width = if self.phone_preview { px(390.) } else { width };
         self.inspector_shown = !phone
             && width >= NARROW_MAX
             && matches!(self.route, Route::Home | Route::Run(_));
