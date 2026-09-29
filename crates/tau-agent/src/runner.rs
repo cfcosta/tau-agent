@@ -61,6 +61,7 @@ use crate::{
         FinishedRun,
         PluginCtx,
         PluginRun,
+        RequestView,
         Rewrite,
         StopDecision,
         Trigger,
@@ -216,6 +217,7 @@ impl Runner {
             })
             .await;
 
+            self.choose_effort(&transcript, turn).await;
             let (mut message, class) = self.respond(&transcript, turn).await;
             let overflow = class == Class::ContextOverflow
                 || is_context_overflow(&message);
@@ -370,6 +372,42 @@ impl Runner {
             text,
             last_seq: self.last_seq.load(Ordering::SeqCst),
         })
+    }
+
+    /// Asks each plugin, in order, for the effort of the turn's request,
+    /// until one picks it, and sets it on the session.
+    async fn choose_effort(&mut self, transcript: &[Message], turn: u32) {
+        let settings = self.session.settings();
+        let view = RequestView {
+            transcript,
+            model: &settings.model,
+            effort: settings.reasoning,
+            turn,
+        };
+        let mut failures: Failures = Vec::new();
+        let mut chosen = None;
+        for plugin in &mut self.plugins {
+            match plugin.run.before_request(&view, &plugin.ctx).await {
+                Ok(None) => {}
+                Ok(Some(effort)) => {
+                    chosen = Some(effort);
+                    break;
+                }
+                Err(error) => failures
+                    .push((plugin.ctx.plugin().into(), format!("{error:#}"))),
+            }
+        }
+        if let Some(effort) = chosen {
+            self.session.set_reasoning(Some(effort));
+        }
+        for (plugin, message) in failures {
+            self.emit(RunEvent::PluginError {
+                run: self.run.clone(),
+                plugin,
+                message,
+            })
+            .await;
+        }
     }
 
     /// Offers the transcript to each plugin, in order, until one rewrites

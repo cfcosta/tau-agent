@@ -22,8 +22,11 @@ four plugins.
   instructions, tools and reasoning are fixed for the whole run, and any
   edit to the transcript forces one full resend
   ([openai-websocket.md](openai-websocket.md)). So:
-  - settings change in exactly one place, before the run opens its
-    session;
+  - settings change before the run opens its session. The one
+    exception is the reasoning effort, which `before_request` may
+    change before any turn: on the models whose cache survives it
+    (`tau_ai::model::effort_keeps_cache`) the next request is still a
+    delta, and on the others it goes in full;
   - a context rewrite replaces the working transcript and is stored,
     and it is not re-applied as a per-turn view (pi's `context` event).
     One rewrite costs one full resend, and the turns after it are deltas
@@ -114,6 +117,15 @@ pub trait PluginRun: Send {
 
     /// Every run event, in order.
     async fn on_event(&mut self, event: &RunEvent, ctx: &PluginCtx) {}
+
+    /// Called before each turn's request (not before its retries), with
+    /// the transcript about to be sent, the model and the current
+    /// effort. Returning an effort sets it for this request and the ones
+    /// after it. The first plugin that picks one wins.
+    async fn before_request(&mut self, view: &RequestView<'_>,
+        ctx: &PluginCtx) -> anyhow::Result<Option<ReasoningEffort>> {
+        Ok(None)
+    }
 
     /// Offered the transcript at each turn boundary, and again on a
     /// context overflow. Returning a rewrite replaces the working
@@ -258,6 +270,7 @@ start run
   ├─ Plugin::start (each, in order)    ← RunPlan: input, context, settings
   ├─ open session with the plan's settings, store the input
   └─ loop
+       ├─ before_request (each)          → the turn's effort
        ├─ respond                        (overflow → rewrite_context(Overflow), retry once)
        ├─ tool calls: before_tool → run → after_tool
        ├─ store the turn

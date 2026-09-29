@@ -7,8 +7,10 @@
 //! time, in registration order, so a `PluginRun` needs no locks.
 //!
 //! The seams follow the WebSocket delta rule: a run's settings change
-//! only in [`Plugin::start`], before its session opens, and the other
-//! seams leave the request alone.
+//! in [`Plugin::start`], before its session opens. The one exception is
+//! [`PluginRun::before_request`], which may change the reasoning effort;
+//! a plugin that uses it checks `tau_ai::model::effort_keeps_cache`
+//! first, or every change costs a full resend.
 
 use std::sync::{
     Arc,
@@ -93,6 +95,19 @@ pub trait PluginRun: Send {
         let _ = (event, ctx);
     }
 
+    /// Runs before each turn's request, retries and overflow retries
+    /// excepted, and may set the reasoning effort for it and the requests
+    /// after it. The first plugin that picks an effort wins. An error is
+    /// reported as `RunEvent::PluginError` and picks nothing.
+    async fn before_request(
+        &mut self,
+        view: &RequestView<'_>,
+        ctx: &PluginCtx,
+    ) -> anyhow::Result<Option<ReasoningEffort>> {
+        let _ = (view, ctx);
+        Ok(None)
+    }
+
     /// Offered the transcript between turns, and when a request failed
     /// because the context overflowed. A [`Rewrite`] replaces the working
     /// transcript: the loop checks it, stores it, and sends the next
@@ -159,6 +174,19 @@ pub struct ContextView<'a> {
     pub window: Option<u64>,
     pub trigger: Trigger,
     /// The turn that just ended, or that overflowed.
+    pub turn: u32,
+}
+
+/// What [`PluginRun::before_request`] is offered.
+#[derive(Debug, Clone, Copy)]
+pub struct RequestView<'a> {
+    /// The transcript about to be sent.
+    pub transcript: &'a [Message],
+    pub model: &'a str,
+    /// The effort the request would go out with; `None` leaves it to
+    /// the model.
+    pub effort: Option<ReasoningEffort>,
+    /// The turn the request is for.
     pub turn: u32,
 }
 

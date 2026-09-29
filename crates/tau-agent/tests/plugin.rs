@@ -1010,3 +1010,121 @@ fn plugins_see_what_a_rewrite_replaced() {
         assert_eq!(model.requests()[1].transcript.len(), 1);
     });
 }
+
+/// What a [`Picker`] was offered: the turn, the model, the effort and the
+/// transcript's length.
+type Offer = (u32, String, Option<ReasoningEffort>, usize);
+
+/// Picks each turn's effort from a script, and logs what it was offered.
+#[derive(Clone)]
+struct Picker {
+    name: &'static str,
+    /// The effort to pick at each turn, from the first; `None` picks
+    /// nothing, and so does a turn past the end.
+    picks: Vec<Option<ReasoningEffort>>,
+    /// Fails every call instead.
+    fails: bool,
+    offered: Arc<Mutex<Vec<Offer>>>,
+}
+
+impl Picker {
+    fn new(name: &'static str, picks: Vec<Option<ReasoningEffort>>) -> Self {
+        Self {
+            name,
+            picks,
+            fails: false,
+            offered: Arc::default(),
+        }
+    }
+}
+
+#[async_trait]
+impl Plugin for Picker {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
+        vec![Arc::new(Echo::new())]
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> anyhow::Result<Box<dyn PluginRun>> {
+        Ok(Box::new(self.clone()))
+    }
+}
+
+#[async_trait]
+impl PluginRun for Picker {
+    async fn before_request(
+        &mut self,
+        view: &tau_agent::plugin::RequestView<'_>,
+        _ctx: &PluginCtx,
+    ) -> anyhow::Result<Option<ReasoningEffort>> {
+        if self.fails {
+            anyhow::bail!("classifier unreachable");
+        }
+        self.offered.lock().unwrap().push((
+            view.turn,
+            view.model.to_owned(),
+            view.effort,
+            view.transcript.len(),
+        ));
+        Ok(self.picks.get(view.turn as usize - 1).copied().flatten())
+    }
+}
+
+/// `before_request` sets the effort of each turn's request, and it holds
+/// for the turns after it until a plugin picks another. A failing plugin
+/// is reported and picks nothing; the plugins after it are still asked.
+#[test]
+fn before_request_picks_each_turns_effort() {
+    use ReasoningEffort::{High, Low, Medium};
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.tool_call("echo", json!({"text": "a"})))
+            .turn(|t| t.tool_call("echo", json!({"text": "b"})))
+            .turn(|t| t.text("done"));
+        let broken = Picker {
+            fails: true,
+            ..Picker::new("broken", vec![])
+        };
+        let picker = Picker::new("picker", vec![Some(High), None, Some(Low)]);
+        let agent = Agent::new(model.clone())
+            .model("gpt-6-sol")
+            .reasoning(Medium)
+            .plugin(broken)
+            .plugin(picker.clone());
+        let store = Store::memory().await.unwrap();
+        let (events, outcome) = run_to_end(&agent, &store, "go", None).await;
+        assert_eq!(outcome.stop, StopReason::Stop);
+        assert_grammar(&events);
+
+        let efforts: Vec<_> = model
+            .requests()
+            .iter()
+            .map(|request| request.settings.reasoning)
+            .collect();
+        assert_eq!(efforts, [Some(High), Some(High), Some(Low)]);
+        let sol = || "gpt-6-sol".to_owned();
+        assert_eq!(
+            *picker.offered.lock().unwrap(),
+            [
+                (1, sol(), Some(Medium), 1),
+                (2, sol(), Some(High), 3),
+                (3, sol(), Some(High), 5),
+            ]
+        );
+        let errors = events
+            .iter()
+            .filter(|e| {
+                matches!(e, RunEvent::PluginError { plugin, message, .. }
+                    if &**plugin == "broken" && message == "classifier unreachable")
+            })
+            .count();
+        assert_eq!(errors, 3);
+    });
+}
