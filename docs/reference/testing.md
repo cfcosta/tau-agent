@@ -410,7 +410,7 @@ cases do not share state.
 | Property                                                                                                                                                                               | Oracle       |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
 | `truncate_head` output is a prefix of whole lines, within `MAX_LINES` and `MAX_BYTES`                                                                                                  | Invariant    |
-| `truncate_tail` output is a suffix, within the limits, and valid UTF-8 at every cut                                                                                                    | Invariant    |
+| `truncate_tail` output is a suffix (after `…` for a cut line), within the limits, and valid UTF-8 at every cut                                                                         | Invariant    |
 | Truncation is idempotent, and input already within the limits is returned unchanged                                                                                                    | Algebraic    |
 | `edit` with exact, unique, non-overlapping edits equals a naive reference that applies them to the string                                                                              | Differential |
 | `edit` on a CRLF file, or a file with a BOM, equals the LF edit with the line ending and BOM restored                                                                                  | Metamorphic  |

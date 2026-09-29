@@ -320,8 +320,9 @@ impl Snapshot {
 /// (`docs/reference/tools.md`, "bash", "Output"), ported from pi's
 /// `OutputAccumulator`.
 ///
-/// Keeps a rolling tail of about `2 * max_bytes` decoded text, decoding
-/// UTF-8 across chunk boundaries so a multi-byte character split
+/// Keeps a rolling tail of at least `2 * max_bytes` decoded text (its
+/// cut rounded back to a character boundary), decoding UTF-8 across
+/// chunk boundaries so a multi-byte character split
 /// between two `append` calls still decodes correctly. Once the total
 /// output passes `max_lines` or `max_bytes`, the full raw output is
 /// spilled to a file under `spill_dir`.
@@ -406,11 +407,16 @@ impl Accumulator {
 
     /// [`truncate::truncate_tail`] of the full output seen so far, with
     /// `total_lines`/`total_bytes` over the *whole* output rather than
-    /// just the rolling tail.
+    /// just the rolling tail. A line the rolling tail starts inside
+    /// counts as the longer line it is: shown, cut and marked, only when
+    /// it is the last line.
     pub fn snapshot(&self) -> Snapshot {
-        let window = self.window_text();
-        let tail =
-            truncate::truncate_tail(window, self.max_lines, self.max_bytes);
+        let tail = truncate::truncate_cut_tail(
+            &self.tail,
+            !self.tail_starts_at_line_boundary,
+            self.max_lines,
+            self.max_bytes,
+        );
         let total_lines = self.total_lines();
         let truncated = total_lines > self.max_lines
             || self.total_decoded_bytes > self.max_bytes;
@@ -539,29 +545,18 @@ impl Accumulator {
         if self.tail.len() <= self.max_rolling_bytes {
             return;
         }
+        // Back to a character boundary, so the tail never holds less
+        // than `max_rolling_bytes`: whatever the byte limit keeps of the
+        // full output is in it.
         let mut start = self.tail.len() - self.max_rolling_bytes;
         while !self.tail.is_char_boundary(start) {
-            start += 1;
+            start -= 1;
         }
         if start > 0 {
             self.tail_starts_at_line_boundary =
                 self.tail.as_bytes()[start - 1] == b'\n';
         }
         self.tail = self.tail[start..].to_owned();
-    }
-
-    /// The rolling tail, starting at a line boundary: if it does not
-    /// already start at one, the partial first line is dropped (the
-    /// full line is out of the window anyway).
-    fn window_text(&self) -> &str {
-        if self.tail_starts_at_line_boundary {
-            &self.tail
-        } else {
-            match self.tail.find('\n') {
-                Some(i) => &self.tail[i + 1..],
-                None => &self.tail,
-            }
-        }
     }
 }
 
@@ -824,21 +819,22 @@ mod tests {
     }
 
     /// Trimming the rolling tail always cuts at a UTF-8 character
-    /// boundary, searching *forward* from the target byte offset
-    /// (`docs/reference/tools.md`, "bash", "Output").
+    /// boundary, searching *back* from the target byte offset, so the
+    /// tail never holds less than it should (`docs/reference/tools.md`,
+    /// "bash", "Output").
     #[test]
-    fn trim_tail_lands_on_the_next_char_boundary() {
+    fn trim_tail_lands_on_the_previous_char_boundary() {
         let dir = tempfile::tempdir().unwrap();
         // max_rolling_bytes = 8; six 3-byte characters (18 bytes) cross
         // the trigger (16) once, with a target cut at byte 10, which is
-        // inside the fourth character (bytes 9..12). The next boundary
-        // is at 12, six bytes into the 18-byte tail.
+        // inside the fourth character (bytes 9..12). The previous
+        // boundary is at 9, leaving nine bytes of the 18-byte tail.
         let mut acc = Accumulator::new(1_000_000, 4, dir.path());
         for _ in 0..6 {
             acc.append("€".as_bytes());
         }
-        assert_eq!(acc.tail.len(), 6);
-        // The byte just before the cut (offset 11, inside the fourth
+        assert_eq!(acc.tail.len(), 9);
+        // The byte just before the cut (offset 8, inside the third
         // character) is not a newline.
         assert!(!acc.tail_starts_at_line_boundary);
     }
@@ -878,21 +874,23 @@ mod tests {
         );
     }
 
-    /// Regression: when the rolling window has been trimmed down to
-    /// nothing (its own `truncate_tail` then reports no cut at all) but
-    /// the true total is over the byte limit, the snapshot still reports
-    /// `Bytes`, not "not truncated" (found by
+    /// Regression: bytes that decode to more than the byte limit are
+    /// reported as cut, though what is kept of them is empty (found by
     /// `output_rechunked_at_any_byte_boundary_gives_the_same_result`
     /// with `bytes = [0x80, 0x80, 0x80]`, `max_lines = max_bytes = 1`).
+    /// The kept end of the one line is under a character, and too short
+    /// for the cut marker, so it is empty; the one kept line meets the
+    /// line limit, which `truncate_tail` reports as `Lines`.
     #[test]
-    fn snapshot_falls_back_to_bytes_when_the_window_looks_whole() {
+    fn snapshot_of_output_over_the_limit_is_cut() {
         let dir = tempfile::tempdir().unwrap();
         let mut acc = Accumulator::new(1, 1, dir.path());
         acc.append(&[0x80, 0x80, 0x80]);
         acc.finish();
         let snapshot = acc.snapshot();
         assert_eq!(snapshot.content, "");
-        assert_eq!(snapshot.by, Some(Limit::Bytes));
+        assert_eq!(snapshot.by, Some(Limit::Lines));
+        assert!(snapshot.last_line_partial);
     }
 
     /// The spill file name has the documented shape,
@@ -973,7 +971,7 @@ mod tests {
     }
 
     /// Trimming records whether the byte right before the cut is a
-    /// newline, so the next `window_text` call knows the tail already
+    /// newline, so the next snapshot knows the tail already
     /// starts at a line boundary (`docs/reference/tools.md`, "bash",
     /// "Output").
     #[test]
@@ -989,15 +987,21 @@ mod tests {
         assert!(acc.tail_starts_at_line_boundary);
     }
 
-    /// `window_text`, when the tail does not start at a line boundary,
-    /// drops everything up to *and including* the first newline
+    /// A last line the rolling tail starts inside is shown as its end,
+    /// after the cut marker, within the byte limit
     /// (`docs/reference/tools.md`, "bash", "Output").
     #[test]
-    fn window_text_strips_up_to_and_including_the_first_newline() {
+    fn a_cut_last_line_shows_its_end_marked() {
         let dir = tempfile::tempdir().unwrap();
-        let mut acc = Accumulator::new(1_000_000, 1_000_000, dir.path());
-        acc.append(b"partial\nrest");
-        acc.tail_starts_at_line_boundary = false;
-        assert_eq!(acc.window_text(), "rest");
+        // max_rolling_bytes = 20; 81 bytes cross the trigger (40).
+        let mut acc = Accumulator::new(10, 10, dir.path());
+        acc.append(&[b'x'; 80]);
+        acc.append(b"\n");
+        acc.finish();
+        assert!(!acc.tail_starts_at_line_boundary);
+        let snapshot = acc.snapshot();
+        assert_eq!(snapshot.content, format!("{}xxxxxxx", truncate::CUT));
+        assert_eq!(snapshot.content.len(), 10);
+        assert!(snapshot.last_line_partial);
     }
 }

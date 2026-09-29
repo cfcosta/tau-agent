@@ -4,7 +4,8 @@
 //! Two limits, lines and bytes; whichever is hit first wins. Head
 //! truncation keeps whole lines from the start. Tail truncation keeps
 //! whole lines from the end, except that a last line longer than the
-//! byte limit keeps its end, cut at a UTF-8 boundary.
+//! byte limit keeps its end, cut at a UTF-8 boundary and marked with
+//! [`CUT`] (unlike pi, which keeps the end unmarked).
 //!
 //! Lines split on `\n`; a trailing `\n` does not start another line.
 
@@ -14,6 +15,11 @@ pub const MAX_LINES: usize = 2000;
 pub const MAX_BYTES: usize = 50 * 1024;
 /// The most characters of one `grep` match line.
 pub const GREP_MAX_LINE: usize = 500;
+
+/// What starts a line whose beginning [`truncate_tail`] cut off. It
+/// counts toward the byte limit; a limit too small to hold it keeps the
+/// line's end unmarked.
+pub const CUT: &str = "…";
 
 /// Which limit cut the content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,14 +126,26 @@ pub fn truncate_head(
 
 /// Keeps whole lines from the end, within `max_lines` and `max_bytes`.
 /// If the last line alone is over `max_bytes`, keeps its end, starting
-/// at a character boundary.
+/// at a character boundary, after [`CUT`], all within `max_bytes`.
 pub fn truncate_tail(
     content: &str,
     max_lines: usize,
     max_bytes: usize,
 ) -> Truncation {
+    truncate_cut_tail(content, false, max_lines, max_bytes)
+}
+
+/// [`truncate_tail`] of text whose first line may be the end of a longer
+/// line (`first_line_cut`): that line then counts as over any limit, so
+/// it is kept only as the last line, cut and marked.
+pub(crate) fn truncate_cut_tail(
+    content: &str,
+    first_line_cut: bool,
+    max_lines: usize,
+    max_bytes: usize,
+) -> Truncation {
     let all = lines(content);
-    if all.len() <= max_lines && content.len() <= max_bytes {
+    if !first_line_cut && all.len() <= max_lines && content.len() <= max_bytes {
         return Truncation::whole(content, all.len());
     }
     let mut result = Truncation {
@@ -142,18 +160,25 @@ pub fn truncate_tail(
     };
     let mut kept: Vec<&str> = Vec::new();
     let mut bytes = 0;
-    for line in all.iter().rev() {
+    for (i, line) in all.iter().enumerate().rev() {
         if kept.len() >= max_lines {
             break;
         }
         let cost = line.len() + usize::from(!kept.is_empty());
-        if bytes + cost > max_bytes {
+        let cut = first_line_cut && i == 0;
+        if cut || bytes + cost > max_bytes {
             result.by = Some(Limit::Bytes);
             if kept.is_empty() {
-                let tail = end_within(line, max_bytes);
-                kept.push(tail);
-                bytes = tail.len();
+                let marker = if max_bytes >= CUT.len() { CUT } else { "" };
+                let tail = end_within(line, max_bytes - marker.len());
+                result.content = format!("{marker}{tail}");
                 result.last_line_partial = true;
+                result.output_lines = 1;
+                result.output_bytes = result.content.len();
+                if max_lines == 1 {
+                    result.by = Some(Limit::Lines);
+                }
+                return result;
             }
             break;
         }

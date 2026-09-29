@@ -3,6 +3,7 @@
 
 use hegel::{TestCase, generators as gs};
 use tau_tools::truncate::{
+    CUT,
     GREP_MAX_LINE,
     Limit,
     MAX_BYTES,
@@ -98,8 +99,10 @@ fn head_keeps_the_longest_prefix_of_whole_lines(tc: TestCase) {
 
 /// `truncate_tail` keeps the longest suffix of whole lines within both
 /// limits; when even the last line is over the byte limit, it keeps the
-/// longest end of that line that fits, which is valid UTF-8 because it
-/// is a `String`, and starts on a character boundary of the original.
+/// cut marker and the longest end of that line that fits after it (with
+/// no marker when the limit cannot hold one), which is valid UTF-8
+/// because it is a `String`, and starts on a character boundary of the
+/// original.
 #[hegel::test(test_cases = 500)]
 fn tail_keeps_the_longest_suffix(tc: TestCase) {
     let text = tc.draw(text());
@@ -120,9 +123,14 @@ fn tail_keeps_the_longest_suffix(tc: TestCase) {
         tc.event("partial last line");
         let last = all.last().unwrap();
         assert!(last.len() > max_bytes);
-        assert!(last.ends_with(&result.content));
+        let marker = if max_bytes >= CUT.len() { CUT } else { "" };
+        let end = result
+            .content
+            .strip_prefix(marker)
+            .expect("a cut line starts with the marker");
+        assert!(last.ends_with(end));
         // The longest end that fits: one more character would not.
-        let start = last.len() - result.content.len();
+        let start = last.len() - end.len();
         let before = last[..start].chars().next_back();
         assert!(before.is_none_or(|c| result.content.len() + c.len_utf8() > max_bytes));
         // pi's rule: reaching the line limit reports `Lines`, even when
@@ -150,6 +158,20 @@ fn tail_keeps_the_longest_suffix(tc: TestCase) {
         };
         assert_eq!(result.by, Some(by));
     }
+}
+
+/// A last line over the byte limit keeps its end after `…`, the marker
+/// counted in the limit; a limit too small for the marker keeps the end
+/// unmarked.
+#[test]
+fn a_cut_last_line_starts_with_the_marker() {
+    let line = "abcdefghij\n";
+    assert_eq!(truncate_tail(line, 10, 6).content, "…hij");
+    assert_eq!(truncate_tail(line, 10, 3).content, "…");
+    assert_eq!(truncate_tail(line, 10, 2).content, "ij");
+    let result = truncate_tail("abc\nabcdefghij", 10, 6);
+    assert_eq!(result.content, "…hij");
+    assert!(result.last_line_partial);
 }
 
 /// Truncation is idempotent: truncating the output again cuts nothing.

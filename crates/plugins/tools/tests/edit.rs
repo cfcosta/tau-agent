@@ -387,18 +387,14 @@ fn bom_is_preserved_across_the_edit(tc: TestCase) {
     assert_eq!(bom_result, format!("\u{FEFF}{plain_result}"));
 }
 
-/// Lines no edit touches keep their bytes, line endings included: a
-/// lone `\r` inside a line, and an LF line in a file whose first line
-/// ends in CRLF.
-///
-/// Ignored: it does not hold. `edit` normalizes every `\r\n` and lone
-/// `\r` to `\n` and writes the file back with the first line's ending
-/// throughout (pi's `normalizeToLF` and `restoreLineEndings`, ported
-/// as they are), so a lone `\r` becomes a line break and mixed endings
-/// become uniform. Whether to part from pi is a product decision.
+/// Line endings follow pi (`normalizeToLF`, `restoreLineEndings`): a
+/// lone `\r` is a line break like `\r\n` and `\n`, and the file is
+/// written back with one ending throughout, CRLF when its first `\n`
+/// ends a CRLF line and LF otherwise, so mixed endings become uniform
+/// and a lone `\r` becomes that ending too (`tools.md`, "edit", "Line
+/// endings").
 #[hegel::test(test_cases = 50)]
-#[ignore = "pi's edit normalizes lone \\r and mixed line endings; product decision"]
-fn untouched_lines_keep_their_line_endings(tc: TestCase) {
+fn line_endings_are_normalized_to_the_first_ones(tc: TestCase) {
     let n = tc.draw(gs::integers::<usize>().min_value(2).max_value(6));
     let endings: Vec<&str> = (0..n)
         .map(|_| tc.draw(gs::sampled_from(vec!["\n", "\r\n", "\n"])))
@@ -417,7 +413,12 @@ fn untouched_lines_keep_their_line_endings(tc: TestCase) {
         })
         .collect();
     let target = tc.draw(gs::integers::<usize>().max_value(n - 1));
-    tc.assume(!lone_cr[target]);
+    if lone_cr.contains(&true) {
+        tc.event("lone CR");
+    }
+    if endings.iter().any(|e| *e != endings[0]) {
+        tc.event("mixed endings");
+    }
 
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f.txt");
@@ -429,9 +430,22 @@ fn untouched_lines_keep_their_line_endings(tc: TestCase) {
     )
     .unwrap();
 
-    let mut expected = lines.clone();
-    expected[target] = format!("CHANGED{}", endings[target]);
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), expected.concat());
+    let ending = endings[0];
+    let expected: String = (0..n)
+        .map(|i| {
+            let body = if i == target {
+                String::from("CHANGED")
+            } else {
+                format!("line-{i}")
+            };
+            if lone_cr[i] {
+                format!("{body}{ending}a{ending}")
+            } else {
+                format!("{body}{ending}")
+            }
+        })
+        .collect();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), expected);
 }
 
 /// In fuzzy mode, lines no edit touches keep their original bytes, and

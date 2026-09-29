@@ -166,11 +166,9 @@ fn output_rechunked_at_any_byte_boundary_gives_the_same_result(tc: TestCase) {
 
 /// `bash` keeps `truncate_tail` of the full output, and the spill file
 /// holds the full output, whether the limit hit was lines or bytes
-/// (`docs/reference/testing.md`, "tau-tools"). The totals, the "was it
-/// cut" flag and the spill always agree with the full output; the
-/// content does as long as the rolling tail was never trimmed (see
-/// [`the_rolling_tail_shows_what_truncating_the_full_output_shows`] for
-/// where a trimmed tail parts from it).
+/// (`docs/reference/testing.md`, "tau-tools"): the content, the totals,
+/// the "was it cut" flag and the spill all agree with the full output,
+/// whether or not the rolling tail was trimmed.
 #[hegel::test(test_cases = 50)]
 fn keeps_truncate_tail_of_the_full_output_and_spills_it_whole(tc: TestCase) {
     let bytes = tc.draw(raw_bytes());
@@ -196,11 +194,10 @@ fn keeps_truncate_tail_of_the_full_output_and_spills_it_whole(tc: TestCase) {
     // The accumulator trims its tail to twice the byte limit once the
     // tail passes four times it.
     let rolling = (2 * max_bytes).max(1);
-    if full_text.len() <= 2 * rolling {
-        assert_eq!(snapshot.content, reference.content);
-    } else {
+    if full_text.len() > 2 * rolling {
         tc.event("rolling tail trimmed");
     }
+    assert_eq!(snapshot.content, reference.content);
     assert_eq!(snapshot.truncated(), reference.truncated());
     assert_eq!(snapshot.total_lines, reference.total_lines);
     assert_eq!(snapshot.total_bytes, reference.total_bytes);
@@ -216,17 +213,10 @@ fn keeps_truncate_tail_of_the_full_output_and_spills_it_whole(tc: TestCase) {
 }
 
 /// What `bash` shows is `truncate_tail` of the full output even once the
-/// rolling tail has been trimmed.
-///
-/// Ignored: it does not hold, and the accumulator is a faithful port of
-/// pi's `OutputAccumulator` (`output-accumulator.ts`), which does the
-/// same. When the trimmed tail starts inside a line, that partial line
-/// is dropped, so (1) a last line longer than the window, followed by
-/// `\n`, shows as nothing instead of its end (`cat` of a one-line
-/// minified file prints an empty result), and (2) when what remains
-/// fits the limits, it keeps a trailing `\n` that `truncate_tail` of
-/// the full output does not. Whether to part from pi here is a product
-/// decision.
+/// rolling tail has been trimmed. A last line that starts before the
+/// rolling tail is not dropped: its end shows after the cut marker, all
+/// within the byte limit, so `cat` of a one-line minified file shows the
+/// file's end.
 #[hegel::test(test_cases = 200)]
 #[hegel::explicit_test_case(
     bytes = [vec![b'x'; 250], vec![b'\n']].concat(),
@@ -238,7 +228,6 @@ fn keeps_truncate_tail_of_the_full_output_and_spills_it_whole(tc: TestCase) {
     max_lines = 1usize,
     max_bytes = 1usize,
 )]
-#[ignore = "pi's OutputAccumulator drops a partial first line of a trimmed tail; product decision"]
 fn the_rolling_tail_shows_what_truncating_the_full_output_shows(tc: TestCase) {
     let bytes = tc.draw(raw_bytes());
     let max_lines = tc.draw(gs::integers::<usize>().min_value(1).max_value(12));
@@ -251,7 +240,13 @@ fn the_rolling_tail_shows_what_truncating_the_full_output_shows(tc: TestCase) {
 
     let full_text = String::from_utf8_lossy(&bytes).into_owned();
     let reference = truncate::truncate_tail(&full_text, max_lines, max_bytes);
-    assert_eq!(acc.snapshot().content, reference.content);
+    let snapshot = acc.snapshot();
+    assert_eq!(snapshot.content, reference.content);
+    assert_eq!(snapshot.last_line_partial, reference.last_line_partial);
+    assert!(snapshot.content.len() <= max_bytes);
+    if snapshot.last_line_partial && max_bytes >= truncate::CUT.len() {
+        assert!(snapshot.content.starts_with(truncate::CUT));
+    }
 }
 
 /// `bash` progress updates stay under a fixed bound however many chunks

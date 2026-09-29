@@ -18,8 +18,11 @@ The shared limits:
 The truncation helpers:
 
 - `truncate_head` keeps whole lines from the start.
-- `truncate_tail` keeps whole lines from the end. It may keep a partial
-  last line, but always cuts at a UTF-8 boundary.
+- `truncate_tail` keeps whole lines from the end. When the last line
+  alone is over the byte limit, it keeps the end of that line after
+  `…`, cut at a UTF-8 boundary. The `…` counts toward the byte limit.
+  A limit under 3 bytes cannot hold it, and keeps the end unmarked.
+  **Deliberate difference from pi:** pi keeps the end without a mark.
 
 A tool that fails returns `Err`, and the loop marks the result
 `is_error`. Every tool takes a root directory (`tau_tools::path::Root`)
@@ -67,8 +70,16 @@ seven, for `Agent::tools`. `bash`, and so both, is unix-only.
   would otherwise lose output.
 - **Output:**
   - stdout and stderr are merged in arrival order;
-  - a rolling tail of about 2 × `MAX_BYTES` is kept;
-  - the result is `truncate_tail`;
+  - a rolling tail of at least 2 × `MAX_BYTES` is kept. It is trimmed
+    back to 2 × `MAX_BYTES` when it passes 4 × `MAX_BYTES`, and the cut
+    moves back to a UTF-8 boundary;
+  - the result is `truncate_tail` of the full output. When the rolling
+    tail starts inside a line, that line still counts at its full
+    length. If it is the last line, its end shows after `…`, so `cat`
+    of a one-line minified file shows the file's end;
+  - **Deliberate difference from pi:** pi's `OutputAccumulator` drops a
+    partial first line of the rolling tail, so that output shows as
+    empty;
   - when output was truncated, the full output is written to
     `$TMPDIR/tau-bash-<hex>.log`, and the notice says
     `Full output: <path>`.
@@ -98,6 +109,15 @@ seven, for `Agent::tools`. `bash`, and so both, is unix-only.
      endings and BOM, then write the file.
   8. Any failure leaves the file unchanged. Edits are all applied, or
      none are.
+- **Line endings** (as pi does, `normalizeToLF` and
+  `restoreLineEndings`):
+  - the file's line ending is CRLF when its first `\n` ends a CRLF line,
+    and LF otherwise;
+  - `\r\n`, `\n` and a lone `\r` all count as line breaks, so a lone
+    `\r` inside a line splits it in two;
+  - the file is written back with its line ending on every line, so
+    mixed endings become uniform, and a lone `\r` becomes that ending,
+    even on lines no edit touches.
 - **Deliberate difference from pi:** uniqueness is checked in the same
   space the match was found in. pi checks it in normalized space even for
   exact matches (`edit-diff.ts:328`). That rejects a match that is unique
