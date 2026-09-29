@@ -180,8 +180,13 @@ fn file_diff(
     }
 }
 
-/// Cuts `text` to [`MAX_DIFF_BYTES`] at a line boundary, with a notice.
-pub(crate) fn truncate(text: String) -> (String, bool) {
+/// What follows a diff cut to [`MAX_DIFF_BYTES`] in the model's text.
+pub(crate) const CUT_NOTICE: &str = "\n[Diff truncated at 50KB. Pass paths \
+                                     to see the rest, a few files at a time.]";
+
+/// Cuts `text` to [`MAX_DIFF_BYTES`] at a line boundary. Whether it cut
+/// comes second.
+pub(crate) fn cut(text: String) -> (String, bool) {
     if text.len() <= MAX_DIFF_BYTES {
         return (text, false);
     }
@@ -190,10 +195,5 @@ pub(crate) fn truncate(text: String) -> (String, bool) {
         end -= 1;
     }
     let end = text[..end].rfind('\n').map_or(end, |newline| newline + 1);
-    let mut cut = text[..end].to_owned();
-    cut.push_str(
-        "\n[Diff truncated at 50KB. Pass paths to see the rest, a few \
-         files at a time.]",
-    );
-    (cut, true)
+    (text[..end].to_owned(), true)
 }

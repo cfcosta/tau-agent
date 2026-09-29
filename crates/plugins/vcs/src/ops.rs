@@ -220,16 +220,20 @@ pub(crate) fn diff(
         matcher.as_ref(),
     )?;
     let info = ChangeInfo::of(repo, &commit, snapshot.wc.id())?;
-    let (text, truncated) = if text.is_empty() {
-        (format!("No changes in {}.", info.line()), false)
+    let (diff, truncated) = diff::cut(text);
+    let text = if diff.is_empty() {
+        format!("No changes in {}.", info.line())
+    } else if truncated {
+        format!("{diff}{}", diff::CUT_NOTICE)
     } else {
-        diff::truncate(text)
+        diff.clone()
     };
     Ok(Report {
         text,
         details: json!({
             "change": info,
             "files": files,
+            "diff": diff,
             "truncated": truncated,
         }),
     })
@@ -321,12 +325,13 @@ pub(crate) fn show(
         &commit.tree(),
         &jj_lib::matchers::EverythingMatcher,
     )?;
-    let mut truncated = false;
+    let (diff_text, truncated) = diff::cut(diff_text);
     if !diff_text.is_empty() {
-        let (diff_text, cut) = diff::truncate(diff_text);
-        truncated = cut;
         text.push('\n');
         text.push_str(&diff_text);
+        if truncated {
+            text.push_str(diff::CUT_NOTICE);
+        }
     }
     Ok(Report {
         text: text.trim_end().to_owned(),
@@ -335,6 +340,7 @@ pub(crate) fn show(
             "parents": parents,
             "author": { "name": author.name, "email": author.email },
             "files": files,
+            "diff": diff_text,
             "truncated": truncated,
         }),
     })

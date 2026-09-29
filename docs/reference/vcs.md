@@ -135,7 +135,8 @@ A changed path is a `FileChange`:
 - A change with no diff returns `No changes in <change line>.`
 - The output is cut to 50 KiB (`MAX_DIFF_BYTES`) at a line boundary,
   with a note to pass `paths`.
-- Details: `change`, `files`, `truncated`.
+- Details: `change`, `files`, `diff` (the diff as in the text, without
+  the note), `truncated`.
 
 ### vcs_log: `{ limit? }`
 
@@ -152,7 +153,7 @@ A changed path is a `FileChange`:
   parent, then `Flags:` when any flag is set, then the full description
   indented by four spaces, then the diff, as for `vcs_diff`.
 - Details: `change`, `parents`, `author` (`name`, `email`), `files`,
-  `truncated`.
+  `diff`, `truncated`.
 
 ## Write tools
 

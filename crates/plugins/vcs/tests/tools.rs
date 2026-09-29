@@ -250,6 +250,9 @@ fn diff_shows_the_hunks() {
             {"path": "b.txt", "kind": "added"},
         ])
     );
+    // Details hold the same diff, for a caller to draw.
+    assert_eq!(details["diff"].as_str(), Some(text.as_str()));
+    assert_eq!(details["truncated"], json!(false));
 
     let (text, _) = repo.ok("vcs_diff", json!({"paths": ["b.txt"]}));
     assert!(!text.contains("a.txt"), "{text}");
@@ -269,8 +272,29 @@ fn diff_shows_the_hunks() {
 #[test]
 fn diff_of_an_empty_change() {
     let repo = Repo::new();
-    let (text, _) = repo.ok("vcs_diff", json!({}));
+    let (text, details) = repo.ok("vcs_diff", json!({}));
     assert!(text.starts_with("No changes in "), "{text}");
+    assert_eq!(details["diff"], json!(""));
+}
+
+/// A diff past 50 KB is cut at a line, with a note for the model that
+/// the details leave out.
+#[test]
+fn a_long_diff_is_cut() {
+    let repo = Repo::new();
+    let line = "x".repeat(99);
+    repo.write("big.txt", &format!("{line}\n").repeat(600));
+    let (text, details) = repo.ok("vcs_diff", json!({}));
+    assert!(
+        text.ends_with("a few files at a time.]"),
+        "{}",
+        &text[text.len() - 80..]
+    );
+    assert_eq!(details["truncated"], json!(true));
+    let diff = details["diff"].as_str().unwrap();
+    assert!(diff.len() <= tau_vcs::MAX_DIFF_BYTES);
+    assert!(diff.ends_with(&format!("+{line}\n")));
+    assert!(text.starts_with(diff));
 }
 
 /// `vcs_show` gives the ids, author, full description and the diff.
@@ -302,6 +326,9 @@ fn show_a_change() {
     );
     assert_eq!(details["author"]["name"], json!("tau"));
     assert_eq!(details["parents"][0]["immutable"], json!(true));
+    let diff = details["diff"].as_str().unwrap();
+    assert!(diff.starts_with("diff --git a/a.txt b/a.txt\n"), "{diff}");
+    assert!(text.ends_with(diff.trim_end()), "{text}");
 }
 
 /// The root commit is shown as immutable.
