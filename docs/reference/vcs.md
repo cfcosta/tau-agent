@@ -91,10 +91,12 @@ value for callers. The model never sees `details`.
 A change appears in text as one line:
 
 ```
-<change id, 12 letters> <commit id, 12 digits> [@] [(empty)] [(conflict)] [(immutable)] <first line of the description>
+<change id, 12 letters> <commit id, 12 digits> [@] [(empty)] [(conflict)] [(divergent)] [(immutable)] [[bookmarks]] <first line of the description>
 ```
 
-An empty description shows as `(no description set)`. In `details`,
+An empty description shows as `(no description set)`. Bookmarks are
+the commit's local bookmarks, such as `[main]`, in brackets and
+separated by commas. In `details`,
 a change is a `ChangeInfo`:
 
 | Field          | Meaning                                     |
@@ -106,6 +108,8 @@ a change is a `ChangeInfo`:
 | `conflict`     | the change has unresolved conflicts         |
 | `immutable`    | see "Scoping rules"                         |
 | `working_copy` | the change is this workspace's working copy |
+| `divergent`    | other visible commits share its change id   |
+| `bookmarks`    | its local bookmarks, sorted                 |
 
 A changed path is a `FileChange`:
 `{ "path": "src/lib.rs", "kind": "added" | "modified" | "removed" }`.

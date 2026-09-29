@@ -310,6 +310,7 @@ Binary files a/logo.png and b/logo.png differ
             "change_id": id, "commit_id": format!("{id}-commit"),
             "description": description, "empty": false, "conflict": false,
             "immutable": false, "working_copy": false,
+            "divergent": false, "bookmarks": [],
         })
     }
 

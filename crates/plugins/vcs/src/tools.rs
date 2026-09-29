@@ -107,7 +107,7 @@ pub struct Log(pub Vcs);
 impl TypedTool for Log {
     type Args = LogArgs;
     const NAME: &'static str = "vcs_log";
-    const DESCRIPTION: &'static str = "List the working-copy change (@) and its ancestors, newest first. Each row: change id, commit id, flags (@, (empty), (conflict), (immutable)) and the first line of the description. Pass these ids to the other vcs tools.";
+    const DESCRIPTION: &'static str = "List the working-copy change (@) and its ancestors, newest first. Each row: change id, commit id, flags (@, (empty), (conflict), (divergent), (immutable)), bookmarks in brackets, and the first line of the description. A divergent change id names more than one commit: pass its commit id instead. Pass these ids to the other vcs tools.";
 
     async fn call(
         &self,

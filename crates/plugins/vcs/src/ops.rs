@@ -59,6 +59,11 @@ pub struct ChangeInfo {
     pub immutable: bool,
     /// The change is this workspace's working copy (`@`).
     pub working_copy: bool,
+    /// More than one visible commit has this change id, so the change id
+    /// names none of them: pass a commit id.
+    pub divergent: bool,
+    /// The local bookmarks on this commit, such as `main`, sorted.
+    pub bookmarks: Vec<String>,
 }
 
 impl ChangeInfo {
@@ -75,10 +80,24 @@ impl ChangeInfo {
             conflict: commit.has_conflict(),
             immutable: is_immutable(repo, commit.id())?,
             working_copy: commit.id() == wc,
+            divergent: block_on(repo.resolve_change_id(commit.change_id()))?
+                .is_some_and(|targets| {
+                    targets.visible_with_offsets().nth(1).is_some()
+                }),
+            bookmarks: {
+                let mut names: Vec<String> = repo
+                    .view()
+                    .local_bookmarks_for_commit(commit.id())
+                    .map(|(name, _)| name.as_str().to_owned())
+                    .collect();
+                names.sort();
+                names
+            },
         })
     }
 
-    /// `<change> <commit> [flags] <first line>`, as `vcs_log` rows.
+    /// `<change> <commit> [flags] [bookmarks] <first line>`, as
+    /// `vcs_log` rows.
     fn line(&self) -> String {
         let mut line = format!(
             "{} {}",
@@ -89,12 +108,16 @@ impl ChangeInfo {
             (self.working_copy, "@"),
             (self.empty, "(empty)"),
             (self.conflict, "(conflict)"),
+            (self.divergent, "(divergent)"),
             (self.immutable, "(immutable)"),
         ] {
             if on {
                 line.push(' ');
                 line.push_str(flag);
             }
+        }
+        if !self.bookmarks.is_empty() {
+            line.push_str(&format!(" [{}]", self.bookmarks.join(", ")));
         }
         line.push(' ');
         line.push_str(first_line(&self.description));

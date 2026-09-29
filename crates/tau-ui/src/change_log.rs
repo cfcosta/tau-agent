@@ -192,6 +192,8 @@ mod tests {
             "conflict": false,
             "immutable": flags.contains(&"immutable"),
             "working_copy": flags.contains(&"@"),
+            "divergent": flags.contains(&"divergent"),
+            "bookmarks": if flags.contains(&"main") { vec!["main"] } else { vec![] },
         })
     }
 

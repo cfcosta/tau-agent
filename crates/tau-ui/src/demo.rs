@@ -544,7 +544,7 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
         "history" => Route::History,
         "memory" => Route::Memory {
             repo: "tau-agent".into(),
-            note: None,
+            note: Some("tau-agent-project-overview".into()),
         },
         "plugins" => Route::Plugins,
         "constitution" => Route::Constitution {
@@ -1159,7 +1159,7 @@ pub fn catalog() -> Catalog {
             Repo {
                 name: "tau-agent".into(),
                 path: "~/Code/cfcosta/tau-agent".into(),
-                memory: tau_agent_memory(&note, &link),
+                memory: { let _ = tau_agent_memory(&note, &link); crate::memory::Memories::keywords().catalog(std::path::Path::new("/home/cfcosta/.local/share/tau/repos/tau-agent-e8db164a/memory")) },
                 constitution: tau_agent_rules(&rule),
             },
             Repo {
@@ -1236,9 +1236,8 @@ fn tau_agent_memory(note: NoteFn<'_>, link: LinkFn<'_>) -> Memory {
                 "n-0417",
                 "Rotation must drain lanes first",
                 &[
-                    "A connection that is past its deadline can still carry lanes with a response in flight. Retiring it right away breaks their continuation: the next request would name a `previous_response_id` that the new socket has never seen.",
-                    "So the pool marks the connection as draining, sends no new lanes to it, and closes it when its last lane finishes.",
-                    "Jitter on the deadline only moves when draining starts. It does not replace it.",
+                    "Rust workspace for embedding LLM agent workflows with OpenAI Responses WebSocket, SQLite run history, and optional plugin crates.",
+                    "This repository is tau-agent, a Rust 2024 workspace for running LLM agents inside an application. `tau-agent` provides immutable agent configuration, async runs/events, tools/hooks, limits, forks, sub-agents and typed outputs; `tau-ai` implements the OpenAI Responses API over WebSocket with pricing and protocol handling; `tau-store` persists runs/transcripts/costs to SQLite; `tau-testing` supplies a deterministic ScriptedModel. Optional plugins under crates/plugins include coding tools, version-control tools, compaction, and memory. The README says no CLI/TUI/server, but the workspace also contains crates/tau-ui, so check current code rather than assuming that statement is up to date. The README's examples and docs/reference/ are useful entry points; docs/architecture.md describes data flow and dependency direction.",
                 ],
                 vec![
                     link("n-0212", "how a lane knows what it continues"),
@@ -1638,6 +1637,9 @@ pub const LOG_CALL: &str = "c12";
 /// The change `--open log` picks in it: the commit with a body.
 pub const LOG_PICKED: &str = "onvkmqwosvvznnzyzztmonuszpkqvokt";
 
+/// The newest trunk commit in the session's log, where `main` points.
+const TRUNK_HEAD: &str = "smrmsnykuxsolrnpslpqttqtypsvkslk";
+
 /// What `vcs_log` returns at the end of the session: the run's turns
 /// and commits over trunk.
 fn change_log() -> ToolOutput {
@@ -1698,6 +1700,7 @@ fn change_log() -> ToolOutput {
         .map(|(change, commit, description, flag)| {
             let flags = match *flag {
                 "@" => " @ (empty)",
+                "immutable" if *change == TRUNK_HEAD => " (immutable) [main]",
                 "immutable" => " (immutable)",
                 _ => "",
             };
@@ -1721,6 +1724,8 @@ fn change_log() -> ToolOutput {
                 "conflict": false,
                 "immutable": *flag == "immutable",
                 "working_copy": *flag == "@",
+                "divergent": false,
+                "bookmarks": if *change == TRUNK_HEAD { vec!["main"] } else { vec![] },
             })
         })
         .collect();
@@ -1742,7 +1747,7 @@ fn vcs_change(change: &str, commit: &str, description: &str) -> Value {
     json!({
         "change_id": change, "commit_id": commit, "description": description,
         "empty": false, "conflict": false, "immutable": false,
-        "working_copy": false,
+        "working_copy": false, "divergent": false, "bookmarks": [],
     })
 }
 

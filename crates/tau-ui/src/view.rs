@@ -2272,7 +2272,7 @@ mod tests {
             json!({
                 "change_id": id, "commit_id": "0123", "description": description,
                 "empty": false, "conflict": false, "immutable": immutable,
-                "working_copy": false,
+                "working_copy": false, "divergent": false, "bookmarks": [],
             })
         };
         view.apply(&RunEvent::ToolEnd {
@@ -2313,7 +2313,7 @@ mod tests {
             "change_id": "onvkmqwo", "commit_id": "28b5b7a7",
             "description": "feat(tau-ai): honor retry-after\n",
             "empty": false, "conflict": false, "immutable": false,
-            "working_copy": false,
+            "working_copy": false, "divergent": false, "bookmarks": [],
         });
         let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n\
                     @@ -1 +1,2 @@\n-old\n+new\n+more\n";
