@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO constitution_rules\n                   (repo, id, position, text, targets, review, block)\n                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "0fadaf3674ce15f07b18704e49e9af86d0e39f5b71717107f211593002c5a1c4"
+}

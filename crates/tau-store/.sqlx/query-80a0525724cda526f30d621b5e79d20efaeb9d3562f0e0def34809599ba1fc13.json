@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM constitution_rules WHERE repo = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "80a0525724cda526f30d621b5e79d20efaeb9d3562f0e0def34809599ba1fc13"
+}

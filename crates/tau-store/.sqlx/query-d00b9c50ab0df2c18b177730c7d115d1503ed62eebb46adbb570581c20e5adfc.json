@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!: String\", text AS \"text!: String\",\n                      targets AS \"targets!: String\",\n                      review AS \"review!: f64\", block AS \"block!: f64\"\n               FROM constitution_rules WHERE repo = ?1 ORDER BY position",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "constitution_rules",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "text!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "constitution_rules",
+            "name": "text"
+          }
+        }
+      },
+      {
+        "name": "targets!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "constitution_rules",
+            "name": "targets"
+          }
+        }
+      },
+      {
+        "name": "review!: f64",
+        "ordinal": 3,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "constitution_rules",
+            "name": "review"
+          }
+        }
+      },
+      {
+        "name": "block!: f64",
+        "ordinal": 4,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "constitution_rules",
+            "name": "block"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d00b9c50ab0df2c18b177730c7d115d1503ed62eebb46adbb570581c20e5adfc"
+}

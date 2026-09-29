@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT on_error AS \"on_error!: String\", max_holds AS \"max_holds!: i64\"\n               FROM constitutions WHERE repo = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "on_error!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "constitutions",
+            "name": "on_error"
+          }
+        }
+      },
+      {
+        "name": "max_holds!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "constitutions",
+            "name": "max_holds"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "815dfcf8e00e625ca21cacf585be656201e3d3443817ccc162fd2de45d51b317"
+}

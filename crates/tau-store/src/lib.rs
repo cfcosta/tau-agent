@@ -221,6 +221,27 @@ pub struct WriterStats {
     pub longest: Duration,
 }
 
+/// A repository's constitution as the store keeps it: plain values,
+/// checked by `tau-constitution` when it reads them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredConstitution {
+    /// `allow` or `block`.
+    pub on_error: String,
+    pub max_holds: u32,
+    /// In order.
+    pub rules: Vec<StoredRule>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredRule {
+    pub id: String,
+    pub text: String,
+    /// Where it applies: `tool.field`, or `final answer`.
+    pub targets: Vec<String>,
+    pub review: f64,
+    pub block: f64,
+}
+
 #[derive(Debug, Clone)]
 pub struct Store {
     writer: SqlitePool,
@@ -342,6 +363,98 @@ impl Store {
         stats.writes += 1;
         stats.waited += waited;
         stats.longest = stats.longest.max(waited);
+    }
+
+    /// Repository `repo`'s constitution, when one was saved.
+    pub async fn constitution(
+        &self,
+        repo: &str,
+    ) -> Result<Option<StoredConstitution>> {
+        let Some(head) = sqlx::query!(
+            r#"SELECT on_error AS "on_error!: String", max_holds AS "max_holds!: i64"
+               FROM constitutions WHERE repo = ?1"#,
+            repo
+        )
+        .fetch_optional(&self.reader)
+        .await?
+        else {
+            return Ok(None);
+        };
+        let rules = sqlx::query!(
+            r#"SELECT id AS "id!: String", text AS "text!: String",
+                      targets AS "targets!: String",
+                      review AS "review!: f64", block AS "block!: f64"
+               FROM constitution_rules WHERE repo = ?1 ORDER BY position"#,
+            repo
+        )
+        .fetch_all(&self.reader)
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(StoredRule {
+                id: row.id,
+                text: row.text,
+                targets: serde_json::from_str(&row.targets)?,
+                review: row.review,
+                block: row.block,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+        Ok(Some(StoredConstitution {
+            on_error: head.on_error,
+            max_holds: u32::try_from(head.max_holds).unwrap_or(u32::MAX),
+            rules,
+        }))
+    }
+
+    /// Replaces repository `repo`'s constitution with `constitution`, in
+    /// one write transaction: a reader sees the old rules or the new ones.
+    pub async fn save_constitution(
+        &self,
+        repo: &str,
+        constitution: &StoredConstitution,
+    ) -> Result<()> {
+        let started = Instant::now();
+        let mut connection = self.writer.acquire().await?;
+        let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+        self.record_wait(started.elapsed());
+        let max_holds = i64::from(constitution.max_holds);
+        sqlx::query!(
+            "INSERT INTO constitutions (repo, on_error, max_holds, updated_at)
+             VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+             ON CONFLICT (repo) DO UPDATE SET
+               on_error = excluded.on_error,
+               max_holds = excluded.max_holds,
+               updated_at = excluded.updated_at",
+            repo,
+            constitution.on_error,
+            max_holds,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM constitution_rules WHERE repo = ?1", repo)
+            .execute(&mut *tx)
+            .await?;
+        for (position, rule) in constitution.rules.iter().enumerate() {
+            let position = position as i64;
+            let targets = serde_json::to_string(&rule.targets)?;
+            sqlx::query!(
+                "INSERT INTO constitution_rules
+                   (repo, id, position, text, targets, review, block)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                repo,
+                rule.id,
+                position,
+                rule.text,
+                targets,
+                rule.review,
+                rule.block,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Records a new run with status `running`.

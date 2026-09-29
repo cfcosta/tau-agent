@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO constitutions (repo, on_error, max_holds, updated_at)\n             VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))\n             ON CONFLICT (repo) DO UPDATE SET\n               on_error = excluded.on_error,\n               max_holds = excluded.max_holds,\n               updated_at = excluded.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "265b09d55f1d4d8162489d0aaa34506e8396506e945191a7496da1bc66c72906"
+}
