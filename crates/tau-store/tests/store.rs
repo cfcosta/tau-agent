@@ -643,6 +643,50 @@ fn waiting_for_the_write_lock_is_measured() {
     });
 }
 
+/// A run's sub-agents come back by their parent, oldest first, whatever
+/// became of them; a fork is not one.
+#[test]
+fn subagents_are_found_by_their_parent() {
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        for (id, kind) in [
+            ("a", RunKind::Root),
+            ("b", RunKind::Subagent { parent: "a".into() }),
+            ("c", RunKind::Subagent { parent: "a".into() }),
+            ("d", RunKind::Subagent { parent: "c".into() }),
+            (
+                "e",
+                RunKind::Fork {
+                    parent: "a".into(),
+                    fork_seq: 0,
+                },
+            ),
+        ] {
+            store
+                .create_run(&NewRun {
+                    id,
+                    workflow_id: None,
+                    agent: "coder",
+                    kind,
+                    model: "m",
+                    turns: 0,
+                })
+                .await
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        store
+            .finish_run("b", Status::Failed, None, Some("broke"))
+            .await
+            .unwrap();
+        let found = store.subagents("a").await.unwrap();
+        let ids: Vec<&str> = found.iter().map(|run| run.id.as_str()).collect();
+        assert_eq!(ids, ["b", "c"]);
+        assert_eq!(found[0].status, Status::Failed);
+        assert!(store.subagents("nobody").await.unwrap().is_empty());
+    });
+}
+
 /// History lists root runs and forks, newest first, without sub-agents.
 #[test]
 fn recent_runs_skip_subagents() {

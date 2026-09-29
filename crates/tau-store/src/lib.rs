@@ -711,6 +711,40 @@ impl Store {
         Ok(record)
     }
 
+    /// The sub-agents `parent` called, oldest first. [`Self::recent_runs`]
+    /// leaves them out: they belong under their parent.
+    pub async fn subagents(&self, parent: &str) -> Result<Vec<RunRecord>> {
+        let rows = sqlx::query!(
+            r#"SELECT id AS "id!: String", workflow_id, agent, kind,
+                      parent_run_id, fork_seq, model, status,
+                      input_tokens, output_tokens, cost_usd, turns, result,
+                      error, created_at
+               FROM runs WHERE kind = 'subagent' AND parent_run_id = ?1
+               ORDER BY created_at, id"#,
+            parent
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| RunRecord {
+                kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq),
+                id: row.id,
+                workflow_id: row.workflow_id,
+                agent: row.agent,
+                model: row.model,
+                status: Status::parse(&row.status),
+                input_tokens: row.input_tokens,
+                output_tokens: row.output_tokens,
+                cost_usd: row.cost_usd,
+                turns: row.turns,
+                result: row.result,
+                error: row.error,
+                created_at: row.created_at,
+            })
+            .collect())
+    }
+
     pub async fn run(&self, run: &str) -> Result<Option<RunRecord>> {
         let row = sqlx::query!(
             r#"SELECT id AS "id!: String", workflow_id, agent, kind,

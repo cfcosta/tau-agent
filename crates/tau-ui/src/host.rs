@@ -3283,39 +3283,29 @@ pub async fn history(
     for record in &records {
         views.push(stored_view(store, record, home).await?);
     }
-    // Sub-agents are left out of the list: their parents' `delegate`
-    // calls name them, and they come back under those parents.
-    let mut delegated = Vec::new();
-    for view in &views {
-        for item in &view.items {
-            if let crate::view::Item::Tool(card) = item
-                && let crate::view::ToolBody::Delegated(landed) = &card.body
+    // Sub-agents are left out of the list: they come back under the
+    // runs that called them, however they ended.
+    let parents: Vec<RunId> =
+        views.iter().map(|view| view.id.clone()).collect();
+    for parent in parents {
+        for record in store.subagents(&parent.0).await? {
+            let view = stored_view(store, &record, home).await?.with_origin(
+                Origin::SubAgent {
+                    parent: parent.clone(),
+                },
+            );
+            if let Some(parent) =
+                views.iter_mut().find(|view| view.id == parent)
             {
-                delegated.push((view.id.clone(), landed.from.clone()));
+                parent.children.push(ChildRun {
+                    id: view.id.clone(),
+                    title: view.title.clone(),
+                    kind: ChildKind::SubAgent,
+                    status: view.status.clone(),
+                });
             }
+            views.push(view);
         }
-    }
-    for (parent, child) in delegated {
-        if views.iter().any(|view| view.id == child) {
-            continue;
-        }
-        let Some(record) = store.run(&child.0).await? else {
-            continue;
-        };
-        let view = stored_view(store, &record, home).await?.with_origin(
-            Origin::SubAgent {
-                parent: parent.clone(),
-            },
-        );
-        if let Some(parent) = views.iter_mut().find(|view| view.id == parent) {
-            parent.children.push(ChildRun {
-                id: view.id.clone(),
-                title: view.title.clone(),
-                kind: ChildKind::SubAgent,
-                status: view.status.clone(),
-            });
-        }
-        views.push(view);
     }
     // Each fork is listed under the run it came from, too.
     let forks: Vec<(RunId, ChildRun)> = views

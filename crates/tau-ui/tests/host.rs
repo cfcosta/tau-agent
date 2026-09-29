@@ -547,6 +547,62 @@ fn a_run_delegates_and_the_sub_agent_lands() {
     assert!(main_view.children.iter().any(|kid| kid.id == landed.from));
 }
 
+/// A sub-agent that fails still comes back from history, under the run
+/// that called it, with how it ended.
+#[test]
+fn a_failed_sub_agent_comes_back_from_history() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "delegate",
+                serde_json::json!({ "task": "write c.txt" }),
+            )
+        })
+        .turn(|t| t.dropped())
+        .turn(|t| t.text("it failed"));
+    let (host, mut events) = host_on(llm, src.path());
+    let host = host.with_project(project);
+    let main = host
+        .start("delegate c.txt", &ModelChoice::default(), "")
+        .unwrap();
+    until_end(&mut events);
+    until_end(&mut events);
+    wait_until_done(&host, &main.id);
+
+    let history = host.history().unwrap();
+    let main_view = history.iter().find(|view| view.id == main.id).unwrap();
+    let child = main_view
+        .children
+        .iter()
+        .find(|child| child.kind == tau_ui::view::ChildKind::SubAgent)
+        .expect("the sub-agent under its parent");
+    let view = history.iter().find(|view| view.id == child.id).unwrap();
+    assert_eq!(
+        view.origin,
+        Origin::SubAgent {
+            parent: main.id.clone()
+        }
+    );
+    assert_eq!(view.title, "write-c-txt");
+    assert!(
+        matches!(&view.status, RunStatus::Finished(StopReason::Error(_))),
+        "{:?}",
+        view.status
+    );
+}
+
 #[test]
 fn runs_come_back_under_their_repository() {
     let other = tempfile::tempdir().unwrap();
