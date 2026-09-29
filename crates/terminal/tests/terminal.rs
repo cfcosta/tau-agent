@@ -2,7 +2,7 @@
 //! and replay (`docs/decisions/0010-terminal-rendering.md`).
 
 use hegel::{TestCase, generators as gs};
-use tau_terminal::{Options, Rgb, Size, Terminal, Underline};
+use tau_terminal::{Color, Options, Rgb, Size, Terminal, Underline};
 
 /// Characters plain output is made of: printable ASCII, the space,
 /// and characters of two, three and four bytes, one of them two cells
@@ -105,7 +105,7 @@ fn a_carriage_return_redraw_leaves_the_last_frame() {
 }
 
 /// Escape sequences never reach the text; their colors reach the
-/// snapshot, resolved through the palette.
+/// snapshot, palette entries by number and direct colors as they are.
 #[test]
 fn colors_reach_the_snapshot_and_not_the_text() {
     let mut terminal = small(false);
@@ -118,12 +118,11 @@ fn colors_reach_the_snapshot_and_not_the_text() {
     let runs = &screen.lines[0].runs;
     assert_eq!(runs[0].text, "red");
     assert!(runs[0].style.bold);
-    let red = runs[0].style.fg.expect("red has a color");
-    assert!(red.r > red.g && red.r > red.b, "{red:?}");
+    assert_eq!(runs[0].style.fg, Some(Color::Palette(1)));
     assert_eq!(runs[1].text, " ");
     assert_eq!(runs[1].style.fg, None);
     assert_eq!(runs[2].text, "rgb");
-    assert_eq!(runs[2].style.fg, Some(Rgb { r: 1, g: 2, b: 3 }));
+    assert_eq!(runs[2].style.fg, Some(Color::Rgb(Rgb { r: 1, g: 2, b: 3 })));
     assert_eq!(runs[3].text, "!");
     assert_eq!(runs[3].style.underline, Underline::Single);
     assert_eq!(

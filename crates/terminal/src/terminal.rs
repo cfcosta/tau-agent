@@ -1,13 +1,18 @@
 //! [`Terminal`]: libghostty-vt's terminal, with plain text for a model,
 //! VT for replay and a styled [`Screen`] for a renderer.
 
-use std::marker::PhantomData;
+use std::{marker::PhantomData, ops::Range};
 
 use libghostty_vt::{
     self as vt,
     fmt::{Format, Formatter, FormatterOptions},
     render::{CellIterator, CursorVisualStyle, RenderState, RowIterator},
-    screen::{CellWide, Screen as ActiveScreen, TrackedGridRef},
+    screen::{
+        CellContentTag,
+        CellWide,
+        Screen as ActiveScreen,
+        TrackedGridRef,
+    },
     selection::{FormatOptions, Selection},
     style::{self as vt_style, StyleColor},
     terminal::{Point, PointCoordinate, PointSpace, ScrollViewport},
@@ -16,6 +21,7 @@ use libghostty_vt::{
 use crate::{
     error::Error,
     screen::{
+        Color,
         Cursor,
         CursorShape,
         Line,
@@ -276,6 +282,34 @@ impl Terminal {
         Ok(out)
     }
 
+    /// Rows of the active screen: the scrollback, then the screen.
+    pub fn total_rows(&self) -> Result<usize, Error> {
+        Ok(self.history_rows()? + usize::from(self.inner.rows()?))
+    }
+
+    /// Rows `range` of the active screen, styled, where row 0 is the
+    /// oldest row of the scrollback (see [`Terminal::history_rows`]).
+    /// Rows past the end are left out. The viewport is scrolled to each
+    /// page in turn and left at the bottom.
+    pub fn lines(&mut self, range: Range<usize>) -> Result<Vec<Line>, Error> {
+        let total = self.total_rows()?;
+        let rows = usize::from(self.inner.rows()?);
+        let end = range.end.min(total);
+        let mut out = Vec::with_capacity(end.saturating_sub(range.start));
+        let mut at = range.start;
+        while at < end {
+            let top = at.min(total - rows);
+            self.inner.scroll_viewport(ScrollViewport::Row(top));
+            let page = self.snapshot()?;
+            let skip = at - top;
+            let take = (end - at).min(rows - skip);
+            out.extend(page.lines.into_iter().skip(skip).take(take));
+            at += take;
+        }
+        self.inner.scroll_viewport(ScrollViewport::Bottom);
+        Ok(out)
+    }
+
     /// The viewport, styled, for a renderer.
     pub fn snapshot(&mut self) -> Result<Screen, Error> {
         let snapshot = self.render.update(&self.inner)?;
@@ -314,11 +348,17 @@ impl Terminal {
                 if matches!(wide, CellWide::SpacerTail | CellWide::SpacerHead) {
                     continue;
                 }
-                let style = style_of(
-                    cell.style()?,
-                    cell.fg_color()?.map(rgb),
-                    cell.bg_color()?.map(rgb),
-                );
+                let raw = cell.raw_cell()?;
+                let bg = match raw.content_tag()? {
+                    CellContentTag::BgColorPalette => {
+                        Some(Color::Palette(raw.bg_color_palette()?.0))
+                    }
+                    CellContentTag::BgColorRgb => {
+                        Some(Color::Rgb(rgb(raw.bg_color_rgb()?)))
+                    }
+                    _ => None,
+                };
+                let style = style_of(cell.style()?, bg);
                 grapheme.clear();
                 cell.graphemes_utf8(&mut grapheme)?;
                 if grapheme.is_empty() {
@@ -360,9 +400,10 @@ impl Terminal {
         })
     }
 
-    /// Rows in the scrollback of the active screen (the alternate screen
-    /// has none).
-    fn history_rows(&self) -> Result<usize, Error> {
+    /// Rows in the scrollback of the active screen: rows `0..history`
+    /// of [`Terminal::lines`] are the scrollback, and the screen's rows
+    /// follow. The alternate screen has none.
+    pub fn history_rows(&self) -> Result<usize, Error> {
         Ok(match self.inner.active_screen()? {
             ActiveScreen::Primary => self.inner.scrollback_rows()?,
             ActiveScreen::Alternate => 0,
@@ -491,16 +532,20 @@ fn rgb(color: vt_style::RgbColor) -> Rgb {
     }
 }
 
-fn style_of(style: vt_style::Style, fg: Option<Rgb>, bg: Option<Rgb>) -> Style {
-    // `fg_color` and `bg_color` are already resolved through the
-    // palette; the style's own colors only say whether one was set.
-    let fg = match style.fg_color {
+fn color_of(color: StyleColor) -> Option<Color> {
+    match color {
         StyleColor::None => None,
-        _ => fg,
-    };
+        StyleColor::Palette(index) => Some(Color::Palette(index.0)),
+        StyleColor::Rgb(color) => Some(Color::Rgb(rgb(color))),
+    }
+}
+
+/// A cell's style; `cell_bg` is the background of a cell with no text
+/// (erased with a background color), which its style does not carry.
+fn style_of(style: vt_style::Style, cell_bg: Option<Color>) -> Style {
     Style {
-        fg,
-        bg,
+        fg: color_of(style.fg_color),
+        bg: cell_bg.or(color_of(style.bg_color)),
         bold: style.bold,
         faint: style.faint,
         italic: style.italic,

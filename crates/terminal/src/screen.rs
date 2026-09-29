@@ -9,6 +9,19 @@ pub struct Rgb {
     pub b: u8,
 }
 
+/// A color a program chose: an entry of the palette, or a color of its
+/// own. A renderer resolves palette entries through its own palette
+/// (see [`crate::Palette`]), so the same output can take any
+/// theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Color {
+    /// An entry of the 256-color palette: 0 to 15 are the ANSI colors,
+    /// 16 to 231 a 6×6×6 color cube, 232 to 255 a gray ramp.
+    Palette(u8),
+    /// A 24-bit color (`38;2;r;g;b`).
+    Rgb(Rgb),
+}
+
 /// How a run's text is underlined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Underline {
@@ -21,14 +34,13 @@ pub enum Underline {
     Dashed,
 }
 
-/// How a run of cells looks. Colors are resolved through the
-/// terminal's palette; `None` means the renderer's default foreground
-/// or background. `inverse` is left for the renderer to apply, so it
-/// can swap its own defaults in.
+/// How a run of cells looks. `None` colors are the renderer's default
+/// foreground or background. `inverse` is left for the renderer to
+/// apply, so it can swap its own defaults in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Style {
-    pub fg: Option<Rgb>,
-    pub bg: Option<Rgb>,
+    pub fg: Option<Color>,
+    pub bg: Option<Color>,
     pub bold: bool,
     pub faint: bool,
     pub italic: bool,
@@ -66,6 +78,48 @@ pub struct Line {
     /// Whether the row continues on the next one (a soft wrap), as
     /// opposed to ending with a newline.
     pub wrapped: bool,
+}
+
+impl Line {
+    /// The row's text: runs at their columns, gaps as spaces, trailing
+    /// blanks left out.
+    pub fn text(&self) -> String {
+        self.text_between(0, u16::MAX).trim_end().to_owned()
+    }
+
+    /// The text of the cells from column `start` up to, not including,
+    /// `end`, gaps as spaces, and nothing past the last run. A run with a
+    /// wide character or a grapheme cluster of several characters is
+    /// taken whole when it overlaps the range.
+    pub fn text_between(&self, start: u16, end: u16) -> String {
+        let mut out = String::new();
+        let mut col = start;
+        for run in &self.runs {
+            let run_end = run.col + run.cells;
+            if run_end <= start || run.col >= end {
+                continue;
+            }
+            let from = run.col.max(start);
+            while col < from {
+                out.push(' ');
+                col += 1;
+            }
+            if usize::from(run.cells) == run.text.chars().count() {
+                let skip = usize::from(from - run.col);
+                let take = usize::from(end.min(run_end) - from);
+                out.extend(run.text.chars().skip(skip).take(take));
+            } else {
+                out.push_str(&run.text);
+            }
+            col = end.min(run_end);
+        }
+        out
+    }
+
+    /// Whether nothing is drawn on the row.
+    pub fn is_blank(&self) -> bool {
+        self.runs.is_empty()
+    }
 }
 
 /// The cursor's shape.
@@ -113,19 +167,7 @@ impl Screen {
     pub fn text(&self) -> String {
         self.lines
             .iter()
-            .map(|line| {
-                let mut out = String::new();
-                let mut col = 0u16;
-                for run in &line.runs {
-                    while col < run.col {
-                        out.push(' ');
-                        col += 1;
-                    }
-                    out.push_str(&run.text);
-                    col = run.col + run.cells;
-                }
-                out.trim_end().to_owned()
-            })
+            .map(Line::text)
             .collect::<Vec<_>>()
             .join("\n")
     }

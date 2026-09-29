@@ -9,4 +9,8 @@ pub enum Error {
     /// Setting up the pseudo-terminal or the process failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// Output was written to a view that was frozen: its terminal is
+    /// gone.
+    #[error("the terminal view is frozen")]
+    Frozen,
 }
