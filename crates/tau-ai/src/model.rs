@@ -393,7 +393,8 @@ pub fn efforts(id: &str) -> Vec<ReasoningEffort> {
 
 /// Models that keep a conversation's cache when only the reasoning
 /// effort changes between requests: a request may continue the previous
-/// response at another effort. Only the models this has been checked on.
+/// response at another effort. Taken from what users report; not yet
+/// confirmed against the API.
 const EFFORT_KEEPS_CACHE: [&str; 2] = ["gpt-6-sol", "gpt-6-astra"];
 
 /// Whether `id` keeps a conversation's cache across a change of

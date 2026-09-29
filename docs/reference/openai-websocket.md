@@ -109,8 +109,8 @@ Otherwise send the full input and no `previous_response_id`.
 
 One exception to rule 1: on a model that keeps a conversation's cache
 when only the reasoning effort changes (`model::effort_keeps_cache`:
-`gpt-6-sol` and `gpt-6-astra`, the models this was checked on), the
-`reasoning` field is left out of the comparison. A run may then change
+`gpt-6-sol` and `gpt-6-astra`, as users report it; not yet confirmed
+against the API), the `reasoning` field is left out of the comparison. A run may then change
 its effort per request (`LlmSession::set_reasoning`) and still continue
 its chain. Should the server refuse, `previous_response_not_found`
 clears the continuation and the request goes in full, as for any
