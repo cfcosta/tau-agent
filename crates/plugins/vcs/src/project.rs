@@ -179,8 +179,12 @@ impl Project {
     ) -> anyhow::Result<Option<(Vec<u8>, bool)>> {
         let repo = self.git()?;
         let id = gix::ObjectId::from_hex(commit.as_bytes())
+            .map_err(|error| error.into_error())
             .with_context(|| format!("{commit} is not a commit id"))?;
-        let commit = repo.find_object(id)?.try_into_commit()?;
+        let commit = repo
+            .find_object(id)?
+            .try_into_commit()
+            .map_err(|error| error.into_error())?;
         let mut tree = commit.tree()?;
         let Some(entry) = tree.peel_to_entry_by_path(path)? else {
             return Ok(None);
@@ -197,8 +201,12 @@ impl Project {
     pub fn parent_of(&self, commit: &str) -> anyhow::Result<Option<String>> {
         let repo = self.git()?;
         let id = gix::ObjectId::from_hex(commit.as_bytes())
+            .map_err(|error| error.into_error())
             .with_context(|| format!("{commit} is not a commit id"))?;
-        let commit = repo.find_object(id)?.try_into_commit()?;
+        let commit = repo
+            .find_object(id)?
+            .try_into_commit()
+            .map_err(|error| error.into_error())?;
         Ok(commit.parent_ids().next().map(|id| id.to_string()))
     }
 

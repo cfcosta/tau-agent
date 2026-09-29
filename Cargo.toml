@@ -23,9 +23,10 @@ futures-util = { version = "0.3.34", default-features = false, features = [
   "std",
 ] }
 base64 = "0.23.1"
-# Only for `gix::hash::Kind`, which jj-lib's init takes; the version
-# jj-lib uses, so it adds nothing to the tree (tau-vcs).
-gix = { version = "0.87.1", default-features = false }
+# tau-vcs's own git work: cloning a source and reading its blobs. Newer
+# than the gix jj-lib 0.45.1 builds on (^0.87.1), so the tree carries
+# both until jj-lib moves; nothing passes a gix value to jj-lib.
+gix = { version = "0.88.0", default-features = false }
 globset = "0.4.20"
 grep-matcher = "0.1.9"
 grep-regex = "0.1.14"
