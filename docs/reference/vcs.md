@@ -337,6 +337,34 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   (`conflicts`), and the new head. Confirmed, conflicts land as jj
   conflicts for the parent's next turn to resolve.
 
+## Delegating to a sub-agent
+
+`Delegate` is the `delegate` tool (`{ task }`): a run hands a task to
+a sub-agent, a child run in a chat of its own
+([ADR 0009](../decisions/0009-child-runs-land-on-their-parent.md)).
+Build it on the run's `RunWorkspace`, with a closure that builds the
+sub-agent's `Agent` around the sub-agent's own `RunWorkspace`.
+
+1. The caller's work so far is committed ("before delegating") and
+   the sub-agent's workspace starts on that commit
+   (`RunWorkspace::with_base`), so it sees the caller's edits.
+2. The sub-agent runs through `Agent::as_tool`: a `Subagent` run of the
+   caller, its events forwarded to the caller's, its turns committed
+   on its own stack under its own bookmark.
+3. When it finishes, its changes land on the caller with `Vcs::land`.
+   The caller has not moved, so nothing is rewritten and nothing can
+   conflict. The tool's text is the sub-agent's answer and a line on
+   what landed; its details hold `run` and the `landing`.
+4. When it fails, its changes are abandoned and the caller gets the
+   error.
+5. Either way the sub-agent closes: its workspace is forgotten and its
+   bookmark removed.
+
+The caller's links record what came to its stack during the turn: its
+own commit from before delegating, then each landed change with `from`
+naming the sub-agent, then the turn's own commit. The tool runs one
+call at a time, since it moves the caller's working copy.
+
 ## Left to the host and the UI
 
 These operations change shared state, use the network, or throw work

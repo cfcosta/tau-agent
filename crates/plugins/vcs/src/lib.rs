@@ -23,6 +23,7 @@
 //! in, over HTTPS, for [`Project::import`].
 
 mod clone;
+pub mod delegate;
 mod diff;
 mod land;
 mod ops;
@@ -34,6 +35,7 @@ pub mod tools;
 mod vcs;
 
 pub use clone::clone_bare;
+pub use delegate::Delegate;
 pub use diff::{ChangeKind, FileChange, MAX_DIFF_BYTES};
 pub use land::Landing;
 pub use ops::{ChangeInfo, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT, TurnCommit};

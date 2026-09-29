@@ -364,6 +364,29 @@ impl Project {
         Ok(ids.len())
     }
 
+    /// The local bookmarks whose names start with `prefix`, sorted.
+    pub fn bookmarks(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
+        let repo = self.load()?;
+        let mut names: Vec<String> = repo
+            .view()
+            .local_bookmarks()
+            .map(|(name, _)| name.as_str().to_owned())
+            .filter(|name| name.starts_with(prefix))
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
+    /// The working-copy commit of workspace `name`, as a full commit id
+    /// in hex, if the workspace exists.
+    pub fn workspace_head(&self, name: &str) -> anyhow::Result<Option<String>> {
+        let repo = self.load()?;
+        Ok(repo
+            .view()
+            .get_wc_commit_id(&WorkspaceNameBuf::from(name))
+            .map(|id| id.hex()))
+    }
+
     /// Removes the local bookmark `name`, if there is one. The commits it
     /// named stay.
     pub fn remove_bookmark(&self, name: &str) -> anyhow::Result<()> {

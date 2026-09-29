@@ -10,7 +10,11 @@
 //! about those files stale, hears of each commit through
 //! [`RunWorkspace::on_commit`].
 
-use std::{fmt, path::PathBuf, sync::Arc};
+use std::{
+    fmt,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -60,14 +64,30 @@ impl Link {
     }
 }
 
+/// A change that came to the run's stack in the middle of a turn: the
+/// run's own work up to a delegated task, or a change the task landed.
+/// It is linked when the turn ends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Pending {
+    pub commit_id: String,
+    pub change_id: String,
+    pub from: Option<String>,
+}
+
 /// A run's workspace, as a plugin. Build one per run, with a workspace
 /// name of its own, and point the run's other tools at [`Self::dir`].
+/// Clones share what they learn of the run.
 #[derive(Clone)]
 pub struct RunWorkspace {
     project: Project,
     name: String,
     vcs: Vcs,
     observers: Vec<CommitObserver>,
+    /// Where a new run's workspace starts instead of trunk.
+    base: Option<String>,
+    pending: Arc<Mutex<Vec<Pending>>>,
+    /// The run the workspace serves, once it has started.
+    run: Arc<Mutex<Option<RunId>>>,
 }
 
 impl fmt::Debug for RunWorkspace {
@@ -94,7 +114,32 @@ impl RunWorkspace {
             name,
             vcs,
             observers: Vec::new(),
+            base: None,
+            pending: Arc::default(),
+            run: Arc::default(),
         })
+    }
+
+    /// Starts a new run's workspace on `commit` (a full commit id in
+    /// hex) rather than on trunk: a sub-agent's, on its caller's work.
+    /// A fork still starts on the turn it continues from.
+    pub fn with_base(mut self, commit: impl Into<String>) -> Self {
+        self.base = Some(commit.into());
+        self
+    }
+
+    /// The run this workspace serves, once it has started.
+    pub fn run(&self) -> Option<RunId> {
+        self.run.lock().expect("not poisoned").clone()
+    }
+
+    pub(crate) fn project(&self) -> &Project {
+        &self.project
+    }
+
+    /// Changes to link when the current turn ends, before its own.
+    pub(crate) fn queue(&self, changes: impl IntoIterator<Item = Pending>) {
+        self.pending.lock().expect("not poisoned").extend(changes);
     }
 
     /// Calls `observer` with each turn's commit, after it is made.
@@ -131,19 +176,22 @@ impl Plugin for RunWorkspace {
     async fn start(
         &self,
         plan: &mut RunPlan,
-        _ctx: &PluginCtx,
+        ctx: &PluginCtx,
     ) -> anyhow::Result<Box<dyn PluginRun>> {
+        *self.run.lock().expect("not poisoned") = Some(ctx.run.clone());
         // A fork continues from the last turn it inherits.
         let inherited = plan.records().iter().rev().find_map(|record| {
             serde_json::from_value::<Link>(record.clone()).ok()
         });
         let project = self.project.clone();
         let name = self.name.clone();
+        let base = self.base.clone();
         tokio::task::spawn_blocking(move || {
             // The turn's change may have been restacked since.
-            let base = match inherited {
-                Some(link) => project.current([link])?.remove(0).commit_id,
-                None => project.trunk()?,
+            let base = match (inherited, base) {
+                (Some(link), _) => project.current([link])?.remove(0).commit_id,
+                (None, Some(base)) => base,
+                (None, None) => project.trunk()?,
             };
             project.add_workspace(&name, &base).map(|_| ())
         })
@@ -152,6 +200,7 @@ impl Plugin for RunWorkspace {
             vcs: self.vcs.clone(),
             name: self.name.clone(),
             observers: self.observers.clone(),
+            pending: self.pending.clone(),
         }))
     }
 }
@@ -160,6 +209,7 @@ struct Turns {
     vcs: Vcs,
     name: String,
     observers: Vec<CommitObserver>,
+    pending: Arc<Mutex<Vec<Pending>>>,
 }
 
 #[async_trait]
@@ -170,6 +220,23 @@ impl PluginRun for Turns {
         };
         if run != &ctx.run {
             return;
+        }
+        // What came to the stack during the turn, in order, before the
+        // turn's own commit.
+        let pending: Vec<Pending> =
+            std::mem::take(&mut *self.pending.lock().expect("not poisoned"));
+        for change in pending {
+            let link = Link {
+                turn: *turn,
+                workspace: self.name.clone(),
+                commit_id: change.commit_id,
+                change_id: change.change_id,
+                changed: true,
+                from: change.from,
+            };
+            let _ = ctx
+                .record(&serde_json::to_value(link).unwrap_or_default())
+                .await;
         }
         let record = match self
             .vcs
