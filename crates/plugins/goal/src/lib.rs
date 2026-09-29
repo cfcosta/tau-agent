@@ -73,7 +73,8 @@ pub enum Command {
 
 impl Command {
     /// Reads `/goal [--continuations N] [--budget USD] <condition>` or
-    /// `/goal clear`. Anything else is not a command.
+    /// `/goal clear`. Anything else is not a command, a budget that is
+    /// not a finite amount of at least zero included.
     pub fn parse(input: &str) -> Option<Self> {
         let rest = input.trim().strip_prefix("/goal")?;
         if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
@@ -90,8 +91,14 @@ impl Command {
                 }
                 Some("--budget") => {
                     words.next();
-                    budget =
-                        words.next()?.trim_start_matches('$').parse().ok()?;
+                    budget = words
+                        .next()?
+                        .trim_start_matches('$')
+                        .parse()
+                        .ok()
+                        .filter(|budget: &f64| {
+                            budget.is_finite() && *budget >= 0.0
+                        })?;
                 }
                 _ => break,
             }

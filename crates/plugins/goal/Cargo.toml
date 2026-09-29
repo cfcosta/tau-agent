@@ -17,6 +17,7 @@ tau-jev.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
+hegeltest.workspace = true
 schemars.workspace = true
 tau-store.workspace = true
 tau-testing.workspace = true

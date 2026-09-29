@@ -182,6 +182,9 @@ fn commands_are_read_with_their_limits() {
         "/goals x",
         "fix /goal x",
         "/goal --budget",
+        "/goal --budget nan tests pass",
+        "/goal --budget inf tests pass",
+        "/goal --budget -3 tests pass",
     ] {
         assert_eq!(Command::parse(not), None, "{not}");
     }
