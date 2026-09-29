@@ -9,14 +9,16 @@ use futures_util::StreamExt as _;
 use jj_lib::{
     backend::CommitId,
     commit::Commit,
+    matchers::{EverythingMatcher, FilesMatcher},
     object_id::ObjectId as _,
     op_store::OperationId,
     operation::Operation,
     ref_name::WorkspaceName,
-    repo::Repo,
+    repo::{ReadonlyRepo, Repo},
     repo_path::RepoPathBuf,
     revset::ResolvedRevsetExpression,
     rewrite::restore_tree,
+    transaction::Transaction,
 };
 use pollster::block_on;
 use serde::{Deserialize, Serialize};
@@ -398,12 +400,10 @@ pub(crate) fn describe(
     message: String,
 ) -> anyhow::Result<Report> {
     let (snapshot, ()) = session::mutate(worker, "describe", |tx, wc| {
-        block_on(
-            tx.repo_mut()
-                .rewrite_commit(wc)
+        session::write_commit(tx, |repo| {
+            repo.rewrite_commit(wc)
                 .set_description(description(&message))
-                .write(),
-        )?;
+        })?;
         Ok(())
     })?;
     let (line, info) = wc_line(&snapshot)?;
@@ -422,12 +422,10 @@ pub(crate) fn commit(
     }
     let name = workspace_name(worker)?;
     let (snapshot, committed) = session::mutate(worker, "commit", |tx, wc| {
-        let committed = block_on(
-            tx.repo_mut()
-                .rewrite_commit(wc)
+        let committed = session::write_commit(tx, |repo| {
+            repo.rewrite_commit(wc)
                 .set_description(description(&message))
-                .write(),
-        )?;
+        })?;
         block_on(tx.repo_mut().rebase_descendants())?;
         block_on(tx.repo_mut().check_out(name, &committed))?;
         Ok(committed)
@@ -463,6 +461,10 @@ pub(crate) fn new(
     })
 }
 
+/// The `tau.vcs.tool` value of a turn's checkpoint. The host makes it,
+/// not the model's tools, so `vcs_undo` treats it as someone else's.
+pub(crate) const CHECKPOINT: &str = "checkpoint";
+
 /// Where a turn left the code: the commit holding its files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct TurnCommit {
@@ -484,7 +486,7 @@ pub(crate) fn checkpoint(
     message: String,
 ) -> anyhow::Result<TurnCommit> {
     let name = workspace_name(worker)?;
-    let (_, turn) = session::mutate(worker, "checkpoint", |tx, wc| {
+    let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, wc| {
         if block_on(wc.is_empty(tx.repo()))? {
             let parent = wc
                 .parent_ids()
@@ -512,12 +514,9 @@ pub(crate) fn checkpoint(
         .into_iter()
         .map(|change| change.path)
         .collect();
-        let committed = block_on(
-            tx.repo_mut()
-                .rewrite_commit(wc)
-                .set_description(text)
-                .write(),
-        )?;
+        let committed = session::write_commit(tx, |repo| {
+            repo.rewrite_commit(wc).set_description(text.clone())
+        })?;
         block_on(tx.repo_mut().rebase_descendants())?;
         block_on(tx.repo_mut().check_out(name, &committed))?;
         Ok(TurnCommit {
@@ -555,9 +554,9 @@ pub(crate) fn restore(
         let restored =
             diff::changed_paths(&wc.tree(), &new_tree, matcher.as_ref())?;
         if !restored.is_empty() {
-            block_on(
-                tx.repo_mut().rewrite_commit(wc).set_tree(new_tree).write(),
-            )?;
+            session::write_commit(tx, |repo| {
+                repo.rewrite_commit(wc).set_tree(new_tree.clone())
+            })?;
         }
         Ok(restored)
     })?;
@@ -581,7 +580,7 @@ pub(crate) fn restore(
 
 pub(crate) fn undo(worker: &mut Worker) -> anyhow::Result<Report> {
     let name = workspace_name(worker)?;
-    let (snapshot, undone) = session::mutate(worker, "undo", |tx, _wc| {
+    let (snapshot, undone) = session::mutate(worker, "undo", |tx, wc| {
         let base = tx.base_repo().clone();
         let target = undoable(base.operation(), &name)?;
         let parents = block_on(target.parents())?;
@@ -591,6 +590,7 @@ pub(crate) fn undo(worker: &mut Worker) -> anyhow::Result<Report> {
         let bad = block_on(base.loader().load_at(&target))?;
         let good = block_on(base.loader().load_at(parent))?;
         block_on(tx.repo_mut().merge(&bad, &good))?;
+        carry_edits(tx, &name, &bad, &good, wc)?;
         tx.set_attribute(UNDO_ATTRIBUTE.to_owned(), target.id().hex());
         Ok(target)
     })?;
@@ -611,6 +611,63 @@ pub(crate) fn undo(worker: &mut Worker) -> anyhow::Result<Report> {
             "working_copy": info,
         }),
     })
+}
+
+/// Puts `@` back where the undone operation found it, with the file
+/// edits made since carried over.
+///
+/// The merge alone does this when nothing was edited since. When files
+/// were, a snapshot rewrote `@` after the operation, so both sides of
+/// the merge moved `@`, and jj keeps the current one: the operation
+/// would stay done (a `vcs_new` kept, a description kept, the original
+/// commit back as a divergent twin). Instead, `@` becomes the commit
+/// the operation started from, with each path edited since as it is
+/// now, and the edited commit is abandoned.
+fn carry_edits(
+    tx: &mut Transaction,
+    name: &WorkspaceName,
+    bad: &ReadonlyRepo,
+    good: &ReadonlyRepo,
+    current: &Commit,
+) -> anyhow::Result<()> {
+    let (Some(bad_id), Some(good_id)) = (
+        bad.view().get_wc_commit_id(name).cloned(),
+        good.view().get_wc_commit_id(name).cloned(),
+    ) else {
+        return Ok(());
+    };
+    if current.id() == &bad_id || bad_id == good_id {
+        return Ok(());
+    }
+    let store = tx.repo().store().clone();
+    let bad_wc = store.get_commit(&bad_id)?;
+    let good_wc = store.get_commit(&good_id)?;
+    let edited: Vec<RepoPathBuf> = block_on(async {
+        let mut stream = bad_wc
+            .tree()
+            .diff_stream(&current.tree(), &EverythingMatcher);
+        let mut paths = Vec::new();
+        while let Some(entry) = stream.next().await {
+            paths.push(entry.path);
+        }
+        paths
+    });
+    let tree = block_on(restore_tree(
+        &current.tree(),
+        &good_wc.tree(),
+        "edits since".to_owned(),
+        "before the operation".to_owned(),
+        &FilesMatcher::new(&edited),
+    ))?;
+    let restored = session::write_commit(tx, |repo| {
+        repo.rewrite_commit(&good_wc).set_tree(tree.clone())
+    })?;
+    tx.repo_mut()
+        .set_wc_commit(name.to_owned(), restored.id().clone())?;
+    if current.id() != &good_id {
+        tx.repo_mut().record_abandoned_commit(current);
+    }
+    Ok(())
 }
 
 /// The newest operation `vcs_undo` may undo: made by these tools in
@@ -637,8 +694,13 @@ fn undoable(
             op = parent.clone();
             continue;
         }
+        // A turn's checkpoint is the host's: undoing it would hide the
+        // commit its turn links to.
         let ours = metadata.workspace_name.as_deref() == Some(name)
-            && metadata.attributes.contains_key(TOOL_ATTRIBUTE);
+            && metadata
+                .attributes
+                .get(TOOL_ATTRIBUTE)
+                .is_some_and(|tool| tool != CHECKPOINT);
         if !ours {
             bail!(
                 "The last operation was not made by the vcs tools in this \

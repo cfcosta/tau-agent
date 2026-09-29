@@ -179,6 +179,38 @@ fn snapshot_locked(
     })
 }
 
+/// Writes the commit `build` makes, with the committer's time moved on a
+/// second when jj already has one with the same content.
+///
+/// Git stores commit times in whole seconds, so redoing a rewrite an
+/// undo took back, within the same second, makes the very commit the
+/// undo hid, and jj refuses it ("Newly-created commit ... already
+/// exists"). jj's Git backend nudges the time only when the change ids
+/// differ; this is the same fix for the same change.
+pub(crate) fn write_commit(
+    tx: &mut Transaction,
+    build: impl Fn(
+        &mut jj_lib::repo::MutableRepo,
+    ) -> jj_lib::commit_builder::CommitBuilder<'_>,
+) -> anyhow::Result<Commit> {
+    const TRIES: i64 = 16;
+    for nudge in 0..TRIES {
+        let mut builder = build(tx.repo_mut());
+        if nudge > 0 {
+            let mut committer = builder.committer().clone();
+            committer.timestamp.timestamp.0 += nudge * 1000;
+            builder = builder.set_committer(committer);
+        }
+        match block_on(builder.write()) {
+            Err(err)
+                if nudge + 1 < TRIES
+                    && err.to_string().contains("already exists") => {}
+            result => return Ok(result?),
+        }
+    }
+    unreachable!("the last try returns")
+}
+
 /// The working-copy commit of workspace `name`.
 pub(crate) fn wc_commit(
     repo: &Arc<ReadonlyRepo>,
