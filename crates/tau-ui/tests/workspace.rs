@@ -1559,3 +1559,29 @@ fn the_picker_keeps_the_chat_from_scrolling(cx: &mut TestAppContext) {
         assert!(!ws.follows(), "the chat scrolled");
     });
 }
+
+/// Closing search or the model picker with escape gives the keys back:
+/// ctrl+k opens search again.
+#[gpui::test]
+fn search_opens_again_after_escape(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_with_models(cx);
+    let searching = |cx: &mut VisualTestContext| {
+        workspace.read_with(cx, |ws, _| ws.is_searching())
+    };
+    cx.simulate_keystrokes("ctrl-k");
+    assert!(searching(&mut cx));
+    cx.simulate_keystrokes("escape");
+    assert!(!searching(&mut cx));
+    cx.simulate_keystrokes("ctrl-k");
+    assert!(searching(&mut cx), "ctrl+k works after escape");
+    cx.simulate_keystrokes("escape");
+
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.navigate(Route::NewRun, cx);
+        ws.open_picker(PickerTarget::Next, window, cx);
+    });
+    cx.simulate_keystrokes("escape");
+    workspace.read_with(&cx, |ws, _| assert!(ws.picker().is_none()));
+    cx.simulate_keystrokes("ctrl-k");
+    assert!(searching(&mut cx), "ctrl+k works after the picker");
+}

@@ -2131,6 +2131,23 @@ impl Workspace {
         .into_any_element()
     }
 
+    /// Takes the focus back from an overlay's field once the overlay is
+    /// gone. Left on a field no longer drawn, keys would reach nothing,
+    /// not even ctrl+k to open search again.
+    fn release_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let stranded = (!self.searching
+            && self.search.read(cx).focus_handle(cx).is_focused(window))
+            || (self.picker.is_none()
+                && self
+                    .model_search
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window));
+        if stranded {
+            self.focus.focus(window);
+        }
+    }
+
     /// Tells the transcript list what changed in the open run since the
     /// last frame: items added, or another run opened. An item in view is
     /// laid out again every frame, so one that grows as it streams needs
@@ -2916,6 +2933,7 @@ impl Render for Workspace {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         self.sync_transcript();
+        self.release_focus(window, cx);
         let t = theme(cx).clone();
         let width = match self.frame {
             Some((width, _)) => px(width),
