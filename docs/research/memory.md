@@ -1,6 +1,7 @@
 # Research: agent memory, for tau-memory
 
-- Status: research, no decision yet
+- Status: decided 2026-09-29 (see Decisions); the plan is in
+  [plugins.md](../reference/plugins.md#tau-memory-a-zettelkasten-on-docbert)
 - Date: 2026-09-29
 - Checked against: Codex `codex-rs` at `6c49240`; akitaonrails/ai-memory
   at `0e560e3` (v2.4.1); letta-ai/letta-code at `2b95889` and letta
@@ -451,25 +452,19 @@ A proposal to argue with, not a decision.
 | No types                                        | A closed set of note types, including cases and gotchas                                            |
 | One notes directory per `Memory`                | Scopes: repository and user, one scope per fact                                                    |
 
-## Open questions
+## Decisions
 
-1. **Where do repository notes live:** in the repository (committed,
-   shared with the team, reviewed in pull requests) or in tau's data
-   directory (private, per machine)? ai-memory and Codex keep them
-   outside; Cline and `AGENTS.md` keep them in.
-2. **Background consolidation:** on or off by default, which model, and
-   whether its changes apply at once or wait for review.
-3. **Retrieval at `start`:** the index note only, or also a few search
-   hits for the task. Pull-only recall misses what the agent does not
-   know to ask for; pushing hits costs context every run.
-4. **The index note:** written by the agent, generated from the notes'
-   descriptions, or both; and its budget.
-5. **Link and note types:** the sets above, or smaller to start.
-6. **Does ColBERT escape interference?** `The Price of Meaning` leaves
-   late interaction untested; tau-memory's evaluation could answer it
-   for this corpus.
-7. **Staleness against code:** notes `about` a file could be flagged
-   when that file changes, since commits are already tied to turns.
+Asked and answered on 2026-09-29; the plan in plugins.md follows them.
+
+| Question                    | Decision                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Where repository notes live | tau's data directory, private and versioned; nothing in the project's history                          |
+| Background consolidation    | Built, off until the evaluation shows it helps                                                         |
+| Context at `start`          | The index note plus the top few search hits, fenced as untrusted                                       |
+| The index note              | Written by the agent, about 2k tokens; a write past the budget is refused with a request to rewrite it |
+| Note and link types         | The full proposed sets                                                                                 |
+| Interference                | Measured in the evaluation: recall as near-duplicates pile up, for BM25, ColBERT and the hybrid        |
+| Staleness against code      | Notes `about` a file are flagged when a later commit touches it                                        |
 
 ## Sources
 

@@ -343,33 +343,80 @@ recorded, and shows as the run's reasoning note and plan.
 
 ### `tau-memory`: a zettelkasten on docbert
 
-- **Seams:** tools, `start`, `finish`.
+Research and the reasons behind these choices:
+[research/memory.md](../research/memory.md). Decided 2026-09-29.
+
+- **Seams:** tools, `start`, and a turn before compaction (tau-agent has
+  no seam there yet).
+- **Notes:** one idea per Markdown file at `<type>/<slug>.md`, the title
+  stating the claim, the body in full prose with exact versions, flags,
+  paths and error strings.
+  - Front matter: `id`, `title`, `description` (one line), `type`,
+    `tags`, `created`, `updated`, `valid_from`, `valid_to`, `source`
+    (run, turn, commit, files; said by the user, done by the agent, or
+    inferred) and `links`.
+  - Types, a closed set: `fact`, `convention`, `decision`, `gotcha`
+    (symptom, cause, fix), `procedure`, `case` (task, approach,
+    outcome), `preference`, `index`. Task progress and TODOs are not
+    memory.
+  - Links, a closed set: `relates` (a bare `[[x]]`), `refines`,
+    `supersedes`, `contradicts`, `derived_from`, `about` (a file, crate
+    or symbol). Backlinks live in the index; a link to a note not
+    written yet is kept and resolves when it is.
+  - A changed fact is a new note that `supersedes` the old one; the old
+    one keeps its text and gets `valid_to`. Nothing is deleted by the
+    model.
 - **Tools:**
-  - `memory_write { title, body, links }` creates or updates an atomic
-    note;
-  - `memory_search { query }` does hybrid search and returns ids,
-    titles and snippets;
+  - `memory_write { type, title, body, links, supersedes? }` searches
+    first and returns the nearest notes with the result, so the agent
+    updates, supersedes or links instead of duplicating;
+  - `memory_search { query }` returns ids, titles, types, descriptions
+    and snippets from docbert, plus one hop along links, in one budget;
+    superseded notes rank lower and are labelled, never hidden;
   - `memory_read { id }` returns a note with its links and backlinks;
-  - `memory_link { from, to, why }` links two notes.
-- **start:** searches for the input, and puts the top notes (ids,
-  titles, one line each) into `plan.context`. The model then reads the
-  ones it needs with `memory_read`.
-- **finish:** optional distillation, off by default. It asks the
-  agent's model (`ctx.llm`) for new notes worth keeping, and writes
-  them.
-- **Storage:** a directory of Markdown notes, one file each, with front
-  matter holding the id and links. The notes are indexed by
-  `docbert-core` as one collection.
-  - Links and backlinks live in the plugin: docbert has no link graph.
+  - `memory_link { from, to, type, why }` links two notes.
+  - Notes are plain files too, so the agent can grep them.
+- **The index note:** written by the agent, like Claude Code's
+  `MEMORY.md`, within about 2k tokens. A write past the budget is
+  refused with a message asking the agent to rewrite it; nothing is cut
+  silently.
+- **start:** puts the index note into `plan.context`, frozen for the
+  run, then the top few docbert hits for the input (about three), both
+  fenced as untrusted data.
+- **Before compaction:** one turn with only the memory tools, since
+  compaction is where details are lost.
+- **After a run:** a background consolidation pass (signal gate,
+  faithful to the transcript, search before write, one reviewable
+  commit) exists but is **off** until the evaluation shows it helps.
+- **Staleness:** a note `about` a file is marked "may be stale" when a
+  later turn's commit touches that file; the agent sees the mark and
+  re-checks.
+- **Storage:** tau's data directory, per repository, versioned so every
+  change is a diff that can be reviewed or reverted; nothing lands in
+  the project's history. Notes are the truth; docbert's collection and
+  the link table are derived and rebuilt from them, recording the model
+  they were built with.
   - `docbert-core` is synchronous and loads a ColBERT model on first
     use. `Memory::open` loads it once, and every call runs through
     `spawn_blocking` behind a mutex on the model manager.
+  - Small collections score every note with MaxSim; PLAID starts past a
+    size threshold and is updated in place per note
+    (`plaid::update_index_from_embedding_db`).
+- **Safety:** secrets are redacted before a note is written, writes are
+  scanned for prompt injection, and memory never stands in for rules
+  (those belong in `AGENTS.md` or the constitution).
+- **Evaluation first:** retrieval recall at 5 and 10 by evidence
+  distance; coding tasks that need an earlier run, before and after the
+  fact changed; recall as near-duplicates pile up, for BM25, ColBERT and
+  the hybrid (does late interaction escape the interference "The Price
+  of Meaning" proves?); calls, tokens and latency. Baselines: no memory,
+  one `MEMORY.md`, docbert over raw transcripts.
 - **Needed upstream in docbert:** a one-call "upsert this note"
   (Tantivy, chunks, embeddings, PLAID update) and "delete this note".
   Today a caller has to copy that sequence out of `docbert-web`'s and
   the CLI's private functions, and web ingest skips the PLAID update.
-- **Scope:** a `Memory` value names one notes directory. Sharing it
-  across agents shares memory; separate values keep it apart.
+- **Scope:** per repository, plus a user scope for preferences across
+  projects; a fact lives in exactly one.
 
 ### `tau-constitution`: rules checked on specific calls
 
