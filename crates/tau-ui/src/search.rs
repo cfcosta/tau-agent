@@ -258,6 +258,7 @@ impl Workspace {
             .pt(sp(20.))
             .px(sp(4.))
             .bg(t.scrim)
+            .occlude()
             .child(
                 div()
                     .id("search")

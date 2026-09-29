@@ -2086,8 +2086,13 @@ pub fn script() -> Vec<Step> {
     s.turn();
     s.say(
         "Tests: `cargo nextest run -p tau-ai retry::`, 14 passed, 4 of them \
-         new: `honors_seconds`, `honors_http_date`, `caps_at_max_delay`, \
-         `ignores_malformed_header`.",
+         new:\n\n\
+         | Test | Header | Waits |\n\
+         |---|---|--:|\n\
+         | `honors_seconds` | `retry-after: 3` | 3 s |\n\
+         | `honors_http_date` | an HTTP date | until then |\n\
+         | `caps_at_max_delay` | `retry-after: 600` | 30 s |\n\
+         | `ignores_malformed_header` | `retry-after: soon` | backoff |",
     );
     s.end_turn(82_600, 300, 0.012);
     s.checked(None, &[("R6", 0.04)]);

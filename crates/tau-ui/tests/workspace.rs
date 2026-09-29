@@ -1496,3 +1496,66 @@ fn a_chat_goes_on_on_another_model(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// Shift+enter takes a new line in the composer; up moves between its
+/// lines; enter sends it all.
+#[gpui::test]
+fn the_composer_takes_new_lines(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.start_new_run(window, cx);
+    });
+    cx.simulate_input("one");
+    cx.simulate_keystrokes("shift-enter");
+    cx.simulate_input("two");
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, cx| {
+        assert_eq!(ws.composer_text(cx), "one\ntwo");
+    });
+    // From the end of "two", up lands at the end of "one".
+    cx.simulate_keystrokes("up");
+    cx.simulate_input("!");
+    cx.simulate_keystrokes("enter");
+    assert!(matches!(
+        events.borrow().last(),
+        Some(WorkspaceEvent::NewRun { prompt, .. }) if prompt == "one!\ntwo"
+    ));
+}
+
+/// With the model picker open, the wheel over the chat behind it does
+/// not scroll the chat.
+#[gpui::test]
+fn the_picker_keeps_the_chat_from_scrolling(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_with_models(cx);
+    let run = demo::run_id();
+    finish_demo_run(&workspace, &mut cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(run.clone()), cx);
+    });
+    cx.run_until_parked();
+    let wheel_up = |cx: &mut VisualTestContext| {
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: gpui::point(gpui::px(420.), gpui::px(200.)),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(
+                gpui::px(0.),
+                gpui::px(120.),
+            )),
+            ..Default::default()
+        });
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.show_picker(PickerTarget::Run(run.clone()), cx);
+    });
+    cx.run_until_parked();
+    wheel_up(&mut cx);
+    workspace.read_with(&cx, |ws, _| {
+        assert!(ws.follows(), "the chat did not scroll");
+    });
+    // Closed, the same wheel scrolls it.
+    workspace.update(&mut cx, |ws, cx| ws.close_picker(cx));
+    cx.run_until_parked();
+    wheel_up(&mut cx);
+    workspace.read_with(&cx, |ws, _| {
+        assert!(!ws.follows(), "the chat scrolled");
+    });
+}

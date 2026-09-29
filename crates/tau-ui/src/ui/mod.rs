@@ -36,6 +36,28 @@ pub fn rich(text: &str, color: Hsla, t: &Theme) -> StyledText {
     rich_in(text, SANS, color, t)
 }
 
+/// A model's reply: its prose with [`rich`] marks, and its pipe tables
+/// drawn as tables.
+pub fn markdown(text: &str, color: Hsla, t: &Theme) -> gpui::Div {
+    use crate::markdown::{Block, blocks};
+    div().flex().flex_col().gap(crate::theme::sp(3.)).children(
+        blocks(text).into_iter().filter_map(|block| match block {
+            Block::Prose(prose) if prose.trim().is_empty() => None,
+            Block::Prose(prose) => Some(
+                div()
+                    .child(rich(prose.trim_matches('\n'), color, t))
+                    .into_any_element(),
+            ),
+            Block::Table { align, head, rows } => Some(
+                table(&align, &head, &rows, t, |text, color| {
+                    rich(text, color, t).into_any_element()
+                })
+                .into_any_element(),
+            ),
+        }),
+    )
+}
+
 /// [`rich`] in another body face, such as the serif of a note.
 pub fn rich_in(
     text: &str,

@@ -485,6 +485,8 @@ impl Workspace {
             .id("picker-backdrop")
             .absolute()
             .inset_0()
+            // What is under it neither scrolls nor takes clicks.
+            .occlude()
             .when(phone, |backdrop| backdrop.bg(t.scrim))
             .on_mouse_down(
                 gpui::MouseButton::Left,

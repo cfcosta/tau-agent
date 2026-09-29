@@ -58,6 +58,7 @@ use crate::{
         PHONE_MAX,
         Theme,
         Type,
+        control,
         radius,
         sp,
         theme,
@@ -499,7 +500,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let composer = cx.new(|cx| TextInput::new("Start a new run", cx));
+        let composer =
+            cx.new(|cx| TextInput::new("Start a new run", cx).multiline());
         let history_filter = cx.new(|cx| {
             TextInput::new("Filter by run, repository, model or stop", cx)
         });
@@ -1276,6 +1278,12 @@ impl Workspace {
     /// Submits `text` as if typed into the composer: it steers the open
     /// run if one is live, or starts a new run.
     /// What the composer holds.
+    /// Whether the transcript keeps to its newest output; scrolling up
+    /// stops it.
+    pub fn follows(&self) -> bool {
+        self.follow
+    }
+
     pub fn composer_text<'a>(&self, cx: &'a gpui::App) -> &'a str {
         self.composer.read(cx).text()
     }
@@ -1398,6 +1406,20 @@ impl Workspace {
         self.forking.is_none()
             && self.route != Route::NewRun
             && self.current().is_some_and(|run| !run.status.is_live())
+    }
+
+    /// Moves the composer's caret a row, when it has focus and a row
+    /// there.
+    fn composer_row(
+        &mut self,
+        rows: i32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.composer.read(cx).focus_handle(cx).is_focused(window)
+            && self
+                .composer
+                .update(cx, |input, cx| input.move_vertical(rows, cx))
     }
 
     fn submit_from_button(&mut self, cx: &mut Context<Self>) {
@@ -2251,19 +2273,30 @@ impl Workspace {
                 t,
             ))
         } else {
-            send.child(ui::button(
-                if self.forking.is_some() {
-                    "Fork"
-                } else if live {
-                    "Steer"
-                } else if continues {
-                    "Send"
-                } else {
-                    "Start"
-                },
-                ButtonKind::Primary,
-                t,
-            ))
+            // As tall as the field beside it, with the field's corners.
+            send.child(
+                ui::big_button(
+                    if self.forking.is_some() {
+                        "Fork"
+                    } else if live {
+                        "Steer"
+                    } else if continues {
+                        "Send"
+                    } else {
+                        "Start"
+                    },
+                    Some(if self.forking.is_some() {
+                        Icon::Fork
+                    } else {
+                        Icon::Send
+                    }),
+                    ButtonKind::Primary,
+                    t,
+                )
+                .h(control::LARGE)
+                .rounded(radius::LARGE)
+                .shadow_sm(),
+            )
         };
 
         div()
@@ -2338,7 +2371,8 @@ impl Workspace {
             .child(
                 div()
                     .flex()
-                    .items_center()
+                    // A taller field keeps the buttons by its last line.
+                    .items_end()
                     .gap(sp(2.5))
                     .when(compact && live, |row| {
                         row.child(
@@ -2356,10 +2390,11 @@ impl Workspace {
                         div()
                             .flex_1()
                             .flex()
-                            .items_center()
+                            .items_end()
                             .gap(sp(2.5))
-                            .min_h(px(44.))
+                            .min_h(control::LARGE)
                             .px(sp(3.5))
+                            .py(sp(2.))
                             .border_1()
                             .border_color(t.border_strong)
                             .rounded(if compact { radius::FULL } else { radius::LARGE })
@@ -2375,8 +2410,16 @@ impl Workspace {
                                         })),
                                 )
                             })
-                            .child(self.composer.clone())
-                            .when(!compact, |field| {
+                            // Its first line level with the chip beside it.
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .py(sp(0.75))
+                                    .child(self.composer.clone()),
+                            )
+                            // Only while empty: text needs the room.
+                            .when(!compact && self.composer.read(cx).text().is_empty(), |field| {
                                 field.child(ui::mono(
                                     if live {
                                         "Enter steers"
@@ -2727,6 +2770,7 @@ impl Workspace {
         div()
             .absolute()
             .inset_0()
+            .occlude()
             .flex()
             .flex_col()
             .child(
@@ -2915,13 +2959,15 @@ impl Render for Workspace {
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|ws, _: &GoBack, _, cx| ws.escape(cx)))
-            .on_action(cx.listener(|ws, _: &SlashUp, _, cx| {
-                if !ws.slash_move(-1, cx) {
+            // Up and down move through the slash menu, else between the
+            // composer's lines.
+            .on_action(cx.listener(|ws, _: &SlashUp, window, cx| {
+                if !ws.slash_move(-1, cx) && !ws.composer_row(-1, window, cx) {
                     cx.propagate();
                 }
             }))
-            .on_action(cx.listener(|ws, _: &SlashDown, _, cx| {
-                if !ws.slash_move(1, cx) {
+            .on_action(cx.listener(|ws, _: &SlashDown, window, cx| {
+                if !ws.slash_move(1, cx) && !ws.composer_row(1, window, cx) {
                     cx.propagate();
                 }
             }))

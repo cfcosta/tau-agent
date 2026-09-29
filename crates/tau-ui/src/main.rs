@@ -388,6 +388,15 @@ fn open_demo_screen(
             workspace.toggle_note(&demo::run_id(), 1, cx);
             return;
         }
+        Some("composer-lines") => {
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            workspace.set_composer(
+                "Two things before you merge:\n- keep the jitter under 10%\n\
+                 - log the header we ignored, once per run",
+                cx,
+            );
+            return;
+        }
         Some("search") => {
             workspace.show_search("re", cx);
             return;

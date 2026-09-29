@@ -48,6 +48,7 @@ pub mod github;
 pub mod goal;
 pub mod host;
 pub mod input;
+pub mod markdown;
 pub mod metered;
 pub mod models;
 pub mod picker;

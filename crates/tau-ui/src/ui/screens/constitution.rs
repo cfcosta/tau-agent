@@ -1452,6 +1452,7 @@ fn editor(
         div()
             .absolute()
             .inset_0()
+            .occlude()
             .flex()
             .child(
                 div().id("rule-scrim").flex_1().bg(t.scrim).on_click(

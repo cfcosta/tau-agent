@@ -7753,6 +7753,7 @@ dependencies = [
  "base64 0.23.1",
  "futures-util",
  "gpui",
+ "hegeltest",
  "reqwest",
  "serde",
  "serde_json",

@@ -563,6 +563,8 @@ pub fn modal(
         .justify_center()
         .p(sp(4.))
         .bg(t.scrim)
+        // What is under it neither scrolls nor takes clicks.
+        .occlude()
         .child(
             // A set width, not a share of the backdrop, so wrapped text
             // is measured at the width it is drawn at.
@@ -823,4 +825,55 @@ pub fn strictness(
         .when(handles, |line| {
             line.child(knob(review, t.accent)).child(knob(block, t.red))
         })
+}
+
+/// A table from a model's reply: a header row on a raised band, rows
+/// split by hairlines, each cell's text set by `cell` (inline marks) and
+/// lined up as its column says. Columns share the width; long cells
+/// wrap.
+pub fn table(
+    align: &[crate::markdown::Align],
+    head: &[String],
+    rows: &[Vec<String>],
+    t: &Theme,
+    cell: impl Fn(&str, Hsla) -> AnyElement,
+) -> Div {
+    use crate::markdown::Align;
+    let row = |cells: &[String], header: bool| {
+        div()
+            .flex()
+            .w_full()
+            .when(!header, |row| row.border_t_1().border_color(t.border))
+            .when(header, |row| row.bg(t.raised).font_weight(weight::EMPHASIS))
+            .children(cells.iter().enumerate().map(|(n, text)| {
+                let lined = div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .px(sp(3.))
+                    .py(sp(2.))
+                    .when(n > 0, |cell| {
+                        cell.border_l_1().border_color(t.border)
+                    });
+                let lined = match align.get(n) {
+                    Some(Align::Right) => lined.text_right(),
+                    Some(Align::Center) => lined.text_center(),
+                    _ => lined,
+                };
+                lined.child(cell(
+                    text,
+                    if header { t.text } else { t.text_soft },
+                ))
+            }))
+    };
+    div()
+        .flex()
+        .flex_col()
+        .w_full()
+        .border_1()
+        .border_color(t.border_strong)
+        .rounded(radius::BOX)
+        .overflow_hidden()
+        .typeset(Type::SMALL)
+        .child(row(head, true))
+        .children(rows.iter().map(|cells| row(cells, false)))
 }
