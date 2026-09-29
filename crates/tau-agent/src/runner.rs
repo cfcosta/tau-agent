@@ -1218,4 +1218,84 @@ mod tests {
             Err("tool call a has no result".into())
         );
     }
+
+    /// A transcript from `tau_testing::generators::transcript`, then a
+    /// user message: it holds complete batches only, every call with its
+    /// own id and result.
+    fn transcript(tc: &hegel::TestCase) -> Vec<Message> {
+        let mut transcript = tc.draw(tau_testing::generators::transcript());
+        transcript.push(user("last"));
+        transcript
+    }
+
+    /// The results of each batch (the run of results right after an
+    /// assistant message), as index ranges into `transcript`.
+    fn batches(transcript: &[Message]) -> Vec<std::ops::Range<usize>> {
+        let mut batches = Vec::new();
+        let mut i = 0;
+        while i < transcript.len() {
+            if matches!(transcript[i], Message::Assistant(_)) {
+                let start = i + 1;
+                let mut end = start;
+                while matches!(
+                    transcript.get(end),
+                    Some(Message::ToolResult(_))
+                ) {
+                    end += 1;
+                }
+                batches.push(start..end);
+                i = end;
+            } else {
+                i += 1;
+            }
+        }
+        batches
+    }
+
+    /// A rewrite that keeps the transcript but reorders the results within
+    /// each batch is accepted: results pair with calls by id, not by
+    /// position.
+    #[hegel::test(test_cases = 200)]
+    fn results_may_come_in_any_order_within_their_batch(tc: hegel::TestCase) {
+        let transcript = transcript(&tc);
+        let mut rewritten = transcript.clone();
+        for batch in batches(&transcript) {
+            let order: Vec<usize> = tc.draw(hegel::generators::permutations(
+                batch.clone().collect::<Vec<_>>(),
+            ));
+            for (slot, from) in batch.zip(order) {
+                rewritten[slot] = transcript[from].clone();
+            }
+        }
+        let rewrite = Rewrite {
+            messages: rewritten,
+            details: Value::Null,
+        };
+        assert_eq!(check_rewrite(&transcript, &rewrite), Ok(()));
+    }
+
+    /// A rewrite that drops any one result is rejected, naming the call
+    /// left without it.
+    #[hegel::test(test_cases = 200)]
+    fn a_dropped_result_is_named(tc: hegel::TestCase) {
+        let transcript = transcript(&tc);
+        let results: Vec<usize> = (0..transcript.len())
+            .filter(|&i| matches!(transcript[i], Message::ToolResult(_)))
+            .collect();
+        tc.assume(!results.is_empty());
+        let drop = tc.draw(hegel::generators::sampled_from(results));
+        let Message::ToolResult(dropped) = &transcript[drop] else {
+            unreachable!("a result position")
+        };
+        let mut messages = transcript.clone();
+        messages.remove(drop);
+        let rewrite = Rewrite {
+            messages,
+            details: Value::Null,
+        };
+        assert_eq!(
+            check_rewrite(&transcript, &rewrite),
+            Err(format!("tool call {} has no result", dropped.tool_call_id))
+        );
+    }
 }

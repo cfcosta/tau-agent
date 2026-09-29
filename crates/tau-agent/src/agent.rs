@@ -1095,4 +1095,25 @@ mod tests {
         assert_eq!(format_name(&"x".repeat(70)), "x".repeat(64));
         assert_eq!(format_name(""), "output");
     }
+
+    /// Any name becomes a valid format name (1–64 characters from
+    /// `[A-Za-z0-9_-]`), a second pass changes nothing, and a name that is
+    /// already valid is kept as it is.
+    #[hegel::test(test_cases = 300)]
+    fn format_names_are_valid_for_any_name(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let valid = |name: &str| {
+            (1..=64).contains(&name.len())
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        };
+        let name: String = tc.draw(gs::text().max_size(80));
+        let formatted = format_name(&name);
+        assert!(valid(&formatted), "{name:?} became {formatted:?}");
+        assert_eq!(format_name(&formatted), formatted);
+        let already: String =
+            tc.draw(gs::from_regex("[A-Za-z0-9_-]{1,64}").fullmatch(true));
+        assert_eq!(format_name(&already), already);
+    }
 }
