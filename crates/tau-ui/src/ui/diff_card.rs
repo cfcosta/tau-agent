@@ -111,21 +111,7 @@ pub fn commit_body(
         .split_once('\n')
         .map(|(_, body)| body.trim().to_owned())
         .filter(|body| !body.is_empty());
-    let mut state = Vec::new();
-    if info.working_copy {
-        state.push("@");
-    }
-    if info.empty {
-        state.push("empty");
-    }
-    if info.conflict {
-        state.push("conflict");
-    }
-    state.push(if info.immutable {
-        "immutable"
-    } else {
-        "mutable"
-    });
+    let state = change.state();
 
     let message = div()
         .flex()
@@ -149,6 +135,7 @@ pub fn commit_body(
                     )
                 })
                 .children(change.kind.as_ref().map(|_| kind_badge(change, t)))
+                .children(log_card::bookmarks(change, t))
                 .child(div().flex_1())
                 .child(
                     mono(state.join(" · "), Type::MICRO, t.dim)
@@ -294,6 +281,7 @@ fn parent_line(parent: &Change, t: &Theme) -> Div {
             6.,
         ))
         .child(log_card::short_id(parent, t))
+        .children(log_card::bookmarks(parent, t))
         .child(
             div()
                 .min_w(px(0.))

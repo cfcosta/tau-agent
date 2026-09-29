@@ -157,6 +157,9 @@ fn working_copy_row(
     if change.info.conflict {
         words.push("conflict");
     }
+    if change.info.divergent {
+        words.push("divergent");
+    }
     words.push(if described {
         &change.subject
     } else {
@@ -185,6 +188,7 @@ fn working_copy_row(
                 .when(!described, |text| text.italic())
                 .child(words.join(" · ")),
         )
+        .children(bookmarks(change, t))
         .child(short_id(change, t))
 }
 
@@ -296,10 +300,27 @@ fn change_row(
         .when(change.info.conflict, |row| {
             row.child(mono("conflict", Type::MICRO, t.red).flex_shrink_0())
         })
+        .when(change.info.divergent, |row| {
+            row.child(mono("divergent", Type::MICRO, t.accent).flex_shrink_0())
+        })
         .when(change.info.empty, |row| {
             row.child(mono("empty", Type::MICRO, t.dim).flex_shrink_0())
         })
+        .children(bookmarks(change, t))
         .child(short_id(change, t))
+}
+
+/// A chip for each of the change's bookmarks, such as `main`.
+pub fn bookmarks(change: &Change, t: &Theme) -> impl Iterator<Item = Div> {
+    change.info.bookmarks.iter().map(|name| {
+        mono(name.clone(), Type::MICRO, t.blue)
+            .flex_shrink_0()
+            .px(sp(1.5))
+            .rounded(radius::SMALL)
+            .bg(t.blue_soft)
+            .border_1()
+            .border_color(t.blue_border)
+    })
 }
 
 /// A conventional commit type's badge colors: text, then ground.
@@ -319,21 +340,7 @@ pub fn short_id(change: &Change, t: &Theme) -> Div {
 /// The picked change: its whole description, ids and state.
 fn detail(change: &Change, t: &Theme) -> Div {
     let info = &change.info;
-    let mut state = Vec::new();
-    if info.working_copy {
-        state.push("working copy");
-    }
-    if info.empty {
-        state.push("empty");
-    }
-    if info.conflict {
-        state.push("conflict");
-    }
-    state.push(if info.immutable {
-        "immutable"
-    } else {
-        "mutable"
-    });
+    let state = change.state();
     let field = |name: &'static str, value: String, color| {
         div()
             .flex()
@@ -372,4 +379,7 @@ fn detail(change: &Change, t: &Theme) -> Div {
         .child(field("change", info.change_id.clone(), t.change))
         .child(field("commit", info.commit_id.clone(), t.blue))
         .child(field("state", state.join(" · "), t.text_soft))
+        .when(!info.bookmarks.is_empty(), |panel| {
+            panel.child(field("bookmarks", info.bookmarks.join(", "), t.blue))
+        })
 }

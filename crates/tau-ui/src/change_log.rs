@@ -135,6 +135,29 @@ impl Change {
         }
     }
 
+    /// Its state in words, as the cards list it: `working copy`,
+    /// `empty`, `conflict`, `divergent`, then `mutable` or `immutable`.
+    pub fn state(&self) -> Vec<&'static str> {
+        let info = &self.info;
+        let mut words = Vec::new();
+        for (on, word) in [
+            (info.working_copy, "working copy"),
+            (info.empty, "empty"),
+            (info.conflict, "conflict"),
+            (info.divergent, "divergent"),
+        ] {
+            if on {
+                words.push(word);
+            }
+        }
+        words.push(if info.immutable {
+            "immutable"
+        } else {
+            "mutable"
+        });
+        words
+    }
+
     /// The first eight letters of the change id, enough to pass back.
     pub fn short_id(&self) -> &str {
         let id = &self.info.change_id;
@@ -249,6 +272,23 @@ mod tests {
         for line in ["just words", "two words: here", "feat(): empty", ""] {
             assert_eq!(parse(line), (None, None, line.to_owned()), "{line}");
         }
+    }
+
+    #[test]
+    fn a_change_says_its_state_in_words() {
+        let log = ChangeLog::parse(&json!({
+            "changes": [
+                info("w", "", &["@", "empty"]),
+                info("a", "feat(x): y", &["divergent", "main", "immutable"]),
+            ],
+            "more": false,
+        }))
+        .unwrap();
+        let wc = log.working_copy.as_ref().unwrap();
+        assert_eq!(wc.state(), ["working copy", "empty", "mutable"]);
+        let trunk = &log.trunk[0].changes[0];
+        assert_eq!(trunk.state(), ["divergent", "immutable"]);
+        assert_eq!(trunk.info.bookmarks, ["main"]);
     }
 
     #[test]
