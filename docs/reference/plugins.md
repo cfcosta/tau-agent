@@ -24,9 +24,8 @@ four plugins.
   ([openai-websocket.md](openai-websocket.md)). So:
   - settings change before the run opens its session. The one
     exception is the reasoning effort, which `before_request` may
-    change before any turn: on the models whose cache survives it
-    (`tau_ai::model::effort_keeps_cache`) the next request is still a
-    delta, and on the others it goes in full;
+    change before any turn. No model keeps its cache across such a
+    change, so the next request goes in full and uncached;
   - a context rewrite replaces the working transcript and is stored,
     and it is not re-applied as a per-turn view (pi's `context` event).
     One rewrite costs one full resend, and the turns after it are deltas
@@ -339,9 +338,8 @@ it in tau-ui when a TypeSafe key is saved; its choice (every level's
 probability, the confidence and the threshold) is reported and
 recorded, and shows as the run's reasoning note and plan.
 
-- **Seams:** `start`, and `before_request` on the models whose cache
-  survives a change of effort (`tau_ai::model::effort_keeps_cache`:
-  Sol 6 and Astra). `finish` leaves the next message its context.
+- **Seams:** `start`, and `before_request` when `Reasoning::redecide`
+  is on. `finish` leaves the next message its context.
 - **How, as a message comes in:**
   1. Put the task, clipped at both ends (600 characters from the
      start, 200 from the end), and the start of the instructions into
@@ -361,7 +359,8 @@ recorded, and shows as the run's reasoning note and plan.
      last message ran at (from the plugin's records), if the model takes
      it, else at the model's default. The record says what the message
      runs at (`runs_at`); tau-ui shows a note only when that changes.
-- **How, between turns** (Sol 6 and Astra only): the first question
+- **How, between turns** (only with `redecide`, off by default): the
+  first question
   also asks, as a `Choice`, how long the effort holds:
   - `one_call`: the next request only;
   - `tool_chain`: while the tool calls succeed;
@@ -378,12 +377,16 @@ recorded, and shows as the run's reasoning note and plan.
   `lease`, and tau-ui shows it before the reply it chose for.
 
 - **Cost:** one Jev round trip (about 180 ms median) before the session
-  opens, and one per ended lease on Sol 6 and Astra. The warm-up, if
-  on, comes after the first, so it warms the chosen effort.
-- **Not re-decided elsewhere:** on the other models a change of effort
-  breaks the response chain, so the effort stays fixed for the run. A
-  workflow that wants more effort for a later phase starts another run,
-  and that run is scored again.
+  opens, and with `redecide` one per ended lease. The warm-up, if on,
+  comes after the first, so it warms the chosen effort.
+- **Why `redecide` is off:** no model keeps its cache across a change
+  of effort (measured on Luna, Sol, Astra and Terra; see
+  [openai-websocket.md](openai-websocket.md)), so every change makes
+  the next request a full, uncached resend. It can still pay when a
+  long tool chain drops from a high effort to a low one; turn it on
+  only where that trade is worth it. A workflow that wants more effort
+  for a later phase can instead start another run, which is scored
+  again.
 - **Sub-agents** are scored too, when their agent has the plugin. A
   cheap sub-task gets a cheap effort without the caller saying so.
 

@@ -9,8 +9,7 @@
 //! The seams follow the WebSocket delta rule: a run's settings change
 //! in [`Plugin::start`], before its session opens. The one exception is
 //! [`PluginRun::before_request`], which may change the reasoning effort;
-//! a plugin that uses it checks `tau_ai::model::effort_keeps_cache`
-//! first, or every change costs a full resend.
+//! every change costs the next request a full, uncached resend.
 
 use std::sync::{
     Arc,

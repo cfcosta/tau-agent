@@ -356,11 +356,12 @@ impl AgentTool for Probe {
     }
 }
 
-/// Runs "fix the lane race" on `model` with one probe call per entry of
-/// `calls`, then a final answer. Returns the effort of each request,
-/// what Jev was asked, and the plugin's reports.
+/// Runs "fix the lane race" on gpt-6-sol with one probe call per entry
+/// of `calls`, then a final answer, with [`Reasoning::redecide`] set to
+/// `redecide`. Returns the effort of each request, what Jev was asked,
+/// and the plugin's reports.
 fn tool_run(
-    model: &str,
+    redecide: bool,
     jev: FakeJev,
     calls: &[&'static str],
 ) -> (Vec<Option<ReasoningEffort>>, Vec<Request>, Vec<Value>) {
@@ -375,9 +376,9 @@ fn tool_run(
     let events: Vec<RunEvent> = block_on(async {
         let store = Store::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
-            .model(model)
+            .model("gpt-6-sol")
             .tool(Probe::new())
-            .plugin(Reasoning::new(Arc::new(jev.clone())));
+            .plugin(Reasoning::new(Arc::new(jev.clone())).redecide(redecide));
         let mut run = agent.start("fix the lane race", &store);
         let events = run.events().collect().await;
         run.outcome().await.unwrap();
@@ -400,7 +401,7 @@ fn tool_run(
     (efforts, jev.requests(), reports)
 }
 
-/// On Sol 6, a `one_call` lease has Jev pick again before the next
+/// With `redecide`, a `one_call` lease has Jev pick again before the next
 /// request, and a `tool_chain` lease holds while the tools succeed.
 /// Each pick is reported and says the turn it is for.
 #[test]
@@ -408,8 +409,7 @@ fn a_lease_says_when_jev_picks_again() {
     use ReasoningEffort::{High, Low};
     // gpt-6-sol's levels: none, low, medium, high, xhigh, max.
     let jev = scripted(vec![(3, "one_call"), (1, "tool_chain")]);
-    let (efforts, asked, reports) =
-        tool_run("gpt-6-sol", jev, &["a", "b", "c"]);
+    let (efforts, asked, reports) = tool_run(true, jev, &["a", "b", "c"]);
     assert_eq!(efforts, [Some(High), Some(Low), Some(Low), Some(Low)]);
     assert_eq!(asked.len(), 2);
     assert!(asked[0].questions.contains_key("lease"));
@@ -442,7 +442,7 @@ fn a_lease_says_when_jev_picks_again() {
 fn a_failed_tool_ends_the_lease() {
     use ReasoningEffort::{Medium, Xhigh};
     let jev = scripted(vec![(2, "user_turn"), (4, "tool_chain")]);
-    let (efforts, asked, _) = tool_run("gpt-6-sol", jev, &["ok", "fail", "ok"]);
+    let (efforts, asked, _) = tool_run(true, jev, &["ok", "fail", "ok"]);
     assert_eq!(
         efforts,
         [Some(Medium), Some(Medium), Some(Xhigh), Some(Xhigh)]
@@ -460,12 +460,12 @@ fn a_failed_tool_ends_the_lease() {
     );
 }
 
-/// Where a change of effort would cost the cache, Jev is asked once, with
-/// no lease, and the effort holds for the whole run.
+/// By default Jev is asked once, with no lease, and the effort holds for
+/// the whole run: a change would cost the next request its cache.
 #[test]
-fn models_that_lose_the_cache_keep_one_effort() {
+fn by_default_the_effort_holds_for_the_run() {
     let jev = scripted(vec![(1, "one_call")]);
-    let (efforts, asked, _) = tool_run("gpt-5.6-terra", jev, &["a", "fail"]);
+    let (efforts, asked, _) = tool_run(false, jev, &["a", "fail"]);
     assert_eq!(efforts, [Some(ReasoningEffort::Low); 3]);
     assert_eq!(asked.len(), 1);
     assert!(!asked[0].questions.contains_key("lease"));
@@ -528,7 +528,7 @@ fn a_stored_run_replays_through_the_policy() {
         let agent = Agent::new(llm)
             .model("gpt-6-sol")
             .tool(Probe::new())
-            .plugin(Reasoning::new(Arc::new(stored)));
+            .plugin(Reasoning::new(Arc::new(stored)).redecide(true));
         let run = agent.run("fix the lane race", &store).await.unwrap();
         let timeline: Vec<Entry> = store
             .timeline(&run.run.0)
@@ -546,7 +546,9 @@ fn a_stored_run_replays_through_the_policy() {
             })
             .collect();
         let jev = scripted(vec![(1, "tool_chain"), (4, "tool_chain")]);
-        let picker = Reasoning::new(Arc::new(jev)).picker("gpt-6-sol");
+        let picker = Reasoning::new(Arc::new(jev))
+            .redecide(true)
+            .picker("gpt-6-sol");
         replay(&picker, "", &timeline).await
     });
     let summary: Vec<_> = decisions

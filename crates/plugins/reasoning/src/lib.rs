@@ -1,6 +1,6 @@
 //! Picks a run's reasoning effort with Jev: once before the run's
-//! session opens, and again before later requests where a change of
-//! effort keeps the cache (`docs/reference/plugins.md`, `tau-reasoning`).
+//! session opens, and, when asked to, again before later requests
+//! (`docs/reference/plugins.md`, `tau-reasoning`).
 //!
 //! Only runs that left the effort open (`plan.reasoning` is `None`, the
 //! "auto" effort) are scored; an effort someone chose stands. Jev gets
@@ -15,15 +15,15 @@
 //! records what Jev answered and what the message runs at, as a
 //! [`Choice`], so interfaces can show why.
 //!
-//! On the models whose cache survives a change of effort
-//! (`tau_ai::model::effort_keeps_cache`), Jev also says how long the
-//! effort holds, as a [`Lease`]. Before each later request whose lease
-//! has ended, the plugin asks again, with what the agent said it would
-//! do and a summary of the tool results it is about to read. A failed
-//! tool call, a context rewrite or a new user message ends any lease.
-//! On the other models the effort stays fixed while the run works:
-//! each change would cost a full resend. A failed request is reported
-//! and never fails the run.
+//! By default the effort stays fixed while the run works: no model
+//! keeps its cache across a change of effort, so each change costs a
+//! full, uncached resend (`docs/reference/openai-websocket.md`). With
+//! [`Reasoning::redecide`], Jev also says how long the effort holds, as
+//! a [`Lease`]. Before each later request whose lease has ended, the
+//! plugin asks again, with what the agent said it would do and a
+//! summary of the tool results it is about to read. A failed tool call,
+//! a context rewrite or a new user message ends any lease. A failed
+//! request is reported and never fails the run.
 
 pub mod replay;
 
@@ -346,6 +346,7 @@ pub struct Reasoning {
     /// The efforts to choose from; `None` takes the run's model's.
     levels: Option<Vec<Level>>,
     threshold: f64,
+    redecide: bool,
 }
 
 impl Reasoning {
@@ -354,7 +355,16 @@ impl Reasoning {
             jev,
             levels: None,
             threshold: DEFAULT_THRESHOLD,
+            redecide: false,
         }
+    }
+
+    /// Whether Jev picks the effort again between turns, when its lease
+    /// ends. Off by default: every change costs the next request its
+    /// cache.
+    pub fn redecide(mut self, redecide: bool) -> Self {
+        self.redecide = redecide;
+        self
     }
 
     /// The efforts to choose from, lowest first, in place of those the
@@ -375,7 +385,7 @@ impl Reasoning {
             jev: self.jev.clone(),
             levels: self.levels.clone().unwrap_or_else(|| levels_for(model)),
             threshold: self.threshold,
-            redecides: tau_ai::model::effort_keeps_cache(model),
+            redecides: self.redecide,
         }
     }
 }
@@ -397,8 +407,8 @@ pub struct Picker {
     jev: Arc<dyn Jev>,
     levels: Vec<Level>,
     threshold: f64,
-    /// Whether Jev picks the effort again between turns: only where a
-    /// change of effort keeps the cache.
+    /// Whether Jev picks the effort again between turns
+    /// ([`Reasoning::redecide`]).
     redecides: bool,
 }
 
