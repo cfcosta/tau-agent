@@ -121,7 +121,7 @@ pub struct OutputPruning {
     pub min_output_tokens: usize,
     /// Lines per chunk, before chunks merge to stay under 200. 20.
     pub chunk_lines: usize,
-    /// A Noul at or above this keeps its chunk; so does one above 0.1.
+    /// A Noul at or above this, against any segment, keeps its chunk.
     /// 0.5.
     pub keep_threshold: f64,
     /// The largest state sent to Jev, in estimated tokens. 25,000.
@@ -131,8 +131,9 @@ pub struct OutputPruning {
     pub max_request_tokens: usize,
     /// Jev requests per output, at most. 12.
     pub max_output_requests: usize,
-    /// The smallest share of the result's estimated tokens the pruned
-    /// output must save to replace it. 0.1 (jev-pruner has none).
+    /// The smallest share of the whole output's estimated tokens the
+    /// pruned output must save to replace the result, which it must not
+    /// outgrow either. 0.1 (jev-pruner has none).
     pub min_reduction_ratio: f64,
 }
 
@@ -328,8 +329,9 @@ impl PluginRun for FastCompactionRun {
 /// Prunes one output that passed the gate: plans the requests, asks Jev,
 /// renders what stays, and writes the archive when `bash` did not spill
 /// the output already. The pruned text, when it saves at least
-/// `min_reduction_ratio` of what the model would otherwise see. Reports
-/// how it went whenever Jev was asked, and records it with the run.
+/// `min_reduction_ratio` of the whole output and is no larger than what
+/// the model would otherwise see. Reports how it went whenever Jev was
+/// asked, and records it with the run.
 async fn prune_output(
     jev: &dyn Jev,
     settings: &Settings,
@@ -377,9 +379,14 @@ async fn prune_output(
         .filter(|(_, kept)| !**kept)
         .map(|(range, _)| range.len())
         .sum::<usize>();
+    // Measured against the whole output, which the pruned one is cut
+    // from, and never larger than what the model would otherwise see:
+    // bash's tail when it truncated.
+    let tokens_full = state::estimate_tokens(&gated.full);
     let pruned = dropped_lines > 0
+        && tokens_after <= tokens_before
         && tokens_after as f64
-            <= tokens_before as f64 * (1.0 - pruning.min_reduction_ratio);
+            <= tokens_full as f64 * (1.0 - pruning.min_reduction_ratio);
     if pruned && gated.spill.is_none() {
         archive::write(&archive, &gated.full).map_err(|error| {
             anyhow::anyhow!("cannot archive to {}: {error}", archive.display())

@@ -448,3 +448,87 @@ fn keeping_everything_leaves_the_output() {
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Jev keeping the chunks `keep` says, by index.
+fn keeps_chunks(
+    keep: impl Fn(usize) -> bool + Send + Sync + 'static,
+) -> FakeJev {
+    FakeJev::nouls(move |id| {
+        let index: usize = id.trim_start_matches('c').parse().unwrap();
+        if keep(index - 1) { 0.9 } else { 0.1 }
+    })
+}
+
+/// The saving counts against the whole output: a spilled output pruned
+/// to a little less than the tail `bash` kept replaces it, though it
+/// saves under `min_reduction_ratio` of that tail, since it saves far
+/// more of the whole.
+#[test]
+fn the_saving_counts_against_the_whole_output() {
+    let dir = scratch("whole-saving");
+    let log = build_log(6000);
+    let model = one_build();
+    block_on(async {
+        let bash = Bash::new(
+            log.clone(),
+            Answering::Spilled {
+                dir: dir.clone(),
+                tail: 2000,
+            },
+        );
+        // The first 1,860 lines (chunks of 30) and the last chunk.
+        let (events, _) = run(
+            &model,
+            bash,
+            keeps_chunks(|index| index < 62),
+            settings(&dir),
+        )
+        .await;
+        let reports = output_reports(&events);
+        assert_eq!(reports.len(), 1);
+        let report = &reports[0];
+        assert!(report.pruned, "{report:?}");
+        assert!(
+            report.tokens_after as f64 > report.tokens_before as f64 * 0.9,
+            "{report:?}"
+        );
+        assert!(seen_result(&model).starts_with(HEADER));
+    });
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A pruned output larger than what `bash` showed does not replace it,
+/// however much of the whole output it saves: pruning never grows the
+/// context past `bash`'s own limits.
+#[test]
+fn a_pruned_output_never_outgrows_the_tail() {
+    let dir = scratch("outgrown");
+    let log = build_log(6000);
+    let model = one_build();
+    block_on(async {
+        let bash = Bash::new(
+            log.clone(),
+            Answering::Spilled {
+                dir: dir.clone(),
+                tail: 100,
+            },
+        );
+        // Every other chunk: half the output, twenty times the tail.
+        let (events, _) = run(
+            &model,
+            bash,
+            keeps_chunks(|index| index % 2 == 0),
+            settings(&dir),
+        )
+        .await;
+        let reports = output_reports(&events);
+        assert_eq!(reports.len(), 1);
+        assert!(!reports[0].pruned);
+        assert!(reports[0].dropped_lines > 0);
+        assert_eq!(reports[0].tokens_after, reports[0].tokens_before);
+        assert!(!seen_result(&model).starts_with(HEADER));
+    });
+    // Only the spilled file: no archive was written.
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -76,9 +76,15 @@ had seen when it made the call ([plugins.md](plugins.md)).
    name and the character offset it starts at. The history keeps at
    least half the room the rest of the state leaves.
 4. **Asks** one yes/no question (Noul) per chunk: does any line in it
-   need to remain available for the ongoing task. One needed line is
-   enough; uncertain means needed; the full output is archived, but a
-   line the task needs must not depend on the model looking there.
+   need to remain available for the ongoing task. Yes: an error,
+   warning, failure, summary or final result, or a value the task or
+   history asks for. No: only routine progress, install logging, a
+   repetitive listing or boilerplate nothing asks for. The guidance
+   that applies to every chunk is said once, in the state's `context`:
+   judge every line against instructions anywhere in the history; one
+   needed line keeps its chunk; the full output is archived, but a line
+   the task needs must not depend on the model looking there. The
+   question itself stays short, so a request holds more of them.
    **Every chunk is asked about against every segment**, in states that
    fit `max_state_tokens` and requests that fit `max_request_tokens`
    (30,000), sent together, at most `max_output_requests` (12) per
@@ -87,8 +93,8 @@ had seen when it made the call ([plugins.md](plugins.md)).
    segment, since it stays too.
 5. **Decides** each chunk. A chunk is **kept** when it is the first or
    the last; when any segment answered at or above `keep_threshold`
-   (0.5), or above 0.1; or when it was not answered against every
-   segment. It goes only when every segment was confident it is noise.
+   (0.5); or when it was not answered against every segment. It goes
+   when every segment answered under the threshold.
 6. **Renders** a header line saying kept lines are verbatim and
    omissions are marked; the kept chunks, verbatim and in order; one
    `[N lines omitted]` for each run of dropped lines; and a footer
@@ -97,9 +103,14 @@ had seen when it made the call ([plugins.md](plugins.md)).
    file in `Settings::archive_dir` (the temporary directory) that only
    its owner can read.
 7. **Replaces** the result only when the rendered text is estimated at
-   least `min_reduction_ratio` (10%) smaller than the result the model
-   would otherwise see. Otherwise the result stays, and no archive is
-   written.
+   least `min_reduction_ratio` (10%) smaller than the **whole output**,
+   and no larger than the result the model would otherwise see.
+   Otherwise the result stays, and no archive is written. The whole
+   output is the measure because the pruned text is cut from it, not
+   from `bash`'s tail: a pruned build log that keeps an error from the
+   head is worth more than a tail of the same size. The second bound
+   keeps pruning from growing the context past `bash`'s own limits when
+   Jev keeps much of a long output.
 
 Whenever Jev was asked, a `PluginReport` with `kind: "output"` says how
 it went: the call, the output's lines, the chunks and how many stayed,
@@ -115,7 +126,7 @@ for diagnostics or results, no document or secret detectors. Jev
 decides, and the structure protects:
 
 - the first and last chunks always stay;
-- an answer above 0.1 keeps, however far under the threshold;
+- a keep in any segment keeps;
 - a chunk not answered against every segment stays;
 - any failure leaves the result as it was.
 
@@ -135,6 +146,12 @@ and is reported as a `PluginError` event. The run goes on.
   ([openai-websocket.md](openai-websocket.md)): no resend.
 - The requests for one output are sent together, so a pruned call takes
   about one Jev round trip longer.
+- The requests grow with the output's size and its number of chunks:
+  in the evaluation, 3 to 8 requests for outputs of 21,000 to 96,000
+  estimated tokens, $0.0035 to $0.0076 each output. At those rates the
+  allowance of 12 covers outputs of about 150,000 tokens, at most about
+  $0.013; past it, the chunks left unasked stay, and the result is
+  replaced only if it still comes out no larger than `bash`'s tail.
 
 ### Evaluation
 
@@ -165,10 +182,13 @@ and the fake `bash` truncates and spills like tau's (or, with
   `bash` alone would have shown (**tail recall**);
 - estimated tokens before (what `bash` alone shows) and after, and the
   **reduction**;
+- the reduction against the whole output too (**of whole**);
 - whether the result was replaced, Jev requests, input tokens, cost,
-  latency, and Jev's answers by band: confident noise (at most 0.1, the
-  only answers that let a chunk go), uncertain, and needed (0.5 or
-  more).
+  latency, and Jev's answers by band: confident noise (at most 0.1),
+  uncertain, and needed (0.5 or more: the chunk stays);
+- in the JSON, each chunk's largest answer, its estimated tokens, and
+  the chunks holding needles, to replay another keep rule offline on
+  the same answers.
 
 ```sh
 TYPESAFE_API_KEY=… cargo run -p tau-output-pruning-eval -- \
@@ -177,9 +197,36 @@ TYPESAFE_API_KEY=… cargo run -p tau-output-pruning-eval -- \
 
 `--workload NAME` picks workloads, `--list` lists them, and
 `--budget-usd` stops once Jev's spend passes it. At $0.042 per million
-input tokens, a workload costs about a cent, so three seeds of all eight
-cost about $0.20. Without `TYPESAFE_API_KEY` it refuses to run. Its
-tests use fake Jevs and need no key.
+input tokens, a workload costs about half a cent, so three seeds of all
+eight cost about $0.13. Without `TYPESAFE_API_KEY` it refuses to run.
+Its tests use fake Jevs and need no key.
+
+Results against the real Jev, three seeds of each workload (24 outputs
+of 21,000 to 96,000 estimated tokens, 3–8 requests each):
+
+| Workload | Recall | Tail recall | Reduction | Of whole | Replaced | Cost |
+|---|---|---|---|---|---|---|
+| `needle-error` | 3/3 | 2/3 | 95.8% | 98.2% | 3/3 | $0.0150 |
+| `needle-detail` | 3/3 | 1/3 | 93.1% | 97.1% | 3/3 | $0.0112 |
+| `summary-line` | 3/3 | 3/3 | 91.7% | 98.1% | 3/3 | $0.0210 |
+| `structured-json` | 12/12 | 4/12 | 96.6% | 98.1% | 3/3 | $0.0104 |
+| `all-noise` | — | — | 94.2% | 98.8% | 3/3 | $0.0160 |
+| `spilled-middle` | 3/3 | 0/3 | 92.4% | 98.2% | 3/3 | $0.0165 |
+| `multi-needle` | 9/9 | 3/9 | 92.1% | 97.4% | 3/3 | $0.0155 |
+| `earlier-requirement` | 3/3 | 3/3 | 91.3% | 91.3% | 3/3 | $0.0198 |
+| total | 36/36 | 16/36 | 93.4% | 97.2% | 24/24 | $0.1254 |
+
+Every needle's chunk was answered 0.90 or more; noise mostly under
+0.2, and 4 of 3,259 noise chunks at 0.5 or more (in `needle-detail`,
+among hashes like the one asked for), which stay at little cost. About
+$0.005 per pruned output.
+
+Before these settings, the question told Jev that uncertain means
+needed and every chunk above 0.1 stayed: Jev answered nearly every
+noise chunk between 0.1 and 0.5, so nothing was replaced (0 of 24,
+recall equal to tail recall). A more balanced question without the
+floor, then the question's shared guidance moved into the `context`
+(which halved the requests), gave the table above.
 
 ### Where it differs from jev-pruner
 
@@ -195,8 +242,15 @@ tests use fake Jevs and need no key.
 - **Nothing is asked that cannot change the outcome:** not the first
   and last chunks, and not the chunks the allowance leaves short of a
   segment.
-- **A replacement must save `min_reduction_ratio`** of what the model
-  would otherwise see; jev-pruner has no such floor.
+- **A replacement must save `min_reduction_ratio`** of the whole
+  output, and must not outgrow what the model would otherwise see;
+  jev-pruner has no such floor.
+- **No floor under the threshold.** jev-pruner also keeps any chunk
+  answered above 0.1. Against the real Jev, noise answers sit between
+  0.1 and 0.5 (see "Evaluation"), so that floor kept every chunk.
+- **The question is short;** its shared guidance is in the state's
+  `context`. jev-pruner repeats it in every question, which about
+  doubles the requests an output takes.
 - **The estimate is exact,** in tenths of a token (see "Token
   estimate").
 
@@ -337,4 +391,4 @@ budget a state or request must fit uses the state estimate.
 | `output.max_state_tokens` | 25,000 | per state |
 | `output.max_request_tokens` | 30,000 | per request |
 | `output.max_output_requests` | 12 | per output |
-| `output.min_reduction_ratio` | 0.1 | of what the model would see |
+| `output.min_reduction_ratio` | 0.1 | of the whole output; nor larger than what the model would see |

@@ -9,7 +9,7 @@ use tau_ai::message::{InputBlock, TextContent};
 use tau_fast_compaction::{
     OutputPruning,
     history::{CallRecord, Field, Record, ResultRecord, split_history},
-    output::{self, HEADER, MAX_CHUNKS, MAX_LINE_CHARS, SPILL, UNCERTAIN},
+    output::{self, HEADER, MAX_CHUNKS, MAX_LINE_CHARS, SPILL},
     plan::{REQUEST_OVERHEAD_TOKENS, Tally},
     state::{Role, estimate_state_tokens, estimate_tokens},
 };
@@ -217,11 +217,11 @@ fn rendering_keeps_lines_verbatim_and_counts_what_it_omits(tc: TestCase) {
 }
 
 /// A chunk goes only when it is neither the first nor the last, every
-/// segment answered about it, and every answer was at most
-/// [`UNCERTAIN`] and under the threshold; an unanswered segment (a
-/// failed request, or one past the allowance) keeps it.
+/// segment answered about it, and every answer was under the threshold;
+/// an unanswered segment (a failed request, or one past the allowance)
+/// keeps it.
 #[hegel::test(test_cases = 300)]
-fn only_a_confidently_disposable_chunk_goes(tc: TestCase) {
+fn only_a_chunk_every_segment_scored_under_the_threshold_goes(tc: TestCase) {
     let chunks = tc.draw(gs::integers::<usize>().min_value(1).max_value(40));
     let segments = tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
     let threshold = tc.draw(gs::sampled_from(vec![0.0, 0.05, 0.1, 0.5, 0.9]));
@@ -233,8 +233,9 @@ fn only_a_confidently_disposable_chunk_goes(tc: TestCase) {
                 None,
                 Some(0.0),
                 Some(0.05),
-                Some(UNCERTAIN),
+                Some(0.1),
                 Some(0.2),
+                Some(0.49),
                 Some(0.5),
                 Some(1.0),
             ]));
@@ -248,9 +249,9 @@ fn only_a_confidently_disposable_chunk_goes(tc: TestCase) {
     for (chunk, row) in answers.iter().enumerate() {
         let disposable = chunk != 0
             && chunk + 1 != chunks
-            && row.iter().all(|answer| {
-                answer.is_some_and(|noul| noul <= UNCERTAIN && noul < threshold)
-            });
+            && row
+                .iter()
+                .all(|answer| answer.is_some_and(|noul| noul < threshold));
         if disposable {
             tc.event("a chunk goes");
         }
