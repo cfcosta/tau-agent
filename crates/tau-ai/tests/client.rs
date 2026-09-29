@@ -96,8 +96,9 @@ fn one_response(
     (event, fake.received()[0].body.clone())
 }
 
-/// A completed response's usage gets its cost from the model table, at
-/// the session's service tier.
+/// A completed response's token counts pass through unchanged, and its
+/// cost is the model table's price for the drawn counts at the session's
+/// service tier.
 #[hegel::test(test_cases = 20)]
 fn done_usage_gets_its_cost(tc: TestCase) {
     let model = tc.draw(gs::sampled_from(vec![
@@ -116,9 +117,9 @@ fn done_usage_gets_its_cost(tc: TestCase) {
         input: tc.draw(tokens()),
         output: tc.draw(tokens()),
         cache_read: tc.draw(tokens()),
-        cache_write: 0,
-        reasoning: None,
-        total_tokens: 0,
+        cache_write: tc.draw(tokens()),
+        reasoning: tc.draw(gs::optional(tokens())),
+        total_tokens: tc.draw(tokens()),
         cost: Default::default(),
     };
     let settings = Settings {
@@ -139,10 +140,23 @@ fn done_usage_gets_its_cost(tc: TestCase) {
         Some(_) => ServiceTier::PriorityOrFast,
         None => ServiceTier::Default,
     };
-    let expected = cost::cost(find(model).unwrap(), &got, tier);
+    let tokens = |u: &Usage| {
+        (
+            u.input,
+            u.output,
+            u.cache_read,
+            u.cache_write,
+            u.reasoning,
+            u.total_tokens,
+        )
+    };
+    assert_eq!(tokens(&got), tokens(&usage));
+    // Priced from the drawn counts, not from what came back.
+    let expected = cost::cost(find(model).unwrap(), &usage, tier);
     assert_eq!(got.cost, expected);
     assert!(
-        got.cost.total > 0.0 || got.input + got.output + got.cache_read == 0
+        got.cost.total > 0.0
+            || usage.input + usage.output + usage.cache_read == 0
     );
 }
 

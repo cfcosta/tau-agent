@@ -356,6 +356,79 @@ fn hint_caps_at_max_delay(tc: TestCase) {
     assert_eq!(delay, hint.min(policy.max_delay));
 }
 
+/// The `code`s `classify` knows, with their class.
+const KNOWN_CODES: [(&str, Class); 8] = [
+    ("rate_limit_exceeded", Class::Retryable),
+    ("server_error", Class::Retryable),
+    ("context_length_exceeded", Class::ContextOverflow),
+    ("insufficient_quota", Class::Fatal),
+    ("billing_not_active", Class::Fatal),
+    ("billing_hard_limit_reached", Class::Fatal),
+    ("account_deactivated", Class::Fatal),
+    ("invalid_api_key", Class::Fatal),
+];
+
+/// The `type`s (`kind`s) `classify` knows, with their class.
+const KNOWN_KINDS: [(&str, Class); 3] = [
+    ("server_error", Class::Retryable),
+    ("api_error", Class::Retryable),
+    ("invalid_request_error", Class::Fatal),
+];
+
+/// The classification table as a model: the first of `code`, `kind` and
+/// `status` that is known decides; with none known, it is fatal.
+fn classify_model(
+    code: Option<&str>,
+    kind: Option<&str>,
+    status: Option<u16>,
+) -> Class {
+    let lookup = |table: &[(&str, Class)], name: Option<&str>| {
+        table
+            .iter()
+            .find(|(known, _)| Some(*known) == name)
+            .map(|(_, class)| *class)
+    };
+    lookup(&KNOWN_CODES, code)
+        .or_else(|| lookup(&KNOWN_KINDS, kind))
+        .or_else(|| match status? {
+            408 | 429 | 500..=599 => Some(Class::Retryable),
+            _ => Some(Class::Fatal),
+        })
+        .unwrap_or(Class::Fatal)
+}
+
+/// A `code` or `kind`: a name `classify` knows (as either field), or
+/// arbitrary text.
+#[hegel::composite]
+fn error_name(tc: &TestCase) -> String {
+    let known: Vec<String> = KNOWN_CODES
+        .iter()
+        .chain(&KNOWN_KINDS)
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    tc.draw(hegel::one_of!(gs::sampled_from(known), generators::text(8)))
+}
+
+/// `classify` agrees with the table's model over any mix of known and
+/// unknown `code`s and `kind`s and any status at all: 1xx to 3xx and
+/// 600 and up are fatal, like every status the table does not name.
+#[hegel::test(test_cases = 500)]
+fn classify_matches_the_first_known_wins_model(tc: TestCase) {
+    let code = tc.draw(gs::optional(error_name()));
+    let kind = tc.draw(gs::optional(error_name()));
+    let status = tc.draw(gs::optional(gs::integers::<u16>()));
+    let failure = Failure::Api {
+        code: code.as_deref(),
+        kind: kind.as_deref(),
+        status,
+    };
+    assert_eq!(
+        classify(&failure),
+        classify_model(code.as_deref(), kind.as_deref(), status),
+        "{failure:?}"
+    );
+}
+
 /// Metamorphic half of the classification table: any 5xx status with no
 /// known `code` or `kind` is retryable.
 #[hegel::test(test_cases = 500)]
@@ -402,16 +475,61 @@ fn parse_retry_after_ms(tc: TestCase) {
     assert_eq!(parsed, Some(Duration::from_millis(u64::from(millis))));
 }
 
-/// Anything that is not a plain non-negative integer is not a supported
-/// `retry-after` value (HTTP-dates are not parsed; see the module doc
-/// comment on [`parse_retry_after`]).
+/// A `Retry-After` value: a near miss of a plain integer (a sign, a
+/// fraction, too many digits, whitespace around it) or arbitrary text.
+#[hegel::composite]
+fn retry_after_value(tc: &TestCase) -> String {
+    tc.draw(hegel::one_of!(
+        gs::from_regex(r"[ \t]{0,2}[+-]?[0-9]{0,21}(\.[0-9]{0,2})?[ \t]{0,2}"),
+        generators::text(16),
+    ))
+}
+
+/// `retry-after` or `retry-after-ms`, each letter in either case.
+#[hegel::composite]
+fn retry_after_header(tc: &TestCase) -> String {
+    let name = tc.draw(gs::sampled_from(vec!["retry-after", "retry-after-ms"]));
+    name.chars()
+        .map(|c| {
+            if tc.draw(gs::booleans()) {
+                c.to_ascii_uppercase()
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// Either header, in any letter case, is a whole number after trimming
+/// whitespace, or nothing: seconds for `retry-after`, milliseconds for
+/// `retry-after-ms`. Anything else (a negative or fractional number,
+/// one past `u64::MAX`, blank or arbitrary text, an HTTP-date; see the
+/// doc comment on [`parse_retry_after`]) is not a supported value. A
+/// leading `+` is accepted, as Rust's integer parsing and pi's
+/// `Number()` both do.
 #[hegel::test(test_cases = 500)]
-fn parse_retry_after_garbage_is_none(tc: TestCase) {
-    let garbage = tc.draw(generators::text(16));
-    // Reject the rare draw that happens to be a plain unsigned integer:
-    // that is valid input, not garbage.
-    tc.assume(garbage.trim().parse::<u64>().is_err());
-    assert_eq!(parse_retry_after("retry-after", &garbage), None);
+#[hegel::explicit_test_case(header = String::from("retry-after"), value = String::from("-1"))]
+#[hegel::explicit_test_case(header = String::from("Retry-After"), value = String::from("+5"))]
+#[hegel::explicit_test_case(header = String::from("retry-after"), value = String::from("1.5"))]
+#[hegel::explicit_test_case(header = String::from("RETRY-AFTER-MS"), value = String::from(" "))]
+#[hegel::explicit_test_case(
+    header = String::from("retry-after"),
+    value = String::from("18446744073709551616"),
+)]
+#[hegel::explicit_test_case(
+    header = String::from("retry-after-ms"),
+    value = String::from(" \t18446744073709551615 "),
+)]
+fn parse_retry_after_is_a_trimmed_whole_number(tc: TestCase) {
+    let header = tc.draw(retry_after_header());
+    let value = tc.draw(retry_after_value());
+    let number = value.trim().parse::<u64>().ok();
+    let expected = if header.eq_ignore_ascii_case("retry-after-ms") {
+        number.map(Duration::from_millis)
+    } else {
+        number.map(Duration::from_secs)
+    };
+    assert_eq!(parse_retry_after(&header, &value), expected);
 }
 
 /// An unrecognized header name is never parsed, whatever its value.
