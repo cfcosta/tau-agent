@@ -407,9 +407,17 @@ Research and the reasons behind these choices:
   change is a diff that can be reviewed or reverted; nothing lands in
   the project's history. Notes are the truth; the search index is
   derived and rebuilt from them on open.
-  - The index is BM25 fused with ColBERT MaxSim by reciprocal rank
-    fusion, as docbert fuses them. The `docbert` feature encodes with
-    docbert's model through `docbert-pylate`, loaded on first use.
+  - The index is ColBERT MaxSim alone. The `docbert` feature encodes
+    with docbert's model through `docbert-pylate`, loaded on first use;
+    without a model (as in tests) memory searches with BM25.
+  - It was BM25 fused with ColBERT by reciprocal rank fusion, as docbert
+    fuses them. The retrieval evaluation showed the fusion doing worse:
+    - ColBERT alone found verbatim queries as well as BM25 did, and found
+      paraphrases far more often (recall at 5 of 0.83 against the
+      fusion's 0.54, and 0.58 against 0.29 with 16 near-duplicates per
+      answer).
+    - The fusion lets BM25 rank near-duplicates that share a query's
+      words above the answer.
   - Embeddings are cached on disk by model and text, so reopening a
     scope encodes only notes that changed.
   - Every note is scored exhaustively: a scope is small, and MaxSim over
@@ -424,7 +432,7 @@ Research and the reasons behind these choices:
   of Meaning" proves?); calls, tokens and latency. Baselines: no memory,
   one `MEMORY.md`, docbert over raw transcripts.
   - Retrieval and interference run today: `cargo run --release -p
-    tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
+tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
     for BM25 alone, `--json PATH` for the rows). The corpus is
     `crates/plugins/memory/eval/harbor.toml`, synthetic facts about a
     made-up service. Every level holds the same number of notes, so only

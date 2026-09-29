@@ -3,7 +3,7 @@
 //! claim, the metrics are their definitions, and BM25 holds the floors
 //! the corpus was written to show.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hegel::{TestCase, generators as gs};
 use tau_memory::{
@@ -12,16 +12,18 @@ use tau_memory::{
         self,
         Distance,
         Fixture,
+        Hybrid,
         LEVELS,
         Leg,
         Outcome,
-        Semantic,
+        RRF_K,
         corpus,
         evaluate,
         index_all,
         mrr,
         per_fact,
         recall_at,
+        rrf,
     },
     index::{Bm25, words},
     note::slug,
@@ -207,8 +209,8 @@ fn a_run_reports_every_leg_at_every_level() {
     let work = tempfile::tempdir().unwrap();
     let legs = [
         Leg::new("bm25", || Box::new(Bm25::new())),
-        Leg::new("colbert", || Box::new(Semantic(Colbert::new(Fake)))),
-        Leg::new("hybrid", || Box::new(Colbert::new(Fake))),
+        Leg::new("colbert", || Box::new(Colbert::new(Fake))),
+        Leg::new("hybrid", || Box::new(Hybrid::new(Colbert::new(Fake)))),
     ];
     let mut seen = Vec::new();
     let report =
@@ -226,4 +228,36 @@ fn a_run_reports_every_leg_at_every_level() {
     for name in ["bm25", "colbert", "hybrid"] {
         assert!(table.contains(name), "{table}");
     }
+}
+
+#[hegel::test(test_cases = 200)]
+fn rrf_is_its_formula(tc: TestCase) {
+    let ids = vec!["a", "b", "c", "d", "e"];
+    let lists: Vec<Vec<String>> = (0..tc
+        .draw(gs::integers::<usize>().min_value(1).max_value(3)))
+        .map(|_| {
+            // A ranking: distinct ids in drawn order.
+            let mut pool = ids.clone();
+            let mut list = Vec::new();
+            for _ in 0..tc.draw(gs::integers::<usize>().max_value(5)) {
+                let at =
+                    tc.draw(gs::integers::<usize>().max_value(pool.len() - 1));
+                list.push(pool.remove(at).to_owned());
+            }
+            list
+        })
+        .collect();
+    let fused = rrf(&lists);
+    let mut want: BTreeMap<String, f32> = BTreeMap::new();
+    for list in &lists {
+        for (rank, id) in list.iter().enumerate() {
+            *want.entry(id.clone()).or_default() +=
+                1.0 / (RRF_K + rank as f32 + 1.0);
+        }
+    }
+    assert_eq!(fused.len(), want.len());
+    for (id, score) in &fused {
+        assert!((score - want[id]).abs() < 1e-6);
+    }
+    assert!(fused.windows(2).all(|pair| pair[0].1 >= pair[1].1));
 }

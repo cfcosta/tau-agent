@@ -1,7 +1,8 @@
 //! The retrieval evaluation (`docs/research/memory.md`, "Evaluation
 //! first"): how often search finds the note that answers a query, by how
 //! far the query's words are from the note's, for BM25, ColBERT and the
-//! two fused, as near-duplicates of each answer pile up.
+//! two fused ([`Hybrid`], kept here to measure against), as
+//! near-duplicates of each answer pile up.
 //!
 //! The corpus is `eval/harbor.toml`: facts about a made-up service, each
 //! a template whose near-duplicates share its wording with another
@@ -10,7 +11,11 @@
 //! and background notes that answer nothing fill the level to the same
 //! size as every other.
 
-use std::{collections::HashMap, fmt, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    path::Path,
+};
 
 use anyhow::{Context as _, anyhow};
 use serde::{Deserialize, Serialize};
@@ -494,16 +499,53 @@ impl<'a> Leg<'a> {
     }
 }
 
-/// ColBERT alone, without BM25: [`Colbert::semantic`] as an index.
-pub struct Semantic<E: Encoder>(pub Colbert<E>);
+/// The constant in reciprocal rank fusion, docbert's.
+pub const RRF_K: f32 = 60.0;
 
-impl<E: Encoder> Index for Semantic<E> {
+/// Fuses ranked lists: each id scores `1 / (RRF_K + rank)` in every list
+/// it is in, summed. Best first, ties by id.
+pub fn rrf(lists: &[Vec<String>]) -> Vec<(String, f32)> {
+    let mut scores: BTreeMap<String, f32> = BTreeMap::new();
+    for list in lists {
+        for (rank, id) in list.iter().enumerate() {
+            *scores.entry(id.clone()).or_default() +=
+                1.0 / (RRF_K + rank as f32 + 1.0);
+        }
+    }
+    let mut fused: Vec<(String, f32)> = scores.into_iter().collect();
+    fused.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    fused
+}
+
+/// How many candidates each side of [`Hybrid`] ranks before fusion.
+pub const LEG: usize = 100;
+
+/// BM25 and ColBERT fused by reciprocal rank fusion, as docbert fuses
+/// them: what memory searched with before the evaluation showed ColBERT
+/// alone does better, kept to measure against.
+pub struct Hybrid<E: Encoder> {
+    pub bm25: Bm25,
+    pub colbert: Colbert<E>,
+}
+
+impl<E: Encoder> Hybrid<E> {
+    pub fn new(colbert: Colbert<E>) -> Self {
+        Self {
+            bm25: Bm25::new(),
+            colbert,
+        }
+    }
+}
+
+impl<E: Encoder> Index for Hybrid<E> {
     fn upsert(&mut self, id: &str, text: &str) -> anyhow::Result<()> {
-        self.0.upsert(id, text)
+        self.bm25.upsert(id, text)?;
+        self.colbert.upsert(id, text)
     }
 
     fn remove(&mut self, id: &str) -> anyhow::Result<()> {
-        self.0.remove(id)
+        self.bm25.remove(id)?;
+        self.colbert.remove(id)
     }
 
     fn search(
@@ -511,7 +553,15 @@ impl<E: Encoder> Index for Semantic<E> {
         query: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<(String, f32)>> {
-        self.0.semantic(query, limit)
+        let ids = |hits: Vec<(String, f32)>| -> Vec<String> {
+            hits.into_iter().map(|(id, _)| id).collect()
+        };
+        let mut fused = rrf(&[
+            ids(self.bm25.search(query, LEG)?),
+            ids(self.colbert.search(query, LEG)?),
+        ]);
+        fused.truncate(limit);
+        Ok(fused)
     }
 }
 

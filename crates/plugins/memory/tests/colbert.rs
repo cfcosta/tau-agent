@@ -1,6 +1,6 @@
-//! Late interaction and fusion: MaxSim and RRF against their
-//! definitions, the index against a model of live notes, the cache that
-//! spares encoding, and the paraphrase BM25 alone would miss.
+//! Late interaction: MaxSim against its definition, the index against a
+//! model of live notes, the cache that spares encoding, and the
+//! paraphrase BM25 alone would miss.
 
 use std::{
     collections::BTreeMap,
@@ -12,12 +12,10 @@ use tau_memory::{
     colbert::{
         Colbert,
         Encoder,
-        RRF_K,
         Shared,
         Tokens,
         max_sim,
         read_tokens,
-        rrf,
         write_tokens,
     },
     index::{Index, words},
@@ -121,38 +119,6 @@ fn max_sim_is_its_definition_and_grows_with_the_document(tc: TestCase) {
     // More tokens never lower it: each maximum is over a superset.
     let longer = tokens(&format!("{doc_text} {}", tc.draw(text())));
     assert!(max_sim(&query, &longer) >= max_sim(&query, &doc) - 1e-5);
-}
-
-#[hegel::test(test_cases = 200)]
-fn rrf_is_its_formula(tc: TestCase) {
-    let ids = vec!["a", "b", "c", "d", "e"];
-    let lists: Vec<Vec<String>> = (0..tc
-        .draw(gs::integers::<usize>().min_value(1).max_value(3)))
-        .map(|_| {
-            // A ranking: distinct ids in drawn order.
-            let mut pool = ids.clone();
-            let mut list = Vec::new();
-            for _ in 0..tc.draw(gs::integers::<usize>().max_value(5)) {
-                let at =
-                    tc.draw(gs::integers::<usize>().max_value(pool.len() - 1));
-                list.push(pool.remove(at).to_owned());
-            }
-            list
-        })
-        .collect();
-    let fused = rrf(&lists);
-    let mut want: BTreeMap<String, f32> = BTreeMap::new();
-    for list in &lists {
-        for (rank, id) in list.iter().enumerate() {
-            *want.entry(id.clone()).or_default() +=
-                1.0 / (RRF_K + rank as f32 + 1.0);
-        }
-    }
-    assert_eq!(fused.len(), want.len());
-    for (id, score) in &fused {
-        assert!((score - want[id]).abs() < 1e-6);
-    }
-    assert!(fused.windows(2).all(|pair| pair[0].1 >= pair[1].1));
 }
 
 #[hegel::test(test_cases = 100)]

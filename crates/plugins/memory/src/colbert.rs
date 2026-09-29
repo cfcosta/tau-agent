@@ -1,9 +1,11 @@
 //! Late-interaction search over notes: each note's text as ColBERT token
-//! vectors, scored against a query's by MaxSim, and fused with BM25 by
-//! reciprocal rank fusion, as docbert fuses them (`docbert-core`,
-//! `search::rrf_fuse`). BM25 keeps identifiers, paths and error strings
-//! findable; late interaction finds notes worded differently from the
-//! query.
+//! vectors, scored against a query's by MaxSim.
+//!
+//! ColBERT alone, not fused with BM25: in the retrieval evaluation
+//! ([`crate::eval`]) it found verbatim queries as well as BM25 and the
+//! fusion did, and paraphrases far more often than either, while the
+//! fusion let BM25 rank near-duplicates that share a query's words above
+//! the answer.
 //!
 //! The model is behind [`Encoder`]: docbert's in the app (the `docbert`
 //! feature), a deterministic stand-in in tests. Embeddings are cached on
@@ -19,7 +21,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::index::{Bm25, Index};
+use crate::index::Index;
 
 /// One text as token vectors, each L2-normalized: `tokens × dim` values,
 /// row by row.
@@ -105,34 +107,12 @@ pub fn max_sim(query: &Tokens, doc: &Tokens) -> f32 {
         .sum()
 }
 
-/// The constant in reciprocal rank fusion, docbert's.
-pub const RRF_K: f32 = 60.0;
-
-/// Fuses ranked lists: each id scores `1 / (RRF_K + rank)` in every list
-/// it is in, summed. Best first, ties by id.
-pub fn rrf(lists: &[Vec<String>]) -> Vec<(String, f32)> {
-    let mut scores: BTreeMap<String, f32> = BTreeMap::new();
-    for list in lists {
-        for (rank, id) in list.iter().enumerate() {
-            *scores.entry(id.clone()).or_default() +=
-                1.0 / (RRF_K + rank as f32 + 1.0);
-        }
-    }
-    let mut fused: Vec<(String, f32)> = scores.into_iter().collect();
-    fused.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    fused
-}
-
-/// How many candidates each leg ranks before fusion.
-pub const LEG: usize = 100;
-
-/// BM25 and late interaction over a scope's notes, fused.
+/// Late interaction over a scope's notes.
 pub struct Colbert<E: Encoder> {
     /// Behind a lock: encoding needs the model mutably, and search does
     /// not otherwise change the index.
     encoder: Mutex<E>,
     model: String,
-    bm25: Bm25,
     embeddings: BTreeMap<String, Tokens>,
     /// Where embeddings are cached, when anywhere.
     cache: Option<PathBuf>,
@@ -143,7 +123,6 @@ impl<E: Encoder> Colbert<E> {
         Self {
             model: encoder.model().to_owned(),
             encoder: Mutex::new(encoder),
-            bm25: Bm25::new(),
             embeddings: BTreeMap::new(),
             cache: None,
         }
@@ -195,13 +174,11 @@ impl<E: Encoder> Colbert<E> {
 impl<E: Encoder> Index for Colbert<E> {
     fn upsert(&mut self, id: &str, text: &str) -> anyhow::Result<()> {
         let tokens = self.embed(id, text)?;
-        self.bm25.upsert(id, text)?;
         self.embeddings.insert(id.to_owned(), tokens);
         Ok(())
     }
 
     fn remove(&mut self, id: &str) -> anyhow::Result<()> {
-        self.bm25.remove(id)?;
         self.embeddings.remove(id);
         if let Some(dir) = &self.cache {
             forget_cached(dir, id);
@@ -214,20 +191,7 @@ impl<E: Encoder> Index for Colbert<E> {
         query: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<(String, f32)>> {
-        let lexical: Vec<String> = self
-            .bm25
-            .search(query, LEG)?
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect();
-        let semantic = self
-            .semantic(query, LEG)?
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect();
-        let mut fused = rrf(&[lexical, semantic]);
-        fused.truncate(limit);
-        Ok(fused)
+        self.semantic(query, limit)
     }
 }
 

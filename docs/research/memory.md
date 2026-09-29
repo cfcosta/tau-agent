@@ -466,6 +466,7 @@ Asked and answered on 2026-09-29; the plan in plugins.md follows them.
 | Note and link types         | The full proposed sets                                                                                 |
 | Interference                | Measured in the evaluation: recall as near-duplicates pile up, for BM25, ColBERT and the hybrid        |
 | Staleness against code      | Notes `about` a file are flagged when a later commit touches it                                        |
+| Search                      | ColBERT alone, after the evaluation showed it beating BM25 and the fusion on paraphrases (2026-09-29)  |
 
 ## Sources
 

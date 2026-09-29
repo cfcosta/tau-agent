@@ -15,6 +15,17 @@ use crate::{
 /// How much a superseded note's score counts against a current one's.
 pub const SUPERSEDED_WEIGHT: f32 = 0.5;
 
+/// `score` with [`SUPERSEDED_WEIGHT`] against it: scaled toward zero
+/// when positive and away from it when negative, so it always falls.
+/// MaxSim's scores can be negative, the dot products of unit vectors.
+fn weigh_down(score: f32) -> f32 {
+    if score >= 0.0 {
+        score * SUPERSEDED_WEIGHT
+    } else {
+        score / SUPERSEDED_WEIGHT
+    }
+}
+
 /// A note found for a query.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hit {
@@ -64,12 +75,12 @@ pub fn recall_with(
         .filter_map(|(id, score)| {
             // The index can lag the files; a note that is gone is skipped.
             let note = notes.get(&id)?;
-            let weight = if note.is_superseded() {
-                SUPERSEDED_WEIGHT
+            let score = if note.is_superseded() {
+                weigh_down(score)
             } else {
-                1.0
+                score
             };
-            Some((id, score * weight))
+            Some((id, score))
         })
         .collect();
     seeds.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));

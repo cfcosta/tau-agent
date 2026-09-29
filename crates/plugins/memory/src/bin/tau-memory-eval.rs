@@ -1,6 +1,6 @@
 //! Runs the retrieval evaluation (`tau_memory::eval`) and prints its
-//! report: BM25, ColBERT alone and the two fused, at every level of
-//! near-duplicates.
+//! report: BM25, ColBERT (what memory searches with) and the two fused,
+//! at every level of near-duplicates.
 //!
 //! ```text
 //! tau-memory-eval [--keywords] [--json PATH]
@@ -16,7 +16,7 @@ use anyhow::{Context as _, bail};
 use tau_memory::{
     colbert::{Colbert, Shared},
     docbert::Docbert,
-    eval::{self, Leg, Semantic},
+    eval::{self, Hybrid, Leg},
     index::Bm25,
 };
 
@@ -45,10 +45,10 @@ fn main() -> anyhow::Result<()> {
     if let Some(encoder) = &encoder {
         let cache = &cache;
         legs.push(Leg::new("colbert", move || {
-            Box::new(Semantic(Colbert::new(encoder.clone()).cached(cache)))
+            Box::new(Colbert::new(encoder.clone()).cached(cache))
         }));
         legs.push(Leg::new("hybrid", move || {
-            Box::new(Colbert::new(encoder.clone()).cached(cache))
+            Box::new(Hybrid::new(Colbert::new(encoder.clone()).cached(cache)))
         }));
     }
 

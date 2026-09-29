@@ -195,6 +195,72 @@ fn superseding_a_note_never_raises_it(tc: TestCase) {
     assert!(at(&after) >= at(&before), "{before:?} then {after:?}");
 }
 
+/// An index that answers every query with the same drawn scores, which
+/// may be negative, as MaxSim's can: the dot products of unit vectors.
+struct Scored(Vec<(String, f32)>);
+
+impl Index for Scored {
+    fn upsert(&mut self, _: &str, _: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn remove(&mut self, _: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn search(
+        &self,
+        _: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(String, f32)>> {
+        let mut hits = self.0.clone();
+        hits.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        hits.truncate(limit);
+        Ok(hits)
+    }
+}
+
+/// Superseding a note never raises it, whatever the sign of the scores.
+#[hegel::test(test_cases = 200)]
+fn superseding_never_raises_a_note_whatever_its_score(tc: TestCase) {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut notes, _) = setup(&tc, dir.path());
+    let index = Scored(
+        notes
+            .iter()
+            .map(|note| {
+                let score =
+                    tc.draw(gs::floats::<f32>().min_value(-5.0).max_value(5.0));
+                (note.id.clone(), score)
+            })
+            .collect(),
+    );
+    let seeds_of = |notes: &Notes| -> Vec<String> {
+        recall(notes, &index, "q", 12)
+            .unwrap()
+            .into_iter()
+            .filter(|hit| hit.via.is_none())
+            .map(|hit| hit.id)
+            .collect()
+    };
+    let before = seeds_of(&notes);
+    let current: Vec<String> = before
+        .iter()
+        .filter(|id| !notes.get(id).unwrap().is_superseded())
+        .cloned()
+        .collect();
+    if current.is_empty() {
+        return;
+    }
+    let id = tc.draw(gs::sampled_from(current));
+    let mut note = notes.get(&id).unwrap().clone();
+    note.valid_to = Some(9);
+    notes.update(note).unwrap();
+    let after = seeds_of(&notes);
+    let at = |list: &[String]| list.iter().position(|x| *x == id).unwrap();
+    assert!(at(&after) >= at(&before), "{before:?} then {after:?}");
+}
+
 #[hegel::test(test_cases = 100)]
 fn a_word_only_one_note_holds_finds_it_first(tc: TestCase) {
     let dir = tempfile::tempdir().unwrap();
@@ -204,8 +270,8 @@ fn a_word_only_one_note_holds_finds_it_first(tc: TestCase) {
     note.valid_to = None;
     notes.update(note.clone()).unwrap();
     index.upsert(&note.id, &index_text(&note)).unwrap();
-    let hits =
-        recall(&notes, &index, "where is zanzibar_only_here", 3).unwrap();
+    // The word alone: any other word could be one a drawn note holds.
+    let hits = recall(&notes, &index, "zanzibar_only_here", 3).unwrap();
     assert_eq!(hits[0].id, note.id);
     assert!(hits[0].snippet.contains("zanzibar_only_here"));
 }
