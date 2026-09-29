@@ -41,7 +41,7 @@ image = { version = "0.25.10", default-features = false, features = [
   "webp",
 ] }
 jj-lib = "=0.45.1"
-jsonschema = { version = "0.58.1", default-features = false }
+jsonschema = { version = "0.58.2", default-features = false }
 pollster = "1.0.1"
 # Model replies are CommonMark with GitHub's tables; only the parser, no
 # HTML output (tau-ui).
@@ -71,7 +71,7 @@ unicode-normalization = "0.1.25"
 turmoil = "0.7.2"
 uuid = { version = "1.26.1", features = ["v7"] }
 webpki-roots = "1.0.9"
-tokio-rustls = { version = "0.26.5", default-features = false, features = [
+tokio-rustls = { version = "0.26.6", default-features = false, features = [
   "logging",
   "ring",
   "tls12",
