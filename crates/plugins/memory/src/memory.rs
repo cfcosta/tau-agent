@@ -167,6 +167,14 @@ impl Memory {
         };
         let (title, description, body) =
             (clean(title), clean(description), clean(body));
+        let tags: Vec<String> = tags.into_iter().map(&mut clean).collect();
+        let links: Vec<Link> = links
+            .into_iter()
+            .map(|link| Link {
+                why: link.why.map(&mut clean),
+                ..link
+            })
+            .collect();
 
         let named = id.is_some();
         let mut target = id.unwrap_or_else(|| {
@@ -291,6 +299,7 @@ impl Memory {
         if let Some(why) = why.as_deref().and_then(safety::refusal) {
             return Err(WriteError::Refused(format!("not stored: {why}")));
         }
+        let why = why.map(|why| safety::redact(&why).0);
         if kind != LinkType::About && !is_id(to) {
             return Err(WriteError::Refused(format!(
                 "{to:?} is not a note id"

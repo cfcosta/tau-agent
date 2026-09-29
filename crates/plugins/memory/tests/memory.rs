@@ -4,11 +4,12 @@
 
 use std::collections::BTreeMap;
 
-use hegel::{TestCase, generators as gs};
+use hegel::{TestCase, generators as gs, stateful::Pool};
 use tau_memory::{
     index::Bm25,
     memory::{Action, Draft, INDEX_BUDGET, INDEX_ID, Memory, WriteError},
-    note::{By, LinkType, NoteType, Source},
+    note::{By, Link, LinkType, NoteType, Source, slug},
+    safety::redact,
 };
 
 const SECRET: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
@@ -31,121 +32,241 @@ fn draft(title: String, body: String) -> Draft {
     }
 }
 
-#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
-enum Op {
-    Create,
-    Update,
-    Supersede,
-    Link,
-    WriteIndex,
-    Reopen,
+/// Where a write puts the secret, if anywhere.
+#[derive(Debug, Clone, Copy, PartialEq, hegel::PrettyPrintable)]
+enum Place {
+    Nowhere,
+    Title,
+    Description,
+    Body,
+    Tag,
+    LinkWhy,
 }
 
-#[hegel::test(test_cases = 60)]
-fn memory_keeps_its_index_in_step(tc: TestCase) {
-    let dir = tempfile::tempdir().unwrap();
-    let mut memory = open(dir.path());
-    // Each note's own word, which only its title holds.
-    let mut words: BTreeMap<String, String> = BTreeMap::new();
-    let steps = tc.draw(gs::integers::<usize>().min_value(1).max_value(15));
-    for step in 0..steps {
-        let now = 1_000 + step as u64;
-        let word = format!("word{step}");
-        let ids: Vec<String> = words.keys().cloned().collect();
-        let body = if tc.draw(gs::booleans()) {
-            format!("the token was {SECRET} before rotation")
-        } else {
-            "nothing secret here".to_owned()
-        };
-        let op = tc.draw(gs::sampled_from(vec![
-            Op::Create,
-            Op::Update,
-            Op::Supersede,
-            Op::Link,
-            Op::WriteIndex,
-            Op::Reopen,
-        ]));
-        match op {
-            Op::Create => {
-                let written = memory
-                    .write(draft(format!("note about {word}"), body), now)
-                    .unwrap();
-                assert_eq!(written.action, Action::Created);
-                assert!(written.nearest.iter().all(|hit| hit.id != written.id));
-                words.insert(written.id, word);
-            }
-            Op::Update if !ids.is_empty() => {
-                let id = tc.draw(gs::sampled_from(ids));
-                let mut update = draft(format!("note about {word}"), body);
-                update.id = Some(id.clone());
-                let written = memory.write(update, now).unwrap();
-                assert_eq!(
-                    (written.id.clone(), written.action),
-                    (id.clone(), Action::Updated)
-                );
-                words.insert(id, word);
-            }
-            Op::Supersede if !ids.is_empty() => {
-                let old = tc.draw(gs::sampled_from(ids));
-                let mut new = draft(format!("newer note about {word}"), body);
-                new.supersedes = Some(old.clone());
-                let written = memory.write(new, now).unwrap();
-                assert_eq!(written.action, Action::Superseded(old.clone()));
-                assert_eq!(
-                    memory.notes().get(&old).unwrap().valid_to,
-                    Some(now)
-                );
-                // The new note links to what it replaced.
-                assert!(memory.read(&old).unwrap().backlinks.iter().any(
-                    |(from, link)| {
-                        *from == written.id && link.kind == LinkType::Supersedes
-                    }
-                ));
-                words.insert(written.id, word);
-            }
-            Op::Link if ids.len() >= 2 => {
-                let from = tc.draw(gs::sampled_from(ids.clone()));
-                let to = tc.draw(gs::sampled_from(ids));
-                memory
-                    .link(&from, &to, LinkType::Refines, None, now)
-                    .unwrap();
-                if from != to {
-                    assert!(
-                        memory
-                            .read(&to)
-                            .unwrap()
-                            .backlinks
-                            .iter()
-                            .any(|(f, _)| *f == from)
-                    );
-                }
-            }
-            Op::WriteIndex => {
-                let size = tc.draw(
-                    gs::integers::<usize>()
-                        .min_value(1)
-                        .max_value(INDEX_BUDGET + 50),
-                );
-                let mut index = draft("Index".into(), "x".repeat(size));
-                index.kind = NoteType::Index;
-                match memory.write(index, now) {
-                    Ok(written) => {
-                        assert!(size <= INDEX_BUDGET);
-                        assert_eq!(written.id, INDEX_ID);
-                    }
-                    Err(WriteError::Refused(why)) => {
-                        assert!(size > INDEX_BUDGET, "{why}");
-                        assert!(why.contains("shorter"));
-                    }
-                    Err(other) => panic!("{other}"),
-                }
-            }
-            Op::Reopen => memory = open(dir.path()),
-            _ => {}
+const PLACES: [Place; 6] = [
+    Place::Nowhere,
+    Place::Title,
+    Place::Description,
+    Place::Body,
+    Place::Tag,
+    Place::LinkWhy,
+];
+
+/// A draft titled `title`, with the secret put at `place`.
+fn leaky(title: String, place: Place) -> Draft {
+    let mut draft = draft(title, "nothing secret here".into());
+    let leak = |text: &str| format!("{text} {SECRET}");
+    match place {
+        Place::Nowhere => {}
+        Place::Title => draft.title = leak(&draft.title),
+        Place::Description => draft.description = leak(&draft.description),
+        Place::Body => draft.body = leak("the token was"),
+        Place::Tag => draft.tags = vec![leak("rotated")],
+        Place::LinkWhy => {
+            draft.links = vec![Link {
+                to: "elsewhere".into(),
+                kind: LinkType::Relates,
+                why: Some(leak("it leaked")),
+            }]
         }
-        // Every note is found first by its own word.
-        for (id, word) in &words {
-            let hits = memory.search(word, 3).unwrap();
+    }
+    draft
+}
+
+/// A scope's memory, and what it should answer: each note's own word,
+/// which only its title holds, and the words updates took away.
+struct Scope {
+    dir: tempfile::TempDir,
+    memory: Memory,
+    words: BTreeMap<String, String>,
+    /// `(id, word)`: a word the note's title held before an update.
+    retired: Vec<(String, String)>,
+    /// The ids of the notes written, index note aside.
+    ids: Pool<String>,
+    step: u64,
+}
+
+impl Scope {
+    /// The time of this step, and a word no note has held.
+    fn tick(&mut self) -> (u64, String) {
+        self.step += 1;
+        (1_000 + self.step, format!("word{}", self.step))
+    }
+
+    fn reopen(&mut self) {
+        self.memory = open(self.dir.path());
+    }
+}
+
+#[hegel::state_machine]
+impl Scope {
+    /// A new note, or a title that lands on an existing note's id, which
+    /// is refused and changes nothing.
+    #[rule]
+    fn create(&mut self, tc: TestCase) {
+        let (now, word) = self.tick();
+        // Titles that name their note's id, as a new note's does.
+        let taken: Vec<String> = self
+            .memory
+            .notes()
+            .iter()
+            .filter(|note| note.id != INDEX_ID && slug(&note.title) == note.id)
+            .map(|note| note.title.clone())
+            .collect();
+        let collide = !taken.is_empty() && tc.draw(gs::weighted_booleans(0.2));
+        let (title, place) = if collide {
+            tc.event("title collided");
+            // The secret goes anywhere but the title, which would change
+            // the id it lands on.
+            let places =
+                PLACES[..].iter().copied().filter(|p| *p != Place::Title);
+            (
+                tc.draw(gs::sampled_from(taken)),
+                tc.draw(gs::sampled_from(places.collect::<Vec<_>>())),
+            )
+        } else {
+            (
+                format!("note about {word}"),
+                tc.draw(gs::sampled_from(PLACES.to_vec())),
+            )
+        };
+        let before = self.memory.notes().len();
+        let draft = leaky(title, place);
+        let title = draft.title.clone();
+        match self.memory.write(draft, now) {
+            Ok(written) => {
+                assert!(!collide, "{title} overwrote a note");
+                assert_eq!(written.action, Action::Created);
+                // The id comes from the title with its secret gone.
+                assert_eq!(written.id, slug(&redact(&title).0));
+                assert_eq!(
+                    written.redacted,
+                    usize::from(place != Place::Nowhere)
+                );
+                assert!(written.nearest.iter().all(|hit| hit.id != written.id));
+                self.words.insert(written.id.clone(), word);
+                self.ids.add(written.id);
+            }
+            Err(WriteError::Refused(why)) => {
+                assert!(collide, "{why}");
+                assert!(why.contains("pass id"), "{why}");
+                assert_eq!(self.memory.notes().len(), before);
+            }
+            Err(other) => panic!("{other}"),
+        }
+    }
+
+    /// A new version of a note: its new word finds it, its old one no
+    /// longer does.
+    #[rule]
+    fn update(&mut self, tc: TestCase) {
+        tc.assume(!self.ids.is_empty());
+        let id = tc.draw(self.ids.values_reusable()).clone();
+        let place = tc.draw(gs::sampled_from(PLACES.to_vec()));
+        let (now, word) = self.tick();
+        let mut update = leaky(format!("note about {word}"), place);
+        update.id = Some(id.clone());
+        let written = self.memory.write(update, now).unwrap();
+        assert_eq!(
+            (written.id.clone(), written.action),
+            (id.clone(), Action::Updated)
+        );
+        assert_eq!(written.redacted, usize::from(place != Place::Nowhere));
+        let old = self.words.insert(id.clone(), word).expect("a known note");
+        self.retired.push((id, old));
+    }
+
+    #[rule]
+    fn supersede(&mut self, tc: TestCase) {
+        tc.assume(!self.ids.is_empty());
+        let old = tc.draw(self.ids.values_reusable()).clone();
+        let place = tc.draw(gs::sampled_from(PLACES.to_vec()));
+        let (now, word) = self.tick();
+        let mut new = leaky(format!("newer note about {word}"), place);
+        new.supersedes = Some(old.clone());
+        let written = self.memory.write(new, now).unwrap();
+        assert_eq!(written.action, Action::Superseded(old.clone()));
+        assert_eq!(written.redacted, usize::from(place != Place::Nowhere));
+        assert_eq!(self.memory.notes().get(&old).unwrap().valid_to, Some(now));
+        // The new note links to what it replaced.
+        assert!(self.memory.read(&old).unwrap().backlinks.iter().any(
+            |(from, link)| {
+                *from == written.id && link.kind == LinkType::Supersedes
+            }
+        ));
+        self.words.insert(written.id.clone(), word);
+        self.ids.add(written.id);
+    }
+
+    /// A link between two notes, sometimes with a secret in its reason.
+    #[rule]
+    fn link(&mut self, tc: TestCase) {
+        tc.assume(!self.ids.is_empty());
+        let from = tc.draw(self.ids.values_reusable()).clone();
+        let to = tc.draw(self.ids.values_reusable()).clone();
+        let why = tc
+            .draw(gs::booleans())
+            .then(|| format!("it leaked {SECRET}"));
+        let (now, _) = self.tick();
+        self.memory
+            .link(&from, &to, LinkType::Refines, why, now)
+            .unwrap();
+        if from != to {
+            assert!(
+                self.memory
+                    .read(&to)
+                    .unwrap()
+                    .backlinks
+                    .iter()
+                    .any(|(f, _)| *f == from)
+            );
+        }
+    }
+
+    /// The index note, near its budget as often as not: over it, the
+    /// write is refused. Its characters take two bytes each, so bytes
+    /// counted for characters would show.
+    #[rule]
+    fn write_index(&mut self, tc: TestCase) {
+        let size = tc.draw(hegel::one_of!(
+            gs::integers::<usize>()
+                .min_value(1)
+                .max_value(INDEX_BUDGET - 3),
+            gs::integers::<usize>()
+                .min_value(INDEX_BUDGET - 2)
+                .max_value(INDEX_BUDGET + 2),
+            gs::integers::<usize>()
+                .min_value(INDEX_BUDGET + 3)
+                .max_value(INDEX_BUDGET + 50),
+        ));
+        let (now, _) = self.tick();
+        let mut index = draft("Index".into(), "é".repeat(size));
+        index.kind = NoteType::Index;
+        match self.memory.write(index, now) {
+            Ok(written) => {
+                tc.event("index written");
+                assert!(size <= INDEX_BUDGET);
+                assert_eq!(written.id, INDEX_ID);
+            }
+            Err(WriteError::Refused(why)) => {
+                tc.event("index refused");
+                assert!(size > INDEX_BUDGET, "{why}");
+                assert!(why.contains("shorter"));
+            }
+            Err(other) => panic!("{other}"),
+        }
+    }
+
+    #[rule]
+    fn reopen_the_scope(&mut self, _tc: TestCase) {
+        self.reopen();
+    }
+
+    /// Every note is found first by its own word.
+    #[invariant(always_run)]
+    fn every_word_finds_its_note_first(&self, _tc: TestCase) {
+        for (id, word) in &self.words {
+            let hits = self.memory.search(word, 3).unwrap();
             assert_eq!(
                 hits.first().map(|hit| hit.id.as_str()),
                 Some(id.as_str()),
@@ -153,14 +274,44 @@ fn memory_keeps_its_index_in_step(tc: TestCase) {
             );
         }
     }
-    // No file anywhere, history included, holds the secret.
-    for entry in walk(dir.path()) {
-        let text = std::fs::read_to_string(&entry).unwrap();
-        assert!(!text.contains(SECRET), "{}", entry.display());
+
+    /// A word an update took from a note's title no longer finds it.
+    #[invariant(always_run)]
+    fn a_retired_word_finds_nothing(&self, _tc: TestCase) {
+        for (id, word) in &self.retired {
+            let hits = self.memory.search(word, 3).unwrap();
+            assert!(hits.iter().all(|hit| hit.id != *id), "{word}: {hits:?}");
+        }
     }
-    if let Some(index) = memory.index_note() {
-        assert!(index.body.chars().count() <= INDEX_BUDGET);
+
+    /// No file anywhere, history included, holds the secret, in its
+    /// name or its text.
+    #[invariant]
+    fn no_file_holds_the_secret(&self, _tc: TestCase) {
+        for entry in walk(self.dir.path()) {
+            let text = std::fs::read_to_string(&entry).unwrap();
+            assert!(!text.contains(SECRET), "{}", entry.display());
+            let name = entry.display().to_string();
+            assert!(!name.contains(&SECRET[4..20]), "{name}");
+        }
+        if let Some(index) = self.memory.index_note() {
+            assert!(index.body.chars().count() <= INDEX_BUDGET);
+        }
     }
+}
+
+#[hegel::test(test_cases = 60)]
+fn memory_keeps_its_index_in_step(tc: TestCase) {
+    let dir = tempfile::tempdir().unwrap();
+    let scope = Scope {
+        memory: open(dir.path()),
+        dir,
+        words: BTreeMap::new(),
+        retired: Vec::new(),
+        ids: hegel::stateful::pool(&tc),
+        step: 0,
+    };
+    hegel::stateful::machine(scope).steps(15).run(tc);
 }
 
 fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
