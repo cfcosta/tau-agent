@@ -365,6 +365,34 @@ fn previous_response_not_found_exposes_its_code() {
     );
 }
 
+/// The server nests an `error` frame's details under `error`, as it
+/// rejects an effort the model does not take.
+#[test]
+fn a_nested_error_frame_keeps_its_code_and_message() {
+    let frame = json!({
+        "type": "error",
+        "status": 400,
+        "error": {
+            "type": "invalid_request_error",
+            "code": "unsupported_value",
+            "message": "Unsupported value: 'minimal' is not supported with the 'gpt-6-sol' model.",
+            "param": "reasoning.effort",
+        },
+    });
+    let mut processor = StreamProcessor::new("gpt-6-sol".to_owned(), 0);
+    let mut acc = Accumulator::new();
+    for event in processor.push(&frame) {
+        acc.push(event).unwrap();
+    }
+    assert_eq!(processor.error_code(), Some("unsupported_value"));
+    assert_eq!(
+        acc.finish().unwrap().error_message.as_deref(),
+        Some(
+            "Error Code unsupported_value: Unsupported value: 'minimal' is not supported with the 'gpt-6-sol' model."
+        )
+    );
+}
+
 /// A `response.failed` frame carries the provider's error, and its code
 /// is exposed too. pi: `openai-responses-terminal-event.test.ts`
 /// ("rejects failed terminal events with the provider error").

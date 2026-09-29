@@ -731,15 +731,21 @@ impl StreamProcessor {
         frame: &Value,
         events: &mut Vec<AssistantEvent>,
     ) {
-        let code = frame.get("code").and_then(Value::as_str);
+        // The server nests the details in `error`; pi's frames carry
+        // them at the top.
+        let details = frame
+            .get("error")
+            .filter(|error| error.is_object())
+            .unwrap_or(frame);
+        let field = |name| details.get(name).and_then(Value::as_str);
+        let code = field("code");
         self.error_code = code.map(str::to_owned);
-        let message =
-            frame.get("message").and_then(Value::as_str).unwrap_or("");
+        let message = field("message").unwrap_or("");
         let code_text = code.unwrap_or("unknown");
         self.finished = true;
         let class = classify(&Failure::Api {
             code,
-            kind: None,
+            kind: field("type"),
             status: frame
                 .get("status")
                 .and_then(Value::as_u64)
