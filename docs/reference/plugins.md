@@ -423,6 +423,13 @@ Research and the reasons behind these choices:
   the hybrid (does late interaction escape the interference "The Price
   of Meaning" proves?); calls, tokens and latency. Baselines: no memory,
   one `MEMORY.md`, docbert over raw transcripts.
+  - Retrieval and interference run today: `cargo run --release -p
+    tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
+    for BM25 alone, `--json PATH` for the rows). The corpus is
+    `crates/plugins/memory/eval/harbor.toml`, synthetic facts about a
+    made-up service. Every level holds the same number of notes, so only
+    the near-duplicates per answer change.
+  - The end-to-end tasks are not built yet.
 - **Scope:** per repository, plus a user scope for preferences across
   projects; a fact lives in exactly one.
   - In the app, a repository's notes are in `memory/` in tau's directory

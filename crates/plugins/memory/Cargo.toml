@@ -11,6 +11,10 @@ default = []
 # docbert's ColBERT model as the encoder.
 docbert = ["dep:docbert-pylate", "dep:candle-core"]
 
+[[bin]]
+name = "tau-memory-eval"
+required-features = ["docbert"]
+
 [dependencies]
 anyhow.workspace = true
 candle-core = { workspace = true, optional = true }

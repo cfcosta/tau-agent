@@ -1,0 +1,454 @@
+# The retrieval evaluation's corpus: facts about "harbor", a made-up job
+# queue service in Rust, as a coding agent's memory would hold them.
+#
+# Each fact is a template over a subject and a value. The note that
+# answers its queries fills in `subject` and `value`; its near-duplicates
+# keep the wording and fill in one of `subjects` with one of `values`,
+# and the first of them is the same subject with `old_value`, the older
+# version the answer supersedes. `{subject_id}` is the subject as an
+# identifier: `webhook worker` is `webhook_worker`.
+#
+# Queries, by how far their words are from the answer's:
+# - `verbatim` shares identifiers, paths or phrases with it;
+# - `paraphrase` means the same in other words, naming the subject by
+#   what it does rather than what it is called;
+# - `indirect` is worded like this fact but answered by the fact it
+#   links to (`link`), which only a hop along the link reaches.
+#
+# Titles start with what tells near-duplicates apart: note ids are cut
+# at 64 characters.
+#
+# Background notes (`[[background]]`, at the end) answer no query: they
+# fill every level to the same size, so what changes from one level to
+# the next is how many near-duplicates each answer has, not how many
+# notes there are.
+
+[[fact]]
+id = "webhook-retries"
+kind = "fact"
+title = "{subject} retries a failed job {value}"
+description = "How many times the {subject} retries a job before giving up on it."
+body = "The {subject} (`src/workers/{subject_id}.rs`) retries a failed job {value}, with exponential backoff, then moves it to the dead-letter queue."
+subject = "webhook worker"
+subjects = ["email worker", "report worker", "billing worker", "export worker"]
+value = "five times"
+values = ["twice", "three times", "eight times", "ten times"]
+old_value = "four times"
+link = "dlq-replay"
+why = "where the jobs it gives up on go"
+verbatim = "src/workers/webhook_worker.rs retries dead-letter queue"
+paraphrase = "how many attempts do outgoing HTTP callbacks get before we stop trying?"
+indirect = "the webhook worker exhausted its retries with exponential backoff; what now?"
+
+[[fact]]
+id = "dlq-replay"
+kind = "procedure"
+title = "{subject} dead letters replay with {value}"
+description = "How to put {subject} jobs from the dead-letter queue back to work."
+body = "Jobs the {subject} worker abandoned sit in the `dlq_{subject_id}` table. Run {value} to move them back to the live queue; they keep their original ids."
+subject = "webhook"
+subjects = ["email", "report", "billing", "export"]
+value = "`harbor dlq replay`"
+values = ["`harbor dlq drain`", "`just revive`", "`harbor requeue`", "`scripts/redo.sh`"]
+old_value = "`scripts/replay.sh`"
+verbatim = "dlq_webhook table harbor dlq replay"
+paraphrase = "bring abandoned HTTP callback deliveries back to life"
+
+[[fact]]
+id = "broker-env"
+kind = "gotcha"
+title = "{subject} tests need {value} set"
+description = "What the {subject} test suite needs in its environment, or it hangs."
+body = "The {subject} integration tests read {value} at startup; without it they wait for a broker that never answers and time out after ten minutes. Set it in `.env.test`."
+subject = "queue"
+subjects = ["scheduler", "api", "storage", "auth"]
+value = "`HARBOR_BROKER_URL`"
+values = ["`HARBOR_DB_URL`", "`HARBOR_REDIS_URL`", "`HARBOR_S3_BUCKET`", "`HARBOR_KEY_FILE`"]
+old_value = "`BROKER_URL`"
+link = "local-broker"
+why = "how to run what they wait for"
+verbatim = "HARBOR_BROKER_URL .env.test queue integration tests"
+paraphrase = "why do the message bus test cases hang forever on my laptop?"
+indirect = "the queue integration tests hang on HARBOR_BROKER_URL; what do I do?"
+
+[[fact]]
+id = "local-broker"
+kind = "procedure"
+title = "{subject} runs locally with {value}"
+description = "Running a {subject} on a laptop for development and tests."
+body = "Run {value} to start a {subject} on its usual port in the background; `just down` stops it. It keeps no data between runs."
+subject = "broker"
+subjects = ["database", "cache", "object store", "mail catcher"]
+value = "`just broker`"
+values = ["`just db`", "`just cache`", "`just s3`", "`just mail`"]
+old_value = "`docker compose up`"
+verbatim = "just broker just down"
+paraphrase = "how do I get RabbitMQ going on my own machine?"
+
+[[fact]]
+id = "api-errors"
+kind = "convention"
+title = "{subject} errors are {value}"
+description = "The shape every {subject} error takes."
+body = "Every {subject} handler returns errors as {value}, built with `ApiError::new` in `src/{subject_id}/error.rs`; never a bare string."
+subject = "http api"
+subjects = ["grpc api", "cli", "admin console", "webhook receiver"]
+value = "RFC 9457 problem details"
+values = ["plain JSON objects", "status codes alone", "protobuf Status messages", "lines on stderr"]
+old_value = "JSON with an error string"
+link = "error-codes"
+why = "where the codes in them are listed"
+verbatim = "ApiError::new src/http_api/error.rs problem details"
+paraphrase = "what should a REST endpoint send back when something goes wrong?"
+indirect = "an http api handler returns problem details built with ApiError::new; what goes in them?"
+
+[[fact]]
+id = "error-codes"
+kind = "fact"
+title = "{subject} error codes live in {value}"
+description = "Where the stable {subject} error codes are listed."
+body = "Stable error codes for the {subject} are kept in {value}; add a code there before using it, and never reuse a retired one."
+subject = "http api"
+subjects = ["grpc api", "cli", "admin console", "webhook receiver"]
+value = "`docs/errors.md`"
+values = ["`src/codes.rs`", "`errors.toml`", "the wiki", "`openapi.yaml`"]
+old_value = "`ERRORS.txt`"
+verbatim = "docs/errors.md stable error codes retired"
+paraphrase = "is there a registry of failure identifiers for the REST endpoints?"
+
+[[fact]]
+id = "job-ids"
+kind = "decision"
+title = "{subject} ids are {value}"
+description = "Why {subject} ids look the way they do."
+body = "The {subject} gives every record a {value} id, sortable by creation time, so pagination can use the id as its cursor. Decided in ADR 12."
+subject = "job table"
+subjects = ["tenant table", "audit log", "schedule table", "artifact table"]
+value = "UUIDv7"
+values = ["ULID", "Snowflake", "auto-increment", "KSUID"]
+old_value = "UUIDv4"
+link = "pagination"
+why = "the cursor these ids make possible"
+verbatim = "UUIDv7 ADR 12 cursor"
+paraphrase = "why are job identifiers ordered by when they were made?"
+indirect = "UUIDv7 job ids are sortable by creation time; how do clients use that?"
+
+[[fact]]
+id = "pagination"
+kind = "convention"
+title = "{subject} pages with {value}"
+description = "How list endpoints of the {subject} page through results."
+body = "List endpoints in the {subject} take {value}; the page size defaults to 50 and is capped at 500."
+subject = "jobs api"
+subjects = ["tenants api", "audit api", "schedules api", "artifacts api"]
+value = "an `after` cursor"
+values = ["`page` and `per_page`", "an `offset`", "a `before` cursor", "a continuation token"]
+old_value = "`page` numbers"
+verbatim = "after cursor page size 50 capped at 500"
+paraphrase = "how do I walk a long listing of jobs from the REST service?"
+
+[[fact]]
+id = "cron-zone"
+kind = "gotcha"
+title = "{subject} cron runs in {value}"
+description = "The time zone the {subject} evaluates cron expressions in."
+body = "The {subject} evaluates cron expressions in {value}, not the tenant's zone; `Schedule::next` converts at the edge."
+subject = "scheduler"
+subjects = ["billing cycle", "report builder", "retention sweeper", "digest mailer"]
+value = "UTC"
+values = ["server local time", "Europe/Berlin", "the tenant's zone", "America/New_York"]
+old_value = "US Pacific time"
+link = "dst-skip"
+why = "what the zone means around clock changes"
+verbatim = "Schedule::next cron expressions UTC"
+paraphrase = "a nightly task fires at the wrong hour for customers in Tokyo; why?"
+indirect = "the scheduler evaluates cron expressions in UTC; any surprises in spring?"
+
+[[fact]]
+id = "dst-skip"
+kind = "gotcha"
+title = "{subject} skips runs {value}"
+description = "Runs the {subject} misses around clock changes."
+body = "When a daylight saving jump removes an hour, the {subject} skips runs {value}; `catch_up = true` on a schedule makes it run them late instead."
+subject = "scheduler"
+subjects = ["billing cycle", "report builder", "retention sweeper", "digest mailer"]
+value = "in the missing hour"
+values = ["on leap seconds", "after a restart", "when the queue is full", "in maintenance windows"]
+old_value = "silently"
+verbatim = "catch_up = true daylight saving"
+paraphrase = "why did my 2:30am task not execute on the night clocks sprang forward?"
+
+[[fact]]
+id = "commit-style"
+kind = "preference"
+title = "{subject}: the user prefers {value}"
+description = "How the user likes {subject} written."
+body = "For {subject}, the user wants {value}; they have asked for it more than once in review."
+subject = "commit messages"
+subjects = ["pull request titles", "branch names", "code comments", "changelog entries"]
+value = "the imperative mood with a scope prefix"
+values = ["lowercase sentences", "ticket numbers first", "no emoji", "one line only"]
+old_value = "past tense"
+verbatim = "commit messages imperative mood scope prefix"
+paraphrase = "how should I word the summary line when I record a change?"
+
+[[fact]]
+id = "release"
+kind = "procedure"
+title = "{subject} releases with {value}"
+description = "The steps for releasing the {subject}."
+body = "Bump the version in `Cargo.toml`, run {value}, then push the tag; CI builds the {subject} images from the tag, not from main."
+subject = "server"
+subjects = ["cli", "sdk", "helm chart", "docs site"]
+value = "`just release`"
+values = ["`cargo release`", "`make dist`", "`scripts/ship.sh`", "`harbor-dev publish`"]
+old_value = "`scripts/release.py`"
+link = "changelog"
+why = "what a release needs written first"
+verbatim = "just release Cargo.toml push the tag"
+paraphrase = "what do I do to ship a new version of the backend?"
+indirect = "I bumped Cargo.toml and am about to push the server tag; anything first?"
+
+[[fact]]
+id = "changelog"
+kind = "convention"
+title = "{subject} changes are logged in {value}"
+description = "Where changes to the {subject} are written down for users."
+body = "Every user-visible change to the {subject} gets a line in {value} under `Unreleased`, written for users rather than reviewers."
+subject = "server"
+subjects = ["cli", "sdk", "helm chart", "docs site"]
+value = "`CHANGELOG.md`"
+values = ["`NEWS`", "the release PR", "`docs/changes.md`", "GitHub releases"]
+old_value = "the wiki"
+verbatim = "CHANGELOG.md Unreleased"
+paraphrase = "where do I describe what's new for people upgrading the backend?"
+
+[[fact]]
+id = "tenant-cache"
+kind = "gotcha"
+title = "{subject} caches for {value}"
+description = "How long the {subject} keeps a cached answer."
+body = "The {subject} (`{subject_id}.rs`) caches lookups for {value} in-process; a change made in the admin console can take that long to show, which is expected."
+subject = "tenant resolver"
+subjects = ["feature flag client", "permission checker", "rate limiter", "pricing lookup"]
+value = "five minutes"
+values = ["thirty seconds", "one hour", "a day", "until a restart"]
+old_value = "one minute"
+link = "cache-flush"
+why = "how to clear it sooner"
+verbatim = "tenant_resolver.rs in-process admin console"
+paraphrase = "I renamed a customer workspace but the old name still shows; is something broken?"
+indirect = "the tenant resolver in-process lookups are five minutes old; I cannot wait that long"
+
+[[fact]]
+id = "cache-flush"
+kind = "procedure"
+title = "{subject} cache flushes with {value}"
+description = "Clearing the {subject} cache without a restart."
+body = "Send {value} to the admin port; the {subject} drops its cache on every replica within a second."
+subject = "tenant resolver"
+subjects = ["feature flag client", "permission checker", "rate limiter", "pricing lookup"]
+value = "`POST /admin/cache/flush`"
+values = ["`SIGHUP`", "`harbor cache clear`", "`DELETE /admin/cache`", "a restart"]
+old_value = "a rolling restart"
+verbatim = "POST /admin/cache/flush admin port"
+paraphrase = "make every instance throw away what it remembered about workspaces"
+
+[[fact]]
+id = "history-store"
+kind = "decision"
+title = "{subject} is stored in {value}"
+description = "Where the {subject} lives, and why there."
+body = "We keep the {subject} in {value} because it needs point-in-time recovery; the queue itself stays in the broker."
+subject = "job history"
+subjects = ["audit events", "tenant settings", "metrics rollups", "uploaded artifacts"]
+value = "Postgres"
+values = ["S3", "ClickHouse", "Redis", "SQLite"]
+old_value = "MongoDB"
+link = "retention"
+why = "how long it is kept there"
+verbatim = "job history Postgres point-in-time recovery"
+paraphrase = "which database holds the record of finished tasks?"
+indirect = "job history needs point-in-time recovery in Postgres; does it grow forever?"
+
+[[fact]]
+id = "retention"
+kind = "fact"
+title = "{subject} is kept for {value}"
+description = "How long the {subject} is retained."
+body = "The retention sweeper deletes {subject} older than {value} every night at 03:00 UTC; records under a legal hold are exempt."
+subject = "job history"
+subjects = ["audit events", "tenant settings", "metrics rollups", "uploaded artifacts"]
+value = "90 days"
+values = ["30 days", "a year", "seven days", "forever"]
+old_value = "180 days"
+verbatim = "retention sweeper legal hold 03:00"
+paraphrase = "when do old task records get purged?"
+
+[[fact]]
+id = "logging"
+kind = "convention"
+title = "{subject} logs are {value}"
+description = "How the {subject} logs."
+body = "The {subject} logs through `tracing` as {value}; `println!` is rejected by the clippy configuration."
+subject = "worker pool"
+subjects = ["api server", "migrator", "cli", "autoscaler"]
+value = "structured JSON"
+values = ["logfmt", "plain text", "OpenTelemetry spans", "journald entries"]
+old_value = "unstructured lines"
+verbatim = "tracing println! clippy configuration"
+paraphrase = "how should background processors emit diagnostics?"
+
+[[fact]]
+id = "migrations"
+kind = "gotcha"
+title = "{subject} migrations need {value}"
+description = "What the {subject} migrations assume of the database."
+body = "Migrations for the {subject} assume {value}; `sqlx migrate run` fails with a permission error without it."
+subject = "job store"
+subjects = ["audit store", "tenant store", "metrics store", "artifact index"]
+value = "the pgcrypto extension"
+values = ["a superuser role", "the citext extension", "an empty schema", "logical replication"]
+old_value = "the uuid-ossp extension"
+verbatim = "sqlx migrate run permission error pgcrypto"
+paraphrase = "a schema upgrade on a fresh database is denied; what is missing?"
+
+[[fact]]
+id = "rate-limit"
+kind = "fact"
+title = "{subject} allows {value}"
+description = "The {subject} rate limit."
+body = "The {subject} allows {value} per tenant; over it, callers get 429 with a `Retry-After` header."
+subject = "public api"
+subjects = ["webhook receiver", "upload endpoint", "search endpoint", "login endpoint"]
+value = "100 requests a second"
+values = ["10 requests a second", "1000 requests a minute", "5 requests a second", "50 requests a minute"]
+old_value = "20 requests a second"
+verbatim = "429 Retry-After per tenant"
+paraphrase = "how hard can one customer hit the REST service before being throttled?"
+
+[[fact]]
+id = "key-rotation"
+kind = "procedure"
+title = "{subject} rotates with {value}"
+description = "Rotating the {subject} without downtime."
+body = "Run {value}; the old and the new {subject} are both accepted for 24 hours, then the old one stops working."
+subject = "signing key"
+subjects = ["database password", "broker credentials", "api token", "tls certificate"]
+value = "`harbor keys rotate`"
+values = ["`just rotate`", "`vault write`", "`harbor secrets roll`", "a redeploy"]
+old_value = "an edit to `keys.toml`"
+verbatim = "harbor keys rotate 24 hours"
+paraphrase = "how do I replace the secret that signs tokens without logging everyone out?"
+
+[[fact]]
+id = "dispatch"
+kind = "decision"
+title = "{subject} reaches workers over {value}"
+description = "The transport between the {subject} and the workers."
+body = "The {subject} hands jobs to workers over {value}; we dropped polling because it doubled the database load."
+subject = "dispatcher"
+subjects = ["scheduler", "admin console", "api server", "autoscaler"]
+value = "AMQP"
+values = ["gRPC streams", "HTTP polling", "Redis pub/sub", "NATS"]
+old_value = "database polling"
+link = "local-broker"
+why = "running that transport locally"
+verbatim = "AMQP polling doubled the database load"
+paraphrase = "how does work get from the central coordinator to the processes that execute it?"
+indirect = "the dispatcher hands jobs to workers over AMQP; I need that for development"
+
+[[fact]]
+id = "replicas"
+kind = "fact"
+title = "{subject} runs {value} replicas"
+description = "How many {subject} replicas production runs."
+body = "Production runs {value} {subject} replicas behind the load balancer; the autoscaler never goes below that."
+subject = "api server"
+subjects = ["worker pool", "scheduler", "dispatcher", "admin console"]
+value = "three"
+values = ["two", "five", "ten", "one"]
+old_value = "four"
+verbatim = "replicas behind the load balancer autoscaler"
+paraphrase = "how many copies of the backend serve traffic in prod?"
+
+[[fact]]
+id = "test-style"
+kind = "preference"
+title = "{subject}: the user wants {value}"
+description = "How the user likes {subject} written."
+body = "For {subject}, the user wants {value}; example checks alone are not enough for them."
+subject = "tests"
+subjects = ["benchmarks", "examples", "fixtures", "docs"]
+value = "property tests with hegel"
+values = ["snapshot tests", "table-driven cases", "doc tests", "golden files"]
+old_value = "example-based unit tests"
+verbatim = "property tests hegel"
+paraphrase = "what style of automated checking does the user expect for new code?"
+
+# Background: templates over `subjects` and `values` like the facts', on
+# the same service, answering nothing asked above.
+
+[[background]]
+kind = "fact"
+title = "{subject} dashboard shows {value}"
+description = "What the {subject} dashboard shows."
+body = "The {subject} dashboard in Grafana shows {value}, refreshed every minute; alerts link to it."
+subjects = ["queue depth", "worker health", "api latency", "tenant usage", "billing", "storage growth", "deploys"]
+values = ["p50 and p99", "error rates", "hourly totals", "a heatmap", "per-tenant rows", "the last seven days", "deploy annotations"]
+
+[[background]]
+kind = "fact"
+title = "{subject} owns {value}"
+description = "Who to ask about {value}."
+body = "Questions about {value} go to the {subject}; they review changes to it within a day."
+subjects = ["platform team", "payments team", "growth team", "infra team", "data team", "security team", "support team"]
+values = ["the helm charts", "the billing code", "the signup flow", "Terraform", "the warehouse", "the auth service", "the status page"]
+
+[[background]]
+kind = "fact"
+title = "{subject} flag is {value}"
+description = "Where the {subject} feature flag stands."
+body = "The `{subject_id}` flag is {value}; flip it in the admin console, not in code."
+subjects = ["new editor", "bulk export", "sso login", "dark mode", "usage alerts", "api v2", "smart digests"]
+values = ["on for staff only", "off everywhere", "on for ten percent", "on for beta tenants", "being removed", "on everywhere", "on in staging"]
+
+[[background]]
+kind = "fact"
+title = "{subject} benchmark takes {value}"
+description = "How long the {subject} benchmark runs."
+body = "`cargo bench --bench {subject_id}` runs in {value} on the CI runner; compare against the stored baseline."
+subjects = ["enqueue", "dequeue", "serialize", "schedule parse", "tenant lookup", "hash ring", "compression"]
+values = ["two seconds", "forty seconds", "a minute", "five minutes", "ten seconds", "half a second", "twenty seconds"]
+
+[[background]]
+kind = "convention"
+title = "{subject} code uses {value}"
+description = "The crate harbor uses for {subject}."
+body = "For {subject}, the code uses the `{value}` crate; do not add a second crate for the same job."
+subjects = ["http clients", "json", "time", "cli parsing", "async", "error types", "hashing"]
+values = ["reqwest", "serde_json", "jiff", "clap", "tokio", "thiserror", "blake3"]
+
+[[background]]
+kind = "fact"
+title = "{subject} on-call rotates {value}"
+description = "When the {subject} on-call rotation changes hands."
+body = "The {subject} on-call rotation changes hands {value}; handover notes go in the incident channel."
+subjects = ["platform", "payments", "data", "security", "support", "infra", "growth"]
+values = ["every Monday", "every two weeks", "daily", "every Friday", "monthly", "every Wednesday", "each sprint"]
+
+[[background]]
+kind = "fact"
+title = "{subject} docs are built with {value}"
+description = "How the {subject} documentation is published."
+body = "Docs for the {subject} are written for {value}; the site rebuilds on every merge."
+subjects = ["sdk", "cli", "admin console", "helm chart", "webhooks", "billing", "onboarding"]
+values = ["mdBook", "Docusaurus", "the README", "rustdoc", "Notion", "Hugo", "the wiki"]
+
+[[background]]
+kind = "convention"
+title = "{subject} incident reviews are {value}"
+description = "How incidents in the {subject} are reviewed."
+body = "After an incident in the {subject}, the review is {value}; action items get tickets the same week."
+subjects = ["api", "queue", "scheduler", "storage", "billing", "auth", "search"]
+values = ["blameless and written", "held on Thursdays", "shared company-wide", "kept to one page", "due in five days", "led by on-call", "recorded"]

@@ -5,6 +5,7 @@
 pub mod colbert;
 #[cfg(feature = "docbert")]
 pub mod docbert;
+pub mod eval;
 pub mod index;
 pub mod memory;
 pub mod note;

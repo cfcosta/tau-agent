@@ -42,6 +42,19 @@ pub fn recall(
     query: &str,
     budget: usize,
 ) -> anyhow::Result<Vec<Hit>> {
+    recall_with(notes, index, query, budget, true)
+}
+
+/// [`recall`], with the hop along links when `hops` is set, and without
+/// it (search alone, superseded notes weighed down) when not: the
+/// evaluation measures what the hop adds.
+pub fn recall_with(
+    notes: &Notes,
+    index: &dyn Index,
+    query: &str,
+    budget: usize,
+    hops: bool,
+) -> anyhow::Result<Vec<Hit>> {
     if budget == 0 {
         return Ok(Vec::new());
     }
@@ -61,7 +74,7 @@ pub fn recall(
         .collect();
     seeds.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-    let reserve = budget / 3;
+    let reserve = if hops { budget / 3 } else { 0 };
     let first = seeds.len().min(budget - reserve);
     let mut picked: Vec<(String, Option<(String, LinkType)>)> = seeds[..first]
         .iter()
@@ -70,7 +83,8 @@ pub fn recall(
     let taken = |picked: &[(String, Option<(String, LinkType)>)], id: &str| {
         picked.iter().any(|(seen, _)| seen == id)
     };
-    'hop: for seed in seeds[..first].iter().map(|(id, _)| id) {
+    let hop_from = if hops { &seeds[..first] } else { &[][..] };
+    'hop: for seed in hop_from.iter().map(|(id, _)| id) {
         for (other, kind) in linked(notes, seed) {
             if picked.len() >= budget {
                 break 'hop;
