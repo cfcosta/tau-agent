@@ -3,3 +3,4 @@
 //! research behind it is `docs/research/memory.md`).
 
 pub mod note;
+pub mod store;

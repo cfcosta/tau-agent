@@ -1,74 +1,11 @@
 //! Notes read back as they were written, and links come from the front
 //! matter and the body alike.
 
+mod common;
+
+use common::{id, note};
 use hegel::{TestCase, generators as gs};
-use tau_memory::note::{
-    By,
-    Link,
-    LinkType,
-    Note,
-    NoteType,
-    Source,
-    is_id,
-    slug,
-    wiki_links,
-};
-
-#[hegel::composite]
-fn id(tc: TestCase) -> String {
-    tc.draw(gs::from_regex("[a-z0-9][a-z0-9-]{0,20}"))
-}
-
-/// One line of any text, not blank.
-#[hegel::composite]
-fn line(tc: TestCase) -> String {
-    let text: String =
-        tc.draw(gs::text().exclude_characters("\n\r").max_size(40));
-    format!("x{text}")
-}
-
-#[hegel::composite]
-fn note(tc: TestCase) -> Note {
-    let links = (0..tc.draw(gs::integers::<usize>().max_value(3)))
-        .map(|_| Link {
-            to: tc.draw(id()),
-            kind: tc.draw(gs::sampled_from(LinkType::ALL.to_vec())),
-            why: tc.draw(gs::optional(line())),
-        })
-        .collect();
-    let created: u64 = tc.draw(gs::integers::<u64>().max_value(1 << 50));
-    Note {
-        id: tc.draw(id()),
-        title: tc.draw(line()),
-        description: tc.draw(line()),
-        kind: tc.draw(gs::sampled_from(NoteType::ALL.to_vec())),
-        tags: tc.draw(gs::vecs(line()).max_size(3)),
-        created,
-        updated: created,
-        valid_from: created,
-        valid_to: tc
-            .draw(gs::optional(gs::integers::<u64>().max_value(1 << 50))),
-        stale: tc.draw(gs::optional(line())),
-        source: Source {
-            by: tc.draw(gs::sampled_from(vec![
-                By::User,
-                By::Agent,
-                By::Inferred,
-            ])),
-            run: tc.draw(gs::optional(line())),
-            turn: tc.draw(gs::optional(gs::integers::<u32>())),
-            commit: tc.draw(gs::optional(line())),
-            files: tc.draw(gs::vecs(line()).max_size(3)),
-        },
-        links,
-        // Any body, fence lines included: only the first closes the
-        // front matter.
-        body: tc.draw(hegel::one_of!(
-            gs::text().max_size(200),
-            gs::just("+++\n+++\nstill body\n".to_owned()),
-        )),
-    }
-}
+use tau_memory::note::{Link, LinkType, Note, is_id, slug, wiki_links};
 
 #[hegel::test(test_cases = 300)]
 fn a_note_reads_back_as_written(tc: TestCase) {
