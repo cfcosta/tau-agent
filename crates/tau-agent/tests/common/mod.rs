@@ -2,8 +2,13 @@
 
 #![allow(dead_code)]
 
-use tau_agent::event::RunEvent;
-use tau_ai::message::Message;
+use std::time::Duration;
+
+use tau_agent::{
+    event::{LimitKind, RunEvent},
+    limits::Limits,
+};
+use tau_ai::message::{Message, Usage};
 use tau_store::{Entry, Store};
 
 /// The run's stored transcript, as messages.
@@ -61,4 +66,27 @@ pub fn assert_grammar(events: &[RunEvent]) {
         }
     }
     assert!(in_turn.is_none(), "a turn never ended");
+}
+
+/// The reference: each limit, checked in order turns, tokens, cost, time,
+/// reached when the value meets or passes it.
+pub fn reference(
+    limits: &Limits,
+    turns: u32,
+    usage: &Usage,
+    elapsed: Duration,
+) -> Option<LimitKind> {
+    let tokens =
+        usage.input + usage.output + usage.cache_read + usage.cache_write;
+    [
+        (limits.max_turns.map(|m| turns >= m), LimitKind::Turns),
+        (limits.max_tokens.map(|m| tokens >= m), LimitKind::Tokens),
+        (
+            limits.max_usd.map(|m| usage.cost.total >= m),
+            LimitKind::Usd,
+        ),
+        (limits.timeout.map(|m| elapsed >= m), LimitKind::Time),
+    ]
+    .into_iter()
+    .find_map(|(hit, kind)| (hit == Some(true)).then_some(kind))
 }

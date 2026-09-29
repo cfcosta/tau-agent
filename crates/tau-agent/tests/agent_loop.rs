@@ -14,10 +14,15 @@ use tau_agent::{
     event::{LimitKind, RunEvent, StopReason},
     hook::{Decision, HookCtx, RunHook, ToolCall},
     limits::Limits,
-    runner::TRUNCATED,
+    runner::{CANCELLED, TRUNCATED},
     tool::{AgentTool, ExecutionMode, ToolCtx, ToolOutput},
 };
-use tau_ai::message::{AssistantBlock, Message, StopReason as MessageStop};
+use tau_ai::message::{
+    AssistantBlock,
+    InputBlock,
+    Message,
+    StopReason as MessageStop,
+};
 use tau_store::Store;
 use tau_testing::{block_on, scripted::ScriptedModel};
 
@@ -240,46 +245,137 @@ fn loop_over_generated_scripts_body(tc: TestCase) {
             .clock(counter_clock());
         let run = agent.start("go", &store);
         let id = run.id();
+        let started = Instant::now();
+        // How many events the recorder held when the cancel fired: the
+        // runtime runs one task at a time, so this places the cancel
+        // exactly within the event sequence.
+        let cancelled_at: Arc<Mutex<Option<usize>>> = Arc::default();
         if let Some(ms) = cancel_at {
-            let cancel = Arc::new(run);
-            let handle = cancel.clone();
+            let control = run.control();
+            let recorder = recorder.clone();
+            let cancelled_at = cancelled_at.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(ms)).await;
-                handle.cancel();
+                control.cancel();
+                *cancelled_at.lock().unwrap() = Some(recorder.events().len());
             });
-            // Wait for the run through a second handle: poll the store.
-            drop(cancel);
-            loop {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                if recorder
-                    .events()
-                    .iter()
-                    .any(|e| matches!(e, RunEvent::RunEnd { .. }))
-                {
-                    break;
-                }
-            }
+        }
+        let outcome = run.outcome().await.unwrap();
+        // A cancel that fires after the run ended changes nothing.
+        let cancelled_at = *cancelled_at.lock().unwrap();
+        let events = recorder.events();
+        let transcript = stored(&store, &id.0).await;
+
+        // The run checks for a cancel when a turn's response and tools are
+        // done, just before its `TurnEnd`, and a cancel during a response
+        // aborts it. So the run was cancelled exactly when the cancel came
+        // before the last `TurnEnd`; after it, the run had already stopped.
+        let last_turn_end = events
+            .iter()
+            .rposition(|e| matches!(e, RunEvent::TurnEnd { .. }))
+            .expect("every run takes a turn");
+        if cancelled_at.is_some_and(|at| at <= last_turn_end) {
+            tc.event("cancel before end");
+            assert_eq!(outcome.stop, StopReason::Cancelled);
         } else {
-            let outcome = run.outcome().await.unwrap();
+            if cancel_at.is_some() {
+                tc.event("cancel after end");
+            }
             assert_eq!(outcome.stop, StopReason::Stop);
             assert_eq!(outcome.text, "done");
-            let transcript = stored(&store, &id.0).await;
-            let (mut input, mut output) = (0, 0);
-            for message in &transcript {
-                if let Message::Assistant(a) = message {
-                    input += a.usage.input;
-                    output += a.usage.output;
-                }
-            }
-            assert_eq!(
-                (outcome.usage.input, outcome.usage.output),
-                (input, output)
-            );
         }
-        let events = recorder.events();
-        assert_grammar(&events);
+        let (mut input, mut output) = (0, 0);
+        for message in &transcript {
+            if let Message::Assistant(a) = message {
+                input += a.usage.input;
+                output += a.usage.output;
+            }
+        }
+        assert_eq!(
+            (outcome.usage.input, outcome.usage.output),
+            (input, output)
+        );
+        if let (Some(at), Some(ms)) = (cancelled_at, cancel_at) {
+            // Nothing starts after a cancel, and running tools stop at it.
+            assert!(
+                events[at..]
+                    .iter()
+                    .all(|e| !matches!(e, RunEvent::ToolStart { .. })),
+                "a tool started after the cancel"
+            );
+            let cancel_instant = started + Duration::from_millis(ms);
+            for interval in log.lock().unwrap().iter() {
+                assert!(
+                    interval.end <= cancel_instant,
+                    "a tool ran past the cancel"
+                );
+            }
+        }
 
-        let transcript = stored(&store, &id.0).await;
+        // Every result answers its own call: the scripted calls pair with
+        // the transcript's call blocks turn by turn, in source order.
+        let mut scripted: std::collections::HashMap<String, &ScriptedCall> =
+            Default::default();
+        let assistant_turns = transcript.iter().filter_map(|m| match m {
+            Message::Assistant(a) => Some(a),
+            _ => None,
+        });
+        for (message, calls) in assistant_turns.zip(&turns) {
+            let ids = message.content.iter().filter_map(|b| match b {
+                AssistantBlock::ToolCall(c) => Some(c.id.clone()),
+                _ => None,
+            });
+            for (call_id, call) in ids.zip(calls) {
+                scripted.insert(call_id, call);
+            }
+        }
+        for message in &transcript {
+            let Message::ToolResult(result) = message else {
+                continue;
+            };
+            let call = scripted[&result.tool_call_id];
+            assert_eq!(result.tool_name, call.tool);
+            let text: String = result
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    InputBlock::Text(t) => Some(t.text.as_str()),
+                    InputBlock::Image(_) => None,
+                })
+                .collect();
+            let end = events
+                .iter()
+                .position(|e| {
+                    matches!(e, RunEvent::ToolEnd { call_id, .. }
+                        if *call_id == result.tool_call_id)
+                })
+                .expect("every result has its ToolEnd");
+            // A call that ended after the cancel may have been cut short.
+            if cancelled_at.is_some_and(|at| end >= at)
+                && result.is_error
+                && (text == "cancelled" || text == CANCELLED)
+            {
+                continue;
+            }
+            let failed = call.tool == "missing" || call.fail;
+            assert_eq!(result.is_error, failed, "{result:?} for {call:?}");
+            let want = if call.tool == "missing" {
+                "Tool missing not found".to_owned()
+            } else if call.fail {
+                "probe failed".to_owned()
+            } else {
+                format!("slept {}", call.ms)
+            };
+            assert_eq!(text, want, "result for {call:?}");
+        }
+        if turns.iter().flatten().any(|c| c.tool == "serial") {
+            tc.event("serial batch");
+        }
+        if turns.iter().flatten().any(|c| c.tool == "missing") {
+            tc.event("missing tool");
+        }
+
+        assert_grammar(&events);
         assert_results_follow_calls(&transcript);
 
         // ToolStart comes in source order within each turn, and every

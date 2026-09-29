@@ -19,6 +19,7 @@ use tau_agent::{
     agent::{Agent, AgentError},
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
+use tau_ai::message::Message;
 use tau_store::{Entry, Status, Store};
 use tau_testing::scripted::ScriptedModel;
 
@@ -157,6 +158,26 @@ fn a_failed_turn_write_leaves_no_partial_turn(tc: TestCase) {
         assert_eq!(roles, expected);
         let record = store.run(&id.0).await.unwrap().unwrap();
         assert_eq!(record.output_tokens, 10 * widths.len() as i64);
+        // Input counts cached tokens too; the stored replies say how many.
+        let input: u64 = entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Message { role, body } if role == "assistant" => {
+                    let Message::Assistant(reply) =
+                        serde_json::from_str(body).unwrap()
+                    else {
+                        unreachable!("an assistant entry")
+                    };
+                    Some(
+                        reply.usage.input
+                            + reply.usage.cache_read
+                            + reply.usage.cache_write,
+                    )
+                }
+                _ => None,
+            })
+            .sum();
+        assert_eq!(record.input_tokens, input as i64);
         // The run could not record its end either.
         assert_eq!(record.status, Status::Running);
     });

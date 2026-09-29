@@ -6,7 +6,10 @@ use std::{collections::HashMap, time::Duration};
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators::{self as gs, PrintableGenerator},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -30,7 +33,7 @@ use tau_store::{RunKind, Status, Store};
 use tau_testing::{block_on, scripted::ScriptedModel};
 
 mod common;
-use common::{assert_grammar, stored};
+use common::{assert_grammar, reference, stored};
 
 /// Runs started with a workflow id are grouped under it: the store
 /// records the id, and the workflow's cost adds up the runs of each
@@ -80,6 +83,7 @@ fn runs_are_grouped_by_workflow() {
     Deserialize,
     JsonSchema,
     hegel::PrettyPrintable,
+    hegel::DefaultGenerator,
 )]
 struct Changes {
     features: Vec<String>,
@@ -96,29 +100,21 @@ struct Changes {
     Deserialize,
     JsonSchema,
     hegel::PrettyPrintable,
+    hegel::DefaultGenerator,
 )]
 struct Breaking {
     summary: String,
     severity: Option<u8>,
 }
 
-#[hegel::composite]
-fn changes(tc: &TestCase) -> Changes {
+/// A [`Changes`] with short strings and lists, so a shrunk failure
+/// stays readable.
+fn changes() -> impl PrintableGenerator<Changes> {
     let text = || gs::text().max_size(20);
-    let breaking = if tc.draw(gs::booleans()) {
-        Some(Breaking {
-            summary: tc.draw(text()),
-            severity: tc.draw(gs::optional(gs::integers::<u8>())),
-        })
-    } else {
-        None
-    };
-    Changes {
-        features: tc.draw(gs::vecs(text()).max_size(4)),
-        fixes: tc.draw(gs::vecs(text()).max_size(4)),
-        breaking,
-        approved: tc.draw(gs::booleans()),
-    }
+    gs::default::<Changes>()
+        .features(gs::vecs(text()).max_size(4))
+        .fixes(gs::vecs(text()).max_size(4))
+        .breaking(gs::optional(gs::default::<Breaking>().summary(text())))
 }
 
 /// Round trip through a typed run: whatever value the model's final
@@ -739,12 +735,13 @@ fn a_sub_agent_tool_outside_a_run_fails() {
 
 /// Limits over drawn scripts, against a model: the lead's turns call a
 /// sub-agent a drawn number of times and cost drawn amounts, and so do
-/// the sub-agent's. The model adds up, after each lead turn, the usage
-/// the lead's and every finished child's `TurnEnd` events report. The
-/// run ends with `StopReason::Limit` if and only if some turn's total
-/// reaches a limit, at the first such turn, with the kind
-/// `Limits::reached` names; otherwise it stops normally after its last
-/// turn.
+/// the sub-agent's. The model adds up, after each lead turn, the cost the
+/// script gave the lead's turns and the children they started, and the
+/// tokens the model reported in the stored transcripts of the lead and
+/// its children. The run ends with `StopReason::Limit` if and only if
+/// some turn's total reaches a limit, at the first such turn, with the
+/// kind the plain reference in `common` names; otherwise it stops
+/// normally after its last turn.
 #[hegel::test(test_cases = 60)]
 fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
     let costs = || gs::sampled_from(vec![0.0, 0.25, 0.5]);
@@ -764,8 +761,10 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
         max_turns: tc.draw(gs::optional(
             gs::integers::<u32>().min_value(1).max_value(5),
         )),
+        // A lead turn reports up to ~1,000 input tokens plus what the
+        // cache simulation adds, so a few thousand is often reached.
         max_tokens: tc
-            .draw(gs::optional(gs::integers::<u64>().max_value(20_000))),
+            .draw(gs::optional(gs::integers::<u64>().max_value(4_000))),
         max_usd: tc
             .draw(gs::optional(gs::sampled_from(vec![0.25, 0.5, 1.0, 2.0]))),
         timeout: None,
@@ -808,36 +807,80 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
         let events: Vec<RunEvent> = run.events().collect().await;
         let outcome = run.outcome().await.unwrap();
 
-        let mut total = tau_ai::message::Usage::default();
-        let mut expected = None;
-        let mut lead_turns = 0;
+        let lead_turns: Vec<tau_ai::message::AssistantMessage> =
+            stored(&store, &lead_id.0)
+                .await
+                .into_iter()
+                .filter_map(|m| match m {
+                    Message::Assistant(a) => Some(a),
+                    _ => None,
+                })
+                .collect();
+        // The children each lead turn started, from where their
+        // `RunStart` falls among the lead's turns.
+        let mut children_of: Vec<Vec<RunId>> = vec![Vec::new(); turns.len()];
+        let mut lead_turn = 0;
         for event in &events {
-            let RunEvent::TurnEnd { run, turn, usage } = event else {
-                continue;
-            };
-            total.input += usage.input;
-            total.output += usage.output;
-            total.cache_read += usage.cache_read;
-            total.cache_write += usage.cache_write;
-            total.cost.total += usage.cost.total;
-            if *run == lead_id {
-                lead_turns = *turn;
-                if expected.is_none() {
-                    expected = limits
-                        .reached(*turn, &total, Duration::ZERO)
-                        .map(|kind| (StopReason::Limit(kind), *turn));
+            match event {
+                RunEvent::TurnStart { run, turn } if *run == lead_id => {
+                    lead_turn = *turn as usize;
                 }
+                RunEvent::RunStart {
+                    run,
+                    parent: Some(parent),
+                    ..
+                } if *parent == lead_id => {
+                    children_of[lead_turn - 1].push(run.clone());
+                }
+                _ => {}
             }
         }
+
+        let tokens = |usage: &tau_ai::message::Usage| {
+            usage.input + usage.output + usage.cache_read + usage.cache_write
+        };
+        // The reference only adds token kinds up, so every token counts
+        // as `input` here.
+        let mut total = tau_ai::message::Usage::default();
+        let mut child_costs = child_costs.iter();
+        let mut expected = None;
+        for (i, &(calls, cost, _)) in turns.iter().enumerate() {
+            let Some(message) = lead_turns.get(i) else {
+                break;
+            };
+            // The last turn only answers.
+            let calls = if i + 1 == turns.len() { 0 } else { calls };
+            assert_eq!(children_of[i].len(), calls, "children of turn {i}");
+            total.cost.total += cost;
+            total.cost.total += child_costs.by_ref().take(calls).sum::<f64>();
+            total.input += tokens(&message.usage);
+            for child in &children_of[i] {
+                for message in stored(&store, &child.0).await {
+                    if let Message::Assistant(a) = message {
+                        total.input += tokens(&a.usage);
+                    }
+                }
+            }
+            let turn = i as u32 + 1;
+            if let Some(kind) = reference(&limits, turn, &total, Duration::ZERO)
+            {
+                expected = Some((StopReason::Limit(kind), turn));
+                break;
+            }
+        }
+        tc.event(format!("{:?}", outcome.stop));
         match expected {
             Some((stop, turn)) => {
                 assert_eq!(outcome.stop, stop, "{limits:?}");
-                assert_eq!(lead_turns, turn, "no turn after the limit");
-                tc.note(&format!("stopped by {stop:?} at turn {turn}"));
+                assert_eq!(
+                    lead_turns.len() as u32,
+                    turn,
+                    "no turn after the limit"
+                );
             }
             None => {
                 assert_eq!(outcome.stop, StopReason::Stop, "{limits:?}");
-                assert_eq!(lead_turns as usize, turns.len());
+                assert_eq!(lead_turns.len(), turns.len());
             }
         }
         assert_eq!(outcome.usage.cost.total, total.cost.total);

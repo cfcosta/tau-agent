@@ -1,4 +1,5 @@
-//! Run limits (`tau_agent::limits`), against a plain reference.
+//! Run limits (`tau_agent::limits`), against a plain reference
+//! (`common::reference`).
 
 use std::time::Duration;
 
@@ -6,28 +7,8 @@ use hegel::{TestCase, generators as gs};
 use tau_agent::{event::LimitKind, limits::Limits};
 use tau_ai::message::{Usage, UsageCost};
 
-/// The reference: each limit, checked in order turns, tokens, cost, time,
-/// reached when the value meets or passes it.
-fn reference(
-    limits: &Limits,
-    turns: u32,
-    usage: &Usage,
-    elapsed: Duration,
-) -> Option<LimitKind> {
-    let tokens =
-        usage.input + usage.output + usage.cache_read + usage.cache_write;
-    [
-        (limits.max_turns.map(|m| turns >= m), LimitKind::Turns),
-        (limits.max_tokens.map(|m| tokens >= m), LimitKind::Tokens),
-        (
-            limits.max_usd.map(|m| usage.cost.total >= m),
-            LimitKind::Usd,
-        ),
-        (limits.timeout.map(|m| elapsed >= m), LimitKind::Time),
-    ]
-    .into_iter()
-    .find_map(|(hit, kind)| (hit == Some(true)).then_some(kind))
-}
+mod common;
+use common::reference;
 
 #[hegel::test(test_cases = 500)]
 fn reached_matches_reference(tc: TestCase) {

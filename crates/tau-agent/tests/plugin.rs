@@ -4,7 +4,6 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::{Agent, AgentError},
@@ -393,11 +392,19 @@ fn tools_and_tool_hooks_are_per_run() {
 
 /// `before_stop` keeps a run going, one turn per continuation, until the
 /// plugin lets it stop or the run reaches `max_continuations`. Each
-/// continuation is a user message and a `Continued` event.
-#[hegel::test(test_cases = 60)]
-fn continuations_are_capped(tc: TestCase) {
-    let wanted = tc.draw(gs::integers::<u32>().max_value(5));
-    let cap = tc.draw(gs::integers::<u32>().max_value(4));
+/// continuation is a user message and a `Continued` event. Checked for
+/// every pair of wanted continuations (0–5) and cap (0–4): the whole
+/// domain is 30 runs, fewer than a property would draw.
+#[test]
+fn continuations_are_capped() {
+    for wanted in 0..=5 {
+        for cap in 0..=4 {
+            continuations_are_capped_at(wanted, cap);
+        }
+    }
+}
+
+fn continuations_are_capped_at(wanted: u32, cap: u32) {
     let turns = wanted.min(cap) + 1;
     block_on(async {
         let mut model = ScriptedModel::new();
