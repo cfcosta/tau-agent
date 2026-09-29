@@ -139,6 +139,12 @@ fn status_shows_written_files() {
         ])
     );
     assert_eq!(details["working_copy"]["empty"], json!(false));
+    // Details hold @'s diff for a caller to draw; the text leaves it
+    // to vcs_diff.
+    let (diff, _) = repo.ok("vcs_diff", json!({}));
+    assert_eq!(details["diff"].as_str(), Some(diff.as_str()));
+    assert_eq!(details["truncated"], json!(false));
+    assert!(!text.contains("diff --git"), "{text}");
 
     repo.ok("vcs_commit", json!({"message": "Add files"}));
     std::fs::remove_file(repo.path().join("hello.txt")).unwrap();

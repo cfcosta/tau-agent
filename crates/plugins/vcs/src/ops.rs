@@ -158,6 +158,7 @@ fn wc_line(snapshot: &Snapshot) -> anyhow::Result<(String, ChangeInfo)> {
 }
 
 pub(crate) fn status(worker: &mut Worker) -> anyhow::Result<Report> {
+    let settings = worker.workspace()?.settings().clone();
     let snapshot = session::snapshot(worker)?;
     let repo = snapshot.repo.as_ref();
     let wc = &snapshot.wc;
@@ -170,12 +171,16 @@ pub(crate) fn status(worker: &mut Worker) -> anyhow::Result<Report> {
         parent_infos.push(info);
     }
 
+    // The diff is for callers that draw it; the model asks vcs_diff.
     let parent_tree = block_on(wc.parent_tree(repo))?;
-    let changes = diff::changed_paths(
+    let (diff_text, changes) = diff::unified(
+        repo,
+        &settings,
         &parent_tree,
         &wc.tree(),
         &jj_lib::matchers::EverythingMatcher,
     )?;
+    let (diff_text, truncated) = diff::cut(diff_text);
     if changes.is_empty() {
         text.push_str("\nThe working copy has no changes.");
     } else {
@@ -222,6 +227,8 @@ pub(crate) fn status(worker: &mut Worker) -> anyhow::Result<Report> {
             "changes": changes,
             "conflicts": conflicts,
             "too_large": snapshot.too_large,
+            "diff": diff_text,
+            "truncated": truncated,
         }),
     })
 }

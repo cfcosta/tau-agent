@@ -124,7 +124,9 @@ A changed path is a `FileChange`:
   Then conflicted paths, and new files too large to snapshot, if there
   are any.
 - Details: `working_copy`, `parents`, `changes`, `conflicts` (paths),
-  `too_large` (`{ "path", "size" }`, the size in bytes).
+  `too_large` (`{ "path", "size" }`, the size in bytes), `diff` (`@`'s
+  diff as `vcs_diff` gives it, which the text leaves out) and
+  `truncated`.
 - Conflicts are data. jj keeps them in commits, and the files hold
   conflict markers that the model edits like any other text.
 
