@@ -274,7 +274,10 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
 - **After each turn** (`TurnEnd`) it ends the turn: if the working copy
   changed, it is committed (described `tau: run <id> turn <n>` unless
   the model described it) and an empty working copy starts on top.
-  Then it stores a `Link` record under the plugin name `workspace`:
+  In the same operation it points the run's local bookmark,
+  `tau/<run id>`, at the run's newest commit, so the run's work stays
+  findable by name after its workspace is gone. Then it stores a
+  `Link` record under the plugin name `workspace`:
 
   ```json
   { "turn": 2, "workspace": "0192…", "commit_id": "…", "change_id": "…", "changed": true }

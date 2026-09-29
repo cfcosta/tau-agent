@@ -11,9 +11,9 @@ use jj_lib::{
     commit::Commit,
     matchers::{EverythingMatcher, FilesMatcher},
     object_id::ObjectId as _,
-    op_store::OperationId,
+    op_store::{OperationId, RefTarget},
     operation::Operation,
-    ref_name::WorkspaceName,
+    ref_name::{RefName, WorkspaceName},
     repo::{ReadonlyRepo, Repo},
     repo_path::RepoPathBuf,
     revset::ResolvedRevsetExpression,
@@ -28,6 +28,7 @@ use crate::{
     diff::{self, FileChange},
     session::{
         self,
+        BOOKMARK_ATTRIBUTE,
         Snapshot,
         TOOL_ATTRIBUTE,
         UNDO_ATTRIBUTE,
@@ -484,47 +485,67 @@ pub struct TurnCommit {
 pub(crate) fn checkpoint(
     worker: &mut Worker,
     message: String,
+    bookmark: &str,
 ) -> anyhow::Result<TurnCommit> {
     let name = workspace_name(worker)?;
     let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, wc| {
-        if block_on(wc.is_empty(tx.repo()))? {
+        let turn = if block_on(wc.is_empty(tx.repo()))? {
             let parent = wc
                 .parent_ids()
                 .first()
                 .ok_or_else(|| anyhow!("The working copy has no parent"))?;
             let parent = tx.repo().store().get_commit(parent)?;
-            return Ok(TurnCommit {
+            TurnCommit {
                 commit_id: parent.id().hex(),
                 change_id: parent.change_id().reverse_hex(),
                 changed: false,
                 paths: Vec::new(),
-            });
-        }
-        let text = if wc.description().trim().is_empty() {
-            description(&message)
+            }
         } else {
-            wc.description().to_owned()
+            let text = if wc.description().trim().is_empty() {
+                description(&message)
+            } else {
+                wc.description().to_owned()
+            };
+            let parent_tree = block_on(wc.parent_tree(tx.repo()))?;
+            let paths = diff::changed_paths(
+                &parent_tree,
+                &wc.tree(),
+                &jj_lib::matchers::EverythingMatcher,
+            )?
+            .into_iter()
+            .map(|change| change.path)
+            .collect();
+            let committed = session::write_commit(tx, |repo| {
+                repo.rewrite_commit(wc).set_description(text.clone())
+            })?;
+            block_on(tx.repo_mut().rebase_descendants())?;
+            block_on(tx.repo_mut().check_out(name, &committed))?;
+            TurnCommit {
+                commit_id: committed.id().hex(),
+                change_id: committed.change_id().reverse_hex(),
+                changed: true,
+                paths,
+            }
         };
-        let parent_tree = block_on(wc.parent_tree(tx.repo()))?;
-        let paths = diff::changed_paths(
-            &parent_tree,
-            &wc.tree(),
-            &jj_lib::matchers::EverythingMatcher,
-        )?
-        .into_iter()
-        .map(|change| change.path)
-        .collect();
-        let committed = session::write_commit(tx, |repo| {
-            repo.rewrite_commit(wc).set_description(text.clone())
-        })?;
-        block_on(tx.repo_mut().rebase_descendants())?;
-        block_on(tx.repo_mut().check_out(name, &committed))?;
-        Ok(TurnCommit {
-            commit_id: committed.id().hex(),
-            change_id: committed.change_id().reverse_hex(),
-            changed: true,
-            paths,
-        })
+        // The run's bookmark names its newest commit, so its work
+        // stays findable after its workspace is gone. A turn that
+        // changed nothing finds it there already, and writes nothing.
+        let head = CommitId::try_from_hex(&turn.commit_id)
+            .ok_or_else(|| anyhow!("A commit id is not hex"))?;
+        let name = RefName::new(bookmark);
+        if tx.repo().view().get_local_bookmark(name).as_normal() != Some(&head)
+        {
+            tx.repo_mut()
+                .set_local_bookmark_target(name, RefTarget::normal(head));
+            if !turn.changed {
+                tx.set_attribute(
+                    BOOKMARK_ATTRIBUTE.to_owned(),
+                    bookmark.to_owned(),
+                );
+            }
+        }
+        Ok(turn)
     })?;
     Ok(turn)
 }
@@ -690,7 +711,10 @@ fn undoable(
             );
         };
         let metadata = op.metadata();
-        if undone.remove(op.id()) || metadata.is_snapshot {
+        if undone.remove(op.id())
+            || metadata.is_snapshot
+            || metadata.attributes.contains_key(BOOKMARK_ATTRIBUTE)
+        {
             op = parent.clone();
             continue;
         }

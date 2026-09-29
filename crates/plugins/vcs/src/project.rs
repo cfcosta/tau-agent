@@ -253,6 +253,18 @@ impl Project {
         Ok(id.hex())
     }
 
+    /// The commit the local bookmark `name` points at, as a full commit
+    /// id in hex. `None` when there is no such bookmark, or it has
+    /// conflicting targets.
+    pub fn bookmark(&self, name: &str) -> anyhow::Result<Option<String>> {
+        let repo = self.load()?;
+        Ok(repo
+            .view()
+            .get_local_bookmark(RefName::new(name))
+            .as_normal()
+            .map(|id| id.hex()))
+    }
+
     /// Makes run `name`'s workspace, on a new empty commit on top of
     /// `base` (a full commit id in hex), with `base`'s files checked out,
     /// and opens it. Opens it as it is if it exists already.

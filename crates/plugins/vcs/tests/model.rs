@@ -492,7 +492,8 @@ impl Machine {
     #[rule]
     fn checkpoint(&mut self, _tc: TestCase) {
         self.wc.tree = self.disk();
-        let turn = block_on(self.vcs.checkpoint("tau: run 1 turn 1")).unwrap();
+        let turn = block_on(self.vcs.checkpoint("tau: run 1 turn 1", "tau/1"))
+            .unwrap();
         let parent = self.parent_tree();
         if self.wc.tree == parent {
             assert!(!turn.changed);
@@ -777,7 +778,8 @@ fn fresh() -> Machine {
 fn undo_refuses_a_turn_checkpoint() {
     let machine = fresh();
     std::fs::write(machine.dir.path().join("a.txt"), "a\n").unwrap();
-    let turn = block_on(machine.vcs.checkpoint("tau: run 1 turn 1")).unwrap();
+    let turn =
+        block_on(machine.vcs.checkpoint("tau: run 1 turn 1", "tau/1")).unwrap();
     assert!(turn.changed);
     let err = machine.call("vcs_undo", json!({})).unwrap_err();
     assert!(

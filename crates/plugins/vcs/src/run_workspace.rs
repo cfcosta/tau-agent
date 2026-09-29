@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use tau_agent::{
     event::RunEvent,
     plugin::{Plugin, PluginCtx, PluginRun, RunPlan},
+    tool::RunId,
 };
 
 use crate::{
@@ -30,6 +31,11 @@ pub type CommitObserver = Arc<dyn Fn(&TurnCommit) + Send + Sync>;
 
 /// The name the plugin stores its links under.
 pub const PLUGIN: &str = "workspace";
+
+/// The local bookmark on a run's newest commit: `tau/<run id>`.
+pub fn bookmark(run: &RunId) -> String {
+    format!("tau/{}", run.0)
+}
 
 /// A turn, and the commit that holds the files it left. Stored as the
 /// plugin's record after each turn.
@@ -162,7 +168,10 @@ impl PluginRun for Turns {
         }
         let record = match self
             .vcs
-            .checkpoint(format!("tau: run {} turn {turn}", ctx.run.0))
+            .checkpoint(
+                format!("tau: run {} turn {turn}", ctx.run.0),
+                bookmark(&ctx.run),
+            )
             .await
         {
             Ok(commit) => {

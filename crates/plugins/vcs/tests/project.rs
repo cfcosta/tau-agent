@@ -21,7 +21,7 @@ use tau_vcs::{
     RunWorkspace,
     UpdateFrom,
     clone_bare,
-    run_workspace::PLUGIN,
+    run_workspace::{PLUGIN, bookmark},
 };
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -318,6 +318,11 @@ fn turns_are_commits_and_forks_start_from_one() {
         // A turn that changed nothing points at the commit before it.
         assert_eq!(turns[2].1.commit_id, turns[1].1.commit_id);
         assert_ne!(turns[0].1.commit_id, turns[1].1.commit_id);
+        // The run's bookmark follows its newest commit.
+        assert_eq!(
+            project.bookmark(&bookmark(&outcome.run)).unwrap(),
+            Some(turns[1].1.commit_id.clone())
+        );
 
         // A fork at turn 1 starts from turn 1's files, in a workspace of
         // its own, and leaves the first run's alone.
@@ -346,6 +351,16 @@ fn turns_are_commits_and_forks_start_from_one() {
         let mut names = project.workspaces().unwrap();
         names.sort();
         assert_eq!(names, ["first", "fork"]);
+        // The fork changed nothing, so its bookmark is where it started;
+        // the first run's has not moved.
+        assert_eq!(
+            project.bookmark(&bookmark(&forked.run)).unwrap(),
+            Some(turns[0].1.commit_id.clone())
+        );
+        assert_eq!(
+            project.bookmark(&bookmark(&outcome.run)).unwrap(),
+            Some(turns[1].1.commit_id.clone())
+        );
     });
 }
 
@@ -368,7 +383,7 @@ fn diffs_between_commits_count_lines_per_file() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(vcs.checkpoint("turn 1"))
+        .block_on(vcs.checkpoint("turn 1", "tau/r1"))
         .unwrap();
     assert!(turn.changed);
     assert_eq!(turn.paths, ["README.md", "new.txt"]);
@@ -531,7 +546,7 @@ fn check_diff_counts(fixture: &DiffFixture, files: &[Sides]) {
             }
         }
         runtime
-            .block_on(vcs.checkpoint(format!("side {side}")))
+            .block_on(vcs.checkpoint(format!("side {side}"), "tau/sides"))
             .unwrap()
             .commit_id
     };

@@ -111,15 +111,21 @@ impl Vcs {
         Self::spawn(dir.into(), identity)
     }
 
-    /// Ends a turn: commits what it changed, if anything, and starts an
-    /// empty working copy on top. See [`crate::TurnCommit`].
+    /// Ends a turn: commits what it changed, if anything, starts an
+    /// empty working copy on top, and points the local bookmark
+    /// `bookmark` at the run's newest commit, all in one operation. See
+    /// [`crate::TurnCommit`].
     pub async fn checkpoint(
         &self,
         message: impl Into<String>,
+        bookmark: impl Into<String>,
     ) -> anyhow::Result<crate::TurnCommit> {
         let message = message.into();
-        self.call(move |worker| crate::ops::checkpoint(worker, message))
-            .await
+        let bookmark = bookmark.into();
+        self.call(move |worker| {
+            crate::ops::checkpoint(worker, message, &bookmark)
+        })
+        .await
     }
 
     /// The directory the workspace was opened at.
