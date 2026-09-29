@@ -93,6 +93,7 @@ use crate::{
         PlanField,
         PluginStatus,
         RunView,
+        Stored,
         Tone,
         parse_diff,
     },
@@ -2794,13 +2795,33 @@ pub async fn history(
     let records = store.recent_runs(HISTORY).await?;
     let mut views = Vec::with_capacity(records.len());
     for record in &records {
-        let messages: Vec<Message> = store
-            .transcript(&record.id)
+        // The messages, and in place among them what tau-reasoning and
+        // the constitution recorded: the effort each message ran at, and
+        // the checks and verdicts on the calls.
+        let timeline: Vec<Stored> = store
+            .timeline(&record.id)
             .await?
             .into_iter()
             .filter_map(|entry| match entry {
-                Entry::Message { body, .. } => serde_json::from_str(&body).ok(),
+                Entry::Message { body, .. } => {
+                    serde_json::from_str(&body).ok().map(Stored::Message)
+                }
+                Entry::Plugin { plugin, body }
+                    if plugin == tau_reasoning::NAME
+                        || plugin == tau_constitution::NAME =>
+                {
+                    serde_json::from_str(&body)
+                        .ok()
+                        .map(|body| Stored::Record { plugin, body })
+                }
                 _ => None,
+            })
+            .collect();
+        let messages: Vec<&Message> = timeline
+            .iter()
+            .filter_map(|entry| match entry {
+                Stored::Message(message) => Some(message),
+                Stored::Record { .. } => None,
             })
             .collect();
         let mut users = messages.iter().filter_map(|message| match message {
@@ -2819,12 +2840,12 @@ pub async fn history(
             }
         }
         .unwrap_or_default();
-        let mut view = RunView::from_messages(
+        let mut view = RunView::from_timeline(
             RunId(record.id.clone().into()),
             title(&prompt),
             &record.agent,
             &record.model,
-            &messages,
+            &timeline,
         )
         .in_repo(
             stored_repo(store, &record.id)
@@ -2844,15 +2865,6 @@ pub async fn history(
             ),
         };
         view.finish_stored(stop, record.cost_usd);
-        // What the plugins recorded: the effort chosen, and the
-        // constitution's checks and verdicts on the calls.
-        for plugin in [tau_reasoning::NAME, tau_constitution::NAME] {
-            for body in store.records(&record.id, plugin).await? {
-                if let Ok(body) = serde_json::from_str(&body) {
-                    view.report(plugin, &body);
-                }
-            }
-        }
         let goal: Vec<serde_json::Value> = store
             .records(&record.id, tau_goal::NAME)
             .await?

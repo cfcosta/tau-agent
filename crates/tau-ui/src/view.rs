@@ -524,6 +524,14 @@ impl From<RunEvent> for RunUpdate {
     }
 }
 
+/// One entry of a stored run, in order: a message, or a record a
+/// plugin kept.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stored {
+    Message(Message),
+    Record { plugin: String, body: Value },
+}
+
 impl RunView {
     pub fn new(
         id: RunId,
@@ -558,9 +566,8 @@ impl RunView {
     }
 
     /// A stored run, rebuilt from its transcript: the user's messages,
-    /// the model's text and tool calls with their results. Plugin notes
-    /// and ledgers are not stored with the messages, so they are missing.
-    /// The caller sets the status and adds the stop.
+    /// the model's text and tool calls with their results. The caller
+    /// sets the status and adds the stop.
     pub fn from_messages(
         id: RunId,
         title: impl Into<String>,
@@ -570,75 +577,141 @@ impl RunView {
     ) -> Self {
         let mut view = Self::new(id, title, agent, model);
         for message in messages {
-            match message {
-                Message::User(user) => {
-                    let text = match &user.content {
-                        UserContent::Text(text) => text.clone(),
-                        UserContent::Blocks(blocks) => blocks
-                            .iter()
-                            .filter_map(|block| match block {
-                                InputBlock::Text(text) => {
-                                    Some(text.text.as_str())
-                                }
-                                InputBlock::Image(_) => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    };
-                    view.push_user(text);
+            view.push_message(message);
+        }
+        view.end_stored_turn();
+        view
+    }
+
+    /// [`Self::from_messages`], with the plugins' records shown where
+    /// they happened. The store writes a turn's messages when the turn
+    /// ends, after what plugins recorded during it, so a record shows
+    /// after the turn that follows it, once its tool cards exist.
+    /// tau-reasoning's is written as a message starts, so it shows
+    /// right after that message, as it does live.
+    pub fn from_timeline(
+        id: RunId,
+        title: impl Into<String>,
+        agent: impl Into<String>,
+        model: impl Into<String>,
+        timeline: &[Stored],
+    ) -> Self {
+        let mut view = Self::new(id, title, agent, model);
+        let mut starting: Vec<&Value> = Vec::new();
+        let mut during: Vec<(&str, &Value)> = Vec::new();
+        // Whether the turn the records in `during` belong to has begun.
+        let mut begun = false;
+        let flush = |view: &mut Self, during: &mut Vec<(&str, &Value)>| {
+            for (plugin, body) in during.drain(..) {
+                view.report(plugin, body);
+            }
+        };
+        for entry in timeline {
+            match entry {
+                Stored::Record { plugin, body }
+                    if plugin == tau_reasoning::NAME =>
+                {
+                    starting.push(body);
                 }
-                Message::Assistant(reply) => {
-                    // A turn is a reply and the results of its calls; the
-                    // next reply starts the next one.
-                    if view.turn > 0 {
-                        view.items.push(Item::TurnEnd { turn: view.turn });
+                Stored::Record { plugin, body } => {
+                    if during.is_empty() {
+                        begun = false;
                     }
-                    view.turn += 1;
-                    view.add_usage(&reply.usage);
-                    for block in &reply.content {
-                        match block {
-                            AssistantBlock::Text(text) => {
-                                view.items.push(Item::Text(text.text.clone()))
-                            }
-                            AssistantBlock::Thinking(thinking) => {
-                                view.items.push(Item::Thinking(
-                                    thinking.thinking.clone(),
-                                ))
-                            }
-                            AssistantBlock::ToolCall(call) => {
-                                let args =
-                                    Value::Object(call.arguments.clone());
-                                view.items.push(Item::Tool(ToolCard {
-                                    call_id: call.id.clone(),
-                                    tool: call.name.clone(),
-                                    summary: summarize_args(&args),
-                                    args,
-                                    state: ToolState::Running,
-                                    body: ToolBody::None,
-                                    from_plugin: None,
-                                    checks: Vec::new(),
-                                    pruned: None,
-                                    size: 0,
-                                }))
-                            }
+                    during.push((plugin, body));
+                }
+                Stored::Message(message) => {
+                    match message {
+                        Message::User(_) => flush(&mut view, &mut during),
+                        Message::Assistant(_) if begun => {
+                            flush(&mut view, &mut during)
                         }
+                        Message::Assistant(_) => begun = true,
+                        Message::ToolResult(_) => {}
                     }
-                }
-                Message::ToolResult(result) => {
-                    let output = ToolOutput {
-                        content: result.content.clone(),
-                        details: result.details.clone(),
-                    };
-                    if let Some(card) = view.tool_mut(&result.tool_call_id) {
-                        finish_tool(card, &output, result.is_error);
+                    view.push_message(message);
+                    if matches!(message, Message::User(_)) {
+                        for body in starting.drain(..) {
+                            view.report(tau_reasoning::NAME, body);
+                        }
                     }
                 }
             }
         }
-        if view.turn > 0 {
-            view.items.push(Item::TurnEnd { turn: view.turn });
+        flush(&mut view, &mut during);
+        for body in starting {
+            view.report(tau_reasoning::NAME, body);
         }
+        view.end_stored_turn();
         view
+    }
+
+    fn end_stored_turn(&mut self) {
+        if self.turn > 0 {
+            self.items.push(Item::TurnEnd { turn: self.turn });
+        }
+    }
+
+    fn push_message(&mut self, message: &Message) {
+        let view = self;
+        match message {
+            Message::User(user) => {
+                let text = match &user.content {
+                    UserContent::Text(text) => text.clone(),
+                    UserContent::Blocks(blocks) => blocks
+                        .iter()
+                        .filter_map(|block| match block {
+                            InputBlock::Text(text) => Some(text.text.as_str()),
+                            InputBlock::Image(_) => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                };
+                view.push_user(text);
+            }
+            Message::Assistant(reply) => {
+                // A turn is a reply and the results of its calls; the
+                // next reply starts the next one.
+                if view.turn > 0 {
+                    view.items.push(Item::TurnEnd { turn: view.turn });
+                }
+                view.turn += 1;
+                view.add_usage(&reply.usage);
+                for block in &reply.content {
+                    match block {
+                        AssistantBlock::Text(text) => {
+                            view.items.push(Item::Text(text.text.clone()))
+                        }
+                        AssistantBlock::Thinking(thinking) => view
+                            .items
+                            .push(Item::Thinking(thinking.thinking.clone())),
+                        AssistantBlock::ToolCall(call) => {
+                            let args = Value::Object(call.arguments.clone());
+                            view.items.push(Item::Tool(ToolCard {
+                                call_id: call.id.clone(),
+                                tool: call.name.clone(),
+                                summary: summarize_args(&args),
+                                args,
+                                state: ToolState::Running,
+                                body: ToolBody::None,
+                                from_plugin: None,
+                                checks: Vec::new(),
+                                pruned: None,
+                                size: 0,
+                            }))
+                        }
+                    }
+                }
+            }
+            Message::ToolResult(result) => {
+                let output = ToolOutput {
+                    content: result.content.clone(),
+                    details: result.details.clone(),
+                };
+                if let Some(card) = view.tool_mut(&result.tool_call_id) {
+                    finish_tool(card, &output, result.is_error);
+                }
+            }
+        }
     }
 
     /// Goes on on `model` at `effort`: the plan says so, and the context
@@ -1380,17 +1453,17 @@ impl RunView {
         let chose = choice.kind == "chose";
         let comparison = if chose { "above" } else { "below" };
         let outcome = if chose {
-            format!(
-                "so the run uses {}. It holds until the run stops.",
-                choice.effort
-            )
+            format!("so this message runs at {}.", choice.effort)
         } else {
             "so the run keeps the model's default.".to_owned()
         };
         self.push_note(PluginNote {
             plugin: plugin.to_owned(),
             text: if chose {
-                format!("picked **{}** reasoning for this run", choice.effort)
+                format!(
+                    "picked **{}** reasoning for this message",
+                    choice.effort
+                )
             } else {
                 "left reasoning at the default: not sure enough".to_owned()
             },

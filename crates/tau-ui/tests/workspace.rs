@@ -155,7 +155,7 @@ fn fork_mode_sends_the_chosen_turn(cx: &mut TestAppContext) {
             turn: Some(last),
             prompt: "try a longer backoff".into(),
             // A fork starts on its run's model and effort.
-            model: ModelChoice::new("gpt-5.5", Effort::High),
+            model: ModelChoice::new("gpt-5.5", Effort::Auto),
         })
     );
     // The next message is an ordinary one again: it goes on with the
@@ -222,7 +222,7 @@ fn forking_from_a_turn_sends_that_turn(cx: &mut TestAppContext) {
             run: run.clone(),
             turn: Some(2),
             prompt: "go another way".into(),
-            model: ModelChoice::new("gpt-5.5", Effort::High),
+            model: ModelChoice::new("gpt-5.5", Effort::Auto),
         })
     );
     workspace.read_with(&cx, |ws, _| {
@@ -467,7 +467,9 @@ fn a_fork_can_run_on_another_model(cx: &mut TestAppContext) {
     match events.borrow().last() {
         Some(WorkspaceEvent::Fork { turn, model, .. }) => {
             assert_eq!(*turn, Some(3));
-            assert_eq!(model, &ModelChoice::new("gpt-6-sol", Effort::High));
+            // tau-reasoning picked high for the run; the fork is scored
+            // again.
+            assert_eq!(model, &ModelChoice::new("gpt-6-sol", Effort::Auto));
         }
         other => panic!("expected a fork, got {other:?}"),
     }
@@ -782,7 +784,7 @@ fn a_message_to_a_finished_run_goes_on_with_it(cx: &mut TestAppContext) {
         Some(&WorkspaceEvent::Resume {
             run: run.clone(),
             prompt: "now add a test for it".into(),
-            model: ModelChoice::new("gpt-5.5", Effort::High),
+            model: ModelChoice::new("gpt-5.5", Effort::Auto),
         })
     );
     // If the host cannot, the run ends as it had.

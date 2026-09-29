@@ -27,12 +27,14 @@ use crate::{
 };
 
 impl Workspace {
-    /// The model and effort a run runs on, as its plan says.
+    /// The model and effort a run's next message goes to, as its plan
+    /// says. An effort a plugin picked counts as auto: each message is
+    /// scored again; only one someone chose stays.
     pub fn model_of(run: &RunView) -> ModelChoice {
         let effort = run
             .plan
             .iter()
-            .find(|field| field.name == "reasoning")
+            .find(|field| field.name == "reasoning" && field.set_by.is_none())
             .and_then(|field| Effort::parse(&field.value))
             .unwrap_or(Effort::Auto);
         ModelChoice::new(run.model.clone(), effort)

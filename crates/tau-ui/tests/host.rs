@@ -1148,3 +1148,91 @@ fn an_effort_the_model_does_not_take_runs_at_auto() {
     let reasoning = run.plan.iter().find(|field| field.name == "reasoning");
     assert_eq!(reasoning.unwrap().value, "auto");
 }
+
+/// Each message of a chat on auto is scored on its own: an effort
+/// tau-reasoning picked does not carry over. History shows each choice
+/// after the message it was for.
+#[test]
+fn each_message_is_scored_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("fine, thanks"))
+        .turn(|t| t.text("a long answer"));
+    let (host, mut events) = host_on(llm.clone(), dir.path());
+    // gpt-5.5's levels: none, low, medium, high, xhigh. The first
+    // message wants none, the second xhigh.
+    let wants = std::sync::Arc::new(std::sync::Mutex::new(vec![4, 0]));
+    let jev = tau_jev::fake::FakeJev::new(move |request| {
+        let level = wants.lock().unwrap().pop().unwrap();
+        let answers = request
+            .questions
+            .keys()
+            .map(|id| {
+                let probabilities = (0..5)
+                    .map(|n| {
+                        (n.to_string(), if n == level { 0.96 } else { 0.01 })
+                    })
+                    .collect();
+                (
+                    id.clone(),
+                    tau_jev::Answer::Score {
+                        score: level as f64,
+                        probabilities,
+                        confidence: 0.96,
+                    },
+                )
+            })
+            .collect();
+        Ok(tau_jev::fake::response(answers, request))
+    });
+    let host = host.with_jev(std::sync::Arc::new(jev));
+    let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
+    let mut view = host.start("how are you?", &auto, "").unwrap();
+    for event in until_end(&mut events) {
+        view.apply(&event);
+    }
+    wait_until_done(&host, &view.id);
+    // What the composer sends next: auto again, not the picked none.
+    let next = tau_ui::Workspace::model_of(&view);
+    assert_eq!(next, auto);
+    host.resume(&view.id, "prove the Riemann hypothesis", &next)
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &view.id);
+    use tau_ai::responses::request::ReasoningEffort;
+    let asked: Vec<_> = llm
+        .requests()
+        .iter()
+        .map(|request| request.settings.reasoning)
+        .collect();
+    assert_eq!(
+        asked,
+        [Some(ReasoningEffort::None), Some(ReasoningEffort::Xhigh)]
+    );
+
+    // History: each choice right after its message.
+    let history = host.history().unwrap();
+    let order: Vec<String> = history[0]
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::User(text) => Some(format!("user: {text}")),
+            Item::Plugin(note) if note.plugin == "tau-reasoning" => {
+                Some(note.text.clone())
+            }
+            Item::Text(text) => Some(format!("reply: {text}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "user: how are you?",
+            "picked **none** reasoning for this message",
+            "reply: fine, thanks",
+            "user: prove the Riemann hypothesis",
+            "picked **xhigh** reasoning for this message",
+            "reply: a long answer",
+        ]
+    );
+}
