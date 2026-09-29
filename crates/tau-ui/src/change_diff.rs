@@ -83,23 +83,7 @@ impl ChangeDiff {
     /// they are not that shape.
     pub fn parse(details: &Value) -> Option<Self> {
         let details = Details::deserialize(details).ok()?;
-        let mut files = parse_files(&details.diff);
-        // The tool's own list says what happened to each path, and
-        // holds the paths a cut diff never reached.
-        for change in &details.files {
-            match files.iter_mut().find(|file| file.path == change.path) {
-                Some(file) => file.kind = change.kind,
-                None if !details.truncated => files.push(FileDiff {
-                    path: change.path.clone(),
-                    kind: change.kind,
-                    hunks: Vec::new(),
-                    added: 0,
-                    removed: 0,
-                    binary: false,
-                }),
-                None => {}
-            }
-        }
+        let files = files_of(&details.diff, &details.files, details.truncated);
         Some(Self {
             change: Change::new(details.change),
             parents: details.parents.into_iter().map(Change::new).collect(),
@@ -129,6 +113,32 @@ impl ChangeDiff {
             count => format!("{count} files"),
         }
     }
+}
+
+/// The files of a tool's diff, each with the kind the tool's own list
+/// gives it. A file with no hunks (a mode change, an empty file) comes
+/// from the list; a cut diff leaves out the files past the cut.
+pub fn files_of(
+    diff: &str,
+    changes: &[FileChange],
+    truncated: bool,
+) -> Vec<FileDiff> {
+    let mut files = parse_files(diff);
+    for change in changes {
+        match files.iter_mut().find(|file| file.path == change.path) {
+            Some(file) => file.kind = change.kind,
+            None if !truncated => files.push(FileDiff {
+                path: change.path.clone(),
+                kind: change.kind,
+                hunks: Vec::new(),
+                added: 0,
+                removed: 0,
+                binary: false,
+            }),
+            None => {}
+        }
+    }
+    files
 }
 
 /// Reads unified diff text, as `git diff` writes it, file by file.

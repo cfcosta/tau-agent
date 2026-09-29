@@ -25,6 +25,7 @@ use tau_ai::message::{
 use crate::{
     change_diff::{self, ChangeDiff},
     change_log::{self, ChangeLog},
+    change_status::{self, ChangeStatus},
 };
 
 /// One run, as the transcript, the inspector and the run list show it.
@@ -366,6 +367,9 @@ pub enum ToolBody {
     Files(Box<ChangeDiff>),
     /// A `vcs_show` result: the message, ids and parent, then the files.
     Commit(Box<ChangeDiff>),
+    /// A `vcs_status` result: what `@` holds, each file opening to its
+    /// hunks.
+    Status(Box<ChangeStatus>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1824,6 +1828,17 @@ fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
     card.size = card.args.to_string().len() + text.len();
     if is_error {
         card.state = ToolState::Failed(first_line(&text));
+        return;
+    }
+    let status = (card.tool == change_status::TOOL)
+        .then_some(output.details.as_ref())
+        .flatten()
+        .and_then(ChangeStatus::parse);
+    if let Some(status) = status {
+        card.state = ToolState::Done {
+            summary: Some(status.summary()),
+        };
+        card.body = ToolBody::Status(Box::new(status));
         return;
     }
     let vcs = [change_diff::DIFF_TOOL, change_diff::SHOW_TOOL]

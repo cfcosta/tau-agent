@@ -45,6 +45,7 @@ pub mod attach;
 pub mod catalog;
 pub mod change_diff;
 pub mod change_log;
+pub mod change_status;
 pub mod demo;
 pub mod github;
 pub mod goal;
