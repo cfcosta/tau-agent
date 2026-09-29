@@ -1730,6 +1730,200 @@ fn change_log() -> ToolOutput {
     }
 }
 
+/// The session's `vcs_show` call, on the commit that honors the header.
+pub const SHOW_CALL: &str = "c13";
+/// The session's `vcs_diff` call, on the commit that adds the tests.
+pub const DIFF_CALL: &str = "c14";
+/// The file `--open show` and `--open diff` open in their cards.
+pub const SHOW_FILE: &str = "crates/tau-ai/src/retry.rs";
+pub const DIFF_FILE: &str = "crates/tau-ai/tests/retry_after.rs";
+
+fn vcs_change(change: &str, commit: &str, description: &str) -> Value {
+    json!({
+        "change_id": change, "commit_id": commit, "description": description,
+        "empty": false, "conflict": false, "immutable": false,
+        "working_copy": false,
+    })
+}
+
+/// A tool result whose text is `diff` after `head`, and whose details
+/// hold the diff and its files.
+fn vcs_output(head: &str, diff: &str, mut details: Value) -> ToolOutput {
+    let files: Vec<Value> = diff_files(diff);
+    details["files"] = json!(files);
+    details["diff"] = json!(diff);
+    details["truncated"] = json!(false);
+    ToolOutput {
+        details: Some(details),
+        ..ToolOutput::text(format!("{head}{diff}").trim_end().to_owned())
+    }
+}
+
+/// The files a diff touches, as the tools list them.
+fn diff_files(diff: &str) -> Vec<Value> {
+    crate::change_diff::parse_files(diff)
+        .into_iter()
+        .map(|file| json!({ "path": file.path, "kind": file.kind }))
+        .collect()
+}
+
+fn change_show() -> ToolOutput {
+    let description = "feat(tau-ai): honor retry-after on 429 and 503\n\n\
+                       The server's hint wins over our backoff, capped at the \
+                       policy's max_delay. A header that does not parse falls \
+                       back to the backoff.\n";
+    let diff = "\
+diff --git a/crates/tau-ai/src/backoff.rs b/crates/tau-ai/src/backoff.rs
+deleted file mode 100644
+--- a/crates/tau-ai/src/backoff.rs
++++ /dev/null
+@@ -1,7 +0,0 @@
+-//! Exponential backoff, before RetryPolicy took it over.
+-
+-use std::time::Duration;
+-
+-pub fn backoff(base: Duration, attempt: u32) -> Duration {
+-    base * 2u32.saturating_pow(attempt)
+-}
+diff --git a/crates/tau-ai/src/client.rs b/crates/tau-ai/src/client.rs
+--- a/crates/tau-ai/src/client.rs
++++ b/crates/tau-ai/src/client.rs
+@@ -112,6 +112,7 @@
+             let response = self.http.execute(request.try_clone()?).await?;
+             if matches!(response.status().as_u16(), 429 | 503) && attempt < max {
+-                tokio::time::sleep(self.retry.delay(attempt)).await;
++                let hint = RetryPolicy::hint(response.headers(), SystemTime::now());
++                tokio::time::sleep(self.retry.delay(attempt, hint)).await;
+                 attempt += 1;
+                 continue;
+             }
+diff --git a/crates/tau-ai/src/lib.rs b/crates/tau-ai/src/lib.rs
+--- a/crates/tau-ai/src/lib.rs
++++ b/crates/tau-ai/src/lib.rs
+@@ -3,6 +3,5 @@
+ //! Model clients for tau.
+ 
+-mod backoff;
+ pub mod client;
+ pub mod message;
+ pub mod retry;
+diff --git a/crates/tau-ai/src/retry.rs b/crates/tau-ai/src/retry.rs
+--- a/crates/tau-ai/src/retry.rs
++++ b/crates/tau-ai/src/retry.rs
+@@ -38,9 +38,24 @@ impl RetryPolicy {
+     /// How long to wait before attempt `attempt`.
+-    pub fn delay(&self, attempt: u32) -> Duration {
+-        let backoff = self.base * 2u32.saturating_pow(attempt);
+-        backoff.min(self.max_delay)
++    /// A server's `retry-after` wins over the backoff, capped at
++    /// `max_delay`.
++    pub fn delay(&self, attempt: u32, hint: Option<Duration>) -> Duration {
++        let wait = match hint {
++            Some(hint) => hint,
++            None => self.base * 2u32.saturating_pow(attempt),
++        };
++        wait.min(self.max_delay)
+     }
+ 
++    /// Reads `retry-after` as seconds or an HTTP date.
++    pub fn hint(headers: &HeaderMap, now: SystemTime) -> Option<Duration> {
++        let value = headers.get(RETRY_AFTER)?.to_str().ok()?;
++        if let Ok(secs) = value.trim().parse::<u64>() {
++            return Some(Duration::from_secs(secs));
++        }
++        let date = httpdate::parse_http_date(value).ok()?;
++        Some(date.duration_since(now).unwrap_or_default())
++    }
++
+     pub fn attempts(&self) -> u32 {
+         self.attempts
+     }
+";
+    let head = format!(
+        "Change ID: {LOG_PICKED}\nCommit ID: 28b5b7a767c76fb008f86bebb2737f6a6f0fb23c\n\
+         Author: tau <tau@localhost>\n\
+         Parent: qzpxumwywmpp 7a8d41bed440 tau: run retry-after turn 2\n\n{}\n",
+        description
+            .lines()
+            .map(|line| format!("    {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    vcs_output(
+        &head,
+        diff,
+        json!({
+            "change": vcs_change(
+                LOG_PICKED,
+                "28b5b7a767c76fb008f86bebb2737f6a6f0fb23c",
+                description,
+            ),
+            "parents": [vcs_change(
+                "qzpxumwywmppokoyozvookknoxqqksqt",
+                "7a8d41bed440e50454f31af3176813e02ea68ef7",
+                "tau: run retry-after turn 2\n",
+            )],
+            "author": { "name": "tau", "email": "tau@localhost" },
+        }),
+    )
+}
+
+fn change_diff() -> ToolOutput {
+    let diff = "\
+diff --git a/crates/tau-ai/tests/retry_after.rs b/crates/tau-ai/tests/retry_after.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/tau-ai/tests/retry_after.rs
+@@ -0,0 +1,21 @@
++//! A 429 or 503 with `retry-after` waits as long as the server says,
++//! up to the policy's `max_delay`.
++
++use std::time::Duration;
++
++use tau_testing::fake_openai::{FakeServer, Reply};
++
++#[tokio::test(start_paused = true)]
++async fn honors_seconds() {
++    let server = FakeServer::start([
++        Reply::status(429).header(\"retry-after\", \"3\"),
++        Reply::ok(),
++    ]);
++    let started = tokio::time::Instant::now();
++    server.client().send(server.request()).await.unwrap();
++    assert_eq!(started.elapsed(), Duration::from_secs(3));
++}
++
++#[tokio::test(start_paused = true)]
++async fn caps_at_max_delay() {
++    // ...
+diff --git a/crates/tau-testing/src/fake_openai.rs b/crates/tau-testing/src/fake_openai.rs
+--- a/crates/tau-testing/src/fake_openai.rs
++++ b/crates/tau-testing/src/fake_openai.rs
+@@ -58,4 +58,10 @@ impl Reply {
+     pub fn status(code: u16) -> Self {
+         Self { code, ..Self::ok() }
+     }
++
++    /// Sends `name: value` with the reply.
++    pub fn header(mut self, name: &str, value: &str) -> Self {
++        self.headers.push((name.to_owned(), value.to_owned()));
++        self
++    }
+ }
+";
+    vcs_output(
+        "",
+        diff,
+        json!({
+            "change": vcs_change(
+                "szmltytwvkyvpnzlqtorwwzmpywsoxsx",
+                "bc74254770f58904dba41ecccc3fc1626e53a130",
+                "test(tau-ai): retry-after as seconds, as a date, capped, malformed\n",
+            ),
+        }),
+    )
+}
+
 fn edit(path: &str, new_text: &str, diff: &str) -> (Value, ToolOutput) {
     (
         json!({ "path": path, "edits": [{ "oldText": "", "newText": new_text }] }),
@@ -2152,6 +2346,20 @@ pub fn script() -> Vec<Step> {
     log.push_str("     Summary [3.1s] 14 tests run: 14 passed, 0 skipped");
     s.end_tool(600, "c11", ToolOutput::text(log));
     s.tool(200, LOG_CALL, "vcs_log", json!({}), change_log());
+    s.tool(
+        200,
+        SHOW_CALL,
+        "vcs_show",
+        json!({ "change": "onvkmqwo" }),
+        change_show(),
+    );
+    s.tool(
+        200,
+        DIFF_CALL,
+        "vcs_diff",
+        json!({ "change": "szmltytw" }),
+        change_diff(),
+    );
     s.end_turn(81_000, 1_300, 0.052);
 
     s.turn();
@@ -2248,7 +2456,7 @@ pub fn script() -> Vec<Step> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::{Item, ToolState};
+    use crate::view::{Item, ToolBody, ToolState};
 
     #[test]
     fn every_demo_screen_has_a_route() {
@@ -2265,6 +2473,28 @@ mod tests {
             assert!(route(name).is_some(), "{name}");
         }
         assert!(route("nowhere").is_none());
+    }
+
+    #[test]
+    fn the_vcs_calls_draw_as_their_cards() {
+        let mut run = retry_after();
+        for (_, update) in script() {
+            run.update(update);
+        }
+        let body = |call: &str| &run.tool(call).expect(call).body;
+        assert!(matches!(body(LOG_CALL), ToolBody::Log(_)));
+        let ToolBody::Commit(show) = body(SHOW_CALL) else {
+            panic!("{:?}", body(SHOW_CALL));
+        };
+        assert_eq!(show.files.len(), 4);
+        assert!(show.files.iter().any(|file| file.path == SHOW_FILE));
+        assert_eq!(show.parents.len(), 1);
+        let ToolBody::Files(diff) = body(DIFF_CALL) else {
+            panic!("{:?}", body(DIFF_CALL));
+        };
+        assert_eq!(diff.files[0].path, DIFF_FILE);
+        assert_eq!(diff.files[0].kind, tau_vcs::ChangeKind::Added);
+        assert_eq!(diff.files[0].added, 21);
     }
 
     #[test]

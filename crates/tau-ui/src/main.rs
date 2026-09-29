@@ -13,7 +13,8 @@
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
 //!   compare, plan or ledger; onboarding's welcome, github, token,
 //!   model, repos or ready; pr and pr-opened; alert, a sample dialog; attach-alert, a long one on New run;
-//!   models, picker, run-picker, fork-picker or log (demo screens).
+//!   models, picker, run-picker, fork-picker, log, show or diff (demo
+//!   screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
 //! - `--frame <w>x<h>`: lay out at exactly that size in the top-left
 //!   corner, to compare with the designs.
@@ -267,6 +268,19 @@ fn open_demo_screen(
             workspace.navigate(Route::Run(run.clone()), cx);
             workspace.toggle_card(&run, demo::LOG_CALL, cx);
             workspace.pick_change(&run, demo::LOG_CALL, demo::LOG_PICKED, cx);
+            return;
+        }
+        // The vcs_show and vcs_diff cards, open, with a file open.
+        Some(open @ ("show" | "diff")) => {
+            let run = demo::run_id();
+            let (call, file) = if open == "show" {
+                (demo::SHOW_CALL, demo::SHOW_FILE)
+            } else {
+                (demo::DIFF_CALL, demo::DIFF_FILE)
+            };
+            workspace.navigate(Route::Run(run.clone()), cx);
+            workspace.toggle_card(&run, call, cx);
+            workspace.toggle_file(&run, call, file, cx);
             return;
         }
         Some("fork-picker") => {
