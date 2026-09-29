@@ -3168,6 +3168,93 @@ fn workspace_name() -> String {
     format!("run-{millis:x}-{}", COUNT.fetch_add(1, Ordering::Relaxed))
 }
 
+/// One stored run, rebuilt as the interface shows it.
+async fn stored_view(
+    store: &Store,
+    record: &tau_store::RunRecord,
+    home: &str,
+) -> anyhow::Result<RunView> {
+    // The messages, and in place among them what tau-reasoning and
+    // the constitution recorded: the effort each message ran at, and
+    // the checks and verdicts on the calls.
+    let timeline: Vec<Stored> = store
+        .timeline(&record.id)
+        .await?
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Entry::Message { body, .. } => {
+                serde_json::from_str(&body).ok().map(Stored::Message)
+            }
+            Entry::Plugin { plugin, body }
+                if plugin == tau_reasoning::NAME
+                    || plugin == tau_constitution::NAME
+                    || plugin == LANDING_RECORD =>
+            {
+                serde_json::from_str(&body)
+                    .ok()
+                    .map(|body| Stored::Record { plugin, body })
+            }
+            _ => None,
+        })
+        .collect();
+    let messages: Vec<&Message> = timeline
+        .iter()
+        .filter_map(|entry| match entry {
+            Stored::Message(message) => Some(message),
+            Stored::Record { .. } => None,
+        })
+        .collect();
+    let prompt = prompt_of(&record.kind, messages.iter().copied());
+    let mut view = RunView::from_timeline(
+        RunId(record.id.clone().into()),
+        title(&prompt),
+        &record.agent,
+        &record.model,
+        &timeline,
+    )
+    .in_repo(
+        stored_repo(store, &record.id)
+            .await
+            .unwrap_or_else(|| home.to_owned()),
+    )
+    .started(started(&record.created_at));
+    let stop = match record.status {
+        Status::Done => StopReason::Stop,
+        Status::Cancelled => StopReason::Cancelled,
+        Status::Failed => StopReason::Error(
+            record.error.clone().unwrap_or_else(|| "failed".into()),
+        ),
+        Status::Limit => StopReason::Error("stopped at a limit".into()),
+        Status::Running => {
+            StopReason::Error("interrupted: tau closed during the run".into())
+        }
+    };
+    view.finish_stored(stop, record.cost_usd);
+    let goal: Vec<serde_json::Value> = store
+        .records(&record.id, tau_goal::NAME)
+        .await?
+        .iter()
+        .filter_map(|body| serde_json::from_str(body).ok())
+        .collect();
+    view.set_goal_records(&goal);
+    if let RunKind::Fork { parent, fork_seq } = &record.kind {
+        let turn = store
+            .plugin_entries(parent, WORKSPACE_PLUGIN)
+            .await?
+            .iter()
+            .filter(|(seq, _)| seq <= fork_seq)
+            .filter_map(|(_, body)| Link::parse(body))
+            .map(|link| link.turn)
+            .next_back()
+            .unwrap_or(0);
+        view = view.with_origin(Origin::Fork {
+            from: RunId(parent.clone().into()),
+            turn,
+        });
+    }
+    Ok(view)
+}
+
 /// The words a run was started with: a fork's own prompt is its last
 /// user message, any other run's its first.
 fn prompt_of<'a>(
@@ -3194,82 +3281,38 @@ pub async fn history(
     let records = store.recent_runs(HISTORY).await?;
     let mut views = Vec::with_capacity(records.len());
     for record in &records {
-        // The messages, and in place among them what tau-reasoning and
-        // the constitution recorded: the effort each message ran at, and
-        // the checks and verdicts on the calls.
-        let timeline: Vec<Stored> = store
-            .timeline(&record.id)
-            .await?
-            .into_iter()
-            .filter_map(|entry| match entry {
-                Entry::Message { body, .. } => {
-                    serde_json::from_str(&body).ok().map(Stored::Message)
-                }
-                Entry::Plugin { plugin, body }
-                    if plugin == tau_reasoning::NAME
-                        || plugin == tau_constitution::NAME
-                        || plugin == LANDING_RECORD =>
-                {
-                    serde_json::from_str(&body)
-                        .ok()
-                        .map(|body| Stored::Record { plugin, body })
-                }
-                _ => None,
-            })
-            .collect();
-        let messages: Vec<&Message> = timeline
-            .iter()
-            .filter_map(|entry| match entry {
-                Stored::Message(message) => Some(message),
-                Stored::Record { .. } => None,
-            })
-            .collect();
-        let prompt = prompt_of(&record.kind, messages.iter().copied());
-        let mut view = RunView::from_timeline(
-            RunId(record.id.clone().into()),
-            title(&prompt),
-            &record.agent,
-            &record.model,
-            &timeline,
-        )
-        .in_repo(
-            stored_repo(store, &record.id)
-                .await
-                .unwrap_or_else(|| home.to_owned()),
-        )
-        .started(started(&record.created_at));
-        let stop = match record.status {
-            Status::Done => StopReason::Stop,
-            Status::Cancelled => StopReason::Cancelled,
-            Status::Failed => StopReason::Error(
-                record.error.clone().unwrap_or_else(|| "failed".into()),
-            ),
-            Status::Limit => StopReason::Error("stopped at a limit".into()),
-            Status::Running => StopReason::Error(
-                "interrupted: tau closed during the run".into(),
-            ),
+        views.push(stored_view(store, record, home).await?);
+    }
+    // Sub-agents are left out of the list: their parents' `delegate`
+    // calls name them, and they come back under those parents.
+    let mut delegated = Vec::new();
+    for view in &views {
+        for item in &view.items {
+            if let crate::view::Item::Tool(card) = item
+                && let crate::view::ToolBody::Delegated(landed) = &card.body
+            {
+                delegated.push((view.id.clone(), landed.from.clone()));
+            }
+        }
+    }
+    for (parent, child) in delegated {
+        if views.iter().any(|view| view.id == child) {
+            continue;
+        }
+        let Some(record) = store.run(&child.0).await? else {
+            continue;
         };
-        view.finish_stored(stop, record.cost_usd);
-        let goal: Vec<serde_json::Value> = store
-            .records(&record.id, tau_goal::NAME)
-            .await?
-            .iter()
-            .filter_map(|body| serde_json::from_str(body).ok())
-            .collect();
-        view.set_goal_records(&goal);
-        if let RunKind::Fork { parent, fork_seq } = &record.kind {
-            let turn = store
-                .plugin_entries(parent, WORKSPACE_PLUGIN)
-                .await?
-                .iter()
-                .filter(|(seq, _)| seq <= fork_seq)
-                .filter_map(|(_, body)| Link::parse(body))
-                .map(|link| link.turn)
-                .next_back()
-                .unwrap_or(0);
-            view = view.with_origin(Origin::Fork {
-                from: RunId(parent.clone().into()),
-                turn,
+        let view = stored_view(store, &record, home).await?.with_origin(
+            Origin::SubAgent {
+                parent: parent.clone(),
+            },
+        );
+        if let Some(parent) = views.iter_mut().find(|view| view.id == parent) {
+            parent.children.push(ChildRun {
+                id: view.id.clone(),
+                title: view.title.clone(),
+                kind: ChildKind::SubAgent,
+                status: view.status.clone(),
             });
         }
         views.push(view);

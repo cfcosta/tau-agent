@@ -859,8 +859,71 @@ impl Workspace {
     /// Feeds a run event to every run it belongs to: its own run, and
     /// the parent that lists it as a child.
     pub fn apply_event(&mut self, event: &RunEvent, cx: &mut Context<Self>) {
+        // A sub-agent is a chat of its own (ADR 0009), started on the
+        // task its parent handed it.
+        if let RunEvent::RunStart {
+            run,
+            parent: Some(parent),
+            agent,
+        } = event
+            && self.run(run).is_none()
+            && let Some(view) = self.run(parent)
+        {
+            let task = view
+                .items
+                .iter()
+                .rev()
+                .find_map(|item| match item {
+                    Item::Tool(card)
+                        if card.tool == tau_vcs::delegate::NAME
+                            && card.state == ToolState::Running =>
+                    {
+                        card.args.get("task")?.as_str().map(str::to_owned)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let mut child = RunView::new(
+                run.clone(),
+                crate::host::title(&task),
+                agent.to_string(),
+                view.model.clone(),
+            )
+            .in_repo(view.repo.clone())
+            .with_origin(Origin::SubAgent {
+                parent: parent.clone(),
+            });
+            child.update(RunUpdate::User(task));
+            self.runs.push(child);
+        }
         for run in &mut self.runs {
             run.apply(event);
+        }
+        // A sub-agent closes once its parent's call returns: landed, or
+        // dropped.
+        if let RunEvent::ToolEnd { run, call_id, .. } = event
+            && let Some(view) = self.run(run)
+            && view
+                .tool(call_id)
+                .is_some_and(|card| card.tool == tau_vcs::delegate::NAME)
+        {
+            let done: Vec<RunId> = view
+                .children
+                .iter()
+                .filter(|child| {
+                    child.kind == ChildKind::SubAgent && !child.status.is_live()
+                })
+                .map(|child| child.id.clone())
+                .filter(|child| !self.closed.contains(child))
+                .collect();
+            let parent = run.clone();
+            for child in done {
+                self.closed.insert(child.clone());
+                cx.emit(WorkspaceEvent::CloseRun { run: child.clone() });
+                if self.route.run() == Some(&child) {
+                    self.navigate(Route::Run(parent.clone()), cx);
+                }
+            }
         }
         match event {
             // The run has read what was queued.

@@ -1532,6 +1532,77 @@ fn a_fork_is_dropped_after_asking(cx: &mut TestAppContext) {
         WorkspaceEvent::DropChild { run } if *run == fork)));
 }
 
+/// A sub-agent gets a chat of its own when it starts, on the task its
+/// parent handed it, and closes when the parent's call returns.
+#[gpui::test]
+fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
+    use std::sync::Arc;
+
+    use tau_agent::{
+        event::RunEvent,
+        tool::{RunId, ToolOutput},
+    };
+
+    let (workspace, mut cx, events) = open_demo(cx);
+    let parent = demo::run_id();
+    let child = RunId("sub-1".into());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply_event(
+            &RunEvent::ToolStart {
+                run: parent.clone(),
+                call_id: "d1".into(),
+                tool: Arc::from("delegate"),
+                args: serde_json::json!({ "task": "write the tests" }),
+            },
+            cx,
+        );
+        ws.apply_event(
+            &RunEvent::RunStart {
+                run: child.clone(),
+                parent: Some(parent.clone()),
+                agent: Arc::from("coder"),
+            },
+            cx,
+        );
+        let view = ws.run(&child).expect("a chat for the sub-agent");
+        assert_eq!(view.origin, tau_ui::view::Origin::SubAgent { parent: parent.clone() });
+        assert!(matches!(view.items.first(), Some(Item::User(task)) if task == "write the tests"));
+        ws.navigate(Route::Run(child.clone()), cx);
+
+        ws.apply_event(
+            &RunEvent::RunEnd {
+                run: child.clone(),
+                parent: Some(parent.clone()),
+                stop: StopReason::Stop,
+                cost: 0.0,
+            },
+            cx,
+        );
+        assert!(!ws.is_closed(&child), "open until the call returns");
+        ws.apply_event(
+            &RunEvent::ToolEnd {
+                run: parent.clone(),
+                call_id: "d1".into(),
+                output: Arc::new(ToolOutput {
+                    details: Some(serde_json::json!({
+                        "run": "sub-1",
+                        "landing": { "changes": [], "conflicts": [], "head": "00" },
+                    })),
+                    ..ToolOutput::text("done")
+                }),
+                is_error: false,
+            },
+            cx,
+        );
+        assert!(ws.is_closed(&child));
+        assert_eq!(ws.route(), &Route::Run(parent.clone()), "back to the parent");
+        let card = ws.run(&parent).unwrap().tool("d1").unwrap();
+        assert!(matches!(&card.body, tau_ui::view::ToolBody::Delegated(landed) if landed.from == child));
+    });
+    assert!(events.borrow().iter().any(|event| matches!(event,
+        WorkspaceEvent::CloseRun { run } if *run == child)));
+}
+
 /// A landing the host refuses shows why, in place of the preview.
 #[gpui::test]
 fn a_refused_landing_says_why(cx: &mut TestAppContext) {

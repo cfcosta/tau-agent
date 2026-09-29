@@ -560,6 +560,31 @@ fn tool(
             diff_card::commit_body(ws, run, card, diff, t, compact, cx)
                 .into_any_element()
         }),
+        (_, ToolBody::Delegated(landed)) => {
+            let child = landed.from.clone();
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(log_card::landed_body(landed, t, compact))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "open-child-{}",
+                                landed.from.0
+                            )))
+                            .px(sp(3.))
+                            .py(sp(2.))
+                            .border_t_1()
+                            .border_color(t.border)
+                            .child(link("Open the sub-agent's chat", t))
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                ws.navigate(Route::Run(child.clone()), cx)
+                            })),
+                    )
+                    .into_any_element(),
+            )
+        }
         (_, ToolBody::Status(status)) => open.then(|| {
             status_card::body(ws, run, card, status, t, compact, cx)
                 .into_any_element()

@@ -1148,7 +1148,7 @@ fn phone_group(
             .children
             .iter()
             .filter(|child| !ws.is_closed(&child.id))
-            .filter_map(fork_route)
+            .filter_map(|child| child_route(ws, child))
         {
             group = group.child(phone_child_row(route, child, t, cx));
         }
@@ -1176,11 +1176,13 @@ fn phone_group(
     group
 }
 
-/// A phone lists a run's forks, which open as chats of their own.
-fn fork_route(
-    child: &crate::view::ChildRun,
-) -> Option<(Route, &crate::view::ChildRun)> {
-    (child.kind == ChildKind::Fork)
+/// A phone lists a run's children that open as chats of their own:
+/// forks, and sub-agents with a chat in this workspace.
+fn child_route<'a>(
+    ws: &Workspace,
+    child: &'a crate::view::ChildRun,
+) -> Option<(Route, &'a crate::view::ChildRun)> {
+    (child.kind == ChildKind::Fork || ws.run(&child.id).is_some())
         .then(|| (Route::Run(child.id.clone()), child))
 }
 

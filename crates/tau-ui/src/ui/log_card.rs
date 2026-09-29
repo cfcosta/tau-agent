@@ -492,6 +492,15 @@ pub fn landed(
                 )
                 .child(mono(count, Type::CAPTION, t.dim).flex_shrink_0()),
         )
+        .child(landed_body(card, t, compact))
+}
+
+/// What a landing brought: its changes as they sit on the stack, and
+/// the files left with conflict markers.
+pub fn landed_body(card: &LandedCard, t: &Theme, compact: bool) -> Div {
+    div()
+        .flex()
+        .flex_col()
         .when(!card.changes.is_empty(), |column| {
             column.child(
                 div()

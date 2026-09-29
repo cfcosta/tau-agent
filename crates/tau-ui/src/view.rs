@@ -370,6 +370,8 @@ pub enum ToolBody {
     /// A `vcs_status` result: what `@` holds, each file opening to its
     /// hunks.
     Status(Box<ChangeStatus>),
+    /// A `delegate` result: the sub-agent, and what it landed.
+    Delegated(Box<LandedCard>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1351,7 +1353,7 @@ pub fn summarize_args(args: &Value) -> String {
         (None, Some(path)) => path.to_owned(),
         (None, None) => match (text("id"), text("title")) {
             (Some(id), Some(title)) => format!("{id} · {title}"),
-            _ => ["query", "id", "title"]
+            _ => ["query", "task", "id", "title"]
                 .into_iter()
                 .find_map(text)
                 .unwrap_or_default()
@@ -1828,6 +1830,37 @@ fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
     card.size = card.args.to_string().len() + text.len();
     if is_error {
         card.state = ToolState::Failed(first_line(&text));
+        return;
+    }
+    // A sub-agent's landing, from the `delegate` tool.
+    let delegated = (card.tool == tau_vcs::delegate::NAME)
+        .then_some(output.details.as_ref())
+        .flatten()
+        .and_then(|details| {
+            Some(LandingRecord {
+                from: details.get("run")?.as_str()?.to_owned(),
+                title: card
+                    .args
+                    .get("task")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                landing: serde_json::from_value(
+                    details.get("landing")?.clone(),
+                )
+                .ok()?,
+            })
+        });
+    if let Some(record) = delegated {
+        card.state = ToolState::Done {
+            summary: Some(match record.landing.changes.len() {
+                0 => "no changes".into(),
+                1 => "1 change landed".into(),
+                n => format!("{n} changes landed"),
+            }),
+        };
+        card.body =
+            ToolBody::Delegated(Box::new(LandedCard::from_record(record)));
         return;
     }
     let status = (card.tool == change_status::TOOL)

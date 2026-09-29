@@ -511,6 +511,35 @@ fn a_run_delegates_and_the_sub_agent_lands() {
         project.bookmarks("tau/").unwrap(),
         [format!("tau/{}", main.id.0)]
     );
+
+    // From history, the run's delegate card says what landed, and the
+    // sub-agent's chat comes back under it.
+    let history = host.history().unwrap();
+    let main_view = history.iter().find(|view| view.id == main.id).unwrap();
+    let card = main_view
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Tool(card) if card.tool == "delegate" => Some(card),
+            _ => None,
+        })
+        .expect("a delegate card");
+    let tau_ui::view::ToolBody::Delegated(landed) = &card.body else {
+        panic!("{:?}", card.body);
+    };
+    assert_eq!(landed.changes.len(), 1);
+    assert_eq!(landed.title, "write c.txt");
+    let child = history
+        .iter()
+        .find(|view| view.id == landed.from)
+        .expect("the sub-agent's chat");
+    assert_eq!(
+        child.origin,
+        Origin::SubAgent {
+            parent: main.id.clone()
+        }
+    );
+    assert!(main_view.children.iter().any(|kid| kid.id == landed.from));
 }
 
 #[test]
