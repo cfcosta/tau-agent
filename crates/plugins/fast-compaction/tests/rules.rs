@@ -17,9 +17,10 @@ use tau_fast_compaction::{
 };
 use tau_testing::generators;
 
-/// Pinned values, computed with pi's own `estimateTokens` in Node: a word
-/// of letters is one token per six letters, rounded up; digits half a
-/// token each; other non-space characters nine tenths.
+/// Pinned values, computed with pi's own `estimateTokens` in Node (its
+/// float sum lands on the exact count for each): a word of letters is
+/// one token per six letters, rounded up; digits half a token each;
+/// other non-space characters nine tenths.
 #[test]
 fn the_token_estimate_matches_pis() {
     assert_eq!(estimate_tokens(""), 0);
@@ -36,15 +37,9 @@ fn the_token_estimate_matches_pis() {
 /// The estimate, counted exactly in tenths of a token: a word of ASCII
 /// letters is ten tenths per started six letters, a digit five, any
 /// other non-space character nine; the total rounds up to whole tokens.
-///
-/// Ignored: `estimate_tokens` sums the tenths as floats, so ten
-/// punctuation characters come to 9.000000000000002 and round up to 10
-/// instead of 9. pi's `estimateTokens`, which this is ported from, adds
-/// floats the same way and gives the same 10; whether to follow pi or the
-/// exact count is not decided here.
+/// Ten punctuation characters are 9 tokens, where pi's float sum gives
+/// 10.
 #[hegel::test]
-#[ignore = "estimate_tokens sums floats like pi's estimateTokens: ten \
-            punctuation characters estimate 10 tokens, not 9"]
 #[hegel::explicit_test_case(text = String::from(".........."))]
 fn the_token_estimate_counts_exact_tenths(tc: TestCase) {
     let text: String = tc.draw(gs::text().alphabet("ab19.,- \n"));

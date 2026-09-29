@@ -184,28 +184,29 @@ pub fn collect_calls(entries: &[Entry], preserve_recent: usize) -> Vec<Call> {
 
 /// A rough token count: a word of ASCII letters is one token per six
 /// letters (rounded up), a run of digits half a token per digit, and any
-/// other non-space character nine tenths of a token.
+/// other non-space character nine tenths of a token; the sum rounds up.
+///
+/// Counted exactly, in tenths of a token. pi's `estimateTokens` sums the
+/// same weights as floats, so ten punctuation characters come to
+/// 9.000000000000002 there and round up to 10; here they are 9, on
+/// purpose.
 pub fn estimate_tokens(text: &str) -> usize {
-    let mut tokens = 0.0f64;
+    let mut tenths = 0usize;
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c.is_ascii_alphabetic() {
-            let mut len = 1;
+            let mut len = 1usize;
             while chars.next_if(char::is_ascii_alphabetic).is_some() {
                 len += 1;
             }
-            tokens += 1.0 + ((len - 1) / 6) as f64;
+            tenths += 10 * len.div_ceil(6);
         } else if c.is_ascii_digit() {
-            let mut len = 1;
-            while chars.next_if(char::is_ascii_digit).is_some() {
-                len += 1;
-            }
-            tokens += len as f64 / 2.0;
+            tenths += 5;
         } else if !c.is_whitespace() {
-            tokens += 0.9;
+            tenths += 9;
         }
     }
-    tokens.ceil() as usize
+    tenths.div_ceil(10)
 }
 
 /// `text` cut to `limit` characters, the last one an ellipsis.
