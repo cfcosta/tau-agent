@@ -202,3 +202,81 @@ fn the_real_jev_scores_tasks() {
         );
     }
 }
+
+/// An unsure score, or a failed request, goes on at the effort the
+/// chat's last message ran at, and records it.
+#[test]
+fn an_unsure_message_goes_on_as_the_last_one() {
+    // Sure of high (index 3 on gpt-6-sol), then unsure, then failing.
+    let answers = Arc::new(std::sync::Mutex::new(vec![
+        None,
+        Some(([0.1, 0.2, 0.3, 0.2, 0.1, 0.1], 0.3)),
+        Some(([0.0, 0.01, 0.02, 0.9, 0.05, 0.02], 0.9)),
+    ]));
+    let jev = FakeJev::new(move |request| {
+        let Some((probabilities, confidence)) =
+            answers.lock().unwrap().pop().unwrap()
+        else {
+            return Err(JevError::Transport("offline".into()));
+        };
+        let probabilities: BTreeMap<String, f64> = probabilities
+            .iter()
+            .enumerate()
+            .map(|(n, p)| (n.to_string(), *p))
+            .collect();
+        let answers = request
+            .questions
+            .keys()
+            .map(|id| {
+                (
+                    id.clone(),
+                    Answer::Score {
+                        score: 3.0,
+                        probabilities: probabilities.clone(),
+                        confidence,
+                    },
+                )
+            })
+            .collect();
+        Ok(tau_jev::fake::response(answers, request))
+    });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("one"))
+        .turn(|t| t.text("two"))
+        .turn(|t| t.text("three"));
+    let reports: Vec<Value> = block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm.clone())
+            .model("gpt-6-sol")
+            .plugin(Reasoning::new(Arc::new(jev)));
+        let first = agent.run("design the retry policy", &store).await.unwrap();
+        let mut reports = Vec::new();
+        for message in ["thanks", "and now?"] {
+            let mut run = agent.resume(&first.run).start(message, &store);
+            let events: Vec<RunEvent> = run.events().collect().await;
+            run.outcome().await.unwrap();
+            reports.extend(events.into_iter().filter_map(
+                |event| match event {
+                    RunEvent::PluginReport { plugin, body, .. }
+                        if &*plugin == NAME =>
+                    {
+                        Some(body)
+                    }
+                    _ => None,
+                },
+            ));
+        }
+        reports
+    });
+    let asked: Vec<_> = llm
+        .requests()
+        .iter()
+        .map(|request| request.settings.reasoning)
+        .collect();
+    assert_eq!(asked, [Some(ReasoningEffort::High); 3]);
+    let unsure = Choice::parse(&reports[0]).unwrap();
+    assert_eq!(unsure.kind, "kept");
+    assert_eq!(unsure.runs_at.as_deref(), Some("high"));
+    assert_eq!(reports[1]["kind"], "error");
+    assert_eq!(reports[1]["runs_at"], "high");
+}

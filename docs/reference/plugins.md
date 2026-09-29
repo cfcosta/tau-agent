@@ -328,7 +328,10 @@ recorded, and shows as the run's reasoning note and plan.
      (`tau_ai::model::efforts`), so Jev never picks one the API would
      reject; a model that does not reason is not scored.
   3. If the answer is confident, set `plan.reasoning` to that level.
-     Otherwise keep the agent's own setting, or a configured floor.
+     Otherwise, or if the request fails, go on at the effort the run's
+     last message ran at (from the plugin's records), if the model takes
+     it, else at the model's default. The record says what the message
+     runs at (`runs_at`); tau-ui shows a note only when that changes.
 - **Cost:** one Jev round trip (about 180 ms median) before the session
   opens. The warm-up, if on, comes after it, so it warms the chosen
   effort.

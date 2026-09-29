@@ -6,13 +6,16 @@
 //! "auto" effort) are scored; an effort someone chose stands. Jev gets
 //! the task and the start of the instructions, and one Score question
 //! whose levels say what each effort suits. The most likely level is
-//! used when Jev's confidence reaches the threshold; below it, the run
-//! keeps the model's default. Either way the plugin reports and records
-//! what Jev answered, as a [`Choice`], so interfaces can show why.
+//! used when Jev's confidence reaches the threshold. Below it, or when
+//! the request fails, the message goes on at the effort the run's last
+//! message ran at, if the model takes it, else at the model's default.
+//! Either way the plugin reports and records what Jev answered and what
+//! the message runs at, as a [`Choice`], so interfaces can show why.
 //!
-//! The effort stays fixed for the run: changing it mid-run would break
-//! the conversation's chain each time. A failed request leaves the
-//! default, reported, and never fails the run.
+//! The effort stays fixed while the run works: changing it mid-run would
+//! break the conversation's chain each time. Each new message of a chat
+//! is scored again. A failed request is reported and never fails the
+//! run.
 
 use std::sync::Arc;
 
@@ -85,6 +88,30 @@ pub struct Choice {
     pub levels: Vec<Scored>,
     /// What Jev cost, in US dollars.
     pub cost: f64,
+    /// The effort the message runs at: `effort` when chosen, else the
+    /// last message's; `None` for the model's default.
+    #[serde(default)]
+    pub runs_at: Option<String>,
+}
+
+impl Choice {
+    /// The effort this record says its message ran at.
+    fn ran_at(&self) -> Option<&str> {
+        self.runs_at
+            .as_deref()
+            .or((self.kind == "chose").then_some(self.effort.as_str()))
+    }
+}
+
+/// The effort the run's last scored message ran at, from the plugin's
+/// records, if one of `levels` still takes it.
+fn previous(records: &[Value], levels: &[Level]) -> Option<ReasoningEffort> {
+    let last = records.iter().rev().find_map(Choice::parse)?;
+    let effort = ReasoningEffort::parse(last.ran_at()?)?;
+    levels
+        .iter()
+        .any(|level| level.effort == effort)
+        .then_some(effort)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -202,6 +229,7 @@ impl Reasoning {
                 })
                 .collect(),
             cost: usage.cost.total,
+            runs_at: None,
         };
         Ok((choice, effort))
     }
@@ -230,19 +258,29 @@ impl Plugin for Reasoning {
         if levels.is_empty() {
             return Ok(Box::new(()));
         }
+        // Unsure or failed, the message goes on as the last one did.
+        let previous = previous(plan.records(), &levels);
         match self.choose(plan, &levels, ctx).await {
-            Ok((choice, effort)) => {
-                if choice.kind == "chose" {
-                    plan.reasoning = Some(effort);
-                }
+            Ok((mut choice, effort)) => {
+                plan.reasoning = if choice.kind == "chose" {
+                    Some(effort)
+                } else {
+                    previous
+                };
+                choice.runs_at =
+                    plan.reasoning.map(|effort| effort.as_str().to_owned());
                 let body = serde_json::to_value(&choice).unwrap_or_default();
                 ctx.report(body.clone());
                 let _ = ctx.record(&body).await;
             }
-            Err(error) => ctx.report(json!({
-                "kind": "error",
-                "message": format!("Jev could not score the task: {error}"),
-            })),
+            Err(error) => {
+                plan.reasoning = previous;
+                ctx.report(json!({
+                    "kind": "error",
+                    "message": format!("Jev could not score the task: {error}"),
+                    "runs_at": previous.map(ReasoningEffort::as_str),
+                }))
+            }
         }
         Ok(Box::new(()))
     }

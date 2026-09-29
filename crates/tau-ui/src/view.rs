@@ -37,6 +37,9 @@ pub struct RunView {
     pub items: Vec<Item>,
     /// The `RunPlan` fields worth showing, after every plugin's `start`.
     pub plan: Vec<PlanField>,
+    /// The effort tau-reasoning last ran a message at; `None` for the
+    /// model's default. A note shows only when it changes.
+    pub ran_at: Option<String>,
     pub limits: Limits,
     pub usage: Totals,
     pub context: ContextWindow,
@@ -549,6 +552,7 @@ impl RunView {
             turn: 0,
             items: Vec::new(),
             plan: Vec::new(),
+            ran_at: None,
             limits: Limits::default(),
             usage: Totals::default(),
             context: ContextWindow::default(),
@@ -1438,10 +1442,15 @@ impl RunView {
     fn reasoning_report(&mut self, body: &Value) {
         let plugin = tau_reasoning::NAME;
         if body["kind"] == "error" {
+            // The message goes on as the last one did; the failure is
+            // worth a note all the same.
             self.push_note(PluginNote {
                 plugin: plugin.to_owned(),
                 text: body["message"].as_str().unwrap_or("failed").to_owned(),
-                detail: Some("kept the default".into()),
+                detail: Some(match body["runs_at"].as_str() {
+                    Some(effort) => format!("stayed at {effort}"),
+                    None => "kept the default".into(),
+                }),
                 tone: Tone::Danger,
                 body: NoteBody::None,
             });
@@ -1451,22 +1460,70 @@ impl RunView {
             return;
         };
         let chose = choice.kind == "chose";
+        // What the message runs at: the pick, else what the last one ran
+        // at (a record from before `runs_at` was kept has only the pick).
+        let runs_at = choice
+            .runs_at
+            .clone()
+            .or_else(|| chose.then(|| choice.effort.clone()));
+        let before = std::mem::replace(&mut self.ran_at, runs_at.clone());
+        self.usage.plugin_cost += choice.cost;
+        let state = match &runs_at {
+            Some(effort) if chose => format!("chose {effort}"),
+            Some(effort) => format!("stayed at {effort}"),
+            None => "kept the default".to_owned(),
+        };
+        match self.plugins.iter_mut().find(|status| status.name == plugin) {
+            Some(status) => status.state = state,
+            None => self.plugins.insert(
+                0,
+                PluginStatus {
+                    name: plugin.to_owned(),
+                    state,
+                    tone: Tone::Quiet,
+                },
+            ),
+        }
+        let value = runs_at.clone().unwrap_or_else(|| "default".into());
+        match self.plan.iter_mut().find(|field| field.name == "reasoning") {
+            Some(field) => {
+                field.value = value;
+                field.set_by = Some(plugin.to_owned());
+            }
+            None => self.plan.insert(
+                0,
+                PlanField {
+                    name: "reasoning".into(),
+                    value,
+                    set_by: Some(plugin.to_owned()),
+                },
+            ),
+        }
+        // Only a change gets a note: the first pick, or a new effort.
+        if runs_at == before {
+            return;
+        }
+        let name = |effort: &Option<String>| match effort {
+            Some(effort) => format!("**{effort}**"),
+            None => "the model's default".to_owned(),
+        };
+        let text = match &before {
+            None if chose => {
+                format!("picked {} reasoning for this message", name(&runs_at))
+            }
+            _ => format!("reasoning {} → {}", name(&before), name(&runs_at)),
+        };
         let comparison = if chose { "above" } else { "below" };
-        let outcome = if chose {
-            format!("so this message runs at {}.", choice.effort)
-        } else {
-            "so the run keeps the model's default.".to_owned()
+        let outcome = match &runs_at {
+            Some(effort) if chose => {
+                format!("so this message runs at {effort}.")
+            }
+            Some(effort) => format!("so this message stays at {effort}."),
+            None => "so this message runs at the model's default.".to_owned(),
         };
         self.push_note(PluginNote {
             plugin: plugin.to_owned(),
-            text: if chose {
-                format!(
-                    "picked **{}** reasoning for this message",
-                    choice.effort
-                )
-            } else {
-                "left reasoning at the default: not sure enough".to_owned()
-            },
+            text,
             detail: Some(format!("Jev · {}", usd(choice.cost))),
             tone: Tone::Info,
             body: NoteBody::Distribution {
@@ -1491,39 +1548,6 @@ impl RunView {
                     .collect(),
             },
         });
-        if chose {
-            match self.plan.iter_mut().find(|field| field.name == "reasoning") {
-                Some(field) => {
-                    field.value = choice.effort.clone();
-                    field.set_by = Some(plugin.to_owned());
-                }
-                None => self.plan.insert(
-                    0,
-                    PlanField {
-                        name: "reasoning".into(),
-                        value: choice.effort.clone(),
-                        set_by: Some(plugin.to_owned()),
-                    },
-                ),
-            }
-        }
-        let state = if chose {
-            format!("chose {}", choice.effort)
-        } else {
-            "kept the default".to_owned()
-        };
-        self.usage.plugin_cost += choice.cost;
-        match self.plugins.iter_mut().find(|status| status.name == plugin) {
-            Some(status) => status.state = state,
-            None => self.plugins.insert(
-                0,
-                PluginStatus {
-                    name: plugin.to_owned(),
-                    state,
-                    tone: Tone::Quiet,
-                },
-            ),
-        }
     }
 
     /// The pruning plugin's ledger: each tool call in the run, with what
@@ -2266,6 +2290,61 @@ mod tests {
             summarize_args(&json!({ "command": "cargo test" })),
             "cargo test"
         );
+    }
+
+    /// A choice as tau-reasoning reports it, on gpt-5.5's levels.
+    fn choice(kind: &str, effort: &str, runs_at: Option<&str>) -> Value {
+        let levels: Vec<Value> = ["none", "low", "medium", "high", "xhigh"]
+            .iter()
+            .map(|effort| json!({ "effort": effort, "suits": "", "p": 0.2 }))
+            .collect();
+        json!({
+            "kind": kind, "effort": effort, "confidence": 0.8,
+            "threshold": 0.7, "levels": levels, "cost": 0.0,
+            "runs_at": runs_at,
+        })
+    }
+
+    #[test]
+    fn a_reasoning_note_shows_only_when_the_effort_changes() {
+        let mut view = RunView::new(RunId("r".into()), "t", "coder", "gpt-5.5");
+        let notes = |view: &RunView| -> Vec<String> {
+            view.items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Plugin(note)
+                        if note.plugin == tau_reasoning::NAME =>
+                    {
+                        Some(note.text.clone())
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        // Unsure with nothing before: the default, no note.
+        view.report(tau_reasoning::NAME, &choice("kept", "low", None));
+        view.report(
+            tau_reasoning::NAME,
+            &choice("chose", "high", Some("high")),
+        );
+        // Unsure, staying at high; then sure of high again.
+        view.report(tau_reasoning::NAME, &choice("kept", "low", Some("high")));
+        view.report(
+            tau_reasoning::NAME,
+            &choice("chose", "high", Some("high")),
+        );
+        view.report(tau_reasoning::NAME, &choice("chose", "low", Some("low")));
+        assert_eq!(
+            notes(&view),
+            [
+                "picked **high** reasoning for this message",
+                "reasoning **high** → **low**",
+            ]
+        );
+        assert_eq!(view.ran_at.as_deref(), Some("low"));
+        let reasoning =
+            view.plan.iter().find(|f| f.name == "reasoning").unwrap();
+        assert_eq!(reasoning.value, "low");
     }
 
     #[test]

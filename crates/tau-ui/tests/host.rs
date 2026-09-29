@@ -1231,7 +1231,7 @@ fn each_message_is_scored_again() {
             "picked **none** reasoning for this message",
             "reply: fine, thanks",
             "user: prove the Riemann hypothesis",
-            "picked **xhigh** reasoning for this message",
+            "reasoning **none** → **xhigh**",
             "reply: a long answer",
         ]
     );
