@@ -16,6 +16,9 @@
 //! is upheld: the first event is always [`AssistantEvent::Start`], and
 //! there is exactly one terminal event ([`AssistantEvent::Done`] or
 //! [`AssistantEvent::Error`]), after which every frame is ignored.
+//! A frame it does not know (such as `codex.rate_limits`, which can come
+//! before `response.created`) is skipped and does not start the stream,
+//! so `Start` carries the response id.
 //!
 //! ## Frame → event mapping
 //!
@@ -203,6 +206,24 @@ enum TerminalOutcome {
     Error(String),
 }
 
+/// The frames [`StreamProcessor::push`] acts on; any other is skipped.
+const KNOWN_FRAMES: &[&str] = &[
+    "response.created",
+    "response.output_item.added",
+    "response.reasoning_summary_text.delta",
+    "response.reasoning_text.delta",
+    "response.reasoning_summary_part.done",
+    "response.output_text.delta",
+    "response.refusal.delta",
+    "response.function_call_arguments.delta",
+    "response.function_call_arguments.done",
+    "response.output_item.done",
+    "response.completed",
+    "response.incomplete",
+    "response.failed",
+    "error",
+];
+
 impl StreamProcessor {
     /// Creates a processor for one response. `model` and `timestamp` seed
     /// the `Start` event; tau-ai has no clock of its own, so the caller
@@ -231,6 +252,13 @@ impl StreamProcessor {
         let Some(frame_type) = frame.get("type").and_then(Value::as_str) else {
             return events;
         };
+        // A frame tau-ai does not know (`codex.rate_limits`, which can
+        // come before `response.created`) is skipped, and does not start
+        // the stream: `Start` waits for a frame that carries the
+        // response, so it has the response id.
+        if !KNOWN_FRAMES.contains(&frame_type) {
+            return events;
+        }
         if frame_type == "response.created"
             && let Some(id) = response_field_str(frame, "id")
         {
