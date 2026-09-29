@@ -22,6 +22,8 @@ use tau_ai::message::{
     UserContent,
 };
 
+use crate::change_log::{self, ChangeLog};
+
 /// One run, as the transcript, the inspector and the run list show it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunView {
@@ -312,6 +314,8 @@ pub enum ToolBody {
     None,
     Diff(Vec<DiffLine>),
     Output(Vec<String>),
+    /// A `vcs_log` result, shown as the stack over trunk.
+    Log(Box<ChangeLog>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1771,6 +1775,17 @@ fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
         .and_then(|details| details.get("diff"))
         .and_then(Value::as_str)
         .map(parse_diff);
+    let log = (card.tool == change_log::TOOL)
+        .then_some(output.details.as_ref())
+        .flatten()
+        .and_then(ChangeLog::parse);
+    if let Some(log) = log {
+        card.state = ToolState::Done {
+            summary: Some(log.summary()),
+        };
+        card.body = ToolBody::Log(Box::new(log));
+        return;
+    }
     // A tool may say how to sum up its result ("5 matches · 9 ms").
     let reported = output
         .details
@@ -2215,6 +2230,53 @@ mod tests {
         };
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].kind, DiffKind::Removed);
+    }
+
+    #[test]
+    fn a_log_reads_as_the_stack_over_trunk() {
+        let mut view = view();
+        view.apply(&RunEvent::ToolStart {
+            run: run(),
+            call_id: "c1".into(),
+            tool: Arc::from("vcs_log"),
+            args: json!({}),
+        });
+        let change = |id: &str, description: &str, immutable: bool| {
+            json!({
+                "change_id": id, "commit_id": "0123", "description": description,
+                "empty": false, "conflict": false, "immutable": immutable,
+                "working_copy": false,
+            })
+        };
+        view.apply(&RunEvent::ToolEnd {
+            run: run(),
+            call_id: "c1".into(),
+            output: Arc::new(ToolOutput {
+                details: Some(json!({
+                    "changes": [
+                        change("a", "feat(tau-ui): a card", false),
+                        change("b", "docs: a page", true),
+                    ],
+                    "more": false,
+                })),
+                ..ToolOutput::text(
+                    "a 0123 feat(tau-ui): a card\nb 0123 docs: a page",
+                )
+            }),
+            is_error: false,
+        });
+        let card = view.tool("c1").expect("card");
+        assert_eq!(
+            card.state,
+            ToolState::Done {
+                summary: Some("1 on the stack · 1 on trunk".into())
+            }
+        );
+        let ToolBody::Log(log) = &card.body else {
+            panic!("expected a log, got {:?}", card.body);
+        };
+        assert_eq!(log.stack[0].changes[0].subject, "a card");
+        assert_eq!(log.trunk[0].scope.as_deref(), Some("docs"));
     }
 
     #[test]

@@ -19,7 +19,7 @@ use jj_lib::{
     rewrite::restore_tree,
 };
 use pollster::block_on;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
@@ -46,7 +46,7 @@ pub(crate) struct Report {
 }
 
 /// One change, as the tools describe it in `details`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangeInfo {
     /// The full change id, in jj's `k`-`z` letters.
     pub change_id: String,
