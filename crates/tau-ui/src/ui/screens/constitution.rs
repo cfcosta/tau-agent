@@ -498,6 +498,12 @@ fn activity(rule: &Rule, stats: &RulesStats, t: &Theme) -> (String, Hsla) {
     }
 }
 
+/// The narrowest screen the rules table fits: its fixed columns (id,
+/// places, strictness, activity, menu, and the gaps between them), room
+/// for a rule's text, and the screen's padding. Narrower, each rule is
+/// stacked as on the phone, so its text never shrinks to a sliver.
+const TABLE_MIN: f32 = 740. + 260. + 64.;
+
 #[allow(clippy::too_many_arguments)]
 fn rules_list(
     ws: &Workspace,
@@ -509,6 +515,7 @@ fn rules_list(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
+    let stacked = compact || ws.screen_width() < px(TABLE_MIN);
     let rows = constitution.rules.iter().map(|rule| {
         let (act, act_color) = activity(rule, stats, t);
         let focused = focus == Some(rule.id.as_str());
@@ -548,7 +555,24 @@ fn rules_list(
             .on_click(cx.listener(move |ws, _, _, cx| {
                 ws.open_rule_editor(&edit_repo, Some(&edit_id), cx)
             }));
-        let row = if compact {
+        // The ⋯ menu: edit or remove the rule. The phone edits in the
+        // editor instead.
+        let menu_button = div()
+            .id(SharedString::from(format!("rule-menu-{}", rule.id)))
+            .size(px(30.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(radius::CONTROL)
+            .when(menu_open, |button| button.bg(t.border_strong))
+            .hover(|style| style.bg(t.border_strong))
+            .child(mono("⋯", Type::BODY, t.muted))
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                cx.stop_propagation();
+                ws.toggle_rule_menu(&menu_id, cx)
+            }));
+        let row = if stacked {
             row.flex()
                 .flex_col()
                 .gap(sp(2.25))
@@ -564,7 +588,8 @@ fn rules_list(
                                 .flex_1()
                                 .min_w(px(0.))
                                 .child(rule.text.clone()),
-                        ),
+                        )
+                        .when(!compact, |line| line.child(menu_button)),
                 )
                 .child(
                     div()
@@ -596,26 +621,7 @@ fn rules_list(
                         .w(px(110.))
                         .flex_shrink_0(),
                 )
-                .child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "rule-menu-{}",
-                            rule.id
-                        )))
-                        .size(px(30.))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(radius::CONTROL)
-                        .when(menu_open, |button| button.bg(t.border_strong))
-                        .hover(|style| style.bg(t.border_strong))
-                        .child(mono("⋯", Type::BODY, t.muted))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            cx.stop_propagation();
-                            ws.toggle_rule_menu(&menu_id, cx)
-                        })),
-                )
+                .child(menu_button)
         };
         row.when(menu_open, |row| row.child(rule_menu(repo, &rule.id, t, cx)))
     });
@@ -626,7 +632,7 @@ fn rules_list(
         .border_1()
         .border_color(t.border)
         .bg(t.card)
-        .when(!compact, |list| {
+        .when(!stacked, |list| {
             list.child(
                 div()
                     .flex()
