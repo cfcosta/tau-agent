@@ -46,6 +46,8 @@ struct ModelRun {
     turns: i64,
     status: Status,
     model: &'static str,
+    result: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Default)]
@@ -117,6 +119,22 @@ impl Model {
             })
             .collect()
     }
+
+    /// `plugin`'s records in `run` itself, with the `seq` each has: its
+    /// index among the run's own entries.
+    fn plugin_entries(&self, run: &str, plugin: &str) -> Vec<(i64, String)> {
+        self.runs[run]
+            .own
+            .iter()
+            .enumerate()
+            .filter_map(|(seq, e)| match e {
+                Entry::Plugin { plugin: p, body } if p == plugin => {
+                    Some((seq as i64, body.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 fn entry() -> impl PrintableGenerator<Entry> {
@@ -175,237 +193,279 @@ fn usage_unprinted(tc: &TestCase) -> TurnUsage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, hegel::PrettyPrintable)]
-enum Op {
-    Root,
-    Fork,
-    Subagent,
-    Append,
-    AppendUnknown,
-    Finish,
-    Reopen,
+/// The store and the model it must match, driven one operation at a
+/// time: create a run (a root, a fork or a sub-agent), append a turn to
+/// it or to a run that does not exist, finish it, or reopen it.
+struct StoreMachine {
+    /// sqlx needs a real runtime, not a paused one; see the module docs.
+    runtime: tokio::runtime::Runtime,
+    store: Store,
+    model: Model,
+    /// Runs created so far, for fresh ids.
+    created: usize,
 }
 
+impl StoreMachine {
+    fn new() -> Self {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let store = runtime.block_on(Store::memory()).unwrap();
+        Self {
+            runtime,
+            store,
+            model: Model::default(),
+            created: 0,
+        }
+    }
+
+    /// A run the model knows, drawn; rejects the step when there is none.
+    fn pick(&self, tc: &TestCase) -> String {
+        tc.assume(!self.model.runs.is_empty());
+        let ids: Vec<String> = self.model.runs.keys().cloned().collect();
+        tc.draw(gs::sampled_from(ids))
+    }
+
+    fn create(&mut self, tc: &TestCase, kind: RunKind) {
+        let id = format!("run_{}", self.created);
+        self.created += 1;
+        let agent = tc.draw(gs::sampled_from(vec!["lead", "coder"]));
+        let workflow =
+            tc.draw(gs::sampled_from(vec![None, Some("wf_1"), Some("wf_2")]));
+        self.runtime
+            .block_on(self.store.create_run(&NewRun {
+                id: &id,
+                workflow_id: workflow,
+                agent,
+                kind: kind.clone(),
+                model: "gpt-5.5",
+                turns: 0,
+            }))
+            .unwrap();
+        self.model.runs.insert(
+            id,
+            ModelRun {
+                kind,
+                agent,
+                workflow,
+                own: Vec::new(),
+                input: 0,
+                output: 0,
+                cost: 0.0,
+                turns: 0,
+                status: Status::Running,
+                model: "gpt-5.5",
+                result: None,
+                error: None,
+            },
+        );
+    }
+}
+
+#[hegel::state_machine]
+impl StoreMachine {
+    #[rule]
+    fn create_root(&mut self, tc: TestCase) {
+        self.create(&tc, RunKind::Root);
+    }
+
+    /// A fork at any `seq` of its parent, and a little past either end.
+    #[rule]
+    fn create_fork(&mut self, tc: TestCase) {
+        let parent = self.pick(&tc);
+        let len = self.model.runs[&parent].own.len() as i64;
+        let fork_seq =
+            tc.draw(gs::integers::<i64>().min_value(-1).max_value(len + 1));
+        self.create(&tc, RunKind::Fork { parent, fork_seq });
+    }
+
+    #[rule]
+    fn create_subagent(&mut self, tc: TestCase) {
+        let parent = self.pick(&tc);
+        self.create(&tc, RunKind::Subagent { parent });
+    }
+
+    /// Appending returns the `seq` of the last entry the run now holds.
+    #[rule]
+    fn append(&mut self, tc: TestCase) {
+        let run = self.pick(&tc);
+        let entries: Vec<Entry> = tc.draw(gs::vecs(entry()).max_size(3));
+        let usage = tc.draw(usage());
+        let last = self
+            .runtime
+            .block_on(self.store.append_turn(&run, &entries, usage))
+            .unwrap();
+        let m = self.model.runs.get_mut(&run).unwrap();
+        m.own.extend(entries);
+        assert_eq!(last, m.own.len() as i64 - 1, "last seq of {run}");
+        m.input += i64::from(usage.input_tokens);
+        m.output += i64::from(usage.output_tokens);
+        m.cost += usage.cost_usd;
+        m.turns += i64::from(usage.turns);
+    }
+
+    #[rule]
+    fn append_to_unknown_run(&mut self, tc: TestCase) {
+        let entries: Vec<Entry> =
+            tc.draw(gs::vecs(entry()).min_size(1).max_size(3));
+        let usage = tc.draw(usage());
+        let result = self.runtime.block_on(self.store.append_turn(
+            "run_missing",
+            &entries,
+            usage,
+        ));
+        assert!(
+            matches!(result, Err(StoreError::UnknownRun(_))),
+            "{result:?}"
+        );
+    }
+
+    #[rule]
+    fn finish(&mut self, tc: TestCase) {
+        let run = self.pick(&tc);
+        let status = tc.draw(
+            gs::sampled_from(vec![
+                Status::Done,
+                Status::Failed,
+                Status::Cancelled,
+                Status::Limit,
+            ])
+            .print_as_debug(),
+        );
+        let result = tc.draw(gs::optional(gs::text().max_size(8)));
+        let error = tc.draw(gs::optional(gs::text().max_size(8)));
+        self.runtime
+            .block_on(self.store.finish_run(
+                &run,
+                status,
+                result.as_deref(),
+                error.as_deref(),
+            ))
+            .unwrap();
+        let m = self.model.runs.get_mut(&run).unwrap();
+        m.status = status;
+        m.result = result;
+        m.error = error;
+    }
+
+    /// A finished run reopens on a drawn model, without its result or
+    /// error; a running one refuses.
+    #[rule]
+    fn reopen(&mut self, tc: TestCase) {
+        let run = self.pick(&tc);
+        let on = tc.draw(gs::sampled_from(vec!["gpt-5.5", "gpt-6-sol"]));
+        let result = self.runtime.block_on(self.store.reopen_run(&run, on));
+        let m = self.model.runs.get_mut(&run).unwrap();
+        if m.status == Status::Running {
+            assert!(
+                matches!(result, Err(StoreError::StillRunning(_))),
+                "{result:?}"
+            );
+        } else {
+            let record = result.unwrap();
+            assert_eq!(record.status, Status::Running);
+            assert_eq!(record.result, None);
+            assert_eq!(record.error, None);
+            assert_eq!(record.model, on, "it goes on on the new model");
+            m.status = Status::Running;
+            m.model = on;
+            m.result = None;
+            m.error = None;
+        }
+    }
+
+    /// Every read matches the model, after every operation.
+    #[invariant(always_run)]
+    fn reads_match_the_model(&self, _tc: TestCase) {
+        self.runtime.block_on(self.check_reads());
+    }
+}
+
+impl StoreMachine {
+    async fn check_reads(&self) {
+        let (store, model) = (&self.store, &self.model);
+        for (id, m) in &model.runs {
+            assert_eq!(
+                store.transcript(id).await.unwrap(),
+                model.transcript(id),
+                "transcript of {id}"
+            );
+            assert_eq!(
+                store.timeline(id).await.unwrap(),
+                model.timeline(id),
+                "timeline of {id}"
+            );
+            for plugin in ["memory", "prune"] {
+                assert_eq!(
+                    store.records(id, plugin).await.unwrap(),
+                    model.records(id, plugin),
+                    "{plugin} records of {id}"
+                );
+                assert_eq!(
+                    store.plugin_entries(id, plugin).await.unwrap(),
+                    model.plugin_entries(id, plugin),
+                    "{plugin} entries of {id}"
+                );
+            }
+            let record = store.run(id).await.unwrap().expect("stored run");
+            assert_eq!(record.kind, m.kind, "{id}");
+            assert_eq!(record.status, m.status, "{id}");
+            assert_eq!(
+                (record.input_tokens, record.output_tokens),
+                (m.input, m.output),
+                "{id}"
+            );
+            assert_eq!(record.cost_usd, m.cost, "{id}");
+            assert_eq!(record.turns, m.turns, "{id}");
+            assert_eq!(record.agent, m.agent);
+            assert_eq!(record.model, m.model, "{id}");
+            assert_eq!(record.workflow_id.as_deref(), m.workflow);
+            assert_eq!(record.result, m.result, "result of {id}");
+            assert_eq!(record.error, m.error, "error of {id}");
+        }
+        for workflow in ["wf_1", "wf_2"] {
+            let mut expected: BTreeMap<&str, (i64, f64)> = BTreeMap::new();
+            for m in
+                model.runs.values().filter(|m| m.workflow == Some(workflow))
+            {
+                let e = expected.entry(m.agent).or_default();
+                e.0 += 1;
+                e.1 += m.cost;
+            }
+            let expected: Vec<AgentCost> = expected
+                .into_iter()
+                .map(|(agent, (runs, usd))| AgentCost {
+                    agent: agent.into(),
+                    runs,
+                    usd,
+                })
+                .collect();
+            assert_eq!(
+                store.workflow_cost(workflow).await.unwrap(),
+                expected,
+                "{workflow}"
+            );
+        }
+    }
+}
+
+/// The store matches a `Vec`-based model over random sequences of
+/// operations: every read, after every operation.
 #[hegel::test(test_cases = 60)]
 fn store_matches_model(tc: TestCase) {
-    store_matches_model_body(tc)
+    hegel::stateful::machine(StoreMachine::new())
+        .steps(25)
+        .run(tc);
 }
 
 /// [`store_matches_model`] with more cases, for the nightly tier.
 #[hegel::test(profile = "nightly_slow")]
 #[ignore = "nightly"]
 fn store_matches_model_nightly(tc: TestCase) {
-    store_matches_model_body(tc)
-}
-
-fn store_matches_model_body(tc: TestCase) {
-    block_on(async {
-        let store = Store::memory().await.unwrap();
-        let mut model = Model::default();
-        let steps = tc.draw(gs::integers::<usize>().min_value(1).max_value(25));
-        for step in 0..steps {
-            let op = tc.draw(gs::sampled_from(vec![
-                Op::Root,
-                Op::Fork,
-                Op::Subagent,
-                Op::Append,
-                Op::AppendUnknown,
-                Op::Finish,
-                Op::Reopen,
-            ]));
-            let ids: Vec<String> = model.runs.keys().cloned().collect();
-            let pick = |tc: &TestCase| -> Option<String> {
-                (!ids.is_empty())
-                    .then(|| tc.draw(gs::sampled_from(ids.clone())))
-            };
-            tc.note(&format!("step {step}: {op:?}"));
-            match op {
-                Op::Root | Op::Fork | Op::Subagent => {
-                    let kind = match op {
-                        Op::Root => RunKind::Root,
-                        Op::Fork => {
-                            let Some(parent) = pick(&tc) else { continue };
-                            let len = model.runs[&parent].own.len() as i64;
-                            RunKind::Fork {
-                                parent,
-                                fork_seq: tc.draw(
-                                    gs::integers::<i64>()
-                                        .min_value(-1)
-                                        .max_value(len + 1),
-                                ),
-                            }
-                        }
-                        _ => {
-                            let Some(parent) = pick(&tc) else { continue };
-                            RunKind::Subagent { parent }
-                        }
-                    };
-                    let id = format!("run_{step}");
-                    let agent =
-                        tc.draw(gs::sampled_from(vec!["lead", "coder"]));
-                    let workflow = tc.draw(gs::sampled_from(vec![
-                        None,
-                        Some("wf_1"),
-                        Some("wf_2"),
-                    ]));
-                    store
-                        .create_run(&NewRun {
-                            id: &id,
-                            workflow_id: workflow,
-                            agent,
-                            kind: kind.clone(),
-                            model: "gpt-5.5",
-                            turns: 0,
-                        })
-                        .await
-                        .unwrap();
-                    model.runs.insert(
-                        id,
-                        ModelRun {
-                            kind,
-                            agent,
-                            workflow,
-                            own: Vec::new(),
-                            input: 0,
-                            output: 0,
-                            cost: 0.0,
-                            turns: 0,
-                            status: Status::Running,
-                            model: "gpt-5.5",
-                        },
-                    );
-                }
-                Op::Append => {
-                    let Some(run) = pick(&tc) else { continue };
-                    let entries: Vec<Entry> =
-                        tc.draw(gs::vecs(entry()).max_size(3));
-                    let usage = tc.draw(usage());
-                    let last =
-                        store.append_turn(&run, &entries, usage).await.unwrap();
-                    let m = model.runs.get_mut(&run).unwrap();
-                    m.own.extend(entries);
-                    assert_eq!(
-                        last,
-                        m.own.len() as i64 - 1,
-                        "last seq of {run}"
-                    );
-                    m.input += i64::from(usage.input_tokens);
-                    m.output += i64::from(usage.output_tokens);
-                    m.cost += usage.cost_usd;
-                    m.turns += i64::from(usage.turns);
-                }
-                Op::AppendUnknown => {
-                    let entries: Vec<Entry> =
-                        tc.draw(gs::vecs(entry()).min_size(1).max_size(3));
-                    let result = store
-                        .append_turn("run_missing", &entries, tc.draw(usage()))
-                        .await;
-                    assert!(
-                        matches!(result, Err(StoreError::UnknownRun(_))),
-                        "{result:?}"
-                    );
-                }
-                Op::Finish => {
-                    let Some(run) = pick(&tc) else { continue };
-                    let status = tc.draw(
-                        gs::sampled_from(vec![
-                            Status::Done,
-                            Status::Failed,
-                            Status::Cancelled,
-                            Status::Limit,
-                        ])
-                        .print_as_debug(),
-                    );
-                    let result = tc.draw(gs::optional(gs::text().max_size(8)));
-                    store
-                        .finish_run(&run, status, result.as_deref(), None)
-                        .await
-                        .unwrap();
-                    model.runs.get_mut(&run).unwrap().status = status;
-                }
-                Op::Reopen => {
-                    let Some(run) = pick(&tc) else { continue };
-                    let on =
-                        tc.draw(gs::sampled_from(vec!["gpt-5.5", "gpt-6-sol"]));
-                    let result = store.reopen_run(&run, on).await;
-                    let m = model.runs.get_mut(&run).unwrap();
-                    if m.status == Status::Running {
-                        assert!(
-                            matches!(result, Err(StoreError::StillRunning(_))),
-                            "{result:?}"
-                        );
-                    } else {
-                        let record = result.unwrap();
-                        assert_eq!(record.status, Status::Running);
-                        assert_eq!(record.result, None);
-                        assert_eq!(
-                            record.model, on,
-                            "it goes on on the new model"
-                        );
-                        m.status = Status::Running;
-                        m.model = on;
-                    }
-                }
-            }
-
-            // Every read matches the model.
-            for (id, m) in &model.runs {
-                assert_eq!(
-                    store.transcript(id).await.unwrap(),
-                    model.transcript(id),
-                    "transcript of {id}"
-                );
-                assert_eq!(
-                    store.timeline(id).await.unwrap(),
-                    model.timeline(id),
-                    "timeline of {id}"
-                );
-                for plugin in ["memory", "prune"] {
-                    assert_eq!(
-                        store.records(id, plugin).await.unwrap(),
-                        model.records(id, plugin),
-                        "{plugin} records of {id}"
-                    );
-                }
-                let record = store.run(id).await.unwrap().expect("stored run");
-                assert_eq!(record.kind, m.kind, "{id}");
-                assert_eq!(record.status, m.status, "{id}");
-                assert_eq!(
-                    (record.input_tokens, record.output_tokens),
-                    (m.input, m.output),
-                    "{id}"
-                );
-                assert_eq!(record.cost_usd, m.cost, "{id}");
-                assert_eq!(record.turns, m.turns, "{id}");
-                assert_eq!(record.agent, m.agent);
-                assert_eq!(record.model, m.model, "{id}");
-                assert_eq!(record.workflow_id.as_deref(), m.workflow);
-            }
-            for workflow in ["wf_1", "wf_2"] {
-                let mut expected: BTreeMap<&str, (i64, f64)> = BTreeMap::new();
-                for m in
-                    model.runs.values().filter(|m| m.workflow == Some(workflow))
-                {
-                    let e = expected.entry(m.agent).or_default();
-                    e.0 += 1;
-                    e.1 += m.cost;
-                }
-                let expected: Vec<AgentCost> = expected
-                    .into_iter()
-                    .map(|(agent, (runs, usd))| AgentCost {
-                        agent: agent.into(),
-                        runs,
-                        usd,
-                    })
-                    .collect();
-                assert_eq!(
-                    store.workflow_cost(workflow).await.unwrap(),
-                    expected,
-                    "{workflow}"
-                );
-            }
-        }
-    });
+    hegel::stateful::machine(StoreMachine::new())
+        .steps(25)
+        .run(tc);
 }
 
 /// A file-backed store keeps its data across reopening, and runs the

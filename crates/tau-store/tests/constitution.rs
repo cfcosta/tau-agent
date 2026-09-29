@@ -26,28 +26,27 @@ fn constitution() -> impl PrintableGenerator<StoredConstitution> {
 
 #[hegel::composite]
 fn constitution_unprinted(tc: &TestCase) -> StoredConstitution {
-    let count = tc.draw(gs::integers::<usize>().max_value(5));
     // Distinct ids, in a drawn order.
-    let mut ids: Vec<usize> = (1..=8).collect();
-    let rules = (0..count)
-        .map(|_| {
-            let at = tc.draw(gs::integers::<usize>().max_value(ids.len() - 1));
-            StoredRule {
-                id: format!("R{}", ids.remove(at)),
-                text: tc.draw(gs::text().max_size(40)),
-                targets: tc.draw(
-                    gs::vecs(gs::sampled_from(vec![
-                        "edit.newText".to_owned(),
-                        "bash.command".to_owned(),
-                        "final answer".to_owned(),
-                    ]))
-                    .max_size(3),
-                ),
-                review: tc
-                    .draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
-                block: tc
-                    .draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
-            }
+    let ids: Vec<usize> = tc.draw(
+        gs::samples((1..=8).collect::<Vec<usize>>())
+            .without_replacement()
+            .max_size(5),
+    );
+    let rules = ids
+        .into_iter()
+        .map(|id| StoredRule {
+            id: format!("R{id}"),
+            text: tc.draw(gs::text().max_size(40)),
+            targets: tc.draw(
+                gs::vecs(gs::sampled_from(vec![
+                    "edit.newText".to_owned(),
+                    "bash.command".to_owned(),
+                    "final answer".to_owned(),
+                ]))
+                .max_size(3),
+            ),
+            review: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
+            block: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
         })
         .collect();
     StoredConstitution {
