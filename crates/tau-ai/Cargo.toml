@@ -29,3 +29,7 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-th
 [[bench]]
 name = "transport"
 harness = false
+
+[[bench]]
+name = "input"
+harness = false
