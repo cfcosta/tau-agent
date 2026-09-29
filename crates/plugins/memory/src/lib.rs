@@ -3,6 +3,7 @@
 //! research behind it is `docs/research/memory.md`).
 
 pub mod index;
+pub mod memory;
 pub mod note;
 pub mod recall;
 pub mod safety;
