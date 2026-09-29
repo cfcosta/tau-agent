@@ -12,7 +12,10 @@
 //! catching a real formula bug (which is usually off by a constant
 //! factor, not a rounding hair).
 
-use hegel::{TestCase, generators::Generator as _};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _, PrintableGenerator},
+};
 use tau_ai::{
     cost,
     message::Usage,
@@ -54,6 +57,99 @@ fn assert_close(actual: f64, expected: f64, what: &str) {
     );
 }
 
+/// Any service tier. `ServiceTier` is `tau-ai`'s own type, so drawn
+/// values print through Debug.
+fn service_tier() -> impl PrintableGenerator<ServiceTier> {
+    gs::sampled_from(vec![
+        ServiceTier::Default,
+        ServiceTier::Flex,
+        ServiceTier::PriorityOrFast,
+    ])
+    .print_as_debug()
+}
+
+/// Any model in the table.
+fn any_model() -> impl PrintableGenerator<&'static Model> {
+    gs::sampled_from(model::models().iter().collect::<Vec<_>>())
+        .print_as_debug()
+}
+
+/// pi's formula written out again, apart from `tau_ai::cost`: the rates
+/// the request's total input picks, each part at its rate, times the
+/// service tier's factor from pi's `getServiceTierCostMultiplier`
+/// (`packages/ai/src/api/openai-responses.ts:367-378`), as literals.
+fn reference(model: &Model, usage: &Usage, tier: ServiceTier) -> [f64; 4] {
+    let pricing = &model.pricing;
+    let total_input = usage.input + usage.cache_read + usage.cache_write;
+    let (input, output, cache_read, cache_write) = match pricing.long_context {
+        Some(long) if total_input > long.input_tokens_above => {
+            (long.input, long.output, long.cache_read, long.cache_write)
+        }
+        _ => (
+            pricing.input,
+            pricing.output,
+            pricing.cache_read,
+            pricing.cache_write,
+        ),
+    };
+    let factor = match tier {
+        ServiceTier::Default => 1.0,
+        ServiceTier::Flex => 0.5,
+        ServiceTier::PriorityOrFast if model.id == "gpt-5.5" => 2.5,
+        ServiceTier::PriorityOrFast => 2.0,
+    };
+    let part =
+        |rate: f64, tokens: u64| rate / 1_000_000.0 * tokens as f64 * factor;
+    [
+        part(input, usage.input),
+        part(output, usage.output),
+        part(cache_read, usage.cache_read),
+        part(cache_write, usage.cache_write),
+    ]
+}
+
+/// A usage for `model`. For a model with a long-context tier, half the
+/// time the request's total input sits within three tokens of the
+/// threshold, split at random across its three parts: the tier switch is
+/// where a pricing bug hides.
+fn usage_for(model: &'static Model) -> impl PrintableGenerator<Usage> {
+    // Usage is tau's own type, so its drawn values print through Debug.
+    usage_for_unprinted(model).print_as_debug()
+}
+
+#[hegel::composite]
+fn usage_for_unprinted(tc: &TestCase, model: &'static Model) -> Usage {
+    let near = model
+        .pricing
+        .long_context
+        .filter(|_| tc.draw(gs::booleans()))
+        .map(|long| long.input_tokens_above);
+    let (input, cache_read, cache_write) = match near {
+        Some(threshold) => {
+            let offset =
+                tc.draw(gs::integers::<i64>().min_value(-3).max_value(3));
+            let total = threshold.saturating_add_signed(offset);
+            let a = tc.draw(gs::integers::<u64>().max_value(total));
+            let b = tc.draw(gs::integers::<u64>().max_value(total - a));
+            (a, b, total - a - b)
+        }
+        None => {
+            let tokens = || gs::integers::<u64>().max_value(1 << 30);
+            (tc.draw(tokens()), tc.draw(tokens()), tc.draw(tokens()))
+        }
+    };
+    let output = tc.draw(gs::integers::<u64>().max_value(1 << 30));
+    Usage {
+        input,
+        output,
+        cache_read,
+        cache_write,
+        reasoning: None,
+        total_tokens: input + output + cache_read + cache_write,
+        cost: Default::default(),
+    }
+}
+
 fn add(a: &Usage, b: &Usage) -> Usage {
     Usage {
         input: a.input + b.input,
@@ -70,14 +166,7 @@ fn add(a: &Usage, b: &Usage) -> Usage {
 #[hegel::test(test_cases = 100)]
 fn zero_usage_is_zero_cost(tc: TestCase) {
     let model = untiered_model();
-    let tier = tc.draw(
-        hegel::generators::sampled_from(vec![
-            ServiceTier::Default,
-            ServiceTier::Flex,
-            ServiceTier::PriorityOrFast,
-        ])
-        .print_as_debug(),
-    );
+    let tier = tc.draw(service_tier());
     let usage = Usage::default();
     let result = cost::cost(model, &usage, tier);
     assert_eq!(result.input, 0.0);
@@ -87,24 +176,31 @@ fn zero_usage_is_zero_cost(tc: TestCase) {
     assert_eq!(result.total, 0.0);
 }
 
+/// How many tokens each part of a usage may have so that two usages, and
+/// their sum, stay in `model`'s base tier: a sixth of the threshold, as
+/// three parts of two usages add up to at most the threshold.
+fn within_base_tier(model: &Model) -> u64 {
+    model
+        .pricing
+        .long_context
+        .map_or(1 << 30, |long| long.input_tokens_above / 6)
+}
+
 /// **Cost is additive:** `cost(a) + cost(b) == cost(a + b)` for two
 /// usages of the same model and the same tier (`testing.md`'s `tau-ai`
-/// property inventory). Bounding each usage's tokens to a quarter of the
-/// long-context threshold keeps both `a`, `b` and `a + b` in the base
-/// tier, so "same tier" holds by construction rather than by `tc.assume`.
+/// property inventory), on a model with a long-context tier too. Each
+/// part is bounded by [`within_base_tier`], so "same tier" holds by
+/// construction rather than by `tc.assume`.
 #[hegel::test(test_cases = 500)]
 fn cost_is_additive_within_a_tier(tc: TestCase) {
-    let model = untiered_model();
-    let tier = tc.draw(
-        hegel::generators::sampled_from(vec![
-            ServiceTier::Default,
-            ServiceTier::Flex,
-            ServiceTier::PriorityOrFast,
-        ])
-        .print_as_debug(),
+    let model = tc.draw(
+        gs::sampled_from(vec![untiered_model(), tiered_model()])
+            .print_as_debug(),
     );
-    let a = tc.draw(generators::usage_with_max_tokens(1 << 30));
-    let b = tc.draw(generators::usage_with_max_tokens(1 << 30));
+    let tier = tc.draw(service_tier());
+    let max = within_base_tier(model);
+    let a = tc.draw(generators::usage_with_max_tokens(max));
+    let b = tc.draw(generators::usage_with_max_tokens(max));
 
     let cost_a = cost::cost(model, &a, tier);
     let cost_b = cost::cost(model, &b, tier);
@@ -130,10 +226,13 @@ fn cost_is_additive_within_a_tier(tc: TestCase) {
 /// this is `cost` restated as "the rates never invent a discount").
 #[hegel::test(test_cases = 500)]
 fn cost_is_monotone_in_each_token_count(tc: TestCase) {
-    let model = untiered_model();
-    let base = tc.draw(generators::usage_with_max_tokens(1 << 30));
-    let extra =
-        tc.draw(hegel::generators::integers::<u64>().max_value(1 << 30));
+    let model = tc.draw(
+        gs::sampled_from(vec![untiered_model(), tiered_model()])
+            .print_as_debug(),
+    );
+    let max = within_base_tier(model);
+    let base = tc.draw(generators::usage_with_max_tokens(max));
+    let extra = tc.draw(gs::integers::<u64>().max_value(max));
     let tier = ServiceTier::Default;
 
     let base_cost = cost::cost(model, &base, tier);
@@ -163,30 +262,25 @@ fn cost_is_monotone_in_each_token_count(tc: TestCase) {
     );
 }
 
-/// `total` is always the sum of the four parts, at every tier and
-/// service tier.
-#[hegel::test(test_cases = 500)]
-fn total_equals_sum_of_parts(tc: TestCase) {
-    let model = tc.draw(
-        hegel::generators::sampled_from(
-            model::models().iter().collect::<Vec<_>>(),
-        )
-        .print_as_debug(),
-    );
-    let tier = tc.draw(
-        hegel::generators::sampled_from(vec![
-            ServiceTier::Default,
-            ServiceTier::Flex,
-            ServiceTier::PriorityOrFast,
-        ])
-        .print_as_debug(),
-    );
-    let usage = tc.draw(generators::usage_with_max_tokens(1 << 40));
+/// **Differential:** every model, every service tier, usages around the
+/// long-context threshold: each part matches the reference formula, and
+/// `total` is their sum.
+#[hegel::test(test_cases = 1000)]
+fn cost_matches_the_reference_formula(tc: TestCase) {
+    let model = tc.draw(any_model());
+    let tier = tc.draw(service_tier());
+    let usage = tc.draw(usage_for(model));
 
     let result = cost::cost(model, &usage, tier);
+    let [input, output, cache_read, cache_write] =
+        reference(model, &usage, tier);
+    assert_close(result.input, input, "input");
+    assert_close(result.output, output, "output");
+    assert_close(result.cache_read, cache_read, "cache_read");
+    assert_close(result.cache_write, cache_write, "cache_write");
     assert_close(
-        result.input + result.output + result.cache_read + result.cache_write,
         result.total,
+        input + output + cache_read + cache_write,
         "total",
     );
 }
