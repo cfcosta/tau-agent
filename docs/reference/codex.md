@@ -128,16 +128,16 @@ them, probed through both an API key and Codex on 2026-09-28; the two
 agree on every model they share. `Model::efforts` carries them, lowest
 first:
 
-| Models                                       | Efforts                             |
-| -------------------------------------------- | ----------------------------------- |
-| `gpt-5`, `gpt-5-mini`, `gpt-5-nano`          | minimal, low, medium, high          |
-| `gpt-5.1`                                    | none, low, medium, high             |
-| `gpt-5.2` to `gpt-5.5`, and their minis      | none, low, medium, high, xhigh      |
+| Models                                         | Efforts                             |
+| ---------------------------------------------- | ----------------------------------- |
+| `gpt-5`, `gpt-5-mini`, `gpt-5-nano`            | minimal, low, medium, high          |
+| `gpt-5.1`                                      | none, low, medium, high             |
+| `gpt-5.2` to `gpt-5.5`, and their minis        | none, low, medium, high, xhigh      |
 | `gpt-5.6-{luna,sol,terra}`, `gpt-6-{luna,sol}` | none, low, medium, high, xhigh, max |
-| `gpt-6-astra`                                | low, medium, high, xhigh, max       |
-| the `-pro` models from `gpt-5.2`             | medium, high, xhigh                 |
-| `gpt-5-pro`                                  | high                                |
-| `o1`, `o3`, `o4-mini` and their variants     | low, medium, high                   |
+| `gpt-6-astra`                                  | low, medium, high, xhigh, max       |
+| the `-pro` models from `gpt-5.2`               | medium, high, xhigh                 |
+| `gpt-5-pro`                                    | high                                |
+| `o1`, `o3`, `o4-mini` and their variants       | low, medium, high                   |
 
 Codex's own model list (`GET /backend-api/codex/models`) leaves out
 `none`, which its server takes, and adds `ultra`, which it never sends:
