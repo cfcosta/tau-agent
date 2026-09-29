@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 
-use hegel::TestCase;
+use hegel::{TestCase, extras::serde_json as json_gs, generators as gs};
 use serde_json::{Map, Value, json};
 use tau_agent::schema::{
     NotStrict,
@@ -179,47 +179,188 @@ fn strip_nulls_round_trips(tc: TestCase) {
     );
 }
 
-/// A schema pi's strict rewrite does not support is rejected with a
-/// `NotStrict` naming one of pi's own reasons, never silently accepted
-/// or panicking.
+/// A schema pi's strict rewrite does not support is rejected with the
+/// reason its one bad node calls for, wherever in the schema that node
+/// sits, never silently accepted or panicking.
 #[hegel::test(test_cases = 300)]
-fn unsupported_schema_is_rejected_with_a_reason(tc: TestCase) {
-    const KNOWN_REASONS: &[&str] = &[
-        "boolean schemas are unsupported",
-        "$ref schemas are unsupported",
-        "$defs schemas are unsupported",
-        "definitions schemas are unsupported",
-        "allOf schemas are unsupported",
-        "oneOf schemas are unsupported",
-        "patternProperties schemas are unsupported",
-        "dependentSchemas schemas are unsupported",
-        "dependencies schemas are unsupported",
-        "unevaluatedProperties schemas are unsupported",
-        "propertyNames schemas are unsupported",
-        "contains schemas are unsupported",
-        "prefixItems schemas are unsupported",
-        "not schemas are unsupported",
-        "if schemas are unsupported",
-        "then schemas are unsupported",
-        "else schemas are unsupported",
-        "anyOf must contain at least one schema",
-        "recursive $ref schemas are unsupported",
-        "tuple schemas are unsupported",
-        "properties require type object",
-        "schema-valued or true additionalProperties is unsupported",
-        "object properties must be a schema map",
-        "object required must be a string array",
-        "required contains an unknown property",
-        "root schema must have type object",
-    ];
-
-    let schema = tc.draw(generators::unsupported_schema());
+fn unsupported_schema_is_rejected_with_its_reason(tc: TestCase) {
+    let (schema, reason) =
+        tc.draw(generators::unsupported_schema_with_reason());
     let error = to_strict(&schema)
         .expect_err("generator only builds unsupported schemas");
-    assert!(
-        KNOWN_REASONS.contains(&error.reason()),
-        "unrecognized NotStrict reason {:?} for schema {schema}",
-        error.reason()
+    assert_eq!(error.reason(), reason, "schema {schema}");
+    tc.event(&reason);
+}
+
+/// `schema` with every object node closed (`additionalProperties:
+/// false`), as strict mode closes them. Written independently of
+/// `to_strict`: it only sets that one field.
+fn closed(schema: &Value) -> Value {
+    let Some(obj) = schema.as_object() else {
+        return schema.clone();
+    };
+    let mut out = obj.clone();
+    if matches!(obj.get("type"), Some(Value::String(t)) if t == "object") {
+        out.insert("additionalProperties".to_owned(), Value::Bool(false));
+    }
+    if let Some(Value::Object(properties)) = obj.get("properties") {
+        out.insert(
+            "properties".to_owned(),
+            Value::Object(
+                properties
+                    .iter()
+                    .map(|(key, property)| (key.clone(), closed(property)))
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(items) = obj.get("items") {
+        out.insert("items".to_owned(), closed(items));
+    }
+    if let Some(Value::Array(variants)) = obj.get("anyOf") {
+        out.insert(
+            "anyOf".to_owned(),
+            Value::Array(variants.iter().map(closed).collect()),
+        );
+    }
+    Value::Object(out)
+}
+
+/// `value` without the `null`s strict mode cannot tell from an omitted
+/// property: a `null` under an optional property whose own schema does
+/// not accept `null`. Strict mode reads such a `null` as "omitted", so
+/// the original schema must be asked about the value without it.
+fn without_ambiguous_nulls(schema: &Value, value: &Value) -> Value {
+    match value {
+        Value::Array(items) => match schema.get("items") {
+            Some(item_schema) => Value::Array(
+                items
+                    .iter()
+                    .map(|item| without_ambiguous_nulls(item_schema, item))
+                    .collect(),
+            ),
+            None => value.clone(),
+        },
+        Value::Object(entries) => {
+            let Some(properties) =
+                schema.get("properties").and_then(Value::as_object)
+            else {
+                return value.clone();
+            };
+            let required: HashSet<&str> = schema
+                .get("required")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let mut out = Map::new();
+            for (key, entry) in entries {
+                match properties.get(key) {
+                    Some(property) => {
+                        if entry.is_null()
+                            && !required.contains(key.as_str())
+                            && !jsonschema::is_valid(property, &Value::Null)
+                        {
+                            continue;
+                        }
+                        out.insert(
+                            key.clone(),
+                            without_ambiguous_nulls(property, entry),
+                        );
+                    }
+                    None => {
+                        out.insert(key.clone(), entry.clone());
+                    }
+                }
+            }
+            Value::Object(out)
+        }
+        _ => value.clone(),
+    }
+}
+
+/// `value` with one drawn edit at a drawn position: the subvalue there
+/// replaced by any JSON value, or, on an object, a key dropped or added.
+/// Starting from a valid value, this lands next to the schema's edges.
+fn perturbed(tc: &TestCase, value: &Value) -> Value {
+    fn pointers(value: &Value, at: String, out: &mut Vec<String>) {
+        match value {
+            Value::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    pointers(item, format!("{at}/{i}"), out);
+                }
+            }
+            Value::Object(entries) => {
+                for (key, entry) in entries {
+                    let key = key.replace('~', "~0").replace('/', "~1");
+                    pointers(entry, format!("{at}/{key}"), out);
+                }
+            }
+            _ => {}
+        }
+        out.push(at);
+    }
+    let mut all = Vec::new();
+    pointers(value, String::new(), &mut all);
+    let at: String = tc.draw(gs::sampled_from(all));
+    let mut out = value.clone();
+    let target = out.pointer_mut(&at).expect("a pointer into the value");
+    match (
+        tc.draw(gs::sampled_from(vec!["replace", "drop", "add"])),
+        target,
+    ) {
+        ("drop", Value::Object(entries)) if !entries.is_empty() => {
+            let keys: Vec<String> = entries.keys().cloned().collect();
+            entries.remove(&tc.draw(gs::sampled_from(keys)));
+        }
+        ("add", Value::Object(entries)) => {
+            let key =
+                tc.draw(gs::sampled_from(vec!["p0", "p1", "p2", "extra"]));
+            entries.insert(key.to_owned(), tc.draw(json_gs::values()));
+        }
+        (_, target) => *target = tc.draw(json_gs::values()),
+    }
+    out
+}
+
+/// Strict mode keeps every constraint of the original schema and adds
+/// only its own: for any value, the strict schema accepts the value with
+/// its missing optionals set to `null` exactly when the original schema,
+/// with every object closed, accepts the value (less the `null`s strict
+/// mode reads as omissions). Checked with the `jsonschema` crate, on
+/// values valid under the schema, one edit away from valid, and
+/// arbitrary.
+#[hegel::test(test_cases = 300)]
+fn strict_schema_accepts_exactly_what_the_closed_original_accepts(
+    tc: TestCase,
+) {
+    let (schema, valid) = tc.draw(generators::strict_schema_with_value(2));
+    let value = match tc.draw(gs::sampled_from(vec![
+        "valid",
+        "perturbed",
+        "arbitrary",
+    ])) {
+        "valid" => valid,
+        "perturbed" => perturbed(&tc, &valid),
+        _ => tc.draw(json_gs::values()),
+    };
+    let strict = to_strict(&schema)
+        .expect("generator only builds strict-convertible schemas");
+    let strict_accepts = jsonschema::is_valid(
+        &strict,
+        &nullify_missing_optionals(&schema, &value),
+    );
+    let original_accepts = jsonschema::is_valid(
+        &closed(&schema),
+        &without_ambiguous_nulls(&schema, &value),
+    );
+    tc.event(if original_accepts {
+        "accepted"
+    } else {
+        "rejected"
+    });
+    assert_eq!(
+        strict_accepts, original_accepts,
+        "schema: {schema}\nstrict: {strict}\nvalue: {value}"
     );
 }
 

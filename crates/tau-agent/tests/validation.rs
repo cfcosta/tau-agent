@@ -7,7 +7,7 @@
 //! "Coercion ..." rows) and `docs/reference/agent-loop.md`'s "Coercion
 //! before validation" for the rules ported here.
 
-use hegel::{TestCase, generators as gs};
+use hegel::{TestCase, extras::serde_json as json_gs, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::validation::ArgumentSchema;
 use tau_testing::generators;
@@ -71,7 +71,7 @@ fn coercion_is_idempotent(tc: TestCase) {
     // An arbitrary JSON value, unrelated to `schema`, so this exercises
     // coercion on inputs that do not already match (including ones
     // coercion cannot fix at all).
-    let value = tc.draw(generators::json_value(3));
+    let value = tc.draw(json_gs::values());
     let compiled = compile(&schema);
     let once = compiled.coerce(&value);
     let twice = compiled.coerce(&once);
@@ -173,58 +173,243 @@ fn null_on_optional_field_is_treated_as_absent(tc: TestCase) {
     assert_eq!(compiled.coerce(&with_null), compiled.coerce(&without_extra));
 }
 
-/// An object missing a required property fails validation, and the
-/// error names that property by its (possibly nested) field path — pi's
-/// `formatValidationPath` special-cases a `required` violation to name
-/// the missing property itself, not just its parent.
+/// Validation accepts exactly the values whose coerced form the schema
+/// accepts, by the `jsonschema` crate asked directly, and hands back that
+/// coerced form. Checked on arbitrary values, on values valid under the
+/// schema, and on values built for an unrelated schema.
+#[hegel::test(test_cases = 300)]
+fn validation_accepts_exactly_what_coercion_makes_valid(tc: TestCase) {
+    let schema = tc.draw(generators::arg_schema(3));
+    let value = match tc.draw(gs::sampled_from(vec![
+        "arbitrary",
+        "valid",
+        "for another schema",
+    ])) {
+        "arbitrary" => tc.draw(json_gs::values()),
+        "valid" => tc.draw(generators::arg_value_for_schema(schema.clone())),
+        _ => {
+            let other = tc.draw(generators::arg_schema(3));
+            tc.draw(generators::arg_value_for_schema(other))
+        }
+    };
+    let compiled = compile(&schema);
+    let coerced = compiled.coerce(&value);
+    let accepted = jsonschema::is_valid(&schema, &coerced);
+    tc.event(if accepted { "accepted" } else { "rejected" });
+    match compiled.validate(&value) {
+        Ok(validated) => {
+            assert!(accepted, "{schema} accepted {value} as {validated}");
+            assert_eq!(validated, coerced);
+        }
+        Err(error) => {
+            assert!(!accepted, "{schema} rejected {value}: {error}");
+            assert!(
+                error.to_string().starts_with("Validation failed:\n  - "),
+                "{error}"
+            );
+        }
+    }
+}
+
+/// The objects in `value` (valid under `schema`) that hold a required
+/// property, found by walking both together through properties and
+/// array items: each as the JSON pointer to the object, its path as a
+/// validation error spells it, and the required key. Values under an
+/// `anyOf` are skipped, since which branch they satisfy is not known.
+fn required_slots(
+    schema: &Value,
+    value: &Value,
+    pointer: &str,
+    path: &str,
+    out: &mut Vec<(String, String, String)>,
+) {
+    if schema.get("anyOf").is_some() {
+        return;
+    }
+    let join = |segment: &str| {
+        if path.is_empty() {
+            segment.to_owned()
+        } else {
+            format!("{path}.{segment}")
+        }
+    };
+    match value {
+        Value::Object(entries) => {
+            let required = schema
+                .get("required")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for key in required.iter().filter_map(Value::as_str) {
+                if entries.contains_key(key) {
+                    out.push((
+                        pointer.to_owned(),
+                        path.to_owned(),
+                        key.to_owned(),
+                    ));
+                }
+            }
+            let properties =
+                schema.get("properties").and_then(Value::as_object);
+            for (key, entry) in entries {
+                if let Some(property) = properties.and_then(|p| p.get(key)) {
+                    required_slots(
+                        property,
+                        entry,
+                        &format!("{pointer}/{key}"),
+                        &join(key),
+                        out,
+                    );
+                }
+            }
+        }
+        Value::Array(items) => {
+            if let Some(item_schema) = schema.get("items") {
+                for (i, item) in items.iter().enumerate() {
+                    required_slots(
+                        item_schema,
+                        item,
+                        &format!("{pointer}/{i}"),
+                        &join(&i.to_string()),
+                        out,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// An object missing a required property fails validation, and the one
+/// error line names that property by its full field path, however deep
+/// (pi's `formatValidationPath` special-cases a `required` violation to
+/// name the missing property itself, not just its parent).
 #[hegel::test(test_cases = 300)]
 fn missing_required_property_is_rejected_with_its_path(tc: TestCase) {
-    let inner_schema = tc.draw(generators::arg_schema(2));
-    let inner_value =
-        tc.draw(generators::arg_value_for_schema(inner_schema.clone()));
+    // Two levels of required objects, then whatever `arg_schema` draws.
     let schema = json!({
         "type": "object",
-        "properties": {"field": inner_schema},
+        "properties": {"field": {
+            "type": "object",
+            "properties": {
+                "p0": tc.draw(generators::arg_schema(2)),
+                "p1": tc.draw(generators::arg_schema(2)),
+            },
+            "required": ["p0", "p1"],
+        }},
         "required": ["field"],
     });
-    // Build a valid call, then break it by dropping the required key.
-    let valid_args = json!({"field": inner_value});
+    let valid = tc.draw(generators::arg_value_for_schema(schema.clone()));
     let compiled = compile(&schema);
-    assert!(compiled.validate(&valid_args).is_ok());
+    assert!(compiled.validate(&valid).is_ok());
 
-    let broken_args = json!({});
+    let mut slots = Vec::new();
+    required_slots(&schema, &valid, "", "", &mut slots);
+    // The root's `field` is always a slot; lean toward the deeper ones.
+    if slots.len() > 1 && tc.draw(gs::weighted_booleans(0.8)) {
+        slots.remove(0);
+    }
+    let (pointer, path, key) = tc.draw(gs::sampled_from(slots));
+    let mut broken = valid.clone();
+    broken
+        .pointer_mut(&pointer)
+        .and_then(Value::as_object_mut)
+        .expect("the slot is an object")
+        .remove(&key);
+    tc.event(if path.is_empty() {
+        "top level"
+    } else {
+        "nested"
+    });
+    let missing = if path.is_empty() {
+        key.clone()
+    } else {
+        format!("{path}.{key}")
+    };
     let error = compiled
-        .validate(&broken_args)
+        .validate(&broken)
         .expect_err("a required property was dropped");
+    let want = format!(
+        "Validation failed:\n  - {missing}: \"{key}\" is a required property\n\nReceived arguments:\n"
+    );
     assert!(
-        error.to_string().contains("field"),
-        "error does not name the missing field: {error}"
+        error.to_string().starts_with(&want),
+        "want {want:?}, got: {error}"
     );
 }
 
+/// A value of a leaf type that no coercion rule turns into `ty`: an
+/// object or an array for any scalar type, and for the non-string types
+/// a string or number the coercion rules leave alone.
+fn uncoercible(tc: &TestCase, ty: &str) -> Value {
+    let mut kinds = vec!["object", "array"];
+    match ty {
+        "number" | "integer" => kinds.push("word"),
+        "boolean" => kinds.extend(["word", "other number"]),
+        "null" => kinds.extend(["word", "other number", "true"]),
+        _ => {}
+    }
+    if ty == "integer" {
+        kinds.push("fraction");
+    }
+    match tc.draw(gs::sampled_from(kinds)) {
+        "object" => json!({"unexpected": tc.draw(json_gs::values())}),
+        "array" => {
+            Value::Array(tc.draw(gs::vecs(json_gs::values()).max_size(3)))
+        }
+        // Letters alone never parse as a finite number, and "true" and
+        // "false" are the only strings a boolean takes: a word not
+        // starting with `t` or `f` is neither.
+        "word" => Value::String(
+            tc.draw(gs::from_regex("[a-eg-su-z][a-z]{0,7}").fullmatch(true)),
+        ),
+        "other number" => json!(tc.draw(hegel::one_of!(
+            gs::integers::<i64>().max_value(-1),
+            gs::integers::<i64>().min_value(2),
+        ))),
+        "true" => Value::Bool(true),
+        _ => json!(
+            tc.draw(gs::integers::<i32>()) as f64
+                + tc.draw(gs::sampled_from(vec![0.25, 0.5, 0.75]))
+        ),
+    }
+}
+
 /// A value whose type cannot be coerced into what a required property
-/// demands is rejected, and the error names that property's field path.
+/// demands is rejected, and the error names that property's field path,
+/// however deep the property sits.
 #[hegel::test(test_cases = 300)]
 fn wrong_type_that_cannot_coerce_is_rejected_with_its_path(tc: TestCase) {
     let ty = tc.draw(gs::sampled_from(vec![
-        "string", "number", "integer", "boolean",
+        "string", "number", "integer", "boolean", "null",
     ]));
-    let schema = json!({
-        "type": "object",
-        "properties": {"field": {"type": ty}},
-        "required": ["field"],
-    });
-    // An object can coerce into none of string/number/integer/boolean,
-    // so this is invalid under every case `ty` draws from.
-    let args = json!({"field": {"unexpected": "object"}});
+    let leaf = json!({"type": ty});
+    let bad = uncoercible(&tc, ty);
+    assert!(!jsonschema::is_valid(&leaf, &bad), "{bad} is a {ty}");
+    let keys: Vec<String> = tc.draw(
+        gs::vecs(gs::from_regex("[a-z]{1,4}").fullmatch(true))
+            .min_size(1)
+            .max_size(4),
+    );
+    let (mut schema, mut args) = (leaf, bad);
+    for key in keys.iter().rev() {
+        schema = json!({
+            "type": "object",
+            "properties": {key.as_str(): schema},
+            "required": [key],
+        });
+        args = json!({key.as_str(): args});
+    }
     let compiled = compile(&schema);
     let error = compiled
         .validate(&args)
-        .expect_err("an object cannot coerce into a scalar");
+        .expect_err("the value cannot coerce into the leaf type");
+    let want = format!("Validation failed:\n  - {}: ", keys.join("."));
     assert!(
-        error.to_string().contains("field"),
-        "error does not name the offending field: {error}"
+        error.to_string().starts_with(&want),
+        "want {want:?}, got: {error}"
     );
+    tc.event(ty);
 }
 
 // =============================================================================
