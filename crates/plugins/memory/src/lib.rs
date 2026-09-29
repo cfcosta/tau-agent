@@ -5,6 +5,10 @@
 pub mod index;
 pub mod memory;
 pub mod note;
+pub mod plugin;
 pub mod recall;
 pub mod safety;
 pub mod store;
+
+pub use memory::Memory;
+pub use plugin::{MemoryPlugin, Scopes};

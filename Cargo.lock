@@ -7690,13 +7690,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures-util",
  "hegeltest",
  "regex",
+ "schemars",
  "serde",
  "serde_json",
  "tau-agent",
  "tau-ai",
+ "tau-store",
+ "tau-testing",
  "tempfile",
+ "tokio",
+ "tokio-util",
  "toml 1.1.6+spec-1.1.0",
 ]
 

@@ -92,6 +92,13 @@ impl ToolUpdates {
         }
     }
 
+    /// An update sink nobody reads, for calling a tool outside the loop,
+    /// as a plugin does with its own tools.
+    pub fn detached() -> Self {
+        let (sender, _) = mpsc::unbounded_channel();
+        Self::new("detached".into(), sender)
+    }
+
     /// An update sink for tests of tools outside the loop.
     pub fn for_tests(
         call_id: &str,
