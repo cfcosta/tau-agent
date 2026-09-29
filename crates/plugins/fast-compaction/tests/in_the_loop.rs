@@ -163,6 +163,15 @@ fn a_stale_result_is_cut() {
             first.contains("[fast-compaction truncated") && first.len() < 500,
             "{first}"
         );
+        // The note names an archive holding the result whole.
+        let (_, rest) = first.rsplit_once("; full result: ").unwrap();
+        let (archive, _) =
+            rest.split_once(" (read or grep it if needed)]").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(archive).unwrap(),
+            format!("CONTENTS OF a.rs: {}", "x".repeat(4000))
+        );
+        std::fs::remove_file(archive).unwrap();
         assert_eq!(
             result_text(&next[4]),
             format!("CONTENTS OF b.rs: {}", "x".repeat(10))

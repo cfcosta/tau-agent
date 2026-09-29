@@ -1,26 +1,24 @@
-//! The transcript as Jev sees it: tool calls with their inputs and the
-//! size of their results, never the results themselves, fitted to a
-//! token budget.
+//! The transcript as the history stage shows it to Jev: tool calls with
+//! their inputs and the size of their results, never the results
+//! themselves; and the token estimate both stages use.
 //!
 //! Ported from `tamaratran/fast-jev-compaction` by way of
-//! `joelhooks/pi-fast-jev-compaction` (`src/core/state.ts`; see
+//! `joelhooks/pi-fast-jev-compaction` (`src/core/state.ts`), with the
+//! estimate of `tamaratran/jev-pruner` (`src/jev.ts`; see
 //! `THIRD_PARTY_NOTICES.md`). Lengths count characters, where the
-//! original counts UTF-16 units; they differ only outside the Basic
+//! originals count UTF-16 units; they differ only outside the Basic
 //! Multilingual Plane.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use tau_ai::message::{AssistantBlock, InputBlock, Message, UserContent};
 
-/// What the state tells Jev about itself.
-pub const STATE_CONTEXT: &str = "A coding assistant conversation is being compacted to free context. `history` is the whole conversation so far, oldest first; tool outputs are replaced by a short `result` note and long texts may be abridged. Each question asks whether one tool call, or the full output of that call, still needs to stay in the history verbatim. Whatever is not kept is deleted from model context, but the assistant can re-run a tool or re-read a file.";
+use crate::history::{CallRecord, Record};
 
-/// Tool inputs are cut to the first of these that fits, in order.
-const INPUT_CHARS: [usize; 3] = [1000, 200, 60];
-const TEXT_HEAD: usize = 400;
-const TEXT_TAIL: usize = 150;
+/// What the state tells Jev about itself.
+pub const STATE_CONTEXT: &str = "A coding assistant conversation is being compacted to free context. `history` is the conversation so far, oldest first, verbatim except that tool outputs are replaced by a short `result` note. A long conversation is split into ordered segments that are asked about separately; then `history` is one segment, `calls` lists the tool calls asked about, and a keep in any segment keeps the call. Oversized fields continue across entries labeled `part`, with their field name and character offset. Each question asks whether one tool call, or the full output of that call, still needs to stay in the history verbatim. Whatever is not kept is deleted from model context: a cut output keeps its head and the path of a file holding it whole, and a dropped call goes with its output, though the assistant can re-run a tool or re-read a file.";
 
 /// Who a message is from, as the state names it. Tool results count as
 /// the user's.
@@ -182,15 +180,35 @@ pub fn collect_calls(entries: &[Entry], preserve_recent: usize) -> Vec<Call> {
     calls
 }
 
-/// A rough token count: a word of ASCII letters is one token per six
-/// letters (rounded up), a run of digits half a token per digit, and any
-/// other non-space character nine tenths of a token; the sum rounds up.
-///
-/// Counted exactly, in tenths of a token. pi's `estimateTokens` sums the
-/// same weights as floats, so ten punctuation characters come to
-/// 9.000000000000002 there and round up to 10; here they are 9, on
-/// purpose.
-pub fn estimate_tokens(text: &str) -> usize {
+/// Whether `c` is whitespace to JavaScript's `\s`, which the estimate
+/// skips (Rust's `char::is_whitespace` differs on U+0085 and U+FEFF).
+fn js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n'
+            | '\u{b}'
+            | '\u{c}'
+            | '\r'
+            | ' '
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
+/// The estimate of `text` in tenths of a token, with `digit` tenths per
+/// digit: a word of ASCII letters costs ten, plus ten per six letters
+/// after its first; any other character that is not a space costs
+/// nine per UTF-16 unit, as the original's regular expression matches
+/// units.
+pub fn tenths(text: &str, digit: usize) -> usize {
     let mut tenths = 0usize;
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
@@ -199,14 +217,51 @@ pub fn estimate_tokens(text: &str) -> usize {
             while chars.next_if(char::is_ascii_alphabetic).is_some() {
                 len += 1;
             }
-            tenths += 10 * len.div_ceil(6);
+            tenths += 10 * (1 + (len - 1) / 6);
         } else if c.is_ascii_digit() {
-            tenths += 5;
-        } else if !c.is_whitespace() {
-            tenths += 9;
+            tenths += digit;
+        } else if !js_space(c) {
+            tenths += 9 * c.len_utf16();
         }
     }
-    tenths.div_ceil(10)
+    tenths
+}
+
+/// Tenths per digit in [`estimate_tokens`].
+pub const DIGIT_TENTHS: usize = 5;
+/// Tenths per digit in [`estimate_state_tokens`]: half a token more.
+pub const STATE_DIGIT_TENTHS: usize = 10;
+
+/// A token count without a tokenizer, `estimateTokens` of
+/// `tamaratran/jev-pruner` (`src/jev.ts`): a word of ASCII letters is
+/// one token per six letters, rounded up; a digit half a token; any
+/// other character that is not a space nine tenths of a token. There it
+/// was calibrated against the usage Jev reports for real transcripts,
+/// landing 2–18% above the true count.
+///
+/// Counted exactly, in tenths of a token, and rounded up once: the
+/// original sums floats, so ten punctuation characters come to
+/// 9.000000000000002 there and round up to 10; here they are 9, on
+/// purpose.
+pub fn estimate_tokens(text: &str) -> usize {
+    tenths(text, DIGIT_TENTHS).div_ceil(10)
+}
+
+/// The estimate of a Jev state or question set, jev-pruner's
+/// `estimateStateTokens`: [`estimate_tokens`] and half a token more per
+/// digit, since the numbers in JSON tokenize worse than prose. Rounded
+/// up once, where the original rounds the first part up and then adds
+/// the halves.
+pub fn estimate_state_tokens(text: &str) -> usize {
+    tenths(text, STATE_DIGIT_TENTHS).div_ceil(10)
+}
+
+/// [`estimate_state_tokens`] of `value` as JSON, in tenths.
+pub fn json_tenths(value: &impl Serialize) -> usize {
+    tenths(
+        &serde_json::to_string(value).expect("states serialize"),
+        STATE_DIGIT_TENTHS,
+    )
 }
 
 /// `text` cut to `limit` characters, the last one an ellipsis.
@@ -218,66 +273,6 @@ pub fn truncate(text: &str, limit: usize) -> String {
     format!("{kept}…")
 }
 
-fn abridge(text: &str, head: usize, tail: usize) -> String {
-    let len = text.chars().count();
-    if len <= head + tail + 40 {
-        return text.to_owned();
-    }
-    let start: String = text.chars().take(head).collect();
-    let end: String = text.chars().skip(len - tail).collect();
-    format!("{start}\n[… {} chars omitted …]\n{end}", len - head - tail)
-}
-
-/// One message in the state.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct HistoryEntry {
-    pub i: usize,
-    pub role: Role,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<HistoryCalls>,
-}
-
-/// A message's tool calls: in full, or compacted to one line each.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum HistoryCalls {
-    Full(Vec<HistoryCall>),
-    Compact(Vec<String>),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct HistoryCall {
-    pub id: String,
-    pub tool: String,
-    pub input: String,
-    pub result: String,
-}
-
-/// The state sent to Jev.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct State {
-    pub context: &'static str,
-    pub goal: String,
-    pub history: Vec<HistoryEntry>,
-}
-
-/// A state that fits the budget: its estimated tokens, and how much it
-/// had to shrink to fit (`full`, or the last stage applied).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Fitted {
-    pub state: State,
-    pub tokens: usize,
-    pub stage: &'static str,
-}
-
-fn input_text(input: &Map<String, Value>, limit: usize) -> String {
-    truncate(
-        &serde_json::to_string(input).expect("JSON objects serialize"),
-        limit,
-    )
-}
-
 fn result_note(call: &Call) -> String {
     format!(
         "{}, {} chars (omitted)",
@@ -286,76 +281,49 @@ fn result_note(call: &Call) -> String {
     )
 }
 
-fn compact_call(call: &Call) -> String {
-    let input = call
-        .input
-        .iter()
-        .map(|(key, value)| {
-            let text = match value {
-                Value::String(text) => text.clone(),
-                other => {
-                    let mut single = Map::new();
-                    single.insert(key.clone(), other.clone());
-                    input_text(&single, 200)
-                }
-            };
-            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            format!("{key}={text}")
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!(
-        "{} {} {} → {} {}ch",
-        call.id,
-        call.tool,
-        truncate(&input, INPUT_CHARS[2]),
-        if call.is_error { "error" } else { "ok" },
-        call.result_chars
-    )
+/// `call` as the state shows it: its id, tool, whole input, and a note
+/// of its result's status and size.
+pub fn call_record(call: &Call) -> CallRecord {
+    CallRecord {
+        id: call.id.clone(),
+        tool: call.tool.clone(),
+        input: serde_json::to_string(&call.input)
+            .expect("JSON objects serialize"),
+        result: Some(result_note(call)),
+    }
 }
 
-fn calls_by_message(calls: &[Call]) -> BTreeMap<usize, Vec<&Call>> {
+/// The history of the state: every message with text or tool calls,
+/// in order, whole. Tool calls come with their input and a note of
+/// their result; the results themselves never do.
+pub fn history_records(entries: &[Entry], calls: &[Call]) -> Vec<Record> {
     let mut by_message: BTreeMap<usize, Vec<&Call>> = BTreeMap::new();
     for call in calls {
         by_message.entry(call.call_index).or_default().push(call);
     }
-    by_message
-}
-
-fn history_entries(
-    entries: &[Entry],
-    calls: &[Call],
-    input_chars: usize,
-) -> Vec<HistoryEntry> {
-    let by_message = calls_by_message(calls);
-    let mut history = Vec::new();
-    for (index, entry) in entries.iter().enumerate() {
-        let tool_calls: Vec<HistoryCall> = by_message
-            .get(&index)
-            .map(|calls| {
-                calls
-                    .iter()
-                    .map(|call| HistoryCall {
-                        id: call.id.clone(),
-                        tool: call.tool.clone(),
-                        input: input_text(&call.input, input_chars),
-                        result: result_note(call),
-                    })
-                    .collect()
+    entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let tool_calls: Vec<CallRecord> = by_message
+                .get(&index)
+                .map(|calls| {
+                    calls.iter().map(|call| call_record(call)).collect()
+                })
+                .unwrap_or_default();
+            if entry.text.trim().is_empty() && tool_calls.is_empty() {
+                return None;
+            }
+            Some(Record {
+                i: index,
+                role: entry.role,
+                text: entry.text.clone(),
+                tool_calls,
+                tool_results: Vec::new(),
+                part: None,
             })
-            .unwrap_or_default();
-        if entry.text.trim().is_empty() && tool_calls.is_empty() {
-            continue;
-        }
-        history.push(HistoryEntry {
-            i: index,
-            role: entry.role,
-            text: entry.text.clone(),
-            tool_calls: (!tool_calls.is_empty())
-                .then_some(HistoryCalls::Full(tool_calls)),
-        });
-    }
-    history
+        })
+        .collect()
 }
 
 /// The user's last three prompts, each cut to 500 characters: the goal
@@ -373,190 +341,19 @@ pub fn goal_from(entries: &[Entry]) -> String {
     prompts[prompts.len().saturating_sub(3)..].join("\n")
 }
 
-fn entry_tokens(entry: &HistoryEntry) -> usize {
-    estimate_tokens(&serde_json::to_string(entry).expect("entries serialize"))
-        + 1
+/// `goal` when there is one, otherwise [`goal_from`] `entries`.
+pub fn goal_or_prompts(goal: Option<&str>, entries: &[Entry]) -> String {
+    goal.filter(|goal| !goal.is_empty())
+        .map_or_else(|| goal_from(entries), str::to_owned)
 }
 
-/// Folds runs of adjacent compacted-call-only entries by one role into
-/// one entry.
-fn merge_call_runs(
-    history: Vec<HistoryEntry>,
-    pinned: impl Fn(&HistoryEntry) -> bool,
-) -> Vec<HistoryEntry> {
-    let foldable = |entry: &HistoryEntry| {
-        !pinned(entry)
-            && entry.text.is_empty()
-            && matches!(entry.tool_calls, Some(HistoryCalls::Compact(_)))
-    };
-    let mut merged: Vec<HistoryEntry> = Vec::new();
-    for entry in history {
-        if let Some(previous) = merged.last_mut()
-            && foldable(previous)
-            && foldable(&entry)
-            && previous.role == entry.role
-            && let (
-                Some(HistoryCalls::Compact(into)),
-                Some(HistoryCalls::Compact(from)),
-            ) = (&mut previous.tool_calls, &entry.tool_calls)
-        {
-            into.extend(from.iter().cloned());
-            continue;
-        }
-        merged.push(entry);
-    }
-    merged
-}
-
-/// Builds the state and shrinks it until its estimate fits `max_tokens`,
-/// in stages: shorter tool inputs, abridged long texts, collapsed old
-/// texts, compacted old calls, old messages without calls left out, and
-/// last, runs of old calls merged. Pinned messages shrink last, and are
-/// never collapsed or left out.
-pub fn fit_state(
-    entries: &[Entry],
-    calls: &[Call],
-    goal: Option<&str>,
-    max_tokens: usize,
-    preserve_recent: usize,
-) -> Result<Fitted, String> {
-    let goal = goal
-        .filter(|goal| !goal.is_empty())
-        .map_or_else(|| goal_from(entries), str::to_owned);
-    let state_of = |history: Vec<HistoryEntry>| State {
-        context: STATE_CONTEXT,
-        goal: goal.clone(),
-        history,
-    };
-    let base = estimate_tokens(
-        &serde_json::to_string(&state_of(Vec::new()))
-            .expect("states serialize"),
-    );
-    let fits = |tokens: usize| tokens <= max_tokens;
-    let fitted = |history, tokens, stage| Fitted {
-        state: state_of(history),
-        tokens,
-        stage,
-    };
-    let rebuild = |input_chars| {
-        let history = history_entries(entries, calls, input_chars);
-        let per: Vec<usize> = history.iter().map(entry_tokens).collect();
-        let tokens = base + per.iter().sum::<usize>();
-        (history, per, tokens)
-    };
-
-    let (mut history, mut per, mut tokens) = rebuild(INPUT_CHARS[0]);
-    if fits(tokens) {
-        return Ok(fitted(history, tokens, "full"));
-    }
-    for (limit, stage) in [
-        (INPUT_CHARS[1], "inputs<=200"),
-        (INPUT_CHARS[2], "inputs<=60"),
-    ] {
-        (history, per, tokens) = rebuild(limit);
-        if fits(tokens) {
-            return Ok(fitted(history, tokens, stage));
-        }
-    }
-
-    let pinned = |entry: &HistoryEntry| {
-        is_pinned(entry.i, entries.len(), preserve_recent)
-    };
-    let order: Vec<usize> = (0..history.len())
-        .filter(|&index| !pinned(&history[index]))
-        .chain((0..history.len()).filter(|&index| pinned(&history[index])))
-        .collect();
-    let mut shrink = |history: &mut Vec<HistoryEntry>,
-                      tokens: &mut usize,
-                      index: usize,
-                      change: &dyn Fn(&mut HistoryEntry)| {
-        change(&mut history[index]);
-        let now = entry_tokens(&history[index]);
-        *tokens = *tokens + now - per[index];
-        per[index] = now;
-    };
-
-    for &index in &order {
-        if history[index].text.chars().count() <= TEXT_HEAD + TEXT_TAIL + 40 {
-            continue;
-        }
-        shrink(&mut history, &mut tokens, index, &|entry| {
-            entry.text = abridge(&entry.text, TEXT_HEAD, TEXT_TAIL);
-        });
-        if fits(tokens) {
-            return Ok(fitted(history, tokens, "texts abridged"));
-        }
-    }
-
-    for &index in &order {
-        let entry = &history[index];
-        if pinned(entry) || entry.text.is_empty() {
-            continue;
-        }
-        let original = entries[entry.i].text.chars().count();
-        shrink(&mut history, &mut tokens, index, &|entry| {
-            entry.text = format!("[… {original} chars omitted …]");
-        });
-        if fits(tokens) {
-            return Ok(fitted(history, tokens, "old messages collapsed"));
-        }
-    }
-
-    let by_message = calls_by_message(calls);
-    for &index in &order {
-        let entry = &history[index];
-        let Some(own) = by_message.get(&entry.i) else {
-            continue;
-        };
-        if pinned(entry) {
-            continue;
-        }
-        let compact: Vec<String> =
-            own.iter().map(|call| compact_call(call)).collect();
-        shrink(&mut history, &mut tokens, index, &|entry| {
-            entry.tool_calls = Some(HistoryCalls::Compact(compact.clone()));
-        });
-        if fits(tokens) {
-            return Ok(fitted(history, tokens, "old calls compacted"));
-        }
-    }
-
-    let mut left_out = BTreeSet::new();
-    for &index in &order {
-        let entry = &history[index];
-        if pinned(entry) || entry.tool_calls.is_some() {
-            continue;
-        }
-        left_out.insert(index);
-        tokens -= per[index];
-        if fits(tokens) {
-            let kept = history
-                .into_iter()
-                .enumerate()
-                .filter(|(index, _)| !left_out.contains(index))
-                .map(|(_, entry)| entry)
-                .collect();
-            return Ok(fitted(kept, tokens, "old messages left out"));
-        }
-    }
-
-    let kept: Vec<HistoryEntry> = history
-        .into_iter()
-        .enumerate()
-        .filter(|(index, _)| !left_out.contains(index))
-        .map(|(_, entry)| entry)
-        .collect();
-    let merged = merge_call_runs(kept, pinned);
-    let tokens = base + merged.iter().map(entry_tokens).sum::<usize>();
-    if fits(tokens) {
-        return Ok(fitted(merged, tokens, "old calls merged"));
-    }
-    Err(format!(
-        "history too large for Jev (~{tokens} tokens after shrinking, limit {max_tokens})"
-    ))
-}
-
-/// The state as JSON, for a request.
-pub fn to_value(state: &State) -> Value {
-    json!(state)
+/// The state sent to Jev: the whole history, or one segment of it with
+/// the calls asked about beside it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct State {
+    pub context: &'static str,
+    pub goal: String,
+    pub history: Vec<Record>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calls: Option<Vec<CallRecord>>,
 }

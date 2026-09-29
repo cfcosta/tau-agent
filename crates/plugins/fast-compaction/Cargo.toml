@@ -1,6 +1,6 @@
 [package]
 name = "tau-fast-compaction"
-description = "Prunes stale tool history from a tau agent's context with Jev, as a plugin."
+description = "Keeps a tau agent's context lean with Jev, as a plugin: prunes large tool outputs and stale tool history."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true

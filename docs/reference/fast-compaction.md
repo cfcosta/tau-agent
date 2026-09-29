@@ -1,17 +1,25 @@
 # Fast compaction
 
-`tau-fast-compaction` (`crates/plugins/fast-compaction`) prunes stale
-tool history from a run's context. It asks Jev, TypeSafe's System One
-model, which tool calls and results still matter, and drops or cuts the
-rest. It never summarizes: text stays verbatim. When pruning cannot free
-enough, summarizing compaction takes over.
+`tau-fast-compaction` (`crates/plugins/fast-compaction`) keeps a run's
+context lean with Jev, TypeSafe's System One model, in two stages. It
+never summarizes: what stays is verbatim, and what goes is archived or
+can be re-run. When pruning cannot free enough, summarizing compaction
+takes over.
 
-It is a port of
+- **Output pruning** trims a large `bash` result to the lines the task
+  still needs, the moment it is produced, before the model first sees
+  it. It changes nothing already sent, so it costs no resend.
+- **History pruning** drops or cuts stale tool calls and results
+  between turns, as a context rewrite.
+
+History pruning is a port of
 [`joelhooks/pi-fast-jev-compaction`](https://github.com/joelhooks/pi-fast-jev-compaction),
 itself built on
 [`tamaratran/fast-jev-compaction`](https://github.com/tamaratran/fast-jev-compaction),
-onto tau's context seam ([plugins.md](plugins.md)). Both are MIT; the
-notices are in the crate's `THIRD_PARTY_NOTICES.md`.
+onto tau's context seam ([plugins.md](plugins.md)). Output pruning, the
+partitioned history and the token estimate come from
+[`tamaratran/jev-pruner`](https://github.com/tamaratran/jev-pruner). All
+three are MIT; the notices are in the crate's `THIRD_PARTY_NOTICES.md`.
 
 ## Using it
 
@@ -29,7 +37,125 @@ let agent = Agent::new(OpenAi::from_env()?)
 offered the context in the order they were added, so add fast
 compaction before summarizing compaction.
 
-## When a pass runs
+## Output pruning
+
+The plugin's `after_tool_result` seam sees each tool result before the
+model does, with whether the call failed and the transcript the model
+had seen when it made the call ([plugins.md](plugins.md)).
+
+### Which outputs
+
+- Only a **successful `bash` result** of text. A failed command comes
+  back as an error, and errors are left as they are.
+- `bash` keeps the last 2,000 lines or 50 KB of an output. When it
+  truncates, it spills the full output to `tau-bash-<hex>.log` in the
+  temporary directory and ends the result with `Full output: <path>`.
+  Then the **full output is read from that file** and judged whole, so
+  an error in the middle of a long build is not lost with the head.
+- Only an output estimated over `min_output_tokens` (10,000) is touched.
+  Anything smaller passes untouched: no Jev call, no archive, no
+  history read.
+- An output holding a NUL byte, a spilled file that is not valid UTF-8,
+  or an output over 64 MB is left as it is.
+
+### What it does
+
+1. **Chunks** the output: lines over 2,000 characters are split first,
+   then the lines go in runs of `chunk_lines` (20), merged so there
+   are at most 200 chunks. With two chunks or fewer, nothing could go,
+   and the output is left as it is.
+2. **Builds the state** Jev sees: what the state is (its `context`), the
+   task (`Settings::goal`, or the user's last three prompts), the
+   **complete history** so far (the user's and the assistant's text,
+   every tool call with its input, and every tool result verbatim), the
+   command, and the chunks.
+3. **Partitions the history** when it does not fit `max_state_tokens`
+   (25,000) with the rest of the state: it is split in order into
+   segments that fit, never truncated or left out. A field too large
+   for a segment becomes continuations, each labeled with the field's
+   name and the character offset it starts at. The history keeps at
+   least half the room the rest of the state leaves.
+4. **Asks** one yes/no question (Noul) per chunk: does any line in it
+   need to remain available for the ongoing task. One needed line is
+   enough; uncertain means needed; the full output is archived, but a
+   line the task needs must not depend on the model looking there.
+   **Every chunk is asked about against every segment**, in states that
+   fit `max_state_tokens` and requests that fit `max_request_tokens`
+   (30,000), sent together, at most `max_output_requests` (12) per
+   output. The first and last chunks are never asked about, since they
+   always stay, and neither is a chunk the allowance leaves short of a
+   segment, since it stays too.
+5. **Decides** each chunk. A chunk is **kept** when it is the first or
+   the last; when any segment answered at or above `keep_threshold`
+   (0.5), or above 0.1; or when it was not answered against every
+   segment. It goes only when every segment was confident it is noise.
+6. **Renders** a header line saying kept lines are verbatim and
+   omissions are marked; the kept chunks, verbatim and in order; one
+   `[N lines omitted]` for each run of dropped lines; and a footer
+   naming the archive, `[full output: <path> (read or grep it if
+   needed)]`. The archive is the file `bash` spilled to, or else a new
+   file in `Settings::archive_dir` (the temporary directory) that only
+   its owner can read.
+7. **Replaces** the result only when the rendered text is estimated at
+   least `min_reduction_ratio` (10%) smaller than the result the model
+   would otherwise see. Otherwise the result stays, and no archive is
+   written.
+
+Whenever Jev was asked, a `PluginReport` with `kind: "output"` says how
+it went: the call, the chunks and how many stayed, the lines dropped,
+the segments, the requests, the estimated tokens before and after,
+whether the result was replaced, and the archive.
+
+### Safeguards
+
+No rule guesses what a line means: no command categories, no patterns
+for diagnostics or results, no document or secret detectors. Jev
+decides, and the structure protects:
+
+- the first and last chunks always stay;
+- an answer above 0.1 keeps, however far under the threshold;
+- a chunk not answered against every segment stays;
+- any failure leaves the result as it was.
+
+### Failure
+
+A Jev error (after its client's retries), a missing or malformed
+answer, a task and command that leave no room for the history, an
+archive that cannot be written, or a cancel leaves the result untouched
+and is reported as a `PluginError` event. The run goes on.
+
+### Cost
+
+- Every Jev request is charged to the run (`PluginCtx::charge`),
+  including the answered ones of a pruning that then failed.
+- Pruning at `after_tool` changes only the result being added, so the
+  next request is still a delta
+  ([openai-websocket.md](openai-websocket.md)): no resend.
+- The requests for one output are sent together, so a pruned call takes
+  about one Jev round trip longer.
+
+### Where it differs from jev-pruner
+
+- **No heuristics.** jev-pruner leaves JSON, XML, YAML, diffs, and the
+  output of `cat`, `jq`, `git diff` and the like untouched; keeps
+  diagnostic and result lines and their neighbors by pattern; sorts
+  commands into categories with guidance for Jev; tells Jev each
+  chunk's information category; and shrinks oversized kept chunks line
+  by line. tau leaves all of that to Jev and the structural safeguards;
+  only the binary check remains.
+- **Any failure keeps the output whole,** where jev-pruner retries with
+  half the state on `max_tokens_exceeded`.
+- **Nothing is asked that cannot change the outcome:** not the first
+  and last chunks, and not the chunks the allowance leaves short of a
+  segment.
+- **A replacement must save `min_reduction_ratio`** of what the model
+  would otherwise see; jev-pruner has no such floor.
+- **The estimate is exact,** in tenths of a token (see "Token
+  estimate").
+
+## History pruning
+
+### When a pass runs
 
 - **Between turns,** when both hold:
   - the loop's token estimate has passed `compact_at_percent` (60%) of
@@ -41,31 +167,34 @@ compaction before summarizing compaction.
 - A pass with no unpinned tool call to ask about ends without asking,
   and does not start the cooldown.
 
-## What a pass does
+### What a pass does
 
 1. **Pins** the first message and the last `preserve_recent` (6; at
    least 1). A call is pinned when its call or its result is. Pinned
    calls are always kept.
 2. **Builds the state** Jev sees: the goal (`Settings::goal`, or the
-   user's last three prompts), and the history, with each tool call's
-   name, input and a note of its result's size and status. **Never the
-   result itself.**
-3. **Fits the state** to `max_state_tokens` (25,000) by shrinking, in
-   order until it fits: tool inputs cut to 200, then 60 characters; long
-   texts abridged to their head and tail; old texts collapsed; old calls
-   compacted to one line; old messages without calls left out; runs of
-   old calls merged. Pinned messages shrink last and are never
-   collapsed or left out. A state that still does not fit fails the
-   pass.
-4. **Asks** two yes/no questions (Nouls) per unpinned call, in batches
-   that fit `max_request_tokens` (30,000) with the state, sent together:
+   user's last three prompts), and the history, whole, with each tool
+   call's name, input and a note of its result's size and status.
+   **Never the result itself.**
+3. **Partitions the history** when the whole of it does not fit
+   `max_state_tokens` (25,000) with the goal, as output pruning does:
+   in order, into segments that fit, never abridged; oversized fields
+   become labeled continuations. Each segment's state then also lists
+   the calls it asks about.
+4. **Asks** two yes/no questions (Nouls) per unpinned call, against
+   every segment, in batches that fit `max_request_tokens` (30,000) with
+   the state, sent together:
    - does knowing the call was made, with its input, still matter;
    - does its full output still need to stay verbatim.
-5. **Decides** each call, at `keep_threshold` (0.5):
+5. **Decides** each call, at `keep_threshold` (0.5), on each answer's
+   largest value over the segments: a keep in any segment keeps. A call
+   not asked about against every segment, one too large to fit beside
+   some, is kept.
    - result still needed: **keep**;
    - only the call still matters: **drop the result**, keeping its first
      `head_chars` (300) characters and a note saying how much was cut
-     and to re-run the tool;
+     and naming an archive of the whole result, which the model can
+     read instead of re-running the tool;
    - neither: **drop the call** and its result.
 6. **Merges** the decisions into the run's ledger. A call's decision
    only escalates: keep, then drop the result, then drop the call.
@@ -74,38 +203,45 @@ compaction before summarizing compaction.
    stays as it was, in order.
 8. **Rewrites** the context only if the pruned transcript is at least
    `min_reduction_ratio` (25%) smaller, measured as JSON. Otherwise the
-   pass declines, the ledger stays as it was, and the next context
-   plugin gets the chance.
+   pass declines, the ledger stays as it was, no archive is written,
+   and the next context plugin gets the chance.
+9. **Archives** each result it cuts, before the rewrite: the result's
+   text, whole, in a new file in `Settings::archive_dir` that only its
+   owner can read. The ledger keeps each archive's path.
 
-## Cost
+### Cost
 
 - Every Jev request is charged to the run (`PluginCtx::charge`), at
   $0.042 per million input tokens, so it counts toward the run's limits
-  and cost. A batch that was answered is charged even when another
-  batch failed.
+  and cost. A request that was answered is charged even when another
+  failed.
+- A partitioned history takes a request per segment and batch: more
+  requests, each within the budget.
 - A rewrite is one full resend of the transcript on the WebSocket; the
   requests after it are deltas again
   ([openai-websocket.md](openai-websocket.md)). The cooldown and the
   reduction threshold keep that rare.
 
-## Failure
+### Failure
 
 Any failure ends the pass without a rewrite and is reported as a
 `PluginError` event: a Jev error (after its client's retries), an answer
-that is missing, of the wrong kind or out of range, a state that cannot
-fit, or a cancel. The run goes on with its transcript as it was; on an
-overflow, the next context plugin is offered it.
+that is missing, of the wrong kind or out of range, a goal that leaves
+no room for the history, an archive that cannot be written, or a
+cancel. The run goes on with its transcript as it was; on an overflow,
+the next context plugin is offered it.
 
-## Storage and forks
+### Storage and forks
 
 A rewrite is stored as a `context` entry by `fast-compaction`, followed
 by the pruned transcript ([storage.md](storage.md)). The entry's body
-is the ledger and the pass's stats (calls, pinned, kept, results and
-calls dropped, requests, the state's size and fitting stage, the
-characters before and after, and the reduction). A fork whose latest
+is the ledger, with the archive of each cut result, and the pass's
+stats: calls, pinned, kept, results and calls dropped, requests, the
+largest state's size and `state_stage` (`whole`, or `N segments`), the
+characters before and after, and the reduction. A fork whose latest
 inherited rewrite is fast compaction's resumes its ledger from it.
 
-## Where it differs from pi
+### Where it differs from pi
 
 - **Once, not every turn.** pi re-applies its ledger to the context of
   every request. tau stores the pruned transcript once, because each
@@ -118,5 +254,40 @@ inherited rewrite is fast compaction's resumes its ledger from it.
   one back.
 - **A message holding only thinking stays** unless pruning emptied it;
   pi drops every such message.
+- **The history is never abridged.** pi shrinks a history that does not
+  fit: shorter inputs, abridged and collapsed texts, compacted calls,
+  messages left out. tau partitions it, as jev-pruner does.
+- **A cut result names its archive,** where pi tells the model to
+  re-run the tool, which can be slow or have side effects.
 - **No settings file, command or status line.** Settings are a Rust
   value; events report each pass.
+
+## Token estimate
+
+Both stages estimate tokens as jev-pruner does (`src/jev.ts`),
+calibrated there against the usage Jev reports for real transcripts,
+where it lands 2–18% above the true count: a word of ASCII letters is
+one token per six letters, rounded up; a digit half a token; any other
+character that is not a space nine tenths of a token, per UTF-16 unit.
+A state or a set of questions (`estimate_state_tokens`) counts another
+half token per digit. tau counts in exact tenths and rounds up once,
+where the original sums floats: ten punctuation characters are 9
+tokens here, 10 there. The output gate uses the plain estimate; every
+budget a state or request must fit uses the state estimate.
+
+## Settings
+
+`Settings` holds history pruning's settings (pi's defaults, above),
+`archive_dir` for both stages, and output pruning's, as `output`:
+
+| Setting | Default | |
+|---|---|---|
+| `archive_dir` | the temporary directory | where archives go |
+| `output.enabled` | `true` | |
+| `output.min_output_tokens` | 10,000 | the gate |
+| `output.chunk_lines` | 20 | lines per chunk |
+| `output.keep_threshold` | 0.5 | a Noul at or above keeps |
+| `output.max_state_tokens` | 25,000 | per state |
+| `output.max_request_tokens` | 30,000 | per request |
+| `output.max_output_requests` | 12 | per output |
+| `output.min_reduction_ratio` | 0.1 | of what the model would see |

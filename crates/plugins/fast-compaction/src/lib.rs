@@ -1,19 +1,30 @@
-//! Prunes stale tool history from a run's context, asking Jev which tool
-//! calls and results still matter (`docs/reference/fast-compaction.md`).
+//! Keeps a run's context lean with Jev, in two stages
+//! (`docs/reference/fast-compaction.md`):
 //!
-//! A port of `joelhooks/pi-fast-jev-compaction`, itself built on
-//! `tamaratran/fast-jev-compaction` (see `THIRD_PARTY_NOTICES.md`), onto
-//! tau's context seam (`docs/reference/plugins.md`):
+//! - **Output pruning,** at `after_tool`: a large `bash` result is
+//!   trimmed to the chunks of lines Jev says the task still needs,
+//!   before the model first sees it, with the whole output archived to a
+//!   file the model can read. Nothing already sent changes, so it costs
+//!   no resend. After `tamaratran/jev-pruner`.
+//! - **History pruning,** between turns: stale tool calls and results
+//!   are dropped or cut, as a context rewrite. A port of
+//!   `joelhooks/pi-fast-jev-compaction`, itself built on
+//!   `tamaratran/fast-jev-compaction` (see `THIRD_PARTY_NOTICES.md`),
+//!   onto tau's context seam (`docs/reference/plugins.md`).
+//!
+//! History pruning:
 //!
 //! - Between turns, once the context passes a share of the window and has
 //!   grown by a cooldown since the last pass, and whenever the context
 //!   overflows, it asks Jev two yes/no questions per tool call that is
 //!   not pinned: does knowing the call was made still matter, and does
 //!   its full result still need to stay verbatim. Jev never sees the
-//!   results, only the tools, their inputs, and the results' sizes.
-//! - Each call is kept, has its result cut to a head and a note, or goes
-//!   with its result. Decisions only ever escalate, and are kept in a
-//!   ledger that a fork of the run inherits.
+//!   results, only the tools, their inputs, and the results' sizes; a
+//!   history too large for one state is split into segments asked about
+//!   separately, never abridged.
+//! - Each call is kept, has its result cut to a head and a note naming
+//!   an archive of it, or goes with its result. Decisions only ever
+//!   escalate, and are kept in a ledger that a fork of the run inherits.
 //! - When the pass saves at least `min_reduction_ratio` of the context,
 //!   the pruned transcript replaces the run's, as a context rewrite:
 //!   one full resend, then deltas again. Otherwise it declines, and the
@@ -26,34 +37,45 @@
 //! `preserve_recent` messages are pinned, and at least the last one
 //! always is, since the loop requires a rewrite to keep it.
 
+pub mod archive;
 pub mod decide;
+pub mod history;
 pub mod ledger;
+pub mod output;
+pub mod plan;
 pub mod state;
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tau_agent::plugin::{
-    ContextView,
-    Plugin,
-    PluginCtx,
-    PluginRun,
-    Rewrite,
-    RunPlan,
-    Trigger,
+use tau_agent::{
+    plugin::{
+        ContextView,
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        Rewrite,
+        RunPlan,
+        ToolResultView,
+        Trigger,
+    },
+    tool::ToolOutput,
 };
+use tau_ai::message::{InputBlock, Message, TextContent};
 use tau_jev::Jev;
 
 pub use crate::{
     decide::{Action, Decision},
     ledger::Ledger,
+    output::OutputStats,
 };
 
 /// The name the plugin goes by in events and stored rewrites.
 pub const NAME: &str = "fast-compaction";
 
-/// Settings, pi's defaults. See the crate docs for what each governs.
+/// Settings, pi's defaults for history pruning. See the crate docs for
+/// what each governs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     /// What the run is for, as context for Jev. Without one, the user's
@@ -82,6 +104,51 @@ pub struct Settings {
     /// Overrides the model's context window, for a model the registry
     /// does not know. Without either, only an overflow runs a pass.
     pub context_window: Option<u64>,
+    /// Where archives of pruned outputs and cut results go, as files only
+    /// their owner can read. The system's temporary directory.
+    pub archive_dir: PathBuf,
+    /// Output pruning, at `after_tool`.
+    pub output: OutputPruning,
+}
+
+/// Settings of output pruning, jev-pruner's defaults unless said.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputPruning {
+    /// On by default.
+    pub enabled: bool,
+    /// Outputs estimated at this many tokens or fewer pass untouched,
+    /// without a Jev call. 10,000.
+    pub min_output_tokens: usize,
+    /// Lines per chunk, before chunks merge to stay under 200. 20.
+    pub chunk_lines: usize,
+    /// A Noul at or above this keeps its chunk; so does one above 0.1.
+    /// 0.5.
+    pub keep_threshold: f64,
+    /// The largest state sent to Jev, in estimated tokens. 25,000.
+    pub max_state_tokens: usize,
+    /// The largest request, state and questions, in estimated tokens.
+    /// 30,000.
+    pub max_request_tokens: usize,
+    /// Jev requests per output, at most. 12.
+    pub max_output_requests: usize,
+    /// The smallest share of the result's estimated tokens the pruned
+    /// output must save to replace it. 0.1 (jev-pruner has none).
+    pub min_reduction_ratio: f64,
+}
+
+impl Default for OutputPruning {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_output_tokens: 10_000,
+            chunk_lines: 20,
+            keep_threshold: 0.5,
+            max_state_tokens: 25_000,
+            max_request_tokens: 30_000,
+            max_output_requests: 12,
+            min_reduction_ratio: 0.1,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -97,6 +164,8 @@ impl Default for Settings {
             min_reduction_ratio: 0.25,
             cooldown_tokens: 8_000,
             context_window: None,
+            archive_dir: std::env::temp_dir(),
+            output: OutputPruning::default(),
         }
     }
 }
@@ -156,7 +225,8 @@ pub struct Stats {
     pub results_dropped: usize,
     pub calls_dropped: usize,
     pub requests: usize,
-    /// The state's estimated tokens, and how it was shrunk to fit.
+    /// The largest state's estimated tokens, and how the history went
+    /// into states: `whole`, or `N segments`.
     pub state_tokens: usize,
     pub state_stage: String,
     pub chars_before: usize,
@@ -221,6 +291,116 @@ impl PluginRun for FastCompactionRun {
             rewrite = self.pass(view, ctx) => rewrite,
         }
     }
+
+    async fn after_tool_result(
+        &mut self,
+        view: &ToolResultView<'_>,
+        output: &mut ToolOutput,
+        ctx: &PluginCtx,
+    ) -> anyhow::Result<()> {
+        let settings = &self.settings.output;
+        if !settings.enabled {
+            return Ok(());
+        }
+        let Some(gated) = output::gate(
+            &view.call.name,
+            view.is_error,
+            &output.content,
+            settings.min_output_tokens,
+        ) else {
+            return Ok(());
+        };
+        let pruned = tokio::select! {
+            biased;
+            _ = ctx.cancel.cancelled() => anyhow::bail!("output pruning was cancelled"),
+            pruned = prune_output(&*self.jev, &self.settings, view, gated, ctx) => pruned?,
+        };
+        if let Some(text) = pruned {
+            output.content = vec![InputBlock::Text(TextContent {
+                text,
+                text_signature: None,
+            })];
+        }
+        Ok(())
+    }
+}
+
+/// Prunes one output that passed the gate: plans the requests, asks Jev,
+/// renders what stays, and writes the archive when `bash` did not spill
+/// the output already. The pruned text, when it saves at least
+/// `min_reduction_ratio` of what the model would otherwise see. Reports
+/// how it went whenever Jev was asked.
+async fn prune_output(
+    jev: &dyn Jev,
+    settings: &Settings,
+    view: &ToolResultView<'_>,
+    gated: output::Gated,
+    ctx: &PluginCtx,
+) -> anyhow::Result<Option<String>> {
+    let pruning = &settings.output;
+    let mut transcript = state::entries(view.transcript);
+    transcript
+        .extend(state::entries(&[Message::Assistant(view.message.clone())]));
+    let task = state::goal_or_prompts(settings.goal.as_deref(), &transcript);
+    let records = output::output_records(&transcript);
+    let command = view.call.args["command"].as_str().unwrap_or_default();
+    let lines = output::lines(&gated.full);
+    let Some(planned) =
+        output::plan_requests(&lines, &records, &task, command, pruning)
+            .map_err(anyhow::Error::msg)?
+    else {
+        return Ok(None);
+    };
+    if planned.requests.is_empty() {
+        return Ok(None);
+    }
+    let asked = output::ask(jev, &planned, pruning.keep_threshold, |usage| {
+        ctx.charge(usage)
+    })
+    .await?;
+    let archive = gated
+        .spill
+        .clone()
+        .unwrap_or_else(|| archive::new_path(&settings.archive_dir, "output"));
+    let text = output::render(
+        &lines,
+        &planned.chunks,
+        &asked.keep,
+        &archive.display().to_string(),
+    );
+    let tokens_before = state::estimate_tokens(&gated.seen);
+    let tokens_after = state::estimate_tokens(&text);
+    let dropped_lines = planned
+        .chunks
+        .iter()
+        .zip(&asked.keep)
+        .filter(|(_, kept)| !**kept)
+        .map(|(range, _)| range.len())
+        .sum::<usize>();
+    let pruned = dropped_lines > 0
+        && tokens_after as f64
+            <= tokens_before as f64 * (1.0 - pruning.min_reduction_ratio);
+    if pruned && gated.spill.is_none() {
+        archive::write(&archive, &gated.full).map_err(|error| {
+            anyhow::anyhow!("cannot archive to {}: {error}", archive.display())
+        })?;
+    }
+    let stats = OutputStats {
+        call_id: view.call.id.clone(),
+        chunks: planned.chunks.len(),
+        kept: asked.keep.iter().filter(|kept| **kept).count(),
+        dropped_lines,
+        segments: planned.segments,
+        requests: asked.requests,
+        tokens_before,
+        tokens_after: if pruned { tokens_after } else { tokens_before },
+        pruned,
+        archive: pruned.then(|| archive.display().to_string()),
+    };
+    let mut report = serde_json::to_value(&stats).expect("stats serialize");
+    report["kind"] = "output".into();
+    ctx.report(report);
+    Ok(pruned.then_some(text))
 }
 
 impl FastCompactionRun {
@@ -253,26 +433,19 @@ impl FastCompactionRun {
         // it exists to space out paid passes and full resends, and a pass
         // with nothing to ask costs neither.
         self.last_pass = Some(view.tokens);
-        let fitted = state::fit_state(
-            &entries,
-            &calls,
-            settings.goal.as_deref(),
-            settings.max_state_tokens,
-            preserve,
-        )
-        .map_err(anyhow::Error::msg)?;
-        let decided = decide::decide(
-            &*self.jev,
-            &calls,
-            &fitted,
-            settings.max_request_tokens,
-            settings.keep_threshold,
-            |usage| ctx.charge(usage),
-        )
-        .await?;
+        let decided =
+            decide::decide(&*self.jev, &entries, &calls, settings, |usage| {
+                ctx.charge(usage)
+            })
+            .await?;
 
         let mut staged = self.ledger.clone();
         staged.merge(decided.decisions.iter().cloned());
+        let archives = staged.assign_archives(
+            view.transcript,
+            settings.head_chars,
+            &settings.archive_dir,
+        );
         let messages = staged.apply(view.transcript, settings.head_chars);
         let chars_before = ledger::measure(view.transcript);
         let chars_after = ledger::measure(&messages);
@@ -284,6 +457,14 @@ impl FastCompactionRun {
         };
         if reduction_ratio < settings.min_reduction_ratio {
             return Ok(None);
+        }
+        // Archives are written only for a rewrite that happens; one that
+        // cannot be written fails the pass rather than cut a result the
+        // model could not read back.
+        for (path, text) in &archives {
+            archive::write(path, text).map_err(|error| {
+                anyhow::anyhow!("cannot archive to {}: {error}", path.display())
+            })?;
         }
         let count = |action| {
             decided
@@ -302,8 +483,12 @@ impl FastCompactionRun {
             results_dropped: count(Action::DropResult),
             calls_dropped: count(Action::DropCall),
             requests: decided.requests,
-            state_tokens: fitted.tokens,
-            state_stage: fitted.stage.to_owned(),
+            state_tokens: decided.state_tokens,
+            state_stage: if decided.segments == 1 {
+                "whole".to_owned()
+            } else {
+                format!("{} segments", decided.segments)
+            },
             chars_before,
             chars_after,
             reduction_ratio,
