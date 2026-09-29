@@ -28,6 +28,7 @@ use super::{
     rich,
     status_card,
     stop_look,
+    term_card,
 };
 use crate::{
     assets::Icon,
@@ -593,6 +594,10 @@ fn tool(
                 .into_any_element()
         }),
         (_, ToolBody::Diff(lines)) => Some(diff(lines, t).into_any_element()),
+        (_, ToolBody::Terminal(term)) => Some(
+            term_card::body(ws, &run.id, card, term, t, compact, cx)
+                .into_any_element(),
+        ),
         (_, ToolBody::Output(lines)) if !lines.is_empty() => {
             Some(output(lines, t).into_any_element())
         }
@@ -600,47 +605,53 @@ fn tool(
     };
 
     // What output pruning cut from the result, and the file that holds
-    // the whole output, which opens with the system's application.
-    let cut = card.cut.as_ref().filter(|_| !dropped).map(|cut| {
-        let path = std::path::PathBuf::from(&cut.archive);
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(2.))
-            .min_w(px(0.))
-            .px(sp(3.))
-            .py(sp(1.5))
-            .border_t_1()
-            .border_color(t.border)
-            .child(
-                mono(
-                    format!("{} · full output", cut.label()),
-                    Type::MICRO,
-                    t.dim,
+    // the whole output, which opens with the system's application. A
+    // terminal's strip says it itself.
+    let terminal = matches!(card.body, ToolBody::Terminal(_));
+    let cut = card
+        .cut
+        .as_ref()
+        .filter(|_| !dropped && !terminal)
+        .map(|cut| {
+            let path = std::path::PathBuf::from(&cut.archive);
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .min_w(px(0.))
+                .px(sp(3.))
+                .py(sp(1.5))
+                .border_t_1()
+                .border_color(t.border)
+                .child(
+                    mono(
+                        format!("{} · full output", cut.label()),
+                        Type::MICRO,
+                        t.dim,
+                    )
+                    .flex_shrink_0(),
                 )
-                .flex_shrink_0(),
-            )
-            .when(!compact, |row| {
-                row.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "archive-{}",
-                            card.call_id
-                        )))
-                        .flex_1()
-                        .min_w(px(0.))
-                        .cursor_pointer()
-                        .hover(|style| style.underline())
-                        .child(
-                            mono(cut.archive.clone(), Type::MICRO, t.blue)
-                                .truncate(),
-                        )
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.open_with_system(&path)
-                        })),
-                )
-            })
-    });
+                .when(!compact, |row| {
+                    row.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "archive-{}",
+                                card.call_id
+                            )))
+                            .flex_1()
+                            .min_w(px(0.))
+                            .cursor_pointer()
+                            .hover(|style| style.underline())
+                            .child(
+                                mono(cut.archive.clone(), Type::MICRO, t.blue)
+                                    .truncate(),
+                            )
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.open_with_system(&path)
+                            })),
+                    )
+                })
+        });
 
     div()
         .flex()
@@ -651,11 +662,9 @@ fn tool(
         .bg(t.card)
         .overflow_hidden()
         .when(dropped, |card| card.opacity(0.7))
-        .child(
-            header.when(body.is_some(), |h| {
-                h.border_b_1().border_color(t.border)
-            }),
-        )
+        .child(header.when(body.is_some() && !terminal, |h| {
+            h.border_b_1().border_color(t.border)
+        }))
         .children(body)
         .children(cut)
 }

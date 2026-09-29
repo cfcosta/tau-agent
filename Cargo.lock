@@ -8615,6 +8615,7 @@ dependencies = [
  "tau-memory",
  "tau-reasoning",
  "tau-store",
+ "tau-terminal",
  "tau-testing",
  "tau-tools",
  "tau-vcs",

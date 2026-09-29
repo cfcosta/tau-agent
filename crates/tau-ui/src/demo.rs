@@ -330,9 +330,14 @@ fn rotation_jitter() -> RunView {
         "j4",
         "bash",
         json!({ "command": "cargo nextest run -p tau-ai ws::" }),
-        ToolOutput::text(
-            "    PASS [0.012s] tau-ai ws::proto::pool::tests::deadline_is_jittered\n\
-             \x20    Summary [4.2s] 52 tests run: 52 passed, 0 skipped",
+        term_output(
+            &format!(
+                "{}{MAGENTA}     Summary{RESET} [   4.200s] 52 tests run: 52 {GREEN}passed{RESET}, 0 skipped\n",
+                pass(0.012, "tau-ai ws::proto::pool::tests::deadline_is_jittered")
+            ),
+            0,
+            1,
+            None,
         ),
     );
     s.end_turn(102_000, 800, 0.05);
@@ -402,16 +407,24 @@ fn backoff_fork() -> RunView {
     s.tool(0, "f1", "edit", args, output);
     s.end_turn(64_000, 1_100, 0.03);
     s.turn();
-    s.tool(
-        0,
+    s.start_tool(
         "f2",
         "bash",
         json!({ "command": "cargo nextest run -p tau-ai ws::" }),
-        ToolOutput::text(
-            "    FAIL ws::proto::continuation::tests::survives_rotation\n\
-             \x20   FAIL ws::proto::lane::tests::drain_before_rotate\n\
-             \x20 lane 3 resumed on connection #7 after it was retired\n\
-             \x20    Summary [4.4s] 52 tests run: 50 passed, 2 failed",
+    );
+    s.fail_tool(
+        0,
+        "f2",
+        term_output(
+            &format!(
+                "{RED}        FAIL{RESET} [   0.031s] tau-ai ws::proto::continuation::tests::survives_rotation\n\
+                 {RED}        FAIL{RESET} [   0.027s] tau-ai ws::proto::lane::tests::drain_before_rotate\n\
+                 \x20 lane 3 resumed on connection #7 after it was retired\n\
+                 {MAGENTA}     Summary{RESET} [   4.400s] 52 tests run: 50 {GREEN}passed{RESET}, 2 {RED}failed{RESET}\n"
+            ),
+            100,
+            1,
+            None,
         ),
     );
     s.end_turn(70_000, 700, 0.03);
@@ -1593,6 +1606,46 @@ impl Script {
         );
     }
 
+    /// Ends a call that failed, keeping its output (a `bash` command
+    /// that exited non-zero).
+    fn fail_tool(&mut self, millis: u64, id: &str, output: ToolOutput) {
+        self.event(
+            millis,
+            RunEvent::ToolEnd {
+                run: self.run.clone(),
+                call_id: id.into(),
+                output: Arc::new(output),
+                is_error: true,
+            },
+        );
+    }
+
+    /// A progress update of a command under a terminal: `ansi` as chunk
+    /// `seq`, with the text so far.
+    fn term_chunk(
+        &mut self,
+        millis: u64,
+        id: &str,
+        seq: u64,
+        ansi: &str,
+        so_far: &str,
+    ) {
+        self.event(
+            millis,
+            RunEvent::ToolUpdate {
+                run: self.run.clone(),
+                call_id: id.into(),
+                partial: Arc::new(ToolOutput {
+                    details: Some(json!({ "term": {
+                        "seq": seq,
+                        "bytes": base64_of(&crlf(ansi)),
+                    }})),
+                    ..ToolOutput::text(plain(so_far))
+                }),
+            },
+        );
+    }
+
     fn tool(
         &mut self,
         millis: u64,
@@ -1608,6 +1661,144 @@ impl Script {
     fn note(&mut self, millis: u64, note: PluginNote) {
         self.at(millis, RunUpdate::Note(note));
     }
+}
+
+/// A terminal's line ends: the terminal turns each `\n` into `\r\n`.
+fn crlf(text: &str) -> Vec<u8> {
+    text.replace('\n', "\r\n").into_bytes()
+}
+
+fn base64_of(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// `ansi` less its SGR sequences: the text a model gets of it.
+fn plain(ansi: &str) -> String {
+    let mut out = String::new();
+    let mut chars = ansi.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            for ch in chars.by_ref() {
+                if ch.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// What `bash` returns for a command run under a 120×40 terminal that
+/// wrote `ansi` and exited with `code`: the plain text for the model
+/// (or `seen`, when output pruning replaced it), and the raw output in
+/// its details.
+fn term_output(
+    ansi: &str,
+    code: i32,
+    chunks: u64,
+    seen: Option<String>,
+) -> ToolOutput {
+    let bytes = crlf(ansi);
+    let text = plain(ansi);
+    let text = if code == 0 {
+        text
+    } else {
+        format!("{}\n\nCommand exited with code {code}", text.trim_end())
+    };
+    ToolOutput {
+        details: Some(json!({ "term": {
+            "cols": 120, "rows": 40, "status": "exited", "exitCode": code,
+            "chunks": chunks, "outputBytes": bytes.len(), "replay": "stream",
+            "bytes": base64_of(&bytes),
+        }})),
+        ..ToolOutput::text(seen.unwrap_or(text))
+    }
+}
+
+/// Colors cargo and nextest write in.
+const GREEN: &str = "\x1b[1;32m";
+const RED: &str = "\x1b[1;31m";
+const YELLOW: &str = "\x1b[1;33m";
+const BLUE: &str = "\x1b[1;34m";
+const MAGENTA: &str = "\x1b[1;35m";
+const CYAN: &str = "\x1b[1;36m";
+const GRAY: &str = "\x1b[90m";
+const RESET: &str = "\x1b[0m";
+
+fn pass(seconds: f32, test: &str) -> String {
+    format!("{GREEN}        PASS{RESET} [{seconds:>8.3}s] {test}\n")
+}
+
+fn compiling(krate: &str, path: &str) -> String {
+    format!(
+        "{GREEN}   Compiling{RESET} {krate} v0.1.0 (/home/you/Code/tau-agent/{path})\n"
+    )
+}
+
+/// A failing `cargo nextest run -p tau-ai`: a warning while it builds,
+/// then a failed test with its panic.
+fn failing_tests() -> String {
+    let mut out = String::new();
+    out.push_str(&compiling("tau-ai", "crates/tau-ai"));
+    out.push_str(&format!(
+        "{YELLOW}warning{RESET}\x1b[1m: unused variable: `hint`{RESET}\n\
+         {BLUE}   -->{RESET} crates/tau-ai/src/retry.rs:88:13\n\
+         {BLUE}    |{RESET}\n\
+         {BLUE} 88 |{RESET}         let hint = server_hint(&headers);\n\
+         {BLUE}    |{RESET}             {YELLOW}^^^^ help: if this is intentional, prefix it with an underscore: `_hint`{RESET}\n\
+         {GREEN}    Finished{RESET} `test` profile [unoptimized + debuginfo] target(s) in 38.90s\n\
+         {GREEN}    Starting{RESET} 212 tests across 9 binaries\n"
+    ));
+    for (seconds, test) in [
+        (0.004, "tau-ai retry::tests::honors_seconds"),
+        (0.011, "tau-ai retry::tests::delay_is_capped"),
+        (0.009, "tau-ai retry::tests::server_hint_parses_seconds"),
+    ] {
+        out.push_str(&pass(seconds, test));
+    }
+    out.push_str(&format!(
+        "{RED}        FAIL{RESET} [   0.019s] tau-ai retry::tests::honors_http_date\n\
+         {RED}--- STDERR:{RESET} tau-ai retry::tests::honors_http_date {RED}---{RESET}\n\
+         thread 'honors_http_date' panicked at crates/tau-ai/src/retry.rs:141:9:\n\
+         assertion `left == right` failed\n\
+         \x20 left: {RED}None\x1b[0m\n\
+         \x20right: {GREEN}Some(120s){RESET}\n\
+         {GRAY}────────────{RESET}\n\
+         {MAGENTA}     Summary{RESET} [  41.207s] 212 tests run: 211 {GREEN}passed{RESET}, 1 {RED}failed{RESET}, 0 skipped\n\
+         {RED}        FAIL{RESET} [   0.019s] tau-ai retry::tests::honors_http_date\n\
+         {RED}error{RESET}: test run failed\n"
+    ));
+    out
+}
+
+/// The whole-workspace test run output pruning cut down: 4,810 lines.
+fn workspace_tests() -> String {
+    let mut out = format!(
+        "{GREEN}    Starting{RESET} 4,403 tests across 61 binaries (12 tests skipped)\n"
+    );
+    let crates = [
+        "tau-agent",
+        "tau-ai",
+        "tau-store",
+        "tau-ui",
+        "tau-memory",
+        "tau-vcs",
+    ];
+    for i in 0..4_807 {
+        let krate = crates[i % crates.len()];
+        out.push_str(&pass(
+            0.001 * (i % 97) as f32,
+            &format!("{krate} tests::case_{i:04}"),
+        ));
+    }
+    out.push_str(&format!(
+        "{GRAY}────────────{RESET}\n\
+         {MAGENTA}     Summary{RESET} [  88.514s] 4,391 tests run: 4,391 {GREEN}passed{RESET}, 12 {YELLOW}skipped{RESET}\n"
+    ));
+    out
 }
 
 /// An output that says how to sum itself up, as tools may.
@@ -2166,6 +2357,13 @@ pub fn script() -> Vec<Step> {
     s.start_tool("c5", "edit", args);
     s.checked(Some(("c5", "edit")), &[("R2", 0.02), ("R4", 0.06)]);
     s.end_tool(450, "c5", output);
+    // The first test run fails: the date parser is not wired in yet.
+    s.start_tool(
+        "c5t",
+        "bash",
+        json!({ "command": "cargo nextest run -p tau-ai" }),
+    );
+    s.fail_tool(900, "c5t", term_output(&failing_tests(), 100, 4, None));
     s.start_tool(
         "c6",
         "bash",
@@ -2205,7 +2403,7 @@ pub fn script() -> Vec<Step> {
     s.start_tool(
         "c7",
         "bash",
-        json!({ "command": "cargo nextest run -p tau-ai" }),
+        json!({ "command": "cargo nextest run --workspace" }),
     );
     let archive = "/home/you/.local/share/tau/repos/tau-agent-3f2a91c0/\
                    archive/tau-output-41822-1790716482-0.txt";
@@ -2213,7 +2411,7 @@ pub fn script() -> Vec<Step> {
         tau_fast_compaction::NAME,
         json!({
             "kind": "output", "call_id": "c7", "lines": 4810,
-            "chunks": 200, "kept": 9, "dropped_lines": 4598,
+            "chunks": 200, "kept": 212, "dropped_lines": 4598,
             "segments": 1, "requests": 2, "tokens_before": 14_200,
             "tokens_after": 1_100, "pruned": true, "archive": archive,
         }),
@@ -2221,14 +2419,20 @@ pub fn script() -> Vec<Step> {
     s.end_tool(
         800,
         "c7",
-        ToolOutput::text(format!(
-            "{}\n    Starting 212 tests across 9 binaries\n\
-             [4598 lines omitted]\n\
-             \x20       PASS [   0.004s] tau-ai retry::tests::server_hint_parses_dates\n\
-             \x20    Summary [  41.207s] 212 tests run: 212 passed, 0 skipped\n\n\
-             [full output: {archive} (read or grep it if needed)]",
-            tau_fast_compaction::output::HEADER
-        )),
+        term_output(
+            &workspace_tests(),
+            0,
+            310,
+            Some(format!(
+                "{}\n    Starting 4,403 tests across 61 binaries (12 tests skipped)\n\
+                 [1960 lines omitted]\n\
+                 \x20       PASS [   1.902s] tau-ui host::a_large_output_is_archived\n\
+                 [2634 lines omitted]\n\
+                 \x20    Summary [  88.514s] 4,391 tests run: 4,391 passed, 12 skipped\n\n\
+                 [full output: {archive} (read or grep it if needed)]",
+                tau_fast_compaction::output::HEADER
+            )),
+        ),
     );
     s.tool(
         300,
@@ -2346,10 +2550,10 @@ pub fn script() -> Vec<Step> {
                 "c7",
                 4,
                 "bash",
-                "cargo nextest run -p tau-ai",
+                "cargo nextest run --workspace",
                 18_200,
-                Some((0.12, 0.03)),
-                Decision::DropCall,
+                Some((0.62, 0.03)),
+                Decision::Keep,
             ),
             entry(
                 "c8",
@@ -2403,25 +2607,41 @@ pub fn script() -> Vec<Step> {
         "bash",
         json!({ "command": "cargo nextest run -p tau-ai retry::" }),
     );
-    let mut log = String::new();
-    for test in [
+    let mut log = compiling("tau-ai", "crates/tau-ai");
+    log.push_str(&format!(
+        "{GREEN}    Finished{RESET} `test` profile [unoptimized + debuginfo] target(s) in 2.71s\n\
+         {GREEN}    Starting{RESET} 14 tests across 1 binary (198 tests skipped)\n"
+    ));
+    // A progress bar, redrawn in place and erased once the build ends.
+    let building = format!(
+        "{CYAN}    Building{RESET} [=========================>   ] 11/12: tau-ai(test)\r\x1b[K"
+    );
+    let mut raw = format!("{building}{log}");
+    s.term_chunk(400, "c11", 0, &raw.clone(), &log.clone());
+    for (seq, test) in [
         "retry::tests::honors_seconds",
         "retry::tests::honors_http_date",
         "retry::tests::caps_at_max_delay",
         "retry::tests::ignores_malformed_header",
-    ] {
-        log.push_str(&format!("    PASS [0.01s] tau-ai {test}\n"));
-        s.event(
-            500,
-            RunEvent::ToolUpdate {
-                run: run.clone(),
-                call_id: "c11".into(),
-                partial: Arc::new(ToolOutput::text(log.clone())),
-            },
-        );
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let line = pass(0.01, &format!("tau-ai {test}"));
+        log.push_str(&line);
+        raw.push_str(&line);
+        let so_far = log.clone();
+        s.term_chunk(500, "c11", seq as u64 + 1, &line, &so_far);
     }
-    log.push_str("     Summary [3.1s] 14 tests run: 14 passed, 0 skipped");
-    s.end_tool(600, "c11", ToolOutput::text(log));
+    let summary = format!(
+        "{GRAY}────────────{RESET}\n\
+         {MAGENTA}     Summary{RESET} [   3.104s] 14 tests run: 14 {GREEN}passed{RESET}, 198 {YELLOW}skipped{RESET}\n"
+    );
+    log.push_str(&summary);
+    raw.push_str(&summary);
+    let so_far = log.clone();
+    s.term_chunk(300, "c11", 5, &summary, &so_far);
+    s.end_tool(300, "c11", term_output(&raw, 0, 6, Some(plain(&log))));
     s.tool(200, LOG_CALL, "vcs_log", json!({}), change_log());
     s.tool(
         200,
@@ -2644,9 +2864,18 @@ mod tests {
         // The ledger marks the cards it pruned.
         assert_eq!(view.ledger.len(), 9);
         assert_eq!(
-            view.tool("c7").and_then(|card| card.pruned),
-            Some(crate::view::Pruned::CallDropped)
+            view.tool("c8").and_then(|card| card.pruned),
+            Some(crate::view::Pruned::ResultDropped)
         );
+        // The test run output pruning cut stays, with its terminal.
+        assert_eq!(
+            view.tool("c7").and_then(|card| card.pruned),
+            Some(crate::view::Pruned::Kept)
+        );
+        assert!(matches!(
+            view.tool("c7").map(|card| &card.body),
+            Some(crate::view::ToolBody::Terminal(_))
+        ));
         // What `start` decided comes before the first turn.
         assert_eq!(view.start_notes().count(), 2);
         assert_eq!(view.proposals().count(), 2);

@@ -11,7 +11,7 @@ tau-agent/
 │   ├── tau-store/    # SQLite via sqlx: runs, messages, fork transcripts, migrations
 │   ├── tau-testing/  # ScriptedModel, recorded-stream replay
 │   ├── terminal/     # tau-terminal: libghostty-vt terminal, PTY command runner,
-│   │                 # plain text, styled snapshots, GPUI view; no tau deps
+│   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
 │   └── plugins/
 │       ├── compaction/       # tau-compaction: summarizing compaction
 │       ├── fast-compaction/  # tau-fast-compaction: Jev-driven pruning of tool history

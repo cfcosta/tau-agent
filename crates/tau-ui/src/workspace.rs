@@ -86,6 +86,7 @@ use crate::{
         RunStatus,
         RunUpdate,
         RunView,
+        ToolBody,
         ToolState,
     },
 };
@@ -430,6 +431,8 @@ pub struct Workspace {
     /// Tool cards that fold, opened, as `(run, call id)`. They start
     /// closed.
     open_cards: HashSet<(RunId, String)>,
+    /// The terminals of `bash` cards, and how each is open.
+    pub(crate) terms: std::cell::RefCell<crate::ui::term_card::TermCards>,
     /// Files opened to their hunks in a diff or show card, as `(run,
     /// call id, path)`.
     open_files: HashSet<(RunId, String, String)>,
@@ -693,6 +696,7 @@ impl Workspace {
             kept: HashMap::new(),
             open_notes: HashSet::new(),
             open_cards: HashSet::new(),
+            terms: Default::default(),
             open_files: HashSet::new(),
             picked_changes: HashMap::new(),
             dismissed: HashSet::new(),
@@ -898,6 +902,16 @@ impl Workspace {
         }
         for run in &mut self.runs {
             run.apply(event);
+        }
+        // A command's screen takes the output its card gained.
+        if let RunEvent::ToolUpdate { run, call_id, .. }
+        | RunEvent::ToolEnd { run, call_id, .. } = event
+            && let Some(card) =
+                self.run(run).and_then(|view| view.tool(call_id))
+            && let ToolBody::Terminal(term) = &card.body
+        {
+            let term = term.clone();
+            self.terms.get_mut().sync(run, call_id, &term, cx);
         }
         // A fork that finishes waits in its parent's chat, to land or
         // be dropped.

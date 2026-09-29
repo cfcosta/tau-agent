@@ -88,6 +88,78 @@ pub struct Theme {
     pub danger_edge: Hsla,
     /// The colors a repository's mark can take.
     pub marks: [Hsla; 6],
+    /// A command's terminal, drawn inside its card.
+    pub term: TermLook,
+}
+
+/// How a `bash` card's terminal looks: a darker ground of its own, and
+/// the programs' own colors from a Ghostty-like palette, not remapped to
+/// the theme's.
+#[derive(Debug, Clone)]
+pub struct TermLook {
+    /// The colors programs pick, and the screen's ground and text.
+    pub palette: tau_terminal::Palette,
+    /// Around the screen.
+    pub border: Hsla,
+    /// Under the strip on top of the screen.
+    pub divider: Hsla,
+    /// The strip's text.
+    pub label: Hsla,
+    /// Behind the selected tab of the strip.
+    pub tab: Hsla,
+    /// The text the terminal is set in.
+    pub text: Type,
+    /// A row's height, in the text's sizes.
+    pub leading: f32,
+    /// Rows a closed screen shows at most.
+    pub rows: usize,
+}
+
+const fn term_rgb(value: u32) -> tau_terminal::Rgb {
+    tau_terminal::Rgb {
+        r: (value >> 16) as u8,
+        g: (value >> 8) as u8,
+        b: value as u8,
+    }
+}
+
+impl TermLook {
+    fn graphite() -> Self {
+        Self {
+            palette: tau_terminal::Palette {
+                ansi: [
+                    term_rgb(0x1d1f24),
+                    term_rgb(0xf0655a),
+                    term_rgb(0x5fd068),
+                    term_rgb(0xf2c14e),
+                    term_rgb(0x5aa9f0),
+                    term_rgb(0xc678dd),
+                    term_rgb(0x3fc5c5),
+                    term_rgb(0xd6d4ce),
+                    term_rgb(0x8a8883),
+                    term_rgb(0xff7b70),
+                    term_rgb(0x7ee08a),
+                    term_rgb(0xffd36b),
+                    term_rgb(0x7cbcff),
+                    term_rgb(0xd898ec),
+                    term_rgb(0x62d8d8),
+                    term_rgb(0xf2f0ea),
+                ],
+                foreground: term_rgb(0xd6d4ce),
+                background: term_rgb(0x0e0f11),
+                cursor: term_rgb(0xd6d4ce),
+                selection: term_rgb(0x2c3a52),
+                scrollbar: term_rgb(0x3a3c44),
+            },
+            border: c(rgb(0x23252c)),
+            divider: c(rgb(0x1d1f24)),
+            label: c(rgb(0x6f6d68)),
+            tab: c(rgb(0x23252c)),
+            text: Type::CAPTION.mono(),
+            leading: 1.5,
+            rows: 12,
+        }
+    }
 }
 
 fn c(color: Rgba) -> Hsla {
@@ -139,6 +211,7 @@ impl Theme {
                 c(rgb(0xf0a37e)),
                 c(rgb(0x7ec8c8)),
             ],
+            term: TermLook::graphite(),
         }
     }
 

@@ -164,6 +164,9 @@ above holds, except as follows.
   - The details are stored with the tool result, so a reopened run
     rebuilds its terminal from the store.
 
+tau-ui draws these as the card's terminal screen
+([terminal.md](terminal.md), "In tau-ui: the `bash` card").
+
 ## edit: `{ path, edits: [{ oldText, newText }] }`
 
 - **Argument repair** (`prepare_arguments`) fixes common model mistakes:

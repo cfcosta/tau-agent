@@ -362,16 +362,20 @@ fn branch(
     let (stop_color, stop) = status_look(&run.status, t);
     let tests = run.items.iter().rev().find_map(|item| match item {
         crate::view::Item::Tool(card) if card.tool == "bash" => {
-            match &card.body {
-                ToolBody::Output(lines) => lines
-                    .iter()
-                    .rev()
-                    .find(|line| line.contains("tests run"))
-                    .and_then(|line| line.split(": ").nth(1))
-                    .and_then(|counts| counts.split(" passed").next())
-                    .map(|passed| (passed.to_owned(), line_total(lines))),
-                _ => None,
-            }
+            let lines: Vec<String> = match &card.body {
+                ToolBody::Output(lines) => lines.clone(),
+                ToolBody::Terminal(term) => {
+                    term.seen.lines().map(str::to_owned).collect()
+                }
+                _ => return None,
+            };
+            lines
+                .iter()
+                .rev()
+                .find(|line| line.contains("tests run"))
+                .and_then(|line| line.split(": ").nth(1))
+                .and_then(|counts| counts.split(" passed").next())
+                .map(|passed| (passed.to_owned(), line_total(&lines)))
         }
         _ => None,
     });

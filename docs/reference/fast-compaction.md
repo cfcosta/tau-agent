@@ -117,7 +117,9 @@ it went: the call, the output's lines, the chunks and how many stayed,
 the lines dropped, the segments, the requests, the estimated tokens
 before and after, whether the result was replaced, and the archive. The
 same body is stored with the run as a record, so an interface can show
-it again when it reloads the run from history.
+it again when it reloads the run from history. tau-ui's `bash` card
+shows a pruned output as two tabs, the terminal and the text the model
+saw ([terminal.md](terminal.md)).
 
 ### Safeguards
 

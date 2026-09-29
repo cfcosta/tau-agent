@@ -32,6 +32,8 @@ tau-store.workspace = true
 # The product shows `bash` output as a terminal: commands run under a
 # pseudo-terminal (docs/decisions/0010-terminal-rendering.md).
 tau-tools = { workspace = true, features = ["terminal"] }
+# Draws those commands' terminals.
+tau-terminal.workspace = true
 tau-vcs.workspace = true
 futures-util.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }

@@ -80,4 +80,5 @@ pub fn init(cx: &mut App) {
     cx.set_global(theme::Theme::graphite());
     input::bind_keys(cx);
     workspace::bind_keys(cx);
+    tau_terminal::view::bind_keys(cx);
 }

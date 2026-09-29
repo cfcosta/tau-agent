@@ -12,6 +12,7 @@ pub mod landing;
 pub mod log_card;
 pub mod screens;
 pub mod status_card;
+pub mod term_card;
 pub mod transcript;
 
 pub use components::*;
