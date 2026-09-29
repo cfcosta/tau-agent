@@ -28,6 +28,7 @@ tau-agent.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }
 
 [dev-dependencies]
+hegeltest.workspace = true
 tau-tools.workspace = true
 serde_json.workspace = true
 tau-ai.workspace = true

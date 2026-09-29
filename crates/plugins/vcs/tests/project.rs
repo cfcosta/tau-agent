@@ -8,6 +8,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use hegel::{Generator as _, TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::agent::{Agent, Checkpoint};
 use tau_store::Store;
@@ -381,4 +382,180 @@ fn diffs_between_commits_count_lines_per_file() {
     assert!(files[1].text.starts_with("diff --git a/new.txt b/new.txt"));
     assert!(files[0].text.contains("+world"));
     assert!(project.diff(&head, &head).unwrap().is_empty());
+}
+
+/// A file's lines before and after (`None`: no file), and whether each
+/// ends in a newline.
+type Sides = (Option<Vec<String>>, Option<Vec<String>>, bool, bool);
+
+/// A file's contents as lines drawn from ones that look like diff
+/// syntax (`-- comment` shows as `--- comment` when removed, `++x` as
+/// `+++x` when added), each with its newline except maybe the last.
+#[hegel::composite]
+fn lines_of(tc: &TestCase) -> Option<Vec<String>> {
+    tc.draw(gs::optional(
+        gs::vecs(
+            gs::sampled_from(vec![
+                "",
+                "-",
+                "--",
+                "-- a",
+                "--- a/x",
+                "+",
+                "++",
+                "++ b",
+                "+++ b/x",
+                "@@ -1 +1 @@",
+                "diff --git a/x b/x",
+                " ",
+                "a",
+                "b",
+            ])
+            .map(String::from),
+        )
+        .max_size(8),
+    ))
+}
+
+/// The line counts of a minimal edit from `before` to `after`: the lines
+/// not in their longest common subsequence.
+fn minimal_counts(before: &[&str], after: &[&str]) -> (usize, usize) {
+    let mut lcs = vec![vec![0usize; after.len() + 1]; before.len() + 1];
+    for i in (0..before.len()).rev() {
+        for j in (0..after.len()).rev() {
+            lcs[i][j] = if before[i] == after[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let common = lcs[0][0];
+    (after.len() - common, before.len() - common)
+}
+
+/// A file's lines as `similar` splits them: each keeps its newline.
+fn split_lines(text: &str) -> Vec<&str> {
+    text.split_inclusive('\n').collect()
+}
+
+fn contents(lines: &[String], newline_at_end: bool) -> String {
+    let mut text = lines.join("\n");
+    if newline_at_end && !lines.is_empty() {
+        text.push('\n');
+    }
+    text
+}
+
+/// What a diff lists for each changed file is how many lines a minimal
+/// edit adds and removes, whatever the lines look like: a removed
+/// `-- comment` or an added `++x` counts like any other line.
+// Each case commits twice through jj, which waits on the disk: slow
+// under load, so the too-slow check would fail it for the machine.
+#[hegel::test(
+    test_cases = 40,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
+#[hegel::explicit_test_case(
+    files = vec![(Some(vec![String::from("-- a")]), None::<Vec<String>>, true, true)]
+)]
+fn diff_line_counts_match_a_minimal_edit(tc: TestCase) {
+    let files: Vec<Sides> = tc.draw(
+        gs::vecs(gs::tuples!(
+            lines_of(),
+            lines_of(),
+            gs::booleans(),
+            gs::booleans()
+        ))
+        .min_size(1)
+        .max_size(2),
+    );
+
+    DIFF_FIXTURE.with(|fixture| check_diff_counts(fixture, &files));
+}
+
+/// A project with one workspace, made once per test thread: importing
+/// one per case is too slow. Each case writes every file it names on
+/// both sides, so what earlier cases left does not change its diff.
+struct DiffFixture {
+    _src: tempfile::TempDir,
+    _home: tempfile::TempDir,
+    project: Project,
+    vcs: tau_vcs::Vcs,
+    runtime: tokio::runtime::Runtime,
+}
+
+thread_local! {
+    static DIFF_FIXTURE: DiffFixture = {
+        let src = tempfile::tempdir().unwrap();
+        let head = source(src.path());
+        let home = tempfile::tempdir().unwrap();
+        let project = Project::import(
+            src.path().to_str().unwrap(),
+            home.path().join("p"),
+            Identity::default(),
+        )
+        .unwrap();
+        let vcs = project.add_workspace("w", &head).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        DiffFixture { _src: src, _home: home, project, vcs, runtime }
+    };
+}
+
+fn check_diff_counts(fixture: &DiffFixture, files: &[Sides]) {
+    let DiffFixture {
+        project,
+        vcs,
+        runtime,
+        ..
+    } = fixture;
+    let dir = project.workspace_dir("w");
+    let commit = |side: usize| {
+        for (n, file) in files.iter().enumerate() {
+            let (lines, end) = if side == 0 {
+                (&file.0, file.2)
+            } else {
+                (&file.1, file.3)
+            };
+            let path = dir.join(format!("f{n}.txt"));
+            match lines {
+                Some(lines) => {
+                    std::fs::write(&path, contents(lines, end)).unwrap()
+                }
+                None => {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+        runtime
+            .block_on(vcs.checkpoint(format!("side {side}")))
+            .unwrap()
+            .commit_id
+    };
+    let before = commit(0);
+    let after = commit(1);
+
+    let mut expected = Vec::new();
+    for (n, (old, new, old_end, new_end)) in files.iter().enumerate() {
+        let old = old.as_ref().map(|lines| contents(lines, *old_end));
+        let new = new.as_ref().map(|lines| contents(lines, *new_end));
+        if old == new {
+            continue;
+        }
+        let (added, removed) = minimal_counts(
+            &split_lines(old.as_deref().unwrap_or_default()),
+            &split_lines(new.as_deref().unwrap_or_default()),
+        );
+        expected.push((format!("f{n}.txt"), added, removed));
+    }
+    let counted: Vec<(String, usize, usize)> = project
+        .diff(&before, &after)
+        .unwrap()
+        .into_iter()
+        .map(|file| (file.path, file.added, file.removed))
+        .collect();
+    assert_eq!(counted, expected);
 }

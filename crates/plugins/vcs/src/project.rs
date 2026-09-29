@@ -417,11 +417,11 @@ fn split_files(text: &str, changes: Vec<FileChange>) -> Vec<FileDiff> {
         )
         .map(|(change, section)| {
             let text = section.unwrap_or_default().to_owned();
-            let body = text.lines().filter(|line| {
-                !line.starts_with("+++") && !line.starts_with("---")
-            });
+            // The `---`/`+++` header lines come before the first hunk;
+            // in a hunk, `---` is a removed line that starts with `--`.
+            let hunks = text.find("\n@@").map_or("", |at| &text[at + 1..]);
             let (mut added, mut removed) = (0, 0);
-            for line in body {
+            for line in hunks.lines() {
                 if line.starts_with('+') {
                     added += 1;
                 } else if line.starts_with('-') {
