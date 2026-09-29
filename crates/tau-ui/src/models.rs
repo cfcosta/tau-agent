@@ -1,9 +1,10 @@
 //! Choosing models: which ones the picker offers and at what price, the
 //! reasoning effort a run asks for, and the defaults the user set.
 //!
-//! A run's model and effort are fixed from its first request, so the
-//! session can keep sending only what is new; a fork is how a run moves
-//! to another model.
+//! A run's model and effort hold while it works, so the session can keep
+//! sending only what is new. A chat's next message can go to another
+//! model: that request sends the whole conversation, and the new model
+//! takes it from there.
 
 use serde::{Deserialize, Serialize};
 use tau_ai::responses::request::ReasoningEffort;

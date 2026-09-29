@@ -150,8 +150,8 @@ pub fn render(
         .line_height(relative(1.5))
         .child(icon(Icon::Warning, IconSize::BASE, t.muted))
         .child(div().flex_1().child(
-            "The effort is fixed for the whole run. If a later phase needs \
-             more or less, start a new run and it is scored again.",
+            "The effort holds until the run stops. Your next message is \
+             scored again, on whatever model it goes to.",
         ));
 
     let side = div()

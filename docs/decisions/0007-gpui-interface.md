@@ -45,11 +45,14 @@ reach into the loop.
   badges, chips, tags, cards, panels, fields, notices). Screens compose
   them and never write their own sizes or colors; `tests/design.rs`
   fails the build if one does.
-- **Models are chosen per run, and forks change them.** The composer's
-  picker sets the next run's model and reasoning effort, grouped by
-  price, with what the sign-in cannot run shown locked. A run keeps its
-  model from its first request (the session sends only what is new), so
-  moving to another model means forking. Defaults per agent, the models
+- **Models are chosen per message.** The composer's picker sets the
+  model and reasoning effort of the next run, or of an open chat's next
+  message, grouped by price, with what the sign-in cannot run shown
+  locked. A run keeps its model while it works (the session sends only
+  what is new); the next message may go to another model, which gets
+  the whole conversation, reasoning included (checked on Codex across
+  gpt-5.5, gpt-5.6 and gpt-6, 2026-09-28). A fork is for trying the
+  task again, not for changing model. Defaults per agent, the models
   the picker shows, and a price to ask above are saved in
   `$XDG_CONFIG_HOME/tau/models.json`.
 - **One layout per width, not per device.** Below 720 px the window

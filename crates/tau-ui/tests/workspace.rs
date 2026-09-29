@@ -329,7 +329,7 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
     let config = HostConfig {
         access: Access::ApiKey("sk-test".into()),
         credentials: Credentials::new(tempfile::tempdir().unwrap().keep()),
-        model: "gpt-5.5".into(),
+        model: Some("gpt-5.5".into()),
         root: std::env::temp_dir(),
         store: std::env::temp_dir().join("unused.db"),
         repos: std::env::temp_dir().join("unused-repos"),
@@ -457,8 +457,8 @@ fn a_fork_can_run_on_another_model(cx: &mut TestAppContext) {
             ws.update_run(&run, update, cx);
         }
         ws.navigate(Route::Run(run.clone()), cx);
-        // On an open run, the title bar's model is the run's, fixed.
-        assert!(ws.shows_run_model());
+        // On an open run, the composer's model is the chat's.
+        assert_eq!(ws.composer_target(), Some(PickerTarget::Run(run.clone())));
         ws.start_fork_at(&run, 3, cx);
         ws.show_picker(PickerTarget::Fork, cx);
         ws.pick_model("gpt-6-sol", cx);
@@ -1444,4 +1444,53 @@ fn the_picker_offers_the_models_own_efforts(cx: &mut TestAppContext) {
         ]
     );
     assert_eq!(Effort::offered("gpt-4.1"), [Effort::Auto]);
+}
+
+/// A chat changes model from its next message: no fork, the same run,
+/// and a live run keeps its model until it stops.
+#[gpui::test]
+fn a_chat_goes_on_on_another_model(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_with_models(cx);
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(run.clone()), cx);
+        assert_eq!(ws.composer_target(), Some(PickerTarget::Run(run.clone())));
+        // Live: the pick waits for the next message.
+        ws.show_picker(PickerTarget::Run(run.clone()), cx);
+        ws.pick_model("gpt-6-sol", cx);
+        assert_eq!(ws.run(&run).unwrap().model, "gpt-5.5");
+        assert_eq!(
+            ws.choice_for(&PickerTarget::Run(run.clone())).model,
+            "gpt-6-sol"
+        );
+    });
+    finish_demo_run(&workspace, &mut cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let runs = ws.runs().len();
+        ws.submit_prompt("go on".into(), cx);
+        assert_eq!(ws.runs().len(), runs, "no fork, no new run");
+        let view = ws.run(&run).unwrap();
+        assert_eq!(view.model, "gpt-6-sol");
+        let reasoning =
+            view.plan.iter().find(|f| f.name == "reasoning").unwrap();
+        // Picked while the run was still on auto, so tau-reasoning
+        // chooses again for the new model.
+        assert_eq!(reasoning.value, "auto");
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::Resume {
+            run: run.clone(),
+            prompt: "go on".into(),
+            model: ModelChoice::new("gpt-6-sol", Effort::Auto),
+        })
+    );
+    // The pick was spent: the next message stays on gpt-6-sol from the
+    // run itself.
+    workspace.update(&mut cx, |ws, _| {
+        assert_eq!(
+            ws.choice_for(&PickerTarget::Run(run.clone())),
+            ModelChoice::new("gpt-6-sol", Effort::Auto)
+        );
+    });
 }

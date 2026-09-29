@@ -58,7 +58,16 @@ impl Access {
         }
     }
 
-    /// How the model reads in onboarding: `gpt-5.5 · Codex`.
+    /// What runs use when nothing else is chosen: gpt-6-sol on a ChatGPT
+    /// sign-in, gpt-5.5 on an API key.
+    pub fn default_model(&self) -> &'static str {
+        match self {
+            Self::Codex(_) => "gpt-6-sol",
+            Self::ApiKey(_) => crate::models::DEFAULT_MODEL,
+        }
+    }
+
+    /// How the model reads in onboarding: `gpt-6-sol · Codex`.
     pub fn short_label(&self, model: &str) -> String {
         match self {
             Self::Codex(_) => format!("{model} · Codex"),
@@ -203,14 +212,16 @@ pub fn handle_sign_in(
     event: &WorkspaceEvent,
     workspace: &Entity<Workspace>,
     credentials: &Credentials,
-    model: &str,
+    model: Option<&str>,
     connected: &Connected,
     cx: &mut App,
 ) -> bool {
     let connect = {
-        let (connected, model) = (connected.clone(), model.to_owned());
+        let (connected, model) = (connected.clone(), model.map(str::to_owned));
         move |access: Access, workspace: &Entity<Workspace>, cx: &mut App| {
-            let label = access.short_label(&model);
+            let label = access.short_label(
+                model.as_deref().unwrap_or(access.default_model()),
+            );
             connected(access, cx);
             workspace.update(cx, |ws, cx| {
                 ws.update_setup(
@@ -332,6 +343,13 @@ async fn sign_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chatgpt_sign_in_runs_on_gpt_6_sol() {
+        let codex = Access::Codex(PathBuf::from("codex.json"));
+        assert_eq!(codex.default_model(), "gpt-6-sol");
+        assert_eq!(Access::ApiKey("sk".into()).default_model(), "gpt-5.5");
+    }
 
     #[test]
     fn access_comes_only_from_what_was_saved() {

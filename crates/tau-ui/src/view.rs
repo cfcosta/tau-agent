@@ -641,6 +641,26 @@ impl RunView {
         view
     }
 
+    /// Goes on on `model` at `effort`: the plan says so, and the context
+    /// window is the new model's. A chat can change model between
+    /// messages; the conversation carries over.
+    pub fn switch_model(&mut self, model: &str, effort: &str) {
+        self.model = model.to_owned();
+        for field in &mut self.plan {
+            match field.name.as_str() {
+                "model" => field.value = model.to_owned(),
+                "reasoning" => {
+                    field.value = effort.to_owned();
+                    field.set_by = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(found) = tau_ai::model::find(model) {
+            self.context.window = Some(found.context_window);
+        }
+    }
+
     /// Ends a rebuilt run: its status, and the stop line.
     pub fn finish_stored(&mut self, stop: StopReason, cost: f64) {
         self.usage.cost = cost;
@@ -1361,7 +1381,7 @@ impl RunView {
         let comparison = if chose { "above" } else { "below" };
         let outcome = if chose {
             format!(
-                "so the run uses {}. It stays fixed for the whole run.",
+                "so the run uses {}. It holds until the run stops.",
                 choice.effort
             )
         } else {

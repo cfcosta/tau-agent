@@ -41,7 +41,7 @@ fn host_on(
         credentials: Credentials::new(
             fresh_repo_list().with_extension("config"),
         ),
-        model: "gpt-5.5".into(),
+        model: Some("gpt-5.5".into()),
         root: root.to_owned(),
         store: std::env::temp_dir().join("unused.db"),
         repos: std::env::temp_dir().join("unused-repos"),
@@ -377,7 +377,7 @@ fn config_on(root: &Path, data: &Path) -> HostConfig {
     HostConfig {
         access: Access::ApiKey("sk-test".into()),
         credentials: Credentials::new(data.join("config")),
-        model: "gpt-5.5".into(),
+        model: Some("gpt-5.5".into()),
         root: root.to_owned(),
         store: data.join("runs.db"),
         repos: data.join("repos"),
@@ -623,8 +623,9 @@ fn a_finished_run_goes_on_in_its_workspace() {
     wait_until_done(&host, &chat.id);
     let dir = host.workspace(&chat.id).unwrap();
 
-    host.resume(&chat.id, "now b.txt", &ModelChoice::default())
-        .unwrap();
+    // The chat goes on on another model, without a fork.
+    let other = ModelChoice::new("gpt-6-sol", Effort::Auto);
+    host.resume(&chat.id, "now b.txt", &other).unwrap();
     let turns: Vec<u32> = until_end(&mut events)
         .into_iter()
         .filter_map(|event| match event {
@@ -640,12 +641,17 @@ fn a_finished_run_goes_on_in_its_workspace() {
     // The model saw the whole chat.
     let last = llm.requests().pop().unwrap();
     assert!(last.transcript.len() > 4, "{}", last.transcript.len());
+    assert_eq!(last.settings.model, "gpt-6-sol");
 
     let history = host.history().unwrap();
     assert_eq!(history.len(), 1, "one chat, not two");
     let view = &history[0];
     assert_eq!(view.id, chat.id);
     assert_eq!(view.title, "write-a-txt");
+    assert_eq!(
+        view.model, "gpt-6-sol",
+        "it reloads on the model it went on"
+    );
     assert_eq!(view.turn, 4);
     let prompts: Vec<&str> = view
         .items

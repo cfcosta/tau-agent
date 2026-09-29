@@ -15,13 +15,12 @@ use gpui::{
     prelude::*,
     px,
 };
-use tau_agent::tool::RunId;
 
 use crate::{
     assets::Icon,
     models::{Effort, ModelChoice, ModelOption, Tier},
     route::Route,
-    theme::{Design as _, IconSize, Theme, Type, control, radius, sp, weight},
+    theme::{Design as _, IconSize, Theme, Type, control, radius, sp},
     ui::{self, ButtonKind},
     view::RunView,
     workspace::{Confirm, Dialog, PickerTarget, Workspace, WorkspaceEvent},
@@ -44,9 +43,27 @@ impl Workspace {
         match target {
             PickerTarget::Next => self.next_model.clone(),
             PickerTarget::Fork => self.fork_model.clone(),
+            PickerTarget::Run(run) => {
+                self.run_models.get(run).cloned().unwrap_or_else(|| {
+                    self.run(run)
+                        .map_or_else(|| self.next_model.clone(), Self::model_of)
+                })
+            }
             PickerTarget::Default(agent) => {
                 self.catalog.models.settings.default_for(agent)
             }
+        }
+    }
+
+    /// What the composer's model chip sets: the next run's model, or the
+    /// open conversation's next message's. The fork banner has its own.
+    pub fn composer_target(&self) -> Option<PickerTarget> {
+        if self.forking.is_some() {
+            return None;
+        }
+        match self.current().filter(|_| self.route != Route::NewRun) {
+            Some(run) => Some(PickerTarget::Run(run.id.clone())),
+            None => Some(PickerTarget::Next),
         }
     }
 
@@ -71,7 +88,6 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.picker = Some(target);
-        self.model_info = false;
         self.model_search.update(cx, |input, cx| input.clear(cx));
         self.model_search.read(cx).focus_handle(cx).focus(window);
         cx.notify();
@@ -84,13 +100,6 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.picker = Some(target);
-        self.model_info = false;
-        cx.notify();
-    }
-
-    /// Opens the note on the open run's fixed model.
-    pub fn show_model_info(&mut self, cx: &mut Context<Self>) {
-        self.model_info = true;
         cx.notify();
     }
 
@@ -173,6 +182,9 @@ impl Workspace {
                 self.next_model_picked = true;
             }
             PickerTarget::Fork => self.fork_model = choice,
+            PickerTarget::Run(run) => {
+                self.run_models.insert(run, choice);
+            }
             PickerTarget::Default(agent) => {
                 self.set_default_model(&agent, choice, cx)
             }
@@ -216,39 +228,15 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The title bar's model: on an open run it explains why the model is
-    /// fixed; otherwise it opens the picker for the next run.
+    /// The title bar's model opens the picker the composer's chip does.
     pub fn title_model_clicked(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.shows_run_model() {
-            self.model_info = !self.model_info;
-            cx.notify();
-        } else {
-            self.open_picker(PickerTarget::Next, window, cx);
+        if let Some(target) = self.composer_target() {
+            self.open_picker(target, window, cx);
         }
-    }
-
-    /// Whether the title bar shows the open run's model, not the next
-    /// run's.
-    pub fn shows_run_model(&self) -> bool {
-        matches!(self.route, Route::Run(_) | Route::Home)
-            && self.current().is_some()
-    }
-
-    /// From the fixed-model note: fork the open run on another model.
-    fn fork_on_another_model(
-        &mut self,
-        run: &RunId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(view) = self.run(run) else { return };
-        let turn = Self::last_fork_turn_of(view);
-        self.fork_from(run, turn, window, cx);
-        self.open_picker(PickerTarget::Fork, window, cx);
     }
 
     // Views.
@@ -301,9 +289,6 @@ impl Workspace {
         if let Some(target) = self.picker.clone() {
             return Some(self.picker_view(target, phone, t, cx));
         }
-        if self.model_info && !phone {
-            return self.model_info_view(t, cx);
-        }
         None
     }
 
@@ -315,6 +300,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let choice = self.choice_for(&target);
+        let live = matches!(&target, PickerTarget::Run(run)
+            if self.run(run).is_some_and(|view| view.status.is_live()));
         let models = &self.catalog.models;
         let filter = self.model_search.read(cx).text().to_owned();
         let shown = models.shown(&filter);
@@ -456,7 +443,15 @@ impl Workspace {
                                     .flex_1(),
                             )
                             .child(ui::mono(
-                                "fixed for the whole run",
+                                match (&target, live) {
+                                    (PickerTarget::Run(_), true) => {
+                                        "from your next message, once this run stops"
+                                    }
+                                    (PickerTarget::Run(_), false) => {
+                                        "from your next message"
+                                    }
+                                    _ => "for the run",
+                                },
                                 Type::MICRO,
                                 t.dim,
                             )),
@@ -480,10 +475,9 @@ impl Workspace {
                         ))
                     }),
             )
-            .when(
-                matches!(target, PickerTarget::Next | PickerTarget::Fork),
-                |panel| panel.child(footer),
-            );
+            .when(!matches!(target, PickerTarget::Default(_)), |panel| {
+                panel.child(footer)
+            });
         // A click outside closes the picker.
         let backdrop = div()
             .id("picker-backdrop")
@@ -527,120 +521,19 @@ impl Workspace {
                 .justify_center()
                 .child(panel.w(px(460.)).rounded(radius::CARD)),
             // Above the composer, by its send button.
-            PickerTarget::Next | PickerTarget::Fork => div()
-                .absolute()
-                .right(px(if self.shows_inspector() { 424. } else { 96. }))
-                .bottom(px(if target == PickerTarget::Fork {
-                    140.
-                } else {
-                    96.
-                }))
-                .child(panel.w(px(460.)).rounded(radius::CARD)),
+            PickerTarget::Next | PickerTarget::Run(_) | PickerTarget::Fork => {
+                div()
+                    .absolute()
+                    .right(px(if self.shows_inspector() { 424. } else { 96. }))
+                    .bottom(px(if target == PickerTarget::Fork {
+                        140.
+                    } else {
+                        96.
+                    }))
+                    .child(panel.w(px(460.)).rounded(radius::CARD))
+            }
         };
         backdrop.child(placed).into_any_element()
-    }
-
-    /// The note under the title bar's model: why it is fixed, and a way to
-    /// another model.
-    fn model_info_view(
-        &self,
-        t: &Theme,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let run = self.current()?;
-        let choice = Self::model_of(run);
-        let price = self.catalog.models.find(&choice.model).map_or_else(
-            || "—".to_owned(),
-            |option| format!("{} per M", option.price()),
-        );
-        let id = run.id.clone();
-        let forkable = Self::last_fork_turn_of(run) >= 1;
-        let rows = [
-            ("model", choice.model.clone()),
-            ("reasoning", choice.effort.label().to_owned()),
-            ("price", price),
-        ];
-        Some(
-            div()
-                .id("model-info-backdrop")
-                .absolute()
-                .inset_0()
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(|ws, _, _, cx| {
-                        ws.model_info = false;
-                        cx.notify();
-                    }),
-                )
-                .child(
-                    div()
-                        .id("model-info")
-                        .absolute()
-                        .top(px(50.))
-                        .right(px(128.))
-                        .w(px(340.))
-                        .flex()
-                        .flex_col()
-                        .gap(sp(2.5))
-                        .p(sp(3.5))
-                        .bg(t.panel)
-                        .border_1()
-                        .border_color(t.border_strong)
-                        .rounded(radius::LARGE)
-                        .shadow_lg()
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation()
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(sp(2.))
-                                .child(ui::icon(Icon::Lock, IconSize::BASE, t.muted))
-                                .child(
-                                    div()
-                                        .font_weight(weight::STRONG)
-                                        .child("Fixed for this run"),
-                                ),
-                        )
-                        .child(ui::text(
-                            "A run keeps its model and reasoning from its first \
-                             request, so its session can keep sending only what \
-                             is new. To try another model, fork the run: the fork \
-                             starts where you choose, on the model you pick.",
-                            Type::CAPTION,
-                            t.muted,
-                        ).leading(1.55))
-                        .child(ui::key_values(
-                            rows.into_iter().map(|(key, value)| {
-                                (key.into(), ui::mono(value, Type::CAPTION, t.text))
-                            }),
-                            t,
-                        ))
-                        .when(forkable, |note| {
-                            note.child(
-                                div()
-                                    .id("fork-another-model")
-                                    .child(
-                                        ui::button(
-                                            "Fork on another model",
-                                            ButtonKind::Secondary,
-                                            t,
-                                        )
-                                        .child(ui::icon(
-                                            Icon::Fork,
-                                            IconSize::COMPACT,
-                                            t.text_soft,
-                                        )),
-                                    )
-                                    .on_click(cx.listener(move |ws, _, window, cx| {
-                                        ws.fork_on_another_model(&id, window, cx)
-                                    })),
-                            )
-                        }),
-                )
-                .into_any_element(),
-        )
     }
 
     /// A dialog, with OK, or Cancel and the choice to confirm.

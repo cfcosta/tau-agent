@@ -107,7 +107,9 @@ pub struct HostConfig {
     pub access: Access,
     /// Where sign-ins and keys are kept.
     pub credentials: Credentials,
-    pub model: String,
+    /// The model runs use when nothing else is chosen; `None` takes the
+    /// sign-in's default ([`Access::default_model`]).
+    pub model: Option<String>,
     /// The checkout runs work on. The host clones it into a project of
     /// its own and gives each run a workspace there; if it cannot (not
     /// a Git repository, no `git`), runs work in it directly.
@@ -123,6 +125,13 @@ pub struct HostConfig {
 }
 
 impl HostConfig {
+    /// The model runs on `access` use when nothing else is chosen.
+    pub fn model_for(&self, access: &Access) -> String {
+        self.model
+            .clone()
+            .unwrap_or_else(|| access.default_model().to_owned())
+    }
+
     /// `$XDG_DATA_HOME/tau`, or `~/.local/share/tau`.
     pub fn data_dir() -> PathBuf {
         std::env::var_os("XDG_DATA_HOME")
@@ -475,7 +484,8 @@ impl Host {
             std::fs::create_dir_all(parent)?;
         }
         let store = runtime.block_on(Store::open(&config.store))?;
-        let agent = coder(&runtime, &config.access, &config.model)?;
+        let agent =
+            coder(&runtime, &config.access, &config.model_for(&config.access))?;
         let (host, events) = Self::with_agent(runtime, agent, store, config);
         // Copying checkouts can take a while; the window opens first.
         let listed: Vec<Listed> = host
@@ -532,7 +542,8 @@ impl Host {
         config: HostConfig,
     ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
-        let settings = load_settings(&config.settings, &config.model);
+        let settings =
+            load_settings(&config.settings, &config.model_for(&config.access));
         // The checkout the host starts in is always listed.
         let mut list = RepoList::load(&config.repo_list);
         let home = list.list(&config.root);
@@ -1211,7 +1222,8 @@ impl Host {
     /// on keep theirs. `None` stops new runs until one is set.
     pub fn set_access(&self, access: Option<Access>) -> anyhow::Result<()> {
         if let Some(access) = &access {
-            let agent = coder(&self.runtime, access, &self.config.model)?;
+            let agent =
+                coder(&self.runtime, access, &self.config.model_for(access))?;
             *self.base.lock().expect("not poisoned") = agent;
         }
         *self.access.lock().expect("not poisoned") = access;
@@ -1546,7 +1558,10 @@ impl Host {
             .get(&id)
             .cloned()
             .unwrap_or_else(|| {
-                ModelChoice::new(self.config.model.clone(), Effort::Auto)
+                ModelChoice::new(
+                    self.config.model_for(&self.config.access),
+                    Effort::Auto,
+                )
             });
         let repo = self.slot_of_run(&id);
         let mut view = RunView::new(id, title(prompt), "coder", &choice.model)
@@ -1695,7 +1710,7 @@ impl Host {
                     event,
                     &workspace,
                     &handler.config.credentials,
-                    &handler.config.model,
+                    handler.config.model.as_deref(),
                     &connected,
                     cx,
                 ) || github::handle(
@@ -2903,7 +2918,7 @@ fn started(created_at: &str) -> String {
 /// start with them.
 pub fn onboard(
     workspace: &Entity<Workspace>,
-    model: String,
+    model: Option<String>,
     credentials: Credentials,
     cx: &mut App,
     ready: impl Fn(Access, &mut App) + 'static,
@@ -2927,7 +2942,7 @@ pub fn onboard(
             event,
             &workspace,
             &credentials,
-            &model,
+            model.as_deref(),
             &connected,
             cx,
         ) || github::handle(event, &workspace, &credentials, &api, cx);

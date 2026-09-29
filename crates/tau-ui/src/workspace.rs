@@ -350,6 +350,8 @@ pub enum PickerTarget {
     Next,
     /// The fork being written.
     Fork,
+    /// An open conversation's next message.
+    Run(RunId),
     /// An agent's default.
     Default(String),
 }
@@ -388,7 +390,7 @@ pub struct Workspace {
     /// The run row under the pointer, which offers to close it.
     pub(crate) hovered_run: Option<RunId>,
     /// The composer is writing a fork of this run, after this turn.
-    forking: Option<(RunId, u32)>,
+    pub(crate) forking: Option<(RunId, u32)>,
     /// A dialog over the app: something failed, or a choice to confirm.
     pub(crate) dialog: Option<Dialog>,
     /// The model the next run starts on, and whether the user picked it
@@ -401,7 +403,9 @@ pub struct Workspace {
     pub(crate) picker: Option<PickerTarget>,
     pub(crate) model_search: Entity<TextInput>,
     /// Whether the title bar explains the open run's fixed model.
-    pub(crate) model_info: bool,
+    /// The model each open conversation's next message goes to, when
+    /// someone picked one other than its current model.
+    pub(crate) run_models: HashMap<RunId, ModelChoice>,
     /// Whether the last layout showed the inspector, for placing the
     /// model picker beside it.
     inspector_shown: bool,
@@ -653,7 +657,7 @@ impl Workspace {
             fork_model: ModelChoice::default(),
             picker: None,
             model_search,
-            model_info: false,
+            run_models: HashMap::new(),
             inspector_shown: false,
             kept: HashMap::new(),
             open_notes: HashSet::new(),
@@ -1230,7 +1234,6 @@ impl Workspace {
         self.fork_model = model;
         self.forking = Some((id, turn));
         self.sheet_open = false;
-        self.model_info = false;
         self.composer.update(cx, |input, cx| {
             input.clear(cx);
             input.set_placeholder("What should the fork try instead?");
@@ -1351,7 +1354,12 @@ impl Workspace {
             return;
         };
         let mut view = self.runs.remove(at);
-        let model = Self::model_of(&view);
+        // The model picked for it, or the one it was on.
+        let model = self
+            .run_models
+            .remove(run)
+            .unwrap_or_else(|| Self::model_of(&view));
+        view.switch_model(&model.model, model.effort.label());
         // A message to a closed conversation opens it again.
         self.closed.remove(run);
         self.resuming.insert(run.clone(), view.status.clone());
@@ -1914,9 +1922,6 @@ impl Workspace {
             cx.notify();
         } else if self.picker.is_some() {
             self.close_picker(cx);
-        } else if self.model_info {
-            self.model_info = false;
-            cx.notify();
         } else {
             self.back(cx);
         }
@@ -2229,12 +2234,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let live = self.is_live();
-        // What the composer's message would do: start a run on the next
-        // model (not steer a live one, not fork).
         let continues = self.continues_chat();
-        let starts_run = self.forking.is_none()
-            && !(live && self.route != Route::NewRun)
-            && !continues;
         let queued = self
             .current()
             .and_then(|run| self.queued.get(&run.id))
@@ -2277,12 +2277,8 @@ impl Workspace {
             .pt(sp(if compact { 2.5 } else { 0. }))
             .pb(sp(if compact { 4.5 } else { 4. }))
             .when(compact, |bar| bar.border_t_1().border_color(t.border))
-            .when(compact && starts_run, |bar| {
-                bar.child(
-                    div()
-                        .flex()
-                        .child(self.model_chip(PickerTarget::Next, t, cx)),
-                )
+            .when_some(self.composer_target().filter(|_| compact), |bar, target| {
+                bar.child(div().flex().child(self.model_chip(target, t, cx)))
             })
             .when_some(self.fork_banner(t, cx), |bar, banner| bar.child(banner))
             .when(!self.attachments.is_empty(), |bar| {
@@ -2393,9 +2389,12 @@ impl Workspace {
                                     t.dim,
                                 ))
                             })
-                            .when(!compact && starts_run, |field| {
-                                field.child(self.model_chip(PickerTarget::Next, t, cx))
-                            }),
+                            .when_some(
+                                self.composer_target().filter(|_| !compact),
+                                |field, target| {
+                                    field.child(self.model_chip(target, t, cx))
+                                },
+                            ),
                     )
                     .child(send),
             )

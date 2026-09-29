@@ -5,14 +5,15 @@
 //! Without either it opens onboarding to set one up. With `--demo` it
 //! replays the scripted session instead.
 //!
-//! - `--model <id>`: the model, `gpt-5.5` by default.
+//! - `--model <id>`: the model; by default gpt-6-sol on a ChatGPT sign-in,
+//!   gpt-5.5 on an API key.
 //! - `--root <dir>`: where the coding tools work.
 //! - `--prompt <text>`: start a run with this task right away.
 //! - `--demo`: the scripted session; `--finished` opens it done.
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
 //!   compare, plan or ledger; onboarding's welcome, github, token,
 //!   model, repos or ready; pr and pr-opened; alert, a sample dialog;
-//!   models, picker, model-info or fork-picker (demo screens).
+//!   models, picker, run-picker or fork-picker (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
 //! - `--frame <w>x<h>`: lay out at exactly that size in the top-left
 //!   corner, to compare with the designs.
@@ -50,7 +51,8 @@ struct Args {
     prompt: Option<String>,
     frame: Option<(f32, f32)>,
     steps: Option<usize>,
-    model: String,
+    /// `None` takes the sign-in's default.
+    model: Option<String>,
     root: PathBuf,
 }
 
@@ -74,7 +76,7 @@ fn args() -> Args {
             Some((w.parse().ok()?, h.parse().ok()?))
         }),
         steps: value("--steps").and_then(|steps| steps.parse().ok()),
-        model: value("--model").unwrap_or_else(|| "gpt-5.5".into()),
+        model: value("--model"),
         root: value("--root")
             .map(PathBuf::from)
             .or_else(|| std::env::current_dir().ok())
@@ -93,9 +95,9 @@ fn main() {
     let (model, root) = (args.model.clone(), args.root.clone());
     let saved = credentials.clone();
     let config = move |access| HostConfig {
+        model: model.clone(),
         access,
         credentials: saved.clone(),
-        model: model.clone(),
         root: root.clone(),
         store: HostConfig::default_store(),
         repos: HostConfig::default_repos(),
@@ -251,9 +253,12 @@ fn open_demo_screen(
             workspace.show_picker(tau_ui::workspace::PickerTarget::Next, cx);
             return;
         }
-        Some("model-info") => {
+        Some("run-picker") => {
             workspace.navigate(Route::Run(demo::run_id()), cx);
-            workspace.show_model_info(cx);
+            workspace.show_picker(
+                tau_ui::workspace::PickerTarget::Run(demo::run_id()),
+                cx,
+            );
             return;
         }
         Some("fork-picker") => {

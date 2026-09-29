@@ -53,12 +53,12 @@ pub fn title_bar(
     cx: &mut Context<Workspace>,
 ) -> Div {
     let run = ws.current();
-    // An open run's model, fixed for it; else the next run's.
-    let fixed = ws.shows_run_model();
-    let choice = match run.filter(|_| fixed) {
-        Some(run) => Workspace::model_of(run),
-        None => ws.next_model().clone(),
-    };
+    // What the composer's next message goes to: the open chat's model,
+    // or the next run's.
+    let choice = ws.composer_target().map_or_else(
+        || ws.fork_model().clone(),
+        |target| ws.choice_for(&target),
+    );
     let reasoning = format!("reasoning {}", choice.effort.label());
     let model = choice.model.clone();
     let total: f64 = ws.runs.iter().map(|run| run.usage.cost).sum();
@@ -145,9 +145,6 @@ pub fn title_bar(
                 .rounded(radius::CONTROL)
                 .cursor_pointer()
                 .hover(|style| style.bg(t.selected))
-                .when(fixed, |chip| {
-                    chip.child(icon(Icon::Lock, IconSize::SMALL, t.dim))
-                })
                 .child(mono(model, Type::CAPTION, t.text))
                 .child(mono("·", Type::CAPTION, t.dim))
                 .child(mono(reasoning, Type::CAPTION, t.blue))
