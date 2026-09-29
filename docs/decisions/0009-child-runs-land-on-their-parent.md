@@ -80,14 +80,21 @@ When a child stops, its changes **land** on its parent's stack.
 - **Fold, on request.** The user may land a child as one change
   instead: a three-way merge of the fork point, the parent's head and
   the child's head, described with the child's summary. The child's
-  own commits stay under its bookmark.
+  own commits are no longer named once it closes; its chat and the
+  operation log still have them.
+- **One level at a time.** A child lands in its direct parent only.
+  Landing that parent in turn is a separate choice, from its own
+  card, so each step can be reviewed.
 - **Several children** land one after another, in the order they
   finished. This includes several sub-agents called in one batch;
   the ones after the first restack onto the one before.
-- **Conflicts land as jj conflicts.** The parent's next `vcs_status`
-  shows them, and the parent's model edits the markers out like any
-  other file. The landing card shows the conflicts before the user
-  confirms.
+- **A landing that would conflict asks first.** The landing card
+  lists the files that would conflict before anything changes. The
+  user confirms, folds instead, or leaves the child open. A confirmed
+  landing puts the conflicts in as jj conflicts: the parent's next
+  `vcs_status` shows them, and its model edits the markers out like
+  any other file. A child the parent waited on cannot conflict, so it
+  never asks.
 - **Idle runs only.** The host rewrites only runs that are idle, lands
   only between turns, and updates each workspace it touched before
   that workspace's next tool call.
@@ -101,8 +108,8 @@ When a child stops, its changes **land** on its parent's stack.
 - A child closes once it has landed, or once it is dropped:
   - its workspace is forgotten;
   - its chat becomes read-only, under its parent in history;
-  - its bookmark is removed, since its changes now live on the
-    parent's stack.
+  - its bookmark is removed, folded or not: its changes now live on
+    the parent's stack.
 - A dropped child's changes are abandoned.
 - A child that has open children of its own cannot close until they
   have landed or been dropped.
@@ -145,13 +152,11 @@ When a child stops, its changes **land** on its parent's stack.
   around the call.
 - The sidebar grows a tree of child chats. Closing keeps it from
   growing without bound.
+- A folded child's separate turns are reachable only through its chat
+  and the operation log, not by a bookmark.
+- A deep tree of children lands one review at a time, level by level.
 - New jj-lib calls:
   - `set_parents`;
   - bookmark set and remove;
   - `record_abandoned_commit`;
   - a three-way tree merge for folding.
-- Open questions:
-  - whether a conflicting landing asks the user first or goes
-    straight to the parent's model;
-  - whether a folded child keeps its bookmark;
-  - whether landing a grandchild offers to land its parent too.
