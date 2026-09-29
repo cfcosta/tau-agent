@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
+    error::ToolError,
     event::{RunEvent, StopReason},
     limits::Limits,
     tool::{RunId, ToolCtx, ToolOutput, TypedTool, typed},
@@ -152,7 +153,7 @@ impl TypedTool for Tests {
         &self,
         _args: TestsArgs,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text("14 tests run: 14 passed"))
     }
 }

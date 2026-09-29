@@ -65,7 +65,7 @@ pub trait Plugin: Send + Sync + 'static {
         &self,
         plan: &mut RunPlan,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>>;
+    ) -> Result<Box<dyn PluginRun>, PluginError>;
 }
 ```
 
@@ -108,7 +108,7 @@ pub trait PluginRun: Send {
     /// `RunHook::before_tool`: may change the arguments (validated
     /// again) or block the call. The first block wins.
     async fn before_tool(&mut self, call: &mut ToolCall, ctx: &PluginCtx)
-        -> anyhow::Result<Decision> { Ok(Decision::Allow) }
+        -> Result<Decision, PluginError> { Ok(Decision::Allow) }
 
     /// `RunHook::after_tool`: may change the output.
     async fn after_tool(&mut self, call: &ToolCall, output: &mut ToolOutput,
@@ -119,7 +119,7 @@ pub trait PluginRun: Send {
     /// it. The loop calls this one; by default it calls `after_tool`.
     /// An error is reported as a `PluginError`.
     async fn after_tool_result(&mut self, view: &ToolResultView<'_>,
-        output: &mut ToolOutput, ctx: &PluginCtx) -> anyhow::Result<()> {
+        output: &mut ToolOutput, ctx: &PluginCtx) -> Result<(), PluginError> {
         self.after_tool(view.call, output, ctx).await;
         Ok(())
     }
@@ -132,7 +132,7 @@ pub trait PluginRun: Send {
     /// effort. Returning an effort sets it for this request and the ones
     /// after it. The first plugin that picks one wins.
     async fn before_request(&mut self, view: &RequestView<'_>,
-        ctx: &PluginCtx) -> anyhow::Result<Option<ReasoningEffort>> {
+        ctx: &PluginCtx) -> Result<Option<ReasoningEffort>, PluginError> {
         Ok(None)
     }
 
@@ -140,20 +140,20 @@ pub trait PluginRun: Send {
     /// context overflow. Returning a rewrite replaces the working
     /// transcript (see "Context rewrites").
     async fn rewrite_context(&mut self, view: &ContextView<'_>,
-        ctx: &PluginCtx) -> anyhow::Result<Option<Rewrite>> { Ok(None) }
+        ctx: &PluginCtx) -> Result<Option<Rewrite>, PluginError> { Ok(None) }
 
     /// Called on every plugin once a rewrite replaced the transcript,
     /// with the transcript it replaced: the last chance to keep what it
     /// dropped (tau-memory saves notes here).
     async fn rewritten(&mut self, replaced: &[Message], rewrite: &Rewrite,
-        ctx: &PluginCtx) -> anyhow::Result<()> { Ok(()) }
+        ctx: &PluginCtx) -> Result<(), PluginError> { Ok(()) }
 
     /// Called when the model has answered with no tool calls and the run
     /// would stop. `Continue(text)` adds `text` as a user message and
     /// runs another turn, at most `Limits::max_continuations` times per
     /// run (default 3).
     async fn before_stop(&mut self, message: &AssistantMessage,
-        ctx: &PluginCtx) -> anyhow::Result<StopDecision> {
+        ctx: &PluginCtx) -> Result<StopDecision, PluginError> {
         Ok(StopDecision::Stop)
     }
 
@@ -202,7 +202,7 @@ impl PluginCtx {
     /// attempt's usage charged to the run. Compaction's summaries go
     /// through it.
     pub async fn ask(&self, settings: Settings, input: &[Message])
-        -> anyhow::Result<AssistantMessage>;
+        -> Result<AssistantMessage, AskError>;
     /// Adds usage (cost included) to the run's total, which limits
     /// check.
     pub fn charge(&self, usage: &Usage);

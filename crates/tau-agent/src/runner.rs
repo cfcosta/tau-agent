@@ -52,6 +52,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     context::{estimate_context_tokens, is_context_overflow},
+    error::describe,
     event::{RunEvent, StopReason},
     hook::{Decision, ToolCall},
     limits::Limits,
@@ -73,6 +74,7 @@ use crate::{
         RunId,
         RunScope,
         ToolCtx,
+        ToolError,
         ToolOutput,
         ToolUpdates,
     },
@@ -395,7 +397,7 @@ impl Runner {
                     break;
                 }
                 Err(error) => failures
-                    .push((plugin.ctx.plugin().into(), format!("{error:#}"))),
+                    .push((plugin.ctx.plugin().into(), describe(&error))),
             }
         }
         if let Some(effort) = chosen {
@@ -449,7 +451,7 @@ impl Runner {
                         )),
                     }
                 }
-                Err(error) => failures.push((name, format!("{error:#}"))),
+                Err(error) => failures.push((name, describe(&error))),
             }
         }
         for (plugin, message) in &failures {
@@ -475,8 +477,7 @@ impl Runner {
             if let Err(error) =
                 other.run.rewritten(transcript, &rewrite, &other.ctx).await
             {
-                failures
-                    .push((other.ctx.plugin().into(), format!("{error:#}")));
+                failures.push((other.ctx.plugin().into(), describe(&error)));
             }
         }
         for (plugin, message) in failures {
@@ -736,7 +737,7 @@ impl Runner {
                     let mut failures: Failures = Vec::new();
                     for plugin in &mut self.plugins {
                         if let Err(error) = plugin.run.after_tool_result(&view, &mut output, &plugin.ctx).await {
-                            failures.push((plugin.ctx.plugin().into(), format!("{error:#}")));
+                            failures.push((plugin.ctx.plugin().into(), describe(&error)));
                         }
                     }
                     for (plugin, message) in failures {
@@ -1105,7 +1106,7 @@ type Failures = Vec<(Arc<str>, String)>;
 type ToolFuture = std::pin::Pin<
     Box<
         dyn std::future::Future<
-                Output = (usize, ToolCall, anyhow::Result<ToolOutput>),
+                Output = (usize, ToolCall, Result<ToolOutput, ToolError>),
             > + Send,
     >,
 >;

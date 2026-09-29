@@ -5,7 +5,10 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 
 use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
-use tau_agent::tool::{AgentTool, RunId, ToolCtx, ToolUpdates};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, RunId, ToolCtx, ToolUpdates},
+};
 use tau_tools::{ABORTED, edit::Edit, path::Root};
 
 fn ctx() -> ToolCtx {
@@ -35,7 +38,7 @@ fn new_edit(dir: &std::path::Path) -> Edit {
 fn call(
     edit: &Edit,
     args: Value,
-) -> anyhow::Result<tau_agent::tool::ToolOutput> {
+) -> Result<tau_agent::tool::ToolOutput, ToolError> {
     let args = edit.prepare_arguments(args);
     tau_testing::block_on(edit.call(args, ctx()))
 }

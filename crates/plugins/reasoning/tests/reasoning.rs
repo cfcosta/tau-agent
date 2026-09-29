@@ -9,6 +9,7 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
+    error::ToolError,
     event::RunEvent,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
@@ -348,9 +349,9 @@ impl AgentTool for Probe {
         &self,
         args: Value,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         match args["text"].as_str().unwrap_or_default() {
-            "fail" => anyhow::bail!("the build failed: 3 errors"),
+            "fail" => return Err("the build failed: 3 errors".into()),
             text => Ok(ToolOutput::text(text)),
         }
     }

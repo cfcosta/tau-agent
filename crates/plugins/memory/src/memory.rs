@@ -78,6 +78,12 @@ impl fmt::Display for WriteError {
 
 impl std::error::Error for WriteError {}
 
+impl From<WriteError> for tau_agent::tool::ToolError {
+    fn from(error: WriteError) -> Self {
+        Self::other(error)
+    }
+}
+
 impl From<StoreError> for WriteError {
     fn from(error: StoreError) -> Self {
         match error {

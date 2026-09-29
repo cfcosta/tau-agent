@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tau_agent::{
     agent::Agent,
+    error::{PluginError, ToolError},
     event::RunEvent,
     plugin::{ContextView, Plugin, PluginCtx, PluginRun, Rewrite, RunPlan},
     tool::{ToolCtx, ToolOutput, ToolUpdates, TypedTool, typed},
@@ -252,7 +253,7 @@ impl Plugin for Compactor {
         &self,
         _: &mut RunPlan,
         _: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         Ok(Box::new(Compactor))
     }
 }
@@ -263,7 +264,7 @@ impl PluginRun for Compactor {
         &mut self,
         view: &ContextView<'_>,
         _: &PluginCtx,
-    ) -> anyhow::Result<Option<Rewrite>> {
+    ) -> Result<Option<Rewrite>, PluginError> {
         let from = view
             .transcript
             .iter()
@@ -378,7 +379,7 @@ impl TypedTool for Edit {
         &self,
         args: EditArgs,
         _: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(format!("edited {}", args.path)))
     }
 }

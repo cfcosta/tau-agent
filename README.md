@@ -12,7 +12,7 @@ use tau_ai::client::OpenAi;
 use tau_store::Store;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = Store::open("runs.db").await?;
     let agent = Agent::new(OpenAi::from_env()?)
         .name("haiku")
@@ -58,7 +58,7 @@ tau-testing = { git = "https://github.com/cfcosta/tau-agent" }
 ```
 
 You also need a tokio runtime, and usually `serde`, `schemars` (typed
-output and tools), `async-trait` and `anyhow` (custom tools and hooks).
+output and tools) and `async-trait` (custom tools and hooks).
 
 The workspace uses Rust edition 2024 and pins a nightly toolchain. No
 database is needed at build time: the sqlx query metadata is committed.
@@ -208,7 +208,7 @@ before your code sees them.
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use tau_agent::tool::{typed, ToolCtx, ToolOutput, TypedTool};
+use tau_agent::tool::{typed, ToolCtx, ToolError, ToolOutput, TypedTool};
 
 #[derive(Deserialize, JsonSchema)]
 struct WeatherArgs {
@@ -224,7 +224,7 @@ impl TypedTool for Weather {
     const NAME: &'static str = "weather";
     const DESCRIPTION: &'static str = "Current weather for a city.";
 
-    async fn call(&self, args: WeatherArgs, _ctx: ToolCtx) -> anyhow::Result<ToolOutput> {
+    async fn call(&self, args: WeatherArgs, _ctx: ToolCtx) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(format!("Sunny in {}", args.city)))
     }
 }
@@ -233,7 +233,9 @@ let agent = agent.tool(typed(Weather));
 ```
 
 A tool that returns `Err` does not end the run: the error becomes the
-tool result and the model sees it. Use `ctx.updates.send(...)` to stream
+tool result and the model sees it. `ToolError` converts with `?` from
+io and JSON errors and from a `String` or `&str` message; wrap anything
+else with `ToolError::other`. Use `ctx.updates.send(...)` to stream
 partial output while a tool works, and `ctx.cancel` to stop early.
 
 For hand-written schemas, implement `AgentTool` directly. Its
@@ -246,13 +248,16 @@ A `RunHook` sees every tool call and every event. Hooks run in the order
 they were added, and each is awaited.
 
 ```rust
-use tau_agent::hook::{Decision, HookCtx, RunHook, ToolCall};
+use tau_agent::{
+    hook::{Decision, HookCtx, RunHook, ToolCall},
+    plugin::PluginError,
+};
 
 struct NoRm;
 
 #[async_trait]
 impl RunHook for NoRm {
-    async fn before_tool(&self, call: &mut ToolCall, _ctx: &HookCtx) -> anyhow::Result<Decision> {
+    async fn before_tool(&self, call: &mut ToolCall, _ctx: &HookCtx) -> Result<Decision, PluginError> {
         let command = call.args["command"].as_str().unwrap_or("");
         if call.name == "bash" && command.contains("rm -rf") {
             return Ok(Decision::Block("rm -rf is not allowed".into()));

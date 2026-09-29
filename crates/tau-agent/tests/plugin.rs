@@ -36,6 +36,7 @@ use tau_testing::{block_on, scripted::ScriptedModel};
 
 mod common;
 use common::assert_grammar;
+use tau_agent::error::{PluginError, ToolError};
 
 /// Changes a run's plan.
 type PlanChange = Arc<dyn Fn(&mut RunPlan) + Send + Sync>;
@@ -91,7 +92,7 @@ impl Plugin for Probe {
         &self,
         plan: &mut RunPlan,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         self.log.lock().unwrap().push(format!(
             "{} start: instructions {:?}",
             self.name, plan.instructions
@@ -108,7 +109,7 @@ impl Plugin for Probe {
             .unwrap()
             .push(plan.records().to_vec());
         if let Some(message) = self.fail_start {
-            anyhow::bail!(message);
+            return Err(message.into());
         }
         if let Some(change) = &self.plan {
             change(plan);
@@ -140,7 +141,7 @@ impl PluginRun for ProbeRun {
         &mut self,
         call: &mut ToolCall,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Decision> {
+    ) -> Result<Decision, PluginError> {
         self.calls += 1;
         if call.args["text"] == "forbidden" {
             return Ok(Decision::Block(format!(
@@ -166,7 +167,7 @@ impl PluginRun for ProbeRun {
         &mut self,
         _message: &AssistantMessage,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<StopDecision> {
+    ) -> Result<StopDecision, PluginError> {
         if self.continued < self.probe.continue_times {
             self.continued += 1;
             return Ok(StopDecision::Continue(format!(
@@ -221,7 +222,7 @@ impl AgentTool for Echo {
         &self,
         args: Value,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(args["text"].as_str().unwrap_or_default()))
     }
 }
@@ -567,7 +568,7 @@ fn a_failing_before_stop_is_reported_and_stops() {
             &self,
             _plan: &mut RunPlan,
             _ctx: &PluginCtx,
-        ) -> anyhow::Result<Box<dyn PluginRun>> {
+        ) -> Result<Box<dyn PluginRun>, PluginError> {
             Ok(Box::new(FailingRun))
         }
     }
@@ -580,8 +581,8 @@ fn a_failing_before_stop_is_reported_and_stops() {
             &mut self,
             _message: &AssistantMessage,
             _ctx: &PluginCtx,
-        ) -> anyhow::Result<StopDecision> {
-            anyhow::bail!("judge unreachable")
+        ) -> Result<StopDecision, PluginError> {
+            return Err("judge unreachable".into());
         }
     }
 
@@ -663,7 +664,7 @@ impl Plugin for Pruner {
         &self,
         plan: &mut RunPlan,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         self.resumed
             .lock()
             .unwrap()
@@ -678,7 +679,7 @@ impl PluginRun for Pruner {
         &mut self,
         view: &tau_agent::plugin::ContextView<'_>,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Option<tau_agent::plugin::Rewrite>> {
+    ) -> Result<Option<tau_agent::plugin::Rewrite>, PluginError> {
         self.offered
             .lock()
             .unwrap()
@@ -967,7 +968,7 @@ impl Plugin for Watcher {
         &self,
         _plan: &mut RunPlan,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         Ok(Box::new(self.clone()))
     }
 }
@@ -979,7 +980,7 @@ impl PluginRun for Watcher {
         replaced: &[Message],
         rewrite: &tau_agent::plugin::Rewrite,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), PluginError> {
         self.seen
             .lock()
             .unwrap()
@@ -1052,7 +1053,7 @@ impl Plugin for Picker {
         &self,
         _plan: &mut RunPlan,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         Ok(Box::new(self.clone()))
     }
 }
@@ -1063,9 +1064,9 @@ impl PluginRun for Picker {
         &mut self,
         view: &tau_agent::plugin::RequestView<'_>,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Option<ReasoningEffort>> {
+    ) -> Result<Option<ReasoningEffort>, PluginError> {
         if self.fails {
-            anyhow::bail!("classifier unreachable");
+            return Err("classifier unreachable".into());
         }
         self.offered.lock().unwrap().push((
             view.turn,

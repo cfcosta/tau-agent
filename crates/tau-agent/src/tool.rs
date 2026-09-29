@@ -27,6 +27,7 @@ use tau_store::Store;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+pub use crate::error::ToolError;
 use crate::event::RunEvent;
 
 /// What a tool returns.
@@ -175,7 +176,7 @@ pub trait AgentTool: Send + Sync + 'static {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput>;
+    ) -> Result<ToolOutput, ToolError>;
 }
 
 /// A tool with typed arguments. Wrap it with [`typed`].
@@ -188,7 +189,7 @@ pub trait TypedTool: Send + Sync + 'static {
         &self,
         args: Self::Args,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput>;
+    ) -> Result<ToolOutput, ToolError>;
 }
 
 /// An [`AgentTool`] made from a [`TypedTool`].
@@ -223,7 +224,7 @@ impl<T: TypedTool> AgentTool for TypedAdapter<T> {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let args: T::Args = serde_json::from_value(args)?;
         self.tool.call(args, ctx).await
     }

@@ -21,6 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
+    error::ToolError,
     event::{RunEvent, StopReason},
     tool::{ToolCtx, ToolOutput, TypedTool, typed},
 };
@@ -96,7 +97,7 @@ impl TypedTool for Write {
         &self,
         _args: WriteArgs,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(ToolOutput::text("written"))
     }
@@ -375,7 +376,7 @@ impl TypedTool for EditsRules {
         &self,
         args: WriteArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         self.live.set(self.then.clone());
         self.writes.call(args, ctx).await
     }

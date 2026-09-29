@@ -6,14 +6,17 @@
 //! first chance.
 
 use async_trait::async_trait;
-use tau_agent::plugin::{
-    ContextView,
-    Plugin,
-    PluginCtx,
-    PluginRun,
-    Rewrite,
-    RunPlan,
-    Trigger,
+use tau_agent::{
+    error::PluginError,
+    plugin::{
+        ContextView,
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        Rewrite,
+        RunPlan,
+        Trigger,
+    },
 };
 use tau_ai::{
     message::{Message, UserContent, UserMessage},
@@ -49,7 +52,7 @@ impl Plugin for Compaction {
         &self,
         plan: &mut RunPlan,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         let known = model::find(plan.model());
         let compacted = plan
             .last_rewrite()
@@ -90,7 +93,7 @@ impl PluginRun for CompactionRun {
         &mut self,
         view: &ContextView<'_>,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Option<Rewrite>> {
+    ) -> Result<Option<Rewrite>, PluginError> {
         match view.trigger {
             Trigger::TurnEnd => {
                 let due = !self.off
@@ -100,13 +103,16 @@ impl PluginRun for CompactionRun {
                 if !due {
                     return Ok(None);
                 }
-                let result = self.compact(view, ctx).await;
+                let result =
+                    self.compact(view, ctx).await.map_err(PluginError::other);
                 if result.is_err() {
                     self.off = true;
                 }
                 result
             }
-            Trigger::Overflow => self.compact(view, ctx).await,
+            Trigger::Overflow => {
+                self.compact(view, ctx).await.map_err(PluginError::other)
+            }
         }
     }
 }

@@ -7,7 +7,10 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use hegel::{TestCase, generators as gs};
 use image::{DynamicImage, ImageFormat, RgbImage};
 use serde_json::{Value, json};
-use tau_agent::tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolUpdates};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolUpdates},
+};
 use tau_ai::message::InputBlock;
 use tau_tools::{
     image::{MAX_BASE64_BYTES, MAX_DIMENSION},
@@ -28,7 +31,7 @@ fn ctx(cancel: CancellationToken) -> ToolCtx {
 
 /// Calls `read` on a normal runtime: it does blocking I/O on the
 /// blocking pool, which paused time would treat as idle.
-fn call(root: &Root, args: Value) -> anyhow::Result<ToolOutput> {
+fn call(root: &Root, args: Value) -> Result<ToolOutput, ToolError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

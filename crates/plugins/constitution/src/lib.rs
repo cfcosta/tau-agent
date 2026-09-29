@@ -30,6 +30,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tau_agent::{
+    error::PluginError,
     hook::{Decision, ToolCall},
     plugin::{Plugin, PluginCtx, PluginRun, RunPlan, StopDecision},
 };
@@ -164,7 +165,7 @@ impl Plugin for ConstitutionPlugin {
         &self,
         _plan: &mut RunPlan,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         Ok(Box::new(Checks {
             jev: self.jev.clone(),
             rules: self.rules.clone(),
@@ -336,7 +337,7 @@ impl PluginRun for Checks {
         &mut self,
         call: &mut ToolCall,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Decision> {
+    ) -> Result<Decision, PluginError> {
         let constitution = self.rules.get();
         let found = constitution.for_call(&call.name, &call.args);
         if found.is_empty() {
@@ -438,7 +439,7 @@ impl PluginRun for Checks {
         &mut self,
         message: &AssistantMessage,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<StopDecision> {
+    ) -> Result<StopDecision, PluginError> {
         let constitution = self.rules.get();
         let rules: Vec<(&Rule, String)> = constitution
             .for_final_answer()
@@ -461,7 +462,7 @@ impl PluginRun for Checks {
             .ask(json!({ "final_answer": answer }), &rules, (None, None), ctx)
             .await
             .map_err(|error| {
-                anyhow::anyhow!("Jev could not check the final answer: {error}")
+                format!("Jev could not check the final answer: {error}")
             })?;
         let mut held: Vec<String> = Vec::new();
         for ((rule, _), score) in rules.iter().zip(&scores) {

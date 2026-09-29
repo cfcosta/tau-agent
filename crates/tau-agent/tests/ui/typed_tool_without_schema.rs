@@ -1,7 +1,10 @@
 // A typed tool's arguments must describe themselves with a JSON schema.
 use async_trait::async_trait;
 use serde::Deserialize;
-use tau_agent::tool::{ToolCtx, ToolOutput, TypedTool};
+use tau_agent::{
+    error::ToolError,
+    tool::{ToolCtx, ToolOutput, TypedTool},
+};
 
 #[derive(Deserialize)]
 struct Args {
@@ -20,7 +23,7 @@ impl TypedTool for Search {
         &self,
         args: Args,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(args.query))
     }
 }

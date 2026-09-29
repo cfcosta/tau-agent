@@ -19,6 +19,7 @@ use std::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tau_agent::{
+    error::PluginError,
     event::RunEvent,
     plugin::{Plugin, PluginCtx, PluginRun, RunPlan},
     tool::RunId,
@@ -177,7 +178,7 @@ impl Plugin for RunWorkspace {
         &self,
         plan: &mut RunPlan,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         *self.run.lock().expect("not poisoned") = Some(ctx.run.clone());
         // A fork continues from the last turn it inherits.
         let inherited = plan.records().iter().rev().find_map(|record| {
@@ -195,7 +196,8 @@ impl Plugin for RunWorkspace {
             };
             project.add_workspace(&name, &base).map(|_| ())
         })
-        .await??;
+        .await?
+        .map_err(PluginError::other)?;
         Ok(Box::new(Turns {
             vcs: self.vcs.clone(),
             name: self.name.clone(),

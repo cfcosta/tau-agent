@@ -39,8 +39,6 @@
 //! cannot be inlined, ...) is rejected with [`NotStrict`] rather than
 //! silently reinterpreted.
 
-use std::fmt;
-
 use serde_json::{Map, Value};
 
 /// Schema keywords pi's strict rewrite does not support. Present on any
@@ -72,7 +70,8 @@ const UNSUPPORTED_KEYS: &[&str] = &[
 /// The reason is one of pi's own error messages (see
 /// `constrained-sampling.ts`'s `UnsupportedStrictJsonSchemaError` call
 /// sites), so a message pinned in a test there stays pinned here.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{reason}")]
 pub struct NotStrict {
     reason: String,
 }
@@ -89,14 +88,6 @@ impl NotStrict {
         &self.reason
     }
 }
-
-impl fmt::Display for NotStrict {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.reason)
-    }
-}
-
-impl std::error::Error for NotStrict {}
 
 /// `schemaAllowsNull`: whether `null` is already a valid instance of
 /// `schema`, by `type`, `const`, `enum`, or (recursively) an `anyOf`

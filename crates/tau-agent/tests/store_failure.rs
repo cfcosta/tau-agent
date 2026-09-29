@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use sqlx::Connection;
 use tau_agent::{
     agent::{Agent, AgentError},
+    error::ToolError,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::message::Message;
@@ -72,7 +73,11 @@ impl AgentTool for Sabotage {
     fn parameters(&self) -> &Value {
         &self.schema
     }
-    async fn call(&self, _: Value, _: ToolCtx) -> anyhow::Result<ToolOutput> {
+    async fn call(
+        &self,
+        _: Value,
+        _: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
         execute(&self.path, "ALTER TABLE messages RENAME TO broken").await;
         Ok(ToolOutput::text("done"))
     }
@@ -96,7 +101,7 @@ impl AgentTool for Echo {
         &self,
         args: Value,
         _: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(args.to_string()))
     }
 }

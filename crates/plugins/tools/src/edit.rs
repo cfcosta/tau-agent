@@ -10,13 +10,15 @@
 
 use std::io;
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use similar::{ChangeTag, TextDiff};
-use tau_agent::tool::{AgentTool, ToolCtx, ToolOutput};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, ToolCtx, ToolOutput},
+};
 use tau_ai::message::{InputBlock, TextContent};
 use unicode_normalization::UnicodeNormalization;
 
@@ -81,11 +83,11 @@ impl AgentTool for Edit {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let args: EditArgs = serde_json::from_value(args)?;
         if args.edits.is_empty() {
-            return Err(anyhow!(
-                "Edit tool input is invalid. edits must contain at least one replacement."
+            return Err(ToolError::from(
+                "Edit tool input is invalid. edits must contain at least one replacement.",
             ));
         }
 
@@ -93,14 +95,14 @@ impl AgentTool for Edit {
         let _guard = lock::lock(&resolved).await;
 
         if ctx.cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
 
         let raw = tokio::fs::read(&resolved)
             .await
-            .map_err(|err| anyhow!(edit_io_error(&args.path, &err)))?;
+            .map_err(|err| edit_io_error(&args.path, &err))?;
         if ctx.cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
 
         let raw_text = String::from_utf8_lossy(&raw).into_owned();
@@ -114,7 +116,7 @@ impl AgentTool for Edit {
             &args.path,
         )?;
         if ctx.cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
 
         let final_content = format!(
@@ -123,9 +125,9 @@ impl AgentTool for Edit {
         );
         tokio::fs::write(&resolved, final_content.as_bytes())
             .await
-            .map_err(|err| anyhow!(edit_io_error(&args.path, &err)))?;
+            .map_err(|err| edit_io_error(&args.path, &err))?;
         if ctx.cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
 
         let (diff, first_changed_line) = generate_diff(
@@ -401,7 +403,7 @@ fn apply_edits_to_normalized_content(
     normalized_content: &str,
     edits: &[EditEntry],
     path: &str,
-) -> anyhow::Result<AppliedEdits> {
+) -> Result<AppliedEdits, ToolError> {
     let normalized_edits: Vec<(String, String)> = edits
         .iter()
         .map(|e| (normalize_to_lf(&e.old_text), normalize_to_lf(&e.new_text)))
@@ -410,7 +412,7 @@ fn apply_edits_to_normalized_content(
 
     for (i, (old, _)) in normalized_edits.iter().enumerate() {
         if old.is_empty() {
-            return Err(anyhow!(empty_old_text_error(path, i, total)));
+            return Err(ToolError::from(empty_old_text_error(path, i, total)));
         }
     }
 
@@ -429,7 +431,7 @@ fn apply_edits_to_normalized_content(
     for (i, (old, new)) in normalized_edits.iter().enumerate() {
         let match_result = fuzzy_find_text(&replacement_base_content, old);
         if !match_result.found {
-            return Err(anyhow!(not_found_error(path, i, total)));
+            return Err(ToolError::from(not_found_error(path, i, total)));
         }
 
         // Deliberate difference from pi: count occurrences in the same
@@ -443,7 +445,12 @@ fn apply_edits_to_normalized_content(
             count_occurrences(&replacement_base_content, old)
         };
         if occurrences > 1 {
-            return Err(anyhow!(duplicate_error(path, i, total, occurrences)));
+            return Err(ToolError::from(duplicate_error(
+                path,
+                i,
+                total,
+                occurrences,
+            )));
         }
 
         matched.push(MatchedEdit {
@@ -458,10 +465,10 @@ fn apply_edits_to_normalized_content(
     for pair in matched.windows(2) {
         let (previous, current) = (&pair[0], &pair[1]);
         if previous.match_index + previous.match_length > current.match_index {
-            return Err(anyhow!(overlap_error(
+            return Err(ToolError::from(overlap_error(
                 path,
                 previous.edit_index,
-                current.edit_index
+                current.edit_index,
             )));
         }
     }
@@ -478,7 +485,7 @@ fn apply_edits_to_normalized_content(
     };
 
     if base_content == new_content {
-        return Err(anyhow!(no_change_error(path, total)));
+        return Err(ToolError::from(no_change_error(path, total)));
     }
 
     Ok(AppliedEdits {
@@ -557,21 +564,21 @@ fn replacement_line_range(
     lines: &[LineSpan],
     match_index: usize,
     match_length: usize,
-) -> anyhow::Result<(usize, usize)> {
+) -> Result<(usize, usize), ToolError> {
     let start = match_index;
     let end = match_index + match_length;
     let start_line = lines
         .iter()
         .position(|line| start >= line.start && start < line.end)
         .ok_or_else(|| {
-            anyhow!("Replacement range is outside the base content.")
+            ToolError::from("Replacement range is outside the base content.")
         })?;
     let end_line = lines[start_line..]
         .iter()
         .position(|line| line.end >= end)
         .map(|offset| start_line + offset)
         .ok_or_else(|| {
-            anyhow!("Replacement range is outside the base content.")
+            ToolError::from("Replacement range is outside the base content.")
         })?;
     Ok((start_line, end_line + 1))
 }
@@ -591,12 +598,12 @@ fn apply_replacements_preserving_unchanged_lines(
     original_content: &str,
     base_content: &str,
     replacements: &[MatchedEdit],
-) -> anyhow::Result<String> {
+) -> Result<String, ToolError> {
     let original_lines = split_lines_with_endings(original_content);
     let base_lines = line_spans(base_content);
     if original_lines.len() != base_lines.len() {
-        return Err(anyhow!(
-            "Cannot preserve unchanged lines because the base content has a different line count."
+        return Err(ToolError::from(
+            "Cannot preserve unchanged lines because the base content has a different line count.",
         ));
     }
 

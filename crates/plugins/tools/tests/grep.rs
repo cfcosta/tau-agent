@@ -5,7 +5,10 @@
 use hegel::{TestCase, generators as gs};
 use regex::RegexBuilder;
 use serde_json::json;
-use tau_agent::tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolUpdates};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolUpdates},
+};
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
 use tau_tools::{
@@ -31,7 +34,7 @@ fn text_of(output: &ToolOutput) -> &str {
     }
 }
 
-fn call(root: &Root, args: serde_json::Value) -> anyhow::Result<String> {
+fn call(root: &Root, args: serde_json::Value) -> Result<String, ToolError> {
     block_on(async {
         Grep::new(root.clone())
             .call(args, ctx())

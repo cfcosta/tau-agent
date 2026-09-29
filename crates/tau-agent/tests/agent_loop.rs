@@ -28,6 +28,7 @@ use tau_testing::{block_on, scripted::ScriptedModel};
 
 mod common;
 use common::{assert_grammar, stored};
+use tau_agent::error::{PluginError, ToolError};
 use tokio::time::Instant;
 
 /// A tool that sleeps `ms` virtual milliseconds (stopping early on
@@ -85,7 +86,7 @@ impl AgentTool for Probe {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let start = Instant::now();
         ctx.updates.send(ToolOutput::text("working"));
         let ms = args["ms"].as_u64().unwrap_or(0);
@@ -98,10 +99,10 @@ impl AgentTool for Probe {
             end: Instant::now(),
         });
         if cancelled {
-            anyhow::bail!("cancelled");
+            return Err("cancelled".into());
         }
         if args["fail"].as_bool() == Some(true) {
-            anyhow::bail!("probe failed");
+            return Err("probe failed".into());
         }
         Ok(ToolOutput::text(format!("slept {ms}")))
     }
@@ -708,11 +709,11 @@ fn before_tool_hooks() {
             &self,
             call: &mut ToolCall,
             _: &HookCtx,
-        ) -> anyhow::Result<Decision> {
+        ) -> Result<Decision, PluginError> {
             self.1.lock().unwrap().push(self.0);
             match (self.0, call.args["ms"].as_u64()) {
                 ("blocker", Some(1)) => Ok(Decision::Block("not today".into())),
-                ("breaker", Some(2)) => anyhow::bail!("hook exploded"),
+                ("breaker", Some(2)) => return Err("hook exploded".into()),
                 ("mangler", Some(3)) => {
                     call.args = json!({"ms": "not a number at all"});
                     Ok(Decision::Allow)
@@ -915,10 +916,10 @@ fn cancel_mid_batch() {
             &self,
             _: Value,
             ctx: ToolCtx,
-        ) -> anyhow::Result<ToolOutput> {
+        ) -> Result<ToolOutput, ToolError> {
             self.0.notify_one();
             ctx.cancel.cancelled().await;
-            anyhow::bail!("cancelled while waiting")
+            return Err("cancelled while waiting".into());
         }
     }
     let llm = ScriptedModel::new()

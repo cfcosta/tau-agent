@@ -12,6 +12,7 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::{Agent, Outcome},
+    error::ToolError,
     event::RunEvent,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
@@ -87,7 +88,7 @@ impl AgentTool for Bash {
         &self,
         _args: Value,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         match &self.answering {
             Answering::Whole => Ok(ToolOutput::text(self.output.clone())),
             Answering::Spilled { dir, tail } => {
@@ -97,10 +98,10 @@ impl AgentTool for Bash {
                 let tail = lines[lines.len() - tail..].join("\n");
                 Ok(ToolOutput::text(format!("{tail}{SPILL}{}", path.display())))
             }
-            Answering::Failed => Err(anyhow::anyhow!(
-                "{}\n\nCommand exited with code 101",
-                self.output
-            )),
+            Answering::Failed => {
+                Err(format!("{}\n\nCommand exited with code 101", self.output)
+                    .into())
+            }
         }
     }
 }

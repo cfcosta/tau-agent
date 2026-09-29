@@ -33,7 +33,7 @@ use crate::{
     plugin::{Hooked, Plugin, RunPlan, RunShared},
     runner::{ActivePlugin, Clock, LoopTool, Runner, system_clock},
     schema::to_strict,
-    tool::{AgentTool, RunId, ToolCtx, ToolOutput},
+    tool::{AgentTool, RunId, ToolCtx, ToolError, ToolOutput},
     validation::ArgumentSchema,
 };
 
@@ -42,58 +42,54 @@ use crate::{
 const EVENT_BUFFER: usize = 64;
 
 /// Why a run could not produce an outcome.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     /// The model provider could not open a session.
-    Llm(LlmError),
-    Store(StoreError),
+    #[error("model provider: {0}")]
+    Llm(#[from] LlmError),
+    #[error("store: {0}")]
+    Store(#[from] StoreError),
     /// A tool's argument schema is not a valid JSON schema.
-    Schema {
-        tool: String,
-        message: String,
-    },
+    #[error("tool {tool} has an invalid schema: {message}")]
+    Schema { tool: String, message: String },
     /// The schema of a typed run's output type has no strict form.
+    #[error("the output type has no strict schema: {0}")]
     OutputSchema(String),
     /// A typed run's final message is not a value of the output type.
+    #[error(
+        "the final message is not a valid output ({message}); the run stopped with {stop:?}",
+        stop = outcome.stop
+    )]
     Output {
         /// The run as it ended; its text is the message that failed.
         outcome: Box<Outcome>,
         message: String,
     },
     /// A plugin's `start` failed; the run did not start.
-    Plugin {
-        plugin: String,
-        message: String,
-    },
+    #[error("plugin {plugin} could not start the run: {message}")]
+    Plugin { plugin: String, message: String },
     /// The run's task panicked.
+    #[error("the run's task panicked")]
     Panicked,
 }
 
-impl fmt::Display for AgentError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Llm(error) => write!(f, "model provider: {error}"),
-            Self::Store(error) => write!(f, "store: {error}"),
-            Self::Schema { tool, message } => {
-                write!(f, "tool {tool} has an invalid schema: {message}")
-            }
-            Self::OutputSchema(message) => {
-                write!(f, "the output type has no strict schema: {message}")
-            }
-            Self::Output { outcome, message } => write!(
-                f,
-                "the final message is not a valid output ({message}); the run stopped with {:?}",
-                outcome.stop
-            ),
-            Self::Plugin { plugin, message } => {
-                write!(f, "plugin {plugin} could not start the run: {message}")
-            }
-            Self::Panicked => f.write_str("the run's task panicked"),
-        }
-    }
+/// Why a sub-agent's call gave its caller no answer.
+#[derive(Debug, thiserror::Error)]
+pub enum SubAgentError {
+    #[error("a sub-agent can only be called from a run")]
+    NotInRun,
+    #[error(transparent)]
+    Agent(#[from] AgentError),
+    /// The child stopped before finishing.
+    #[error(
+        "{name} ended with {stop:?} before finishing; its last message: {text}"
+    )]
+    Stopped {
+        name: String,
+        stop: StopReason,
+        text: String,
+    },
 }
-
-impl std::error::Error for AgentError {}
 
 /// What a run starts from: the user's message, and optionally the
 /// workflow the run belongs to. Runs started by a run (sub-agents)
@@ -586,9 +582,20 @@ impl AgentTool for SubAgent {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
+        Ok(self.ask(args, ctx).await?)
+    }
+}
+
+impl SubAgent {
+    /// Runs the child to its end, and answers with its last text.
+    async fn ask(
+        &self,
+        args: Value,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, SubAgentError> {
         let Some(scope) = ctx.scope else {
-            anyhow::bail!("a sub-agent can only be called from a run");
+            return Err(SubAgentError::NotInRun);
         };
         let input = args["input"].as_str().unwrap_or_default().to_owned();
         let launch = Launch {
@@ -615,11 +622,11 @@ impl AgentTool for SubAgent {
                 details: Some(json!({ "run": outcome.run.0.as_ref() })),
                 ..ToolOutput::text(outcome.text)
             }),
-            stop => anyhow::bail!(
-                "{} ended with {stop:?} before finishing; its last message: {}",
-                self.name,
-                outcome.text
-            ),
+            stop => Err(SubAgentError::Stopped {
+                name: self.name.clone(),
+                stop: stop.clone(),
+                text: outcome.text,
+            }),
         }
     }
 }
@@ -752,12 +759,7 @@ async fn run_task(
     // A resumed run is reopened as it was stored: its kind, workflow and
     // turns. It goes on on this agent's model, which may be another.
     let resumed = match &launch.resume {
-        Some(run) => Some(
-            store
-                .reopen_run(&run.0, &agent.0.model)
-                .await
-                .map_err(AgentError::Store)?,
-        ),
+        Some(run) => Some(store.reopen_run(&run.0, &agent.0.model).await?),
         None => None,
     };
     let kind = resumed
@@ -773,7 +775,7 @@ async fn run_task(
     if launch.inherit_workflow
         && let Some(parent) = &parent_run
     {
-        let record = store.run(parent).await.map_err(AgentError::Store)?;
+        let record = store.run(parent).await?;
         let record = record.ok_or_else(|| {
             AgentError::Store(StoreError::UnknownRun(parent.clone()))
         })?;
@@ -782,17 +784,18 @@ async fn run_task(
     let fork = matches!(launch.kind, RunKind::Fork { .. });
     match &resumed {
         Some(record) => workflow = record.workflow_id.clone(),
-        None => store
-            .create_run(&NewRun {
-                id: &id.0,
-                workflow_id: workflow.as_deref(),
-                agent: &agent.0.name,
-                kind: launch.kind.clone(),
-                model: &agent.0.model,
-                turns: i64::from(launch.turns_before),
-            })
-            .await
-            .map_err(AgentError::Store)?,
+        None => {
+            store
+                .create_run(&NewRun {
+                    id: &id.0,
+                    workflow_id: workflow.as_deref(),
+                    agent: &agent.0.name,
+                    kind: launch.kind.clone(),
+                    model: &agent.0.model,
+                    turns: i64::from(launch.turns_before),
+                })
+                .await?
+        }
     }
     let turns_before = resumed.as_ref().map_or(launch.turns_before, |record| {
         u32::try_from(record.turns).unwrap_or(u32::MAX)
@@ -896,8 +899,7 @@ async fn run_task(
         turns_before,
     }
     .run(first)
-    .await
-    .map_err(AgentError::Store)?;
+    .await?;
     Ok(Outcome {
         run: id,
         text: result.text,
@@ -913,10 +915,7 @@ async fn plugin_records(
     run: &RunId,
     plugin: &str,
 ) -> Result<Vec<Value>, AgentError> {
-    let bodies = store
-        .records(&run.0, plugin)
-        .await
-        .map_err(AgentError::Store)?;
+    let bodies = store.records(&run.0, plugin).await?;
     bodies
         .iter()
         .map(|body| serde_json::from_str(body))

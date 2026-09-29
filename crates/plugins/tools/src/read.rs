@@ -16,12 +16,14 @@ use std::{
     path::Path,
 };
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tau_agent::tool::{AgentTool, ToolCtx, ToolOutput};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, ToolCtx, ToolOutput},
+};
 use tau_ai::message::{ImageContent, InputBlock, TextContent};
 
 use crate::{
@@ -85,30 +87,30 @@ impl AgentTool for Read {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let args: Args = serde_json::from_value(args)?;
         if ctx.cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
         let root = self.root.clone();
         let work = tokio::task::spawn_blocking(move || read(&root, &args));
         tokio::select! {
             biased;
-            _ = ctx.cancel.cancelled() => Err(anyhow!(ABORTED)),
+            _ = ctx.cancel.cancelled() => Err(ToolError::from(ABORTED)),
             result = work => result?,
         }
     }
 }
 
-fn read(root: &Root, args: &Args) -> anyhow::Result<ToolOutput> {
+fn read(root: &Root, args: &Args) -> Result<ToolOutput, ToolError> {
     let path = root.resolve_read(&args.path);
-    let mut file = File::open(&path)
-        .map_err(|e| anyhow!(errno::message(&e, "open", &path)))?;
+    let mut file =
+        File::open(&path).map_err(|e| errno::message(&e, "open", &path))?;
     let mut head = Vec::with_capacity(SNIFF_BYTES);
     (&mut file)
         .take(SNIFF_BYTES as u64)
         .read_to_end(&mut head)
-        .map_err(|e| anyhow!(errno::message(&e, "read", &path)))?;
+        .map_err(|e| errno::message(&e, "read", &path))?;
     match image::detect(&head) {
         Some(mime_type) => read_image(&path, head, file, mime_type),
         None => {
@@ -123,9 +125,9 @@ fn read_image(
     mut bytes: Vec<u8>,
     mut file: File,
     mime_type: &str,
-) -> anyhow::Result<ToolOutput> {
+) -> Result<ToolOutput, ToolError> {
     file.read_to_end(&mut bytes)
-        .map_err(|e| anyhow!(errno::message(&e, "read", path)))?;
+        .map_err(|e| errno::message(&e, "read", path))?;
     let content = match image::process(&bytes, mime_type) {
         Ok(processed) => {
             let mut note = format!("Read image file [{}]", processed.mime_type);
@@ -208,8 +210,9 @@ fn read_text(
     offset: Option<u64>,
     limit: Option<u64>,
     path: &Path,
-) -> anyhow::Result<ToolOutput> {
-    let io = |e: std::io::Error| anyhow!(errno::message(&e, "read", path));
+) -> Result<ToolOutput, ToolError> {
+    let io =
+        |e: std::io::Error| ToolError::from(errno::message(&e, "read", path));
     let start = offset.map_or(0, |o| o.saturating_sub(1)) as usize;
     let end = limit.map(|l| start.saturating_add(l as usize));
     // Enough to decide what truncation shows: one line or byte past.
@@ -229,10 +232,10 @@ fn read_text(
         total += 1;
     }
     if start >= total {
-        return Err(anyhow!(
+        return Err(ToolError::from(format!(
             "Offset {} is beyond end of file ({total} lines total)",
             offset.unwrap_or(0)
-        ));
+        )));
     }
     let selected = kept
         .iter()

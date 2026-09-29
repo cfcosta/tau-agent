@@ -50,6 +50,7 @@ use std::{path::PathBuf, sync::Arc};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tau_agent::{
+    error::PluginError,
     plugin::{
         ContextView,
         Plugin,
@@ -245,7 +246,7 @@ impl Plugin for FastCompaction {
         &self,
         plan: &mut RunPlan,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         let ledger = match plan.last_rewrite() {
             Some(details) => {
                 let details: Details = serde_json::from_value(details.clone())?;
@@ -282,14 +283,14 @@ impl PluginRun for FastCompactionRun {
         &mut self,
         view: &ContextView<'_>,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Option<Rewrite>> {
+    ) -> Result<Option<Rewrite>, PluginError> {
         if view.trigger == Trigger::TurnEnd && !self.due(view.tokens) {
             return Ok(None);
         }
         tokio::select! {
             biased;
-            _ = ctx.cancel.cancelled() => anyhow::bail!("the pass was cancelled"),
-            rewrite = self.pass(view, ctx) => rewrite,
+            _ = ctx.cancel.cancelled() => return Err("the pass was cancelled".into()),
+            rewrite = self.pass(view, ctx) => rewrite.map_err(PluginError::other),
         }
     }
 
@@ -298,7 +299,7 @@ impl PluginRun for FastCompactionRun {
         view: &ToolResultView<'_>,
         output: &mut ToolOutput,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), PluginError> {
         let settings = &self.settings.output;
         if !settings.enabled {
             return Ok(());
@@ -313,8 +314,8 @@ impl PluginRun for FastCompactionRun {
         };
         let pruned = tokio::select! {
             biased;
-            _ = ctx.cancel.cancelled() => anyhow::bail!("output pruning was cancelled"),
-            pruned = prune_output(&*self.jev, &self.settings, view, gated, ctx) => pruned?,
+            _ = ctx.cancel.cancelled() => return Err("output pruning was cancelled".into()),
+            pruned = prune_output(&*self.jev, &self.settings, view, gated, ctx) => pruned.map_err(PluginError::other)?,
         };
         if let Some(text) = pruned {
             output.content = vec![InputBlock::Text(TextContent {

@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{
+    error::PluginError,
     event::RunEvent,
     tool::{RunId, ToolOutput},
 };
@@ -45,7 +46,7 @@ pub trait RunHook: Send + Sync + 'static {
         &self,
         call: &mut ToolCall,
         ctx: &HookCtx,
-    ) -> anyhow::Result<Decision> {
+    ) -> Result<Decision, PluginError> {
         let _ = (call, ctx);
         Ok(Decision::Allow)
     }

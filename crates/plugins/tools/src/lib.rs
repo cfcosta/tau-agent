@@ -29,6 +29,24 @@ pub mod write;
 /// What every tool returns when the run is cancelled while it works.
 pub const ABORTED: &str = "Operation aborted";
 
+/// A search that could not start: its glob or its pattern does not
+/// parse. The model reads the parser's own message.
+#[derive(Debug, thiserror::Error)]
+pub enum SearchError {
+    #[error(transparent)]
+    Glob(#[from] globset::Error),
+    #[error(transparent)]
+    Filter(#[from] ignore::Error),
+    #[error(transparent)]
+    Pattern(#[from] grep_regex::Error),
+}
+
+impl From<SearchError> for tau_agent::tool::ToolError {
+    fn from(error: SearchError) -> Self {
+        Self::other(error)
+    }
+}
+
 /// All seven tools on `root`, in pi's order, for `Agent::tools`. The
 /// same tools [`plugin::CodingTools`] adds.
 #[cfg(unix)]

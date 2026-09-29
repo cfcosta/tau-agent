@@ -8264,7 +8264,6 @@ checksum = "876fef147edbcbddc8ac5cbbba92c7b86519e314e86638596c09673b2ed01e7f"
 name = "tau-agent"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "hegeltest",
@@ -8276,6 +8275,7 @@ dependencies = [
  "tau-ai",
  "tau-store",
  "tau-testing",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "trybuild",
@@ -8507,7 +8507,6 @@ dependencies = [
 name = "tau-tools"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64 0.23.1",
  "globset",
@@ -8528,6 +8527,7 @@ dependencies = [
  "tau-store",
  "tau-testing",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "unicode-normalization",

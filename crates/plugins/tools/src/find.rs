@@ -11,18 +11,21 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::anyhow;
 use async_trait::async_trait;
-use globset::GlobBuilder;
+use globset::{GlobBuilder, GlobMatcher};
 use ignore::WalkBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
-use tau_agent::tool::{AgentTool, ToolCtx, ToolOutput};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, ToolCtx, ToolOutput},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     ABORTED,
+    SearchError,
     path::Root,
     truncate::{MAX_BYTES, format_size, truncate_head},
 };
@@ -74,7 +77,7 @@ impl AgentTool for Find {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let args: FindArgs = serde_json::from_value(args)?;
         let root = self.root.clone();
         let cancel = ctx.cancel.clone();
@@ -118,7 +121,7 @@ fn relative_posix(search_path: &Path, file: &Path) -> String {
 fn walk_files(
     search_path: &Path,
     cancel: &CancellationToken,
-) -> anyhow::Result<Vec<PathBuf>> {
+) -> Result<Vec<PathBuf>, ToolError> {
     let mut files = Vec::new();
     // `.gitignore` applies whether or not the tree sits inside an
     // actual git repository (`ignore`'s default requires one). The
@@ -132,7 +135,7 @@ fn walk_files(
         .git_exclude(false);
     for result in walk.build() {
         if cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
         let Ok(entry) = result else { continue };
         if !entry.file_type().is_some_and(|t| t.is_file()) {
@@ -144,24 +147,32 @@ fn walk_files(
     Ok(files)
 }
 
+/// `pattern` as a glob whose `*` stops at a `/`.
+fn glob(pattern: &str) -> Result<GlobMatcher, SearchError> {
+    Ok(GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()?
+        .compile_matcher())
+}
+
 fn run(
     root: &Root,
     args: FindArgs,
     cancel: &CancellationToken,
-) -> anyhow::Result<String> {
+) -> Result<String, ToolError> {
     if cancel.is_cancelled() {
-        return Err(anyhow!(ABORTED));
+        return Err(ToolError::from(ABORTED));
     }
     let search_path = root.resolve(args.path.as_deref().unwrap_or("."));
     if !search_path.exists() {
-        return Err(anyhow!("Path not found: {}", search_path.display()));
+        return Err(ToolError::from(format!(
+            "Path not found: {}",
+            search_path.display()
+        )));
     }
     let limit = args.limit.unwrap_or(DEFAULT_LIMIT) as usize;
     let (full_path_mode, pattern) = effective_pattern(&args.pattern);
-    let glob = GlobBuilder::new(&pattern)
-        .literal_separator(true)
-        .build()?
-        .compile_matcher();
+    let glob = glob(&pattern)?;
 
     let is_dir = search_path.is_dir();
     let files = if is_dir {
@@ -174,7 +185,7 @@ fn run(
     let mut limit_reached = false;
     for file in &files {
         if cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
         let candidate = if full_path_mode {
             relative_posix(&search_path, file)

@@ -34,6 +34,7 @@ use tau_testing::{block_on, scripted::ScriptedModel};
 
 mod common;
 use common::{assert_grammar, reference, stored};
+use tau_agent::error::ToolError;
 
 /// Runs started with a workflow id are grouped under it: the store
 /// records the id, and the workflow's cost adds up the runs of each
@@ -174,7 +175,7 @@ impl TypedTool for Lookup {
         &self,
         args: LookupArgs,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(format!("notes on {}", args.topic)))
     }
 }
@@ -295,7 +296,7 @@ impl TypedTool for Echo {
         &self,
         args: EchoArgs,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(args.text))
     }
 }

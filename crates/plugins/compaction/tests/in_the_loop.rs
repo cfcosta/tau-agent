@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tau_agent::{
     agent::Agent,
+    error::ToolError,
     event::{RunEvent, StopReason},
     tool::{ToolCtx, ToolOutput, TypedTool, typed},
 };
@@ -47,7 +48,7 @@ impl TypedTool for Read {
         &self,
         args: ReadArgs,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(format!("contents of {}", args.path)))
     }
 }

@@ -6,6 +6,7 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::{Agent, Outcome},
+    error::ToolError,
     event::{RunEvent, StopReason},
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
@@ -47,7 +48,7 @@ impl AgentTool for Read {
         &self,
         args: Value,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let path = args["path"].as_str().unwrap_or_default();
         let size = args["size"].as_u64().unwrap_or(0) as usize;
         Ok(ToolOutput::text(format!(

@@ -15,6 +15,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tau_agent::{
+    error::{PluginError, ToolError},
     plugin::{FinishedRun, Plugin, PluginCtx, PluginRun, Rewrite, RunPlan},
     tool::{AgentTool, ToolCtx, ToolOutput, TypedTool, typed},
 };
@@ -197,16 +198,18 @@ impl Plugin for MemoryPlugin {
         &self,
         plan: &mut RunPlan,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         let scopes = &self.scopes;
         let repo = Scopes::with(&scopes.repo, |m| {
             m.index_note().map(|n| n.body.clone())
         })
-        .await?;
+        .await
+        .map_err(PluginError::other)?;
         let user = match &scopes.user {
             Some(user) => {
                 Scopes::with(user, |m| m.index_note().map(|n| n.body.clone()))
-                    .await?
+                    .await
+                    .map_err(PluginError::other)?
             }
             None => None,
         };
@@ -304,7 +307,7 @@ impl PluginRun for MemoryRun {
         replaced: &[Message],
         _rewrite: &Rewrite,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), PluginError> {
         distill(
             &self.plugin,
             &self.model,
@@ -314,6 +317,7 @@ impl PluginRun for MemoryRun {
             ctx,
         )
         .await
+        .map_err(PluginError::other)
     }
 
     async fn finish(&mut self, run: &FinishedRun<'_>, ctx: &PluginCtx) {
@@ -592,15 +596,16 @@ impl TypedTool for WriteTool {
         &self,
         args: WriteArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let kind = NoteType::parse(&args.kind)
-            .ok_or_else(|| anyhow!("{:?} is not a note type", args.kind))?;
+            .ok_or_else(|| format!("{:?} is not a note type", args.kind))?;
         let links = args
             .links
             .unwrap_or_default()
             .into_iter()
             .map(parse_link)
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(ToolError::other)?;
         let by = match args.by.as_deref() {
             Some("inferred") => By::Inferred,
             Some("user") => By::User,
@@ -617,16 +622,14 @@ impl TypedTool for WriteTool {
             None | Some("repository") | Some("repo") => false,
             Some("user") => true,
             Some(other) => {
-                return Err(anyhow!(
+                return Err(format!(
                     "{other:?} is not a scope: repository or user"
-                ));
+                )
+                .into());
             }
         };
         let scope = if user {
-            self.0
-                .user
-                .as_ref()
-                .ok_or_else(|| anyhow!("there is no user scope"))?
+            self.0.user.as_ref().ok_or("there is no user scope")?
         } else {
             &self.0.repo
         };
@@ -647,8 +650,8 @@ impl TypedTool for WriteTool {
         let now = (self.0.clock)();
         let written =
             Scopes::with(scope, move |memory| memory.write(draft, now))
-                .await?
-                .map_err(|error| anyhow!("{error}"))?;
+                .await
+                .map_err(ToolError::other)??;
         let prefix = if user { USER } else { "" };
         let mut output = ToolOutput::text(render_written(&written, prefix));
         output.details = Some(json!({
@@ -723,9 +726,13 @@ impl TypedTool for SearchTool {
         &self,
         args: SearchArgs,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let limit = args.limit.unwrap_or(8).clamp(1, 20);
-        let hits = self.0.search(&args.query, limit).await?;
+        let hits = self
+            .0
+            .search(&args.query, limit)
+            .await
+            .map_err(ToolError::other)?;
         let text = if hits.is_empty() {
             "No notes match.".to_owned()
         } else {
@@ -758,12 +765,14 @@ impl TypedTool for ReadTool {
         &self,
         args: ReadArgs,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
-        let (scope, bare) = self.0.resolve(&args.id)?;
+    ) -> Result<ToolOutput, ToolError> {
+        let (scope, bare) =
+            self.0.resolve(&args.id).map_err(ToolError::other)?;
         let bare = bare.to_owned();
         let reading = Scopes::with(scope, move |memory| memory.read(&bare))
-            .await?
-            .ok_or_else(|| anyhow!("no note is called {:?}", args.id))?;
+            .await
+            .map_err(ToolError::other)?
+            .ok_or_else(|| format!("no note is called {:?}", args.id))?;
         let prefix = if args.id.starts_with(USER) { USER } else { "" };
         Ok(ToolOutput::text(render_reading(&reading, prefix)))
     }
@@ -823,10 +832,11 @@ impl TypedTool for LinkTool {
         &self,
         args: LinkArgs,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let kind = LinkType::parse(&args.kind)
-            .ok_or_else(|| anyhow!("{:?} is not a link type", args.kind))?;
-        let (scope, from) = self.0.resolve(&args.from)?;
+            .ok_or_else(|| format!("{:?} is not a link type", args.kind))?;
+        let (scope, from) =
+            self.0.resolve(&args.from).map_err(ToolError::other)?;
         let from = from.to_owned();
         let to = args.to.trim_start_matches(USER).to_owned();
         let now = (self.0.clock)();
@@ -835,8 +845,8 @@ impl TypedTool for LinkTool {
         Scopes::with(scope, move |memory| {
             memory.link(&from_c, &to_c, kind, why, now)
         })
-        .await?
-        .map_err(|error| anyhow!("{error}"))?;
+        .await
+        .map_err(ToolError::other)??;
         Ok(ToolOutput::text(format!(
             "Linked `{from}` {} `{to}`.",
             kind.as_str()

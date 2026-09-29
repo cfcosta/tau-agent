@@ -1,12 +1,14 @@
 //! `write`: create or overwrite a file (`docs/reference/tools.md`,
 //! "write"), ported from pi's `write.ts`.
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
-use tau_agent::tool::{AgentTool, ToolCtx, ToolOutput};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, ToolCtx, ToolOutput},
+};
 
 use crate::{ABORTED, lock, path::Root};
 
@@ -54,25 +56,25 @@ impl AgentTool for Write {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let args: WriteArgs = serde_json::from_value(args)?;
         let resolved = self.root.resolve(&args.path);
         let _guard = lock::lock(&resolved).await;
 
         if ctx.cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
 
         if let Some(parent) = resolved.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
         if ctx.cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
 
         tokio::fs::write(&resolved, args.content.as_bytes()).await?;
         if ctx.cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
 
         Ok(ToolOutput::text(format!(

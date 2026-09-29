@@ -3,19 +3,21 @@
 
 use std::sync::Arc;
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
-use tau_agent::tool::{
-    AgentTool,
-    ExecutionMode,
-    ToolCtx,
-    ToolOutput,
-    TypedAdapter,
-    TypedTool,
-    typed,
+use tau_agent::{
+    error::ToolError,
+    tool::{
+        AgentTool,
+        ExecutionMode,
+        ToolCtx,
+        ToolOutput,
+        TypedAdapter,
+        TypedTool,
+        typed,
+    },
 };
 
 use crate::{
@@ -29,11 +31,12 @@ async fn run(
     vcs: &Vcs,
     ctx: &ToolCtx,
     op: impl FnOnce(&mut Worker) -> anyhow::Result<Report> + Send + 'static,
-) -> anyhow::Result<ToolOutput> {
+) -> Result<ToolOutput, ToolError> {
     if ctx.cancel.is_cancelled() {
-        return Err(anyhow!(ABORTED));
+        return Err(ABORTED.into());
     }
-    let report = vcs.call(op).await?;
+    // tau-vcs still reports with anyhow.
+    let report = vcs.call(op).await.map_err(ToolError::other)?;
     let mut output = ToolOutput::text(report.text);
     output.details = Some(report.details);
     Ok(output)
@@ -56,7 +59,7 @@ impl TypedTool for Status {
         &self,
         _args: StatusArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         run(&self.0, &ctx, ops::status).await
     }
 }
@@ -85,7 +88,7 @@ impl TypedTool for Diff {
         &self,
         args: DiffArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         run(&self.0, &ctx, move |worker| {
             ops::diff(worker, args.change, args.paths.unwrap_or_default())
         })
@@ -113,7 +116,7 @@ impl TypedTool for Log {
         &self,
         args: LogArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let limit = args.limit.unwrap_or(DEFAULT_LOG_LIMIT);
         run(&self.0, &ctx, move |worker| ops::log(worker, limit)).await
     }
@@ -139,7 +142,7 @@ impl TypedTool for Show {
         &self,
         args: ShowArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         run(&self.0, &ctx, move |worker| ops::show(worker, args.change)).await
     }
 }
@@ -164,7 +167,7 @@ impl TypedTool for Describe {
         &self,
         args: DescribeArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         run(&self.0, &ctx, move |worker| {
             ops::describe(worker, args.message)
         })
@@ -192,7 +195,7 @@ impl TypedTool for Commit {
         &self,
         args: CommitArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         run(&self.0, &ctx, move |worker| {
             ops::commit(worker, args.message)
         })
@@ -220,7 +223,7 @@ impl TypedTool for New {
         &self,
         args: NewArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         run(&self.0, &ctx, move |worker| ops::new(worker, args.message)).await
     }
 }
@@ -249,7 +252,7 @@ impl TypedTool for Restore {
         &self,
         args: RestoreArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         run(&self.0, &ctx, move |worker| {
             ops::restore(worker, args.paths, args.from)
         })
@@ -274,7 +277,7 @@ impl TypedTool for Undo {
         &self,
         _args: UndoArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         run(&self.0, &ctx, ops::undo).await
     }
 }
@@ -311,7 +314,7 @@ impl<T: TypedTool> AgentTool for Sequential<T> {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         self.0.call(args, ctx).await
     }
 }

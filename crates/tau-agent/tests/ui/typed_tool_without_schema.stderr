@@ -1,13 +1,13 @@
 error[E0277]: the trait bound `Args: schemars::JsonSchema` is not satisfied
-  --> tests/ui/typed_tool_without_schema.rs:15:17
+  --> tests/ui/typed_tool_without_schema.rs:18:17
    |
-15 |     type Args = Args;
+18 |     type Args = Args;
    |                 ^^^^ unsatisfied trait bound
    |
 help: the trait `schemars::JsonSchema` is not implemented for `Args`
-  --> tests/ui/typed_tool_without_schema.rs:7:1
+  --> tests/ui/typed_tool_without_schema.rs:10:1
    |
- 7 | struct Args {
+10 | struct Args {
    | ^^^^^^^^^^^
    = help: the following other types implement trait `schemars::JsonSchema`:
              &'a T

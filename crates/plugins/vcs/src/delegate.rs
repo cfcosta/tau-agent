@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
+    error::ToolError,
     tool::{AgentTool, ExecutionMode, ToolCtx, ToolOutput},
 };
 
@@ -120,7 +121,7 @@ impl AgentTool for Delegate {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let task = args["task"].as_str().unwrap_or_default().to_owned();
         let parent_bookmark = bookmark(&ctx.run);
         let project = self.parent.project().clone();
@@ -133,7 +134,8 @@ impl AgentTool for Delegate {
                 format!("tau: run {}, before delegating", ctx.run.0),
                 &parent_bookmark,
             )
-            .await?;
+            .await
+            .map_err(ToolError::other)?;
         if head.changed {
             self.parent.queue([Pending {
                 commit_id: head.commit_id.clone(),
@@ -143,7 +145,8 @@ impl AgentTool for Delegate {
         }
         let name = child_name(self.parent.name());
         let workspace =
-            RunWorkspace::new(project.clone(), &name, self.identity.clone())?
+            RunWorkspace::new(project.clone(), &name, self.identity.clone())
+                .map_err(ToolError::other)?
                 .with_base(head.commit_id.clone());
 
         // 2. The sub-agent, as a child run of the caller.
@@ -154,7 +157,7 @@ impl AgentTool for Delegate {
                     .call(json!({ "input": task }), ctx)
                     .await
             }
-            Err(error) => Err(error),
+            Err(error) => Err(ToolError::other(error)),
         };
         let child_bookmark = workspace.run().map(|run| bookmark(&run));
 
@@ -164,13 +167,15 @@ impl AgentTool for Delegate {
                 let landing = match child_bookmark.clone() {
                     Some(name) => {
                         match blocking(&project, move |p| p.bookmark(&name))
-                            .await?
+                            .await
+                            .map_err(ToolError::other)?
                         {
                             Some(child_head) => Some(
                                 self.parent
                                     .vcs()
                                     .land(child_head, &parent_bookmark, true)
-                                    .await?,
+                                    .await
+                                    .map_err(ToolError::other)?,
                             ),
                             None => None,
                         }
@@ -224,7 +229,8 @@ impl AgentTool for Delegate {
                     }
                     Ok(())
                 })
-                .await?;
+                .await
+                .map_err(ToolError::other)?;
                 Err(error)
             }
         };
@@ -237,7 +243,8 @@ impl AgentTool for Delegate {
             }
             Ok(())
         })
-        .await?;
+        .await
+        .map_err(ToolError::other)?;
         output
     }
 }

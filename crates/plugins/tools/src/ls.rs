@@ -1,12 +1,14 @@
 //! `ls`: list directory contents (`docs/reference/tools.md`, "ls"),
 //! ported from pi's `ls.ts`.
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
-use tau_agent::tool::{AgentTool, ToolCtx, ToolOutput};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, ToolCtx, ToolOutput},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -60,7 +62,7 @@ impl AgentTool for Ls {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let args: LsArgs = serde_json::from_value(args)?;
         let root = self.root.clone();
         let cancel = ctx.cancel.clone();
@@ -75,16 +77,22 @@ fn run(
     root: &Root,
     args: LsArgs,
     cancel: &CancellationToken,
-) -> anyhow::Result<String> {
+) -> Result<String, ToolError> {
     if cancel.is_cancelled() {
-        return Err(anyhow!(ABORTED));
+        return Err(ToolError::from(ABORTED));
     }
     let dir_path = root.resolve(args.path.as_deref().unwrap_or("."));
     if !dir_path.exists() {
-        return Err(anyhow!("Path not found: {}", dir_path.display()));
+        return Err(ToolError::from(format!(
+            "Path not found: {}",
+            dir_path.display()
+        )));
     }
     if !dir_path.is_dir() {
-        return Err(anyhow!("Not a directory: {}", dir_path.display()));
+        return Err(ToolError::from(format!(
+            "Not a directory: {}",
+            dir_path.display()
+        )));
     }
     let limit = args.limit.unwrap_or(DEFAULT_LIMIT) as usize;
 
@@ -94,7 +102,9 @@ fn run(
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect(),
         Err(err) => {
-            return Err(anyhow!("Cannot read directory: {err}"));
+            return Err(ToolError::from(format!(
+                "Cannot read directory: {err}"
+            )));
         }
     };
     // Case-insensitively, and names equal but for case in byte order,
@@ -111,7 +121,7 @@ fn run(
     let mut limit_reached = false;
     for name in &names {
         if cancel.is_cancelled() {
-            return Err(anyhow!(ABORTED));
+            return Err(ToolError::from(ABORTED));
         }
         if results.len() >= limit {
             limit_reached = true;

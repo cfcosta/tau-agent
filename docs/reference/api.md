@@ -93,7 +93,7 @@ pub trait AgentTool: Send + Sync + 'static {
     fn parameters(&self) -> &serde_json::Value;           // rewritten to OpenAI strict form
     fn execution_mode(&self) -> ExecutionMode { ExecutionMode::Parallel }
     fn prepare_arguments(&self, raw: Value) -> Value { raw }
-    async fn call(&self, args: Value, ctx: ToolCtx) -> anyhow::Result<ToolOutput>;
+    async fn call(&self, args: Value, ctx: ToolCtx) -> Result<ToolOutput, ToolError>;
 }
 
 #[async_trait]
@@ -101,11 +101,19 @@ pub trait TypedTool: Send + Sync + 'static {
     type Args: DeserializeOwned + JsonSchema + Send;
     const NAME: &'static str;
     const DESCRIPTION: &'static str;
-    async fn call(&self, args: Self::Args, ctx: ToolCtx) -> anyhow::Result<ToolOutput>;
+    async fn call(&self, args: Self::Args, ctx: ToolCtx) -> Result<ToolOutput, ToolError>;
 }
 
 pub struct ToolCtx { pub cancel: CancellationToken, pub updates: ToolUpdates, pub run: RunId }
 ```
+
+A tool's error is a `ToolError` (`tau_agent::error`, re-exported from
+`tool`). `?` converts io, JSON and `JoinError`s, a sub-agent's error,
+and a `String` or `&str` message into it; anything else goes in with
+`ToolError::other`. The model reads its `Display` as the tool result.
+Plugins and hooks return a `PluginError` the same way, which also
+converts store errors and `PluginCtx::ask`'s `AskError`; the loop
+reports it as `RunEvent::PluginError`, with its chain of sources.
 
 ## Hooks
 
@@ -113,7 +121,7 @@ pub struct ToolCtx { pub cancel: CancellationToken, pub updates: ToolUpdates, pu
 #[async_trait]
 pub trait RunHook: Send + Sync + 'static {
     // An error blocks the call, as a Block does.
-    async fn before_tool(&self, call: &mut ToolCall, ctx: &HookCtx) -> anyhow::Result<Decision> { Ok(Decision::Allow) }
+    async fn before_tool(&self, call: &mut ToolCall, ctx: &HookCtx) -> Result<Decision, PluginError> { Ok(Decision::Allow) }
     async fn after_tool(&self, call: &ToolCall, out: &mut ToolOutput, ctx: &HookCtx) {}
     async fn on_event(&self, ev: &RunEvent) {}          // awaited in order
 }
@@ -210,7 +218,7 @@ let results = futures::future::join_all(attempts).await;
 struct NoProdWrites;
 #[async_trait]
 impl RunHook for NoProdWrites {
-    async fn before_tool(&self, call: &mut ToolCall, _: &HookCtx) -> anyhow::Result<Decision> {
+    async fn before_tool(&self, call: &mut ToolCall, _: &HookCtx) -> Result<Decision, PluginError> {
         let prod = call.args["command"].as_str().is_some_and(|c| c.contains("--env prod"));
         if call.name == "bash" && prod { return Ok(Decision::Block("no production commands".into())); }
         Ok(Decision::Allow)

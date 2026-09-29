@@ -30,12 +30,14 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
-use tau_agent::tool::{AgentTool, ToolCtx, ToolOutput};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, ToolCtx, ToolOutput},
+};
 use tokio::{
     io::AsyncReadExt,
     sync::{Notify, mpsc, oneshot},
@@ -125,7 +127,7 @@ impl AgentTool for Bash {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let args: BashArgs = serde_json::from_value(args)?;
         self.run(args, ctx).await
     }
@@ -593,14 +595,16 @@ fn or_no_output(text: String) -> String {
     }
 }
 
-fn validate_timeout(timeout: Option<f64>) -> anyhow::Result<Option<Duration>> {
+fn validate_timeout(
+    timeout: Option<f64>,
+) -> Result<Option<Duration>, ToolError> {
     match timeout {
         None => Ok(None),
         Some(t) if t.is_finite() && t > 0.0 => {
             Ok(Some(Duration::from_secs_f64(t)))
         }
-        Some(_) => Err(anyhow!(
-            "Invalid timeout: must be a finite number of seconds"
+        Some(_) => Err(ToolError::from(
+            "Invalid timeout: must be a finite number of seconds",
         )),
     }
 }
@@ -634,11 +638,11 @@ impl Bash {
         &self,
         args: BashArgs,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let timeout = validate_timeout(args.timeout)?;
 
         if ctx.cancel.is_cancelled() {
-            return Err(anyhow!("Command aborted"));
+            return Err(ToolError::from("Command aborted"));
         }
 
         let shell = self.resolve_shell();
@@ -652,10 +656,10 @@ impl Bash {
             .stderr(Stdio::piped());
         command.process_group(0);
 
-        let mut child = command
-            .spawn()
-            .with_context(|| format!("failed to start {}", shell.display()))?;
-        let pid = child.id().context("spawned child has no pid")?;
+        let mut child = command.spawn().map_err(|error| {
+            format!("failed to start {}: {error}", shell.display())
+        })?;
+        let pid = child.id().ok_or("spawned child has no pid")?;
         let stdout = child.stdout.take().expect("stdout is piped");
         let stderr = child.stderr.take().expect("stderr is piped");
 
@@ -722,7 +726,7 @@ impl Bash {
 
         match outcome {
             Outcome::Cancelled => {
-                Err(anyhow!(append_status(&content, "Command aborted")))
+                Err(ToolError::from(append_status(&content, "Command aborted")))
             }
             Outcome::TimedOut => {
                 // Report the value the caller gave us, not one recovered
@@ -730,9 +734,9 @@ impl Bash {
                 // input number verbatim).
                 let secs =
                     args.timeout.expect("timed out implies a timeout was set");
-                Err(anyhow!(append_status(
+                Err(ToolError::from(append_status(
                     &content,
-                    format!("Command timed out after {secs} seconds")
+                    format!("Command timed out after {secs} seconds"),
                 )))
             }
             Outcome::Done => {
@@ -741,9 +745,9 @@ impl Bash {
                 if exit_code == 0 {
                     Ok(ToolOutput::text(display))
                 } else {
-                    Err(anyhow!(append_status(
+                    Err(ToolError::from(append_status(
                         &display,
-                        format!("Command exited with code {exit_code}")
+                        format!("Command exited with code {exit_code}"),
                     )))
                 }
             }

@@ -17,6 +17,7 @@ use futures_util::future::BoxFuture;
 use serde::Serialize;
 use tau_agent::{
     agent::Agent,
+    error::PluginError,
     limits::Limits,
     plugin::{FinishedRun, Plugin, PluginCtx, PluginRun, RunPlan},
 };
@@ -321,7 +322,7 @@ impl Plugin for Keep {
         &self,
         _: &mut RunPlan,
         _: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         Ok(Box::new(Keep(self.0.clone())))
     }
 }
@@ -351,7 +352,7 @@ impl Plugin for Given {
         &self,
         plan: &mut RunPlan,
         _: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         plan.context.push(self.0.clone());
         Ok(Box::new(Idle))
     }

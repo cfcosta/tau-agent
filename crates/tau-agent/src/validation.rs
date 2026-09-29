@@ -111,34 +111,20 @@ impl fmt::Debug for ArgumentSchema {
 }
 
 /// A schema that failed to compile.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("invalid tool argument schema: {0}")]
 pub struct SchemaError(String);
-
-impl fmt::Display for SchemaError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid tool argument schema: {}", self.0)
-    }
-}
-
-impl std::error::Error for SchemaError {}
 
 /// Tool arguments that still fail to validate after coercion.
 ///
 /// `Display` (and so `to_string()`) is the exact text the model sees:
 /// tau-agent's tool executor uses it verbatim as the tool call's error
 /// result (`docs/reference/agent-loop.md`, "Tool execution").
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
 pub struct ValidationError {
     message: String,
 }
-
-impl fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for ValidationError {}
 
 impl ArgumentSchema {
     /// Compiles `schema`. Fails only if `schema` is not a valid JSON

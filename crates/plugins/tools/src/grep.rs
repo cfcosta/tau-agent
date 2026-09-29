@@ -21,7 +21,6 @@ use std::{
     },
 };
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
@@ -40,11 +39,15 @@ use ignore::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
-use tau_agent::tool::{AgentTool, ToolCtx, ToolOutput};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, ToolCtx, ToolOutput},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     ABORTED,
+    SearchError,
     path::Root,
     truncate::{
         GREP_MAX_LINE,
@@ -112,7 +115,7 @@ impl AgentTool for Grep {
         &self,
         args: Value,
         ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         let args: GrepArgs = serde_json::from_value(args)?;
         let root = self.root.clone();
         let cancel = ctx.cancel.clone();
@@ -189,7 +192,7 @@ fn decode_line(bytes: &[u8]) -> String {
 /// no `/` matches a file's name at any depth, and matching honors
 /// `**` the way a `.gitignore` line would (`ignore::overrides`, the
 /// same mechanism ripgrep's own `--glob` uses).
-fn build_glob(root: &Path, pattern: &str) -> anyhow::Result<Override> {
+fn build_glob(root: &Path, pattern: &str) -> Result<Override, SearchError> {
     Ok(OverrideBuilder::new(root).add(pattern)?.build()?)
 }
 
@@ -214,7 +217,7 @@ fn files_under(
     search_path: &Path,
     overrides: Override,
     cancel: &CancellationToken,
-) -> anyhow::Result<Vec<PathBuf>> {
+) -> Result<Vec<PathBuf>, ToolError> {
     let mut walk = WalkBuilder::new(search_path);
     // `.gitignore` applies whether or not the tree sits inside an
     // actual git repository (`ignore`'s default requires one). The
@@ -242,7 +245,7 @@ fn files_under(
         })
     });
     if cancel.is_cancelled() {
-        return Err(anyhow!(ABORTED));
+        return Err(ToolError::from(ABORTED));
     }
     let mut files = files.into_inner().expect("not poisoned");
     files.sort();
@@ -288,7 +291,7 @@ fn search_files(
     limit: usize,
     workers: usize,
     cancel: &CancellationToken,
-) -> anyhow::Result<Vec<Option<Vec<LineEntry>>>> {
+) -> Result<Vec<Option<Vec<LineEntry>>>, ToolError> {
     struct Progress {
         results: Vec<Option<Vec<LineEntry>>>,
         done: Vec<bool>,
@@ -350,31 +353,39 @@ fn search_files(
         })
     })?;
     if cancel.is_cancelled() {
-        return Err(anyhow!(ABORTED));
+        return Err(ToolError::from(ABORTED));
     }
     Ok(progress.into_inner().expect("not poisoned").results)
+}
+
+/// The matcher for `args`' pattern, as its flags ask.
+fn matcher(args: &GrepArgs) -> Result<RegexMatcher, SearchError> {
+    Ok(RegexMatcherBuilder::new()
+        .case_insensitive(args.ignore_case.unwrap_or(false))
+        .fixed_strings(args.literal.unwrap_or(false))
+        .build(&args.pattern)?)
 }
 
 fn run(
     root: &Root,
     args: GrepArgs,
     cancel: &CancellationToken,
-) -> anyhow::Result<String> {
+) -> Result<String, ToolError> {
     if cancel.is_cancelled() {
-        return Err(anyhow!(ABORTED));
+        return Err(ToolError::from(ABORTED));
     }
     let search_path = root.resolve(args.path.as_deref().unwrap_or("."));
     if !search_path.exists() {
-        return Err(anyhow!("Path not found: {}", search_path.display()));
+        return Err(ToolError::from(format!(
+            "Path not found: {}",
+            search_path.display()
+        )));
     }
     let is_dir = search_path.is_dir();
     let limit = args.limit.unwrap_or(DEFAULT_LIMIT).max(1) as usize;
     let context = args.context.unwrap_or(0) as usize;
 
-    let matcher = RegexMatcherBuilder::new()
-        .case_insensitive(args.ignore_case.unwrap_or(false))
-        .fixed_strings(args.literal.unwrap_or(false))
-        .build(&args.pattern)?;
+    let matcher = matcher(&args)?;
 
     let files = if is_dir {
         let overrides = match args.glob.as_deref() {

@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_agent::{
+    error::PluginError,
     event::RunEvent,
     hook::ToolCall,
     plugin::{Plugin, PluginCtx, PluginRun, RunPlan, StopDecision},
@@ -378,7 +379,7 @@ impl Plugin for GoalPlugin {
         &self,
         plan: &mut RunPlan,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         if let Some(command) = Command::parse(&plan.input) {
             let record = match command {
                 Command::Set {
@@ -508,7 +509,7 @@ impl PluginRun for Pursuit {
         &mut self,
         message: &AssistantMessage,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<StopDecision> {
+    ) -> Result<StopDecision, PluginError> {
         // Read again: an interface may have paused, extended or cleared
         // the goal since the run started.
         let records = ctx.records().await?;

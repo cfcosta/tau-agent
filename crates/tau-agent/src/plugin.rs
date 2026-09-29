@@ -22,7 +22,7 @@ use futures_util::StreamExt;
 use serde_json::Value;
 use tau_ai::{
     event::{Accumulator, AssistantEvent},
-    llm::Llm,
+    llm::{Llm, LlmError},
     message::{AssistantMessage, Message, Timestamp, Usage},
     responses::request::{ReasoningEffort, Settings},
     retry::{Class, RetryPolicy, jitter},
@@ -30,6 +30,7 @@ use tau_ai::{
 use tau_store::{Entry, RunKind, Store, StoreError, TurnUsage};
 use tokio_util::sync::CancellationToken;
 
+pub use crate::error::PluginError;
 use crate::{
     event::{RunEvent, StopReason},
     hook::{Decision, HookCtx, RunHook, ToolCall},
@@ -57,7 +58,7 @@ pub trait Plugin: Send + Sync + 'static {
         &self,
         plan: &mut RunPlan,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         let _ = (plan, ctx);
         Ok(Box::new(()))
     }
@@ -74,7 +75,7 @@ pub trait PluginRun: Send {
         &mut self,
         call: &mut ToolCall,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Decision> {
+    ) -> Result<Decision, PluginError> {
         let _ = (call, ctx);
         Ok(Decision::Allow)
     }
@@ -100,7 +101,7 @@ pub trait PluginRun: Send {
         view: &ToolResultView<'_>,
         output: &mut ToolOutput,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), PluginError> {
         self.after_tool(view.call, output, ctx).await;
         Ok(())
     }
@@ -118,7 +119,7 @@ pub trait PluginRun: Send {
         &mut self,
         view: &RequestView<'_>,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Option<ReasoningEffort>> {
+    ) -> Result<Option<ReasoningEffort>, PluginError> {
         let _ = (view, ctx);
         Ok(None)
     }
@@ -134,7 +135,7 @@ pub trait PluginRun: Send {
         &mut self,
         view: &ContextView<'_>,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Option<Rewrite>> {
+    ) -> Result<Option<Rewrite>, PluginError> {
         let _ = (view, ctx);
         Ok(None)
     }
@@ -148,7 +149,7 @@ pub trait PluginRun: Send {
         replaced: &[Message],
         rewrite: &Rewrite,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), PluginError> {
         let _ = (replaced, rewrite, ctx);
         Ok(())
     }
@@ -162,7 +163,7 @@ pub trait PluginRun: Send {
         &mut self,
         message: &AssistantMessage,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<StopDecision> {
+    ) -> Result<StopDecision, PluginError> {
         let _ = (message, ctx);
         Ok(StopDecision::Stop)
     }
@@ -447,12 +448,8 @@ impl PluginCtx {
         &self,
         settings: Settings,
         input: &[Message],
-    ) -> anyhow::Result<AssistantMessage> {
-        let mut session = self
-            .llm
-            .open(settings)
-            .await
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
+    ) -> Result<AssistantMessage, AskError> {
+        let mut session = self.llm.open(settings).await?;
         let mut attempts = 1;
         loop {
             let mut stream = session.respond(input, self.now());
@@ -462,7 +459,7 @@ impl PluginCtx {
                 let event = tokio::select! {
                     biased;
                     _ = self.cancel.cancelled() => {
-                        anyhow::bail!("the request was cancelled");
+                        return Err(AskError::Cancelled);
                     }
                     event = stream.next() => event,
                 };
@@ -471,11 +468,11 @@ impl PluginCtx {
                     class = *failed;
                 }
                 if accumulator.push(event).is_err() {
-                    anyhow::bail!("the response broke the event grammar");
+                    return Err(AskError::BrokeGrammar);
                 }
             }
             let Ok(message) = accumulator.finish() else {
-                anyhow::bail!("the response ended without a terminal event");
+                return Err(AskError::NoTerminal);
             };
             self.charge(&message.usage);
             if class != Class::Retryable || !self.retry.allows(attempts) {
@@ -486,7 +483,7 @@ impl PluginCtx {
             tokio::select! {
                 biased;
                 _ = self.cancel.cancelled() => {
-                    anyhow::bail!("the request was cancelled");
+                    return Err(AskError::Cancelled);
                 }
                 _ = tokio::time::sleep(delay) => {}
             }
@@ -541,6 +538,20 @@ impl PluginCtx {
     }
 }
 
+/// Why [`PluginCtx::ask`] got no response at all.
+#[derive(Debug, thiserror::Error)]
+pub enum AskError {
+    /// The session did not open.
+    #[error(transparent)]
+    Open(#[from] LlmError),
+    #[error("the request was cancelled")]
+    Cancelled,
+    #[error("the response broke the event grammar")]
+    BrokeGrammar,
+    #[error("the response ended without a terminal event")]
+    NoTerminal,
+}
+
 /// A [`RunHook`] as a plugin: every run shares the one hook.
 pub(crate) struct Hooked(pub Arc<dyn RunHook>);
 
@@ -554,7 +565,7 @@ impl Plugin for Hooked {
         &self,
         _plan: &mut RunPlan,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         Ok(Box::new(HookedRun(self.0.clone())))
     }
 }
@@ -574,7 +585,7 @@ impl PluginRun for HookedRun {
         &mut self,
         call: &mut ToolCall,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Decision> {
+    ) -> Result<Decision, PluginError> {
         self.0.before_tool(call, &hook_ctx(ctx)).await
     }
 

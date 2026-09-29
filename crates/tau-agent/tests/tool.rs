@@ -4,15 +4,18 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
-use tau_agent::tool::{
-    AgentTool,
-    ExecutionMode,
-    RunId,
-    ToolCtx,
-    ToolOutput,
-    ToolUpdates,
-    TypedTool,
-    typed,
+use tau_agent::{
+    error::ToolError,
+    tool::{
+        AgentTool,
+        ExecutionMode,
+        RunId,
+        ToolCtx,
+        ToolOutput,
+        ToolUpdates,
+        TypedTool,
+        typed,
+    },
 };
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -34,7 +37,7 @@ impl TypedTool for Search {
         &self,
         args: SearchArgs,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(format!(
             "{}:{}",
             args.query,

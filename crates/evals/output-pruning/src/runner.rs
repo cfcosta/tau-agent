@@ -16,6 +16,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
+    error::ToolError,
     event::RunEvent,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
@@ -166,13 +167,13 @@ impl AgentTool for Scripted {
         &self,
         args: Value,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         self.answers
             .iter()
             .find(|(asked, _)| *asked == args)
             .map(|(_, result)| ToolOutput::text(result.clone()))
             .ok_or_else(|| {
-                anyhow::anyhow!("the workload has no answer for {args}")
+                format!("the workload has no answer for {args}").into()
             })
     }
 }

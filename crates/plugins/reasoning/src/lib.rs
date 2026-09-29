@@ -32,14 +32,17 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tau_agent::plugin::{
-    FinishedRun,
-    Plugin,
-    PluginCtx,
-    PluginRun,
-    RequestView,
-    Rewrite,
-    RunPlan,
+use tau_agent::{
+    error::PluginError,
+    plugin::{
+        FinishedRun,
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        RequestView,
+        Rewrite,
+        RunPlan,
+    },
 };
 use tau_ai::{
     message::{AssistantBlock, InputBlock, Message, Usage},
@@ -611,7 +614,7 @@ impl Plugin for Reasoning {
         &self,
         plan: &mut RunPlan,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         let mut steps = Steps {
             picker: self.picker(plan.model()),
             task: plan.input.clone(),
@@ -680,7 +683,7 @@ impl PluginRun for Steps {
         &mut self,
         view: &RequestView<'_>,
         ctx: &PluginCtx,
-    ) -> anyhow::Result<Option<ReasoningEffort>> {
+    ) -> Result<Option<ReasoningEffort>, PluginError> {
         if std::mem::take(&mut self.first)
             || !self.picker.redecides
             || !lease_ended(self.lease, self.rewritten, view.transcript)
@@ -730,7 +733,7 @@ impl PluginRun for Steps {
         _replaced: &[Message],
         _rewrite: &Rewrite,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), PluginError> {
         self.rewritten = true;
         Ok(())
     }

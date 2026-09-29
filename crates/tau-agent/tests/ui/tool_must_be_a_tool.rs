@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tau_agent::{
     agent::Agent,
+    error::ToolError,
     tool::{ToolCtx, ToolOutput, TypedTool},
 };
 use tau_testing::scripted::ScriptedModel;
@@ -26,7 +27,7 @@ impl TypedTool for Search {
         &self,
         args: Args,
         _ctx: ToolCtx,
-    ) -> anyhow::Result<ToolOutput> {
+    ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text(args.query))
     }
 }

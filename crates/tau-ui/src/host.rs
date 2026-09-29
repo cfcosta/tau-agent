@@ -26,6 +26,7 @@ use gpui::{App, Entity};
 use serde::{Deserialize, Serialize};
 use tau_agent::{
     agent::{Agent, Checkpoint, RunControl},
+    error::PluginError,
     event::{RunEvent, StopReason},
     limits::Limits,
     plugin::{Plugin, PluginCtx, PluginRun, RunPlan},
@@ -290,7 +291,7 @@ impl Plugin for RepoTag {
         &self,
         _plan: &mut RunPlan,
         _ctx: &PluginCtx,
-    ) -> anyhow::Result<Box<dyn PluginRun>> {
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
         Ok(Box::new(TagOnce {
             repo: self.0.clone(),
             done: false,

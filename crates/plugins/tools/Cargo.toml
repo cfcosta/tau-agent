@@ -7,7 +7,6 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 globset.workspace = true
@@ -24,6 +23,7 @@ serde_json.workspace = true
 similar.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "process"] }
 tokio-util.workspace = true
 unicode-normalization.workspace = true
