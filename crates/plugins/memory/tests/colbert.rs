@@ -85,42 +85,63 @@ const VOCAB: [&str; 10] = [
     "header",
 ];
 
+/// Words from the vocabulary, none at all included.
 #[hegel::composite]
 fn text(tc: &TestCase) -> String {
-    tc.draw(
-        gs::vecs(gs::sampled_from(VOCAB.to_vec()))
-            .min_size(1)
-            .max_size(8),
-    )
-    .join(" ")
+    tc.draw(gs::vecs(gs::sampled_from(VOCAB.to_vec())).max_size(8))
+        .join(" ")
+}
+
+/// MaxSim by its definition: nothing across dimensions; otherwise each
+/// query token's best dot product with a document token, summed over
+/// the tokens that have one (none do against an empty document).
+fn reference(query: &Tokens, doc: &Tokens) -> f32 {
+    if query.dim != doc.dim {
+        return 0.0;
+    }
+    let mut sum = 0.0;
+    for q in 0..query.count() {
+        let mut best: Option<f32> = None;
+        for d in 0..doc.count() {
+            let dot: f32 = query
+                .row(q)
+                .iter()
+                .zip(doc.row(d))
+                .map(|(a, b)| a * b)
+                .sum();
+            best = Some(best.map_or(dot, |best| best.max(dot)));
+        }
+        sum += best.unwrap_or(0.0);
+    }
+    sum
 }
 
 #[hegel::test(test_cases = 200)]
 fn max_sim_is_its_definition_and_grows_with_the_document(tc: TestCase) {
     let query = tokens(&tc.draw(text()));
     let doc_text = tc.draw(text());
-    let doc = tokens(&doc_text);
-    // Each query token's best match, summed.
-    let want: f32 = (0..query.count())
-        .map(|q| {
-            (0..doc.count())
-                .map(|d| {
-                    query
-                        .row(q)
-                        .iter()
-                        .zip(doc.row(d))
-                        .map(|(a, b)| a * b)
-                        .sum::<f32>()
-                })
-                .fold(f32::NEG_INFINITY, f32::max)
-        })
-        .sum();
-    assert!((max_sim(&query, &doc) - want).abs() < 1e-4);
-    // More tokens never lower it: each maximum is over a superset.
-    let longer = tokens(&format!("{doc_text} {}", tc.draw(text())));
-    assert!(max_sim(&query, &longer) >= max_sim(&query, &doc) - 1e-5);
+    let mut doc = tokens(&doc_text);
+    // The same values read with another width: a different model's.
+    if tc.draw(gs::weighted_booleans(0.2)) {
+        tc.event("dimensions differ");
+        doc.dim = DIM / 2;
+        assert_eq!(max_sim(&query, &doc), 0.0);
+        return;
+    }
+    if doc.count() == 0 {
+        tc.event("empty document");
+    }
+    assert!((max_sim(&query, &doc) - reference(&query, &doc)).abs() < 1e-4);
+    // More tokens never lower it, from a document with any: each
+    // maximum is over a superset.
+    if doc.count() > 0 {
+        let longer = tokens(&format!("{doc_text} {}", tc.draw(text())));
+        assert!(max_sim(&query, &longer) >= max_sim(&query, &doc) - 1e-5);
+    }
 }
 
+/// The index answers with every live note, scored by MaxSim against
+/// the query, best first and ties by id, up to its limit.
 #[hegel::test(test_cases = 100)]
 fn the_index_answers_only_with_live_notes(tc: TestCase) {
     let mut index = Colbert::new(Fake::default());
@@ -138,12 +159,21 @@ fn the_index_answers_only_with_live_notes(tc: TestCase) {
             live.remove(&id);
         }
     }
-    let hits = index.search(&tc.draw(text()), 10).unwrap();
-    assert!(
-        hits.iter().all(|(id, _)| live.contains_key(id)),
-        "{hits:?} vs {live:?}"
-    );
-    assert!(hits.len() <= live.len());
+    let query = tc.draw(text());
+    let limit = tc.draw(gs::integers::<usize>().max_value(5));
+    let hits = index.search(&query, limit).unwrap();
+    let mut want: Vec<(String, f32)> = if query.trim().is_empty() {
+        Vec::new()
+    } else {
+        live.iter()
+            .map(|(id, text)| {
+                (id.clone(), reference(&tokens(&query), &tokens(text)))
+            })
+            .collect()
+    };
+    want.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    want.truncate(limit);
+    assert_eq!(hits, want, "{live:?}");
 }
 
 #[test]
@@ -216,7 +246,8 @@ fn a_shared_encoder_answers_as_its_own(tc: TestCase) {
     let mut a = Colbert::new(shared.clone());
     let mut b = Colbert::new(shared);
     let mut own = Colbert::new(Fake::default());
-    for n in 0..tc.draw(gs::integers::<usize>().min_value(1).max_value(6)) {
+    let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(6));
+    for n in 0..count {
         let text = tc.draw(text());
         let index = if n % 2 == 0 { &mut a } else { &mut b };
         index.upsert(&format!("n{n}"), &text).unwrap();
@@ -228,7 +259,7 @@ fn a_shared_encoder_answers_as_its_own(tc: TestCase) {
     both.sort_by(|x, y| y.1.total_cmp(&x.1).then_with(|| x.0.cmp(&y.0)));
     assert_eq!(both, own.semantic(&query, 10).unwrap());
     // Both indexes encoded through the one encoder.
-    assert_eq!(*fake.encoded.lock().unwrap(), both.len());
+    assert_eq!(*fake.encoded.lock().unwrap(), count);
 }
 
 #[hegel::test(test_cases = 100)]
@@ -236,15 +267,18 @@ fn an_embedding_file_reads_back(tc: TestCase) {
     let dir = tempfile::tempdir().unwrap();
     let dim = tc.draw(gs::integers::<usize>().min_value(1).max_value(16));
     let count = tc.draw(gs::integers::<usize>().max_value(20));
+    // Any value, NaN and infinities too: the file holds bits.
     let values: Vec<f32> = (0..dim * count)
-        .map(|_| {
-            tc.draw(gs::floats::<f32>().allow_nan(false).allow_infinity(false))
-        })
+        .map(|_| tc.draw(gs::floats::<f32>().allow_nan(true)))
         .collect();
     let tokens = Tokens { dim, values };
     let path = dir.path().join("x.emb");
     write_tokens(&path, &tokens).unwrap();
-    assert_eq!(read_tokens(&path).unwrap(), tokens);
+    let read = read_tokens(&path).unwrap();
+    let bits = |tokens: &Tokens| -> Vec<u32> {
+        tokens.values.iter().map(|value| value.to_bits()).collect()
+    };
+    assert_eq!((read.dim, bits(&read)), (tokens.dim, bits(&tokens)));
 }
 
 /// docbert's model itself: unit-length token vectors, and a paraphrase

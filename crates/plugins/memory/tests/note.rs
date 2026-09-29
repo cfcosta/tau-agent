@@ -4,7 +4,7 @@
 mod common;
 
 use common::{id, note};
-use hegel::{TestCase, generators as gs};
+use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_memory::note::{Link, LinkType, Note, is_id, slug, wiki_links};
 
 #[hegel::test(test_cases = 300)]
@@ -39,6 +39,46 @@ fn a_slug_is_an_id(tc: TestCase) {
     let title: String = tc.draw(gs::text().max_size(200));
     let id = slug(&title);
     assert!(is_id(&id), "{id:?} from {title:?}");
+}
+
+/// A slug is its own slug, and an id of words joined by single dashes
+/// is its own slug too.
+#[hegel::test]
+fn a_slug_is_a_fixed_point(tc: TestCase) {
+    let title: String = tc.draw(gs::text().max_size(200));
+    let id = slug(&title);
+    assert_eq!(slug(&id), id);
+    let words: String =
+        tc.draw(gs::from_regex("[a-z0-9]{1,10}(?:-[a-z0-9]{1,10}){0,4}"));
+    assert_eq!(slug(&words), words);
+}
+
+/// `[[id]]` links come back in order, each once; brackets around what
+/// is not an id, and an unclosed pair, give nothing.
+#[hegel::test]
+fn wiki_links_are_the_ids_in_brackets(tc: TestCase) {
+    let parts: Vec<(String, Option<String>)> = tc.draw(
+        gs::vecs(hegel::one_of!(
+            id().map(|id| (format!("[[{id}]]"), Some(id))),
+            gs::from_regex("[a-z .]{0,8}").map(|text| (text, None)),
+            gs::sampled_from(vec!["[[Not An Id]]", "[[]]", "[[a b]]"])
+                .map(|text| (text.to_owned(), None)),
+        ))
+        .max_size(8),
+    );
+    let tail = tc.draw(gs::sampled_from(vec!["", "[[x", "[[y]"]));
+    let text: String = parts
+        .iter()
+        .map(|(text, _)| text.as_str())
+        .chain([tail])
+        .collect();
+    let mut want: Vec<String> = Vec::new();
+    for id in parts.into_iter().filter_map(|(_, id)| id) {
+        if !want.contains(&id) {
+            want.push(id);
+        }
+    }
+    assert_eq!(wiki_links(&text), want, "{text:?}");
 }
 
 #[test]

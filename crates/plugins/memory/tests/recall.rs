@@ -3,14 +3,14 @@
 
 mod common;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use common::pool_note;
 use hegel::{TestCase, generators as gs};
 use tau_memory::{
     index::{B, Bm25, Index, K1, index_text},
-    note::Note,
-    recall::{linked, recall},
+    note::{By, Note, NoteType, Source},
+    recall::{SUPERSEDED_WEIGHT, linked, recall},
     store::Notes,
 };
 
@@ -111,9 +111,16 @@ fn bm25_scores_as_its_formula(tc: TestCase) {
 fn setup(tc: &TestCase, dir: &std::path::Path) -> (Notes, Bm25) {
     let mut notes = Notes::open(dir).unwrap();
     let mut index = Bm25::new();
+    // Sometimes no note links anywhere, so seeds are left to fill the
+    // budget.
+    let unlinked = tc.draw(gs::weighted_booleans(0.2));
     for _ in 0..tc.draw(gs::integers::<usize>().min_value(1).max_value(8)) {
         let mut note: Note = tc.draw(pool_note());
         note.body = format!("{}\n{}", note.body, tc.draw(words_text()));
+        if unlinked {
+            note.links.clear();
+            note.body = tc.draw(words_text());
+        }
         note.valid_to = tc.draw(gs::optional(gs::just(5_u64)));
         if notes.create(note.clone()).is_ok() {
             index.upsert(&note.id, &index_text(&note)).unwrap();
@@ -122,12 +129,45 @@ fn setup(tc: &TestCase, dir: &std::path::Path) -> (Notes, Bm25) {
     (notes, index)
 }
 
+/// The seeds recall starts from: what the index answers for `limit`,
+/// notes that are gone left out, superseded ones weighed down, best
+/// first and ties by id.
+fn weighted(
+    notes: &Notes,
+    index: &dyn Index,
+    query: &str,
+    limit: usize,
+) -> Vec<String> {
+    let mut seeds: Vec<(String, f32)> = index
+        .search(query, limit)
+        .unwrap()
+        .into_iter()
+        .filter_map(|(id, score)| {
+            let note = notes.get(&id)?;
+            let score = match (note.is_superseded(), score >= 0.0) {
+                (false, _) => score,
+                (true, true) => score * SUPERSEDED_WEIGHT,
+                (true, false) => score / SUPERSEDED_WEIGHT,
+            };
+            Some((id, score))
+        })
+        .collect();
+    seeds.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    seeds.into_iter().map(|(id, _)| id).collect()
+}
+
+/// Recall keeps its budget and lists each note once; seeds come in
+/// their weighted order, and each linked note after the seed it hangs
+/// from; and the budget fills when there is enough to fill it with.
 #[hegel::test(test_cases = 200)]
 fn recall_keeps_its_budget_and_follows_links(tc: TestCase) {
     let dir = tempfile::tempdir().unwrap();
     let (notes, index) = setup(&tc, dir.path());
     let query = tc.draw(words_text());
-    let budget = tc.draw(gs::integers::<usize>().max_value(6));
+    let budget = tc.draw(hegel::one_of!(
+        gs::integers::<usize>().max_value(3),
+        gs::integers::<usize>().max_value(6),
+    ));
     let hits = recall(&notes, &index, &query, budget).unwrap();
 
     assert!(hits.len() <= budget);
@@ -136,20 +176,25 @@ fn recall_keeps_its_budget_and_follows_links(tc: TestCase) {
     unique.sort();
     unique.dedup();
     assert_eq!(unique.len(), ids.len(), "each note once: {ids:?}");
+    // Recall asks the index for three times its budget.
+    let seeds = weighted(&notes, &index, &query, budget * 3);
+    let mut last_seed = None;
     for (at, hit) in hits.iter().enumerate() {
         let note = notes.get(&hit.id).expect("a hit is a note");
         assert_eq!(hit.superseded, note.is_superseded());
         match &hit.via {
-            // A seed: search found it.
-            None => assert!(
-                index
-                    .search(&query, 100)
-                    .unwrap()
+            // A seed, after the seeds that outrank it.
+            None => {
+                let rank = seeds
                     .iter()
-                    .any(|(id, _)| *id == hit.id)
-            ),
+                    .position(|id| *id == hit.id)
+                    .expect("search found it");
+                assert!(last_seed < Some(rank), "{ids:?} vs {seeds:?}");
+                last_seed = Some(rank);
+            }
             // Reached by a link from a seed listed before it.
             Some((from, kind)) => {
+                tc.event("hop used");
                 let seed = ids
                     .iter()
                     .position(|id| id == from)
@@ -161,38 +206,22 @@ fn recall_keeps_its_budget_and_follows_links(tc: TestCase) {
             }
         }
     }
-}
-
-#[hegel::test(test_cases = 100)]
-fn superseding_a_note_never_raises_it(tc: TestCase) {
-    let dir = tempfile::tempdir().unwrap();
-    let (mut notes, index) = setup(&tc, dir.path());
-    let query = tc.draw(words_text());
-    let seeds_of = |notes: &Notes| -> Vec<String> {
-        recall(notes, &index, &query, 12)
-            .unwrap()
-            .into_iter()
-            .filter(|hit| hit.via.is_none())
-            .map(|hit| hit.id)
-            .collect()
-    };
-    let before = seeds_of(&notes);
-    // Any current seed: the first cannot rise, so it proves nothing alone.
-    let current: Vec<String> = before
-        .iter()
-        .filter(|id| !notes.get(id).unwrap().is_superseded())
-        .cloned()
-        .collect();
-    if current.is_empty() {
-        return;
+    // A third of the budget is kept for linked notes, from the seeds
+    // that come first; whatever they leave, later seeds fill.
+    let first = seeds.len().min(budget - budget / 3);
+    let mut candidates: BTreeSet<&str> =
+        seeds.iter().map(String::as_str).collect();
+    for seed in &seeds[..first] {
+        candidates.extend(
+            linked(&notes, seed)
+                .into_iter()
+                .map(|(id, _)| notes.get(&id).unwrap().id.as_str()),
+        );
     }
-    let id = tc.draw(gs::sampled_from(current));
-    let mut note = notes.get(&id).unwrap().clone();
-    note.valid_to = Some(9);
-    notes.update(note).unwrap();
-    let after = seeds_of(&notes);
-    let at = |list: &[String]| list.iter().position(|x| *x == id).unwrap();
-    assert!(at(&after) >= at(&before), "{before:?} then {after:?}");
+    assert_eq!(hits.len(), budget.min(candidates.len()), "{hits:?}");
+    if hits.iter().filter(|hit| hit.via.is_none()).count() > first {
+        tc.event("reserve left unused");
+    }
 }
 
 /// An index that answers every query with the same drawn scores, which
@@ -220,52 +249,130 @@ impl Index for Scored {
     }
 }
 
-/// Superseding a note never raises it, whatever the sign of the scores.
+/// The seeds recall lists for `query`, in order.
+fn seeds_of(notes: &Notes, index: &dyn Index, query: &str) -> Vec<String> {
+    recall(notes, index, query, 12)
+        .unwrap()
+        .into_iter()
+        .filter(|hit| hit.via.is_none())
+        .map(|hit| hit.id)
+        .collect()
+}
+
+/// Supersedes `id`, and checks it did not rise among `index`'s seeds,
+/// and the others kept their order.
+fn supersede_and_check(
+    notes: &mut Notes,
+    index: &dyn Index,
+    query: &str,
+    id: &str,
+) {
+    let before = seeds_of(notes, index, query);
+    let mut note = notes.get(id).unwrap().clone();
+    note.valid_to = Some(9);
+    notes.update(note).unwrap();
+    let after = seeds_of(notes, index, query);
+    let at = |list: &[String]| list.iter().position(|x| x == id).unwrap();
+    assert!(at(&after) >= at(&before), "{before:?} then {after:?}");
+    let others = |list: &[String]| -> Vec<String> {
+        list.iter().filter(|x| *x != id).cloned().collect()
+    };
+    assert_eq!(others(&after), others(&before), "{id}");
+}
+
+/// Superseding a note never raises it, and leaves the others in their
+/// order, under BM25 or an index whose scores may be negative.
 #[hegel::test(test_cases = 200)]
-fn superseding_never_raises_a_note_whatever_its_score(tc: TestCase) {
+fn superseding_a_note_never_raises_it(tc: TestCase) {
     let dir = tempfile::tempdir().unwrap();
-    let (mut notes, _) = setup(&tc, dir.path());
-    let index = Scored(
-        notes
+    let (mut notes, bm25) = setup(&tc, dir.path());
+    let query = tc.draw(words_text());
+    let index: Box<dyn Index> = if tc.draw(gs::booleans()) {
+        tc.event("bm25");
+        Box::new(bm25)
+    } else {
+        tc.event("scored");
+        let scores = notes
             .iter()
             .map(|note| {
                 let score =
                     tc.draw(gs::floats::<f32>().min_value(-5.0).max_value(5.0));
                 (note.id.clone(), score)
             })
-            .collect(),
-    );
-    let seeds_of = |notes: &Notes| -> Vec<String> {
-        recall(notes, &index, "q", 12)
-            .unwrap()
-            .into_iter()
-            .filter(|hit| hit.via.is_none())
-            .map(|hit| hit.id)
-            .collect()
+            .collect();
+        Box::new(Scored(scores))
     };
-    let before = seeds_of(&notes);
-    let current: Vec<String> = before
-        .iter()
+    // Any current seed: the first cannot rise, so it proves nothing alone.
+    let current: Vec<String> = seeds_of(&notes, index.as_ref(), &query)
+        .into_iter()
         .filter(|id| !notes.get(id).unwrap().is_superseded())
-        .cloned()
         .collect();
-    if current.is_empty() {
-        return;
-    }
+    tc.assume(!current.is_empty());
     let id = tc.draw(gs::sampled_from(current));
-    let mut note = notes.get(&id).unwrap().clone();
-    note.valid_to = Some(9);
-    notes.update(note).unwrap();
-    let after = seeds_of(&notes);
-    let at = |list: &[String]| list.iter().position(|x| *x == id).unwrap();
-    assert!(at(&after) >= at(&before), "{before:?} then {after:?}");
+    supersede_and_check(&mut notes, index.as_ref(), &query, &id);
 }
 
-#[hegel::test(test_cases = 100)]
-fn a_word_only_one_note_holds_finds_it_first(tc: TestCase) {
+/// A note with nothing but an id and a description.
+fn plain(id: &str, description: &str) -> Note {
+    Note {
+        id: id.into(),
+        title: format!("about {id}"),
+        description: description.into(),
+        kind: NoteType::Fact,
+        tags: Vec::new(),
+        created: 1,
+        updated: 1,
+        valid_from: 1,
+        valid_to: None,
+        stale: None,
+        source: Source::new(By::Agent),
+        links: Vec::new(),
+        body: String::new(),
+    }
+}
+
+/// Superseding never raises a note whose score is negative: halving it
+/// would. The scores are pinned where that went wrong.
+#[hegel::test(test_cases = 200)]
+#[hegel::explicit_test_case(scores = vec![-1.0_f32, -1.5], pick = 1_usize)]
+fn superseding_never_raises_a_note_whatever_its_score(tc: TestCase) {
+    let scores: Vec<f32> = tc.draw(
+        gs::vecs(gs::floats::<f32>().min_value(-5.0).max_value(5.0))
+            .min_size(1)
+            .max_size(5),
+    );
+    let pick = tc.draw(gs::integers::<usize>().max_value(scores.len() - 1));
     let dir = tempfile::tempdir().unwrap();
-    let (mut notes, mut index) = setup(&tc, dir.path());
-    let mut note = notes.iter().next().unwrap().clone();
+    let mut notes = Notes::open(dir.path()).unwrap();
+    let ids: Vec<String> = (0..scores.len()).map(|n| format!("n{n}")).collect();
+    for id in &ids {
+        notes.create(plain(id, "a note")).unwrap();
+    }
+    let index = Scored(ids.iter().cloned().zip(scores).collect());
+    supersede_and_check(&mut notes, &index, "q", &ids[pick]);
+}
+
+/// A word only one note holds finds that note first, with the line that
+/// holds it as the snippet.
+#[hegel::test(test_cases = 100)]
+#[hegel::explicit_test_case(
+    drawn = vec![plain("a", "retry the header"), plain("b", "a cache")],
+    id = "a".to_owned()
+)]
+fn a_word_only_one_note_holds_finds_it_first(tc: TestCase) {
+    let drawn: Vec<Note> =
+        tc.draw(gs::vecs(pool_note()).min_size(1).max_size(8));
+    let dir = tempfile::tempdir().unwrap();
+    let mut notes = Notes::open(dir.path()).unwrap();
+    let mut index = Bm25::new();
+    for note in drawn {
+        if notes.create(note.clone()).is_ok() {
+            index.upsert(&note.id, &index_text(&note)).unwrap();
+        }
+    }
+    let ids: Vec<String> = notes.iter().map(|note| note.id.clone()).collect();
+    let id = tc.draw(gs::sampled_from(ids));
+    let mut note = notes.get(&id).unwrap().clone();
     note.body.push_str("\nzanzibar_only_here");
     note.valid_to = None;
     notes.update(note.clone()).unwrap();

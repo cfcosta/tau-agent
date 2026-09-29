@@ -38,7 +38,8 @@ fn note_unprinted(tc: &TestCase) -> Note {
             why: tc.draw(gs::optional(line())),
         })
         .collect();
-    let created: u64 = tc.draw(gs::integers::<u64>().max_value(1 << 50));
+    // Each time on its own: a round trip that swapped two would show.
+    let time = || gs::integers::<u64>().max_value(1 << 50);
     Note {
         id: tc.draw(id()),
         title: tc.draw(line()),
@@ -46,9 +47,9 @@ fn note_unprinted(tc: &TestCase) -> Note {
         kind: tc
             .draw(gs::sampled_from(NoteType::ALL.to_vec()).print_as_debug()),
         tags: tc.draw(gs::vecs(line()).max_size(3)),
-        created,
-        updated: created,
-        valid_from: created,
+        created: tc.draw(time()),
+        updated: tc.draw(time()),
+        valid_from: tc.draw(time()),
         valid_to: tc
             .draw(gs::optional(gs::integers::<u64>().max_value(1 << 50))),
         stale: tc.draw(gs::optional(line())),
@@ -92,6 +93,10 @@ fn pool_note_unprinted(tc: &TestCase) -> Note {
     note.id = tc.draw(pool_id());
     note.valid_to = None;
     note.stale = None;
+    // Written before the tests' clock starts, at 1_000, or just after:
+    // old enough, often, for a change to make it stale.
+    note.created = tc.draw(gs::integers::<u64>().max_value(1_100));
+    note.updated = tc.draw(gs::integers::<u64>().max_value(1_100));
     note.links = (0..tc.draw(gs::integers::<usize>().max_value(3)))
         .map(|_| Link {
             to: tc.draw(pool_id()),

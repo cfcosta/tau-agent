@@ -114,8 +114,39 @@ fn a_note_written_through_the_tools_reads_back(tc: TestCase) {
     let tools = plugin.tools();
     let tool =
         |name: &str| tools.iter().find(|t| t.name() == name).unwrap().clone();
+    // Notes in both scopes that do not hold the word.
+    let others = tc.draw(gs::integers::<usize>().max_value(4));
+    for n in 0..others {
+        let scope = if n % 2 == 0 {
+            &scopes.repo
+        } else {
+            scopes.user.as_ref().unwrap()
+        };
+        scope
+            .lock()
+            .unwrap()
+            .write(
+                draft(
+                    NoteType::Fact,
+                    &format!("other note {n}"),
+                    "the retry loop reads a header",
+                ),
+                1,
+            )
+            .unwrap();
+    }
     let word: String = tc.draw(gs::from_regex("[a-z]{6,10}"));
-    let body = format!("{} {word}", tc.draw(gs::text().exclude_characters("\u{200B}\u{200C}\u{200D}\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2060}\u{2061}\u{2062}\u{2063}\u{2064}\u{2066}\u{2067}\u{2068}\u{2069}\u{FEFF}").max_size(80)));
+    tc.assume(
+        !["other", "note", "about", "retry", "header"].contains(&word.as_str()),
+    );
+    // Any text but the characters that hide text, which are refused
+    // however the rest reads.
+    let noise: String = tc.draw(gs::text().max_size(80));
+    let noise: String = noise
+        .chars()
+        .filter(|c| tau_memory::safety::refusal(&c.to_string()).is_none())
+        .collect();
+    let body = format!("{noise} {word}");
     let scope = tc.draw(gs::sampled_from(vec!["repository", "user"]));
     let kind =
         tc.draw(gs::sampled_from(vec!["fact", "gotcha", "decision", "case"]));
