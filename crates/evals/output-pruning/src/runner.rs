@@ -25,7 +25,7 @@ use tau_fast_compaction::{
     NAME,
     OutputStats,
     Settings,
-    output::SPILL,
+    output::{self, SPILL, chunk_id},
     state,
 };
 use tau_jev::{Jev, JevError, Request, Response};
@@ -72,18 +72,23 @@ pub struct Metered {
     tally: Mutex<Tally>,
 }
 
-/// Requests, input tokens and dollars, and Jev's answers by band.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+/// Requests, input tokens and dollars, Jev's answers by band, and each
+/// question's largest answer by its id (a chunk's, such as `c7`).
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Tally {
     pub requests: usize,
     pub input_tokens: u64,
     pub cost_usd: f64,
     pub bands: Bands,
+    pub answers: std::collections::BTreeMap<String, f64>,
 }
 
-/// Noul answers: at most 0.1 (confident noise, the only answers that
-/// let a chunk go), above 0.1 and under 0.5 (uncertain, kept), and 0.5
-/// or more (needed).
+/// Noul answers at most this are confident noise.
+pub const NOISE: f64 = 0.1;
+
+/// Noul answers: at most [`NOISE`] (confident noise), above it and under
+/// 0.5 (uncertain; with the default threshold, these go too), and 0.5 or
+/// more (needed: the chunk stays).
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, serde::Deserialize,
 )]
@@ -95,7 +100,7 @@ pub struct Bands {
 
 impl Bands {
     pub fn record(&mut self, noul: f64) {
-        if noul <= tau_fast_compaction::output::UNCERTAIN {
+        if noul <= NOISE {
             self.noise += 1;
         } else if noul < 0.5 {
             self.uncertain += 1;
@@ -114,7 +119,7 @@ impl Metered {
     }
 
     pub fn tally(&self) -> Tally {
-        *self.tally.lock().expect("not poisoned")
+        self.tally.lock().expect("not poisoned").clone()
     }
 }
 
@@ -130,6 +135,8 @@ impl Jev for Metered {
             for id in request.questions.keys() {
                 if let Ok(noul) = response.noul(id) {
                     tally.bands.record(noul);
+                    let most = tally.answers.entry(id.clone()).or_insert(noul);
+                    *most = most.max(noul);
                 }
             }
         }
@@ -185,6 +192,7 @@ pub async fn run(
     bash: Bash,
 ) -> anyhow::Result<Trial> {
     settings.archive_dir = work.to_owned();
+    let chunk_lines = settings.output.chunk_lines;
     let spill = work.join(SPILL_NAME);
     let (native, spilled) = match bash {
         Bash::Tau => bash_result(&workload.output, &spill),
@@ -292,6 +300,7 @@ pub async fn run(
             .collect()
     };
     let tally = metered.tally();
+    let layout = layout(workload, chunk_lines);
     let tokens_before = state::estimate_tokens(&native);
     let tokens_after = state::estimate_tokens(&seen);
     Ok(Trial {
@@ -317,10 +326,53 @@ pub async fn run(
         jev_input_tokens: tally.input_tokens,
         cost_usd: tally.cost_usd,
         answers: tally.bands,
+        scores: (0..layout.chunk_tokens.len())
+            .map(|index| tally.answers.get(&chunk_id(index)).copied())
+            .collect(),
+        chunk_tokens: layout.chunk_tokens,
+        needle_chunks: layout.needle_chunks,
         latency_ms,
         archive: stats.and_then(|stats| stats.archive),
         error,
     })
+}
+
+/// How the plugin chunks a workload's whole output.
+struct Layout {
+    /// Each chunk's estimated tokens.
+    chunk_tokens: Vec<usize>,
+    /// The chunk each needle is in, in the workload's order.
+    needle_chunks: Vec<usize>,
+}
+
+fn layout(workload: &Workload, chunk_lines: usize) -> Layout {
+    let lines = output::lines(&workload.output);
+    let ranges = output::chunks(lines.len(), chunk_lines);
+    // The piece each whole line starts at.
+    let mut starts = Vec::new();
+    let mut starting = true;
+    for (index, line) in lines.iter().enumerate() {
+        if starting {
+            starts.push(index);
+        }
+        starting = line.ends;
+    }
+    Layout {
+        chunk_tokens: ranges
+            .iter()
+            .map(|range| {
+                state::estimate_tokens(&output::text_of(&lines, range.clone()))
+            })
+            .collect(),
+        needle_chunks: workload
+            .needles
+            .iter()
+            .filter_map(|needle| {
+                let piece = *starts.get(needle.line)?;
+                ranges.iter().position(|range| range.contains(&piece))
+            })
+            .collect(),
+    }
 }
 
 /// What to evaluate.

@@ -15,6 +15,7 @@ fn trial(tc: &TestCase) -> Trial {
     let tail_retained = tc.draw(gs::integers::<usize>().max_value(needles));
     let tokens_before = tc.draw(gs::integers::<usize>().max_value(100_000));
     let tokens_after = tc.draw(gs::integers::<usize>().max_value(120_000));
+    let tokens_full = tc.draw(gs::integers::<usize>().max_value(200_000));
     Trial {
         workload: tc
             .draw(gs::sampled_from(Kind::ALL.to_vec()).print_as_debug()),
@@ -28,7 +29,7 @@ fn trial(tc: &TestCase) -> Trial {
         chunks: None,
         kept_chunks: None,
         spilled: tc.draw(gs::booleans()),
-        tokens_full: tokens_before,
+        tokens_full,
         tokens_before,
         tokens_after,
         replaced: tc.draw(gs::booleans()),
@@ -40,6 +41,9 @@ fn trial(tc: &TestCase) -> Trial {
             uncertain: tc.draw(gs::integers::<usize>().max_value(200)),
             needed: tc.draw(gs::integers::<usize>().max_value(200)),
         },
+        scores: Vec::new(),
+        chunk_tokens: Vec::new(),
+        needle_chunks: Vec::new(),
         latency_ms: tc.draw(gs::integers::<u64>().max_value(10_000)),
         archive: None,
         error: tc
@@ -49,34 +53,48 @@ fn trial(tc: &TestCase) -> Trial {
 }
 
 /// What a summary of `trials` should say, computed plainly.
-fn reference(trials: &[&Trial]) -> (usize, usize, usize, usize, f64, f64) {
+/// A trial's share of `of` it saved, or 0.
+fn saved(of: usize, after: usize) -> f64 {
+    if of == 0 || after >= of {
+        0.0
+    } else {
+        (of - after) as f64 / of as f64
+    }
+}
+
+fn reference(trials: &[&Trial]) -> (usize, usize, usize, usize, f64, f64, f64) {
     let mut needles = 0;
     let mut retained = 0;
     let mut requests = 0;
     let mut replaced = 0;
     let mut reductions = 0.0;
+    let mut of_whole = 0.0;
     let mut cost = 0.0;
     for trial in trials {
         needles += trial.needles;
         retained += trial.retained;
         requests += trial.requests;
         replaced += usize::from(trial.replaced);
-        reductions += if trial.tokens_before == 0
-            || trial.tokens_after >= trial.tokens_before
-        {
-            0.0
-        } else {
-            (trial.tokens_before - trial.tokens_after) as f64
-                / trial.tokens_before as f64
-        };
+        reductions += saved(trial.tokens_before, trial.tokens_after);
+        of_whole += saved(trial.tokens_full, trial.tokens_after);
         cost += trial.cost_usd;
     }
-    let mean = if trials.is_empty() {
-        0.0
-    } else {
-        reductions / trials.len() as f64
+    let mean = |total: f64| {
+        if trials.is_empty() {
+            0.0
+        } else {
+            total / trials.len() as f64
+        }
     };
-    (needles, retained, requests, replaced, mean, cost)
+    (
+        needles,
+        retained,
+        requests,
+        replaced,
+        mean(reductions),
+        mean(of_whole),
+        cost,
+    )
 }
 
 /// One summary per workload with trials, in order, then the total;
@@ -103,7 +121,7 @@ fn summaries_match_a_reference(tc: TestCase) {
         .chain([("total", trials.iter().collect::<Vec<_>>())]);
     for (summary, (name, of)) in summaries.iter().zip(groups) {
         let of: Vec<&Trial> = of;
-        let (needles, retained, requests, replaced, mean, cost) =
+        let (needles, retained, requests, replaced, mean, mean_full, cost) =
             reference(&of);
         assert_eq!(summary.workload, name);
         assert_eq!(summary.trials, of.len());
@@ -124,6 +142,7 @@ fn summaries_match_a_reference(tc: TestCase) {
             of.iter().filter(|t| t.error.is_some()).count()
         );
         assert!((summary.mean_reduction - mean).abs() < 1e-9);
+        assert!((summary.mean_reduction_full - mean_full).abs() < 1e-9);
         assert!((summary.cost_usd - cost).abs() < 1e-9);
         match summary.recall() {
             None => assert_eq!(needles, 0),

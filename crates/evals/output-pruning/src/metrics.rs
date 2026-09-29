@@ -42,6 +42,12 @@ pub struct Trial {
     pub cost_usd: f64,
     /// Jev's answers about the chunks, by band.
     pub answers: Bands,
+    /// Each chunk of the whole output's largest answer, when it was
+    /// asked about; its estimated tokens; and the chunk each needle is
+    /// in. Enough to replay another keep rule on the same answers.
+    pub scores: Vec<Option<f64>>,
+    pub chunk_tokens: Vec<usize>,
+    pub needle_chunks: Vec<usize>,
     pub latency_ms: u64,
     /// The file holding the output whole, when the result was replaced.
     pub archive: Option<String>,
@@ -58,6 +64,16 @@ impl Trial {
         }
         (1.0 - self.tokens_after as f64 / self.tokens_before as f64).max(0.0)
     }
+
+    /// The share of the whole output's estimated tokens the model was
+    /// spared: what pruning left out of it, or `bash`'s truncation; 0
+    /// when nothing.
+    pub fn reduction_full(&self) -> f64 {
+        if self.tokens_full == 0 {
+            return 0.0;
+        }
+        (1.0 - self.tokens_after as f64 / self.tokens_full as f64).max(0.0)
+    }
 }
 
 /// The trials of one workload, or of all (`workload: "total"`).
@@ -68,8 +84,10 @@ pub struct Summary {
     pub needles: usize,
     pub retained: usize,
     pub tail_retained: usize,
-    /// Mean of the trials' reductions.
+    /// Mean of the trials' reductions, against what `bash` alone shows
+    /// and against the whole output.
     pub mean_reduction: f64,
+    pub mean_reduction_full: f64,
     pub replaced: usize,
     pub errors: usize,
     pub requests: usize,
@@ -108,6 +126,9 @@ fn summary_of(name: &str, trials: &[&Trial]) -> Summary {
         tail_retained: trials.iter().map(|trial| trial.tail_retained).sum(),
         mean_reduction: mean(
             trials.iter().map(|trial| trial.reduction()).sum(),
+        ),
+        mean_reduction_full: mean(
+            trials.iter().map(|trial| trial.reduction_full()).sum(),
         ),
         replaced: trials.iter().filter(|trial| trial.replaced).count(),
         errors: trials.iter().filter(|trial| trial.error.is_some()).count(),
@@ -148,17 +169,19 @@ fn ratio(value: Option<f64>, retained: usize, needles: usize) -> String {
     }
 }
 
-/// The summaries as a plain-text table. `answers n/u/y` counts Jev's
-/// answers about chunks: confident noise (at most 0.1, the only ones
-/// that let a chunk go), uncertain, and needed (0.5 or more).
+/// The summaries as a plain-text table. `reduction` is against what
+/// `bash` alone shows, `of whole` against the whole output. `answers
+/// n/u/y` counts Jev's answers about chunks: confident noise (at most
+/// 0.1), uncertain, and needed (0.5 or more).
 pub fn table(summaries: &[Summary]) -> String {
     let mut table = format!(
-        "{:<20} {:>6} {:>12} {:>12} {:>9} {:>8} {:>6} {:>8} {:>17} {:>9} {:>8}\n",
+        "{:<20} {:>6} {:>12} {:>12} {:>9} {:>8} {:>8} {:>6} {:>8} {:>17} {:>9} {:>8}\n",
         "workload",
         "trials",
         "recall",
         "tail recall",
         "reduction",
+        "of whole",
         "replaced",
         "errors",
         "requests",
@@ -169,12 +192,13 @@ pub fn table(summaries: &[Summary]) -> String {
     for summary in summaries {
         writeln!(
             table,
-            "{:<20} {:>6} {:>12} {:>12} {:>8.1}% {:>8} {:>6} {:>8} {:>17} {:>9} {:>7.1}s",
+            "{:<20} {:>6} {:>12} {:>12} {:>8.1}% {:>7.1}% {:>8} {:>6} {:>8} {:>17} {:>9} {:>7.1}s",
             summary.workload,
             summary.trials,
             ratio(summary.recall(), summary.retained, summary.needles),
             ratio(summary.tail_recall(), summary.tail_retained, summary.needles),
             summary.mean_reduction * 100.0,
+            summary.mean_reduction_full * 100.0,
             summary.replaced,
             summary.errors,
             summary.requests,

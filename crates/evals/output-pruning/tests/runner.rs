@@ -138,6 +138,19 @@ fn ground_truth_keeps_every_needle() {
                 assert!((trial.reduction() - reduction).abs() < 1e-12);
                 assert!(trial.reduction() > 0.5, "{context}: {reduction}");
                 assert!(trial.requests > 0 && trial.cost_usd > 0.0);
+                // The recorded answers replay the decision: each needle's
+                // chunk scored as needed, every other asked chunk not.
+                assert_eq!(trial.needle_chunks.len(), trial.needles);
+                assert_eq!(Some(trial.scores.len()), trial.chunks);
+                for (index, score) in trial.scores.iter().enumerate() {
+                    let needed = trial.needle_chunks.contains(&index);
+                    let ends = index == 0 || index + 1 == trial.scores.len();
+                    assert_eq!(
+                        *score,
+                        (!ends).then_some(if needed { 0.95 } else { 0.0 }),
+                        "{context}: chunk {index}"
+                    );
+                }
                 if kind == Kind::EarlierRequirement {
                     // The history came in segments: only some states
                     // held the requirement, and the needle was kept.
@@ -199,19 +212,27 @@ fn keeping_nothing_keeps_the_ends() {
     assert_eq!(trial.retained, 0);
 }
 
-/// A Jev uncertain about every chunk (above 0.1, under 0.5) keeps them
-/// all: nothing is replaced, and every answer counts as uncertain.
+/// Jev's answers decide against the threshold alone: a Jev uncertain
+/// about every chunk (0.3) lets every asked chunk go, and one at the
+/// threshold (0.5) keeps them all, so nothing is replaced.
 #[test]
-fn uncertain_answers_keep_everything() {
+fn the_threshold_alone_decides() {
     for kind in [Kind::AllNoise, Kind::NeedleError] {
         let workload = generate(kind, 2);
-        let (trial, _work) =
+        let (uncertain, _work) =
             trial(&workload, FakeJev::nouls(|_| 0.3), Bash::Tau);
-        assert!(!trial.replaced);
-        assert_eq!(trial.retained, trial.tail_retained);
-        assert_eq!(trial.kept_chunks, trial.chunks);
-        assert_eq!((trial.answers.noise, trial.answers.needed), (0, 0));
-        assert!(trial.answers.uncertain > 0);
+        assert!(uncertain.replaced, "{kind:?}");
+        assert_eq!(uncertain.kept_chunks, Some(2));
+        assert_eq!((uncertain.answers.noise, uncertain.answers.needed), (0, 0));
+        assert!(uncertain.answers.uncertain > 0);
+
+        let (needed, _work) =
+            trial(&workload, FakeJev::nouls(|_| 0.5), Bash::Tau);
+        assert!(!needed.replaced, "{kind:?}");
+        assert_eq!(needed.retained, needed.tail_retained);
+        assert_eq!(needed.kept_chunks, needed.chunks);
+        assert_eq!((needed.answers.noise, needed.answers.uncertain), (0, 0));
+        assert!(needed.answers.needed > 0);
     }
 }
 
