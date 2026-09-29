@@ -1,6 +1,6 @@
 # 0009: Child runs land on their parent's stack, then close
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-29
 - Options, with commit graphs:
   [Landing Child Runs](https://claude.ai/artifact/XhxBri4hxYF34fAprH98hC);
