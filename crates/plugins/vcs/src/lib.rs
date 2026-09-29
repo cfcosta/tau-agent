@@ -38,7 +38,7 @@ pub use ops::{ChangeInfo, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT, TurnCommit};
 pub use plugin::VcsPlugin;
 pub use project::{FileDiff, Project, UpdateFrom, Updated};
 pub use run_workspace::{Link, RunWorkspace};
-pub use session::MAX_NEW_FILE_SIZE;
+pub use session::{MAX_NEW_FILE_SIZE, TooLarge};
 pub use vcs::{Identity, Vcs};
 
 /// What every tool returns when the run is cancelled before it starts.

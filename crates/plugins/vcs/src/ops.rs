@@ -179,10 +179,16 @@ pub(crate) fn status(worker: &mut Worker) -> anyhow::Result<Report> {
             text.push_str(&format!("\n{path}"));
         }
     }
-    if !snapshot.untracked.is_empty() {
-        text.push_str("\nNot tracked:");
-        for path in &snapshot.untracked {
-            text.push_str(&format!("\n{path}"));
+    if !snapshot.too_large.is_empty() {
+        text.push_str(
+            "\nLeft out of @ (new files over 1 MiB are not snapshotted):",
+        );
+        for file in &snapshot.too_large {
+            text.push_str(&format!(
+                "\n{} ({:.1} MiB)",
+                file.path,
+                file.size as f64 / (1024. * 1024.)
+            ));
         }
     }
     Ok(Report {
@@ -192,7 +198,7 @@ pub(crate) fn status(worker: &mut Worker) -> anyhow::Result<Report> {
             "parents": parent_infos,
             "changes": changes,
             "conflicts": conflicts,
-            "untracked": snapshot.untracked,
+            "too_large": snapshot.too_large,
         }),
     })
 }
@@ -382,7 +388,7 @@ pub(crate) fn commit(
     message: String,
 ) -> anyhow::Result<Report> {
     if message.trim().is_empty() {
-        bail!("The commit message must not be empty");
+        bail!("The description must not be empty");
     }
     let name = workspace_name(worker)?;
     let (snapshot, committed) = session::mutate(worker, "commit", |tx, wc| {

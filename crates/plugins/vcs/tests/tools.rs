@@ -149,6 +149,33 @@ fn status_shows_written_files() {
     assert!(text.contains("Add files"), "{text}");
 }
 
+/// Every new file is tracked except one over 1 MiB, which status names
+/// with its size and which stays out of `@`.
+#[test]
+fn status_names_files_too_large_to_snapshot() {
+    let repo = Repo::new();
+    repo.write("small.txt", "small\n");
+    let big = "x".repeat(tau_vcs::MAX_NEW_FILE_SIZE as usize + 1);
+    repo.write("big.bin", &big);
+    let (text, details) = repo.ok("vcs_status", json!({}));
+    assert!(
+        text.contains(
+            "Left out of @ (new files over 1 MiB are not snapshotted):\n\
+             big.bin (1.0 MiB)"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("Not tracked"), "{text}");
+    assert_eq!(
+        details["too_large"],
+        json!([{"path": "big.bin", "size": big.len()}])
+    );
+    assert_eq!(
+        details["changes"],
+        json!([{"path": "small.txt", "kind": "added"}])
+    );
+}
+
 /// `vcs_commit` describes the change and starts an empty one on top;
 /// `vcs_log` lists both, newest first, with the ids the tools accept.
 #[test]
@@ -192,7 +219,7 @@ fn commit_needs_a_message() {
     let err = repo
         .call("vcs_commit", json!({"message": "  "}))
         .unwrap_err();
-    assert_eq!(err, "The commit message must not be empty");
+    assert_eq!(err, "The description must not be empty");
 }
 
 /// `limit` caps the rows and says how to see more.

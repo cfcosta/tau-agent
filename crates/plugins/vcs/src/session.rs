@@ -23,6 +23,7 @@ use jj_lib::{
     workspace::{LockedWorkspace, Workspace},
 };
 use pollster::block_on;
+use serde::{Deserialize, Serialize};
 
 use crate::vcs::Worker;
 
@@ -31,7 +32,8 @@ pub(crate) const TOOL_ATTRIBUTE: &str = "tau.vcs.tool";
 /// The operation attribute an undo sets to the operation it undid.
 pub(crate) const UNDO_ATTRIBUTE: &str = "tau.vcs.undo";
 
-/// New files larger than this are left untracked, as jj's default.
+/// New files larger than this stay out of the snapshot, as jj's
+/// default. Every other new file is tracked: nothing is staged.
 pub const MAX_NEW_FILE_SIZE: u64 = 1024 * 1024;
 
 /// How many hex digits of an id the tools show.
@@ -41,8 +43,17 @@ pub(crate) const SHORT_ID: usize = 12;
 pub(crate) struct Snapshot {
     pub repo: Arc<ReadonlyRepo>,
     pub wc: Commit,
-    /// New files the snapshot left untracked, with the reason.
-    pub untracked: Vec<String>,
+    /// New files over [`MAX_NEW_FILE_SIZE`], which the snapshot left
+    /// out of `@`.
+    pub too_large: Vec<TooLarge>,
+}
+
+/// A new file the snapshot left out of `@` for its size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TooLarge {
+    pub path: String,
+    /// Its size in bytes.
+    pub size: u64,
 }
 
 /// Snapshots the working copy, one operation if files changed, and
@@ -97,7 +108,7 @@ pub(crate) fn mutate<T>(
         Snapshot {
             repo,
             wc,
-            untracked: before.untracked,
+            too_large: before.too_large,
         },
         value,
     ))
@@ -135,19 +146,17 @@ fn snapshot_locked(
         max_new_file_size: MAX_NEW_FILE_SIZE,
     };
     let (tree, stats) = block_on(locked.locked_wc().snapshot(&options))?;
-    let untracked = stats
+    // Every new file matches `start_tracking_matcher`, so size is the
+    // only reason a file stays out.
+    let too_large = stats
         .untracked_paths
         .iter()
-        .map(|(path, reason)| {
-            let why = match reason {
-                UntrackedReason::FileTooLarge { size, max_size } => {
-                    format!("{size} bytes, over the {max_size}-byte limit")
-                }
-                UntrackedReason::FileNotAutoTracked => {
-                    "not tracked automatically".to_owned()
-                }
-            };
-            format!("{} ({why})", path.as_internal_file_string())
+        .filter_map(|(path, reason)| match reason {
+            UntrackedReason::FileTooLarge { size, .. } => Some(TooLarge {
+                path: path.as_internal_file_string().to_owned(),
+                size: *size,
+            }),
+            UntrackedReason::FileNotAutoTracked => None,
         })
         .collect();
 
@@ -166,7 +175,7 @@ fn snapshot_locked(
     Ok(Snapshot {
         repo,
         wc,
-        untracked,
+        too_large,
     })
 }
 

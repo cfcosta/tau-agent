@@ -73,9 +73,11 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
 - **Tagged operations.** Each write is one operation, described as
   `tau vcs: <tool>`. It carries the workspace name and the operation
   attribute `tau.vcs.tool = <tool>`. `vcs_undo` uses these tags.
-- **Untracked large files.** New files larger than 1 MiB
-  (`MAX_NEW_FILE_SIZE`, jj's default) stay untracked. `vcs_status`
-  lists them under `Not tracked:`.
+- **Everything is tracked but large new files.** The snapshot tracks
+  every new file, so there is no staging and no list of untracked
+  files. The one exception is a new file larger than 1 MiB
+  (`MAX_NEW_FILE_SIZE`, jj's default): it stays out of `@`, and
+  `vcs_status` names it under `Left out of @` with its size.
 - **Stale working copies.** If another process rewrote this workspace's
   commit, the tools fail with `The working copy is stale: ...` and ask
   for the user to update the workspace. They do not update it
@@ -115,9 +117,10 @@ A changed path is a `FileChange`:
 - Text: the working-copy line, one `Parent (@-):` line for each parent,
   then either `The working copy has no changes.` or
   `Working copy changes:` with one `A`, `M` or `D` line for each path.
-  Then conflicted paths and untracked files, if there are any.
+  Then conflicted paths, and new files too large to snapshot, if there
+  are any.
 - Details: `working_copy`, `parents`, `changes`, `conflicts` (paths),
-  `untracked`.
+  `too_large` (`{ "path", "size" }`, the size in bytes).
 - Conflicts are data. jj keeps them in commits, and the files hold
   conflict markers that the model edits like any other text.
 
@@ -169,7 +172,7 @@ A changed path is a `FileChange`:
 - Does what `jj commit -m` does: describes the working-copy change, and
   then starts a new empty change on top of it as the new `@`. Files do
   not change.
-- An empty message is refused: `The commit message must not be empty`.
+- An empty message is refused: `The description must not be empty`.
 - Details: `committed` and `working_copy`.
 
 ### vcs_new: `{ message? }`
@@ -222,7 +225,7 @@ model gave it, and the real message puts it in backquotes.
 | paths         | absolute, outside the workspace    | `<path> is outside the repository`                                                              |
 | paths         | `..` or not a valid path           | `<path> is not a path inside the repository`                                                    |
 | write tools   | `@` is immutable                   | `The working-copy commit <id> is immutable`                                                     |
-| `vcs_commit`  | empty message                      | `The commit message must not be empty`                                                          |
+| `vcs_commit`  | empty message                      | `The description must not be empty`                                                             |
 | `vcs_restore` | no paths                           | `Name at least one path to restore ("." restores everything)`                                   |
 | `vcs_undo`    | newest operation is not the tools' | `The last operation was not made by the vcs tools in this workspace ("<description>"); ...`     |
 | `vcs_undo`    | concurrent operations              | `The operation log has concurrent operations here; ask the user to undo from the operation log` |
