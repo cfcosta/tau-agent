@@ -2316,7 +2316,8 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let live = self.is_live();
+        // On New Run the message starts a run, whatever the open run does.
+        let live = self.route != Route::NewRun && self.is_live();
         let continues = self.continues_chat();
         let queued = self
             .current()
@@ -2462,8 +2463,13 @@ impl Workspace {
                             .bg(t.panel)
                             .when(!compact, |field| {
                                 field.child(
+                                    // As tall as the chip, so it lines up
+                                    // with the first line of text.
                                     div()
                                         .id("attach")
+                                        .h(control::SMALL)
+                                        .flex()
+                                        .items_center()
                                         .cursor_pointer()
                                         .child(ui::icon(Icon::Paperclip, IconSize::BASE, t.muted))
                                         .on_click(cx.listener(|ws, _, _, cx| {

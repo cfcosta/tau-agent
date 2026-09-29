@@ -587,7 +587,11 @@ pub fn modal(
                         .gap(sp(2.5))
                         .child(glyph)
                         .child(
+                            // Shrinks to the box, so a long title wraps
+                            // instead of running out of it.
                             div()
+                                .flex_1()
+                                .min_w(px(0.))
                                 .typeset(Type::SUBTITLE)
                                 .font_weight(weight::STRONG)
                                 .child(title.into()),

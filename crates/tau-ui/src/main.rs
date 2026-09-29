@@ -12,7 +12,7 @@
 //! - `--demo`: the scripted session; `--finished` opens it done.
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
 //!   compare, plan or ledger; onboarding's welcome, github, token,
-//!   model, repos or ready; pr and pr-opened; alert, a sample dialog;
+//!   model, repos or ready; pr and pr-opened; alert, a sample dialog; attach-alert, a long one on New run;
 //!   models, picker, run-picker or fork-picker (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
 //! - `--frame <w>x<h>`: lay out at exactly that size in the top-left
@@ -422,6 +422,15 @@ fn open_demo_screen(
             return;
         }
         _ => {}
+    }
+    if args.open.as_deref() == Some("attach-alert") {
+        workspace.navigate(Route::NewRun, cx);
+        workspace.show_alert(
+            "Could not attach Before Orthodoxy - Shahab Ahmed.epub",
+            "it is 581 KB; files up to 200 KB can be attached",
+            cx,
+        );
+        return;
     }
     if args.open.as_deref() == Some("alert") {
         workspace.show_alert(
