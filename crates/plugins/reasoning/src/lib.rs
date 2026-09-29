@@ -25,6 +25,8 @@
 //! each change would cost a full resend. A failed request is reported
 //! and never fails the run.
 
+pub mod replay;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -40,7 +42,7 @@ use tau_agent::plugin::{
     RunPlan,
 };
 use tau_ai::{
-    message::{AssistantBlock, InputBlock, Message},
+    message::{AssistantBlock, InputBlock, Message, Usage},
     responses::request::ReasoningEffort,
 };
 use tau_jev::{Answer, Jev, Question, Request};
@@ -366,38 +368,53 @@ impl Reasoning {
         self.threshold = threshold;
         self
     }
+
+    /// What asks Jev for runs on `model`.
+    pub fn picker(&self, model: &str) -> Picker {
+        Picker {
+            jev: self.jev.clone(),
+            levels: self.levels.clone().unwrap_or_else(|| levels_for(model)),
+            threshold: self.threshold,
+            redecides: tau_ai::model::effort_keeps_cache(model),
+        }
+    }
 }
 
 /// What one question to Jev settled.
-struct Asked {
-    choice: Choice,
-    effort: ReasoningEffort,
-    lease: Option<Lease>,
+#[derive(Debug, Clone)]
+pub struct Asked {
+    pub choice: Choice,
+    /// The most likely effort, sure or not.
+    pub effort: ReasoningEffort,
+    /// How long the effort holds; `None` where it never changes mid-run.
+    pub lease: Option<Lease>,
+    pub usage: Usage,
 }
 
-/// A run's part: what it needs to ask Jev again, and to leave the next
-/// message its context.
-struct Steps {
+/// Asks Jev for one model's effort.
+#[derive(Clone)]
+pub struct Picker {
     jev: Arc<dyn Jev>,
     levels: Vec<Level>,
     threshold: f64,
-    /// Whether Jev picks the effort again between turns.
+    /// Whether Jev picks the effort again between turns: only where a
+    /// change of effort keeps the cache.
     redecides: bool,
-    task: String,
-    instructions: String,
-    lease: Option<Lease>,
-    /// Whether the next request is the one `start` already chose for.
-    first: bool,
-    /// Whether a context rewrite happened since the last choice.
-    rewritten: bool,
 }
 
-impl Steps {
-    async fn ask(
-        &self,
-        state: Value,
-        ctx: &PluginCtx,
-    ) -> Result<Asked, String> {
+impl Picker {
+    /// Whether the model has efforts to choose from.
+    pub fn scores(&self) -> bool {
+        !self.levels.is_empty()
+    }
+
+    /// Whether the effort is picked again between turns.
+    pub fn redecides(&self) -> bool {
+        self.redecides
+    }
+
+    /// The effort, and the lease where the model redecides, for `state`.
+    pub async fn ask(&self, state: Value) -> Result<Asked, String> {
         let mut request = Request::new(state).question(
             "effort",
             Question::score(
@@ -418,7 +435,6 @@ impl Steps {
         let response =
             self.jev.ask(&request).await.map_err(|e| e.to_string())?;
         let usage = response.usage();
-        ctx.charge(&usage);
         let Some(Answer::Score {
             probabilities,
             confidence,
@@ -471,25 +487,108 @@ impl Steps {
             choice,
             effort,
             lease,
+            usage,
         })
     }
+}
 
-    /// Whether the effort should be chosen again before this request.
-    fn lease_ended(&self, transcript: &[Message]) -> bool {
-        let failed = transcript
-            .iter()
-            .rev()
-            .map_while(|message| match message {
-                Message::ToolResult(result) => Some(result.is_error),
-                _ => None,
-            })
-            .any(|failed| failed);
-        let user_wrote = matches!(transcript.last(), Some(Message::User(_)));
-        failed
-            || user_wrote
-            || self.rewritten
-            || self.lease.is_none_or(|lease| lease == Lease::OneCall)
+/// What Jev reads as a message comes in: the task, and for a short one
+/// the `context` record the last message left.
+pub fn message_state(
+    task: &str,
+    instructions: &str,
+    context: Option<&Value>,
+) -> Value {
+    let mut state = json!({
+        "step": "user_turn",
+        "task": clip(task, TASK_HEAD, TASK_TAIL),
+        "agent_instructions": instructions,
+    });
+    if task.chars().count() <= SHORT_ASK
+        && let Some(context) = context
+    {
+        state["previous_task"] = context["task"].clone();
+        state["last_proposal"] = context["proposal"].clone();
     }
+    state
+}
+
+/// The record a message leaves the next one: its task and the agent's
+/// last words.
+pub fn context_record(task: &str, said: &str) -> Value {
+    json!({
+        "kind": CONTEXT,
+        "task": clip(task, TASK_HEAD, TASK_TAIL),
+        "proposal": clip(said, 0, SAID_SEEN),
+    })
+}
+
+/// The latest `context` record among `records`.
+pub fn last_context(records: &[Value]) -> Option<&Value> {
+    records
+        .iter()
+        .rev()
+        .find(|record| record["kind"] == CONTEXT)
+}
+
+/// What Jev reads between turns: the step, the effort now, what the
+/// agent last said and the tool results it is about to read.
+pub fn step_state(
+    task: &str,
+    instructions: &str,
+    effort: Option<ReasoningEffort>,
+    transcript: &[Message],
+) -> Value {
+    let user_wrote = matches!(transcript.last(), Some(Message::User(_)));
+    let mut state = json!({
+        "step": if user_wrote { "user_turn" } else { "tool_step" },
+        "task": clip(task, TASK_HEAD, TASK_TAIL),
+        "agent_instructions": instructions,
+        "effort_now": effort.map(ReasoningEffort::as_str),
+    });
+    if let Some(said) = last_said(transcript) {
+        state["agent_said"] = said.into();
+    }
+    if let Some(batch) = tool_batch(transcript) {
+        state["tool_results"] = batch;
+    }
+    state
+}
+
+/// Whether `lease` has ended before a request that sends `transcript`:
+/// a `one_call` lease always has, and a failed tool call, a user
+/// message or a context rewrite since the last pick end any lease.
+pub fn lease_ended(
+    lease: Option<Lease>,
+    rewritten: bool,
+    transcript: &[Message],
+) -> bool {
+    let failed = transcript
+        .iter()
+        .rev()
+        .map_while(|message| match message {
+            Message::ToolResult(result) => Some(result.is_error),
+            _ => None,
+        })
+        .any(|failed| failed);
+    let user_wrote = matches!(transcript.last(), Some(Message::User(_)));
+    failed
+        || user_wrote
+        || rewritten
+        || lease.is_none_or(|lease| lease == Lease::OneCall)
+}
+
+/// A run's part: what it needs to ask Jev again, and to leave the next
+/// message its context.
+struct Steps {
+    picker: Picker,
+    task: String,
+    instructions: String,
+    lease: Option<Lease>,
+    /// Whether the next request is the one `start` already chose for.
+    first: bool,
+    /// Whether a context rewrite happened since the last choice.
+    rewritten: bool,
 }
 
 #[async_trait]
@@ -503,15 +602,8 @@ impl Plugin for Reasoning {
         plan: &mut RunPlan,
         ctx: &PluginCtx,
     ) -> anyhow::Result<Box<dyn PluginRun>> {
-        let levels = self
-            .levels
-            .clone()
-            .unwrap_or_else(|| levels_for(plan.model()));
         let mut steps = Steps {
-            jev: self.jev.clone(),
-            redecides: tau_ai::model::effort_keeps_cache(plan.model()),
-            levels,
-            threshold: self.threshold,
+            picker: self.picker(plan.model()),
             task: plan.input.clone(),
             instructions: plan
                 .instructions
@@ -527,35 +619,25 @@ impl Plugin for Reasoning {
         // An effort someone chose stands, and a model that does not
         // reason has nothing to choose; the run still leaves its context
         // to the next message.
-        if plan.reasoning.is_some() || steps.levels.is_empty() {
-            steps.redecides = false;
-            steps.lease = Some(Lease::UserTurn);
-            steps.levels.clear();
+        if plan.reasoning.is_some() || !steps.picker.scores() {
+            steps.picker.redecides = false;
             return Ok(Box::new(steps));
         }
-        let mut state = json!({
-            "step": "user_turn",
-            "task": clip(&plan.input, TASK_HEAD, TASK_TAIL),
-            "agent_instructions": steps.instructions,
-        });
-        if plan.input.chars().count() <= SHORT_ASK
-            && let Some(context) = plan
-                .records()
-                .iter()
-                .rev()
-                .find(|record| record["kind"] == CONTEXT)
-        {
-            state["previous_task"] = context["task"].clone();
-            state["last_proposal"] = context["proposal"].clone();
-        }
+        let state = message_state(
+            &plan.input,
+            &steps.instructions,
+            last_context(plan.records()),
+        );
         // Unsure or failed, the message goes on as the last one did.
-        let previous = previous(plan.records(), &steps.levels);
-        match steps.ask(state, ctx).await {
+        let previous = previous(plan.records(), &steps.picker.levels);
+        match steps.picker.ask(state).await {
             Ok(Asked {
                 mut choice,
                 effort,
                 lease,
+                usage,
             }) => {
+                ctx.charge(&usage);
                 plan.reasoning = if choice.kind == "chose" {
                     Some(effort)
                 } else {
@@ -590,37 +672,31 @@ impl PluginRun for Steps {
         ctx: &PluginCtx,
     ) -> anyhow::Result<Option<ReasoningEffort>> {
         if std::mem::take(&mut self.first)
-            || !self.redecides
-            || !self.lease_ended(view.transcript)
+            || !self.picker.redecides
+            || !lease_ended(self.lease, self.rewritten, view.transcript)
         {
             return Ok(None);
         }
         self.rewritten = false;
-        let user_wrote =
-            matches!(view.transcript.last(), Some(Message::User(_)));
-        let step = if user_wrote { "user_turn" } else { "tool_step" };
-        let mut state = json!({
-            "step": step,
-            "task": clip(&self.task, TASK_HEAD, TASK_TAIL),
-            "agent_instructions": self.instructions,
-            "effort_now": view.effort.map(ReasoningEffort::as_str),
-        });
-        if let Some(said) = last_said(view.transcript) {
-            state["agent_said"] = said.into();
-        }
-        if let Some(batch) = tool_batch(view.transcript) {
-            state["tool_results"] = batch;
-        }
-        match self.ask(state, ctx).await {
+        let state = step_state(
+            &self.task,
+            &self.instructions,
+            view.effort,
+            view.transcript,
+        );
+        let step = state["step"].as_str().unwrap_or_default().to_owned();
+        match self.picker.ask(state).await {
             Ok(Asked {
                 mut choice,
                 effort,
                 lease,
+                usage,
             }) => {
+                ctx.charge(&usage);
                 self.lease = lease;
                 let chosen = (choice.kind == "chose").then_some(effort);
                 let runs_at = chosen.or(view.effort);
-                choice.step = step.into();
+                choice.step = step;
                 choice.turn = Some(view.turn);
                 choice.runs_at = runs_at.map(|effort| effort.as_str().into());
                 let body = serde_json::to_value(&choice).unwrap_or_default();
@@ -650,12 +726,6 @@ impl PluginRun for Steps {
     }
 
     async fn finish(&mut self, run: &FinishedRun<'_>, ctx: &PluginCtx) {
-        let _ = ctx
-            .record(&json!({
-                "kind": CONTEXT,
-                "task": clip(&self.task, TASK_HEAD, TASK_TAIL),
-                "proposal": clip(run.text, 0, SAID_SEEN),
-            }))
-            .await;
+        let _ = ctx.record(&context_record(&self.task, run.text)).await;
     }
 }

@@ -510,3 +510,63 @@ fn a_short_ask_brings_the_task_it_answers() {
     );
     assert_eq!(asked[2].state.get("previous_task"), None);
 }
+
+/// A stored run replays request by request: Jev scores the message, a
+/// lease that holds skips a request, and a failed tool ends it. Each
+/// decision says what the stored request went out at.
+#[test]
+fn a_stored_run_replays_through_the_policy() {
+    use tau_reasoning::replay::{Entry, replay};
+    let stored = scripted(vec![(3, "user_turn"); 2]);
+    let mut llm = ScriptedModel::new();
+    for text in ["a", "fail"] {
+        llm = llm.turn(|t| t.tool_call("probe", json!({"text": text})));
+    }
+    let llm = llm.turn(|t| t.text("done"));
+    let decisions = block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm)
+            .model("gpt-6-sol")
+            .tool(Probe::new())
+            .plugin(Reasoning::new(Arc::new(stored)));
+        let run = agent.run("fix the lane race", &store).await.unwrap();
+        let timeline: Vec<Entry> = store
+            .timeline(&run.run.0)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter_map(|entry| match entry {
+                tau_store::Entry::Message { body, .. } => {
+                    serde_json::from_str(&body).ok().map(Entry::Message)
+                }
+                tau_store::Entry::Plugin { plugin, body } if plugin == NAME => {
+                    serde_json::from_str(&body).ok().map(Entry::Record)
+                }
+                _ => None,
+            })
+            .collect();
+        let jev = scripted(vec![(1, "tool_chain"), (4, "tool_chain")]);
+        let picker = Reasoning::new(Arc::new(jev)).picker("gpt-6-sol");
+        replay(&picker, "", &timeline).await
+    });
+    let summary: Vec<_> = decisions
+        .iter()
+        .map(|d| {
+            (
+                d.request,
+                d.step,
+                d.recorded.as_deref(),
+                d.asked.is_some(),
+                d.runs_at.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (1, "user_turn", Some("high"), true, Some("low")),
+            (2, "tool_step", Some("high"), false, Some("low")),
+            (3, "tool_step", Some("high"), true, Some("xhigh")),
+        ]
+    );
+}

@@ -387,6 +387,25 @@ recorded, and shows as the run's reasoning note and plan.
 - **Sub-agents** are scored too, when their agent has the plugin. A
   cheap sub-task gets a cheap effort without the caller saying so.
 
+#### Replaying stored runs
+
+`tau_reasoning::replay` walks a stored run's timeline request by request
+through the same policy: a user message after a final answer is scored
+as `start` would score it, and a later request only when the simulated
+lease has ended. Each `Decision` says what the stored request went out
+at (from the run's records), what Jev answered, and what the policy
+would send. The example runs it on the latest runs of a store, each on
+its own model, with the real Jev:
+
+```sh
+cargo run -p tau-reasoning --example replay -- ~/.local/share/tau/runs.db 20
+```
+
+It reports decisions, not savings: the reasoning tokens a request
+would have spent at another effort were never spent, so no stored
+number says what it would have cost. The store keeps no agent
+instructions, so the replay goes without them.
+
 ### `tau-memory`: a zettelkasten on docbert
 
 Research and the reasons behind these choices:
