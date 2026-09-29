@@ -38,23 +38,29 @@ use crate::{
     workspace::Workspace,
 };
 
-/// Every item of the run, top to bottom. `compact` is the phone layout.
-pub fn items(
+/// The run's item at `index`, padded as the transcript lays it out: the
+/// transcript is a list that builds only the items in view. `compact`
+/// is the phone layout.
+pub fn item(
     ws: &Workspace,
     run: &RunView,
+    index: usize,
     t: &Theme,
     compact: bool,
     cx: &mut Context<Workspace>,
-) -> Vec<AnyElement> {
+) -> AnyElement {
+    let Some(item) = run.items.get(index) else {
+        return div().into_any_element();
+    };
     let empty = HashSet::new();
     let kept = ws.kept.get(&run.id).unwrap_or(&empty);
-    run.items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            item_view(ws, run, kept, index, item, t, compact, cx)
-        })
-        .collect()
+    let edge = sp(if compact { 4. } else { 5. });
+    div()
+        .px(sp(if compact { 4. } else { 6. }))
+        .pt(if index == 0 { edge } else { sp(3.) })
+        .when(index + 1 == run.items.len(), |item| item.pb(edge))
+        .child(item_view(ws, run, kept, index, item, t, compact, cx))
+        .into_any_element()
 }
 
 #[allow(clippy::too_many_arguments)]

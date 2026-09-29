@@ -20,8 +20,9 @@ use gpui::{
     FocusHandle,
     Focusable,
     KeyBinding,
-    ScrollHandle,
-    ScrollWheelEvent,
+    ListAlignment,
+    ListOffset,
+    ListState,
     Subscription,
     Task,
     Window,
@@ -469,7 +470,11 @@ pub struct Workspace {
     /// The `/goal` popover's limits.
     pub(crate) goal_continuations: Entity<TextInput>,
     pub(crate) goal_budget: Entity<TextInput>,
-    scroll: ScrollHandle,
+    /// The open run's transcript: only the items in view are laid out.
+    /// While `follow` holds, it is kept scrolled to the newest item.
+    transcript: ListState,
+    /// The run and item count `transcript` was last told about.
+    listed: Option<(RunId, usize)>,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
     /// turns it off; scrolling back down turns it on.
     follow: bool,
@@ -696,7 +701,8 @@ impl Workspace {
             slash_seen: String::new(),
             goal_continuations,
             goal_budget,
-            scroll: ScrollHandle::new(),
+            transcript: ListState::new(0, ListAlignment::Top, px(600.)),
+            listed: None,
             follow: true,
             focus: cx.focus_handle(),
             replays: Vec::new(),
@@ -704,6 +710,21 @@ impl Workspace {
             frame: None,
             _subscriptions: subscriptions,
         };
+        // Scrolling up stops following new output; back at the bottom,
+        // it follows again. The list is busy while it calls this, so the
+        // offset is read after.
+        let this = cx.entity().downgrade();
+        let list = workspace.transcript.clone();
+        workspace.transcript.set_scroll_handler(move |_, _, cx| {
+            let (this, list) = (this.clone(), list.clone());
+            cx.defer(move |cx| {
+                let offset = -list.scroll_px_offset_for_scrollbar().y;
+                let bottom = list.max_offset_for_scrollbar().height;
+                let _ = this.update(cx, |ws, _| {
+                    ws.follow = offset >= bottom - px(24.);
+                });
+            });
+        });
         workspace.restore_repos();
         let catalog = workspace.catalog.clone();
         workspace.remember_good_rules(&catalog);
@@ -2073,49 +2094,72 @@ impl Workspace {
         compact: bool,
         t: &Theme,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let run = self.current().filter(|_| self.route != Route::NewRun);
-        let items = match run {
-            Some(run) => transcript::items(self, run, t, compact, cx),
-            None => vec![
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap(sp(3.))
-                    .pt(sp(30.))
-                    .text_color(t.muted)
-                    .child(ui::logo(t, 40.))
-                    .child("A new run. Describe the task below.")
-                    .into_any_element(),
-            ],
-        };
-        if self.follow {
-            self.scroll.scroll_to_bottom();
+    ) -> AnyElement {
+        if self
+            .current()
+            .filter(|_| self.route != Route::NewRun)
+            .is_none()
+        {
+            return div()
+                .id("transcript")
+                .flex_1()
+                .min_h(px(0.))
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(sp(3.))
+                .text_color(t.muted)
+                .child(ui::logo(t, 40.))
+                .child("A new run. Describe the task below.")
+                .into_any_element();
         }
-        div()
-            .id("transcript")
-            .flex_1()
-            .min_h(px(0.))
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .on_scroll_wheel(cx.listener(
-                |ws, event: &ScrollWheelEvent, _, _| {
-                    let up = event.delta.pixel_delta(px(20.)).y > px(0.);
-                    let bottom = -ws.scroll.max_offset().height;
-                    ws.follow = !up && ws.scroll.offset().y <= bottom + px(40.);
-                },
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(3.))
-                    .px(sp(if compact { 4. } else { 6. }))
-                    .py(sp(if compact { 4. } else { 5. }))
-                    .children(items),
-            )
+        let theme = t.clone();
+        gpui::list(
+            self.transcript.clone(),
+            cx.processor(move |ws, index: usize, _, cx| {
+                let Some(run) =
+                    ws.current().filter(|_| ws.route != Route::NewRun)
+                else {
+                    return div().into_any_element();
+                };
+                transcript::item(ws, run, index, &theme, compact, cx)
+            }),
+        )
+        .flex_1()
+        .min_h(px(0.))
+        .into_any_element()
+    }
+
+    /// Tells the transcript list what changed in the open run since the
+    /// last frame: items added, or another run opened. An item in view is
+    /// laid out again every frame, so one that grows as it streams needs
+    /// no telling.
+    fn sync_transcript(&mut self) {
+        let now = self
+            .current()
+            .filter(|_| self.route != Route::NewRun)
+            .map(|run| (run.id.clone(), run.items.len()));
+        match (&now, &self.listed) {
+            (Some((run, count)), Some((listed, before))) if run == listed => {
+                if count > before {
+                    // The last known item may have changed too.
+                    let from = before.saturating_sub(1);
+                    self.transcript.splice(from..*before, count - from);
+                } else if count < before {
+                    self.transcript.reset(*count);
+                }
+            }
+            (Some((_, count)), _) => self.transcript.reset(*count),
+            (None, _) => {}
+        }
+        self.listed = now;
+        if self.follow {
+            self.transcript.scroll_to(ListOffset {
+                item_ix: usize::MAX,
+                offset_in_item: px(0.),
+            });
+        }
     }
 
     fn run_header(
@@ -2871,6 +2915,7 @@ impl Render for Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        self.sync_transcript();
         let t = theme(cx).clone();
         let width = match self.frame {
             Some((width, _)) => px(width),
