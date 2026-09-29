@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use hegel::{TestCase, generators as gs};
+use hegel::{TestCase, generators as gs, generators::Generator as _};
 use serde_json::{Map, Value};
 use tau_ai::{
     event::{Accumulator, AssistantEvent, ErrorReason, GrammarError},
@@ -90,7 +90,7 @@ async fn accumulate(
 // Generators for scripted turns
 // =============================================================================
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, hegel::PrettyPrintable)]
 enum GenBlock {
     Text(String),
     Thinking(String),
@@ -98,7 +98,7 @@ enum GenBlock {
 }
 
 #[hegel::composite]
-fn gen_block(tc: TestCase) -> GenBlock {
+fn gen_block(tc: &TestCase) -> GenBlock {
     match tc.draw(gs::integers::<u8>().max_value(2)) {
         0 => GenBlock::Text(tc.draw(tau_testing::generators::text(20))),
         1 => GenBlock::Thinking(tc.draw(tau_testing::generators::text(20))),
@@ -109,15 +109,17 @@ fn gen_block(tc: TestCase) -> GenBlock {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, hegel::PrettyPrintable)]
 struct GenTurn {
     blocks: Vec<GenBlock>,
+    // Our own library type: printed through Debug.
+    #[pretty(debug)]
     stop: StopReason,
     usage: (u64, u64),
 }
 
 #[hegel::composite]
-fn gen_turn(tc: TestCase) -> GenTurn {
+fn gen_turn(tc: &TestCase) -> GenTurn {
     let blocks = tc.draw(gs::vecs(gen_block()).max_size(4));
     let has_tool_call = blocks
         .iter()
@@ -125,7 +127,10 @@ fn gen_turn(tc: TestCase) -> GenTurn {
     let stop = if has_tool_call {
         StopReason::ToolUse
     } else {
-        tc.draw(gs::sampled_from(vec![StopReason::Stop, StopReason::Length]))
+        tc.draw(
+            gs::sampled_from(vec![StopReason::Stop, StopReason::Length])
+                .print_as_debug(),
+        )
     };
     let usage = (
         tc.draw(gs::integers::<u64>().max_value(100_000)),

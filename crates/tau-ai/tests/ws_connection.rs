@@ -51,7 +51,7 @@ struct Script {
 }
 
 #[hegel::composite]
-fn frame(tc: TestCase) -> Value {
+fn frame(tc: &TestCase) -> Value {
     json!({ "type": "response.output_text.delta", "delta": tc.draw(tau_testing::generators::text(16)) })
 }
 

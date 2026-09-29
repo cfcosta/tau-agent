@@ -72,7 +72,15 @@ fn runs_are_grouped_by_workflow() {
     });
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    hegel::PrettyPrintable,
+)]
 struct Changes {
     features: Vec<String>,
     fixes: Vec<String>,
@@ -80,14 +88,22 @@ struct Changes {
     approved: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    hegel::PrettyPrintable,
+)]
 struct Breaking {
     summary: String,
     severity: Option<u8>,
 }
 
 #[hegel::composite]
-fn changes(tc: TestCase) -> Changes {
+fn changes(tc: &TestCase) -> Changes {
     let text = || gs::text().max_size(20);
     let breaking = if tc.draw(gs::booleans()) {
         Some(Breaking {

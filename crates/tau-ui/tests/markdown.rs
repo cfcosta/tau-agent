@@ -1,7 +1,7 @@
 //! Replies read as blocks: what is written as a table reads back as that
 //! table, links keep where they go, and code stays code.
 
-use hegel::{TestCase, generators as gs};
+use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_ui::markdown::{Align, Block, Span, blocks, plain};
 
 /// A cell as written, and the text it shows: plain, marked, empty, and
@@ -21,10 +21,12 @@ fn cell(tc: &TestCase) -> (String, String) {
 }
 
 /// What a block shows, without styles: enough to compare.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, hegel::PrettyPrintable)]
 enum Shape {
     Paragraph(String),
     Table {
+        // Our own library type: printed through Debug.
+        #[pretty(debug)]
         align: Vec<Align>,
         head: Vec<String>,
         rows: Vec<Vec<String>>,
@@ -48,24 +50,27 @@ fn shape(block: &Block) -> Shape {
 
 /// A table as written, and what it shows.
 #[hegel::composite]
-fn table(tc: TestCase) -> (String, Shape) {
+fn table(tc: &TestCase) -> (String, Shape) {
     let width = tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
     let align: Vec<Align> = (0..width)
         .map(|_| {
-            tc.draw(gs::sampled_from(vec![
-                Align::Left,
-                Align::Center,
-                Align::Right,
-            ]))
+            tc.draw(
+                gs::sampled_from(vec![
+                    Align::Left,
+                    Align::Center,
+                    Align::Right,
+                ])
+                .print_as_debug(),
+            )
         })
         .collect();
     let row = |tc: &TestCase| -> Vec<(String, String)> {
         (0..width).map(|_| cell(tc)).collect()
     };
-    let head = row(&tc);
+    let head = row(tc);
     let count = tc.draw(gs::integers::<usize>().max_value(3));
     let rows: Vec<Vec<(String, String)>> =
-        (0..count).map(|_| row(&tc)).collect();
+        (0..count).map(|_| row(tc)).collect();
     let line = |cells: &[(String, String)]| {
         let written: Vec<&str> = cells.iter().map(|c| c.0.as_str()).collect();
         format!("| {} |", written.join(" | "))
@@ -94,7 +99,7 @@ fn table(tc: TestCase) -> (String, Shape) {
 /// A paragraph of words, some over a soft line break, which reads as a
 /// space.
 #[hegel::composite]
-fn paragraph(tc: TestCase) -> (String, Shape) {
+fn paragraph(tc: &TestCase) -> (String, Shape) {
     let lines = tc.draw(
         gs::vecs(gs::sampled_from(vec![
             "Some text.".to_owned(),

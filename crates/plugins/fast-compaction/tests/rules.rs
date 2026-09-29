@@ -3,7 +3,11 @@
 
 use std::collections::BTreeSet;
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators as gs,
+    generators::{Generator as _, PrintableGenerator},
+};
 use tau_ai::message::{AssistantBlock, InputBlock, Message};
 use tau_fast_compaction::{
     Action,
@@ -47,13 +51,21 @@ fn call_ids(transcript: &[Message]) -> Vec<String> {
         .collect()
 }
 
+fn action() -> impl PrintableGenerator<Action> {
+    // Action is tau's own type, so its drawn values print through Debug.
+    action_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-fn action(tc: TestCase) -> Action {
-    tc.draw(gs::sampled_from(vec![
-        Action::Keep,
-        Action::DropResult,
-        Action::DropCall,
-    ]))
+fn action_unprinted(tc: &TestCase) -> Action {
+    tc.draw(
+        gs::sampled_from(vec![
+            Action::Keep,
+            Action::DropResult,
+            Action::DropCall,
+        ])
+        .print_as_debug(),
+    )
 }
 
 fn decision(call_id: &str, action: Action) -> Decision {
@@ -67,8 +79,13 @@ fn decision(call_id: &str, action: Action) -> Decision {
 }
 
 /// A ledger with a drawn action for some of the transcript's calls.
+fn ledger_for(transcript: Vec<Message>) -> impl PrintableGenerator<Ledger> {
+    // Ledger is tau's own type, so its drawn values print through Debug.
+    ledger_for_unprinted(transcript).print_as_debug()
+}
+
 #[hegel::composite]
-fn ledger_for(tc: TestCase, transcript: Vec<Message>) -> Ledger {
+fn ledger_for_unprinted(tc: &TestCase, transcript: Vec<Message>) -> Ledger {
     Ledger::from_decisions(call_ids(&transcript).into_iter().filter_map(|id| {
         tc.draw(gs::booleans())
             .then(|| decision(&id, tc.draw(action())))

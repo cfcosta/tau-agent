@@ -7,7 +7,7 @@ use super::{id, text};
 
 /// One turn on a lane: the items the caller adds (a user message or tool
 /// outputs), then the output items of the response.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, hegel::PrettyPrintable)]
 pub struct Turn {
     pub new_items: Vec<Value>,
     pub output_items: Vec<Value>,
@@ -17,7 +17,7 @@ pub struct Turn {
 /// A clean lane history: fixed request settings and a series of turns,
 /// each of which extends the previous turn's input with that turn's
 /// output items and its own new items.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, hegel::PrettyPrintable)]
 pub struct LaneHistory {
     /// Every request field except `input`: model, instructions, tools.
     pub settings: Map<String, Value>,
@@ -47,7 +47,7 @@ impl LaneHistory {
 
 /// A small input or output item.
 #[hegel::composite]
-pub fn item(tc: TestCase) -> Value {
+pub fn item(tc: &TestCase) -> Value {
     let kind = tc.draw(gs::sampled_from(vec![
         "message",
         "reasoning",
@@ -58,7 +58,7 @@ pub fn item(tc: TestCase) -> Value {
 }
 
 #[hegel::composite]
-pub fn lane_history(tc: TestCase) -> LaneHistory {
+pub fn lane_history(tc: &TestCase) -> LaneHistory {
     let mut settings = Map::new();
     settings.insert("type".into(), json!("response.create"));
     settings.insert("model".into(), json!("gpt-5.5"));

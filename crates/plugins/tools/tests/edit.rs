@@ -131,7 +131,7 @@ fn apply_unified_diff(original: &str, patch: &str) -> String {
 /// `n` lines, each with a distinct marker (`line-{i}-...`) so no line's
 /// text can occur anywhere else in the content, and each ends in `\n`.
 #[hegel::composite]
-fn unique_lines(tc: TestCase, n: usize) -> Vec<String> {
+fn unique_lines(tc: &TestCase, n: usize) -> Vec<String> {
     (0..n)
         .map(|i| {
             let suffix: String = tc.draw(

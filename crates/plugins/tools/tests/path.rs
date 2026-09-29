@@ -8,7 +8,7 @@ use tau_tools::path::Root;
 use unicode_normalization::UnicodeNormalization;
 
 /// How macOS may have written a name the model typed.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
 enum Variant {
     AmPm,
     Nfd,
@@ -19,7 +19,7 @@ enum Variant {
 /// A screenshot-like name as typed: straight apostrophes, precomposed
 /// accents, plain spaces, sometimes a time with `AM`/`pm` in any case.
 #[hegel::composite]
-fn typed_name(tc: TestCase) -> String {
+fn typed_name(tc: &TestCase) -> String {
     let word = || gs::text().alphabet("abcéèç'").min_size(1).max_size(8);
     let mut name = tc.draw(word());
     if tc.draw(gs::booleans()) {

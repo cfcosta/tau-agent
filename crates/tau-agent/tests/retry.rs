@@ -21,7 +21,7 @@ mod common;
 use common::stored;
 
 /// A retryable failure, as the scripts draw it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
 enum Retryable {
     ServerError,
     RateLimited,

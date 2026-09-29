@@ -106,7 +106,7 @@ fn pi_read(
 /// that the byte limit or a first line over it comes up, and enough of
 /// them that the line limit does.
 #[hegel::composite]
-fn file(tc: TestCase) -> String {
+fn file(tc: &TestCase) -> String {
     let lengths = || gs::sampled_from(vec![0usize, 1, 7, 40, 300, 60_000]);
     let count = tc.draw(gs::integers::<usize>().max_value(2_600));
     let chars = ["a", "é", "€", "😀"];

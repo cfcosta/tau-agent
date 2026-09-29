@@ -19,7 +19,7 @@ const VOCAB: [&str; 8] = [
 ];
 
 #[hegel::composite]
-fn words_text(tc: TestCase) -> String {
+fn words_text(tc: &TestCase) -> String {
     tc.draw(gs::vecs(gs::sampled_from(VOCAB.to_vec())).max_size(12))
         .join(" ")
 }

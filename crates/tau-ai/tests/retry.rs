@@ -267,12 +267,8 @@ fn classify_table() {
 fn delay_matches_full_jitter_reference(tc: TestCase) {
     let policy = tc.draw(generators::retry_policy());
     let attempt = tc.draw(gs::integers::<u32>().min_value(1).max_value(80));
-    let jitter = tc.draw(
-        gs::floats::<f64>()
-            .min_value(0.0)
-            .max_value(1.0)
-            .exclude_max(true),
-    );
+    let jitter =
+        tc.draw(gs::floats::<f64>().min_value(0.0).max_value_exclusive(1.0));
     let base = policy.base.as_nanos();
     let cap = (0..attempt - 1)
         .fold(base, |d, _| d.saturating_mul(2).min(u128::MAX / 4))

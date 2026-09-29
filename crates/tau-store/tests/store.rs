@@ -8,7 +8,11 @@
 
 use std::collections::BTreeMap;
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators as gs,
+    generators::{Generator as _, PrintableGenerator},
+};
 use serde_json::json;
 use tau_store::{
     AgentCost,
@@ -115,8 +119,13 @@ impl Model {
     }
 }
 
+fn entry() -> impl PrintableGenerator<Entry> {
+    // Entry is tau's own type, so its drawn values print through Debug.
+    entry_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-fn entry(tc: TestCase) -> Entry {
+fn entry_unprinted(tc: &TestCase) -> Entry {
     let text: String = tc.draw(gs::text().max_size(12));
     let plugin = || {
         tc.draw(gs::sampled_from(vec![
@@ -150,8 +159,13 @@ fn entry(tc: TestCase) -> Entry {
 
 /// Usage whose cost adds exactly in binary floating point, so the
 /// model's sum and SQLite's agree bit for bit.
+fn usage() -> impl PrintableGenerator<TurnUsage> {
+    // TurnUsage is tau's own type, so its drawn values print through Debug.
+    usage_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-fn usage(tc: TestCase) -> TurnUsage {
+fn usage_unprinted(tc: &TestCase) -> TurnUsage {
     TurnUsage {
         input_tokens: tc.draw(gs::integers::<u32>()),
         output_tokens: tc.draw(gs::integers::<u32>()),
@@ -161,7 +175,7 @@ fn usage(tc: TestCase) -> TurnUsage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, hegel::PrettyPrintable)]
 enum Op {
     Root,
     Fork,
@@ -293,12 +307,15 @@ fn store_matches_model_body(tc: TestCase) {
                 }
                 Op::Finish => {
                     let Some(run) = pick(&tc) else { continue };
-                    let status = tc.draw(gs::sampled_from(vec![
-                        Status::Done,
-                        Status::Failed,
-                        Status::Cancelled,
-                        Status::Limit,
-                    ]));
+                    let status = tc.draw(
+                        gs::sampled_from(vec![
+                            Status::Done,
+                            Status::Failed,
+                            Status::Cancelled,
+                            Status::Limit,
+                        ])
+                        .print_as_debug(),
+                    );
                     let result = tc.draw(gs::optional(gs::text().max_size(8)));
                     store
                         .finish_run(&run, status, result.as_deref(), None)

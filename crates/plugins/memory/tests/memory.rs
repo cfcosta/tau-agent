@@ -31,7 +31,7 @@ fn draft(title: String, body: String) -> Draft {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
 enum Op {
     Create,
     Update,

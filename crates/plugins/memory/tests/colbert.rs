@@ -86,7 +86,7 @@ const VOCAB: [&str; 10] = [
 ];
 
 #[hegel::composite]
-fn text(tc: TestCase) -> String {
+fn text(tc: &TestCase) -> String {
     tc.draw(
         gs::vecs(gs::sampled_from(VOCAB.to_vec()))
             .min_size(1)

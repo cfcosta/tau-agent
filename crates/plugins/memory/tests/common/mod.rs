@@ -2,28 +2,39 @@
 
 #![allow(dead_code)]
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators as gs,
+    generators::{Generator as _, PrintableGenerator},
+};
 use tau_memory::note::{By, Link, LinkType, Note, NoteType, Source};
 
 #[hegel::composite]
-pub fn id(tc: TestCase) -> String {
+pub fn id(tc: &TestCase) -> String {
     tc.draw(gs::from_regex("[a-z0-9][a-z0-9-]{0,20}"))
 }
 
 /// One line of any text, not blank.
 #[hegel::composite]
-pub fn line(tc: TestCase) -> String {
+pub fn line(tc: &TestCase) -> String {
     let text: String =
         tc.draw(gs::text().exclude_characters("\n\r").max_size(40));
     format!("x{text}")
 }
 
+pub fn note() -> impl PrintableGenerator<Note> {
+    // Note is tau's own type, so its drawn values print through Debug.
+    note_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn note(tc: TestCase) -> Note {
+fn note_unprinted(tc: &TestCase) -> Note {
     let links = (0..tc.draw(gs::integers::<usize>().max_value(3)))
         .map(|_| Link {
             to: tc.draw(id()),
-            kind: tc.draw(gs::sampled_from(LinkType::ALL.to_vec())),
+            kind: tc.draw(
+                gs::sampled_from(LinkType::ALL.to_vec()).print_as_debug(),
+            ),
             why: tc.draw(gs::optional(line())),
         })
         .collect();
@@ -32,7 +43,8 @@ pub fn note(tc: TestCase) -> Note {
         id: tc.draw(id()),
         title: tc.draw(line()),
         description: tc.draw(line()),
-        kind: tc.draw(gs::sampled_from(NoteType::ALL.to_vec())),
+        kind: tc
+            .draw(gs::sampled_from(NoteType::ALL.to_vec()).print_as_debug()),
         tags: tc.draw(gs::vecs(line()).max_size(3)),
         created,
         updated: created,
@@ -41,11 +53,10 @@ pub fn note(tc: TestCase) -> Note {
             .draw(gs::optional(gs::integers::<u64>().max_value(1 << 50))),
         stale: tc.draw(gs::optional(line())),
         source: Source {
-            by: tc.draw(gs::sampled_from(vec![
-                By::User,
-                By::Agent,
-                By::Inferred,
-            ])),
+            by: tc.draw(
+                gs::sampled_from(vec![By::User, By::Agent, By::Inferred])
+                    .print_as_debug(),
+            ),
             run: tc.draw(gs::optional(line())),
             turn: tc.draw(gs::optional(gs::integers::<u32>())),
             commit: tc.draw(gs::optional(line())),
@@ -63,15 +74,20 @@ pub fn note(tc: TestCase) -> Note {
 
 /// Ids from a small pool, so notes collide and link to one another.
 #[hegel::composite]
-pub fn pool_id(tc: TestCase) -> String {
+pub fn pool_id(tc: &TestCase) -> String {
     tc.draw(gs::sampled_from(vec!["a", "b", "c", "d", "e"]))
         .to_owned()
 }
 
 /// A current note from the pool, linking within it, with some bare
 /// `[[id]]` links in its body.
+pub fn pool_note() -> impl PrintableGenerator<Note> {
+    // Note is tau's own type, so its drawn values print through Debug.
+    pool_note_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn pool_note(tc: TestCase) -> Note {
+fn pool_note_unprinted(tc: &TestCase) -> Note {
     let mut note = tc.draw(note());
     note.id = tc.draw(pool_id());
     note.valid_to = None;
@@ -79,12 +95,15 @@ pub fn pool_note(tc: TestCase) -> Note {
     note.links = (0..tc.draw(gs::integers::<usize>().max_value(3)))
         .map(|_| Link {
             to: tc.draw(pool_id()),
-            kind: tc.draw(gs::sampled_from(vec![
-                LinkType::Relates,
-                LinkType::Refines,
-                LinkType::Contradicts,
-                LinkType::DerivedFrom,
-            ])),
+            kind: tc.draw(
+                gs::sampled_from(vec![
+                    LinkType::Relates,
+                    LinkType::Refines,
+                    LinkType::Contradicts,
+                    LinkType::DerivedFrom,
+                ])
+                .print_as_debug(),
+            ),
             why: None,
         })
         .collect();

@@ -4,7 +4,11 @@
 
 use std::{collections::BTreeSet, path::Path};
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators as gs,
+    generators::{Generator as _, PrintableGenerator},
+};
 use tau_memory::{
     Memory,
     index::Bm25,
@@ -33,8 +37,13 @@ fn source(files: Vec<String>) -> Source {
     }
 }
 
+fn draft() -> impl PrintableGenerator<Draft> {
+    // Draft is tau's own type, so its drawn values print through Debug.
+    draft_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-fn draft(tc: TestCase) -> Draft {
+fn draft_unprinted(tc: &TestCase) -> Draft {
     let title = tc.draw(gs::sampled_from(TITLES.to_vec())).to_owned();
     let about: Vec<String> = tc
         .draw(gs::vecs(gs::sampled_from(PATHS.to_vec())).max_size(2))

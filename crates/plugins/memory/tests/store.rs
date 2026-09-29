@@ -12,7 +12,7 @@ use tau_memory::{
     store::{Notes, StoreError},
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
 enum Op {
     Create,
     Update,

@@ -26,7 +26,7 @@ use tau_ai::ws::proto::{
 use tau_testing::generators::lane::{LaneHistory, lane_history};
 
 /// What the server does with one request, drawn per request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, hegel::PrettyPrintable)]
 enum Fault {
     None,
     /// The server forgets every response before this request arrives.

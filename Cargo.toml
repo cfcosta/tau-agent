@@ -29,7 +29,7 @@ globset = "0.4.20"
 grep-matcher = "0.1.9"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.17"
-hegeltest = "0.28"
+hegeltest = { version = "0.48.1", features = ["serde_json", "static-engine"] }
 ignore = "0.4.33"
 libc = "0.2.189"
 image = { version = "0.25.10", default-features = false, features = [

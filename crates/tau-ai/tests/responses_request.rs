@@ -1,6 +1,10 @@
 //! The `response.create` body (`tau_ai::responses::request`).
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators as gs,
+    generators::{Generator as _, PrintableGenerator},
+};
 use serde_json::{Value, json};
 use tau_ai::responses::request::{
     MIN_OUTPUT_TOKENS,
@@ -21,8 +25,13 @@ fn body(
     tau_ai::responses::request::body(settings, input, lane).to_map()
 }
 
+fn settings() -> impl PrintableGenerator<Settings> {
+    // Settings is tau's own type, so its drawn values print through Debug.
+    settings_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-fn settings(tc: TestCase) -> Settings {
+fn settings_unprinted(tc: &TestCase) -> Settings {
     let tool_count = tc.draw(gs::integers::<usize>().max_value(3));
     Settings {
         model: tc.draw(gs::sampled_from(vec!["gpt-5.5".to_owned(), "gpt-5.4-mini".to_owned()])),
@@ -44,7 +53,7 @@ fn settings(tc: TestCase) -> Settings {
             ReasoningEffort::High,
             ReasoningEffort::Xhigh,
             ReasoningEffort::Max,
-        ]))),
+        ])).print_as_debug()),
         max_output_tokens: tc.draw(gs::optional(gs::integers::<u64>().max_value(200_000))),
         text_format: tc.draw(gs::optional(gs::just(json!({"type": "json_schema", "name": "T", "schema": {}, "strict": true})))),
         service_tier: tc.draw(gs::optional(gs::sampled_from(vec!["flex".to_owned(), "priority".to_owned()]))),
@@ -52,8 +61,13 @@ fn settings(tc: TestCase) -> Settings {
     }
 }
 
+fn stream_id() -> impl PrintableGenerator<StreamId> {
+    // StreamId is tau's own type, so its drawn values print through Debug.
+    stream_id_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-fn stream_id(tc: TestCase) -> StreamId {
+fn stream_id_unprinted(tc: &TestCase) -> StreamId {
     let id: String = tc.draw(
         gs::text()
             .alphabet("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")

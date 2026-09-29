@@ -156,7 +156,7 @@ fn assert_results_follow_calls(transcript: &[Message]) {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, hegel::PrettyPrintable)]
 struct ScriptedCall {
     tool: &'static str,
     ms: u64,
@@ -164,7 +164,7 @@ struct ScriptedCall {
 }
 
 #[hegel::composite]
-fn scripted_call(tc: TestCase, sequential_allowed: bool) -> ScriptedCall {
+fn scripted_call(tc: &TestCase, sequential_allowed: bool) -> ScriptedCall {
     let mut tools = vec!["probe", "probe", "missing"];
     if sequential_allowed {
         tools.push("serial");

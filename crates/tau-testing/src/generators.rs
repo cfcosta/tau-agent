@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use hegel::{
     TestCase,
-    generators::{self as gs, Generator},
+    generators::{self as gs, Generator, PrintableGenerator},
 };
 use serde_json::{Map, Number, Value};
 use tau_ai::message::{
@@ -37,7 +37,7 @@ pub const SPECIAL_CHARS: &str = "ab \n\r\t\u{feff}\u{2028}\u{2029}\u{202f}\u{201
 /// Short text: either arbitrary Unicode or text built from
 /// [`SPECIAL_CHARS`].
 #[hegel::composite]
-pub fn text(tc: TestCase, max_size: usize) -> String {
+pub fn text(tc: &TestCase, max_size: usize) -> String {
     tc.draw(hegel::one_of!(
         gs::text().max_size(max_size),
         gs::text().alphabet(SPECIAL_CHARS).max_size(max_size),
@@ -46,7 +46,7 @@ pub fn text(tc: TestCase, max_size: usize) -> String {
 
 /// A short identifier, like the ids OpenAI assigns.
 #[hegel::composite]
-pub fn id(tc: TestCase, prefix: &'static str) -> String {
+pub fn id(tc: &TestCase, prefix: &'static str) -> String {
     let suffix: String = tc.draw(
         gs::text()
             .alphabet("abcdefghijklmnopqrstuvwxyz0123456789")
@@ -58,7 +58,7 @@ pub fn id(tc: TestCase, prefix: &'static str) -> String {
 
 /// A JSON number that survives a text round trip.
 #[hegel::composite]
-pub fn json_number(tc: TestCase) -> Number {
+pub fn json_number(tc: &TestCase) -> Number {
     if tc.draw(gs::booleans()) {
         Number::from(tc.draw(gs::integers::<i64>()))
     } else {
@@ -70,14 +70,14 @@ pub fn json_number(tc: TestCase) -> Number {
 
 /// Any JSON value, nested at most `depth` levels.
 #[hegel::composite]
-pub fn json_value(tc: TestCase, depth: u32) -> Value {
-    draw_json_value(&tc, depth)
+pub fn json_value(tc: &TestCase, depth: u32) -> Value {
+    draw_json_value(tc, depth)
 }
 
 /// A JSON object, nested at most `depth` levels below its fields.
 #[hegel::composite]
-pub fn json_object(tc: TestCase, depth: u32) -> Map<String, Value> {
-    draw_json_object(&tc, depth)
+pub fn json_object(tc: &TestCase, depth: u32) -> Map<String, Value> {
+    draw_json_object(tc, depth)
 }
 
 // The recursion lives in plain functions: a composite that draws itself
@@ -106,8 +106,13 @@ fn draw_json_object(tc: &TestCase, depth: u32) -> Map<String, Value> {
         .collect()
 }
 
+pub fn usage() -> impl PrintableGenerator<Usage> {
+    // Usage is tau's own type, so its drawn values print through Debug.
+    usage_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn usage(tc: TestCase) -> Usage {
+fn usage_unprinted(tc: &TestCase) -> Usage {
     let tokens = || gs::integers::<u64>().max_value(1 << 40);
     let dollars = || {
         gs::floats::<f64>()
@@ -133,27 +138,45 @@ pub fn usage(tc: TestCase) -> Usage {
     }
 }
 
-#[hegel::composite]
-pub fn stop_reason(tc: TestCase) -> StopReason {
-    tc.draw(gs::sampled_from(vec![
-        StopReason::Stop,
-        StopReason::Length,
-        StopReason::ToolUse,
-        StopReason::Error,
-        StopReason::Aborted,
-    ]))
+pub fn stop_reason() -> impl PrintableGenerator<StopReason> {
+    // StopReason is tau's own type, so its drawn values print through Debug.
+    stop_reason_unprinted().print_as_debug()
 }
 
 #[hegel::composite]
-pub fn text_content(tc: TestCase) -> TextContent {
+fn stop_reason_unprinted(tc: &TestCase) -> StopReason {
+    tc.draw(
+        gs::sampled_from(vec![
+            StopReason::Stop,
+            StopReason::Length,
+            StopReason::ToolUse,
+            StopReason::Error,
+            StopReason::Aborted,
+        ])
+        .print_as_debug(),
+    )
+}
+
+pub fn text_content() -> impl PrintableGenerator<TextContent> {
+    // TextContent is tau's own type, so its drawn values print through Debug.
+    text_content_unprinted().print_as_debug()
+}
+
+#[hegel::composite]
+fn text_content_unprinted(tc: &TestCase) -> TextContent {
     TextContent {
         text: tc.draw(text(40)),
         text_signature: tc.draw(gs::optional(id("msg_"))),
     }
 }
 
+pub fn thinking_content() -> impl PrintableGenerator<ThinkingContent> {
+    // ThinkingContent is tau's own type, so its drawn values print through Debug.
+    thinking_content_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn thinking_content(tc: TestCase) -> ThinkingContent {
+fn thinking_content_unprinted(tc: &TestCase) -> ThinkingContent {
     ThinkingContent {
         thinking: tc.draw(text(40)),
         thinking_signature: tc.draw(gs::optional(id("rs_"))),
@@ -161,8 +184,13 @@ pub fn thinking_content(tc: TestCase) -> ThinkingContent {
     }
 }
 
+pub fn image_content() -> impl PrintableGenerator<ImageContent> {
+    // ImageContent is tau's own type, so its drawn values print through Debug.
+    image_content_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn image_content(tc: TestCase) -> ImageContent {
+fn image_content_unprinted(tc: &TestCase) -> ImageContent {
     ImageContent {
         data: tc.draw(
             gs::text()
@@ -177,8 +205,13 @@ pub fn image_content(tc: TestCase) -> ImageContent {
 }
 
 /// A tool call whose id has pi's `call_id|item_id` form.
+pub fn tool_call() -> impl PrintableGenerator<ToolCall> {
+    // ToolCall is tau's own type, so its drawn values print through Debug.
+    tool_call_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn tool_call(tc: TestCase) -> ToolCall {
+fn tool_call_unprinted(tc: &TestCase) -> ToolCall {
     let call_id = tc.draw(id("call_"));
     let item_id = tc.draw(id("fc_"));
     ToolCall {
@@ -188,8 +221,13 @@ pub fn tool_call(tc: TestCase) -> ToolCall {
     }
 }
 
+pub fn input_block() -> impl PrintableGenerator<InputBlock> {
+    // InputBlock is tau's own type, so its drawn values print through Debug.
+    input_block_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn input_block(tc: TestCase) -> InputBlock {
+fn input_block_unprinted(tc: &TestCase) -> InputBlock {
     if tc.draw(gs::booleans()) {
         InputBlock::Text(tc.draw(text_content()))
     } else {
@@ -197,8 +235,13 @@ pub fn input_block(tc: TestCase) -> InputBlock {
     }
 }
 
+pub fn assistant_block() -> impl PrintableGenerator<AssistantBlock> {
+    // AssistantBlock is tau's own type, so its drawn values print through Debug.
+    assistant_block_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn assistant_block(tc: TestCase) -> AssistantBlock {
+fn assistant_block_unprinted(tc: &TestCase) -> AssistantBlock {
     match tc.draw(gs::integers::<u8>().max_value(2)) {
         0 => AssistantBlock::Text(tc.draw(text_content())),
         1 => AssistantBlock::Thinking(tc.draw(thinking_content())),
@@ -206,8 +249,13 @@ pub fn assistant_block(tc: TestCase) -> AssistantBlock {
     }
 }
 
+pub fn user_message() -> impl PrintableGenerator<UserMessage> {
+    // UserMessage is tau's own type, so its drawn values print through Debug.
+    user_message_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn user_message(tc: TestCase) -> UserMessage {
+fn user_message_unprinted(tc: &TestCase) -> UserMessage {
     let content = if tc.draw(gs::booleans()) {
         UserContent::Text(tc.draw(text(40)))
     } else {
@@ -219,8 +267,13 @@ pub fn user_message(tc: TestCase) -> UserMessage {
     }
 }
 
+pub fn assistant_message() -> impl PrintableGenerator<AssistantMessage> {
+    // AssistantMessage is tau's own type, so its drawn values print through Debug.
+    assistant_message_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn assistant_message(tc: TestCase) -> AssistantMessage {
+fn assistant_message_unprinted(tc: &TestCase) -> AssistantMessage {
     let stop_reason = tc.draw(stop_reason());
     let failed = matches!(stop_reason, StopReason::Error | StopReason::Aborted);
     AssistantMessage {
@@ -243,8 +296,13 @@ pub fn assistant_message(tc: TestCase) -> AssistantMessage {
     }
 }
 
+pub fn tool_result_message() -> impl PrintableGenerator<ToolResultMessage> {
+    // ToolResultMessage is tau's own type, so its drawn values print through Debug.
+    tool_result_message_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn tool_result_message(tc: TestCase) -> ToolResultMessage {
+fn tool_result_message_unprinted(tc: &TestCase) -> ToolResultMessage {
     ToolResultMessage {
         tool_call_id: tc.draw(id("call_")),
         tool_name: tc.draw(id("tool_")),
@@ -255,8 +313,13 @@ pub fn tool_result_message(tc: TestCase) -> ToolResultMessage {
     }
 }
 
+pub fn message() -> impl PrintableGenerator<Message> {
+    // Message is tau's own type, so its drawn values print through Debug.
+    message_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn message(tc: TestCase) -> Message {
+fn message_unprinted(tc: &TestCase) -> Message {
     match tc.draw(gs::integers::<u8>().max_value(2)) {
         0 => Message::User(tc.draw(user_message())),
         1 => Message::Assistant(tc.draw(assistant_message())),
@@ -265,15 +328,20 @@ pub fn message(tc: TestCase) -> Message {
 }
 
 /// Milliseconds since the Unix epoch, within the next few centuries.
-pub fn timestamp() -> impl Generator<u64> {
+pub fn timestamp() -> impl PrintableGenerator<u64> {
     gs::integers::<u64>().max_value(10_000_000_000_000)
 }
 
 /// A [`tau_ai::retry::RetryPolicy`] with small, valid bounds: `base` in
 /// `1ms..=10s`, `max_delay >= base` (also within a few seconds of it, so
 /// shrunk failures stay short), and `max_attempts` in `0..=10`.
+pub fn retry_policy() -> impl PrintableGenerator<tau_ai::retry::RetryPolicy> {
+    // RetryPolicy is tau's own type, so its drawn values print through Debug.
+    retry_policy_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn retry_policy(tc: TestCase) -> tau_ai::retry::RetryPolicy {
+fn retry_policy_unprinted(tc: &TestCase) -> tau_ai::retry::RetryPolicy {
     let base_ms = tc.draw(gs::integers::<u64>().min_value(1).max_value(10_000));
     let extra_ms =
         tc.draw(gs::integers::<u64>().min_value(0).max_value(10_000));
@@ -290,8 +358,15 @@ pub fn retry_policy(tc: TestCase) -> tau_ai::retry::RetryPolicy {
 /// need to keep a request's total input tokens
 /// (`input + cache_read + cache_write`) under a known bound, such as a
 /// model's pricing-tier threshold.
+pub fn usage_with_max_tokens(
+    max_tokens: u64,
+) -> impl PrintableGenerator<Usage> {
+    // Usage is tau's own type, so its drawn values print through Debug.
+    usage_with_max_tokens_unprinted(max_tokens).print_as_debug()
+}
+
 #[hegel::composite]
-pub fn usage_with_max_tokens(tc: TestCase, max_tokens: u64) -> Usage {
+fn usage_with_max_tokens_unprinted(tc: &TestCase, max_tokens: u64) -> Usage {
     let tokens = || gs::integers::<u64>().max_value(max_tokens);
     Usage {
         input: tc.draw(tokens()),
@@ -311,7 +386,7 @@ pub fn usage_with_max_tokens(tc: TestCase, max_tokens: u64) -> Usage {
 /// anything in between, since each internal character boundary is cut
 /// or not independently.
 #[hegel::composite]
-pub fn char_chunks(tc: TestCase, text: String) -> Vec<String> {
+pub fn char_chunks(tc: &TestCase, text: String) -> Vec<String> {
     let boundaries: Vec<usize> = text
         .char_indices()
         .map(|(i, _)| i)
@@ -346,7 +421,7 @@ pub mod lane;
 /// serialized reasoning item there), so a thinking block built from
 /// [`thinking_content_for_transcript`] always replays.
 #[hegel::composite]
-pub fn reasoning_item_json(tc: TestCase) -> String {
+pub fn reasoning_item_json(tc: &TestCase) -> String {
     let value = serde_json::json!({
         "id": tc.draw(id("rs_")),
         "type": "reasoning",
@@ -360,8 +435,14 @@ pub fn reasoning_item_json(tc: TestCase) -> String {
 /// reasoning item ([`reasoning_item_json`]), but sometimes absent or
 /// unparsable text, so transcripts drawn from it exercise all three
 /// paths in `responses::input::build_reasoning_item`.
+pub fn thinking_content_for_transcript()
+-> impl PrintableGenerator<ThinkingContent> {
+    // ThinkingContent is tau's own type, so its drawn values print through Debug.
+    thinking_content_for_transcript_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn thinking_content_for_transcript(tc: TestCase) -> ThinkingContent {
+fn thinking_content_for_transcript_unprinted(tc: &TestCase) -> ThinkingContent {
     let signature = match tc.draw(gs::integers::<u8>().max_value(2)) {
         0 => None,
         1 => Some(tc.draw(text(10))),
@@ -377,8 +458,14 @@ pub fn thinking_content_for_transcript(tc: TestCase) -> ThinkingContent {
 /// Like [`assistant_block`], but its thinking blocks come from
 /// [`thinking_content_for_transcript`], so most of them hold a real
 /// reasoning item instead of the bare id [`thinking_content`] draws.
+pub fn assistant_block_for_transcript()
+-> impl PrintableGenerator<AssistantBlock> {
+    // AssistantBlock is tau's own type, so its drawn values print through Debug.
+    assistant_block_for_transcript_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn assistant_block_for_transcript(tc: TestCase) -> AssistantBlock {
+fn assistant_block_for_transcript_unprinted(tc: &TestCase) -> AssistantBlock {
     match tc.draw(gs::integers::<u8>().max_value(2)) {
         0 => AssistantBlock::Text(tc.draw(text_content())),
         1 => {
@@ -392,8 +479,13 @@ pub fn assistant_block_for_transcript(tc: TestCase) -> AssistantBlock {
 /// `ToolUse` when the turn holds a tool call, and `Stop` or `Length`
 /// otherwise, so a `transcript()` is realistic and never needs an
 /// `Error`/`Aborted` turn to be well-formed.
+pub fn assistant_step() -> impl PrintableGenerator<AssistantMessage> {
+    // AssistantMessage is tau's own type, so its drawn values print through Debug.
+    assistant_step_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn assistant_step(tc: TestCase) -> AssistantMessage {
+fn assistant_step_unprinted(tc: &TestCase) -> AssistantMessage {
     let content: Vec<AssistantBlock> = tc.draw(
         gs::vecs(assistant_block_for_transcript())
             .min_size(1)
@@ -405,7 +497,10 @@ pub fn assistant_step(tc: TestCase) -> AssistantMessage {
     let stop_reason = if has_tool_call {
         StopReason::ToolUse
     } else {
-        tc.draw(gs::sampled_from(vec![StopReason::Stop, StopReason::Length]))
+        tc.draw(
+            gs::sampled_from(vec![StopReason::Stop, StopReason::Length])
+                .print_as_debug(),
+        )
     };
     AssistantMessage {
         content,
@@ -425,8 +520,18 @@ pub fn assistant_step(tc: TestCase) -> AssistantMessage {
 
 /// A [`ToolResultMessage`] that answers `call`: same id and tool name,
 /// otherwise drawn like [`tool_result_message`].
+pub fn tool_result_for_call(
+    call: ToolCall,
+) -> impl PrintableGenerator<ToolResultMessage> {
+    // ToolResultMessage is tau's own type, so its drawn values print through Debug.
+    tool_result_for_call_unprinted(call).print_as_debug()
+}
+
 #[hegel::composite]
-pub fn tool_result_for_call(tc: TestCase, call: ToolCall) -> ToolResultMessage {
+fn tool_result_for_call_unprinted(
+    tc: &TestCase,
+    call: ToolCall,
+) -> ToolResultMessage {
     ToolResultMessage {
         tool_call_id: call.id.clone(),
         tool_name: call.name.clone(),
@@ -442,8 +547,13 @@ pub fn tool_result_for_call(tc: TestCase, call: ToolCall) -> ToolResultMessage {
 /// exactly one matching result, and no assistant message ever errors or
 /// aborts, so converting it with `tau_ai::responses::input::to_input`
 /// drops nothing.
+pub fn transcript() -> impl PrintableGenerator<Vec<Message>> {
+    // Vec<Message> is tau's own type, so its drawn values print through Debug.
+    transcript_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn transcript(tc: TestCase) -> Vec<Message> {
+fn transcript_unprinted(tc: &TestCase) -> Vec<Message> {
     let turns = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
     let mut messages = Vec::new();
     for _ in 0..turns {
@@ -481,8 +591,13 @@ pub fn transcript(tc: TestCase) -> Vec<Message> {
 /// `transform-messages.ts:201`), and sometimes a synthetic turn that
 /// aborts holding only reasoning (pi's known case,
 /// `openai-responses-reasoning-replay-e2e.test.ts`).
+pub fn damaged_transcript() -> impl PrintableGenerator<Vec<Message>> {
+    // Vec<Message> is tau's own type, so its drawn values print through Debug.
+    damaged_transcript_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn damaged_transcript(tc: TestCase) -> Vec<Message> {
+fn damaged_transcript_unprinted(tc: &TestCase) -> Vec<Message> {
     let messages = tc.draw(transcript());
 
     // Drop some tool results, leaving their calls orphaned.
@@ -514,10 +629,10 @@ pub fn damaged_transcript(tc: TestCase) -> Vec<Message> {
     if !assistant_positions.is_empty() && tc.draw(gs::booleans()) {
         let idx = tc.draw(gs::sampled_from(assistant_positions));
         if let Message::Assistant(assistant) = &mut messages[idx] {
-            assistant.stop_reason = tc.draw(gs::sampled_from(vec![
-                StopReason::Error,
-                StopReason::Aborted,
-            ]));
+            assistant.stop_reason = tc.draw(
+                gs::sampled_from(vec![StopReason::Error, StopReason::Aborted])
+                    .print_as_debug(),
+            );
             assistant.error_message = Some(tc.draw(text(20)));
         }
     }
@@ -558,7 +673,7 @@ pub fn damaged_transcript(tc: TestCase) -> Vec<Message> {
 /// that is *almost* valid JSON, for differential fuzzing against a
 /// tolerant reference parser.
 #[hegel::composite]
-pub fn mutate_text(tc: TestCase, text: String) -> String {
+pub fn mutate_text(tc: &TestCase, text: String) -> String {
     const EDIT_ALPHABET: &str = "{}[]:,\"\\ 0123456789.eE+-truefalsn/x";
     let mut chars: Vec<char> = text.chars().collect();
     let edits = tc.draw(gs::integers::<u32>().min_value(1).max_value(3));
@@ -814,8 +929,8 @@ fn draw_object_schema_case(tc: &TestCase, depth: u32) -> (Value, Value) {
 /// produces them; see [`unsupported_schema`] for schemas built from
 /// exactly those keywords.
 #[hegel::composite]
-pub fn strict_schema(tc: TestCase, depth: u32) -> Value {
-    draw_object_schema_case(&tc, depth).0
+pub fn strict_schema(tc: &TestCase, depth: u32) -> Value {
+    draw_object_schema_case(tc, depth).0
 }
 
 /// A [`strict_schema`] paired with a value that validates against it.
@@ -826,8 +941,8 @@ pub fn strict_schema(tc: TestCase, depth: u32) -> Value {
 /// `tau_agent::schema::strip_nulls_for_optional` (see
 /// [`schema_case_is_nullable`]).
 #[hegel::composite]
-pub fn strict_schema_with_value(tc: TestCase, depth: u32) -> (Value, Value) {
-    draw_object_schema_case(&tc, depth)
+pub fn strict_schema_with_value(tc: &TestCase, depth: u32) -> (Value, Value) {
+    draw_object_schema_case(tc, depth)
 }
 
 /// A JSON schema that `tau_agent::schema::to_strict` must reject, built
@@ -841,7 +956,7 @@ pub fn strict_schema_with_value(tc: TestCase, depth: u32) -> (Value, Value) {
 /// naming an unknown property or holding a non-string, or a boolean
 /// (`true`/`false`) schema node.
 #[hegel::composite]
-pub fn unsupported_schema(tc: TestCase) -> Value {
+pub fn unsupported_schema(tc: &TestCase) -> Value {
     match tc.draw(gs::integers::<u8>().max_value(10)) {
         0 => {
             let key = tc.draw(gs::sampled_from(vec![
@@ -969,8 +1084,8 @@ fn draw_arg_object_schema(tc: &TestCase, depth: u32) -> Value {
 /// `anyOf`. `depth` bounds how deep arrays, objects and unions may
 /// nest.
 #[hegel::composite]
-pub fn arg_schema(tc: TestCase, depth: u32) -> Value {
-    draw_arg_schema(&tc, depth)
+pub fn arg_schema(tc: &TestCase, depth: u32) -> Value {
+    draw_arg_schema(tc, depth)
 }
 
 fn draw_arg_value(tc: &TestCase, schema: &Value) -> Value {
@@ -1039,6 +1154,6 @@ fn draw_arg_value(tc: &TestCase, schema: &Value) -> Value {
 /// and satisfies it. Pairs with [`arg_schema`] for coercion properties
 /// that need a value already valid under the schema they drew.
 #[hegel::composite]
-pub fn arg_value_for_schema(tc: TestCase, schema: Value) -> Value {
-    draw_arg_value(&tc, &schema)
+pub fn arg_value_for_schema(tc: &TestCase, schema: Value) -> Value {
+    draw_arg_value(tc, &schema)
 }

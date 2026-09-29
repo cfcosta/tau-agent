@@ -71,7 +71,7 @@ file paths and line numbers. Respects .gitignore. Output is truncated to \
 /// (`grep.ts:169`) but a native scan must not
 /// (`docs/reference/tools.md`, "grep").
 #[hegel::composite]
-fn grep_file(tc: TestCase) -> String {
+fn grep_file(tc: &TestCase) -> String {
     let line_count = tc.draw(gs::integers::<usize>().min_value(0).max_value(5));
     let needle_at = if line_count > 0 && tc.draw(gs::booleans()) {
         Some(

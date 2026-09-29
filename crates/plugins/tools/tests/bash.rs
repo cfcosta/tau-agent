@@ -78,7 +78,7 @@ async fn wait_until_dead(pid: i32, timeout: Duration) {
 /// Raw bytes, including invalid UTF-8 and multi-byte sequences, so a
 /// chunk boundary can land anywhere, including mid-character.
 #[hegel::composite]
-fn raw_bytes(tc: TestCase) -> Vec<u8> {
+fn raw_bytes(tc: &TestCase) -> Vec<u8> {
     tc.draw(gs::vecs(gs::integers::<u8>()).max_size(400))
 }
 

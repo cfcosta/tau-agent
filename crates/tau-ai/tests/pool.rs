@@ -84,7 +84,7 @@ impl Model {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, hegel::PrettyPrintable)]
 enum Op {
     OpenLane,
     CloseLane,

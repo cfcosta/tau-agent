@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hegel::{TestCase, generators as gs};
+use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_memory::{
     colbert::{Colbert, Encoder, Tokens},
     eval::{
@@ -36,7 +36,8 @@ fn fixture() -> Fixture {
 #[hegel::test(test_cases = 100)]
 fn near_duplicates_are_k_distinct_others_starting_with_the_older(tc: TestCase) {
     let fixture = fixture();
-    let fact = tc.draw(gs::sampled_from(fixture.facts.clone()));
+    let fact =
+        tc.draw(gs::sampled_from(fixture.facts.clone()).print_as_debug());
     let k = tc.draw(gs::integers::<usize>().max_value(per_fact() - 1));
     let near = fact.near_duplicates(k);
     assert_eq!(near.len(), k);

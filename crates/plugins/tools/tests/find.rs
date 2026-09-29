@@ -96,14 +96,14 @@ const PATTERNS: &[&str] = &[
 /// A hand-written `.gitignore` subset: either no `.gitignore`, one
 /// that excludes an extension (`*.md`), or one that excludes an exact
 /// name (`b.txt`) -- at any depth, as a slash-free gitignore line does.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
 enum GitignoreCase {
     None,
     ByExt,
     ByName,
 }
 
-#[derive(Debug)]
+#[derive(Debug, hegel::PrettyPrintable)]
 struct FindCase {
     present: Vec<bool>,
     gitignore: GitignoreCase,
@@ -112,7 +112,7 @@ struct FindCase {
 }
 
 #[hegel::composite]
-fn find_case(tc: TestCase) -> FindCase {
+fn find_case(tc: &TestCase) -> FindCase {
     let present: Vec<bool> =
         CANDIDATES.iter().map(|_| tc.draw(gs::booleans())).collect();
     let gitignore = tc.draw(gs::sampled_from(vec![

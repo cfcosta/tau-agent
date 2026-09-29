@@ -12,7 +12,7 @@
 //! catching a real formula bug (which is usually off by a constant
 //! factor, not a rounding hair).
 
-use hegel::TestCase;
+use hegel::{TestCase, generators::Generator as _};
 use tau_ai::{
     cost,
     message::Usage,
@@ -70,11 +70,14 @@ fn add(a: &Usage, b: &Usage) -> Usage {
 #[hegel::test(test_cases = 100)]
 fn zero_usage_is_zero_cost(tc: TestCase) {
     let model = untiered_model();
-    let tier = tc.draw(hegel::generators::sampled_from(vec![
-        ServiceTier::Default,
-        ServiceTier::Flex,
-        ServiceTier::PriorityOrFast,
-    ]));
+    let tier = tc.draw(
+        hegel::generators::sampled_from(vec![
+            ServiceTier::Default,
+            ServiceTier::Flex,
+            ServiceTier::PriorityOrFast,
+        ])
+        .print_as_debug(),
+    );
     let usage = Usage::default();
     let result = cost::cost(model, &usage, tier);
     assert_eq!(result.input, 0.0);
@@ -92,11 +95,14 @@ fn zero_usage_is_zero_cost(tc: TestCase) {
 #[hegel::test(test_cases = 500)]
 fn cost_is_additive_within_a_tier(tc: TestCase) {
     let model = untiered_model();
-    let tier = tc.draw(hegel::generators::sampled_from(vec![
-        ServiceTier::Default,
-        ServiceTier::Flex,
-        ServiceTier::PriorityOrFast,
-    ]));
+    let tier = tc.draw(
+        hegel::generators::sampled_from(vec![
+            ServiceTier::Default,
+            ServiceTier::Flex,
+            ServiceTier::PriorityOrFast,
+        ])
+        .print_as_debug(),
+    );
     let a = tc.draw(generators::usage_with_max_tokens(1 << 30));
     let b = tc.draw(generators::usage_with_max_tokens(1 << 30));
 
@@ -161,14 +167,20 @@ fn cost_is_monotone_in_each_token_count(tc: TestCase) {
 /// service tier.
 #[hegel::test(test_cases = 500)]
 fn total_equals_sum_of_parts(tc: TestCase) {
-    let model = tc.draw(hegel::generators::sampled_from(
-        model::models().iter().collect::<Vec<_>>(),
-    ));
-    let tier = tc.draw(hegel::generators::sampled_from(vec![
-        ServiceTier::Default,
-        ServiceTier::Flex,
-        ServiceTier::PriorityOrFast,
-    ]));
+    let model = tc.draw(
+        hegel::generators::sampled_from(
+            model::models().iter().collect::<Vec<_>>(),
+        )
+        .print_as_debug(),
+    );
+    let tier = tc.draw(
+        hegel::generators::sampled_from(vec![
+            ServiceTier::Default,
+            ServiceTier::Flex,
+            ServiceTier::PriorityOrFast,
+        ])
+        .print_as_debug(),
+    );
     let usage = tc.draw(generators::usage_with_max_tokens(1 << 40));
 
     let result = cost::cost(model, &usage, tier);

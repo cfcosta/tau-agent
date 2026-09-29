@@ -40,7 +40,10 @@
 //! - `usage.cost` is always [`UsageCost::default`] (all zero): the stream
 //!   processor never prices usage, `tau_ai::cost` does.
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _, PrintableGenerator},
+};
 use serde_json::{Value, json};
 use tau_ai::{
     message::{
@@ -61,8 +64,13 @@ use crate::{generators, stream::draw_split};
 /// A text block a real `response.output_item.done` `message` item could
 /// produce: `text_signature` decodes back to the item's id (and `phase`,
 /// when present).
+pub fn wire_text_content() -> impl PrintableGenerator<TextContent> {
+    // TextContent is tau's own type, so its drawn values print through Debug.
+    wire_text_content_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn wire_text_content(tc: TestCase) -> TextContent {
+fn wire_text_content_unprinted(tc: &TestCase) -> TextContent {
     let item_id = tc.draw(generators::id("msg_"));
     let phase = tc.draw(gs::optional(gs::sampled_from(vec![
         "commentary".to_owned(),
@@ -80,8 +88,13 @@ pub fn wire_text_content(tc: TestCase) -> TextContent {
 /// A thinking block a real `response.output_item.done` `reasoning` item
 /// could produce, in tau-agent's always-encrypted-reasoning
 /// configuration: see the module docs for why `summary` is empty.
+pub fn wire_thinking_content() -> impl PrintableGenerator<ThinkingContent> {
+    // ThinkingContent is tau's own type, so its drawn values print through Debug.
+    wire_thinking_content_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn wire_thinking_content(tc: TestCase) -> ThinkingContent {
+fn wire_thinking_content_unprinted(tc: &TestCase) -> ThinkingContent {
     ThinkingContent {
         thinking: tc.draw(generators::text(40)),
         thinking_signature: Some(tc.draw(generators::reasoning_item_json())),
@@ -93,14 +106,22 @@ pub fn wire_thinking_content(tc: TestCase) -> ThinkingContent {
 /// above, with a stop reason `StreamProcessor` can actually produce (see
 /// the module docs). `usage` never exceeds `max_tokens` per field, and
 /// `usage.cost` is always zero.
+pub fn wire_assistant_message() -> impl PrintableGenerator<AssistantMessage> {
+    // AssistantMessage is tau's own type, so its drawn values print through Debug.
+    wire_assistant_message_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-pub fn wire_assistant_message(tc: TestCase) -> AssistantMessage {
-    let stop_reason = tc.draw(gs::sampled_from(vec![
-        StopReason::Stop,
-        StopReason::Length,
-        StopReason::ToolUse,
-        StopReason::Error,
-    ]));
+fn wire_assistant_message_unprinted(tc: &TestCase) -> AssistantMessage {
+    let stop_reason = tc.draw(
+        gs::sampled_from(vec![
+            StopReason::Stop,
+            StopReason::Length,
+            StopReason::ToolUse,
+            StopReason::Error,
+        ])
+        .print_as_debug(),
+    );
     let block_count =
         tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
     let force_tool_call_at = (stop_reason == StopReason::ToolUse)

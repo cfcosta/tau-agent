@@ -17,7 +17,7 @@ use tau_tools::truncate::{
 /// and sometimes a trailing newline, so both limits and every UTF-8
 /// boundary get hit with small limits.
 #[hegel::composite]
-fn text(tc: TestCase) -> String {
+fn text(tc: &TestCase) -> String {
     let line = gs::text().alphabet("ab \té€😀").max_size(30);
     let lines: Vec<String> = tc.draw(gs::vecs(line).max_size(30));
     let mut text = lines.join("\n");

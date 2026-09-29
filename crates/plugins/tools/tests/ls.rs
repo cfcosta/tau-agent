@@ -67,7 +67,7 @@ to 500 entries or 50KB (whichever is hit first)."
 /// case and sometimes a leading dot, to exercise case-insensitive
 /// sorting and dotfiles (`docs/reference/tools.md`, "ls").
 #[hegel::composite]
-fn ls_entries(tc: TestCase) -> Vec<(String, bool)> {
+fn ls_entries(tc: &TestCase) -> Vec<(String, bool)> {
     let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(6));
     let mut entries = Vec::new();
     for i in 0..count {

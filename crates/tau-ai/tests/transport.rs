@@ -85,7 +85,7 @@ impl Connector for UntaggedConnector {
 }
 
 /// A fault the server applies to one turn's first attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, hegel::PrettyPrintable)]
 enum Fault {
     None,
     /// The server forgets the lane's previous response.

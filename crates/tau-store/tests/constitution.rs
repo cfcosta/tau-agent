@@ -4,7 +4,11 @@
 
 use std::collections::BTreeMap;
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators as gs,
+    generators::{Generator as _, PrintableGenerator},
+};
 use tau_store::{Store, StoredConstitution, StoredRule};
 
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
@@ -15,8 +19,13 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
         .block_on(future)
 }
 
+fn constitution() -> impl PrintableGenerator<StoredConstitution> {
+    // StoredConstitution is tau's own type, so its drawn values print through Debug.
+    constitution_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-fn constitution(tc: TestCase) -> StoredConstitution {
+fn constitution_unprinted(tc: &TestCase) -> StoredConstitution {
     let count = tc.draw(gs::integers::<usize>().max_value(5));
     // Distinct ids, in a drawn order.
     let mut ids: Vec<usize> = (1..=8).collect();

@@ -1,6 +1,6 @@
 //! Event streams and the accumulator (`tau_ai::event`).
 
-use hegel::{TestCase, generators as gs};
+use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_ai::{
     event::{Accumulator, AssistantEvent, DoneReason},
     message::{AssistantBlock, AssistantMessage, StopReason, Usage},
@@ -138,7 +138,7 @@ fn error_mid_block_keeps_partial_content(tc: TestCase) {
 fn events_after_terminal_are_rejected(tc: TestCase) {
     let message = tc.draw(generators::assistant_message());
     let events = stream::draw_stream(&tc, &message);
-    let extra = tc.draw(gs::sampled_from(events.clone()));
+    let extra = tc.draw(gs::sampled_from(events.clone()).print_as_debug());
     let mut acc = Accumulator::new();
     for event in events {
         acc.push(event).unwrap();

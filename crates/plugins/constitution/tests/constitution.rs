@@ -11,7 +11,11 @@ use std::sync::{
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators as gs,
+    generators::{Generator as _, PrintableGenerator},
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -408,11 +412,18 @@ fn an_edit_applies_from_the_next_tool_call() {
     assert_eq!(first[0].rule, "R2");
 }
 
+fn constitution() -> impl PrintableGenerator<Constitution> {
+    // Constitution is tau's own type, so its drawn values print through Debug.
+    constitution_unprinted().print_as_debug()
+}
+
 #[hegel::composite]
-fn constitution(tc: TestCase) -> Constitution {
+fn constitution_unprinted(tc: &TestCase) -> Constitution {
     let mut constitution = Constitution {
-        on_error: tc
-            .draw(gs::sampled_from(vec![OnError::Allow, OnError::Block])),
+        on_error: tc.draw(
+            gs::sampled_from(vec![OnError::Allow, OnError::Block])
+                .print_as_debug(),
+        ),
         max_holds: tc.draw(gs::integers::<u32>().max_value(9)),
         ..Constitution::default()
     };

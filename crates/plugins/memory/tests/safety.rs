@@ -6,7 +6,7 @@ use tau_memory::safety::{REDACTED, redact, refusal};
 
 /// Prose from words that are neither secrets nor instructions.
 #[hegel::composite]
-fn prose(tc: TestCase) -> String {
+fn prose(tc: &TestCase) -> String {
     tc.draw(
         gs::vecs(gs::sampled_from(vec![
             "the",
@@ -33,7 +33,7 @@ fn prose(tc: TestCase) -> String {
 }
 
 #[hegel::composite]
-fn secret(tc: TestCase) -> String {
+fn secret(tc: &TestCase) -> String {
     let body: String = tc.draw(gs::from_regex("[A-Za-z0-9]{36}"));
     let kind = tc.draw(gs::integers::<u8>().max_value(6));
     match kind {
