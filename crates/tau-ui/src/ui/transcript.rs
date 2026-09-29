@@ -74,7 +74,7 @@ fn item_view(
             goal_set(run, condition, t, compact).into_any_element()
         }
         Item::Text(text) => div()
-            .max_w(px(760.))
+            .w_full()
             .text_color(t.text_soft)
             .line_height(relative(1.6))
             .child(rich(text, t.text_soft, t))
