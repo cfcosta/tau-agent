@@ -122,12 +122,18 @@ fn the_store_matches_its_model(tc: TestCase) {
                 // Stale marks follow the files a note came from.
                 let file =
                     tc.draw(gs::sampled_from(vec!["src/a.rs", "src/b.rs"]));
+                // A change that began at `written_by`: notes written
+                // since are newer than it.
+                let written_by = tc.draw(
+                    gs::integers::<u64>().min_value(1_000).max_value(now),
+                );
                 let expected: Vec<String> = model
                     .notes
                     .values()
                     .filter(|note| {
                         note.valid_to.is_none()
                             && note.stale.is_none()
+                            && note.updated <= written_by
                             && (note.source.files.iter().any(|f| f == file)
                                 || note.links.iter().any(|link| {
                                     link.kind == LinkType::About
@@ -137,7 +143,12 @@ fn the_store_matches_its_model(tc: TestCase) {
                     .map(|note| note.id.clone())
                     .collect();
                 let marked = notes
-                    .mark_stale(&[file.to_owned()], "src changed", now)
+                    .mark_stale(
+                        &[file.to_owned()],
+                        "src changed",
+                        written_by,
+                        now,
+                    )
                     .unwrap();
                 assert_eq!(marked, expected);
                 for id in marked {

@@ -16,7 +16,7 @@ use std::{
     fs,
     io::{self, Read as _, Write as _},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use crate::index::{Bm25, Index};
@@ -45,6 +45,45 @@ pub trait Encoder: Send {
     fn query(&mut self, text: &str) -> anyhow::Result<Tokens>;
     /// Names the model, so a cache from another model is not reused.
     fn model(&self) -> &str;
+}
+
+/// One encoder shared by several indexes, so a model is loaded once for
+/// every scope.
+pub struct Shared<E> {
+    inner: Arc<Mutex<E>>,
+    model: String,
+}
+
+impl<E: Encoder> Shared<E> {
+    pub fn new(encoder: E) -> Self {
+        Self {
+            model: encoder.model().to_owned(),
+            inner: Arc::new(Mutex::new(encoder)),
+        }
+    }
+}
+
+impl<E> Clone for Shared<E> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            model: self.model.clone(),
+        }
+    }
+}
+
+impl<E: Encoder> Encoder for Shared<E> {
+    fn documents(&mut self, texts: &[String]) -> anyhow::Result<Vec<Tokens>> {
+        self.inner.lock().expect("not poisoned").documents(texts)
+    }
+
+    fn query(&mut self, text: &str) -> anyhow::Result<Tokens> {
+        self.inner.lock().expect("not poisoned").query(text)
+    }
+
+    fn model(&self) -> &str {
+        &self.model
+    }
 }
 
 /// ColBERT's MaxSim: for each query token, its best dot product with any

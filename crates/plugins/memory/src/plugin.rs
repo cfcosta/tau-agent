@@ -148,6 +148,7 @@ impl MemoryPlugin {
         &self,
         paths: &[String],
         why: &str,
+        written_by: u64,
     ) -> anyhow::Result<Vec<String>> {
         let now = (self.scopes.clock)();
         let mut marked = self
@@ -155,15 +156,20 @@ impl MemoryPlugin {
             .repo
             .lock()
             .expect("not poisoned")
-            .mark_stale(paths, why, now)?;
+            .mark_stale(paths, why, written_by, now)?;
         if let Some(user) = &self.scopes.user {
             let theirs = user
                 .lock()
                 .expect("not poisoned")
-                .mark_stale(paths, why, now)?;
+                .mark_stale(paths, why, written_by, now)?;
             marked.extend(theirs.into_iter().map(|id| format!("{USER}{id}")));
         }
         Ok(marked)
+    }
+
+    /// The scopes' clock, for a caller's `written_by`.
+    pub fn now(&self) -> u64 {
+        (self.scopes.clock)()
     }
 
     fn tool_list(&self) -> Vec<Arc<dyn AgentTool>> {
@@ -283,7 +289,10 @@ impl PluginRun for MemoryRun {
             return;
         };
         let why = format!("{path} was edited after this note was written");
-        if let Err(error) = self.plugin.mark_stale(&[path.to_owned()], &why) {
+        let now = self.plugin.now();
+        if let Err(error) =
+            self.plugin.mark_stale(&[path.to_owned()], &why, now)
+        {
             ctx.report(
                 json!({ "kind": "error", "message": format!("{error:#}") }),
             );

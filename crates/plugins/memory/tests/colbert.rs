@@ -13,6 +13,7 @@ use tau_memory::{
         Colbert,
         Encoder,
         RRF_K,
+        Shared,
         Tokens,
         max_sim,
         read_tokens,
@@ -239,6 +240,29 @@ fn the_cache_spares_encoding_what_did_not_change(tc: TestCase) {
         .collect();
     assert_eq!(left.len(), notes.len() - 1);
     assert!(left.iter().all(|name| !name.starts_with("n0.")));
+}
+
+/// Two indexes over one shared encoder answer as two with their own.
+#[hegel::test(test_cases = 50)]
+fn a_shared_encoder_answers_as_its_own(tc: TestCase) {
+    let fake = Fake::default();
+    let shared = Shared::new(fake.clone());
+    let mut a = Colbert::new(shared.clone());
+    let mut b = Colbert::new(shared);
+    let mut own = Colbert::new(Fake::default());
+    for n in 0..tc.draw(gs::integers::<usize>().min_value(1).max_value(6)) {
+        let text = tc.draw(text());
+        let index = if n % 2 == 0 { &mut a } else { &mut b };
+        index.upsert(&format!("n{n}"), &text).unwrap();
+        own.upsert(&format!("n{n}"), &text).unwrap();
+    }
+    let query = tc.draw(text());
+    let mut both = a.semantic(&query, 10).unwrap();
+    both.extend(b.semantic(&query, 10).unwrap());
+    both.sort_by(|x, y| y.1.total_cmp(&x.1).then_with(|| x.0.cmp(&y.0)));
+    assert_eq!(both, own.semantic(&query, 10).unwrap());
+    // Both indexes encoded through the one encoder.
+    assert_eq!(*fake.encoded.lock().unwrap(), both.len());
 }
 
 #[hegel::test(test_cases = 100)]

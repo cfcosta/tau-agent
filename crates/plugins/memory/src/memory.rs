@@ -325,13 +325,15 @@ impl Memory {
         })
     }
 
-    /// Marks the notes about any of `paths` as possibly stale.
+    /// Marks the notes about any of `paths`, last written at or before
+    /// `written_by`, as possibly stale.
     pub fn mark_stale(
         &mut self,
         paths: &[String],
         why: &str,
+        written_by: u64,
         now: u64,
     ) -> Result<Vec<String>, StoreError> {
-        self.notes.mark_stale(paths, why, now)
+        self.notes.mark_stale(paths, why, written_by, now)
     }
 }

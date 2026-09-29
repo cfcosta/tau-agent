@@ -205,18 +205,22 @@ impl Notes {
     }
 
     /// Marks each note about one of `paths` as possibly stale: an
-    /// `about` link to it, or a source file that is it. Returns the ids
+    /// `about` link to it, or a source file that is it. Only notes last
+    /// written at or before `written_by` are marked: a change that began
+    /// before a note was written cannot make it stale. Returns the ids
     /// marked. Superseded notes are left alone.
     pub fn mark_stale(
         &mut self,
         paths: &[String],
         why: &str,
+        written_by: u64,
         now: u64,
     ) -> Result<Vec<String>, StoreError> {
         let touched: Vec<String> = self
             .notes
             .values()
             .filter(|note| !note.is_superseded() && note.stale.is_none())
+            .filter(|note| note.updated <= written_by)
             .filter(|note| {
                 let about = note.links.iter().any(|link| {
                     link.kind == LinkType::About && paths.contains(&link.to)
