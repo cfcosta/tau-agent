@@ -465,16 +465,13 @@ fn a_session_takes_a_new_effort_between_requests(tc: TestCase) {
     assert_eq!(bodies[1]["reasoning"]["effort"], json!("high"));
 }
 
-/// On Sol 6 the second turn, at a new effort, continues the first; on
-/// a model not known to keep its cache across efforts, it goes in full.
+/// A new effort resends in full on every model: no model keeps its cache
+/// across a change of effort (`docs/reference/openai-websocket.md`).
 #[hegel::test(test_cases = 5)]
-fn a_new_effort_continues_only_where_the_cache_survives(tc: TestCase) {
-    let (bodies, full, delta) = two_turns_changing_effort(&tc, "gpt-6-sol");
-    assert_eq!((full, delta), (1, 1));
-    assert_eq!(bodies[1]["previous_response_id"], json!("resp_1"));
-    assert_eq!(bodies[1]["reasoning"]["effort"], json!("high"));
-
-    let (bodies, full, delta) = two_turns_changing_effort(&tc, "gpt-5.6-terra");
-    assert_eq!((full, delta), (2, 0));
-    assert!(bodies[1].get("previous_response_id").is_none());
+fn a_new_effort_resends_in_full(tc: TestCase) {
+    for model in ["gpt-6-sol", "gpt-6-luna"] {
+        let (bodies, full, delta) = two_turns_changing_effort(&tc, model);
+        assert_eq!((full, delta), (2, 0), "{model}");
+        assert!(bodies[1].get("previous_response_id").is_none(), "{model}");
+    }
 }

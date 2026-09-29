@@ -107,14 +107,14 @@ but only if both of these hold:
 
 Otherwise send the full input and no `previous_response_id`.
 
-One exception to rule 1: on a model that keeps a conversation's cache
-when only the reasoning effort changes (`model::effort_keeps_cache`:
-`gpt-6-sol` and `gpt-6-astra`, as users report it; not yet confirmed
-against the API), the `reasoning` field is left out of the comparison. A run may then change
-its effort per request (`LlmSession::set_reasoning`) and still continue
-its chain. Should the server refuse, `previous_response_not_found`
-clears the continuation and the request goes in full, as for any
-delta.
+A change of reasoning effort is a change of fields, so it resends in
+full. Continuing across one would not save anything: measured on
+2026-09-29 over the Codex backend's WebSocket (a 3.6k-token prompt, two
+requests per chain), the server accepts a `previous_response_id` at a
+new effort but reports 0 cached tokens, against 2.8k–3.5k at the same
+effort. It held for `gpt-6-luna`, `gpt-6-sol`, `gpt-6-astra` and
+`gpt-5.6-terra`, in both directions (low→high, high→low, low→medium,
+medium→high). A full resend at the new effort also caches nothing.
 
 The check is cheap even for a long transcript, because nothing in it is
 copied:
