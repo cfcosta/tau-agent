@@ -40,7 +40,6 @@ use tau_vcs::Landing;
 use crate::{
     assets::Icon,
     catalog::{Catalog, PluginInfo, PluginScreen},
-    change_log::Change,
     input::{InputEvent, TextInput},
     models::{AccessKind, ModelChoice, ModelSettings},
     pull_request::{PrState, PullRequest},
@@ -81,6 +80,7 @@ use crate::{
         CodeState,
         Item,
         LandedCard,
+        LandingRecord,
         Origin,
         Proposal,
         RunStatus,
@@ -1289,12 +1289,11 @@ impl Workspace {
             Origin::SubAgent { parent } => parent.clone(),
             Origin::Root => return,
         };
-        let card = LandedCard {
-            from: run.clone(),
+        let card = LandedCard::from_record(LandingRecord {
+            from: run.0.to_string(),
             title: child.title.clone(),
-            changes: landing.changes.into_iter().map(Change::new).collect(),
-            conflicts: landing.conflicts,
-        };
+            landing,
+        });
         if let Some(view) = self.runs.iter_mut().find(|view| view.id == parent)
         {
             view.items.push(Item::Landed(card));

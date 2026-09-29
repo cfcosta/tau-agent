@@ -90,6 +90,8 @@ use crate::{
         FileChange,
         FileKind,
         FileStat,
+        LANDING_RECORD,
+        LandingRecord,
         Limits as ViewLimits,
         Origin,
         PlanField,
@@ -1540,6 +1542,17 @@ impl Host {
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
+        // And a record to draw the landing's card from, in history.
+        let record = LandingRecord {
+            from: child.0.to_string(),
+            title: title(&self.stored_prompt(child)?),
+            landing: landing.clone(),
+        };
+        let mut entries = entries;
+        entries.push(Entry::Plugin {
+            plugin: LANDING_RECORD.to_owned(),
+            body: serde_json::to_string(&record)?,
+        });
         self.runtime.block_on(self.store.append_turn(
             &plan.parent.0,
             &entries,
@@ -1550,6 +1563,30 @@ impl Host {
         plan.project.remove_bookmark(&bookmark(child))?;
         self.workspaces.lock().expect("not poisoned").remove(child);
         Ok(landing)
+    }
+
+    /// The words `run` was started with, from its stored transcript.
+    fn stored_prompt(&self, run: &RunId) -> anyhow::Result<String> {
+        self.runtime.block_on(async {
+            let kind = self
+                .store
+                .run(&run.0)
+                .await?
+                .map_or(RunKind::Root, |record| record.kind);
+            let messages: Vec<Message> = self
+                .store
+                .transcript(&run.0)
+                .await?
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    Entry::Message { body, .. } => {
+                        serde_json::from_str(&body).ok()
+                    }
+                    _ => None,
+                })
+                .collect();
+            anyhow::Ok(prompt_of(&kind, messages.iter()))
+        })
     }
 
     /// Everything landing `child` needs, once both runs are idle.
@@ -3016,6 +3053,23 @@ fn workspace_name() -> String {
     format!("run-{millis:x}-{}", COUNT.fetch_add(1, Ordering::Relaxed))
 }
 
+/// The words a run was started with: a fork's own prompt is its last
+/// user message, any other run's its first.
+fn prompt_of<'a>(
+    kind: &RunKind,
+    messages: impl DoubleEndedIterator<Item = &'a Message>,
+) -> String {
+    let mut users = messages.filter_map(|message| match message {
+        Message::User(user) => Some(crate::view::user_words(&user.content)),
+        _ => None,
+    });
+    match kind {
+        RunKind::Fork { .. } => users.next_back(),
+        _ => users.next(),
+    }
+    .unwrap_or_default()
+}
+
 /// Past runs, rebuilt from their stored transcripts, each under the
 /// repository it recorded, or `home` if it recorded none.
 pub async fn history(
@@ -3038,7 +3092,8 @@ pub async fn history(
                 }
                 Entry::Plugin { plugin, body }
                     if plugin == tau_reasoning::NAME
-                        || plugin == tau_constitution::NAME =>
+                        || plugin == tau_constitution::NAME
+                        || plugin == LANDING_RECORD =>
                 {
                     serde_json::from_str(&body)
                         .ok()
@@ -3054,19 +3109,7 @@ pub async fn history(
                 Stored::Record { .. } => None,
             })
             .collect();
-        let mut users = messages.iter().filter_map(|message| match message {
-            Message::User(user) => Some(crate::view::user_words(&user.content)),
-            _ => None,
-        });
-        // A fork's own prompt is its last user message.
-        let prompt = match record.kind {
-            RunKind::Fork { .. } => users.next_back(),
-            _ => {
-                let mut users = users;
-                users.next()
-            }
-        }
-        .unwrap_or_default();
+        let prompt = prompt_of(&record.kind, messages.iter().copied());
         let mut view = RunView::from_timeline(
             RunId(record.id.clone().into()),
             title(&prompt),

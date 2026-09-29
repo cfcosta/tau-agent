@@ -253,6 +253,35 @@ pub enum Item {
     },
 }
 
+/// The record a landing leaves in its parent, under [`LANDING_RECORD`]:
+/// enough to draw its card again when the parent comes back from
+/// history.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LandingRecord {
+    pub from: String,
+    pub title: String,
+    pub landing: tau_vcs::Landing,
+}
+
+/// The plugin name a landing's record is stored under.
+pub const LANDING_RECORD: &str = "landing";
+
+impl LandedCard {
+    pub fn from_record(record: LandingRecord) -> Self {
+        Self {
+            from: RunId(record.from.into()),
+            title: record.title,
+            changes: record
+                .landing
+                .changes
+                .into_iter()
+                .map(crate::change_log::Change::new)
+                .collect(),
+            conflicts: record.landing.conflicts,
+        }
+    }
+}
+
 /// A child run that landed on this run: what it brought.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LandedCard {
@@ -642,6 +671,19 @@ impl RunView {
                 {
                     starting.push(body);
                 }
+                // A child landed between turns: its card follows the
+                // turn it came after.
+                Stored::Record { plugin, body } if plugin == LANDING_RECORD => {
+                    flush(&mut view, &mut during);
+                    if let Ok(record) =
+                        serde_json::from_value::<LandingRecord>(body.clone())
+                    {
+                        view.end_turn();
+                        view.items.push(Item::Landed(LandedCard::from_record(
+                            record,
+                        )));
+                    }
+                }
                 Stored::Record { plugin, body } => {
                     if during.is_empty() {
                         begun = false;
@@ -675,7 +717,16 @@ impl RunView {
     }
 
     fn end_stored_turn(&mut self) {
-        if self.turn > 0 {
+        self.end_turn();
+    }
+
+    /// Marks the end of the current turn, once.
+    fn end_turn(&mut self) {
+        let ended = self.items.iter().rev().find_map(|item| match item {
+            Item::TurnEnd { turn } => Some(*turn),
+            _ => None,
+        });
+        if self.turn > 0 && ended != Some(self.turn) {
             self.items.push(Item::TurnEnd { turn: self.turn });
         }
     }
@@ -687,9 +738,7 @@ impl RunView {
             Message::Assistant(reply) => {
                 // A turn is a reply and the results of its calls; the
                 // next reply starts the next one.
-                if view.turn > 0 {
-                    view.items.push(Item::TurnEnd { turn: view.turn });
-                }
+                view.end_turn();
                 view.turn += 1;
                 view.add_usage(&reply.usage);
                 for block in &reply.content {

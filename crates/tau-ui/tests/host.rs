@@ -377,6 +377,27 @@ fn a_fork_lands_on_its_parent_and_closes() {
     );
     // Landing again finds nothing to land.
     assert!(host.land(&fork.id).is_err());
+
+    // Back from history, the main run shows the landing where it
+    // happened: after its last turn, before its stop.
+    let history = host.history().unwrap();
+    let items = &history
+        .iter()
+        .find(|view| view.id == main.id)
+        .unwrap()
+        .items;
+    let [.., turn_end, Item::Landed(card), Item::Stop { .. }] =
+        items.as_slice()
+    else {
+        panic!("no landed card before the stop: {items:?}");
+    };
+    assert!(
+        matches!(turn_end, Item::TurnEnd { turn: 3 }),
+        "{turn_end:?}"
+    );
+    assert_eq!(card.from, fork.id);
+    assert_eq!(card.title, "write-c-instead");
+    assert_eq!(card.changes.len(), 1);
 }
 
 #[test]
