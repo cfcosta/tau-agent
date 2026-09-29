@@ -128,6 +128,26 @@ impl Vcs {
         .await
     }
 
+    /// Lands a child run on this workspace's run (ADR 0009): rebases
+    /// the child's changes, up to `child_head` (a full commit id in
+    /// hex), onto this run's newest commit, starts this run's working
+    /// copy on top, and points `bookmark`, this run's, at the new head.
+    /// With `confirm` off it changes nothing and says what landing would
+    /// do. Call it between this run's turns.
+    pub async fn land(
+        &self,
+        child_head: impl Into<String>,
+        bookmark: impl Into<String>,
+        confirm: bool,
+    ) -> anyhow::Result<crate::Landing> {
+        let child_head = child_head.into();
+        let bookmark = bookmark.into();
+        self.call(move |worker| {
+            crate::land::land(worker, &child_head, &bookmark, confirm)
+        })
+        .await
+    }
+
     /// The directory the workspace was opened at.
     pub fn root(&self) -> &Path {
         &self.inner.root

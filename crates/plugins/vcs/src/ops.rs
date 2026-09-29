@@ -70,7 +70,7 @@ pub struct ChangeInfo {
 }
 
 impl ChangeInfo {
-    fn of(
+    pub(crate) fn of(
         repo: &dyn Repo,
         commit: &Commit,
         wc: &CommitId,

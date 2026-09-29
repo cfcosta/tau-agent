@@ -296,6 +296,28 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   `RunWorkspace`. The fork inherits the transcript and links up to that
   turn, so it starts on that turn's code.
 
+## Landing a child run
+
+A child run (a fork, or a sub-agent) lands on its parent by restacking
+([ADR 0009](../decisions/0009-child-runs-land-on-their-parent.md)).
+`Vcs::land(child_head, bookmark, confirm)` runs on the parent's `Vcs`:
+
+- The child's changes are what its head has that the parent's newest
+  commit lacks. Their root is rebased onto that commit, the rest
+  follow, and each keeps its change id.
+- The parent's working copy starts again on the child's new head, and
+  the parent's bookmark moves there, in the same operation (tagged
+  `land`), so the parent's files follow.
+- A child that already sits on the parent's head (the parent waited on
+  it) is not rewritten.
+- It refuses while the parent's working copy holds changes: landing is
+  between the parent's turns.
+- With `confirm` off, nothing changes. The `Landing` it returns says
+  what would happen: the changes as they would be (`changes`, newest
+  first), the paths that would hold conflict markers in the new head
+  (`conflicts`), and the new head. Confirmed, conflicts land as jj
+  conflicts for the parent's next turn to resolve.
+
 ## Left to the host and the UI
 
 These operations change shared state, use the network, or throw work

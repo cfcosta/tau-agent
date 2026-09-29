@@ -24,6 +24,7 @@
 
 mod clone;
 mod diff;
+mod land;
 mod ops;
 pub mod plugin;
 pub mod project;
@@ -34,6 +35,7 @@ mod vcs;
 
 pub use clone::clone_bare;
 pub use diff::{ChangeKind, FileChange, MAX_DIFF_BYTES};
+pub use land::Landing;
 pub use ops::{ChangeInfo, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT, TurnCommit};
 pub use plugin::VcsPlugin;
 pub use project::{FileDiff, Project, UpdateFrom, Updated};
