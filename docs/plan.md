@@ -184,7 +184,9 @@ The hardest part is the WebSocket layer. It has to:
         lane), with `parent_run_id` set and the parent's workflow;
   - [x] cancelling the parent cancels the child;
   - [x] the child's usage counts toward the parent's limits and
-        outcome; its events reach the parent's subscriber.
+        outcome; its events reach the parent's subscriber;
+  - [x] `SubAgent::forking`: the child forks the caller at the call
+        (ADR 0015).
 - [x] `Limits`: turns, tokens, USD and wall clock. Checked after every
       turn. When a limit is hit the run ends with `StopReason::Limit`.
 - [x] `Checkpoint` and `Agent::fork`.

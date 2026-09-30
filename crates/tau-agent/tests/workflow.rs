@@ -1050,3 +1050,134 @@ fn a_fork_counts_turns_from_its_fork_point() {
         assert_eq!(turns, [3]);
     });
 }
+
+/// Forking sub-agents, over drawn batches that mix sub-agent calls with
+/// other tools. Each sub-agent is asked on its caller's stored
+/// transcript, then the turn that made its call, then one output per
+/// call in that turn (its own, a sibling's, another tool's), then its
+/// input; the store records it as a sub-agent forked where its caller
+/// had stored up to.
+#[hegel::test(test_cases = 40)]
+fn forking_sub_agents_start_from_their_callers_turn(tc: TestCase) {
+    let batches: Vec<Vec<bool>> = tc.draw(
+        gs::vecs(gs::vecs(gs::booleans()).min_size(1).max_size(4)).max_size(3),
+    );
+    let children: usize = batches.iter().flatten().filter(|&&b| b).count();
+    let mut lead_llm = ScriptedModel::new();
+    for (b, batch) in batches.iter().enumerate() {
+        lead_llm = lead_llm.turn(|mut t| {
+            for (c, &research) in batch.iter().enumerate() {
+                t = if research {
+                    t.tool_call(
+                        "research",
+                        json!({"input": format!("q{b}.{c}")}),
+                    )
+                } else {
+                    t.tool_call("echo", json!({"text": "x"}))
+                };
+            }
+            t
+        });
+    }
+    lead_llm = lead_llm.turn(|t| t.text("done"));
+    let mut child_llm = ScriptedModel::new();
+    for _ in 0..children {
+        child_llm = child_llm.turn(|t| t.text("found"));
+    }
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let researcher = Agent::new(child_llm.clone()).name("researcher");
+        let lead = Agent::new(lead_llm.clone())
+            .name("lead")
+            .tool(typed(Echo))
+            .tool(researcher.as_tool("research", "Investigates.").forking());
+        let outcome = lead.run("task", &store).await.unwrap();
+        assert_eq!(outcome.text, "done");
+        let lead_stored = stored(&store, &outcome.run.0).await;
+
+        let requests = child_llm.requests();
+        assert_eq!(requests.len(), children);
+        let asks = |call: &tau_ai::message::ToolCall, input: &str| {
+            call.arguments.get("input").and_then(Value::as_str) == Some(input)
+        };
+        let own = "You are the sub-agent running this call. Your task \
+                   follows: do that task alone, then answer with what you \
+                   did.";
+        for request in &requests {
+            let transcript = &request.transcript;
+            let Some(Message::User(input)) = transcript.last() else {
+                panic!("a sub-agent is asked its input last: {transcript:?}");
+            };
+            let UserContent::Text(input) = &input.content else {
+                panic!("text input");
+            };
+            // The caller's turn that made this call, where it is stored.
+            let at = lead_stored
+                .iter()
+                .position(|m| match m {
+                    Message::Assistant(a) => a.content.iter().any(|b| {
+                        matches!(b, AssistantBlock::ToolCall(call)
+                            if asks(call, input))
+                    }),
+                    _ => false,
+                })
+                .expect("the call is in the caller's transcript");
+            let Message::Assistant(turn) = &lead_stored[at] else {
+                unreachable!()
+            };
+            assert_eq!(transcript[..=at], lead_stored[..=at]);
+            let outputs: Vec<(String, String)> = transcript[at + 1..]
+                .iter()
+                .take_while(|m| matches!(m, Message::ToolResult(_)))
+                .map(|m| match m {
+                    Message::ToolResult(r) => {
+                        (r.tool_call_id.clone(), format!("{:?}", r.content))
+                    }
+                    _ => unreachable!(),
+                })
+                .collect();
+            let expected: Vec<(String, String)> = turn
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    AssistantBlock::ToolCall(call) => Some(call),
+                    _ => None,
+                })
+                .map(|call| {
+                    let text = if asks(call, input) {
+                        own
+                    } else if call.name == "research" {
+                        "Another sub-agent runs this call."
+                    } else {
+                        "This call's result is not available to you."
+                    };
+                    (
+                        call.id.clone(),
+                        format!("{:?}", ToolOutput::text(text).content),
+                    )
+                })
+                .collect();
+            assert_eq!(outputs, expected);
+            assert_eq!(transcript.len(), at + 1 + outputs.len() + 1);
+        }
+
+        // Each sub-agent forked where its caller had stored up to: just
+        // before the turn that called it.
+        let runs = store.subagents(&outcome.run.0).await.unwrap();
+        assert_eq!(runs.len(), children);
+        for run in runs {
+            let RunKind::Subagent {
+                parent,
+                fork_seq: Some(fork_seq),
+            } = &run.kind
+            else {
+                panic!("a forked sub-agent: {:?}", run.kind);
+            };
+            assert_eq!(parent, &outcome.run.0.to_string());
+            let child = stored(&store, &run.id).await;
+            let at = usize::try_from(*fork_seq + 1).unwrap();
+            assert!(matches!(child[at], Message::Assistant(_)));
+            assert_eq!(child[..=at], lead_stored[..=at]);
+        }
+    });
+}

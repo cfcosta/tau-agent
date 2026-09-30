@@ -131,6 +131,11 @@ pub(crate) struct Runner {
     pub clock: Clock,
     /// Messages the run inherits (a fork's), before its input.
     pub history: Vec<Message>,
+    /// Messages the run starts with, stored as its own before its
+    /// input: a forking sub-agent's copy of its caller's pending turn.
+    pub prelude: Vec<Message>,
+    /// The assistant message whose tool calls are running.
+    pub pending_turn: Option<Arc<AssistantMessage>>,
     /// The `seq` of the run's last stored entry, -1 before the first.
     /// Shared with plugins, which store records too.
     pub last_seq: Arc<AtomicI64>,
@@ -202,10 +207,12 @@ impl Runner {
             content: input,
             timestamp: (self.clock)(),
         });
-        self.persist(std::slice::from_ref(&first), &own).await?;
+        let mut start = std::mem::take(&mut self.prelude);
+        start.push(first);
+        self.persist(&start, &own).await?;
         let mut transcript = std::mem::take(&mut self.history);
-        let inherited = !transcript.is_empty();
-        transcript.push(first);
+        let inherited = transcript.len() + start.len() > 1;
+        transcript.extend(start);
         if inherited {
             // A transcript from another run, or another model, may not
             // fit this one's window. Failures were reported as events.
@@ -700,6 +707,7 @@ impl Runner {
         transcript: &[Message],
         message: &AssistantMessage,
     ) -> Vec<ToolResultMessage> {
+        self.pending_turn = Some(Arc::new(message.clone()));
         let mut outcomes: Vec<Option<(ToolOutput, bool)>> =
             vec![None; calls.len()];
         let mut ready = Vec::new();
@@ -871,11 +879,14 @@ impl Runner {
                     updates.clone(),
                 ),
                 run: self.run.clone(),
-                scope: Some(RunScope {
+                scope: self.pending_turn.clone().map(|turn| RunScope {
                     store: self.store.clone(),
                     workflow: self.workflow.clone(),
                     events: self.events.clone(),
                     children: self.children.clone(),
+                    call: call.id.as_str().into(),
+                    turn,
+                    stored: self.last_seq.load(Ordering::SeqCst),
                 }),
             };
             let args = call.args.clone();

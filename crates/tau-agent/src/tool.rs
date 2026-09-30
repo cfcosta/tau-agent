@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tau_ai::message::{InputBlock, TextContent, Usage};
+use tau_ai::message::{AssistantMessage, InputBlock, TextContent, Usage};
 use tau_store::Store;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -152,13 +152,22 @@ impl ToolCtx {
 
 /// The part of a run that a sub-agent run started by one of its tools
 /// shares: the store, the workflow, the event subscriber, and the usage
-/// of its children, which counts toward the run's limits.
+/// of its children, which counts toward the run's limits. A forking
+/// sub-agent also starts from the call, the turn that made it, and what
+/// the run had stored when it started.
 #[derive(Debug, Clone)]
 pub(crate) struct RunScope {
     pub store: Store,
     pub workflow: Option<Arc<str>>,
     pub events: Option<mpsc::Sender<RunEvent>>,
     pub children: Arc<Mutex<Usage>>,
+    /// The id of the call being run.
+    pub call: Arc<str>,
+    /// The assistant message that made the call. The run stores it only
+    /// once its tools are done.
+    pub turn: Arc<AssistantMessage>,
+    /// The `seq` of the run's last stored entry when the call started.
+    pub stored: i64,
 }
 
 /// A tool, as the loop sees it.

@@ -20,9 +20,11 @@ use tau_ai::{
     llm::{Llm, LlmError},
     message::{
         AssistantBlock,
+        AssistantMessage,
         InputBlock,
         Message,
         TextContent,
+        ToolResultMessage,
         Usage,
         UserContent,
     },
@@ -424,6 +426,7 @@ impl Agent {
     pub fn as_tool(&self, name: &str, description: &str) -> SubAgent {
         SubAgent {
             agent: self.clone(),
+            fork: false,
             name: name.to_owned(),
             description: description.to_owned(),
             parameters: json!({
@@ -566,6 +569,8 @@ impl Resumed {
 /// An agent as a tool. See [`Agent::as_tool`].
 pub struct SubAgent {
     agent: Agent,
+    /// Whether each call forks the calling run.
+    fork: bool,
     name: String,
     description: String,
     parameters: Value,
@@ -595,6 +600,15 @@ impl AgentTool for SubAgent {
 }
 
 impl SubAgent {
+    /// Each call forks the calling run instead of starting blank. The
+    /// sub-agent inherits the caller's stored transcript, then the turn
+    /// that made the call with an output for each of its calls (see
+    /// `fork_prelude`), then its input.
+    pub fn forking(mut self) -> Self {
+        self.fork = true;
+        self
+    }
+
     /// Runs the child to its end, and answers with its last text.
     async fn ask(
         &self,
@@ -605,10 +619,16 @@ impl SubAgent {
             return Err(SubAgentError::NotInRun);
         };
         let input = args["input"].as_str().unwrap_or_default().to_owned();
+        let (fork_seq, prelude) = if self.fork {
+            let prelude = fork_prelude(&scope.turn, &scope.call, &self.name);
+            (Some(scope.stored), prelude)
+        } else {
+            (None, Vec::new())
+        };
         let launch = Launch {
             kind: RunKind::Subagent {
                 parent: ctx.run.0.to_string(),
-                fork_seq: None,
+                fork_seq,
             },
             parent: Some(ctx.run.clone()),
             workflow: scope.workflow.clone(),
@@ -618,6 +638,7 @@ impl SubAgent {
             events: Events::Forward(scope.events.clone()),
             resume: None,
             turns_before: 0,
+            prelude,
         };
         let outcome = self
             .agent
@@ -663,6 +684,8 @@ struct Launch {
     resume: Option<RunId>,
     /// Turns a new run starts after: a fork's, from its parent.
     turns_before: u32,
+    /// Messages a new run stores as its own before its input.
+    prelude: Vec<Message>,
 }
 
 /// Where a run's events go.
@@ -686,6 +709,7 @@ impl Launch {
             events: Events::Own,
             resume: None,
             turns_before: 0,
+            prelude: Vec::new(),
         }
     }
 }
@@ -789,7 +813,14 @@ async fn run_task(
         })?;
         workflow = record.workflow_id;
     }
-    let fork = matches!(launch.kind, RunKind::Fork { .. });
+    let fork = matches!(
+        launch.kind,
+        RunKind::Fork { .. }
+            | RunKind::Subagent {
+                fork_seq: Some(_),
+                ..
+            }
+    );
     match &resumed {
         Some(record) => workflow = record.workflow_id.clone(),
         None => {
@@ -841,7 +872,9 @@ async fn run_task(
     } else {
         (Vec::new(), None)
     };
+    let mut prelude = launch.prelude;
     keep_own_reasoning(&mut history, &agent.0.model);
+    keep_own_reasoning(&mut prelude, &agent.0.model);
     let mut plan = RunPlan::new(
         input,
         agent.0.instructions.clone(),
@@ -898,6 +931,8 @@ async fn run_task(
         cancel: launch.cancel,
         clock: agent.0.clock.clone(),
         history,
+        prelude,
+        pending_turn: None,
         reports: shared.reports,
         last_seq: shared.last_seq,
         charged: shared.charged,
@@ -963,6 +998,46 @@ fn first_message(context: Vec<String>, input: String) -> UserContent {
             })
             .collect(),
     )
+}
+
+/// What a forking sub-agent stores before its input: its caller's turn,
+/// which the caller stores only once its tools are done, and an output
+/// for each of that turn's calls, so the sub-agent sees the whole batch
+/// and knows its own part in it. `tool` is the sub-agent's tool name:
+/// calls to it are its siblings.
+fn fork_prelude(
+    turn: &AssistantMessage,
+    call: &str,
+    tool: &str,
+) -> Vec<Message> {
+    let outputs = turn.content.iter().filter_map(|block| match block {
+        AssistantBlock::ToolCall(each) => {
+            let text = if each.id == call {
+                "You are the sub-agent running this call. Your task \
+                 follows: do that task alone, then answer with what you \
+                 did."
+            } else if each.name == tool {
+                "Another sub-agent runs this call."
+            } else {
+                "This call's result is not available to you."
+            };
+            Some(Message::ToolResult(ToolResultMessage {
+                tool_call_id: each.id.clone(),
+                tool_name: each.name.clone(),
+                content: vec![InputBlock::Text(TextContent {
+                    text: text.to_owned(),
+                    text_signature: None,
+                })],
+                details: None,
+                is_error: false,
+                timestamp: turn.timestamp,
+            }))
+        }
+        _ => None,
+    });
+    std::iter::once(Message::Assistant(turn.clone()))
+        .chain(outputs)
+        .collect()
 }
 
 /// Drops the reasoning of the assistant messages another model wrote,
@@ -1147,7 +1222,6 @@ mod tests {
     #[hegel::test(test_cases = 300)]
     fn only_another_models_reasoning_is_dropped(tc: hegel::TestCase) {
         use hegel::generators as gs;
-        use tau_ai::message::AssistantMessage;
         use tau_testing::generators::message;
         let before: Vec<Message> = tc.draw(gs::vecs(message()).max_size(8));
         let model: String = tc.draw(gs::sampled_from(vec![

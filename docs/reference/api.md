@@ -48,7 +48,7 @@ impl Agent {
     pub async fn run(&self, input: impl Into<Input>, store: &Store) -> Result<Outcome>;
     pub async fn run_typed<T>(&self, input: impl Into<Input>, store: &Store) -> Result<Typed<T>>
     where T: DeserializeOwned + JsonSchema;
-    pub fn as_tool(&self, name: &str, description: &str) -> impl AgentTool;
+    pub fn as_tool(&self, name: &str, description: &str) -> SubAgent; // SubAgent: AgentTool
     pub fn fork(&self, from: &Checkpoint) -> Forked;  // Forked::run / run_typed / start
     pub fn resume(&self, run: &RunId) -> Resumed;    // a finished run goes on, in place: Resumed::run / start
 }
@@ -67,6 +67,13 @@ impl Input {
 
 Sub-agent runs inherit their parent's workflow. Forks do too, unless
 their input names another.
+
+A sub-agent starts blank: it sees only its input. `SubAgent::forking`
+makes each call fork the calling run instead. The sub-agent then sees
+the caller's stored transcript, the turn that made the call, an output
+for each call in that turn (its own, a sibling sub-agent's, or another
+tool's, whose result it cannot see), and then its input. `delegate`
+works this way ([0015](../decisions/0015-delegates-fork-their-caller.md)).
 
 ## Run and Outcome
 
