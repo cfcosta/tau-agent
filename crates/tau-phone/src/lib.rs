@@ -1,8 +1,8 @@
 //! tau-ui on an Android phone.
 //!
-//! For now it shows the demo session with no host: runs, history and
-//! screens as `tau-ui --demo` has them, answered the way a host would.
-//! Connecting to a running tau is decision 0013.
+//! It opens on pairing with the tau on a computer (decision 0013). For
+//! now nothing connects: the demo answers pairing the way a remote
+//! would, then shows its session, as `tau-ui --demo` has it.
 //!
 //! To build the APK, in the flake's `android` shell (`nix develop
 //! .#android`), from the repository's root:
@@ -20,7 +20,7 @@
 
 use gpui::{App, AppContext, Application, WindowOptions};
 use gpui_mobile::android::jni;
-use tau_ui::{Workspace, assets::Assets, demo};
+use tau_ui::{Workspace, assets::Assets, demo, pairing::PairStep};
 
 /// Called by `android-activity` on its own thread once NativeActivity
 /// loads this library. Returns when the activity is gone.
@@ -62,6 +62,7 @@ fn android_main(app: android_activity::AndroidApp) {
                         cx,
                     );
                     workspace.replay(demo::run_id(), demo::script(), cx);
+                    workspace.start_pairing(PairStep::Welcome, cx);
                     workspace
                 })
             });
