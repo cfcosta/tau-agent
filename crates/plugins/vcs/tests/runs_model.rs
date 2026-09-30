@@ -1,26 +1,37 @@
 //! Runs in a project against a model (`docs/reference/vcs.md`,
-//! "Projects", "Runs and turns", "Landing a child run"; ADR 0009):
-//! random sequences of runs, turns, forks, landings, drops and forgotten
-//! workspaces on a real project, checked after every step.
+//! "Projects", "Runs and turns", "Landing a child run", "Merging a run
+//! into trunk"; ADR 0009, 0014): random sequences of runs, turns, edits
+//! left uncommitted, forks, landings, drops, merges into trunk and
+//! forgotten workspaces on a real project, checked after every step.
 //!
-//! The model is a graph of commits, each a parent and a file tree, and
-//! the runs that point into it. What it holds to:
+//! The model is a graph of commits, each a parent and a file tree, the
+//! runs that point into it, each with the tree of its `@`, and trunk.
+//! What it holds to:
 //! - a turn commits what it changed on top of the run's head, and a turn
 //!   that changed nothing names the commit before it; the run's bookmark
 //!   `tau/<run>` names its newest commit;
-//! - a fork at a link starts on exactly that link's files;
-//! - runs are isolated: a run's files are its head's tree, whatever the
+//! - a turn that ends as `RunWorkspace` ends one snapshots `@` and leaves
+//!   it uncommitted, listing the paths changed since the last snapshot;
+//! - a fork at a change's link starts on exactly that link's files; one
+//!   at a snapshot starts on the snapshot's files, on its parent as it
+//!   is now, with what the parent gained since merged in;
+//! - runs are isolated: a run's files are its `@`'s tree, whatever the
 //!   other runs do;
 //! - landing moves the child's own changes (what its head has that the
 //!   parent's lacks) onto the parent's head, in order, each keeping its
 //!   change id, each tree rebased as jj rebases (`onto + old - base`,
 //!   path by path, resolved by jj's trivial merge, else a conflict); a
 //!   child already on the parent's head is not rewritten; the parent's
-//!   files and bookmark follow; the child closes;
+//!   files and bookmark follow, and its uncommitted work moves on top;
+//!   the child closes;
+//! - moving a top-level run onto trunk restacks its changes and its `@`
+//!   the same way, reporting conflicts in `@` too; trunk moves forward
+//!   to a merged run and never sideways;
 //! - dropping abandons the child's own changes; whatever descended from
 //!   a rewritten or abandoned commit follows it, as jj rebases it;
 //! - `Project::current` moves each link to its change's commit now, and
-//!   leaves a link to an abandoned change where it was;
+//!   leaves a link to an abandoned change, or to a snapshot, where it
+//!   was;
 //! - `forget_workspace` deletes the directory and keeps the commits and
 //!   the bookmark.
 //!
@@ -35,7 +46,7 @@ use std::{
 
 use hegel::{TestCase, generators as gs};
 use tau_testing::block_on;
-use tau_vcs::{Identity, Link, Project, Vcs};
+use tau_vcs::{Identity, Link, Project, Vcs, VcsError};
 
 const PATHS: [&str; 3] = ["a.txt", "c.txt", "dir/b.txt"];
 const VALUES: [&str; 4] = ["", "one\n", "two\n", "three\n"];
@@ -157,6 +168,16 @@ enum State {
     Landed,
     Dropped,
     Forgotten,
+    Merged,
+}
+
+/// A run's link, and the commit it names: for a turn's snapshot, the
+/// commit `@` stood on, with that commit's tree and `@`'s then.
+#[derive(Debug, Clone)]
+struct Linked {
+    link: Link,
+    at: usize,
+    snapshot: Option<(Tree, Tree)>,
 }
 
 struct Run {
@@ -164,8 +185,13 @@ struct Run {
     parent: Option<usize>,
     /// The run's newest commit.
     head: usize,
-    /// Its links, and the commit each names.
-    links: Vec<(Link, usize)>,
+    /// `@`'s tree: the files on disk, committed or not.
+    wc: Tree,
+    /// Its links.
+    links: Vec<Linked>,
+    /// The last turn's snapshot and its tree, which the next turn's
+    /// paths are counted from, as `RunWorkspace` keeps it.
+    since: Option<(String, Tree)>,
     turns: u32,
     state: State,
     /// A turn has set `tau/<name>`.
@@ -180,10 +206,12 @@ impl Run {
 }
 
 struct Machine {
-    _home: tempfile::TempDir,
+    home: tempfile::TempDir,
     project: Project,
     commits: Vec<Commit>,
     runs: Vec<Run>,
+    /// The commit trunk's bookmark names.
+    trunk: usize,
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -221,7 +249,7 @@ impl Machine {
         set(&mut tree, "a.txt", Term::resolved(Some("one\n")));
         set(&mut tree, "dir/b.txt", Term::resolved(Some("two\n")));
         let mut machine = Self {
-            _home: home,
+            home,
             project,
             commits: vec![Commit {
                 change_id: None,
@@ -231,6 +259,7 @@ impl Machine {
                 abandoned: false,
             }],
             runs: Vec::new(),
+            trunk: 0,
         };
         // A first run, so no step waits for one.
         machine.start_root();
@@ -241,13 +270,15 @@ impl Machine {
     fn start_root(&mut self) {
         let name = format!("r{}", self.runs.len());
         let trunk = self.project.trunk().unwrap();
-        assert_eq!(trunk, self.commits[0].commit_id);
+        assert_eq!(trunk, self.commits[self.trunk].commit_id);
         let vcs = self.project.add_workspace(&name, &trunk).unwrap();
         self.runs.push(Run {
             name,
             parent: None,
-            head: 0,
+            head: self.trunk,
+            wc: self.commits[self.trunk].tree.clone(),
             links: Vec::new(),
+            since: None,
             turns: 0,
             state: State::Open,
             bookmarked: false,
@@ -369,12 +400,12 @@ impl Machine {
             .collect()
     }
 
-    /// The files at `run`'s head are its tree: resolved files as they
-    /// are, conflicts as jj materializes them (see
+    /// The files in `run`'s workspace are `@`'s tree: resolved files as
+    /// they are, conflicts as jj materializes them (see
     /// `a_landed_conflict_shows_markers`).
     fn check_files(&self, run: usize) {
         let disk = self.disk(run);
-        let tree = &self.commits[self.runs[run].head].tree;
+        let tree = &self.runs[run].wc;
         for path in PATHS {
             let term = get(tree, path);
             let on_disk = disk.get(path);
@@ -446,14 +477,22 @@ impl Machine {
         self.runs[run].bookmarked = false;
     }
 
+    /// Whether `run` has no uncommitted work: a run commits what it
+    /// leaves when it finishes.
+    fn clean(&self, run: usize) -> bool {
+        let run = &self.runs[run];
+        run.wc == self.commits[run.head].tree
+    }
+
     /// A child that can land or be dropped, by the host's rule: open or
-    /// forgotten, with an open parent, and no children open or holding
-    /// changes it does not have.
+    /// forgotten, finished, with an open parent, and no children open or
+    /// holding changes it does not have.
     fn closable(&self) -> Vec<usize> {
         (0..self.runs.len())
             .filter(|&r| {
                 let run = &self.runs[r];
                 matches!(run.state, State::Open | State::Forgotten)
+                    && self.clean(r)
                     && run
                         .parent
                         .is_some_and(|p| self.runs[p].state == State::Open)
@@ -469,10 +508,194 @@ impl Machine {
             })
             .collect()
     }
+
+    /// A top-level run the host lets merge into trunk
+    /// (`Host::merge_plan`): open, and no child holding changes it does
+    /// not have. The host also lets an idle child with a workspace stay
+    /// open, which the merge leaves stale
+    /// (`a_merge_leaves_an_open_fork_stale`); until that is decided, the
+    /// model keeps no child open.
+    fn mergeable(&self) -> Vec<usize> {
+        (0..self.runs.len())
+            .filter(|&r| {
+                let run = &self.runs[r];
+                run.parent.is_none()
+                    && run.state == State::Open
+                    && !self.has_open_children(r)
+                    && self.runs.iter().all(|child| {
+                        let has_bookmark = child.bookmarked
+                            && matches!(
+                                child.state,
+                                State::Open | State::Forgotten
+                            );
+                        child.parent != Some(r)
+                            || !has_bookmark
+                            || run.bookmarked
+                                && self
+                                    .ancestors(self.live(run.head))
+                                    .contains(&self.live(child.head))
+                    })
+            })
+            .collect()
+    }
+
+    /// Restacks `chain` onto `onto` in the model, as jj rebases it, with
+    /// the commits that descend from it. Returns whether it rewrote
+    /// anything, and the descendants it dragged along.
+    fn restack(&mut self, chain: &[usize], onto: usize) -> (bool, Vec<usize>) {
+        let rewrite = chain
+            .first()
+            .is_some_and(|&root| self.commits[root].parent != Some(onto));
+        if !rewrite {
+            return (false, Vec::new());
+        }
+        let before: Vec<Tree> =
+            self.commits.iter().map(|c| c.tree.clone()).collect();
+        let mut onto = onto;
+        for &at in chain {
+            let base = self.commits[at].parent.unwrap();
+            let tree = rebase_tree(
+                &self.commits[onto].tree,
+                &before[base],
+                &before[at],
+            );
+            self.commits[at].parent = Some(onto);
+            self.commits[at].tree = tree;
+            onto = at;
+        }
+        let dragged = self.follow(&chain.iter().copied().collect(), &before);
+        (true, dragged)
+    }
+
+    /// The paths jj holds in conflict at `commit` (a full hex id).
+    fn jj_conflicts(&self, commit: &str) -> BTreeSet<String> {
+        use jj_lib::{
+            backend::CommitId,
+            config::{ConfigLayer, ConfigSource, StackedConfig},
+            default_backend_factories::{
+                default_backend_factories,
+                default_working_copy_factories,
+            },
+            repo::Repo as _,
+            settings::UserSettings,
+            workspace::Workspace,
+        };
+        let mut config = StackedConfig::with_defaults();
+        let mut user = ConfigLayer::empty(ConfigSource::User);
+        user.set_value("user.name", "model").unwrap();
+        user.set_value("user.email", "model@localhost").unwrap();
+        config.add_layer(user);
+        let settings = UserSettings::from_config(config).unwrap();
+        let workspace = Workspace::load(
+            &settings,
+            &self.home.path().join("p").join("main"),
+            &default_backend_factories(),
+            &default_working_copy_factories(),
+        )
+        .unwrap();
+        let repo =
+            pollster::block_on(workspace.repo_loader().load_at_head()).unwrap();
+        let id = CommitId::try_from_hex(commit).unwrap();
+        repo.store()
+            .get_commit(&id)
+            .unwrap()
+            .tree()
+            .conflicts()
+            .map(|(path, _)| path.as_internal_file_string().to_owned())
+            .collect()
+    }
+
+    /// The commit `run`'s working copy stands on, as jj has it.
+    fn wc_parent(&self, run: usize) -> Option<String> {
+        let wc = self
+            .project
+            .workspace_head(&self.runs[run].name)
+            .unwrap()
+            .unwrap();
+        self.project.parent_of(&wc).unwrap()
+    }
+}
+
+/// Writes `edits` to `dir` and returns `wc` with them.
+fn write_edits(
+    tc: &TestCase,
+    dir: &Path,
+    wc: &Tree,
+    edits: &[(&'static str, Val)],
+) -> Tree {
+    let mut tree = wc.clone();
+    for (path, value) in edits {
+        let file = dir.join(path);
+        match value {
+            Some(text) => {
+                std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+                std::fs::write(&file, text).unwrap();
+            }
+            None => match std::fs::remove_file(&file) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => panic!("{e}"),
+            },
+        }
+        if conflicts(&tree).contains(&(*path).to_owned()) {
+            tc.event("an edit resolves a conflict");
+        }
+        set(&mut tree, path, Term::resolved(*value));
+    }
+    tree
+}
+
+/// Settles what a snapshot made of conflicts jj wrote without markers.
+/// One the edits left alone may be taken as resolved, and one rewritten
+/// with the very text jj wrote stays a conflict: an open question
+/// (`a_turn_keeps_a_conflict_it_did_not_touch`). Either reading is
+/// accepted, as `conflicted`, the paths jj holds in conflict now, tells.
+fn settle(
+    tc: &TestCase,
+    was: &Tree,
+    tree: &mut Tree,
+    conflicted: &BTreeSet<String>,
+) {
+    for path in PATHS {
+        let old = get(was, path);
+        let Some(value) = old.materialized().filter(|_| old.value().is_none())
+        else {
+            continue;
+        };
+        let now = get(tree, path);
+        let kept = conflicted.contains(path);
+        if now == old && !kept {
+            tc.event("an untouched conflict resolves itself");
+            set(tree, path, Term::resolved(value));
+        } else if now == Term::resolved(value) && kept {
+            tc.event("writing a conflict's own text keeps it");
+            set(tree, path, old);
+        }
+    }
+}
+
+/// The paths a snapshot lists as changed from `base` are those the model
+/// changed, and maybe conflicts it holds as they were: after a few
+/// restacks, jj lists an untouched conflict that stays a conflict,
+/// perhaps written as another form of the same merge.
+fn check_paths(listed: &[String], base: &Tree, tree: &Tree, what: &str) {
+    for path in PATHS {
+        let (old, new) = (get(base, path), get(tree, path));
+        let is_listed = listed.iter().any(|p| p == path);
+        if old != new {
+            assert!(is_listed, "{what}: {path} changed, but is not listed");
+        } else if is_listed {
+            assert!(
+                new.value().is_none(),
+                "{what}: {path} is listed, but did not change"
+            );
+        }
+    }
 }
 
 impl Machine {
-    /// A turn in `run`: `edits` to its files, then the checkpoint.
+    /// A turn in `run`: `edits` to its files, then a commit of all of
+    /// `@`, as a run's model makes one.
     fn do_turn(
         &mut self,
         tc: &TestCase,
@@ -481,25 +704,8 @@ impl Machine {
     ) {
         let dir = self.project.workspace_dir(&self.runs[run].name);
         let head = self.runs[run].head;
-        let mut tree = self.commits[head].tree.clone();
-        for (path, value) in edits {
-            let file = dir.join(path);
-            match value {
-                Some(text) => {
-                    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-                    std::fs::write(&file, text).unwrap();
-                }
-                None => match std::fs::remove_file(&file) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => panic!("{e}"),
-                },
-            }
-            if conflicts(&tree).contains(&(*path).to_owned()) {
-                tc.event("a turn resolves a conflict");
-            }
-            set(&mut tree, path, Term::resolved(*value));
-        }
+        let was = self.runs[run].wc.clone();
+        let mut tree = write_edits(tc, &dir, &was, edits);
         self.runs[run].turns += 1;
         let r = &self.runs[run];
         let turn = block_on(r.vcs.commit_all(
@@ -507,32 +713,14 @@ impl Machine {
             r.bookmark(),
         ))
         .unwrap();
-        // A conflict jj wrote without markers may be taken as resolved
-        // by a turn that did not touch it, and one the turn rewrote with
-        // the very text jj wrote stays a conflict: an open question
-        // (`a_turn_keeps_a_conflict_it_did_not_touch`). Both are
-        // accepted, as the turn's paths say.
-        for path in PATHS {
-            let was = get(&self.commits[head].tree, path);
-            let Some(value) =
-                was.materialized().filter(|_| was.value().is_none())
-            else {
-                continue;
-            };
-            let listed = turn.paths.iter().any(|p| p == path);
-            let now = get(&tree, path);
-            if now == was && listed {
-                tc.event("an untouched conflict resolves itself");
-                set(&mut tree, path, Term::resolved(value));
-            } else if now == Term::resolved(value) && !listed {
-                tc.event("writing a conflict's own text keeps it");
-                set(&mut tree, path, was);
-            }
-        }
+        let conflicted = self.jj_conflicts(&turn.commit_id);
+        settle(tc, &was, &mut tree, &conflicted);
+        self.runs[run].wc = tree.clone();
+        check_paths(&turn.paths, &self.commits[head].tree, &tree, "the turn");
 
-        let at = if tree == self.commits[head].tree {
+        let at = if !turn.changed {
             tc.event("a turn changes nothing");
-            assert!(!turn.changed, "a turn that changed nothing committed");
+            assert_eq!(tree, self.commits[head].tree, "a turn did not commit");
             assert!(turn.paths.is_empty());
             // It names the commit before it.
             let commit = &mut self.commits[head];
@@ -543,14 +731,9 @@ impl Machine {
             }
             head
         } else {
-            assert!(turn.changed, "a turn that changed files did not commit");
-            let old = &self.commits[head].tree;
-            let paths: Vec<String> = PATHS
-                .iter()
-                .filter(|path| get(old, path) != get(&tree, path))
-                .map(|path| (*path).to_owned())
-                .collect();
-            assert_eq!(turn.paths, paths, "the turn's paths");
+            if tree == self.commits[head].tree {
+                tc.event("a turn rewrites a conflict alone");
+            }
             assert!(
                 self.commits
                     .iter()
@@ -569,8 +752,8 @@ impl Machine {
         let r = &mut self.runs[run];
         r.head = at;
         r.bookmarked = true;
-        r.links.push((
-            Link {
+        r.links.push(Linked {
+            link: Link {
                 turn: r.turns,
                 workspace: r.name.clone(),
                 commit_id: turn.commit_id,
@@ -580,8 +763,75 @@ impl Machine {
                 snapshot: false,
             },
             at,
-        ));
+            snapshot: None,
+        });
         self.check_commit(at);
+    }
+
+    /// A turn in `run` that ends as `RunWorkspace` ends one (ADR 0014):
+    /// `edits` to its files, then a snapshot of `@`, left uncommitted.
+    fn do_snapshot(
+        &mut self,
+        tc: &TestCase,
+        run: usize,
+        edits: &[(&'static str, Val)],
+    ) {
+        let dir = self.project.workspace_dir(&self.runs[run].name);
+        let head = self.runs[run].head;
+        let was = self.runs[run].wc.clone();
+        let mut tree = write_edits(tc, &dir, &was, edits);
+        let r = &self.runs[run];
+        let since = r.since.clone();
+        let snapshot =
+            block_on(r.vcs.end_turn(
+                r.bookmark(),
+                since.as_ref().map(|(id, _)| id.clone()),
+            ))
+            .unwrap();
+        // The paths count from the turn before's snapshot, else from the
+        // run's head.
+        let base = since
+            .map(|(_, tree)| tree)
+            .unwrap_or_else(|| self.commits[head].tree.clone());
+        let conflicted = self.jj_conflicts(&snapshot.commit_id);
+        settle(tc, &was, &mut tree, &conflicted);
+        check_paths(&snapshot.paths, &base, &tree, "the snapshot");
+        assert_eq!(snapshot.head, self.commits[head].commit_id);
+        if tree != self.commits[head].tree {
+            tc.event("a turn leaves work uncommitted");
+        }
+
+        let head_tree = self.commits[head].tree.clone();
+        let r = &mut self.runs[run];
+        r.wc = tree.clone();
+        r.turns += 1;
+        r.bookmarked = true;
+        r.since = Some((snapshot.commit_id.clone(), tree.clone()));
+        r.links.push(Linked {
+            link: Link {
+                turn: r.turns,
+                workspace: r.name.clone(),
+                commit_id: snapshot.commit_id,
+                change_id: snapshot.change_id,
+                changed: !snapshot.paths.is_empty(),
+                from: None,
+                snapshot: true,
+            },
+            at: head,
+            snapshot: Some((head_tree, tree)),
+        });
+    }
+
+    /// The tree a fork at `link` starts with in `@`: a change's own, or
+    /// a snapshot's files on its parent as it is now, what a landing
+    /// brought to the parent since merged in.
+    fn fork_tree(&self, linked: &Linked) -> Tree {
+        match &linked.snapshot {
+            None => self.commits[linked.at].tree.clone(),
+            Some((then, wc)) => {
+                rebase_tree(&self.commits[linked.at].tree, then, wc)
+            }
+        }
     }
 
     /// A fork of `parent` at its `k`th link.
@@ -592,24 +842,53 @@ impl Machine {
         } else {
             "a fork at an earlier link"
         });
-        let (link, at) = self.runs[parent].links[k].clone();
+        let linked = self.runs[parent].links[k].clone();
+        let link = linked.link.clone();
+        // A change's link follows its change, which a move onto trunk
+        // may have rewritten; a snapshot's is that very commit.
         let now = self.project.current([link.clone()]).unwrap().remove(0);
-        assert_eq!(now, link, "an open run's link moved");
+        let want = if link.snapshot {
+            link.commit_id.clone()
+        } else {
+            self.commits[linked.at].commit_id.clone()
+        };
+        assert_eq!(now.commit_id, want, "the link to fork at");
         let name = format!("r{}", self.runs.len());
-        let vcs = self.project.add_workspace(&name, &now.commit_id).unwrap();
+        let vcs = if link.snapshot {
+            if self.commits[linked.at].tree
+                != linked.snapshot.as_ref().unwrap().0
+            {
+                tc.event("a fork at a snapshot whose parent's files moved");
+            }
+            self.project
+                .add_workspace_from_snapshot(&name, &link.commit_id)
+                .unwrap()
+        } else {
+            self.project.add_workspace(&name, &now.commit_id).unwrap()
+        };
         let links = self.runs[parent].links[..=k].to_vec();
         self.runs.push(Run {
             name,
             parent: Some(parent),
-            head: at,
+            head: linked.at,
+            wc: self.fork_tree(&linked),
             links,
+            since: link.snapshot.then(|| {
+                (link.commit_id.clone(), linked.snapshot.clone().unwrap().1)
+            }),
             turns: link.turn,
             state: State::Open,
             bookmarked: false,
             vcs,
         });
         // The fork starts on exactly that turn's files.
-        self.check_files(self.runs.len() - 1);
+        let fork = self.runs.len() - 1;
+        self.check_files(fork);
+        assert_eq!(
+            self.wc_parent(fork).as_ref(),
+            Some(&self.commits[linked.at].commit_id),
+            "the fork's working copy is not on its link's commit"
+        );
     }
 
     /// Lands `child` on its parent, previewed first, then closes it.
@@ -624,44 +903,31 @@ impl Machine {
         let p = &self.runs[parent];
         let files = self.disk(parent);
         let bookmark = self.project.bookmark(&p.bookmark()).unwrap();
-        let wc = self.project.workspace_head(&p.name).unwrap();
+        let wc = self.wc_parent(parent);
 
         let preview =
             block_on(p.vcs.land(&child_head, p.bookmark(), false)).unwrap();
+        let p = &self.runs[parent];
         assert_eq!(self.disk(parent), files, "a preview changed files");
         assert_eq!(self.project.bookmark(&p.bookmark()).unwrap(), bookmark);
-        assert_eq!(self.project.workspace_head(&p.name).unwrap(), wc);
+        // A preview snapshots `@`, which may rewrite it; it stays put.
+        assert_eq!(self.wc_parent(parent), wc);
 
         let landing =
             block_on(p.vcs.land(&child_head, p.bookmark(), true)).unwrap();
 
         // The model's landing.
-        let moving = self.own_changes(self.runs[child].head, p.head);
-        let before: Vec<Tree> =
-            self.commits.iter().map(|c| c.tree.clone()).collect();
+        if !self.clean(parent) {
+            tc.event("a landing under uncommitted work");
+        }
+        let old_head = self.runs[parent].head;
+        let old_head_tree = self.commits[old_head].tree.clone();
+        let moving = self.own_changes(self.runs[child].head, old_head);
         let old_ids: Vec<String> = moving
             .iter()
             .map(|&at| self.commits[at].commit_id.clone())
             .collect();
-        let rewrite = moving
-            .first()
-            .is_some_and(|&root| self.commits[root].parent != Some(p.head));
-        let mut dragged = Vec::new();
-        if rewrite {
-            let mut onto = p.head;
-            for &at in &moving {
-                let base = self.commits[at].parent.unwrap();
-                let tree = rebase_tree(
-                    &self.commits[onto].tree,
-                    &before[base],
-                    &before[at],
-                );
-                self.commits[at].parent = Some(onto);
-                self.commits[at].tree = tree;
-                onto = at;
-            }
-            dragged = self.follow(&moving.iter().copied().collect(), &before);
-        }
+        let (rewrite, dragged) = self.restack(&moving, old_head);
         match (moving.is_empty(), rewrite) {
             (true, _) => tc.event("a landing with nothing to land"),
             (false, false) => tc.event("a landing that rewrites nothing"),
@@ -713,6 +979,9 @@ impl Machine {
             self.runs[parent].head = last;
         }
         let head = self.runs[parent].head;
+        // The parent's uncommitted work moves on top, as jj rebases it.
+        let p = &mut self.runs[parent];
+        p.wc = rebase_tree(&self.commits[head].tree, &old_head_tree, &p.wc);
         let want_conflicts = conflicts(&self.commits[head].tree);
         if !want_conflicts.is_empty() {
             tc.event("a landing conflicts");
@@ -749,8 +1018,8 @@ impl Machine {
                         == Some(&change.change_id)
                 })
                 .unwrap();
-            self.runs[parent].links.push((
-                Link {
+            self.runs[parent].links.push(Linked {
+                link: Link {
                     turn,
                     workspace: workspace.clone(),
                     commit_id: change.commit_id.clone(),
@@ -760,9 +1029,150 @@ impl Machine {
                     snapshot: false,
                 },
                 at,
-            ));
+                snapshot: None,
+            });
         }
         self.close(child, State::Landed);
+    }
+
+    /// Moves top-level `run`'s changes, up to `@`, onto trunk, previewed
+    /// first. With `merge`, the host's merge goes on: trunk moves
+    /// forward to the run and the run closes, unless nothing moved or
+    /// something conflicts, when the run stays open to resolve it.
+    fn do_move(&mut self, tc: &TestCase, run: usize, merge: bool) {
+        let trunk = self.trunk;
+        let head = self.runs[run].head;
+        let trunk_id = self.commits[trunk].commit_id.clone();
+        // Trunk only moves forward.
+        if !self.ancestors(head).contains(&trunk) {
+            tc.event("trunk has moved on past a run");
+            let head_id = self.commits[head].commit_id.clone();
+            let error = self.project.fast_forward_trunk(&head_id).unwrap_err();
+            assert!(
+                matches!(error, VcsError::NotFastForward(_)),
+                "a sideways move of trunk: {error}"
+            );
+            assert_eq!(self.project.trunk().unwrap(), trunk_id);
+        }
+
+        let r = &self.runs[run];
+        let files = self.disk(run);
+        let bookmark = self.project.bookmark(&r.bookmark()).unwrap();
+        let wc = self.wc_parent(run);
+        let preview =
+            block_on(r.vcs.move_onto(trunk_id.clone(), r.bookmark(), false))
+                .unwrap();
+        let r = &self.runs[run];
+        assert_eq!(self.disk(run), files, "a preview changed files");
+        assert_eq!(self.project.bookmark(&r.bookmark()).unwrap(), bookmark);
+        assert_eq!(self.wc_parent(run), wc, "a preview moved @");
+        let moved =
+            block_on(r.vcs.move_onto(trunk_id, r.bookmark(), true)).unwrap();
+
+        // The model's move.
+        let chain = self.own_changes(head, trunk);
+        let old_ids: Vec<String> = chain
+            .iter()
+            .map(|&at| self.commits[at].commit_id.clone())
+            .collect();
+        let old_head_tree = self.commits[head].tree.clone();
+        let (rewrite, dragged) = self.restack(&chain, trunk);
+        match (chain.is_empty(), rewrite) {
+            (true, _) if head == trunk => {
+                tc.event("a move with nothing to move")
+            }
+            (true, _) => tc.event("a move of @ alone onto trunk"),
+            (false, false) => tc.event("a move that rewrites nothing"),
+            (false, true) => tc.event("a move that restacks"),
+        }
+        if !dragged.is_empty() {
+            tc.event("a move drags a forgotten fork along");
+        }
+        let ids: Vec<String> = moved
+            .changes
+            .iter()
+            .map(|change| change.change_id.clone())
+            .collect();
+        let want: Vec<String> = chain
+            .iter()
+            .rev()
+            .map(|&at| self.commits[at].change_id.clone().unwrap())
+            .collect();
+        assert_eq!(ids, want, "the moved changes");
+        assert_eq!(
+            preview
+                .changes
+                .iter()
+                .map(|c| &c.change_id)
+                .collect::<Vec<_>>(),
+            ids.iter().collect::<Vec<_>>(),
+            "the preview's changes"
+        );
+        assert_eq!(
+            preview.conflicts, moved.conflicts,
+            "the preview's conflicts"
+        );
+        for (change, &at) in moved.changes.iter().zip(chain.iter().rev()) {
+            self.commits[at].commit_id = change.commit_id.clone();
+            let conflicted = !conflicts(&self.commits[at].tree).is_empty();
+            assert_eq!(change.conflict, conflicted, "conflict flag of {at}");
+        }
+        if !rewrite {
+            let now: Vec<String> = chain
+                .iter()
+                .map(|&at| self.commits[at].commit_id.clone())
+                .collect();
+            assert_eq!(now, old_ids, "a run on trunk's head moved");
+        }
+        self.learn(&dragged);
+        let new_head = chain.last().copied().unwrap_or(trunk);
+        let r = &mut self.runs[run];
+        r.head = new_head;
+        r.bookmarked = true;
+        r.wc = rebase_tree(&self.commits[new_head].tree, &old_head_tree, &r.wc);
+
+        // The conflicts in the new head, then any more in `@`.
+        let mut want = conflicts(&self.commits[new_head].tree);
+        for path in conflicts(&self.runs[run].wc) {
+            if !want.contains(&path) {
+                tc.event("a move conflicts in @ alone");
+                want.push(path);
+            }
+        }
+        if !want.is_empty() {
+            tc.event("a move conflicts");
+        }
+        assert_eq!(moved.conflicts, want, "the move's conflicts");
+        assert_eq!(moved.head, self.commits[new_head].commit_id);
+        for &at in chain.iter().chain(&dragged) {
+            self.check_commit(at);
+        }
+        assert_eq!(
+            self.project.bookmark(&self.runs[run].bookmark()).unwrap(),
+            Some(moved.head.clone()),
+            "the run's bookmark"
+        );
+
+        if !merge {
+            return;
+        }
+        if moved.changes.is_empty() {
+            tc.event("a merge with nothing to merge");
+            return;
+        }
+        if !moved.conflicts.is_empty() {
+            tc.event("a merge waits on its conflicts");
+            return;
+        }
+        let into = self.project.fast_forward_trunk(&moved.head).unwrap();
+        assert_eq!(into, "main");
+        assert_eq!(self.project.trunk().unwrap(), moved.head);
+        tc.event("a merge into trunk");
+        if !self.runs[run].links.iter().all(|l| l.snapshot.is_none()) {
+            tc.event("a merge of a run with snapshots");
+        }
+        self.trunk = new_head;
+        self.close(run, State::Merged);
     }
 }
 
@@ -792,9 +1202,31 @@ impl Machine {
         self.do_turn(&tc, run, &edits);
     }
 
+    /// A turn as `RunWorkspace` ends one: edits in one run's files,
+    /// snapshotted and left uncommitted.
+    #[rule(weight = 3)]
+    fn snapshot_turn(&mut self, tc: TestCase) {
+        let open = self.open();
+        tc.assume(!open.is_empty());
+        let run = tc.draw(gs::sampled_from(open));
+        let edits = tc.draw(edits());
+        self.do_snapshot(&tc, run, &edits);
+    }
+
+    /// Edits in one run's files, with no tool run after them.
+    #[rule(weight = 2)]
+    fn write(&mut self, tc: TestCase) {
+        let open = self.open();
+        tc.assume(!open.is_empty());
+        let run = tc.draw(gs::sampled_from(open));
+        let edits = tc.draw(edits());
+        let dir = self.project.workspace_dir(&self.runs[run].name);
+        self.runs[run].wc = write_edits(&tc, &dir, &self.runs[run].wc, &edits);
+    }
+
     /// A fork at one of a run's links, as `RunWorkspace` starts one: on
-    /// the commit `Project::current` gives the link, inheriting the
-    /// links up to it.
+    /// the commit `Project::current` gives a change's link, or on a
+    /// snapshot's files, inheriting the links up to it.
     #[rule(weight = 3)]
     fn fork(&mut self, tc: TestCase) {
         tc.assume(self.runs.len() < MAX_RUNS);
@@ -808,6 +1240,30 @@ impl Machine {
         let count = self.runs[parent].links.len();
         let k = tc.draw(gs::integers::<usize>().max_value(count - 1));
         self.do_fork(&tc, parent, k);
+    }
+
+    /// Merges a finished top-level run into trunk, as `Host::merge` and
+    /// `Host::finish_merge` do.
+    #[rule(weight = 2)]
+    fn merge(&mut self, tc: TestCase) {
+        let candidates: Vec<usize> = self
+            .mergeable()
+            .into_iter()
+            .filter(|&r| self.clean(r))
+            .collect();
+        tc.assume(!candidates.is_empty());
+        let run = tc.draw(gs::sampled_from(candidates));
+        self.do_move(&tc, run, true);
+    }
+
+    /// Moves a top-level run onto trunk with its work in `@`, as the
+    /// host brings a main chat up to trunk.
+    #[rule]
+    fn move_onto_trunk(&mut self, tc: TestCase) {
+        let candidates = self.mergeable();
+        tc.assume(!candidates.is_empty());
+        let run = tc.draw(gs::sampled_from(candidates));
+        self.do_move(&tc, run, false);
     }
 
     /// Lands a child on its parent, previewed first, then closes it.
@@ -873,7 +1329,9 @@ impl Machine {
             .open()
             .into_iter()
             .filter(|&r| {
-                self.runs[r].parent.is_some() && !self.has_open_children(r)
+                self.runs[r].parent.is_some()
+                    && !self.has_open_children(r)
+                    && self.clean(r)
             })
             .collect();
         tc.assume(!candidates.is_empty());
@@ -920,19 +1378,17 @@ impl Machine {
         }
 
         // Every link, of every run, is where its change is now; one to
-        // an abandoned change stays where it was.
-        let links: Vec<(Link, usize)> = self
-            .runs
-            .iter()
-            .flat_map(|run| run.links.iter().cloned())
-            .collect();
+        // an abandoned change stays where it was, and a snapshot is that
+        // very commit.
+        let links: Vec<&Linked> =
+            self.runs.iter().flat_map(|run| &run.links).collect();
         let now = self
             .project
-            .current(links.iter().map(|(link, _)| link.clone()))
+            .current(links.iter().map(|linked| linked.link.clone()))
             .unwrap();
-        for ((link, at), now) in links.iter().zip(now) {
+        for (Linked { link, at, .. }, now) in links.into_iter().zip(now) {
             let commit = &self.commits[*at];
-            let want = if commit.abandoned {
+            let want = if commit.abandoned || link.snapshot {
                 link.commit_id.clone()
             } else {
                 commit.commit_id.clone()
@@ -962,9 +1418,12 @@ fn runs_behave_like_the_model_nightly(tc: TestCase) {
     hegel::stateful::machine(Machine::new()).steps(50).run(tc);
 }
 
-/// A turn's edits: files written or deleted, in order.
+/// Files written or deleted, in order.
+type Edits = Vec<(&'static str, Val)>;
+
+/// A turn's edits.
 #[hegel::composite]
-fn edits(tc: &TestCase) -> Vec<(&'static str, Val)> {
+fn edits(tc: &TestCase) -> Edits {
     tc.draw(
         gs::vecs(gs::tuples!(
             gs::sampled_from(PATHS.to_vec()),
@@ -1017,6 +1476,57 @@ fn children_land_like_the_model(tc: TestCase) {
     let last = tc.draw(edits());
     m.do_turn(&tc, 0, &last);
     m.the_project_is_the_model(tc.clone());
+}
+
+/// Merging, head on: two top-level runs take turns, committed or left
+/// in `@`; the first merges into trunk, so trunk moves on past the
+/// second, which then moves onto trunk with whatever `@` holds, and
+/// maybe merges too. A fork at one of its links after that starts on a
+/// snapshot whose parent the move rewrote. Against the same model; the
+/// state machine reaches these steps only now and then.
+#[hegel::test(
+    test_cases = 30,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
+fn runs_merge_like_the_model(tc: TestCase) {
+    let mut m = Machine::new();
+    m.start_root();
+    for run in [0, 1] {
+        m.do_turn(&tc, run, &tc.draw(edits()));
+        m.do_snapshot(&tc, run, &tc.draw(edits()));
+    }
+    let steps: Vec<(usize, bool, Edits)> = tc.draw(
+        gs::vecs(gs::tuples!(
+            gs::integers::<usize>().max_value(1),
+            gs::booleans(),
+            edits()
+        ))
+        .max_size(4),
+    );
+    for (run, commit, edits) in steps {
+        if commit {
+            m.do_turn(&tc, run, &edits);
+        } else {
+            m.do_snapshot(&tc, run, &edits);
+        }
+    }
+    if !m.clean(0) {
+        m.do_turn(&tc, 0, &[]);
+    }
+    m.do_move(&tc, 0, true);
+    m.the_project_is_the_model(tc.clone());
+
+    let merge = tc.draw(gs::booleans()) && m.clean(1);
+    m.do_move(&tc, 1, merge);
+    m.the_project_is_the_model(tc.clone());
+    if m.runs[1].state == State::Open {
+        let count = m.runs[1].links.len();
+        let k = tc.draw(gs::integers::<usize>().max_value(count - 1));
+        m.do_fork(&tc, 1, k);
+        let fork = m.runs.len() - 1;
+        m.do_turn(&tc, fork, &tc.draw(edits()));
+        m.the_project_is_the_model(tc.clone());
+    }
 }
 
 #[test]
@@ -1104,4 +1614,42 @@ fn a_turn_keeps_a_conflict_it_did_not_touch() {
     std::fs::remove_file(dir.join("a.txt")).unwrap();
     let turn = block_on(parent.commit_all("p3", "tau/p")).unwrap();
     assert_eq!(turn.paths, ["a.txt"], "the turn only deleted a.txt");
+}
+
+/// Merging a top-level run whose idle fork still has a workspace: the
+/// host allows it (`Host::merge_plan` refuses only children holding
+/// changes the run lacks), trunk has moved on, so the merge rewrites
+/// the run's commits, and jj rebases the fork's `@` along with them.
+/// The fork's workspace is then stale: its next turn fails with "The
+/// working copy is stale", and its parent is closed.
+///
+/// Open question: should the host refuse the merge while a child has a
+/// workspace, or the merge bring the children's workspaces along? A
+/// landing can do the same to an idle grandchild. Until that is
+/// decided, this expects the fork to go on and is ignored.
+#[test]
+#[ignore = "open question: a merge rewrites the commits under an idle fork's @"]
+fn a_merge_leaves_an_open_fork_stale() {
+    let m = Machine::new();
+    let trunk = m.commits[0].commit_id.clone();
+    let run = m.project.add_workspace("r", &trunk).unwrap();
+    let dir = m.project.workspace_dir("r");
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    let turn = block_on(run.commit_all("r1", "tau/r")).unwrap();
+    // A fork at that turn, idle, with nothing of its own.
+    let fork = m.project.add_workspace("f", &turn.commit_id).unwrap();
+    // Trunk moves on.
+    let other = m.project.add_workspace("o", &trunk).unwrap();
+    std::fs::write(m.project.workspace_dir("o").join("c.txt"), "one\n")
+        .unwrap();
+    let moved = block_on(other.commit_all("o1", "tau/o")).unwrap();
+    m.project.fast_forward_trunk(&moved.commit_id).unwrap();
+    // The run merges onto it.
+    let merged =
+        block_on(run.move_onto(moved.commit_id.clone(), "tau/r", true))
+            .unwrap();
+    assert!(merged.conflicts.is_empty());
+    m.project.fast_forward_trunk(&merged.head).unwrap();
+    // The fork's next turn.
+    block_on(fork.end_turn("tau/f", None)).unwrap();
 }
