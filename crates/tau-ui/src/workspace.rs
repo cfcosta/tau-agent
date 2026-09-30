@@ -70,7 +70,7 @@ use crate::{
         self,
         chrome,
         components::ButtonKind,
-        inspector::{self, Tab},
+        inspector,
         screens,
         transcript,
     },
@@ -389,7 +389,11 @@ pub struct Workspace {
     pub(crate) searching: bool,
     pub(crate) search: Entity<TextInput>,
     pub(crate) memory_search: Entity<TextInput>,
-    tab: Tab,
+    /// Whether the side panel shows the event log open.
+    events_open: bool,
+    /// The ChatGPT plan's usage limits, while runs reach models with a
+    /// ChatGPT sign-in and a response has reported them.
+    rate_limits: Option<tau_ai::codex::limits::RateLimits>,
     sheet_open: bool,
     /// Steering messages sent but not yet seen by the run, per run.
     queued: HashMap<RunId, String>,
@@ -677,7 +681,8 @@ impl Workspace {
             search,
             attachments: Vec::new(),
             memory_search,
-            tab: Tab::Run,
+            events_open: false,
+            rate_limits: None,
             sheet_open: false,
             queued: HashMap::new(),
             resuming: HashMap::new(),
@@ -902,6 +907,14 @@ impl Workspace {
         }
         for run in &mut self.runs {
             run.apply(event);
+        }
+        // What the plan's limits were as the run started, to tell what
+        // it used of them.
+        if let RunEvent::RunStart { run, .. } = event
+            && let Some(view) =
+                self.runs.iter_mut().find(|view| &view.id == run)
+        {
+            view.limits_at_start = self.rate_limits.clone();
         }
         // A command's screen takes the output its card gained.
         if let RunEvent::ToolUpdate { run, call_id, .. }
@@ -1588,9 +1601,30 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
-        self.tab = tab;
+    /// Opens or closes the side panel's event log.
+    pub fn toggle_events(&mut self, cx: &mut Context<Self>) {
+        self.events_open = !self.events_open;
         cx.notify();
+    }
+
+    pub fn events_open(&self) -> bool {
+        self.events_open
+    }
+
+    /// The ChatGPT plan's usage limits as the host last saw them.
+    pub fn set_rate_limits(
+        &mut self,
+        limits: Option<tau_ai::codex::limits::RateLimits>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.rate_limits != limits {
+            self.rate_limits = limits;
+            cx.notify();
+        }
+    }
+
+    pub fn rate_limits(&self) -> Option<&tau_ai::codex::limits::RateLimits> {
+        self.rate_limits.as_ref()
     }
 
     /// Submits `text` as if typed into the composer: it steers the open
@@ -2879,12 +2913,7 @@ impl Workspace {
     }
 
     fn inspector(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let tabs = Tab::of(self.current()).into_iter().map(|tab| {
-            div()
-                .id(tab.label())
-                .child(inspector::tab_label(tab, tab == self.tab, t))
-                .on_click(cx.listener(move |ws, _, _, cx| ws.set_tab(tab, cx)))
-        });
+        let run = self.current();
         div()
             .flex_1()
             .flex()
@@ -2898,12 +2927,11 @@ impl Workspace {
                     .h(px(48.))
                     .flex_shrink_0()
                     .flex()
-                    .items_end()
-                    .gap(sp(4.5))
+                    .items_center()
                     .px(sp(4.))
                     .border_b_1()
                     .border_color(t.border)
-                    .children(tabs),
+                    .children(run.map(|run| inspector::header(run, t))),
             )
             .child(
                 div()
@@ -2912,10 +2940,11 @@ impl Workspace {
                     .min_h(px(0.))
                     .overflow_y_scroll()
                     .p(sp(4.))
-                    .children(self.current().map(|run| {
-                        inspector::content(self, run, self.tab, t, cx)
-                    })),
+                    .children(
+                        run.map(|run| inspector::content(self, run, t, cx)),
+                    ),
             )
+            .children(run.map(|run| inspector::events(self, run, t, cx)))
     }
 
     /// The run screen: its header, transcript and composer.
@@ -3096,24 +3125,6 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let tabs = Tab::of(Some(run));
-        let count = tabs.len();
-        let segments = tabs.into_iter().map(|tab| {
-            let active = tab == self.tab;
-            div()
-                .id(("sheet-tab", tab as usize))
-                .h(px(36.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(radius::BOX)
-                .typeset(Type::SMALL)
-                .cursor_pointer()
-                .text_color(if active { t.text } else { t.muted })
-                .when(active, |segment| segment.bg(t.selected))
-                .child(tab.label())
-                .on_click(cx.listener(move |ws, _, _, cx| ws.set_tab(tab, cx)))
-        });
         let live = run.status.is_live();
         let done = self.catalog.pull_requests
             && run.status == RunStatus::Finished(StopReason::Stop);
@@ -3153,26 +3164,16 @@ impl Workspace {
                                 .bg(t.border_strong),
                         ),
                     )
-                    .child(
-                        div()
-                            .grid()
-                            .grid_cols(count as u16)
-                            .gap(sp(1.))
-                            .p(sp(1.))
-                            .rounded(radius::LARGE)
-                            .bg(t.bg)
-                            .children(segments),
-                    )
+                    .child(inspector::header(run, t))
                     .child(
                         div()
                             .id("sheet-body")
                             .flex_1()
                             .min_h(px(0.))
                             .overflow_y_scroll()
-                            .child(inspector::content(
-                                self, run, self.tab, t, cx,
-                            )),
+                            .child(inspector::content(self, run, t, cx)),
                     )
+                    .child(inspector::events(self, run, t, cx))
                     .child(
                         div()
                             .grid()

@@ -14,12 +14,9 @@ use tau_agent::{
     event::{LimitKind, RunEvent, StopReason},
     tool::{RunId, ToolOutput},
 };
-use tau_ai::message::{
-    AssistantBlock,
-    InputBlock,
-    Message,
-    Usage,
-    UserContent,
+use tau_ai::{
+    codex::limits::{RateLimits, Window},
+    message::{AssistantBlock, InputBlock, Message, Usage, UserContent},
 };
 
 use crate::{
@@ -67,6 +64,9 @@ pub struct RunView {
     pub constitution: ConstitutionStats,
     /// The conversation's goal, from tau-goal's reports and records.
     pub goal: Option<tau_goal::Goal>,
+    /// The ChatGPT plan's limits when the run started, to tell what it
+    /// used of them; `None` when none were known.
+    pub limits_at_start: Option<RateLimits>,
     /// What the pruning plugin said about its pass, for the rewrite it
     /// explains, which comes right after.
     pending_rewrite: Option<String>,
@@ -657,6 +657,125 @@ pub struct ContextWindow {
     pub before: Option<u64>,
 }
 
+/// What fills the context, estimated at four characters a token and
+/// scaled to the model's own count ([`ContextWindow::used`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ContextParts {
+    /// What the transcript does not account for: the instructions, the
+    /// tool definitions, and the reasoning the model carries between
+    /// turns.
+    pub fixed: u64,
+    /// What the person and the model wrote, tool calls included.
+    pub conversation: u64,
+    /// What the tools returned.
+    pub results: u64,
+}
+
+impl ContextParts {
+    /// The parts in `used` tokens of context, from what `items` hold
+    /// after the last rewrite that replaced them (pruning keeps them,
+    /// marked).
+    pub fn estimate(items: &[Item], used: u64) -> Self {
+        let from = items
+            .iter()
+            .rposition(|item| {
+                matches!(item, Item::Rewrite { plugin, .. }
+                    if plugin != tau_fast_compaction::NAME)
+            })
+            .map_or(0, |at| at + 1);
+        let tokens = |chars: usize| chars.div_ceil(4) as u64;
+        let (mut conversation, mut results) = (0, 0);
+        for item in &items[from..] {
+            match item {
+                Item::User(text) | Item::Goal(text) | Item::Text(text) => {
+                    conversation += tokens(text.len())
+                }
+                Item::Tool(card) => {
+                    let args = card.args.to_string().len();
+                    match card.pruned {
+                        Some(Pruned::CallDropped) => {}
+                        Some(Pruned::ResultDropped) => {
+                            conversation += tokens(args)
+                        }
+                        _ => {
+                            conversation += tokens(args);
+                            results += tokens(card.size.saturating_sub(args));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let seen = conversation + results;
+        if seen > used {
+            // The estimate runs over the model's count: share the count
+            // out in proportion.
+            let conversation = conversation * used / seen;
+            return Self {
+                fixed: 0,
+                conversation,
+                results: used - conversation,
+            };
+        }
+        Self {
+            fixed: used - seen,
+            conversation,
+            results,
+        }
+    }
+}
+
+/// A usage window's name: `5-hour window`, `This week`.
+pub fn window_label(minutes: u64) -> String {
+    match minutes {
+        10_080 => "This week".into(),
+        1_440 => "Today".into(),
+        minutes if minutes % 1_440 == 0 => {
+            format!("{}-day window", minutes / 1_440)
+        }
+        minutes if minutes % 60 == 0 => format!("{}-hour window", minutes / 60),
+        minutes => format!("{minutes}-minute window"),
+    }
+}
+
+/// How long until `resets_at`, from `now`, both in seconds since the
+/// Unix epoch: `resets in 1h 48m`.
+pub fn resets_in(resets_at: i64, now: i64) -> String {
+    let left = (resets_at - now).max(0) as u64;
+    let (days, hours, minutes) =
+        (left / 86_400, left % 86_400 / 3_600, left % 3_600 / 60);
+    match (days, hours) {
+        (0, 0) if minutes == 0 => "resets in under a minute".into(),
+        (0, 0) => format!("resets in {minutes}m"),
+        (0, _) => format!("resets in {hours}h {minutes}m"),
+        _ => format!("resets in {days}d {hours}h"),
+    }
+}
+
+/// A ChatGPT plan's name as the person knows it: `pro` is `ChatGPT
+/// Pro`.
+pub fn plan_label(plan: Option<&str>) -> String {
+    match plan {
+        None | Some("") => "ChatGPT".into(),
+        Some(plan) => {
+            let mut chars = plan.chars();
+            let first = chars.next().map(|c| c.to_uppercase().to_string());
+            format!("ChatGPT {}{}", first.unwrap_or_default(), chars.as_str())
+        }
+    }
+}
+
+/// The points of `window` a run used since `start`: `None` when the
+/// window was not known then, or reset since.
+pub fn used_since(window: &Window, start: &RateLimits) -> Option<f64> {
+    let before = start
+        .windows
+        .iter()
+        .find(|then| then.minutes == window.minutes)?;
+    (before.resets_at == window.resets_at)
+        .then(|| (window.used_percent - before.used_percent).max(0.0))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginStatus {
     pub name: String,
@@ -813,6 +932,7 @@ impl RunView {
             cost_before: 0.0,
             constitution: ConstitutionStats::default(),
             goal: None,
+            limits_at_start: None,
             pending_rewrite: None,
         }
     }
@@ -1065,6 +1185,13 @@ impl RunView {
     }
 
     /// The latest context rewrite, as `(plugin, before, after, detail)`.
+    /// What fills the context now, estimated; `None` before the model
+    /// has counted it.
+    pub fn context_parts(&self) -> Option<ContextParts> {
+        (self.context.used > 0)
+            .then(|| ContextParts::estimate(&self.items, self.context.used))
+    }
+
     pub fn last_rewrite(&self) -> Option<(&str, u64, u64, Option<&str>)> {
         self.items.iter().rev().find_map(|item| match item {
             Item::Rewrite {
@@ -3202,5 +3329,80 @@ mod tests {
                 "two",
             ]
         );
+    }
+
+    #[test]
+    fn context_parts_split_the_models_count() {
+        let mut view = RunView::new(run(), "t", "a", "gpt-6-sol");
+        view.items.push(Item::User("x".repeat(400)));
+        view.items.push(Item::Text("y".repeat(400)));
+        let mut card = ToolCard {
+            call_id: "c1".into(),
+            tool: "read".into(),
+            summary: String::new(),
+            args: json!({"path": "a.rs"}),
+            state: ToolState::Done { summary: None },
+            body: ToolBody::None,
+            from_plugin: None,
+            checks: Vec::new(),
+            pruned: None,
+            cut: None,
+            size: 0,
+        };
+        let args = card.args.to_string().len();
+        card.size = args + 4_000;
+        view.items.push(Item::Tool(card.clone()));
+        view.context.used = 5_000;
+        let parts = view.context_parts().unwrap();
+        assert_eq!(parts.results, 1_000);
+        assert_eq!(parts.conversation, 200 + args.div_ceil(4) as u64);
+        assert_eq!(parts.fixed + parts.conversation + parts.results, 5_000);
+
+        // A dropped result counts only its call.
+        card.pruned = Some(Pruned::ResultDropped);
+        view.items[2] = Item::Tool(card);
+        assert_eq!(view.context_parts().unwrap().results, 0);
+
+        // A summary replaced what came before it; an estimate over the
+        // count is scaled down to it.
+        view.items.push(Item::Rewrite {
+            plugin: "tau-compaction".into(),
+            tokens_before: 5_000,
+            tokens_after: 100,
+            detail: None,
+        });
+        view.items.push(Item::Text("z".repeat(800)));
+        view.context.used = 100;
+        let parts = view.context_parts().unwrap();
+        assert_eq!((parts.fixed, parts.conversation), (0, 100));
+    }
+
+    #[test]
+    fn limits_read_as_people_say_them() {
+        assert_eq!(window_label(300), "5-hour window");
+        assert_eq!(window_label(10_080), "This week");
+        assert_eq!(resets_in(1_000 + 6_480, 1_000), "resets in 1h 48m");
+        assert_eq!(resets_in(1_000 + 1_320, 1_000), "resets in 22m");
+        assert_eq!(
+            resets_in(1_000 + 3 * 86_400 + 7_200, 1_000),
+            "resets in 3d 2h"
+        );
+        assert_eq!(resets_in(0, 1_000), "resets in under a minute");
+        assert_eq!(plan_label(Some("pro")), "ChatGPT Pro");
+        assert_eq!(plan_label(None), "ChatGPT");
+
+        let window = |used, resets_at| Window {
+            used_percent: used,
+            minutes: 300,
+            resets_at,
+        };
+        let start = RateLimits {
+            plan: None,
+            limit_reached: false,
+            windows: vec![window(40.0, 9)],
+            credits: None,
+        };
+        assert_eq!(used_since(&window(61.0, 9), &start), Some(21.0));
+        assert_eq!(used_since(&window(3.0, 99), &start), None, "it reset");
     }
 }

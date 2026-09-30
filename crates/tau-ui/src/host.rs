@@ -34,7 +34,7 @@ use tau_agent::{
 };
 use tau_ai::{
     client::OpenAi,
-    codex::{CodexAuth, CodexCredentials},
+    codex::{CodexAuth, CodexCredentials, limits::RateLimits},
     message::Message,
     model::find,
 };
@@ -400,6 +400,10 @@ pub struct Host {
     base: Mutex<Agent>,
     /// What runs reach models with; `None` after signing out of all.
     access: Mutex<Option<Access>>,
+    /// The client `base` reaches models with, for what it learns on the
+    /// way: a ChatGPT plan's usage limits. `None` for an agent built
+    /// elsewhere, as in tests.
+    client: Mutex<Option<OpenAi>>,
     github: github::Api,
     /// Jev for tau-constitution, in place of TypeSafe's with the saved
     /// key: for tests.
@@ -446,19 +450,20 @@ const MAX_TURNS: u32 = 50;
 /// How many past runs history shows.
 const HISTORY: u32 = 50;
 
-/// The agent runs start from, reaching models with `access`.
+/// The agent runs start from, reaching models with `access`, and the
+/// client it reaches them through.
 fn coder(
     runtime: &Runtime,
     access: &Access,
     model: &str,
-) -> anyhow::Result<Agent> {
+) -> anyhow::Result<(Agent, OpenAi)> {
     // Clients must be created inside the runtime.
     let _guard = runtime.enter();
     let client = match access {
         Access::Codex(path) => OpenAi::codex(CodexAuth::from_file(path)?),
         Access::ApiKey(key) => OpenAi::new(key.clone()),
     };
-    Ok(Agent::new(client)
+    let agent = Agent::new(client.clone())
         .name("coder")
         .model(model)
         .instructions(INSTRUCTIONS)
@@ -468,7 +473,8 @@ fn coder(
             Limits::default()
                 .max_turns(MAX_TURNS)
                 .max_continuations(u32::MAX),
-        ))
+        );
+    Ok((agent, client))
 }
 
 const INSTRUCTIONS: &str = "You are tau, a coding agent working in the \
@@ -497,10 +503,11 @@ impl Host {
             std::fs::create_dir_all(parent)?;
         }
         let store = runtime.block_on(Store::open(&config.store))?;
-        let agent =
+        let (agent, client) =
             coder(&runtime, &config.access, &config.model_for(&config.access))?;
         let (mut host, events) =
             Self::with_agent(runtime, agent, store, config);
+        host.client = Mutex::new(Some(client));
         // The app searches memory with docbert's model; hosts built
         // elsewhere, as in tests, by keywords alone.
         host.memories = Arc::new(Memories::semantic());
@@ -578,6 +585,7 @@ impl Host {
             runtime,
             base: Mutex::new(agent),
             access: Mutex::new(Some(config.access.clone())),
+            client: Mutex::new(None),
             github: github::Api::default(),
             jev: None,
             jev_meter: Arc::default(),
@@ -1326,6 +1334,19 @@ impl Host {
         self.access.lock().expect("not poisoned").clone()
     }
 
+    /// The ChatGPT plan's usage limits as the latest response gave them,
+    /// while runs reach models through a ChatGPT sign-in.
+    pub fn rate_limits(&self) -> Option<RateLimits> {
+        if !matches!(self.access(), Some(Access::Codex(_))) {
+            return None;
+        }
+        self.client
+            .lock()
+            .expect("not poisoned")
+            .as_ref()?
+            .rate_limits()
+    }
+
     fn access_label(&self) -> &'static str {
         self.access().map_or("signed out", |access| access.label())
     }
@@ -1334,9 +1355,10 @@ impl Host {
     /// on keep theirs. `None` stops new runs until one is set.
     pub fn set_access(&self, access: Option<Access>) -> anyhow::Result<()> {
         if let Some(access) = &access {
-            let agent =
+            let (agent, client) =
                 coder(&self.runtime, access, &self.config.model_for(access))?;
             *self.base.lock().expect("not poisoned") = agent;
+            *self.client.lock().expect("not poisoned") = Some(client);
         }
         *self.access.lock().expect("not poisoned") = access;
         Ok(())
@@ -2509,8 +2531,12 @@ impl Host {
                         }
                     });
                 }
-                let applied =
-                    workspace.update(cx, |ws, cx| ws.apply_event(&event, cx));
+                // Each response may bring the plan's limits up to date.
+                let limits = host.rate_limits();
+                let applied = workspace.update(cx, |ws, cx| {
+                    ws.set_rate_limits(limits, cx);
+                    ws.apply_event(&event, cx)
+                });
                 if applied.is_err() {
                     break;
                 }

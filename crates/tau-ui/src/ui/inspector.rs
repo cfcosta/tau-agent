@@ -1,98 +1,457 @@
-//! The run's side panel: its plan and limits, its context window, and
-//! what each plugin is doing. The phone layout shows the same tabs in a
-//! bottom sheet.
+//! The run's side panel: one column of what the run is doing and what
+//! it may still spend. From the top: its goal, the ChatGPT plan's usage
+//! limits, the context window and what fills it, the run's own limits
+//! and outcome, its plan, its sub-agents, and its plugins. The event log
+//! opens from a bar pinned under it. The phone layout shows the same
+//! column in a bottom sheet.
 
-use gpui::{
-    Context,
-    Div,
-    IntoElement,
-    SharedString,
-    div,
-    prelude::*,
-    px,
-    relative,
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use gpui::{Context, Div, Hsla, SharedString, div, prelude::*, px, relative};
+use tau_ai::codex::limits::RateLimits;
+
+use super::{
+    bar,
+    heading,
+    icon,
+    key_values,
+    link,
+    mono,
+    status_look,
+    stop_look,
 };
-
-use super::{bar, heading, icon, key_values, link, mono, stop_look};
 use crate::{
     assets::Icon,
     route::Route,
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
-    view::{ChildKind, Item, Pruned, RunStatus, RunView, tokens, usd},
+    view::{
+        ChildKind,
+        Item,
+        Pruned,
+        RunStatus,
+        RunView,
+        plan_label,
+        resets_in,
+        tokens,
+        usd,
+        used_since,
+        window_label,
+    },
     workspace::Workspace,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Tab {
-    #[default]
-    Run,
-    /// Only while the conversation has a goal.
-    Goal,
-    Context,
-    Plugins,
-    Events,
+/// The run's state in a line: its status and turn, and the model with
+/// its reasoning effort. Heads the panel.
+pub fn header(run: &RunView, t: &Theme) -> Div {
+    let (color, label) = status_look(&run.status, t);
+    let effort = run
+        .plan
+        .iter()
+        .find(|field| field.name == "reasoning")
+        .map(|field| field.value.clone());
+    let model = match effort {
+        Some(effort) => format!("{} · {effort}", run.model),
+        None => run.model.clone(),
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap(sp(2.5))
+        .child(super::dot(color, 8.))
+        .child(div().typeset(Type::SMALL).text_color(t.text).child(label))
+        .child(mono(format!("turn {}", run.turn), Type::CAPTION, t.dim))
+        .child(div().flex_1())
+        .child(
+            mono(model, Type::MICRO, t.blue)
+                .px(sp(1.75))
+                .py(sp(0.75))
+                .rounded(radius::CONTROL)
+                .border_1()
+                .border_color(t.blue_border)
+                .bg(t.blue_soft)
+                .truncate(),
+        )
 }
 
-impl Tab {
-    pub const ALL: [Self; 5] = [
-        Self::Run,
-        Self::Goal,
-        Self::Context,
-        Self::Plugins,
-        Self::Events,
-    ];
-
-    /// The tabs `run` has: Goal only with a goal.
-    pub fn of(run: Option<&RunView>) -> Vec<Self> {
-        let goal = run.is_some_and(|run| run.goal.is_some());
-        Self::ALL
-            .into_iter()
-            .filter(|tab| *tab != Self::Goal || goal)
-            .collect()
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Run => "Run",
-            Self::Goal => "Goal",
-            Self::Context => "Context",
-            Self::Plugins => "Plugins",
-            Self::Events => "Events",
-        }
-    }
-}
-
+/// Every section, top to bottom.
 pub fn content(
     ws: &Workspace,
     run: &RunView,
-    tab: Tab,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let body = div().flex().flex_col().gap(sp(5.));
-    match tab {
-        Tab::Run => {
-            let body = run_tab(ws, run, body, t, cx);
-            if run.plugins.is_empty() {
-                body
-            } else {
-                body.child(heading("Plugins", t))
-                    .child(plugin_states(ws, run, t, cx))
-            }
-        }
-        Tab::Goal if run.goal.is_some() => crate::goal::tab(run, body, t),
-        Tab::Goal => {
-            let body = run_tab(ws, run, body, t, cx);
-            body.child(heading("Plugins", t))
-                .child(plugin_states(ws, run, t, cx))
-        }
-        Tab::Context => context_tab(run, body, t, cx),
-        Tab::Plugins => plugins_tab(ws, run, body, t, cx),
-        Tab::Events => events_tab(run, body, t),
+    let body = div().flex().flex_col().gap(sp(5.5));
+    let body = if run.goal.is_some() {
+        crate::goal::tab(run, body, t)
+    } else {
+        body
+    };
+    let body = match ws.rate_limits() {
+        Some(limits) => body.child(subscription(run, limits, t)),
+        None => body,
+    };
+    let body = body.child(context(run, t, cx));
+    let body = run_section(ws, run, body, t, cx);
+    plugins_section(ws, run, body, t, cx)
+}
+
+/// How far the level `used` (0 to 100) is toward the limit, as a color:
+/// calm, then amber past three quarters, red past nine tenths.
+fn level(used: f64, t: &Theme) -> Hsla {
+    if used >= 90.0 {
+        t.red
+    } else if used >= 75.0 {
+        t.accent
+    } else {
+        t.blue
     }
 }
 
-fn run_tab(
+/// The ChatGPT plan's usage windows: how much of each is used, when it
+/// resets, and what this run took of it. A window near its end gets a
+/// warning on top.
+fn subscription(run: &RunView, limits: &RateLimits, t: &Theme) -> Div {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64);
+    let fullest = limits
+        .windows
+        .iter()
+        .max_by(|a, b| a.used_percent.total_cmp(&b.used_percent));
+    let warning = fullest
+        .filter(|window| limits.limit_reached || window.used_percent >= 90.0)
+        .map(|window| {
+            let name = window_label(window.minutes);
+            let (title, detail) = if limits.limit_reached {
+                (
+                    format!("{name}: used up"),
+                    format!(
+                        "Requests wait until it resets; it {}.",
+                        resets_in(window.resets_at, now)
+                    ),
+                )
+            } else {
+                (
+                    format!("{name}: almost used"),
+                    format!(
+                        "At 100% requests wait until it resets; it {}.",
+                        resets_in(window.resets_at, now)
+                    ),
+                )
+            };
+            div()
+                .flex()
+                .gap(sp(2.5))
+                .p(sp(3.))
+                .rounded(radius::BOX)
+                .border_1()
+                .border_color(t.red_border)
+                .bg(t.danger_surface)
+                .child(icon(Icon::Warning, IconSize::SMALL, t.red))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(sp(1.))
+                        .child(
+                            div()
+                                .typeset(Type::SMALL)
+                                .text_color(t.removed_text)
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .typeset(Type::CAPTION)
+                                .text_color(t.muted)
+                                .line_height(relative(1.5))
+                                .child(detail),
+                        ),
+                )
+        });
+    let windows = limits.windows.iter().map(|window| {
+        let color = level(window.used_percent, t);
+        let mut detail = resets_in(window.resets_at, now);
+        if let Some(used) = run
+            .limits_at_start
+            .as_ref()
+            .and_then(|start| used_since(window, start))
+            .filter(|used| *used >= 1.0)
+        {
+            detail.push_str(&format!(" · this run used about {used:.0}%"));
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(sp(1.5))
+            .child(
+                div()
+                    .flex()
+                    .typeset(Type::SMALL)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(t.text_soft)
+                            .child(window_label(window.minutes)),
+                    )
+                    .child(mono(
+                        format!("{:.0}%", window.used_percent),
+                        Type::SMALL,
+                        if color == t.blue { t.text } else { color },
+                    )),
+            )
+            .child(bar(
+                (window.used_percent / 100.0) as f32,
+                6.,
+                color,
+                t.raised,
+            ))
+            .child(mono(detail, Type::MICRO, t.dim))
+    });
+    let credits = limits
+        .credits
+        .as_ref()
+        .filter(|credits| credits.has_credits || credits.unlimited)
+        .map(|credits| {
+            let value = if credits.unlimited {
+                "unlimited".to_owned()
+            } else {
+                credits.balance.clone()
+            };
+            div()
+                .flex()
+                .typeset(Type::CAPTION)
+                .text_color(t.muted)
+                .child(div().flex_1().child("Credits"))
+                .child(mono(value, Type::CAPTION, t.text))
+        });
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(3.))
+        .children(warning)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .child(heading("Subscription", t).flex_1())
+                .child(super::badge(
+                    plan_label(limits.plan.as_deref()),
+                    t.accent,
+                    t.accent_border,
+                )),
+        )
+        .children(windows)
+        .children(credits)
+}
+
+/// The context window: how full it is, what fills it, where pruning
+/// starts, and what pruning did.
+fn context(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> Div {
+    let ledger_route = Route::Ledger(run.id.clone());
+    let has_rewrite = run.last_rewrite().is_some();
+    let context = &run.context;
+    let heading_row = div()
+        .flex()
+        .items_center()
+        .child(heading("Context", t).flex_1())
+        .when(has_rewrite, |row| {
+            row.child(
+                div()
+                    .id("open-ledger-panel")
+                    .child(link("Ledger", t))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(ledger_route.clone(), cx)
+                    })),
+            )
+        });
+    let section = div().flex().flex_col().gap(sp(3.)).child(heading_row);
+    let Some(window) = context.window else {
+        return section.child(
+            div()
+                .typeset(Type::SMALL)
+                .text_color(t.muted)
+                .child(format!("{} tokens in context", tokens(context.used))),
+        );
+    };
+    let share = context.used as f32 / window as f32;
+    let over_trigger = context.trigger.is_some_and(|trigger| share >= trigger);
+    let parts = run.context_parts().unwrap_or_default();
+    let segments = [
+        ("Instructions, tools, other", parts.fixed, t.slate),
+        ("Conversation", parts.conversation, t.blue),
+        ("Tool results", parts.results, t.green),
+    ];
+    let stack = div()
+        .relative()
+        .h(px(12.))
+        .child(
+            div()
+                .flex()
+                .h(px(12.))
+                .rounded(radius::SMALL)
+                .overflow_hidden()
+                .bg(t.raised)
+                .children(
+                    segments.iter().filter(|(_, used, _)| *used > 0).map(
+                        |(_, used, color)| {
+                            div()
+                                .h_full()
+                                .w(relative(*used as f32 / window as f32))
+                                .bg(*color)
+                        },
+                    ),
+                ),
+        )
+        .when_some(context.trigger, |track, trigger| {
+            track.child(
+                div()
+                    .absolute()
+                    .top(px(-4.))
+                    .left(relative(trigger))
+                    .w(px(2.))
+                    .h(px(20.))
+                    .bg(t.accent),
+            )
+        });
+    let legend =
+        div()
+            .grid()
+            .grid_cols(1)
+            .gap(sp(1.5))
+            .children(segments.iter().map(|(name, used, color)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(2.))
+                    .typeset(Type::CAPTION)
+                    .text_color(t.muted)
+                    .child(
+                        div().size(px(8.)).rounded(radius::HAIRLINE).bg(*color),
+                    )
+                    .child(div().flex_1().child(*name))
+                    .child(mono(tokens(*used), Type::CAPTION, t.text_soft))
+            }));
+    let (mut kept, mut results, mut calls) = (0, 0, 0);
+    for item in &run.items {
+        if let Item::Tool(card) = item {
+            match card.pruned {
+                Some(Pruned::Kept) => kept += 1,
+                Some(Pruned::ResultDropped) => results += 1,
+                Some(Pruned::CallDropped) => calls += 1,
+                None => {}
+            }
+        }
+    }
+    let mut note = String::new();
+    if let Some(trigger) = context.trigger {
+        if over_trigger {
+            note.push_str(&format!(
+                "Past {:.0}%: pruning runs after this turn.",
+                trigger * 100.
+            ));
+        } else {
+            note.push_str(&format!(
+                "Pruning starts at {:.0}%.",
+                trigger * 100.
+            ));
+        }
+    }
+    if let Some(before) = context.before {
+        note.push_str(&format!(
+            " Last pruned from {} to {}.",
+            tokens(before),
+            tokens(context.used)
+        ));
+    }
+    if kept + results + calls > 0 {
+        note.push_str(&format!(
+            " {kept} kept, {results} results and {calls} calls dropped."
+        ));
+    }
+    let used_color = if over_trigger { t.accent } else { t.text };
+    section
+        .child(
+            div()
+                .flex()
+                .items_baseline()
+                .gap(sp(1.5))
+                .child(mono(tokens(context.used), Type::LEAD, used_color))
+                .child(mono(
+                    format!("/ {} tokens", tokens(window)),
+                    Type::CAPTION,
+                    t.muted,
+                ))
+                .child(div().flex_1())
+                .child(mono(
+                    format!("{:.0}%", share * 100.),
+                    Type::CAPTION,
+                    t.muted,
+                )),
+        )
+        .child(stack)
+        .child(legend)
+        .when(!note.is_empty(), |section| {
+            section.child(
+                div()
+                    .typeset(Type::MICRO)
+                    .text_color(if over_trigger { t.accent } else { t.dim })
+                    .line_height(relative(1.5))
+                    .child(note.trim().to_owned()),
+            )
+        })
+}
+
+/// The run's own limits as tiles, and its outcome, plan and children.
+fn run_section(
+    ws: &Workspace,
+    run: &RunView,
+    body: Div,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let meters = run.meters();
+    if meters.is_empty() {
+        return run_details(ws, run, body, t, cx);
+    }
+    let columns = match meters.len() {
+        4 => 2,
+        n => n.clamp(1, 3),
+    };
+    let tiles = div()
+        .grid()
+        .grid_cols(columns as u16)
+        .gap(sp(2.5))
+        .children(meters.into_iter().map(|meter| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(sp(1.5))
+                .p(sp(2.5))
+                .rounded(radius::BOX)
+                .border_1()
+                .border_color(t.border)
+                .bg(t.card)
+                .child(
+                    div()
+                        .typeset(Type::MICRO)
+                        .text_color(t.dim)
+                        .child(meter.label),
+                )
+                .child(mono(meter.value, Type::CAPTION, t.text).truncate())
+                .child(bar(meter.share, 3., t.text_soft, t.raised))
+        }));
+    let body = body.child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(sp(2.5))
+            .child(heading("This run", t))
+            .child(tiles),
+    );
+    run_details(ws, run, body, t, cx)
+}
+
+fn run_details(
     ws: &Workspace,
     run: &RunView,
     body: Div,
@@ -197,7 +556,6 @@ fn run_tab(
             });
         (SharedString::from(field.name.clone()), value)
     });
-    let meters = run.meters();
     body.when(!run.plan.is_empty(), |body| {
         body.child(
             div()
@@ -214,28 +572,6 @@ fn run_tab(
                 ),
         )
         .child(key_values(plan, t))
-    })
-    .when(!meters.is_empty(), |body| {
-        body.child(heading("Limits", t))
-            .children(meters.into_iter().map(|meter| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(1.25))
-                    .child(
-                        div()
-                            .flex()
-                            .typeset(Type::CAPTION)
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_color(t.text_soft)
-                                    .child(meter.label),
-                            )
-                            .child(mono(meter.value, Type::CAPTION, t.muted)),
-                    )
-                    .child(bar(meter.share, 4., t.text_soft, t.border))
-            }))
     })
     .when(!run.children.is_empty(), |body| {
         body.child(heading("Sub-agents and forks", t)).children(
@@ -277,131 +613,7 @@ fn run_tab(
     })
 }
 
-fn context_tab(
-    run: &RunView,
-    body: Div,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let ledger_route = Route::Ledger(run.id.clone());
-    let has_rewrite = run.last_rewrite().is_some();
-    let context = &run.context;
-    let Some(window) = context.window else {
-        return body.child(
-            div()
-                .text_color(t.muted)
-                .child(format!("{} tokens in context", tokens(context.used))),
-        );
-    };
-    let share = |used: u64| used as f32 / window as f32;
-    let row = |label: &'static str, used: u64, fill| {
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(2.5))
-            .child(
-                div()
-                    .w(px(48.))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.muted)
-                    .child(label),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .relative()
-                    .child(bar(share(used), 10., fill, t.raised))
-                    .when_some(context.trigger, |track, trigger| {
-                        track.child(
-                            div()
-                                .absolute()
-                                .top(px(-3.))
-                                .left(relative(trigger))
-                                .w(px(2.))
-                                .h(px(16.))
-                                .bg(t.accent),
-                        )
-                    }),
-            )
-            .child(
-                mono(tokens(used), Type::CAPTION, t.text)
-                    .w(px(40.))
-                    .flex()
-                    .justify_end(),
-            )
-    };
-    let (mut kept, mut results, mut calls) = (0, 0, 0);
-    for item in &run.items {
-        if let Item::Tool(card) = item {
-            match card.pruned {
-                Some(Pruned::Kept) => kept += 1,
-                Some(Pruned::ResultDropped) => results += 1,
-                Some(Pruned::CallDropped) => calls += 1,
-                None => {}
-            }
-        }
-    }
-    body.child(
-        div()
-            .flex()
-            .items_center()
-            .child(heading("Context window", t).flex_1())
-            .when(has_rewrite, |row| {
-                row.child(
-                    div()
-                        .id("open-ledger-panel")
-                        .child(link("Ledger", t))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.navigate(ledger_route.clone(), cx)
-                        })),
-                )
-            }),
-    )
-    .when_some(context.before, |body, before| {
-        body.child(row("Before", before, t.slate))
-    })
-    .child(row(
-        if context.before.is_some() {
-            "After"
-        } else {
-            "Now"
-        },
-        context.used,
-        t.blue,
-    ))
-    .child(
-        div()
-            .typeset(Type::CAPTION)
-            .text_color(t.dim)
-            .line_height(relative(1.5))
-            .child(format!(
-                "{} window.{}",
-                tokens(window),
-                context.trigger.map_or(String::new(), |trigger| format!(
-                    " Pruning starts at {:.0}%.",
-                    trigger * 100.
-                ))
-            )),
-    )
-    .when(kept + results + calls > 0, |body| {
-        body.child(heading("Ledger", t)).child(key_values(
-            [
-                ("kept".into(), mono(kept.to_string(), Type::CAPTION, t.text)),
-                (
-                    "result dropped".into(),
-                    mono(results.to_string(), Type::CAPTION, t.text),
-                ),
-                (
-                    "call dropped".into(),
-                    mono(calls.to_string(), Type::CAPTION, t.text),
-                ),
-            ],
-            t,
-        ))
-    })
-}
-
-fn plugins_tab(
+fn plugins_section(
     ws: &Workspace,
     run: &RunView,
     body: Div,
@@ -416,7 +628,10 @@ fn plugins_tab(
             format!("{count} ({})", list.join(", "))
         }
     };
-    body.child(heading("Plugins this run", t))
+    if run.plugins.is_empty() && rules.is_empty() {
+        return body;
+    }
+    body.child(heading("Plugins", t))
         .child(plugin_states(ws, run, t, cx))
         .child(
             div()
@@ -535,21 +750,54 @@ fn plugin_states(
         }))
 }
 
-/// The tab strip, for the desktop panel.
-pub fn tab_label(tab: Tab, active: bool, t: &Theme) -> impl IntoElement {
+/// The bar pinned under the panel that opens the event log, and the
+/// log when it is open.
+pub fn events(
+    ws: &Workspace,
+    run: &RunView,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let open = ws.events_open();
     div()
-        .h(px(48.))
         .flex()
-        .items_center()
-        .px(sp(0.5))
-        .typeset(Type::SMALL)
-        .cursor_pointer()
-        .text_color(if active { t.text } else { t.muted })
-        .when(active, |tab| tab.border_b_2().border_color(t.accent))
-        .child(tab.label())
+        .flex_col()
+        .flex_shrink_0()
+        .border_t_1()
+        .border_color(t.border)
+        .when(open, |panel| {
+            panel.child(
+                div()
+                    .id("event-log")
+                    .max_h(px(280.))
+                    .overflow_y_scroll()
+                    .px(sp(4.))
+                    .pt(sp(3.))
+                    .child(event_log(run, t)),
+            )
+        })
+        .child(
+            div()
+                .id("toggle-events")
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .h(px(44.))
+                .px(sp(4.))
+                .cursor_pointer()
+                .hover(|style| style.bg(gpui::white().opacity(0.03)))
+                .on_click(cx.listener(|ws, _, _, cx| ws.toggle_events(cx)))
+                .child(heading("Events", t).flex_1())
+                .child(mono(run.log.len().to_string(), Type::CAPTION, t.dim))
+                .child(icon(
+                    if open { Icon::Down } else { Icon::Chevron },
+                    IconSize::SMALL,
+                    t.muted,
+                )),
+        )
 }
 
-fn events_tab(run: &RunView, body: Div, t: &Theme) -> Div {
+fn event_log(run: &RunView, t: &Theme) -> Div {
     let color = |kind: &str| match kind {
         "ToolStart" | "Retry" | "Continued" => t.accent,
         "ToolEnd" | "RunStart" => t.green,
@@ -557,7 +805,7 @@ fn events_tab(run: &RunView, body: Div, t: &Theme) -> Div {
         "PluginError" => t.red,
         _ => t.text_soft,
     };
-    body.child(heading("Live events", t)).child(
+    div().child(
         div()
             .flex()
             .flex_col()

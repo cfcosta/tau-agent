@@ -10,7 +10,10 @@ use tau_agent::{
     event::{RunEvent, StopReason},
     tool::{RunId, ToolOutput},
 };
-use tau_ai::message::{Usage, UsageCost};
+use tau_ai::{
+    codex::limits::{RateLimits, Window},
+    message::{Usage, UsageCost},
+};
 
 use crate::{
     Workspace,
@@ -89,7 +92,41 @@ pub fn retry_after() -> RunView {
         before: None,
     };
     view.plugins = plugins(["waiting", "waiting", "watching edits", "idle"]);
+    view.limits_at_start = Some(rate_limits_at(57.0, 21.0));
     view
+}
+
+/// A ChatGPT Plus plan's limits as the demo shows them: a five-hour
+/// window 61% used, resetting in an hour and 48 minutes, and the week
+/// 23% used.
+pub fn rate_limits() -> RateLimits {
+    rate_limits_at(61.0, 23.0)
+}
+
+/// The demo plan with its five hours and its week used this much.
+fn rate_limits_at(hours: f64, week: f64) -> RateLimits {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64);
+    // Whole minutes ahead, plus a little, so the countdown reads evenly.
+    let reset = |minutes: i64| (now / 60 + minutes) * 60 + 30;
+    RateLimits {
+        plan: Some("plus".into()),
+        limit_reached: false,
+        windows: vec![
+            Window {
+                used_percent: hours,
+                minutes: 300,
+                resets_at: reset(108),
+            },
+            Window {
+                used_percent: week,
+                minutes: 10_080,
+                resets_at: reset(4 * 1_440 + 180),
+            },
+        ],
+        credits: None,
+    }
 }
 
 /// A goal's records as tau-goal stores them: `working` (two checks, not

@@ -227,6 +227,7 @@ fn demo_workspace(
         Workspace::new("tau-agent", runs, demo::catalog(), window, cx);
     workspace.set_phone_preview(args.phone, cx);
     workspace.set_frame(args.frame, cx);
+    workspace.set_rate_limits(Some(demo::rate_limits()), cx);
     if let Some(steps) = args.steps {
         for (_, update) in demo::script().into_iter().take(steps) {
             workspace.update_run(&demo::run_id(), update, cx);
@@ -385,7 +386,6 @@ fn open_demo_screen(
                     cx,
                 );
             }
-            workspace.set_tab(tau_ui::ui::inspector::Tab::Goal, cx);
             if open == "goal-sheet" {
                 workspace.toggle_sheet(cx);
             }
@@ -393,7 +393,6 @@ fn open_demo_screen(
         }
         Some("run-plugins") => {
             workspace.navigate(Route::Run(demo::run_id()), cx);
-            workspace.set_tab(tau_ui::ui::inspector::Tab::Plugins, cx);
             return;
         }
         Some("note-open") => {
@@ -422,7 +421,6 @@ fn open_demo_screen(
         }
         Some("sheet-plugins") => {
             workspace.navigate(Route::Run(demo::run_id()), cx);
-            workspace.set_tab(tau_ui::ui::inspector::Tab::Plugins, cx);
             workspace.toggle_sheet(cx);
             return;
         }

@@ -1354,10 +1354,9 @@ fn goal_buttons_store_changes_and_keep_going(cx: &mut TestAppContext) {
     let stopped = tau_agent::tool::RunId("lane-audit".into());
     let met = tau_agent::tool::RunId("mutants-triage".into());
     workspace.update(&mut cx, |ws, cx| {
-        use tau_ui::ui::inspector::Tab;
-        assert!(Tab::of(ws.run(&stopped)).contains(&Tab::Goal));
+        assert!(ws.run(&stopped).unwrap().goal.is_some());
         let done = tau_agent::tool::RunId("plugin-docs".into());
-        assert!(!Tab::of(ws.run(&done)).contains(&Tab::Goal));
+        assert!(ws.run(&done).unwrap().goal.is_none());
 
         // Keep going: more continuations, and the conversation goes on.
         ws.navigate(Route::Run(stopped.clone()), cx);
@@ -1808,4 +1807,41 @@ fn search_opens_again_after_escape(cx: &mut TestAppContext) {
     workspace.read_with(&cx, |ws, _| assert!(ws.picker().is_none()));
     cx.simulate_keystrokes("ctrl-k");
     assert!(searching(&mut cx), "ctrl+k works after the picker");
+}
+
+/// The side panel shows the ChatGPT plan's limits once the host reports
+/// them, each run records them as it starts, and the event log opens
+/// and closes from its bar.
+#[gpui::test]
+fn the_panel_follows_the_plans_limits(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open(cx);
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(run.clone()), cx);
+        assert!(ws.rate_limits().is_none());
+        ws.set_rate_limits(Some(demo::rate_limits()), cx);
+        ws.apply_event(
+            &tau_agent::event::RunEvent::RunStart {
+                run: run.clone(),
+                parent: None,
+                agent: "coder".into(),
+            },
+            cx,
+        );
+        assert_eq!(
+            ws.run(&run).unwrap().limits_at_start,
+            Some(demo::rate_limits())
+        );
+        assert!(!ws.events_open());
+        ws.toggle_events(cx);
+        assert!(ws.events_open());
+    });
+    // Drawn with the limits, the context and the open log.
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.set_rate_limits(None, cx);
+        ws.toggle_events(cx);
+        assert!(ws.rate_limits().is_none() && !ws.events_open());
+    });
+    cx.run_until_parked();
 }

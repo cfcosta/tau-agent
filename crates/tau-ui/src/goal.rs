@@ -9,7 +9,7 @@ use tau_goal::{Exhausted, Goal, Record, Status};
 use crate::{
     assets::Icon,
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
-    ui::{self, ButtonKind, inspector::Tab},
+    ui::{self, ButtonKind},
     view::{RunView, usd},
     workspace::Workspace,
 };
@@ -262,7 +262,6 @@ impl Workspace {
                 )
                 .child(ui::icon(Icon::Chevron, IconSize::BASE, t.muted))
                 .on_click(cx.listener(|ws, _, _, cx| {
-                    ws.set_tab(Tab::Goal, cx);
                     if !ws.sheet_is_open() {
                         ws.toggle_sheet(cx);
                     }
