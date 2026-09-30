@@ -6,7 +6,7 @@ use tau_agent::tool::RunId;
 use crate::{
     assets::Icon,
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, dot, heading, icon, mono, rich, transcript},
+    ui::{self, Material as _, dot, heading, icon, mono, rich, transcript},
     view::{Item, NoteBody, PluginNote, RunView},
     workspace::Workspace,
 };
@@ -249,7 +249,7 @@ fn chart(
         .border_1()
         .border_color(t.border)
         .rounded(radius::BOX)
-        .bg(t.bg)
+        .well(t)
         .children(confidence.map(|(value, threshold)| {
             let verdict = if value >= threshold {
                 "is applied"

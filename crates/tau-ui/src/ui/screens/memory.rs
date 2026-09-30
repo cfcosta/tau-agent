@@ -37,7 +37,15 @@ use crate::{
         sp,
         weight,
     },
-    ui::{self, components::ButtonKind, heading, icon, mono, rich_in},
+    ui::{
+        self,
+        Material as _,
+        components::ButtonKind,
+        heading,
+        icon,
+        mono,
+        rich_in,
+    },
     workspace::Workspace,
 };
 
@@ -119,7 +127,7 @@ pub fn render(
                 .w(columns.list)
                 .flex_shrink_0()
                 .overflow_y_scroll()
-                .bg(t.panel)
+                .chrome(crate::ui::Edge::Left, t)
                 .border_r_1()
                 .border_color(t.border)
                 .p(sp(3.))
@@ -162,7 +170,7 @@ pub fn render(
                             .w(width)
                             .flex_shrink_0()
                             .overflow_y_scroll()
-                            .bg(t.panel)
+                            .chrome(crate::ui::Edge::Right, t)
                             .border_l_1()
                             .border_color(t.border)
                             .p(sp(5.))
@@ -335,7 +343,7 @@ fn list(
                 .p(sp(2.5))
                 .rounded(radius::CONTROL)
                 .cursor_pointer()
-                .when(active, |row| row.bg(t.selected))
+                .when(active, |row| row.pressed(t))
                 .when(!active, |row| {
                     row.hover(|style| style.bg(gpui::white().opacity(0.03)))
                 })

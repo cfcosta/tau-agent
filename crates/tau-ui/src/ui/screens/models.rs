@@ -8,7 +8,7 @@ use crate::{
     models::{AccessInfo, AccountState},
     plan_usage,
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
-    ui::{self, ButtonKind, heading, mono},
+    ui::{self, ButtonKind, Material as _, heading, mono},
     workspace::{PickerTarget, Workspace},
 };
 
@@ -309,7 +309,7 @@ fn chatgpt_section(
             .px(sp(2.5))
             .py(sp(1.75))
             .rounded(radius::CONTROL)
-            .when(account.active, |row| row.bg(t.raised))
+            .when(account.active, |row| row.key(t))
             .when(!account.active, |row| {
                 row.cursor_pointer()
                     .hover(|style| style.bg(gpui::white().opacity(0.04)))

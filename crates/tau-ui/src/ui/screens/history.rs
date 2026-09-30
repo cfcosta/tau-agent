@@ -7,7 +7,15 @@ use crate::{
     assets::Icon,
     route::Route,
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, components::ButtonKind, icon, mono, status_icon, status_look},
+    ui::{
+        self,
+        Material as _,
+        components::ButtonKind,
+        icon,
+        mono,
+        status_icon,
+        status_look,
+    },
     view::{Origin, RunView, tokens, usd},
     workspace::Workspace,
 };
@@ -162,7 +170,7 @@ pub fn render(
                 row(t)
                     .id(SharedString::from(format!("history-{}", run.id)))
                     .cursor_pointer()
-                    .when(active, |row| row.bg(t.selected))
+                    .when(active, |row| row.pressed(t))
                     .hover(|style| style.bg(gpui::white().opacity(0.03)))
                     .child(div().w(px(20.)).child(status_icon(
                         run,
@@ -249,7 +257,7 @@ pub fn render(
                     .gap(sp(3.))
                     .px(sp(4.))
                     .py(sp(3.))
-                    .bg(t.panel)
+                    .chrome(crate::ui::Edge::Bottom, t)
                     .border_t_1()
                     .border_color(t.border)
                     .child(mono("SQL", Type::MICRO, t.dim))

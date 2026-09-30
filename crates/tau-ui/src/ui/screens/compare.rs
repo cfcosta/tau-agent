@@ -285,7 +285,6 @@ fn code(
                 let shown = &file.lines[..file.lines.len().min(DIFF_LINES)];
                 let hidden = file.lines.len() - shown.len();
                 ui::card(t)
-                    .bg(t.card)
                     .child(
                         file_row(&file.stat, t)
                             .px(sp(3.))
@@ -390,7 +389,6 @@ fn branch(
     });
     let diff = run.last_diff().map(|(card, lines)| {
         ui::card(t)
-            .bg(t.card)
             .child(
                 div()
                     .px(sp(3.))

@@ -10,6 +10,7 @@ use crate::{
     route::Route,
     theme::{Design as _, IconSize, MONO, Theme, Type, radius, sp, weight},
     ui::{
+        Material as _,
         components::{
             ButtonKind,
             big_button,
@@ -99,7 +100,7 @@ fn top_bar(
         .items_center()
         .gap(sp(3.))
         .px(sp(4.))
-        .bg(t.panel)
+        .chrome(crate::ui::Edge::Top, t)
         .border_b_1()
         .border_color(t.border)
         .child(logo(t, 26.))
@@ -212,7 +213,7 @@ fn draft(
                         .rounded(radius::BOX)
                         .border_1()
                         .border_color(t.border_strong)
-                        .bg(t.panel)
+                        .well(t)
                         .child(ws.pr_title.clone()),
                 ),
         )
@@ -234,7 +235,7 @@ fn draft(
                         .rounded(radius::BOX)
                         .border_1()
                         .border_color(t.border_strong)
-                        .bg(t.panel)
+                        .well(t)
                         .font_family(MONO)
                         .typeset(Type::CODE)
                         .line_height(relative(1.6))
@@ -280,7 +281,7 @@ fn draft(
         .gap(sp(5.5))
         .px(sp(6.))
         .py(sp(8.))
-        .bg(t.panel)
+        .chrome(crate::ui::Edge::Right, t)
         .border_l_1()
         .border_color(t.border)
         .child(
@@ -343,7 +344,7 @@ fn draft(
                                 .rounded(radius::BOX)
                                 .border_1()
                                 .border_color(t.border_strong)
-                                .bg(t.bg)
+                                .well(t)
                                 .typeset(Type::SMALL)
                                 .child(ws.reviewers.clone()),
                         ),
@@ -448,7 +449,7 @@ fn phone_draft(
                         .rounded(radius::BOX)
                         .border_1()
                         .border_color(t.border_strong)
-                        .bg(t.panel)
+                        .raised(t)
                         .typeset(Type::SMALL)
                         .line_height(relative(1.55))
                         .child(prose(&pr.short_body(), t.text_soft, t)),

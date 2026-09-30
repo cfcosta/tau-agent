@@ -19,7 +19,7 @@ use crate::{
         Trying,
     },
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, components::ButtonKind, heading, icon, mono},
+    ui::{self, Material as _, components::ButtonKind, heading, icon, mono},
     view::usd,
     workspace::Workspace,
 };
@@ -237,7 +237,7 @@ fn nothing_yet(repo: &str, t: &Theme, cx: &mut Context<Workspace>) -> Div {
                     .items_center()
                     .justify_center()
                     .rounded(radius::BOX)
-                    .bg(t.raised)
+                    .key(t)
                     .child(icon(Icon::Blocked, IconSize::LARGE, t.muted)),
             )
             .child(
@@ -288,7 +288,7 @@ fn stat_tiles(stats: &RulesStats, compact: bool, t: &Theme) -> Div {
             .px(sp(3.5))
             .py(sp(3.))
             .rounded(radius::BOX)
-            .bg(t.card)
+            .raised(t)
             .border_1()
             .border_color(t.border)
             .child(ui::text(name, Type::CAPTION, t.muted))
@@ -550,7 +550,7 @@ fn rules_list(
             .cursor_pointer()
             .border_b_1()
             .border_color(t.border)
-            .when(focused || menu_open, |row| row.bg(t.selected))
+            .when(focused || menu_open, |row| row.pressed(t))
             .hover(|style| style.bg(t.selected))
             .on_click(cx.listener(move |ws, _, _, cx| {
                 ws.open_rule_editor(&edit_repo, Some(&edit_id), cx)
@@ -631,7 +631,7 @@ fn rules_list(
         .rounded(radius::BOX)
         .border_1()
         .border_color(t.border)
-        .bg(t.card)
+        .raised(t)
         .when(!stacked, |list| {
             list.child(
                 div()
@@ -681,11 +681,10 @@ fn rule_menu(
         .p(sp(1.))
         .flex()
         .flex_col()
-        .bg(t.panel)
+        .raised(t)
         .border_1()
         .border_color(t.border_strong)
         .rounded(radius::BOX)
-        .shadow_lg()
         .child(entry("Edit", t.text).on_click(cx.listener(
             move |ws, _, _, cx| {
                 cx.stop_propagation();
@@ -775,7 +774,7 @@ fn review(
                 .rounded(radius::BOX)
                 .border_1()
                 .border_color(t.border)
-                .bg(t.card)
+                .raised(t)
                 .when(handled.is_empty(), |list| {
                     list.child(div().p(sp(3.)).child(ui::text(
                         "Nothing yet.",
@@ -866,7 +865,7 @@ fn review_card(
         .rounded(radius::BOX)
         .border_1()
         .border_color(t.accent_border)
-        .bg(t.card)
+        .raised(t)
         .child(
             div()
                 .flex()
@@ -887,7 +886,7 @@ fn review_card(
                 .px(sp(3.5))
                 .py(sp(2.5))
                 .rounded(radius::CONTROL)
-                .bg(t.bg)
+                .well(t)
                 .map(|body| {
                     if answer {
                         body.child(ui::text(item.shown.clone(), Type::BODY, t.text_soft))
@@ -1045,7 +1044,7 @@ fn editor(
                         t.border
                     },
                 )
-                .bg(t.bg)
+                .well(t)
                 .children(places)
                 .child(
                     div()
@@ -1088,9 +1087,7 @@ fn editor(
             .cursor_pointer()
             .typeset(Type::SMALL)
             .text_color(if on { t.text } else { t.muted })
-            .when(on, |segment| {
-                segment.bg(t.selected).font_weight(weight::EMPHASIS)
-            })
+            .when(on, |segment| segment.key(t).font_weight(weight::EMPHASIS))
             .child(preset.label())
             .on_click(
                 cx.listener(move |ws, _, _, cx| ws.set_preset(preset, cx)),
@@ -1158,7 +1155,7 @@ fn editor(
                         .gap(sp(1.5))
                         .p(sp(0.75))
                         .rounded(radius::BOX)
-                        .bg(t.card)
+                        .well(t)
                         .children(presets),
                 )
                 .child(div().px(sp(2.)).py(sp(2.)).child(ui::strictness(
@@ -1488,7 +1485,7 @@ fn try_section(
                         .rounded(radius::BOX)
                         .border_1()
                         .border_color(t.border)
-                        .bg(t.bg)
+                        .raised(t)
                         .children(rows),
                 )
                 .child(ui::text(
