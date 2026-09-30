@@ -319,6 +319,14 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(output.status.success(), "git {args:?}: {output:?}");
 }
 
+/// Sends `prompt` to the repository's main chat, the top-level run the
+/// others nest under (runs nest one level), and returns its id.
+fn on_main(host: &Host, prompt: &str) -> tau_agent::tool::RunId {
+    let main = host.main_of(REPO).unwrap();
+    host.resume(&main, prompt, &ModelChoice::default()).unwrap();
+    main
+}
+
 fn wait_until_done(host: &Host, run: &tau_agent::tool::RunId) {
     let deadline = std::time::Instant::now() + WAIT;
     while host.is_running(run) && std::time::Instant::now() < deadline {
@@ -355,12 +363,10 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     let (host, mut events) = host_on(llm.clone(), src.path());
     let host = host.with_repo(REPO, project);
 
-    let main = host
-        .start("write a.txt twice", &ModelChoice::default(), REPO)
-        .unwrap();
+    let main = on_main(&host, "write a.txt twice");
     until_end(&mut events);
-    wait_until_done(&host, &main.id);
-    let main_dir = host.workspace(&main.id).unwrap();
+    wait_until_done(&host, &main);
+    let main_dir = host.workspace(&main).unwrap();
     assert_eq!(
         std::fs::read_to_string(main_dir.join("a.txt")).unwrap(),
         "two\n"
@@ -370,13 +376,13 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
 
     let other = ModelChoice::new("gpt-6-sol", Effort::High);
     let fork = host
-        .fork(&main.id, Some(1), "try it another way", &other)
+        .fork(&main, Some(1), "try it another way", &other)
         .unwrap();
     assert_eq!(fork.model, "gpt-6-sol");
     assert_eq!(
         fork.origin,
         Origin::Fork {
-            from: main.id.clone(),
+            from: main.clone(),
             turn: 1
         }
     );
@@ -399,8 +405,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
 
     let history = host.history().unwrap();
     let ids: Vec<_> = history.iter().map(|view| view.id.clone()).collect();
-    let repo_main = host.main_of(REPO).unwrap();
-    assert_eq!(ids, [fork.id.clone(), main.id.clone(), repo_main]);
+    assert_eq!(ids, [fork.id.clone(), main.clone()]);
     assert_eq!(history[0].title, "try it another way");
     assert_eq!(history[0].origin, fork.origin);
     assert_eq!(history[0].status, RunStatus::Finished(StopReason::Stop));
@@ -420,7 +425,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
 
     // Compare: the run changed a.txt after the fork point, the fork did
     // nothing, and their code differs in a.txt.
-    let code = host.block_on(host.branch_code(&main.id, &fork.id)).unwrap();
+    let code = host.block_on(host.branch_code(&main, &fork.id)).unwrap();
     let paths = |files: &[FileStat]| {
         files
             .iter()
@@ -440,21 +445,12 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         [(DiffKind::Removed, "two"), (DiffKind::Added, "one")]
     );
 
-    // Forking the fork at a turn it inherited forks the run that took
-    // that turn, with the same conversation and code.
-    let again = host
-        .fork(&fork.id, Some(1), "a third way", &ModelChoice::default())
-        .unwrap();
-    assert_eq!(
-        again.origin,
-        Origin::Fork {
-            from: main.id.clone(),
-            turn: 1
-        }
+    // Runs nest one level: the fork, a chat under the main chat,
+    // cannot be forked in turn.
+    assert!(
+        host.fork(&fork.id, Some(1), "a third way", &ModelChoice::default())
+            .is_err()
     );
-    host.cancel(&again.id);
-    until_end(&mut events);
-    wait_until_done(&host, &again.id);
 
     // Keeping the fork drops the main run's workspace, not its commits.
     host.keep_branch(&fork.id).unwrap();
@@ -493,19 +489,12 @@ fn a_fork_lands_on_its_parent_and_closes() {
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_repo(REPO, project.clone());
 
-    let main = host
-        .start("write two files", &ModelChoice::default(), REPO)
-        .unwrap();
+    let main = on_main(&host, "write two files");
     until_end(&mut events);
-    wait_until_done(&host, &main.id);
-    let main_dir = host.workspace(&main.id).unwrap();
+    wait_until_done(&host, &main);
+    let main_dir = host.workspace(&main).unwrap();
     let fork = host
-        .fork(
-            &main.id,
-            Some(1),
-            "write c instead",
-            &ModelChoice::default(),
-        )
+        .fork(&main, Some(1), "write c instead", &ModelChoice::default())
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &fork.id);
@@ -520,7 +509,7 @@ fn a_fork_lands_on_its_parent_and_closes() {
         host.history()
             .unwrap()
             .iter()
-            .find(|view| view.id == main.id)
+            .find(|view| view.id == main)
             .unwrap()
             .items
             .iter()
@@ -546,21 +535,15 @@ fn a_fork_lands_on_its_parent_and_closes() {
     assert!(!fork_dir.exists());
     let fork_bookmark = format!("tau/{}", fork.id.0);
     assert_eq!(project.bookmark(&fork_bookmark).unwrap(), None);
-    assert_eq!(
-        project.bookmark(&format!("tau/{}", main.id.0)).unwrap(),
-        Some(landed.head.clone())
-    );
+    // The main chat commits on trunk: landing on it moves main.
+    assert_eq!(project.trunk().unwrap(), landed.head);
     // Landing again finds nothing to land.
     assert!(host.land(&fork.id).is_err());
 
     // Back from history, the main run shows the landing where it
     // happened: after its last turn, before its stop.
     let history = host.history().unwrap();
-    let items = &history
-        .iter()
-        .find(|view| view.id == main.id)
-        .unwrap()
-        .items;
+    let items = &history.iter().find(|view| view.id == main).unwrap().items;
     let [.., turn_end, Item::Landed(card), Item::Stop { .. }] =
         items.as_slice()
     else {
@@ -576,10 +559,10 @@ fn a_fork_lands_on_its_parent_and_closes() {
     assert_eq!(card.changes.len(), 1);
 }
 
-/// A child with an open child of its own cannot land (ADR 0009) until
-/// that one lands or is dropped; dropping abandons its own changes.
+/// Runs nest one level: a chat under the main chat cannot be forked,
+/// and it lands on the main chat.
 #[test]
-fn a_child_lands_after_its_children() {
+fn a_chat_under_main_is_not_forked() {
     let src = tempfile::tempdir().unwrap();
     git(src.path(), &["init", "--quiet"]);
     std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
@@ -602,45 +585,29 @@ fn a_child_lands_after_its_children() {
         .turn(|t| t.text("done"))
         .turn(|t| t.tool_call("write", write("b.txt")))
         .turn(|t| t.tool_call("vcs_commit", commit("feat: a and b")))
-        .turn(|t| t.text("forked"))
-        .turn(|t| t.tool_call("write", write("c.txt")))
-        .turn(|t| t.tool_call("vcs_commit", commit("feat: a, b and c")))
-        .turn(|t| t.text("forked again"));
+        .turn(|t| t.text("forked"));
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_repo(REPO, project.clone());
     let choice = ModelChoice::default();
 
-    let main = host.start("write a", &choice, REPO).unwrap();
+    let main = on_main(&host, "write a");
     until_end(&mut events);
-    wait_until_done(&host, &main.id);
-    let child = host.fork(&main.id, Some(1), "write b", &choice).unwrap();
+    wait_until_done(&host, &main);
+    let child = host.fork(&main, Some(1), "write b", &choice).unwrap();
     until_end(&mut events);
     wait_until_done(&host, &child.id);
-    // The child's own turn 2 wrote b.txt; its fork starts there.
-    let grandchild = host.fork(&child.id, Some(2), "write c", &choice).unwrap();
-    until_end(&mut events);
-    wait_until_done(&host, &grandchild.id);
-    let grandchild_dir = host.workspace(&grandchild.id).unwrap();
-    assert!(grandchild_dir.join("c.txt").exists());
-
-    let err = host.land(&child.id).unwrap_err().to_string();
-    assert!(err.contains("have not landed"), "{err}");
-    assert!(err.contains(&*grandchild.id.0), "{err}");
-
-    host.drop_child(&grandchild.id).unwrap();
-    assert!(!grandchild_dir.exists());
-    assert_eq!(
-        project
-            .bookmark(&format!("tau/{}", grandchild.id.0))
-            .unwrap(),
-        None
-    );
+    // A chat under the main chat has nothing under it: it cannot be
+    // forked, and so it lands with nothing waiting on it.
+    let err = host
+        .fork(&child.id, Some(2), "write c", &choice)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Only a top-level chat"), "{err}");
 
     let landed = host.land(&child.id).unwrap();
-    assert_eq!(landed.changes.len(), 1, "b.txt only, not c.txt");
-    let main_dir = host.workspace(&main.id).unwrap();
+    assert_eq!(landed.changes.len(), 1, "b.txt");
+    let main_dir = host.workspace(&main).unwrap();
     assert!(main_dir.join("b.txt").exists());
-    assert!(!main_dir.join("c.txt").exists());
 }
 
 /// A run delegates to a sub-agent (ADR 0009): the sub-agent works in a
@@ -684,25 +651,21 @@ fn a_run_delegates_and_the_sub_agent_lands() {
         .turn(|t| t.text("done"));
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_repo(REPO, project.clone());
-    let main = host
-        .start("delegate c.txt", &ModelChoice::default(), REPO)
-        .unwrap();
+    let main = on_main(&host, "delegate c.txt");
     until_end(&mut events);
-    wait_until_done(&host, &main.id);
+    wait_until_done(&host, &main);
 
-    let dir = host.workspace(&main.id).unwrap();
+    let dir = host.workspace(&main).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
-    // The sub-agent is closed: one workspace, one run bookmark.
+    // The sub-agent is closed: one workspace, and no run bookmark, as
+    // the main chat commits on trunk.
     assert_eq!(project.workspaces().unwrap().len(), 1);
-    assert_eq!(
-        project.bookmarks("tau/").unwrap(),
-        [format!("tau/{}", main.id.0)]
-    );
+    assert!(project.bookmarks("tau/").unwrap().is_empty());
 
     // From history, the run's delegate card says what landed, and the
     // sub-agent's chat comes back under it.
     let history = host.history().unwrap();
-    let main_view = history.iter().find(|view| view.id == main.id).unwrap();
+    let main_view = history.iter().find(|view| view.id == main).unwrap();
     let card = main_view
         .items
         .iter()
@@ -723,7 +686,7 @@ fn a_run_delegates_and_the_sub_agent_lands() {
     assert_eq!(
         child.origin,
         Origin::SubAgent {
-            parent: main.id.clone()
+            parent: main.clone()
         }
     );
     assert!(main_view.children.iter().any(|kid| kid.id == landed.from));
@@ -756,15 +719,13 @@ fn a_failed_sub_agent_comes_back_from_history() {
         .turn(|t| t.text("it failed"));
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_repo(REPO, project);
-    let main = host
-        .start("delegate c.txt", &ModelChoice::default(), REPO)
-        .unwrap();
+    let main = on_main(&host, "delegate c.txt");
     until_end(&mut events);
     until_end(&mut events);
-    wait_until_done(&host, &main.id);
+    wait_until_done(&host, &main);
 
     let history = host.history().unwrap();
-    let main_view = history.iter().find(|view| view.id == main.id).unwrap();
+    let main_view = history.iter().find(|view| view.id == main).unwrap();
     let child = main_view
         .children
         .iter()
@@ -774,7 +735,7 @@ fn a_failed_sub_agent_comes_back_from_history() {
     assert_eq!(
         view.origin,
         Origin::SubAgent {
-            parent: main.id.clone()
+            parent: main.clone()
         }
     );
     assert_eq!(view.title, "write c.txt");
@@ -1955,4 +1916,41 @@ fn a_repository_main_chat_has_a_view() {
     assert_eq!(view.title, "main");
     assert_eq!(view.repo, REPO);
     assert_eq!(view.origin, Origin::Root);
+}
+
+/// Runs nest one level: the main chat can delegate, and a chat under it,
+/// which could only nest a sub-agent under itself, is not given the
+/// tool.
+#[test]
+fn only_the_main_chat_delegates() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("main"))
+        .turn(|t| t.text("chat"));
+    let (host, mut events) = host(llm.clone());
+    let main = on_main(&host, "hello main");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let chat = host
+        .start("hello chat", &ModelChoice::default(), REPO)
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    let tools = |n: usize| -> Vec<String> {
+        llm.requests()[n]
+            .settings
+            .tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect()
+    };
+    assert!(
+        tools(0).iter().any(|name| name == "delegate"),
+        "{:?}",
+        tools(0)
+    );
+    assert!(
+        !tools(1).iter().any(|name| name == "delegate"),
+        "{:?}",
+        tools(1)
+    );
 }

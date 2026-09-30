@@ -1768,10 +1768,17 @@ impl Workspace {
         self.inspector_shown
     }
 
-    /// Whether a fork can start after `turn` of `run`: the turn has
-    /// ended.
+    /// Whether `run` can be forked at all. Runs nest one level: a
+    /// top-level run (a repository's main chat) has chats under it,
+    /// and those, like sub-agents, have nothing under them.
+    pub fn can_fork(run: &RunView) -> bool {
+        run.origin == Origin::Root
+    }
+
+    /// Whether a fork can start after `turn` of `run`: the run can be
+    /// forked, and the turn has ended.
     pub fn can_fork_at(run: &RunView, turn: u32) -> bool {
-        turn >= 1 && turn <= Self::last_fork_turn(run)
+        Self::can_fork(run) && turn >= 1 && turn <= Self::last_fork_turn(run)
     }
 
     /// Puts the composer in fork mode: the next message starts a fork of
@@ -1804,7 +1811,7 @@ impl Workspace {
         turn: u32,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(run) = self.run(run) else {
+        let Some(run) = self.run(run).filter(|run| Self::can_fork(run)) else {
             return false;
         };
         let (id, turn) = (
@@ -3319,21 +3326,23 @@ impl Workspace {
                 )
             })
             .children(self.land_button(run, t, cx))
-            .child(
-                div()
-                    .id("fork")
-                    .child(
-                        ui::button("Fork here", ButtonKind::Secondary, t)
-                            .child(ui::icon(
-                                Icon::Fork,
-                                IconSize::COMPACT,
-                                t.text_soft,
-                            )),
-                    )
-                    .on_click(cx.listener(|ws, _, window, cx| {
-                        ws.start_fork(window, cx)
-                    })),
-            )
+            .when(Self::can_fork(run), |header| {
+                header.child(
+                    div()
+                        .id("fork")
+                        .child(
+                            ui::button("Fork here", ButtonKind::Secondary, t)
+                                .child(ui::icon(
+                                    Icon::Fork,
+                                    IconSize::COMPACT,
+                                    t.text_soft,
+                                )),
+                        )
+                        .on_click(cx.listener(|ws, _, window, cx| {
+                            ws.start_fork(window, cx)
+                        })),
+                )
+            })
             .when(live, |header| {
                 header.child(
                     div()
@@ -3884,23 +3893,29 @@ impl Workspace {
                     .child(
                         div()
                             .grid()
-                            .grid_cols(if live || done { 2 } else { 1 })
-                            .gap(sp(2.))
-                            .child(
-                                div()
-                                    .id("sheet-fork")
-                                    .child(ui::big_button(
-                                        "Fork here",
-                                        None,
-                                        ButtonKind::Secondary,
-                                        t,
-                                    ))
-                                    .on_click(cx.listener(
-                                        |ws, _, window, cx| {
-                                            ws.start_fork(window, cx)
-                                        },
-                                    )),
+                            .grid_cols(
+                                (usize::from(Self::can_fork(run))
+                                    + usize::from(live || done))
+                                .max(1) as u16,
                             )
+                            .gap(sp(2.))
+                            .when(Self::can_fork(run), |row| {
+                                row.child(
+                                    div()
+                                        .id("sheet-fork")
+                                        .child(ui::big_button(
+                                            "Fork here",
+                                            None,
+                                            ButtonKind::Secondary,
+                                            t,
+                                        ))
+                                        .on_click(cx.listener(
+                                            |ws, _, window, cx| {
+                                                ws.start_fork(window, cx)
+                                            },
+                                        )),
+                                )
+                            })
                             .when(done, |row| {
                                 row.child(
                                     div()

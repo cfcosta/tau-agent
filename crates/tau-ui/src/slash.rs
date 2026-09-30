@@ -102,10 +102,14 @@ impl Workspace {
     /// The commands that work here: the ones about a conversation only
     /// when one is open.
     fn commands(&self) -> impl Iterator<Item = Command> + '_ {
-        let in_run = self.route != Route::NewRun && self.current().is_some();
+        let run = self.current().filter(|_| self.route != Route::NewRun);
+        let in_run = run.is_some();
+        // Only a top-level run can be forked.
+        let forks = run.is_some_and(Self::can_fork);
         COMMANDS
             .into_iter()
             .filter(move |command| in_run || !command.needs_run)
+            .filter(move |command| command.name != "/fork" || forks)
     }
 
     /// What `text` in the composer asks for.

@@ -836,6 +836,17 @@ impl Host {
             .any(|listed| listed.main.as_deref() == Some(&*run.0))
     }
 
+    /// Whether `run` has no parent: a repository's main chat, or a run
+    /// from before main chats. Runs nest one level, so only these fork
+    /// and delegate.
+    fn is_top_level(&self, run: &RunId) -> anyhow::Result<bool> {
+        let record = self
+            .runtime
+            .block_on(self.store.run(&run.0))?
+            .ok_or_else(|| anyhow::anyhow!("No run {}", run.0))?;
+        Ok(record.kind == RunKind::Root)
+    }
+
     /// The bookmark `run`'s commits move: trunk's for a main chat, which
     /// commits on it, else `tau/<run>`.
     fn bookmark_of(
@@ -1308,12 +1319,17 @@ impl Host {
 
     /// The agent for one run, with its tools on the run's workspace, and
     /// the workspace's name.
+    ///
+    /// `main`: the run is its repository's main chat, which commits on
+    /// trunk. `delegates`: the run gets `delegate`, which only a
+    /// top-level run does, as runs nest one level.
     fn agent_for_run(
         &self,
         choice: &ModelChoice,
         repo: &RepoSlot,
         workspace: Option<String>,
         main: bool,
+        delegates: bool,
     ) -> anyhow::Result<(Agent, String)> {
         if self.account().is_none() {
             anyhow::bail!(
@@ -1403,7 +1419,12 @@ impl Host {
                 },
             )
         };
-        let agent = on_workspace(agent.tool(delegate), workspace, !main);
+        let agent = if delegates {
+            agent.tool(delegate)
+        } else {
+            agent
+        };
+        let agent = on_workspace(agent, workspace, !main);
         Ok((with_plugin(agent, goal), name))
     }
 
@@ -1693,6 +1714,12 @@ impl Host {
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
         let repo = self.slot_of_run(run)?;
+        if !self.is_top_level(run)? {
+            anyhow::bail!(
+                "Only a top-level chat can be forked: a chat under it, like \
+                 a sub-agent, has nothing under it"
+            );
+        }
         let (source, seq, link) =
             self.fork_point(run, turn)?.ok_or_else(|| match turn {
                 Some(turn) => {
@@ -1718,8 +1745,9 @@ impl Host {
     ) -> anyhow::Result<RunView> {
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
+        // A fork is a chat under a top-level run: it delegates to none.
         let (agent, workspace) =
-            self.agent_for_run(choice, repo, None, false)?;
+            self.agent_for_run(choice, repo, None, false, false)?;
         let _guard = self.runtime.enter();
         let forked = agent
             .fork(&Checkpoint::at(source.clone(), seq))
@@ -1790,8 +1818,9 @@ impl Host {
         }
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
+        let delegates = self.is_top_level(run)?;
         let (agent, workspace) =
-            self.agent_for_run(choice, &repo, workspace, main)?;
+            self.agent_for_run(choice, &repo, workspace, main, delegates)?;
         let _guard = self.runtime.enter();
         let resumed = agent.resume(run).start(prompt, &self.store);
         self.track(resumed, workspace, choice, &repo.name);

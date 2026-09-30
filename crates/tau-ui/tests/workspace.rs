@@ -2544,3 +2544,29 @@ fn a_picked_effort_stays_after_sending(cx: &mut TestAppContext) {
         assert_eq!(choice.model, "gpt-5.5");
     });
 }
+
+/// Runs nest one level: a fork (a chat under the main chat) offers no
+/// fork of its own, neither from the header nor with `/fork`.
+#[gpui::test]
+fn a_chat_under_main_offers_no_fork(cx: &mut TestAppContext) {
+    use tau_agent::tool::RunId;
+    use tau_ui::view::{Origin, RunStatus, RunView};
+
+    let (workspace, mut cx, _) = open(cx);
+    let chat = RunId("chat".into());
+    let mut view = RunView::new(chat.clone(), "chat", "coder", "gpt-5.5")
+        .with_origin(Origin::Fork {
+            from: demo::run_id(),
+            turn: 1,
+        });
+    view.status = RunStatus::Finished(StopReason::Stop);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.add_history(vec![view], cx);
+        ws.navigate(Route::Run(chat.clone()), cx);
+        let run = ws.run(&chat).unwrap();
+        assert!(!Workspace::can_fork(run));
+        assert!(!Workspace::can_fork_at(run, 1));
+        assert!(!ws.start_fork_at(&chat, 1, cx), "no fork mode");
+        assert!(matches!(ws.slash("/fo"), tau_ui::slash::Slash::None));
+    });
+}
