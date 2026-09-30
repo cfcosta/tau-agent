@@ -577,6 +577,20 @@ impl Store {
         self.entries(run, false).await
     }
 
+    /// The body of the run's own first user message, not one it
+    /// inherited: what a fork was started with.
+    pub async fn first_prompt(&self, run: &str) -> Result<Option<String>> {
+        let row = sqlx::query_scalar!(
+            "SELECT body FROM messages
+             WHERE run_id = ?1 AND kind = 'message' AND role = 'user'
+             ORDER BY seq LIMIT 1",
+            run
+        )
+        .fetch_optional(&self.reader)
+        .await?;
+        Ok(row)
+    }
+
     /// [`Store::transcript`] with the plugin records in place among the
     /// messages, in the order they were written: what an interface needs
     /// to show a stored run as it happened.

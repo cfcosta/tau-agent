@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT body FROM messages\n             WHERE run_id = ?1 AND kind = 'message' AND role = 'user'\n             ORDER BY seq LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "body",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "body"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f21ddf636ff55d11bd730d357aa511e4bf9a35cf87d1b5b221e325bd43746dc0"
+}

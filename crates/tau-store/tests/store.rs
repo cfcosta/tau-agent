@@ -448,6 +448,17 @@ impl StoreMachine {
             assert_eq!(record.result, m.result, "result of {id}");
             assert_eq!(record.error, m.error, "error of {id}");
             assert_eq!(record.title, m.title, "title of {id}");
+            let first = m.own.iter().find_map(|entry| match entry {
+                Entry::Message { role, body } if role == "user" => {
+                    Some(body.clone())
+                }
+                _ => None,
+            });
+            assert_eq!(
+                store.first_prompt(id).await.unwrap(),
+                first,
+                "first prompt of {id}"
+            );
         }
         for workflow in ["wf_1", "wf_2"] {
             let mut expected: BTreeMap<&str, (i64, f64)> = BTreeMap::new();
