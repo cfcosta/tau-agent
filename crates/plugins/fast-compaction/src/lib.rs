@@ -314,7 +314,7 @@ impl PluginRun for FastCompactionRun {
         view: &ContextView<'_>,
         ctx: &PluginCtx,
     ) -> Result<Option<Rewrite>, PluginError> {
-        if view.trigger == Trigger::TurnEnd && !self.due(view.tokens) {
+        if view.trigger != Trigger::Overflow && !self.due(view.tokens) {
             return Ok(None);
         }
         tokio::select! {

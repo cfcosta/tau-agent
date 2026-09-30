@@ -18,7 +18,14 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tau_ai::{
     llm::{Llm, LlmError},
-    message::{InputBlock, Message, TextContent, Usage, UserContent},
+    message::{
+        AssistantBlock,
+        InputBlock,
+        Message,
+        TextContent,
+        Usage,
+        UserContent,
+    },
     responses::request::{ReasoningEffort, Settings, ToolDefinition},
     retry::RetryPolicy,
 };
@@ -818,7 +825,7 @@ async fn run_task(
     };
     // A fork starts from its inherited transcript, a resumed run from
     // its own, and from the latest context rewrite in it, if any.
-    let (history, last_rewrite) = if fork || resumed.is_some() {
+    let (mut history, last_rewrite) = if fork || resumed.is_some() {
         let entries = match store.transcript(&id.0).await {
             Ok(entries) => entries,
             Err(error) => {
@@ -834,6 +841,7 @@ async fn run_task(
     } else {
         (Vec::new(), None)
     };
+    keep_own_reasoning(&mut history, &agent.0.model);
     let mut plan = RunPlan::new(
         input,
         agent.0.instructions.clone(),
@@ -955,6 +963,22 @@ fn first_message(context: Vec<String>, input: String) -> UserContent {
             })
             .collect(),
     )
+}
+
+/// Drops the reasoning of the assistant messages another model wrote,
+/// and keeps the rest of them: reasoning goes back only to the model
+/// that wrote it, as a fork or a resumed run on another model would
+/// otherwise send it.
+fn keep_own_reasoning(messages: &mut [Message], model: &str) {
+    for message in messages {
+        if let Message::Assistant(assistant) = message
+            && assistant.model != model
+        {
+            assistant
+                .content
+                .retain(|block| !matches!(block, AssistantBlock::Thinking(_)));
+        }
+    }
 }
 
 /// The latest context rewrite in a transcript: the plugin that made it,
@@ -1115,5 +1139,48 @@ mod tests {
         let already: String =
             tc.draw(gs::from_regex("[A-Za-z0-9_-]{1,64}").fullmatch(true));
         assert_eq!(format_name(&already), already);
+    }
+
+    /// Only another model's reasoning goes: this model's messages, and
+    /// every other message, stay as they were, and the other blocks of a
+    /// foreign message keep their order.
+    #[hegel::test(test_cases = 300)]
+    fn only_another_models_reasoning_is_dropped(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        use tau_ai::message::AssistantMessage;
+        use tau_testing::generators::message;
+        let before: Vec<Message> = tc.draw(gs::vecs(message()).max_size(8));
+        let model: String = tc.draw(gs::sampled_from(vec![
+            "gpt-5.5".to_owned(),
+            "gpt-5.5-mini".to_owned(),
+        ]));
+        let mut after = before.clone();
+        keep_own_reasoning(&mut after, &model);
+        assert_eq!(after.len(), before.len());
+        for (was, now) in before.iter().zip(&after) {
+            match (was, now) {
+                (Message::Assistant(was), Message::Assistant(now))
+                    if was.model != model =>
+                {
+                    let kept: Vec<&AssistantBlock> = was
+                        .content
+                        .iter()
+                        .filter(|b| !matches!(b, AssistantBlock::Thinking(_)))
+                        .collect();
+                    assert_eq!(now.content.iter().collect::<Vec<_>>(), kept);
+                    assert_eq!(
+                        AssistantMessage {
+                            content: Vec::new(),
+                            ..now.clone()
+                        },
+                        AssistantMessage {
+                            content: Vec::new(),
+                            ..was.clone()
+                        },
+                    );
+                }
+                _ => assert_eq!(now, was),
+            }
+        }
     }
 }

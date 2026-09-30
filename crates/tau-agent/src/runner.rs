@@ -204,7 +204,19 @@ impl Runner {
         });
         self.persist(std::slice::from_ref(&first), &own).await?;
         let mut transcript = std::mem::take(&mut self.history);
+        let inherited = !transcript.is_empty();
         transcript.push(first);
+        if inherited {
+            // A transcript from another run, or another model, may not
+            // fit this one's window. Failures were reported as events.
+            let _ = self
+                .rewrite_context(
+                    &mut transcript,
+                    Trigger::Start,
+                    self.turns_before + 1,
+                )
+                .await?;
+        }
         let mut turn = self.turns_before;
         // The turns of this start, for limits: a resumed run gets a
         // fresh budget.

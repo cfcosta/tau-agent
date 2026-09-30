@@ -18,6 +18,9 @@ compacts by is the loop's, in `tau_agent::context`.
   `estimated_tokens > context_window - reserve_tokens`.
   - `reserve_tokens` defaults to 16,384.
   - It is checked at most once per turn.
+  - It is also checked before the first request of a run that starts
+    on an inherited or resumed transcript: a fork or sub-agent on a
+    model with a smaller window compacts before it asks anything.
 - **Overflow.** If the response fails with `context_length_exceeded`, the
   loop compacts once and retries once. A second overflow fails the run.
   The failed response is not stored.

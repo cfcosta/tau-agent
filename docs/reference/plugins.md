@@ -233,6 +233,9 @@ pub struct ContextView<'a> {
 pub enum Trigger {
     /// After a turn, before the next request.
     TurnEnd,
+    /// Before the first request of a run that starts on a transcript
+    /// it inherited or goes on with: on another model, it may not fit.
+    Start,
     /// The last request failed with `context_length_exceeded`.
     Overflow,
 }
@@ -278,6 +281,7 @@ tokens_after }` marks each rewrite.
 start run
   ├─ Plugin::start (each, in order)    ← RunPlan: input, context, settings
   ├─ open session with the plan's settings, store the input
+  ├─ inherited or resumed transcript? rewrite_context(Start)
   └─ loop
        ├─ before_request (each)          → the turn's effort
        ├─ respond                        (overflow → rewrite_context(Overflow), retry once)

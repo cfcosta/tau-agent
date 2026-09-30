@@ -223,6 +223,10 @@ pub struct RequestView<'a> {
 pub enum Trigger {
     /// A turn ended, and the run goes on.
     TurnEnd,
+    /// The run starts on a transcript it inherited (a fork) or goes on
+    /// with (a resumed run), before its first request: on another model,
+    /// it may not fit.
+    Start,
     /// The last request failed because the context was too long.
     Overflow,
 }

@@ -92,7 +92,7 @@ impl PluginRun for CompactionRun {
         ctx: &PluginCtx,
     ) -> Result<Option<Rewrite>, PluginError> {
         match view.trigger {
-            Trigger::TurnEnd => {
+            Trigger::TurnEnd | Trigger::Start => {
                 let due = !self.off
                     && self.window.is_some_and(|window| {
                         should_compact(view.tokens, window, &self.settings)

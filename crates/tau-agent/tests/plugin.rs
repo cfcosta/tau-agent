@@ -738,7 +738,11 @@ fn a_rewrite_replaces_the_transcript() {
             .turn(|t| t.tool_call("echo", json!({"text": "x"})))
             .turn(|t| t.text("done"))
             .turn(|t| t.text("forked"));
-        let pruner = Pruner::new(Prune::KeepLastUser);
+        // Only at turn ends: the fork below keeps what it inherited.
+        let pruner = Pruner {
+            on: Some(tau_agent::plugin::Trigger::TurnEnd),
+            ..Pruner::new(Prune::KeepLastUser)
+        };
         let agent = Agent::new(model.clone())
             .tool(Echo::new())
             .plugin(pruner.clone());
@@ -891,6 +895,42 @@ fn the_first_rewrite_takes_an_overflow() {
             user_texts(&model.requests()[2].transcript[0]),
             ["then this"]
         );
+    });
+}
+
+/// A run that starts on an inherited transcript offers it for a rewrite
+/// before its first request, so it can fit the run's model; a run that
+/// starts fresh has nothing to offer.
+#[test]
+fn a_fork_is_offered_its_context_before_it_asks() {
+    use tau_agent::plugin::Trigger;
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.text("done"))
+            .turn(|t| t.text("forked"));
+        let pruner = Pruner {
+            on: Some(Trigger::Start),
+            ..Pruner::new(Prune::KeepLastUser)
+        };
+        let agent = Agent::new(model.clone()).plugin(pruner.clone());
+        let store = Store::memory().await.unwrap();
+        let (_, outcome) = run_to_end(&agent, &store, "go", None).await;
+        assert_eq!(pruner.offered.lock().unwrap().clone(), []);
+
+        let fork = agent
+            .fork(&outcome.checkpoint())
+            .run("and now", &store)
+            .await
+            .unwrap();
+        assert_eq!(fork.text, "forked");
+        // The inherited "go" and "done", then "and now": offered at
+        // the start, and cut to the last user message before it asked.
+        assert_eq!(
+            pruner.offered.lock().unwrap().clone(),
+            [(Trigger::Start, 3)]
+        );
+        assert_eq!(model.requests()[1].transcript.len(), 1);
+        assert_eq!(user_texts(&model.requests()[1].transcript[0]), ["and now"]);
     });
 }
 
