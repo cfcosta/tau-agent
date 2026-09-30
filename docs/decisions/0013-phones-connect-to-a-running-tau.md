@@ -172,4 +172,3 @@ All five steps are in. Where the code went its own way:
   the whole certificate to compare.
 - **The phone keeps its token in the app's private directory**, not yet
   in the Android Keystore.
-
