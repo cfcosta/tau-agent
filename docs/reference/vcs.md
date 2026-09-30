@@ -414,9 +414,12 @@ does not get `vcs_land`, the host refuses to merge it, and its bar
 offers neither.
 
 Trunk can move without it, when an update brings commits from GitHub.
-Before each of its turns, and before a chat lands on it, the host moves
-its workspace onto trunk's head (`Vcs::move_onto`), so its next commit
-moves trunk forward rather than aside.
+When the main chat has moved trunk too, `Project::update` takes
+upstream's trunk. Before each of its turns, and before a chat lands on
+it, the host moves its workspace onto trunk's head (`Vcs::move_onto`):
+its commits that upstream lacks go on top, keeping their change ids,
+and so does its work in `@`. Its next commit moves trunk forward rather
+than aside.
 
 ## Delegating to a sub-agent
 

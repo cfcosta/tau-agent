@@ -25,7 +25,7 @@ use jj_lib::{
         default_working_copy_factories,
         default_working_copy_factory,
     },
-    git::{GitImportOptions, import_refs},
+    git::{GitImportOptions, REMOTE_NAME_FOR_LOCAL_GIT_REPO, import_refs},
     matchers::EverythingMatcher,
     object_id::ObjectId as _,
     ref_name::{RefName, WorkspaceNameBuf},
@@ -169,6 +169,7 @@ impl Project {
         };
         block_on(import_refs(tx.repo_mut(), &options))
             .map_err(VcsError::ImportBranches)?;
+        self.take_upstream_trunk(&mut tx);
         block_on(tx.commit("tau: update"))?;
         Ok(Updated {
             before,
@@ -276,6 +277,35 @@ impl Project {
 
     /// Trunk's bookmark and the commit it names: the default branch, else
     /// `main`, `master` or `trunk`.
+    /// Points trunk's bookmark at upstream's trunk when an update left it
+    /// with two targets: the main chat moves trunk here (ADR 0015) while
+    /// upstream moves it there. The main chat's commits go onto
+    /// upstream's when it catches up (`Vcs::move_onto`).
+    fn take_upstream_trunk(&self, tx: &mut jj_lib::transaction::Transaction) {
+        let names = self
+            .default_branch()
+            .into_iter()
+            .chain(["main", "master", "trunk"].map(str::to_owned));
+        for name in names {
+            let name = RefName::new(&name);
+            let view = tx.repo().view();
+            let local = view.get_local_bookmark(name);
+            if local.is_absent() {
+                continue;
+            }
+            let upstream = &view
+                .get_remote_bookmark(
+                    name.to_remote_symbol(REMOTE_NAME_FOR_LOCAL_GIT_REPO),
+                )
+                .target;
+            if local.has_conflict() && upstream.as_normal().is_some() {
+                let upstream = upstream.clone();
+                tx.repo_mut().set_local_bookmark_target(name, upstream);
+            }
+            return;
+        }
+    }
+
     fn trunk_bookmark(
         &self,
         repo: &ReadonlyRepo,

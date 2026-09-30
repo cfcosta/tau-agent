@@ -12,14 +12,16 @@ use hegel::{Generator as _, TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::agent::{Agent, Checkpoint};
 use tau_store::Store;
-use tau_testing::scripted::ScriptedModel;
+use tau_testing::{block_on, scripted::ScriptedModel};
 use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
+    DEFAULT_WORKSPACE,
     Identity,
     Link,
     Project,
     RunWorkspace,
     UpdateFrom,
+    Vcs,
     clone_bare,
     run_workspace::{PLUGIN, bookmark},
 };
@@ -171,6 +173,59 @@ fn a_project_updates_from_its_checkout() {
     // Nothing new: nothing changes.
     let again = project.update(UpdateFrom::Checkout(src.path())).unwrap();
     assert!(!again.changed());
+}
+
+/// The main chat commits on trunk (ADR 0015) while upstream moves on:
+/// an update takes upstream's trunk, and the main chat's commits and
+/// its work in `@` go on top of it when it catches up
+/// (`Vcs::move_onto`), each keeping its change id.
+#[test]
+fn an_update_under_the_main_chats_commits_takes_upstreams_trunk() {
+    let src = tempfile::tempdir().unwrap();
+    let first = source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
+    let ours = block_on(main.commit_all("ours", project.trunk_name().unwrap()))
+        .unwrap();
+    assert_eq!(project.trunk().unwrap(), ours.commit_id);
+    std::fs::write(dir.join("wip.txt"), "wip\n").unwrap();
+
+    let theirs = commit(src.path(), "theirs.txt");
+    let updated = project.update(UpdateFrom::Checkout(src.path())).unwrap();
+    assert_eq!(
+        (updated.before, updated.after),
+        (ours.commit_id, theirs.clone())
+    );
+    assert_eq!(project.trunk().unwrap(), theirs);
+    assert_ne!(theirs, first);
+
+    // The main chat catches up: its commit goes onto upstream's, and its
+    // work in `@` stays uncommitted on top.
+    let moved = block_on(main.move_onto(
+        theirs.clone(),
+        project.trunk_name().unwrap(),
+        true,
+    ))
+    .unwrap();
+    assert!(moved.conflicts.is_empty());
+    let [change] = moved.changes.as_slice() else {
+        panic!("{moved:?}");
+    };
+    assert_eq!(change.change_id, ours.change_id);
+    assert_eq!(project.trunk().unwrap(), moved.head);
+    assert_eq!(project.parent_of(&moved.head).unwrap(), Some(theirs));
+    for file in ["README.md", "ours.txt", "theirs.txt", "wip.txt"] {
+        assert!(dir.join(file).exists(), "{file}");
+    }
+    assert_eq!(block_on(main.working_copy()).unwrap().paths, ["wip.txt"]);
 }
 
 #[test]
