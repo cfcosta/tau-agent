@@ -136,7 +136,6 @@ fn runs_propose_merge_and_resolve_into_main(cx: &mut TestAppContext) {
         account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(dir.path().join("config")),
         model: Some("gpt-5.5".into()),
-        root: src.path().to_owned(),
         store: dir.path().join("unused.db"),
         repos: dir.path().join("repos"),
         settings: dir.path().join("models.json"),
@@ -144,7 +143,7 @@ fn runs_propose_merge_and_resolve_into_main(cx: &mut TestAppContext) {
     };
     let agent = tau_agent::agent::Agent::new(llm.clone()).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
-    let host = host.with_project(project.clone());
+    let host = host.with_repo("hello", project.clone());
     cx.update(|_, cx| host.attach(&workspace, events, cx));
 
     // The first run proposed its landing: once it stops, the card opens

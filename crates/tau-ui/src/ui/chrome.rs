@@ -236,9 +236,7 @@ pub fn sidebar(
         .cursor_pointer()
         .hover(|style| style.bg(t.selected))
         .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
-        .on_click(
-            cx.listener(|ws, _, window, cx| ws.show_add_repo(window, cx)),
-        );
+        .on_click(cx.listener(|ws, _, _, cx| ws.pick_github_repos(cx)));
 
     let everywhere = [
         (Route::History, Icon::History, "History", "all repos"),
@@ -856,17 +854,16 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
                     .text_color(t.accent)
                     .child(format!("importing {name}…")),
             ),
-            ProjectStatus::Ready(name) => {
-                Some(div().child(format!("{name} · a workspace per run")))
-            }
             ProjectStatus::Updating(name) => Some(
                 div()
                     .text_color(t.accent)
                     .child(format!("updating {name}…")),
             ),
-            ProjectStatus::Checkout(_) => {
-                Some(div().text_color(t.dim).child("runs in the checkout"))
-            }
+            ProjectStatus::Failed(name) => Some(
+                div()
+                    .text_color(t.red)
+                    .child(format!("{name} could not be imported")),
+            ),
         })
         .children(ws.catalog.update.clone().map(|text| div().child(text)))
         .child(div().flex_1())
@@ -994,9 +991,7 @@ pub fn phone_header(
         .when(matches!(ws.route, Route::Home), |bar| {
             bar.child(
                 icon_button("phone-add-repo", Icon::Folder, 44., t).on_click(
-                    cx.listener(|ws, _, window, cx| {
-                        ws.show_add_repo(window, cx)
-                    }),
+                    cx.listener(|ws, _, _, cx| ws.pick_github_repos(cx)),
                 ),
             )
         })

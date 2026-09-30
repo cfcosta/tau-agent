@@ -875,7 +875,6 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     let done = workspace.update(cx, |ws, cx| match answer {
                         Answer::Setup(update) => ws.update_setup(update, cx),
                         Answer::Pair(update) => ws.update_pairing(update, cx),
-                        Answer::Repo(repo) => ws.add_repo(repo, cx),
                         Answer::Pr(run, state) => {
                             ws.set_pull_request_state(&run, state, cx)
                         }
@@ -1196,20 +1195,6 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     ws.set_catalog(catalog, cx);
                 });
             }
-            // The checkout at `path` becomes a repository with no notes
-            // or rules yet.
-            WorkspaceEvent::AddRepo { path } => {
-                let name = path
-                    .trim_end_matches('/')
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(path)
-                    .to_owned();
-                later(
-                    vec![(400, Answer::Repo(Repo::new(name, path.clone())))],
-                    cx,
-                )
-            }
             WorkspaceEvent::CompareCode { main, fork } => later(
                 vec![(
                     400,
@@ -1226,7 +1211,6 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
 enum Answer {
     Setup(SetupUpdate),
     Pair(PairingUpdate),
-    Repo(Repo),
     Pr(RunId, PrState),
     Code(RunId, RunId, BranchCode),
     Trial(Vec<tau_constitution::Trial>, f64),

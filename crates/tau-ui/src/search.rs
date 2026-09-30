@@ -192,7 +192,7 @@ impl Workspace {
             }
             Pick::NewRunIn(repo) => self.new_run_in(&repo, window, cx),
             Pick::Screen(route) => self.navigate(route, cx),
-            Pick::AddRepo => self.show_add_repo(window, cx),
+            Pick::AddRepo => self.pick_github_repos(cx),
         }
         cx.notify();
     }

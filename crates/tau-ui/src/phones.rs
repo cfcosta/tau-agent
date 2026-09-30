@@ -73,7 +73,6 @@ impl WorkspaceEvent {
             Self::Pair(_)
                 | Self::Phones(_)
                 | Self::OpenRepos(_)
-                | Self::AddRepo { .. }
                 | Self::JevKey { .. }
                 | Self::GitHubSignIn
                 | Self::GitHubCheck

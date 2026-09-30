@@ -361,13 +361,12 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(tempfile::tempdir().unwrap().keep()),
         model: Some("gpt-5.5".into()),
-        root: std::env::temp_dir(),
         store: std::env::temp_dir().join("unused.db"),
         repos: std::env::temp_dir().join("unused-repos"),
         settings: std::env::temp_dir().join("unused-models.json"),
         repo_list: std::env::temp_dir().join("unused-repos.json"),
     };
-    // No project: runs work in the checkout, and forking cannot work.
+    // No repository is listed, so the demo's run cannot be forked.
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     cx.update(|_, cx| host.attach(&workspace, events, cx));
     let run = demo::run_id();
@@ -384,7 +383,7 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
     workspace.read_with(&cx, |ws, _| {
         let (title, message) = ws.alert().expect("a dialog");
         assert_eq!(title, "Could not fork the run");
-        assert!(message.starts_with("Forking needs a project"), "{message}");
+        assert!(message.contains("no listed repository"), "{message}");
     });
 }
 
@@ -630,8 +629,7 @@ fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
 #[gpui::test]
 fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
-    workspace.update_in(&mut cx, |ws, window, cx| {
-        ws.show_add_repo(window, cx);
+    workspace.update_in(&mut cx, |ws, _, cx| {
         ws.navigate(
             Route::Memory {
                 repo: "docbert".into(),
@@ -659,25 +657,6 @@ fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
     assert!(events.borrow().contains(&WorkspaceEvent::HideRepo {
         repo: "docbert".into()
     }));
-}
-
-#[gpui::test]
-fn the_demo_adds_a_repository_by_path(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open_demo(cx);
-    cx.update(|_, cx| demo::respond(&workspace, cx));
-    workspace.update_in(&mut cx, |ws, window, cx| {
-        ws.show_add_repo(window, cx);
-    });
-    cx.simulate_input("~/Code/you/dotfiles");
-    cx.simulate_keystrokes("enter");
-    cx.executor()
-        .advance_clock(std::time::Duration::from_secs(1));
-    cx.run_until_parked();
-    workspace.read_with(&cx, |ws, _| {
-        let repo = ws.catalog().repo("dotfiles").expect("added");
-        assert_eq!(repo.path, "~/Code/you/dotfiles");
-        assert_eq!(ws.selected_repo(), Some("dotfiles"));
-    });
 }
 
 #[gpui::test]

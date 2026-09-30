@@ -55,7 +55,7 @@ impl Catalog {
 pub struct Repo {
     /// What the sidebar calls it; unique in the catalog.
     pub name: String,
-    /// The checkout it came from.
+    /// Where its clone is.
     pub path: String,
     pub memory: Memory,
     pub constitution: Constitution,
@@ -85,15 +85,13 @@ pub enum ProjectStatus {
     /// No host, or one that says nothing.
     #[default]
     Unknown,
-    /// The checkout is being copied into a project named this.
+    /// The clone named this is being made a project.
     Importing(String),
-    /// Runs get a workspace each in the project named this.
-    Ready(String),
-    /// The repository named this is taking in new commits from its
-    /// source.
+    /// The repository named this is taking in new commits from GitHub.
     Updating(String),
-    /// Runs work in the checkout itself, for this reason.
-    Checkout(String),
+    /// The clone named this could not be made a project; runs cannot
+    /// start in it.
+    Failed(String),
 }
 
 /// The seams a plugin can use, in the order the loop reaches them.

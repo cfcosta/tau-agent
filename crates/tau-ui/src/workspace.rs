@@ -154,11 +154,6 @@ pub enum WorkspaceEvent {
     /// The repositories the sidebar shows open, to open them the same
     /// way next time.
     OpenRepos(Vec<String>),
-    /// Add the checkout at `path` as a repository; answer with
-    /// [`Workspace::add_repo`], or [`Workspace::show_alert`].
-    AddRepo {
-        path: String,
-    },
     /// Stop listing the repository. Its runs and project stay.
     HideRepo {
         repo: String,
@@ -505,8 +500,6 @@ pub struct Workspace {
     /// The repository whose menu is open.
     pub(crate) repo_menu: Option<String>,
     pub(crate) sidebar_filter: Entity<TextInput>,
-    /// The dialog that adds a repository, with its path field.
-    pub(crate) adding_repo: bool,
     /// Why an onboarding step was opened from the app, if it was: once
     /// that is done, go back rather than on through onboarding.
     pub(crate) setup_goal: Option<SetupGoal>,
@@ -514,7 +507,6 @@ pub struct Workspace {
     pub(crate) setup_motion: crate::motion::SetupMotion,
     /// The user asked for less motion: no loops, and plain fades.
     reduce_motion: bool,
-    pub(crate) repo_path: Entity<TextInput>,
     /// The new rule's text and where it applies, on the Constitution
     /// screen.
     pub(crate) rule_text: Entity<TextInput>,
@@ -626,9 +618,6 @@ impl Workspace {
             cx.new(|cx| TextInput::new("@reviewer", cx).keep_on_submit());
         let sidebar_filter =
             cx.new(|cx| TextInput::new("Filter repositories and runs", cx));
-        let repo_path = cx.new(|cx| {
-            TextInput::new("~/Code/you/project", cx).keep_on_submit()
-        });
         let rule_text = cx.new(|cx| {
             TextInput::new(
                 "A rule in plain words: \"No unwrap or expect outside tests.\"",
@@ -687,10 +676,6 @@ impl Workspace {
             // background.
             cx.observe_window_activation(window, |_, _, cx| cx.notify()),
             cx.observe(&sidebar_filter, |_, _, cx| cx.notify()),
-            cx.subscribe(&repo_path, |ws, _, event: &InputEvent, cx| {
-                let InputEvent::Submit(path) = event;
-                ws.submit_repo_path(path.clone(), cx);
-            }),
             cx.subscribe_in(
                 &search,
                 window,
@@ -796,11 +781,9 @@ impl Workspace {
             hovered_repo: None,
             repo_menu: None,
             sidebar_filter,
-            adding_repo: false,
             setup_goal: None,
             setup_motion: Default::default(),
             reduce_motion: false,
-            repo_path,
             rule_text,
             rule_on,
             rule_draft: None,
@@ -2481,7 +2464,6 @@ impl Workspace {
     /// Picks repositories to clone from GitHub, signing in first if
     /// needed, then comes back.
     pub fn pick_github_repos(&mut self, cx: &mut Context<Self>) {
-        self.adding_repo = false;
         if self.setup.user().is_some() {
             self.navigate(Route::Setup(SetupStep::Repos), cx);
         } else {
@@ -2989,8 +2971,6 @@ impl Workspace {
             cx.notify();
         } else if self.searching {
             self.close_search(cx);
-        } else if self.adding_repo {
-            self.cancel_add_repo(cx);
         } else if self.adding_jev_key {
             self.adding_jev_key = false;
             cx.notify();
@@ -4035,9 +4015,6 @@ impl Render for Workspace {
             .child(body)
             .when_some(self.model_overlay(phone, &t, cx), |body, overlay| {
                 body.child(overlay)
-            })
-            .when(self.adding_repo, |body| {
-                body.child(self.add_repo_view(&t, cx))
             })
             .when(self.searching, |body| body.child(self.search_view(&t, cx)))
             .when(self.adding_jev_key, |body| {

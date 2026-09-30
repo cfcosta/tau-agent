@@ -6,8 +6,8 @@
 //! the workspace drains on the UI thread. Steering and cancelling go the
 //! other way through each run's [`RunControl`].
 //!
-//! Runs do not work in the user's checkouts. The host copies each
-//! repository into a [`Project`] under `$XDG_DATA_HOME/tau/repos`, and
+//! Repositories come from GitHub alone: the host clones each one and
+//! makes it a [`Project`] under `$XDG_DATA_HOME/tau/repos`, and
 //! each run gets a jj workspace there ([`RunWorkspace`]) with a commit
 //! per turn, so a fork starts from a turn's conversation and code. The
 //! repositories tau lists, and which the sidebar shows open, are kept in
@@ -123,10 +123,6 @@ pub struct HostConfig {
     /// The model runs use when nothing else is chosen; `None` takes
     /// [`DEFAULT_MODEL`].
     pub model: Option<String>,
-    /// The checkout runs work on. The host clones it into a project of
-    /// its own and gives each run a workspace there; if it cannot (not
-    /// a Git repository, no `git`), runs work in it directly.
-    pub root: PathBuf,
     /// The run store, usually `$XDG_DATA_HOME/tau/runs.db`.
     pub store: PathBuf,
     /// Where projects live, usually `$XDG_DATA_HOME/tau/repos`.
@@ -181,13 +177,8 @@ impl HostConfig {
         Credentials::default_dir().dir.join("interface.json")
     }
 
-    /// The project directory for `root`.
-    pub fn project_dir(&self) -> PathBuf {
-        self.project_dir_of(&self.root)
-    }
-
-    /// The project directory for the checkout at `path`: its name and a
-    /// hash of its full path, so two checkouts with one name get two
+    /// The project directory for the clone at `path`: its name and a
+    /// hash of its full path, so two clones with one name get two
     /// projects.
     pub fn project_dir_of(&self, path: &Path) -> PathBuf {
         let full = canonical(path);
@@ -252,8 +243,8 @@ impl RepoList {
         Ok(())
     }
 
-    /// Lists the checkout at `path`, or lists it again if it was
-    /// removed, and returns its name: the directory's, made unique.
+    /// Lists the clone at `path`, or lists it again if it was removed,
+    /// and returns its name: the directory's, made unique.
     fn list(&mut self, path: &Path) -> String {
         let path = canonical(path);
         if let Some(listed) =
@@ -360,8 +351,9 @@ struct ProjectSlot {
 enum ProjectState {
     Importing,
     Ready(Project),
-    /// Runs work in the checkout itself, for this reason.
-    Checkout(String),
+    /// The clone could not be made a project, for this reason; runs
+    /// cannot start in it.
+    Failed(String),
 }
 
 impl ProjectSlot {
@@ -381,8 +373,7 @@ impl ProjectSlot {
         self.state.lock().expect("not poisoned").clone()
     }
 
-    /// The project, once the import is over; `None` if runs work in the
-    /// checkout.
+    /// The project, once the import is over; `None` if it failed.
     fn wait(&self) -> Option<Project> {
         let mut state = self.state.lock().expect("not poisoned");
         while matches!(*state, ProjectState::Importing) {
@@ -395,13 +386,29 @@ impl ProjectSlot {
     }
 }
 
-/// A listed repository: its checkout, and the project runs in it work
-/// in.
+/// A listed repository: its clone, and the project runs in it work in.
 #[derive(Clone)]
 struct RepoSlot {
     name: String,
     path: PathBuf,
     project: Arc<ProjectSlot>,
+}
+
+impl RepoSlot {
+    /// The project runs in the repository work in, once imported.
+    fn project(&self) -> anyhow::Result<Project> {
+        self.project
+            .wait()
+            .ok_or_else(|| match self.project.peek() {
+                ProjectState::Failed(why) => {
+                    anyhow::anyhow!(
+                        "{} could not be imported: {why}",
+                        self.name
+                    )
+                }
+                _ => anyhow::anyhow!("{} has no project", self.name),
+            })
+    }
 }
 
 pub struct Host {
@@ -437,9 +444,6 @@ pub struct Host {
     /// The repositories of this session, in the list's order. Removed
     /// ones stay here, unlisted, for their runs.
     repos: Arc<Mutex<Vec<RepoSlot>>>,
-    /// The checkout the host started in; runs that recorded no
-    /// repository belong to it.
-    home: String,
     list: Arc<Mutex<RepoList>>,
     /// The repository each run of this session works in.
     run_repos: Arc<Mutex<HashMap<RunId, String>>>,
@@ -539,7 +543,7 @@ impl Host {
         // The app searches memory with docbert's model; hosts built
         // elsewhere, as in tests, by keywords alone.
         host.memories = Arc::new(Memories::semantic());
-        // Copying checkouts can take a while; the window opens first.
+        // Importing clones can take a while; the window opens first.
         let listed: Vec<Listed> = host
             .list
             .lock()
@@ -571,22 +575,24 @@ impl Host {
         std::thread::Builder::new()
             .name("tau-import".into())
             .spawn(move || {
-                project.set(match Project::open_or_import(&source, dir, identity()) {
-                    Ok(project) => ProjectState::Ready(project),
-                    Err(error) => {
-                        eprintln!(
-                            "tau-ui: runs will work in {source} itself: {error:#}"
-                        );
-                        ProjectState::Checkout(format!("{error:#}"))
-                    }
-                });
+                project.set(
+                    match Project::open_or_import(&source, dir, identity()) {
+                        Ok(project) => ProjectState::Ready(project),
+                        Err(error) => {
+                            eprintln!(
+                                "tau-ui: cannot import {source}: {error:#}"
+                            );
+                            ProjectState::Failed(format!("{error:#}"))
+                        }
+                    },
+                );
             })?;
         Ok(())
     }
 
     /// A host over an agent built elsewhere: another model, other
-    /// plugins, or a scripted model in tests. Runs work in `config.root`
-    /// until [`Self::with_project`] gives them workspaces.
+    /// plugins, or a scripted model in tests. It lists no repository
+    /// until one is cloned, or given with [`Self::with_repo`].
     pub fn with_agent(
         runtime: Runtime,
         agent: Agent,
@@ -595,19 +601,7 @@ impl Host {
     ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
         let settings = load_settings(&config.settings, &config.default_model());
-        // The checkout the host starts in is always listed.
-        let mut list = RepoList::load(&config.repo_list);
-        let home = list.list(&config.root);
-        if let Err(error) = list.save(&config.repo_list) {
-            eprintln!("tau-ui: cannot save the repository list: {error:#}");
-        }
-        let slot = RepoSlot {
-            name: home.clone(),
-            path: canonical(&config.root),
-            project: ProjectSlot::new(ProjectState::Checkout(
-                "no project was given".into(),
-            )),
-        };
+        let list = RepoList::load(&config.repo_list);
         let host = Self {
             runtime,
             base: Mutex::new(agent),
@@ -623,8 +617,7 @@ impl Host {
             choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
             config,
-            repos: Arc::new(Mutex::new(vec![slot])),
-            home,
+            repos: Arc::default(),
             list: Arc::new(Mutex::new(list)),
             run_repos: Arc::default(),
             updating: Arc::default(),
@@ -640,16 +633,30 @@ impl Host {
         (host, receiver)
     }
 
-    /// Gives each run in the checkout a workspace in `project`, and a
-    /// commit per turn.
-    pub fn with_project(self, project: Project) -> Self {
-        self.home_slot().project.set(ProjectState::Ready(project));
+    /// Lists `project` as the repository `name`, in place of any listed
+    /// under that name, for a host built elsewhere: runs in it get a
+    /// workspace each there, as in a clone from GitHub.
+    pub fn with_repo(self, name: &str, project: Project) -> Self {
+        let path = project.root().to_owned();
+        {
+            let mut list = self.list.lock().expect("not poisoned");
+            list.repos.retain(|listed| listed.name != name);
+            list.repos.push(Listed {
+                name: name.to_owned(),
+                path: path.clone(),
+                hidden: false,
+                github: None,
+            });
+        }
+        let mut repos = self.repos.lock().expect("not poisoned");
+        repos.retain(|slot| slot.name != name);
+        repos.push(RepoSlot {
+            name: name.to_owned(),
+            path,
+            project: ProjectSlot::new(ProjectState::Ready(project)),
+        });
+        drop(repos);
         self
-    }
-
-    fn home_slot(&self) -> RepoSlot {
-        self.slot(&self.home)
-            .expect("the checkout's repository is always there")
     }
 
     fn slot(&self, name: &str) -> Option<RepoSlot> {
@@ -661,9 +668,9 @@ impl Host {
             .cloned()
     }
 
-    /// The repository `run` works in: as this session started it, as
-    /// the store recorded it, or the checkout's.
-    fn slot_of_run(&self, run: &RunId) -> RepoSlot {
+    /// The repository `run` works in: as this session started it, or as
+    /// the store recorded it.
+    fn slot_of_run(&self, run: &RunId) -> anyhow::Result<RepoSlot> {
         let known = self
             .run_repos
             .lock()
@@ -673,14 +680,9 @@ impl Host {
         let name = known.or_else(|| {
             self.runtime.block_on(stored_repo(&self.store, &run.0))
         });
-        name.and_then(|name| self.slot(&name))
-            .unwrap_or_else(|| self.home_slot())
-    }
-
-    /// The checkout's project, waiting for the import if it is still
-    /// going; `None` when runs work in the checkout.
-    pub fn project(&self) -> Option<Project> {
-        self.home_slot().project.wait()
+        name.and_then(|name| self.slot(&name)).ok_or_else(|| {
+            anyhow::anyhow!("{} works in no listed repository", run.0)
+        })
     }
 
     /// A listed repository's project, waiting for its import.
@@ -693,11 +695,6 @@ impl Host {
         &self.config.credentials
     }
 
-    /// The name the checkout is listed under.
-    pub fn home(&self) -> &str {
-        &self.home
-    }
-
     /// Whether a repository is still being imported.
     pub fn is_importing(&self) -> bool {
         self.repos
@@ -707,29 +704,30 @@ impl Host {
             .any(|slot| matches!(slot.project.peek(), ProjectState::Importing))
     }
 
-    /// Lists the checkout at `path` (`~` for the home directory) and
-    /// starts copying it. Returns it as the sidebar shows it.
-    pub fn add_repo(&self, path: &str) -> anyhow::Result<Repo> {
-        let path = crate::repos::expand_home(path);
-        if !path.is_dir() {
-            anyhow::bail!("{} is not a directory", path.display());
-        }
+    /// Lists the clone of `full_name` at `dir` and starts importing it.
+    /// Returns it as the sidebar shows it.
+    fn list_clone(&self, dir: &Path, full_name: &str) -> anyhow::Result<Repo> {
         let name = {
             let mut list = self.list.lock().expect("not poisoned");
-            let name = list.list(&path);
+            let name = list.list(dir);
+            if let Some(listed) =
+                list.repos.iter_mut().find(|listed| listed.name == name)
+            {
+                listed.github = Some(full_name.to_owned());
+            }
             list.save(&self.config.repo_list)?;
             name
         };
         if self.slot(&name).is_none() {
             let slot = RepoSlot {
                 name: name.clone(),
-                path: canonical(&path),
+                path: canonical(dir),
                 project: ProjectSlot::new(ProjectState::Importing),
             };
             self.spawn_import(&slot)?;
             self.repos.lock().expect("not poisoned").push(slot);
         }
-        Ok(Repo::new(name, canonical(&path).display().to_string()))
+        Ok(Repo::new(name, canonical(dir).display().to_string()))
     }
 
     /// Checks constitutions with `jev` instead of TypeSafe's, for tests.
@@ -745,8 +743,8 @@ impl Host {
     }
 
     /// Clones `full_name` (`owner/name`) from GitHub with the saved
-    /// sign-in, unless it was cloned before, and lists it like a
-    /// checkout. Blocks for the clone.
+    /// sign-in, unless it was cloned before, and lists it. Blocks for
+    /// the clone; the import goes on in the background.
     pub fn clone_github(&self, full_name: &str) -> anyhow::Result<Repo> {
         let token = github::Token::load(&self.config.credentials)
             .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
@@ -768,42 +766,25 @@ impl Host {
                 &dir,
             )?;
         }
-        let repo = self.add_repo(&dir.to_string_lossy())?;
-        let mut list = self.list.lock().expect("not poisoned");
-        if let Some(listed) = list
-            .repos
-            .iter_mut()
-            .find(|listed| listed.name == repo.name)
-        {
-            listed.github = Some(full_name.to_owned());
-        }
-        list.save(&self.config.repo_list)?;
-        Ok(repo)
+        self.list_clone(&dir, full_name)
     }
 
-    /// Brings new commits into a repository's project: from GitHub for
-    /// one cloned from there, else from its checkout. New runs start
-    /// from the new trunk; runs going on keep their code. Blocks.
+    /// Brings new commits from GitHub into a repository's project. New
+    /// runs start from the new trunk; runs going on keep their code.
+    /// Blocks.
     pub fn update_repo(&self, name: &str) -> anyhow::Result<tau_vcs::Updated> {
         let slot = self
             .slot(name)
             .ok_or_else(|| anyhow::anyhow!("No repository {name}"))?;
-        let project = slot.project.wait().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Runs in {name} work in its checkout, which is always current"
-            )
+        let project = slot.project()?;
+        let full_name = self.github_of(name).ok_or_else(|| {
+            anyhow::anyhow!("{name} was not cloned from GitHub")
         })?;
-        let updated = match self.github_of(name) {
-            Some(full_name) => {
-                let token = github::Token::load(&self.config.credentials);
-                project.update(tau_vcs::UpdateFrom::Remote {
-                    url: &self.github.clone_url(&full_name),
-                    token: token.as_ref().map(|token| token.token.as_str()),
-                })
-            }
-            None => project.update(tau_vcs::UpdateFrom::Checkout(&slot.path)),
-        };
-        Ok(updated?)
+        let token = github::Token::load(&self.config.credentials);
+        Ok(project.update(tau_vcs::UpdateFrom::Remote {
+            url: &self.github.clone_url(&full_name),
+            token: token.as_ref().map(|token| token.token.as_str()),
+        })?)
     }
 
     /// The `owner/name` a repository was cloned from, if it came from
@@ -937,43 +918,45 @@ impl Host {
             .expect("not poisoned")
             .get(run)?
             .clone();
-        Some(self.slot_of_run(run).project.wait()?.workspace_dir(&name))
+        Some(
+            self.slot_of_run(run)
+                .ok()?
+                .project
+                .wait()?
+                .workspace_dir(&name),
+        )
     }
 
     /// What the workspace shows beyond runs: the agent's plugins and the
     /// store.
     pub fn catalog(&self) -> Catalog {
-        let mut plugins = vec![PluginInfo {
-            name: "tau-tools".into(),
-            description: "read bash edit write grep find ls".into(),
-            seams: vec![Seam::Tools],
-            spend: 0.0,
-            screen: None,
-        }];
-        let home = self.home_slot();
-        let state = home.project.peek();
-        if matches!(state, ProjectState::Ready(_)) {
-            plugins.extend([
-                PluginInfo {
-                    name: "tau-vcs".into(),
-                    description: "status diff log show describe commit new \
-                                  restore undo, on the run's workspace"
-                        .into(),
-                    seams: vec![Seam::Tools],
-                    spend: 0.0,
-                    screen: None,
-                },
-                PluginInfo {
-                    name: "workspace".into(),
-                    description: "A jj workspace per run, and a commit per \
-                                  turn to fork from"
-                        .into(),
-                    seams: vec![Seam::Start],
-                    spend: 0.0,
-                    screen: None,
-                },
-            ]);
-        }
+        let mut plugins = vec![
+            PluginInfo {
+                name: "tau-tools".into(),
+                description: "read bash edit write grep find ls".into(),
+                seams: vec![Seam::Tools],
+                spend: 0.0,
+                screen: None,
+            },
+            PluginInfo {
+                name: "tau-vcs".into(),
+                description: "status diff log show describe commit new \
+                              restore undo, on the run's workspace"
+                    .into(),
+                seams: vec![Seam::Tools],
+                spend: 0.0,
+                screen: None,
+            },
+            PluginInfo {
+                name: "workspace".into(),
+                description: "A jj workspace per run, and a commit per \
+                              turn to fork from"
+                    .into(),
+                seams: vec![Seam::Start],
+                spend: 0.0,
+                screen: None,
+            },
+        ];
         if self.jev().is_some() {
             plugins.push(PluginInfo {
                 name: tau_fast_compaction::NAME.into(),
@@ -993,39 +976,26 @@ impl Host {
             spend: 0.0,
             screen: None,
         });
-        let source = match &state {
-            ProjectState::Ready(project) => format!(
-                "{} · {} → {}",
-                self.access_label(),
-                self.config.root.display(),
-                project.root().display()
-            ),
-            _ => format!(
-                "{} · {}",
-                self.access_label(),
-                self.config.root.display()
-            ),
-        };
+        let source = self.access_label();
         let slots = self.repos.lock().expect("not poisoned").clone();
         let list = self.list.lock().expect("not poisoned").clone();
-        // Any import going on shows; else how the checkout's runs work.
+        // An import going on shows first, then an update, then a failed
+        // import.
         let importing = slots.iter().find(|slot| {
             matches!(slot.project.peek(), ProjectState::Importing)
         });
         let updating =
             self.updating.lock().expect("not poisoned").first().cloned();
-        let project = match (importing, state) {
-            (Some(slot), _) => ProjectStatus::Importing(slot.name.clone()),
-            (None, _) if updating.is_some() => {
-                ProjectStatus::Updating(updating.unwrap_or_default())
+        let failed = slots.iter().find(|slot| {
+            matches!(slot.project.peek(), ProjectState::Failed(_))
+        });
+        let project = match (importing, updating, failed) {
+            (Some(slot), _, _) => ProjectStatus::Importing(slot.name.clone()),
+            (None, Some(name), _) => ProjectStatus::Updating(name),
+            (None, None, Some(slot)) => {
+                ProjectStatus::Failed(slot.name.clone())
             }
-            (None, ProjectState::Ready(_)) => {
-                ProjectStatus::Ready(home.name.clone())
-            }
-            (None, ProjectState::Checkout(why)) => ProjectStatus::Checkout(why),
-            (None, ProjectState::Importing) => {
-                ProjectStatus::Importing(home.name.clone())
-            }
+            (None, None, None) => ProjectStatus::Unknown,
         };
         // In the list's order, which adding a repository again keeps.
         let repos: Vec<Repo> = list
@@ -1091,7 +1061,7 @@ impl Host {
         });
         Catalog {
             agent: "coder".into(),
-            agent_source: Some(source),
+            agent_source: Some(source.to_owned()),
             plugins,
             jev: self.jev_stats(),
             repos,
@@ -1130,7 +1100,7 @@ impl Host {
         choice: &ModelChoice,
         repo: &RepoSlot,
         workspace: Option<String>,
-    ) -> anyhow::Result<(Agent, Option<String>)> {
+    ) -> anyhow::Result<(Agent, String)> {
         if self.account().is_none() {
             anyhow::bail!(
                 "tau has no ChatGPT plan to run on. Sign in with ChatGPT and \
@@ -1185,12 +1155,7 @@ impl Host {
         // constitution, whose hold of a stop wins.
         let goal = self.jev().map(tau_goal::GoalPlugin::new);
         let memory = self.memory_plugin(repo);
-        let Some(project) = repo.project.wait() else {
-            let tools = CodingTools::new(Root::new(repo.path.clone()));
-            let agent = with_plugin(agent.plugin(tools), memory);
-            let agent = with_plugin(with_plugin(agent, constitution), goal);
-            return Ok((agent, None));
-        };
+        let project = repo.project()?;
         let name = workspace.unwrap_or_else(workspace_name);
         // A run and its sub-agents work the same way, each in its own
         // workspace: tools, memory and the repository's rules. Only the
@@ -1227,7 +1192,7 @@ impl Host {
             })
         };
         let agent = on_workspace(agent.tool(delegate), workspace, true);
-        Ok((with_plugin(agent, goal), Some(name)))
+        Ok((with_plugin(agent, goal), name))
     }
 
     /// Jev, when there is a TypeSafe key (or one given for tests).
@@ -1306,8 +1271,8 @@ impl Host {
             .ok()
     }
 
-    /// What a repository's constitution is stored under: its checkout,
-    /// as the repository list keeps it.
+    /// What a repository's constitution is stored under: its clone, as
+    /// the repository list keeps it.
     fn constitution_key(repo: &RepoSlot) -> String {
         canonical(&repo.path).display().to_string()
     }
@@ -1486,22 +1451,23 @@ impl Host {
 
     /// Starts a run and returns its view, ready to be pushed into the
     /// workspace before its first event arrives.
-    /// It works in `repo`, or in the checkout's repository when no
-    /// repository has that name.
+    /// It works in `repo`, which must be listed.
     pub fn start(
         &self,
         prompt: &str,
         choice: &ModelChoice,
         repo: &str,
     ) -> anyhow::Result<RunView> {
-        let repo = self.slot(repo).unwrap_or_else(|| self.home_slot());
+        let repo = self
+            .slot(repo)
+            .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
         let (agent, workspace) = self.agent_for_run(choice, &repo, None)?;
         let _guard = self.runtime.enter();
         let run = agent.start(prompt, &self.store);
         let id = self.track(run, workspace, choice, &repo.name);
-        Ok(self.view(id, prompt))
+        Ok(self.view(id, prompt, &repo))
     }
 
     /// Forks `run` after `turn` (its latest turn when `None`): a new run
@@ -1514,13 +1480,8 @@ impl Host {
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
-        let repo = self.slot_of_run(run);
-        if repo.project.wait().is_none() {
-            anyhow::bail!(
-                "Forking needs a project: {} could not be copied",
-                repo.path.display()
-            );
-        }
+        let repo = self.slot_of_run(run)?;
+        repo.project()?;
         let (source, seq, link) =
             self.fork_point(run, turn)?.ok_or_else(|| match turn {
                 Some(turn) => {
@@ -1539,7 +1500,7 @@ impl Host {
             .after_turn(link.turn)
             .start(prompt, &self.store);
         let id = self.track(forked, workspace, choice, &repo.name);
-        Ok(self.view(id, prompt).with_origin(Origin::Fork {
+        Ok(self.view(id, prompt, &repo).with_origin(Origin::Fork {
             from: source,
             turn: link.turn,
         }))
@@ -1583,7 +1544,7 @@ impl Host {
         if self.is_running(run) {
             anyhow::bail!("The run is still going; steer it instead");
         }
-        let repo = self.slot_of_run(run);
+        let repo = self.slot_of_run(run)?;
         // The workspace its last turn worked in, which still has its
         // files.
         let known = self
@@ -1727,11 +1688,7 @@ impl Host {
         if self.is_running(run) {
             anyhow::bail!("{} is still running; merge it once it stops", run.0);
         }
-        let project = self
-            .slot_of_run(run)
-            .project
-            .wait()
-            .ok_or_else(|| anyhow::anyhow!("The run has no project"))?;
+        let project = self.slot_of_run(run)?.project()?;
         let known = self
             .workspaces
             .lock()
@@ -1883,11 +1840,7 @@ impl Host {
                 );
             }
         }
-        let project = self
-            .slot_of_run(child)
-            .project
-            .wait()
-            .ok_or_else(|| anyhow::anyhow!("The runs have no project"))?;
+        let project = self.slot_of_run(child)?.project()?;
         self.no_open_children(child, &project)?;
         if let Some(head) = project.bookmark(&bookmark(child))? {
             let keep = match project.bookmark(&bookmark(&parent))? {
@@ -2014,11 +1967,7 @@ impl Host {
                 anyhow::bail!("{} is still running; land once it stops", run.0);
             }
         }
-        let project = self
-            .slot_of_run(child)
-            .project
-            .wait()
-            .ok_or_else(|| anyhow::anyhow!("The runs have no project"))?;
+        let project = self.slot_of_run(child)?.project()?;
         let workspace_of = |run: &RunId| -> anyhow::Result<String> {
             let known = self
                 .workspaces
@@ -2064,9 +2013,7 @@ impl Host {
     /// other branches that are not running: the run it was forked from,
     /// and its other forks. Their commits stay in the project.
     pub fn keep_branch(&self, run: &RunId) -> anyhow::Result<()> {
-        let Some(project) = self.slot_of_run(run).project.wait() else {
-            return Ok(());
-        };
+        let project = self.slot_of_run(run)?.project()?;
         let store = self.store.clone();
         let kept = run.0.to_string();
         let running: Vec<String> = self
@@ -2123,7 +2070,7 @@ impl Host {
     {
         branch_code(
             self.store.clone(),
-            self.slot_of_run(main).project,
+            self.slot_of_run(main),
             main.clone(),
             fork.clone(),
         )
@@ -2137,7 +2084,7 @@ impl Host {
 
     /// Runs from earlier sessions, newest first, rebuilt from the store.
     pub fn history(&self) -> anyhow::Result<Vec<RunView>> {
-        self.runtime.block_on(history(&self.store, &self.home))
+        self.runtime.block_on(history(&self.store))
     }
 
     /// Follows a started run: its control, its workspace, and a task
@@ -2145,7 +2092,7 @@ impl Host {
     fn track(
         &self,
         mut run: tau_agent::agent::Run,
-        workspace: Option<String>,
+        workspace: String,
         choice: &ModelChoice,
         repo: &str,
     ) -> RunId {
@@ -2162,12 +2109,10 @@ impl Host {
             .lock()
             .expect("not poisoned")
             .insert(id.clone(), run.control());
-        if let Some(name) = workspace {
-            self.workspaces
-                .lock()
-                .expect("not poisoned")
-                .insert(id.clone(), name);
-        }
+        self.workspaces
+            .lock()
+            .expect("not poisoned")
+            .insert(id.clone(), workspace);
         let events = self.events.clone();
         let runs = self.runs.clone();
         let ending = self.ending.clone();
@@ -2189,7 +2134,7 @@ impl Host {
         id
     }
 
-    fn view(&self, id: RunId, prompt: &str) -> RunView {
+    fn view(&self, id: RunId, prompt: &str, repo: &RepoSlot) -> RunView {
         let choice = self
             .choices
             .lock()
@@ -2199,7 +2144,6 @@ impl Host {
             .unwrap_or_else(|| {
                 ModelChoice::new(self.config.default_model(), Effort::Auto)
             });
-        let repo = self.slot_of_run(&id);
         let mut view = RunView::new(
             id,
             crate::titles::placeholder(prompt),
@@ -2245,7 +2189,7 @@ impl Host {
                     (Some(project), Some(name)) => {
                         project.workspace_dir(name).display().to_string()
                     }
-                    _ => repo.path.display().to_string(),
+                    _ => String::new(),
                 },
                 set_by: workspace.as_ref().map(|_| "workspace".to_owned()),
             },
@@ -2278,7 +2222,7 @@ impl Host {
             name: tau_memory::plugin::NAME.into(),
             state: match self
                 .memories
-                .catalog(&self.memory_dir(&repo))
+                .catalog(&self.memory_dir(repo))
                 .notes
                 .len()
             {
@@ -2289,7 +2233,7 @@ impl Host {
             tone: Tone::Quiet,
         });
         let rules = self
-            .constitution(&repo)
+            .constitution(repo)
             .map_or(0, |live| live.get().rules.len());
         view.plugins.push(PluginStatus {
             name: tau_constitution::NAME.into(),
@@ -2738,21 +2682,6 @@ impl Host {
                         );
                     }
                 }
-                WorkspaceEvent::AddRepo { path } => {
-                    match handler.add_repo(path) {
-                        Ok(repo) => {
-                            if let Some(slot) = handler.slot(&repo.name) {
-                                refresh_when_imported(
-                                    &handler, &slot, &workspace, cx,
-                                );
-                            }
-                            workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Repo(repo), cx))
-                        }
-                        Err(error) => workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::alert("Could not add the repository", format!("{error:#}")), cx)
-                        }),
-                    }
-                }
                 WorkspaceEvent::HideRepo { repo } => {
                     if let Err(error) = handler.hide_repo(repo) {
                         eprintln!(
@@ -3057,11 +2986,11 @@ impl Host {
         &self,
         run: &RunId,
     ) -> anyhow::Result<PullRequest> {
-        let slot = self.slot_of_run(run);
+        let slot = self.slot_of_run(run)?;
         let repo = self.github_of(&slot.name).ok_or_else(|| {
             anyhow::anyhow!(
-                "Pull requests need a repository added from GitHub; {} is a \
-                 local checkout",
+                "Pull requests need a repository cloned from GitHub; {} was \
+                 not",
                 slot.name
             )
         })?;
@@ -3235,13 +3164,10 @@ impl Host {
         title: &str,
         from: Option<(&str, &str)>,
     ) -> anyhow::Result<Pushing> {
-        let slot = self.slot_of_run(run);
+        let slot = self.slot_of_run(run)?;
         let token = github::Token::load(&self.config.credentials)
             .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
-        let project = slot
-            .project
-            .wait()
-            .ok_or_else(|| anyhow::anyhow!("{} has no project", slot.name))?;
+        let project = slot.project()?;
         let all = self.stack(run, &project)?;
         let first = all
             .first()
@@ -3526,18 +3452,12 @@ fn last_link(entries: &[(i64, String)], seq: Option<i64>) -> Option<Link> {
 /// See [`Host::branch_code`].
 async fn branch_code(
     store: Store,
-    project: Arc<ProjectSlot>,
+    slot: anyhow::Result<RepoSlot>,
     main: RunId,
     fork: RunId,
 ) -> anyhow::Result<BranchCode> {
-    let project = tokio::task::spawn_blocking(move || project.wait())
-        .await?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Runs work in the checkout itself, so there are no commits to \
-             compare"
-            )
-        })?;
+    let slot = slot?;
+    let project = tokio::task::spawn_blocking(move || slot.project()).await??;
     let record = store
         .run(&fork.0)
         .await?
@@ -3629,7 +3549,6 @@ fn workspace_name() -> String {
 async fn stored_view(
     store: &Store,
     record: &tau_store::RunRecord,
-    home: &str,
 ) -> anyhow::Result<RunView> {
     // The messages, and in place among them what tau-reasoning and
     // the constitution recorded: the effort each message ran at, and
@@ -3682,11 +3601,7 @@ async fn stored_view(
         &record.model,
         &timeline,
     )
-    .in_repo(
-        stored_repo(store, &record.id)
-            .await
-            .unwrap_or_else(|| home.to_owned()),
-    )
+    .in_repo(stored_repo(store, &record.id).await.unwrap_or_default())
     .started(started(&record.created_at));
     let stop = match record.status {
         Status::Done => StopReason::Stop,
@@ -3743,15 +3658,12 @@ fn prompt_of<'a>(
 }
 
 /// Past runs, rebuilt from their stored transcripts, each under the
-/// repository it recorded, or `home` if it recorded none.
-pub async fn history(
-    store: &Store,
-    home: &str,
-) -> anyhow::Result<Vec<RunView>> {
+/// repository it recorded.
+pub async fn history(store: &Store) -> anyhow::Result<Vec<RunView>> {
     let records = store.recent_runs(HISTORY).await?;
     let mut views = Vec::with_capacity(records.len());
     for record in &records {
-        views.push(stored_view(store, record, home).await?);
+        views.push(stored_view(store, record).await?);
     }
     // Sub-agents are left out of the list: they come back under the
     // runs that called them, however they ended.
@@ -3759,7 +3671,7 @@ pub async fn history(
         views.iter().map(|view| view.id.clone()).collect();
     for parent in parents {
         for record in store.subagents(&parent.0).await? {
-            let view = stored_view(store, &record, home).await?.with_origin(
+            let view = stored_view(store, &record).await?.with_origin(
                 Origin::SubAgent {
                     parent: parent.clone(),
                 },

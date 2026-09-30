@@ -22,8 +22,30 @@ use tau_ui::{
 use tau_vcs::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 
+/// The repository a host under test lists, made from the checkout it
+/// is given, as a clone from GitHub would be.
+const REPO: &str = "repo";
+
 fn host(llm: ScriptedModel) -> (Host, UnboundedReceiver<RunEvent>) {
-    host_on(llm, &std::env::temp_dir())
+    host_on(llm, &tempfile::tempdir().unwrap().keep())
+}
+
+/// A project imported from `checkout`, which is made a Git repository
+/// with one commit first if it is not one.
+fn project_of(checkout: &Path) -> Project {
+    if !checkout.join(".git").exists() {
+        git(checkout, &["init", "--quiet"]);
+        git(
+            checkout,
+            &["commit", "--quiet", "--allow-empty", "-m", "first"],
+        );
+    }
+    Project::import(
+        checkout.to_str().unwrap(),
+        tempfile::tempdir().unwrap().keep().join("p"),
+        Identity::default(),
+    )
+    .unwrap()
 }
 
 fn host_on(
@@ -66,7 +88,6 @@ fn host_over(
             fresh_repo_list().with_extension("config"),
         ),
         model: Some("gpt-6-luna".into()),
-        root: root.to_owned(),
         store: std::env::temp_dir().join("unused.db"),
         // Tau's directory for repositories, where memory lives too: the
         // test's own.
@@ -74,7 +95,8 @@ fn host_over(
         settings: std::env::temp_dir().join("unused-models.json"),
         repo_list: fresh_repo_list(),
     };
-    Host::with_agent(runtime, agent, store, config)
+    let (host, events) = Host::with_agent(runtime, agent, store, config);
+    (host.with_repo(REPO, project_of(root)), events)
 }
 
 /// The ChatGPT account a host under test runs on; nothing connects
@@ -127,7 +149,7 @@ fn written_titles_come_back_in_history() {
     let db = data.path().join("runs.db");
     let (host, mut events) = host_with_store(llm, &std::env::temp_dir(), &db);
     let view = host
-        .start("Say hello\nto everyone", &ModelChoice::default(), "")
+        .start("Say hello\nto everyone", &ModelChoice::default(), REPO)
         .unwrap();
     assert_eq!(view.title, "Say hello");
     until_end(&mut events);
@@ -149,7 +171,7 @@ fn a_run_streams_into_its_view() {
     let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
     let (host, mut events) = host(llm);
     let mut view = host
-        .start("Say hello, please", &ModelChoice::default(), "")
+        .start("Say hello, please", &ModelChoice::default(), REPO)
         .unwrap();
     assert_eq!(view.title, "Say hello, please");
     assert!(
@@ -174,7 +196,7 @@ fn a_run_can_be_cancelled_from_the_ui() {
     let llm = ScriptedModel::new()
         .turn(|t| t.delay(Duration::from_secs(30)).text("too late"));
     let (host, mut events) = host(llm);
-    let view = host.start("wait", &ModelChoice::default(), "").unwrap();
+    let view = host.start("wait", &ModelChoice::default(), REPO).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     assert!(host.is_running(&view.id));
     host.cancel(&view.id);
@@ -235,10 +257,10 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: a.txt says one")))
         .turn(|t| t.text("forked"));
     let (host, mut events) = host_on(llm.clone(), src.path());
-    let host = host.with_project(project);
+    let host = host.with_repo(REPO, project);
 
     let main = host
-        .start("write a.txt twice", &ModelChoice::default(), "")
+        .start("write a.txt twice", &ModelChoice::default(), REPO)
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main.id);
@@ -285,7 +307,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     assert_eq!(history[0].title, "try it another way");
     assert_eq!(history[0].origin, fork.origin);
     assert_eq!(history[0].status, RunStatus::Finished(StopReason::Stop));
-    assert!(history.iter().all(|view| view.repo == host.home()));
+    assert!(history.iter().all(|view| view.repo == REPO));
     let old_main = &history[1];
     assert_eq!(old_main.children.len(), 1);
     assert_eq!(old_main.turn, 4);
@@ -372,10 +394,10 @@ fn a_fork_lands_on_its_parent_and_closes() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: a and c")))
         .turn(|t| t.text("forked"));
     let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_project(project.clone());
+    let host = host.with_repo(REPO, project.clone());
 
     let main = host
-        .start("write two files", &ModelChoice::default(), "")
+        .start("write two files", &ModelChoice::default(), REPO)
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main.id);
@@ -488,10 +510,10 @@ fn a_child_lands_after_its_children() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: a, b and c")))
         .turn(|t| t.text("forked again"));
     let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_project(project.clone());
+    let host = host.with_repo(REPO, project.clone());
     let choice = ModelChoice::default();
 
-    let main = host.start("write a", &choice, "").unwrap();
+    let main = host.start("write a", &choice, REPO).unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main.id);
     let child = host.fork(&main.id, Some(1), "write b", &choice).unwrap();
@@ -564,9 +586,9 @@ fn a_run_delegates_and_the_sub_agent_lands() {
         .turn(|t| t.text("wrote c.txt"))
         .turn(|t| t.text("done"));
     let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_project(project.clone());
+    let host = host.with_repo(REPO, project.clone());
     let main = host
-        .start("delegate c.txt", &ModelChoice::default(), "")
+        .start("delegate c.txt", &ModelChoice::default(), REPO)
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main.id);
@@ -636,9 +658,9 @@ fn a_failed_sub_agent_comes_back_from_history() {
         .turn(|t| t.dropped())
         .turn(|t| t.text("it failed"));
     let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_project(project);
+    let host = host.with_repo(REPO, project);
     let main = host
-        .start("delegate c.txt", &ModelChoice::default(), "")
+        .start("delegate c.txt", &ModelChoice::default(), REPO)
         .unwrap();
     until_end(&mut events);
     until_end(&mut events);
@@ -673,18 +695,18 @@ fn runs_come_back_under_their_repository() {
         .turn(|t| t.text("one"))
         .turn(|t| t.text("two"));
     let (host, mut events) = host(llm);
-    let repo = host.add_repo(other.path().to_str().unwrap()).unwrap();
+    let host = host.with_repo("other", project_of(other.path()));
 
     let here = host
-        .start("in the checkout", &ModelChoice::default(), "")
+        .start("in the first", &ModelChoice::default(), REPO)
         .unwrap();
-    assert_eq!(here.repo, host.home());
+    assert_eq!(here.repo, REPO);
     until_end(&mut events);
     wait_until_done(&host, &here.id);
     let there = host
-        .start("in the other", &ModelChoice::default(), &repo.name)
+        .start("in the other", &ModelChoice::default(), "other")
         .unwrap();
-    assert_eq!(there.repo, repo.name);
+    assert_eq!(there.repo, "other");
     until_end(&mut events);
     wait_until_done(&host, &there.id);
 
@@ -696,21 +718,46 @@ fn runs_come_back_under_their_repository() {
             .map(|view| view.repo.clone())
             .unwrap()
     };
-    assert_eq!(repo_of(here.id.clone()), host.home());
-    assert_eq!(repo_of(there.id.clone()), repo.name);
+    assert_eq!(repo_of(here.id.clone()), REPO);
+    assert_eq!(repo_of(there.id.clone()), "other");
+    // A repository that is not listed runs nothing.
+    assert!(
+        host.start("nowhere", &ModelChoice::default(), "none")
+            .is_err()
+    );
+}
+
+/// What GitHub would serve for `full_name`: a repository with one
+/// commit at `owner/name.git` under `remote`.
+fn served(remote: &Path, full_name: &str) -> std::path::PathBuf {
+    let src = remote.join(format!("{full_name}.git"));
+    std::fs::create_dir_all(&src).unwrap();
+    git(&src, &["init", "--quiet"]);
+    std::fs::write(src.join("README.md"), "hello\n").unwrap();
+    git(&src, &["add", "README.md"]);
+    git(&src, &["commit", "--quiet", "-m", "first"]);
+    src
+}
+
+/// `host`, signed in to GitHub and reaching it at `remote`.
+fn on_github(host: Host, remote: &Path) -> Host {
+    Token {
+        token: "ghu_token".into(),
+        user: "cfcosta".into(),
+        expires_at: None,
+    }
+    .save(&host_credentials(&host))
+    .unwrap();
+    let web = format!("file://{}", remote.display());
+    host.with_github(Api::at(&web, "http://127.0.0.1:9"))
 }
 
 #[test]
 fn repositories_are_listed_and_remembered() {
-    let home = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
-    let elsewhere = tempfile::tempdir().unwrap();
-    let (a, b) = (
-        elsewhere.path().join("a/proj"),
-        elsewhere.path().join("b/proj"),
-    );
-    std::fs::create_dir_all(&a).unwrap();
-    std::fs::create_dir_all(&b).unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    served(remote.path(), "a/proj");
+    served(remote.path(), "b/proj");
     let names = |host: &Host| -> Vec<String> {
         host.catalog()
             .repos
@@ -719,26 +766,27 @@ fn repositories_are_listed_and_remembered() {
             .collect()
     };
 
-    let (host, _events) =
-        Host::new(config_on(home.path(), data.path())).unwrap();
-    let home_name = host.home().to_owned();
-    assert_eq!(names(&host), [home_name.as_str()]);
-    // Two checkouts with one name get two names.
-    assert_eq!(host.add_repo(a.to_str().unwrap()).unwrap().name, "proj");
-    assert_eq!(host.add_repo(b.to_str().unwrap()).unwrap().name, "proj-2");
-    // Adding one again keeps its name.
-    assert_eq!(host.add_repo(a.to_str().unwrap()).unwrap().name, "proj");
-    assert!(host.add_repo("/no/such/checkout").is_err());
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    // Nothing is listed until it is cloned: not even the directory tau
+    // started in.
+    assert!(names(&host).is_empty());
+    // Two repositories with one name get two names.
+    assert_eq!(host.clone_github("a/proj").unwrap().name, "proj");
+    assert_eq!(host.clone_github("b/proj").unwrap().name, "proj-2");
+    // Cloning one again keeps its name.
+    assert_eq!(host.clone_github("a/proj").unwrap().name, "proj");
+    assert!(host.clone_github("c/missing").is_err());
     host.set_open_repos(vec!["proj-2".into()]).unwrap();
-    assert_eq!(names(&host), [home_name.as_str(), "proj", "proj-2"]);
+    assert_eq!(names(&host), ["proj", "proj-2"]);
     drop(host);
 
-    let (host, _events) =
-        Host::new(config_on(home.path(), data.path())).unwrap();
-    assert_eq!(names(&host), [home_name.as_str(), "proj", "proj-2"]);
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    assert_eq!(names(&host), ["proj", "proj-2"]);
     assert_eq!(host.catalog().open_repos, ["proj-2"]);
     host.hide_repo("proj").unwrap();
-    assert_eq!(names(&host), [home_name.as_str(), "proj-2"]);
+    assert_eq!(names(&host), ["proj-2"]);
     // Closed conversations are remembered too, until opened again.
     let (first, second) = (
         tau_agent::tool::RunId("a".into()),
@@ -752,23 +800,22 @@ fn repositories_are_listed_and_remembered() {
     host.set_reviewed(&first, "call-1").unwrap();
     drop(host);
 
-    let (host, _events) =
-        Host::new(config_on(home.path(), data.path())).unwrap();
-    assert_eq!(names(&host), [home_name.as_str(), "proj-2"]);
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    assert_eq!(names(&host), ["proj-2"]);
     let catalog = host.catalog();
     assert_eq!(catalog.closed_runs, std::slice::from_ref(&first));
     assert_eq!(catalog.reviewed, [(first, "call-1".to_owned())]);
-    // Adding a removed one lists it again, under its name.
-    assert_eq!(host.add_repo(a.to_str().unwrap()).unwrap().name, "proj");
-    assert_eq!(names(&host), [home_name.as_str(), "proj", "proj-2"]);
+    // Cloning a removed one lists it again, under its name.
+    assert_eq!(host.clone_github("a/proj").unwrap().name, "proj");
+    assert_eq!(names(&host), ["proj", "proj-2"]);
 }
 
-fn config_on(root: &Path, data: &Path) -> HostConfig {
+fn config_on(data: &Path) -> HostConfig {
     HostConfig {
         account: test_account(),
         credentials: Credentials::new(data.join("config")),
         model: Some("gpt-6-luna".into()),
-        root: root.to_owned(),
         store: data.join("runs.db"),
         repos: data.join("repos"),
         settings: data.join("models.json"),
@@ -777,52 +824,10 @@ fn config_on(root: &Path, data: &Path) -> HostConfig {
 }
 
 #[test]
-fn the_checkout_is_imported_in_the_background() {
-    let src = tempfile::tempdir().unwrap();
-    git(src.path(), &["init", "--quiet"]);
-    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
-    git(src.path(), &["add", "README.md"]);
-    git(src.path(), &["commit", "--quiet", "-m", "first"]);
-    let data = tempfile::tempdir().unwrap();
-    let (host, _events) =
-        Host::new(config_on(src.path(), data.path())).unwrap();
-    // Waiting for the project is what blocks, not opening the host.
-    let project = host.project().expect("the checkout imports");
-    assert!(project.root().starts_with(data.path().join("repos")));
-    assert!(!host.is_importing());
-    assert!(matches!(
-        host.catalog().project,
-        tau_ui::catalog::ProjectStatus::Ready(_)
-    ));
-    let names: Vec<_> = host
-        .catalog()
-        .plugins
-        .into_iter()
-        .map(|plugin| plugin.name)
-        .collect();
-    assert!(names.contains(&"workspace".to_owned()));
-}
-
-#[test]
-fn a_plain_directory_means_runs_work_in_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let (host, _events) =
-        Host::new(config_on(dir.path(), data.path())).unwrap();
-    assert!(host.project().is_none());
-    assert!(matches!(
-        host.catalog().project,
-        tau_ui::catalog::ProjectStatus::Checkout(_)
-    ));
-}
-
-#[test]
 fn models_follow_the_sign_in_and_settings_persist() {
-    let dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
 
-    let (host, _events) =
-        Host::new(config_on(dir.path(), data.path())).unwrap();
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
     let models = host.models();
     // No settings yet: coder runs on the model the host was given.
     assert_eq!(models.settings.default_for("coder").model, "gpt-6-luna");
@@ -834,11 +839,11 @@ fn models_follow_the_sign_in_and_settings_persist() {
 
     // On a ChatGPT plan the picker offers the plan's models from the
     // model table at once; the saved choices come back.
-    let credentials = config_on(dir.path(), data.path()).credentials;
+    let credentials = config_on(data.path()).credentials;
     let account = sign_in_saved(&credentials, "a@example.com", PLAN);
     let config = HostConfig {
         account: account.clone(),
-        ..config_on(dir.path(), data.path())
+        ..config_on(data.path())
     };
     let (host, _events) = Host::new(config).unwrap();
     let models = host.models();
@@ -889,9 +894,8 @@ fn sign_in_saved(
 
 #[test]
 fn runs_use_the_plan_and_never_a_declined_one() {
-    let dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
-    let config = config_on(dir.path(), data.path());
+    let config = config_on(data.path());
     let credentials = config.credentials.clone();
     // A key saved by an older tau is never read.
     std::fs::create_dir_all(&credentials.dir).unwrap();
@@ -900,6 +904,8 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     let account = credentials.plan_account().unwrap();
     assert_eq!(account, plan);
     let (host, _events) = Host::new(HostConfig { account, ..config }).unwrap();
+    let host =
+        host.with_repo(REPO, project_of(&tempfile::tempdir().unwrap().keep()));
     assert!(host.models().access.chatgpt);
 
     // Switching to an account that declined plan usage leaves nothing
@@ -914,7 +920,7 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     let active = models.access.active_account().unwrap();
     assert_eq!(active.id, declined.to_string());
     assert_eq!(active.state, AccountState::PlanDisabled);
-    let error = host.start("hi", &ModelChoice::default(), "").unwrap_err();
+    let error = host.start("hi", &ModelChoice::default(), REPO).unwrap_err();
     assert!(error.to_string().contains("no ChatGPT plan"), "{error}");
 
     // Back on the plan account, runs use the plan again.
@@ -925,20 +931,11 @@ fn runs_use_the_plan_and_never_a_declined_one() {
 
 #[test]
 fn github_repositories_clone_into_tau() {
-    let (dir, data, remote) = (
-        tempfile::tempdir().unwrap(),
-        tempfile::tempdir().unwrap(),
-        tempfile::tempdir().unwrap(),
-    );
-    // What GitHub would serve, as a local repository at owner/name.git.
-    let src = remote.path().join("cfcosta/hello.git");
-    std::fs::create_dir_all(&src).unwrap();
-    git(&src, &["init", "--quiet"]);
-    std::fs::write(src.join("README.md"), "hello\n").unwrap();
-    git(&src, &["add", "README.md"]);
-    git(&src, &["commit", "--quiet", "-m", "first"]);
+    let (data, remote) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let src = served(remote.path(), "cfcosta/hello");
 
-    let config = config_on(dir.path(), data.path());
+    let config = config_on(data.path());
     let credentials = config.credentials.clone();
     let (host, _events) = Host::new(config).unwrap();
     let web = format!("file://{}", remote.path().display());
@@ -963,8 +960,15 @@ fn github_repositories_clone_into_tau() {
             .iter()
             .any(|listed| listed.name == "hello")
     );
+    // Waiting for the project is what blocks, not cloning.
     let project = host.project_of("hello").expect("the clone imports");
+    assert!(project.root().starts_with(data.path().join("repos")));
     assert!(!project.trunk().unwrap().is_empty());
+    assert!(!host.is_importing());
+    assert_eq!(
+        host.catalog().project,
+        tau_ui::catalog::ProjectStatus::Unknown
+    );
     // Cloning it again lists the same repository, without fetching.
     assert_eq!(host.clone_github("cfcosta/hello").unwrap().name, "hello");
 
@@ -976,27 +980,6 @@ fn github_repositories_clone_into_tau() {
     assert!(updated.changed());
     assert_eq!(project.trunk().unwrap(), updated.after);
     assert!(!host.update_repo("hello").unwrap().changed());
-}
-
-#[test]
-fn a_checkout_updates_from_itself() {
-    let (dir, data) =
-        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    git(dir.path(), &["init", "--quiet"]);
-    std::fs::write(dir.path().join("README.md"), "hello\n").unwrap();
-    git(dir.path(), &["add", "README.md"]);
-    git(dir.path(), &["commit", "--quiet", "-m", "first"]);
-    let (host, _events) =
-        Host::new(config_on(dir.path(), data.path())).unwrap();
-    let project = host.project().expect("the checkout imports");
-    let before = project.trunk().unwrap();
-    std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
-    git(dir.path(), &["add", "b.txt"]);
-    git(dir.path(), &["commit", "--quiet", "-m", "second"]);
-    let updated = host.update_repo(host.home()).unwrap();
-    assert_eq!(updated.before, before);
-    assert!(updated.changed());
-    assert!(host.update_repo("no-such-repo").is_err());
 }
 
 #[test]
@@ -1024,10 +1007,10 @@ fn a_finished_run_goes_on_in_its_workspace() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
         .turn(|t| t.text("wrote b"));
     let (host, mut events) = host_on(llm.clone(), src.path());
-    let host = host.with_project(project);
+    let host = host.with_repo(REPO, project);
 
     let chat = host
-        .start("write a.txt", &ModelChoice::default(), "")
+        .start("write a.txt", &ModelChoice::default(), REPO)
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
@@ -1090,9 +1073,10 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     let (host, mut events) = host_with_store(llm, dir.path(), &db);
     let host = host
         .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.95)));
-    // What the store holds for the checkout, as a run would read it.
+    // What the store holds for the repository, as a run would read it.
+    let root = host.project_of(REPO).unwrap().root().to_owned();
     let stored = || {
-        let key = dir.path().canonicalize().unwrap().display().to_string();
+        let key = root.canonicalize().unwrap().display().to_string();
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1104,7 +1088,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             .unwrap()
     };
     // A rule saved the way the Constitution screen saves one.
-    host.edit_rules(host.home(), |rules| {
+    host.edit_rules(REPO, |rules| {
         rules
             .add("No unwrap.", &["write.content".into()], 0.5, 0.8)
             .map(drop)
@@ -1126,7 +1110,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert_eq!((stats.requests, stats.failed), (0, 0));
 
     let mut view = host
-        .start("write a.txt", &ModelChoice::default(), "")
+        .start("write a.txt", &ModelChoice::default(), REPO)
         .unwrap();
     for event in until_end(&mut events) {
         view.apply(&event);
@@ -1153,7 +1137,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert_eq!(history[0].constitution, view.constitution);
 
     // Editing a rule saves over it, in place.
-    host.edit_rules(host.home(), |rules| {
+    host.edit_rules(REPO, |rules| {
         rules.replace(
             "R1",
             "No unwrap, ever.",
@@ -1197,7 +1181,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     );
 
     // Removing a rule saves it.
-    host.edit_rules(host.home(), |rules| {
+    host.edit_rules(REPO, |rules| {
         rules.remove("R1");
         Ok(())
     })
@@ -1207,7 +1191,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert!(stored().rules.is_empty());
     // An edit the rules would refuse is not saved.
     assert!(
-        host.edit_rules(host.home(), |rules| rules
+        host.edit_rules(REPO, |rules| rules
             .add("x", &["write.content".into()], 0.9, 0.1)
             .map(drop))
             .is_err()
@@ -1241,8 +1225,9 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         runtime,
         Agent::new(llm).name("coder"),
         store,
-        config_on(dir.path(), data.path()),
+        config_on(data.path()),
     );
+    let host = host.with_repo(REPO, project_of(dir.path()));
     // Jev finds every chunk it is asked about disposable: the first
     // and last stay anyway.
     let host = host
@@ -1255,7 +1240,9 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         .expect("fast compaction runs with Jev");
     assert!(status.description.contains("bash outputs"), "{status:?}");
 
-    let mut view = host.start("build it", &ModelChoice::default(), "").unwrap();
+    let mut view = host
+        .start("build it", &ModelChoice::default(), REPO)
+        .unwrap();
     for event in until_end(&mut events) {
         view.apply(&event);
     }
@@ -1517,7 +1504,7 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
     });
     let host = host.with_jev(std::sync::Arc::new(jev));
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
-    let mut view = host.start("track down the race", &auto, "").unwrap();
+    let mut view = host.start("track down the race", &auto, REPO).unwrap();
     for event in until_end(&mut events) {
         view.apply(&event);
     }
@@ -1551,7 +1538,7 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
             panic!("not asked")
         })));
     let low = ModelChoice::new("gpt-5.5", Effort::Low);
-    let run = host.start("rename a variable", &low, "").unwrap();
+    let run = host.start("rename a variable", &low, REPO).unwrap();
     until_end(&mut events);
     wait_until_done(&host, &run.id);
 }
@@ -1595,7 +1582,7 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     );
 
     let prompt = "/goal --continuations 3 the tests pass";
-    let mut view = host.start(prompt, &ModelChoice::default(), "").unwrap();
+    let mut view = host.start(prompt, &ModelChoice::default(), REPO).unwrap();
     assert_eq!(view.title, "the tests pass");
     for event in until_end(&mut events) {
         view.apply(&event);
@@ -1676,7 +1663,7 @@ fn an_effort_the_model_does_not_take_runs_at_auto() {
     let (host, mut events) = host_on(llm.clone(), dir.path());
     // gpt-5.5 stops at xhigh; the API would reject max.
     let max = ModelChoice::new("gpt-5.5", Effort::Max);
-    let run = host.start("rename a variable", &max, "").unwrap();
+    let run = host.start("rename a variable", &max, REPO).unwrap();
     until_end(&mut events);
     wait_until_done(&host, &run.id);
     assert_eq!(llm.requests()[0].settings.reasoning, None);
@@ -1722,7 +1709,7 @@ fn each_message_is_scored_again() {
     });
     let host = host.with_jev(std::sync::Arc::new(jev));
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
-    let mut view = host.start("how are you?", &auto, "").unwrap();
+    let mut view = host.start("how are you?", &auto, REPO).unwrap();
     for event in until_end(&mut events) {
         view.apply(&event);
     }
@@ -1803,16 +1790,14 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
         .turn(|t| t.tool_call("bash", bash.clone()))
         .turn(|t| t.text("changed"));
     let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_project(project);
+    let host = host.with_repo(REPO, project);
     let memory_of = |host: &Host| {
         let catalog = host.catalog();
         let repo = catalog
             .repos
             .iter()
-            .find(|repo| {
-                Path::new(&repo.path) == src.path().canonicalize().unwrap()
-            })
-            .expect("the checkout is listed")
+            .find(|repo| repo.name == REPO)
+            .expect("the repository is listed")
             .clone();
         repo.memory
     };
@@ -1824,7 +1809,9 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
             .any(|plugin| plugin.name == "tau-memory")
     );
 
-    let first = host.start("note it", &ModelChoice::default(), "").unwrap();
+    let first = host
+        .start("note it", &ModelChoice::default(), REPO)
+        .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &first.id);
     let memory = memory_of(&host);
@@ -1835,7 +1822,7 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     assert!(!kept.body[0].starts_with("May be stale"), "{:?}", kept.body);
 
     let second = host
-        .start("change it", &ModelChoice::default(), "")
+        .start("change it", &ModelChoice::default(), REPO)
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &second.id);

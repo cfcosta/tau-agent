@@ -4,14 +4,11 @@
 
 use std::sync::LazyLock;
 
-use gpui::{Context, Focusable as _, Window, div, prelude::*};
+use gpui::{Context, Window};
 
 use crate::{
-    assets::Icon,
     catalog::Repo,
     route::Route,
-    theme::{IconSize, Theme, sp},
-    ui::{self, ButtonKind},
     view::{Origin, RunView},
     workspace::{Workspace, WorkspaceEvent},
 };
@@ -265,7 +262,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Opens the repository's checkout in the file manager.
+    /// Opens the repository's clone in the file manager.
     pub fn show_in_files(&mut self, name: &str, cx: &mut Context<Self>) {
         let path = self.repo_named(name).path.clone();
         self.repo_menu = None;
@@ -296,48 +293,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Asks for a checkout to add.
-    pub fn show_add_repo(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.ask_for_repo(cx);
-        self.repo_path.read(cx).focus_handle(cx).focus(window, cx);
-    }
-
-    /// Opens the dialog without focusing its field.
-    pub fn ask_for_repo(&mut self, cx: &mut Context<Self>) {
-        self.adding_repo = true;
-        self.repo_menu = None;
-        self.repo_path.update(cx, |input, cx| input.clear(cx));
-        cx.notify();
-    }
-
-    pub fn cancel_add_repo(&mut self, cx: &mut Context<Self>) {
-        self.adding_repo = false;
-        cx.notify();
-    }
-
-    pub(crate) fn submit_repo_path(
-        &mut self,
-        path: String,
-        cx: &mut Context<Self>,
-    ) {
-        let path = path.trim().to_owned();
-        if path.is_empty() {
-            return;
-        }
-        self.adding_repo = false;
-        cx.emit(WorkspaceEvent::AddRepo { path });
-        cx.notify();
-    }
-
-    fn submit_repo_path_from_button(&mut self, cx: &mut Context<Self>) {
-        let path = self.repo_path.read(cx).text().to_owned();
-        self.submit_repo_path(path, cx);
-    }
-
     /// A repository the host added: listed last, open and selected. One
     /// already listed under the name is replaced.
     pub fn add_repo(&mut self, repo: Repo, cx: &mut Context<Self>) {
@@ -350,56 +305,6 @@ impl Workspace {
         self.repo = Some(name);
         self.emit_open_repos(cx);
         cx.notify();
-    }
-
-    /// The dialog that asks for a checkout's path.
-    pub(crate) fn add_repo_view(
-        &self,
-        t: &Theme,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let field = ui::field(&self.repo_path, true, t)
-            .flex_shrink_0()
-            .into_any_element();
-        let actions = div()
-            .w_full()
-            .flex()
-            .gap(sp(2.))
-            .child(
-                div()
-                    .id("add-repo-github")
-                    .child(ui::button("From GitHub…", ButtonKind::Secondary, t))
-                    .on_click(
-                        cx.listener(|ws, _, _, cx| ws.pick_github_repos(cx)),
-                    ),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .id("add-repo-cancel")
-                    .child(ui::button("Cancel", ButtonKind::Secondary, t))
-                    .on_click(
-                        cx.listener(|ws, _, _, cx| ws.cancel_add_repo(cx)),
-                    ),
-            )
-            .child(
-                div()
-                    .id("add-repo-confirm")
-                    .child(ui::button("Add repository", ButtonKind::Primary, t))
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        ws.submit_repo_path_from_button(cx)
-                    })),
-            );
-        ui::modal(
-            ui::icon(Icon::Folder, IconSize::LARGE, t.muted),
-            "Add a repository",
-            "The checkout on this machine. tau copies it into a project of \
-             its own, and runs work there, a workspace each; the checkout \
-             is never touched.",
-            Some(field),
-            actions,
-            t,
-        )
     }
 }
 

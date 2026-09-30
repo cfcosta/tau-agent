@@ -1,12 +1,12 @@
 //! Opens the interface.
 //!
 //! With a ChatGPT sign-in that allows plan use, `tau-ui` runs a real
-//! coding agent in the current directory: type a task to start a run.
+//! coding agent in the repositories cloned from GitHub: type a task to
+//! start a run.
 //! Without one it opens onboarding to sign in. With `--demo` it
 //! replays the scripted session instead.
 //!
 //! - `--model <id>`: the model; gpt-6.1-sol by default.
-//! - `--root <dir>`: where the coding tools work.
 //! - `--prompt <text>`: start a run with this task right away.
 //! - `--demo`: the scripted session; `--finished` opens it done.
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
@@ -31,8 +31,6 @@
 //!   fades. `TAU_REDUCE_MOTION=1` asks the same (`0` asks for all the
 //!   motion), then `"reduce_motion": true` in `interface.json`, then
 //!   the desktop's `enable-animations`.
-
-use std::path::PathBuf;
 
 use gpui::{
     App,
@@ -68,7 +66,6 @@ struct Args {
     steps: Option<usize>,
     /// `None` takes gpt-6.1-sol.
     model: Option<String>,
-    root: PathBuf,
     reduce_motion: bool,
 }
 
@@ -93,10 +90,6 @@ fn args() -> Args {
         }),
         steps: value("--steps").and_then(|steps| steps.parse().ok()),
         model: value("--model"),
-        root: value("--root")
-            .map(PathBuf::from)
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from(".")),
         reduce_motion: flag("--reduce-motion"),
     }
 }
@@ -109,13 +102,12 @@ fn main() {
     } else {
         credentials.plan_account()
     };
-    let (model, root) = (args.model.clone(), args.root.clone());
+    let model = args.model.clone();
     let saved = credentials.clone();
     let config = move |account| HostConfig {
         model: model.clone(),
         account,
         credentials: saved.clone(),
-        root: root.clone(),
         store: HostConfig::default_store(),
         repos: HostConfig::default_repos(),
         settings: HostConfig::default_settings(),
@@ -144,9 +136,7 @@ fn main() {
                 app_id: Some("tau-ui".into()),
                 ..Default::default()
             };
-            let name = args.root.file_name().map_or("tau".into(), |name| {
-                name.to_string_lossy().into_owned()
-            });
+            let name = "tau";
             let live = match &host {
                 Some((host, _)) => Some(host.catalog()),
                 None if onboarding => Some(Catalog::default()),
@@ -381,10 +371,6 @@ fn open_demo_screen(
     }
     // The repository tree's states.
     match args.open.as_deref() {
-        Some("add-repo") => {
-            workspace.ask_for_repo(cx);
-            return;
-        }
         Some("repo-menu") => {
             workspace.toggle_repo_open("docbert", cx);
             workspace.toggle_repo_menu("homelab.nix", cx);
