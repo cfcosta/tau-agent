@@ -865,6 +865,64 @@ fn a_waiting_chatgpt_sign_in_can_be_cancelled(cx: &mut TestAppContext) {
     assert_eq!(events.borrow().last(), Some(&WorkspaceEvent::ChatGptCancel));
 }
 
+/// A sign-in landing moves the handshake once: the change animates, and
+/// redrawing it starts nothing new.
+#[gpui::test]
+fn a_landing_sign_in_animates_the_handshake_once(cx: &mut TestAppContext) {
+    use tau_ui::motion::{Link, Mood};
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let mut setup = demo::setup(SetupStep::Model);
+        setup.model = ModelAccess::SigningIn { url: None };
+        ws.set_setup(setup, cx);
+        ws.start_setup(SetupStep::Model, cx);
+    });
+    cx.run_until_parked();
+    let waited = workspace.read_with(&cx, |ws, _| {
+        let motion = ws.setup_motion();
+        assert_eq!(motion.link.current, Link::Waiting);
+        motion.link.epoch
+    });
+    workspace.update(&mut cx, |ws, cx| {
+        ws.update_setup(
+            SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    let landed = workspace.read_with(&cx, |ws, _| {
+        let motion = ws.setup_motion();
+        assert_eq!(motion.link.current, Link::Connected);
+        assert_eq!(motion.link.previous, Link::Waiting);
+        assert_eq!(motion.mood.current, Mood::Done);
+        assert_eq!(motion.link.epoch, waited + 1);
+        motion.link.epoch
+    });
+    workspace.update(&mut cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        assert_eq!(
+            ws.setup_motion().link.epoch,
+            landed,
+            "a redraw is no change"
+        )
+    });
+}
+
+#[gpui::test]
+fn reduced_motion_stops_onboardings_loops(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.set_setup(demo::setup(SetupStep::Model), cx);
+        ws.start_setup(SetupStep::Model, cx);
+        ws.set_reduce_motion(true, cx);
+    });
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        assert!(ws.setup_motion().reduce && !ws.setup_motion().loops())
+    });
+}
+
 /// Every onboarding screen draws, on a desktop and on a phone.
 #[gpui::test]
 fn every_onboarding_screen_draws(cx: &mut TestAppContext) {

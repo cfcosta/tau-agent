@@ -126,6 +126,9 @@ pub struct SetupLook {
     pub idle: Hsla,
     /// A service tile's edge when connected.
     pub green_edge: Hsla,
+    /// A service tile's edge at the top of its breath, while tau waits
+    /// on it.
+    pub waiting_edge: Hsla,
     /// The code of a refusal, under a blocked handshake.
     pub refusal: Hsla,
     /// How strong the rings are, from the inside out.
@@ -155,6 +158,7 @@ impl SetupLook {
             faint: c(rgb(0x6f6d68)),
             idle: c(rgb(0x55544f)),
             green_edge: c(rgb(0x2d4a33)),
+            waiting_edge: c(rgb(0x6b5230)),
             refusal: c(rgb(0x7a5a55)),
             ring_alphas: [0.16, 0.10, 0.07, 0.05, 0.035],
             ring_radii: [150., 250., 360., 480., 610.],

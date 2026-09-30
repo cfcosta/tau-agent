@@ -4,6 +4,12 @@
 //! behind the handshake, amber while acting, green once connected and
 //! red when blocked. On a phone the same screens stack, with smaller
 //! tiles and full-width buttons.
+//!
+//! It moves as the prototype does (see [`crate::motion`]): the rings
+//! breathe, the line drifts, carries a comet while waiting and draws
+//! itself green once connected; the handshake shrinks and rises between
+//! steps; each screen's words rise into place. Every change follows a
+//! change of state, never a timer.
 
 use std::time::Duration;
 
@@ -11,76 +17,70 @@ use gpui::{
     Animation,
     AnimationExt as _,
     AnyElement,
+    App,
     BoxShadow,
     ClipboardItem,
     Context,
     Div,
+    Focusable as _,
     Hsla,
     SharedString,
+    Transformation,
+    Window,
     div,
     linear_color_stop,
     linear_gradient,
     prelude::*,
-    pulsating_between,
     px,
+    radians,
     relative,
+    size as area,
     svg,
 };
 
 use crate::{
     assets::{Brand, Icon},
+    motion::{
+        Frame,
+        Link,
+        Mood,
+        Scale,
+        Scene,
+        Segment,
+        Service,
+        SetupMotion,
+        after,
+        breath,
+        curve,
+        entrance,
+        lerp,
+        loop_of,
+        mix,
+        pop,
+        stagger,
+    },
     route::Route,
     setup::{CloneState, DeviceCode, GitHub, ModelAccess, SetupStep},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{bar, checkbox, icon, icon_button, mono, text_link},
+    ui::{bar, icon, icon_button, mono, text_link},
     workspace::{Workspace, WorkspaceEvent},
 };
 
 /// Where ChatGPT explains plan use and who can share it.
 const PLAN_HELP_URL: &str = "https://help.openai.com";
 
-/// The waiting dot's halo; the dot is half as wide.
+/// The waiting dot's halo, when the comet does not run; the dot is half
+/// as wide.
 const HALO: f32 = 24.;
 
 /// The top bar's height, the same on a desktop and a phone.
 const TOP_BAR: f32 = 56.;
 
-/// How a connection stands, as the line between the tiles draws it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Link {
-    /// Not started: dashed amber.
-    Idle,
-    /// Waiting on the other side: dim dashes and a pulsing dot.
-    Waiting,
-    /// Done: solid green with a check.
-    Connected,
-    /// Signed in, but something was not allowed: broken amber and "!".
-    Declined,
-    /// Refused for good: broken red and a cross.
-    Blocked,
-}
+/// The comet's length and thickness.
+const COMET: (f32, f32) = (70., 8.);
 
-/// The mood of a screen: the color of its rings and glow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mood {
-    Acting,
-    Done,
-    Refused,
-}
-
-impl Mood {
-    fn color(self, t: &Theme) -> Hsla {
-        match self {
-            Self::Acting => t.accent,
-            Self::Done => t.green,
-            Self::Refused => t.red,
-        }
-    }
-}
-
-/// How big the handshake is and where it sits: a big one for sign-ins,
-/// a small one over a list.
-#[derive(Debug, Clone, Copy)]
+/// How big the handshake is and where it sits.
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Size {
     tile: f32,
     line: f32,
@@ -89,35 +89,36 @@ struct Size {
 }
 
 impl Size {
-    fn big(compact: bool) -> Self {
-        if compact {
-            Self {
-                tile: 64.,
-                line: 96.,
-                top: 28.,
-            }
-        } else {
-            Self {
+    fn of(scale: Scale, compact: bool) -> Self {
+        match (scale, compact) {
+            (Scale::Big, false) => Self {
                 tile: 112.,
                 line: 250.,
                 top: 140.,
-            }
-        }
-    }
-
-    fn small(compact: bool) -> Self {
-        if compact {
-            Self {
-                tile: 52.,
-                line: 80.,
-                top: 24.,
-            }
-        } else {
-            Self {
+            },
+            (Scale::Big, true) => Self {
+                tile: 64.,
+                line: 96.,
+                top: 28.,
+            },
+            (Scale::Small, false) => Self {
                 tile: 72.,
                 line: 170.,
                 top: 40.,
-            }
+            },
+            (Scale::Small, true) => Self {
+                tile: 52.,
+                line: 80.,
+                top: 24.,
+            },
+        }
+    }
+
+    fn between(from: Self, to: Self, t: f32) -> Self {
+        Self {
+            tile: lerp(from.tile, to.tile, t),
+            line: lerp(from.line, to.line, t),
+            top: lerp(from.top, to.top, t),
         }
     }
 
@@ -127,12 +128,151 @@ impl Size {
     }
 }
 
-/// A screen: its mood, where its handshake is, and what it holds.
-struct Screen {
-    mood: Mood,
-    /// Where the rings center, from the window's top.
-    center: f32,
-    body: Div,
+/// Where the welcome's picture centers, from the window's top.
+const WELCOME_CENTER: f32 = TOP_BAR + 196.;
+
+// What the frame shows.
+
+/// The handshake's other side, the line and the rings for `step`, as
+/// onboarding stands.
+fn frame(ws: &Workspace, step: SetupStep) -> Frame {
+    let signed_in = ws.setup.user().is_some();
+    let (state, mood, link, service, scale) = match step {
+        SetupStep::Welcome => {
+            (0, Mood::Acting, Link::Idle, Service::None, Scale::Big)
+        }
+        SetupStep::GitHub => match &ws.setup.github {
+            GitHub::SignedIn { .. } => {
+                (1, Mood::Done, Link::Connected, Service::GitHub, Scale::Big)
+            }
+            GitHub::Failed(_) => {
+                (2, Mood::Refused, Link::Blocked, Service::GitHub, Scale::Big)
+            }
+            _ => (0, Mood::Acting, Link::Waiting, Service::GitHub, Scale::Big),
+        },
+        SetupStep::Token => match &ws.setup.github {
+            GitHub::Failed(_) => {
+                (2, Mood::Refused, Link::Blocked, Service::Token, Scale::Big)
+            }
+            GitHub::Checking => {
+                (1, Mood::Acting, Link::Waiting, Service::Token, Scale::Big)
+            }
+            _ => (0, Mood::Acting, Link::Idle, Service::Token, Scale::Big),
+        },
+        SetupStep::Model => {
+            let (state, mood, link) = match &ws.setup.model {
+                ModelAccess::None => (0, Mood::Acting, Link::Idle),
+                ModelAccess::Failed(_) => (5, Mood::Acting, Link::Idle),
+                ModelAccess::SigningIn { .. } => {
+                    (1, Mood::Acting, Link::Waiting)
+                }
+                ModelAccess::Connected { .. } => {
+                    (2, Mood::Done, Link::Connected)
+                }
+                ModelAccess::PlanDisabled { .. } => {
+                    (3, Mood::Acting, Link::Declined)
+                }
+                ModelAccess::NotEligible { .. } => {
+                    (4, Mood::Refused, Link::Blocked)
+                }
+            };
+            (state, mood, link, Service::ChatGpt, Scale::Big)
+        }
+        SetupStep::Repos => (
+            0,
+            Mood::Acting,
+            Link::Connected,
+            Service::Repos,
+            Scale::Small,
+        ),
+        SetupStep::Ready => (
+            0,
+            Mood::Acting,
+            Link::Connected,
+            Service::FirstRun,
+            Scale::Small,
+        ),
+    };
+    let stage = (step != SetupStep::Welcome).then(|| step.stage());
+    let segments = std::array::from_fn(|n| match stage {
+        // GitHub can be skipped: then it is not done.
+        Some(stage) if n < stage && (n > 0 || signed_in) => Segment::Done,
+        Some(stage) if n == stage => Segment::Current,
+        _ => Segment::Ahead,
+    });
+    Frame {
+        scene: Scene { step, state },
+        mood,
+        link,
+        service,
+        scale,
+        segments,
+    }
+}
+
+/// Records what this frame of onboarding shows, before it is drawn, so
+/// that what changed animates.
+pub fn observe(ws: &mut Workspace, step: SetupStep, window: &Window, cx: &App) {
+    let frame = frame(ws, step);
+    let composing = ws.first_task.read(cx).focus_handle(cx).is_focused(window);
+    let clones: Vec<(String, u32, bool)> = ws
+        .setup
+        .clones
+        .iter()
+        .map(|clone| match &clone.state {
+            CloneState::Cloning { share, .. } => (
+                clone.name.clone(),
+                (share.clamp(0., 1.) * 1000.) as u32,
+                false,
+            ),
+            CloneState::Ready => (clone.name.clone(), 1000, true),
+            CloneState::Failed(_) => (clone.name.clone(), 1000, false),
+        })
+        .collect();
+    let reduce = ws.reduce_motion() || cx.reduce_motion();
+    let motion = &mut ws.setup_motion;
+    motion.observe(frame);
+    motion.composing.observe(composing);
+    motion.observe_clones(
+        clones
+            .iter()
+            .map(|(name, share, ready)| (name.as_str(), *share, *ready)),
+    );
+    motion.active = window.is_window_active();
+    motion.reduce = reduce;
+}
+
+/// What the handshake's animations need to know, all copied so that an
+/// animation can redraw it.
+#[derive(Debug, Clone, Copy)]
+struct Beat {
+    link: Link,
+    link_from: Link,
+    link_epoch: u64,
+    /// The link changed to what it is, rather than being so from the
+    /// start.
+    link_changed: bool,
+    service: Service,
+    service_epoch: u64,
+    service_changed: bool,
+    loops: bool,
+    reduce: bool,
+}
+
+impl Beat {
+    fn of(motion: &SetupMotion) -> Self {
+        Self {
+            link: motion.link.current,
+            link_from: motion.link.previous,
+            link_epoch: motion.link.epoch,
+            link_changed: motion.link.changed(),
+            service: motion.service.current,
+            service_epoch: motion.service.epoch,
+            service_changed: motion.service.changed(),
+            loops: motion.loops(),
+            reduce: motion.reduce,
+        }
+    }
 }
 
 pub fn render(
@@ -142,7 +282,8 @@ pub fn render(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let screen = match step {
+    let motion = &ws.setup_motion;
+    let body = match step {
         SetupStep::Welcome => welcome(ws, compact, t, cx),
         SetupStep::GitHub => github(ws, compact, t, cx),
         SetupStep::Token => token(ws, compact, t, cx),
@@ -159,7 +300,7 @@ pub fn render(
         .bg(t.setup.ground)
         .text_color(t.text)
         .typeset(Type::BODY)
-        .child(backdrop(screen.mood, screen.center, compact, t))
+        .child(backdrop(motion, step, compact, t))
         .child(top_bar(ws, step, compact, t, cx))
         .child(
             div()
@@ -168,9 +309,7 @@ pub fn render(
                 .min_h(px(0.))
                 .overflow_y_scroll()
                 .child(
-                    screen
-                        .body
-                        .w_full()
+                    body.w_full()
                         .flex()
                         .flex_col()
                         .items_center()
@@ -183,37 +322,68 @@ pub fn render(
 
 // The scene.
 
-/// The rings and the glow, centered on the handshake. Radial gradients
-/// are not in GPUI: the glow is a soft shadow around a circle.
-fn backdrop(mood: Mood, center: f32, compact: bool, t: &Theme) -> Div {
+fn mood_color(mood: Mood, t: &Theme) -> Hsla {
+    match mood {
+        Mood::Acting => t.accent,
+        Mood::Done => t.green,
+        Mood::Refused => t.red,
+    }
+}
+
+/// The rings and the glow in one mood's color. The rings breathe, out of
+/// step, while loops run. Radial gradients are not in GPUI: the glow is
+/// a soft shadow around a circle.
+fn ring_set(
+    set: &'static str,
+    mood: Mood,
+    scale: f32,
+    loops: bool,
+    t: &Theme,
+) -> Div {
     let look = &t.setup;
-    let color = mood.color(t);
-    let scale = if compact { look.compact_scale } else { 1. };
-    let rings =
-        look.ring_radii
-            .iter()
-            .zip(look.ring_alphas)
-            .map(|(radius, alpha)| {
-                let r = radius * scale;
-                div()
-                    .absolute()
-                    .left(px(-r))
-                    .top(px(-r))
-                    .size(px(2. * r))
-                    .rounded(radius::FULL)
-                    .border_1()
-                    .border_color(color.opacity(alpha))
-            });
+    let color = mood_color(mood, t);
     let glow = 200. * scale;
-    let alpha = if mood == Mood::Refused {
-        look.glow_alpha * 0.8
-    } else {
-        look.glow_alpha
+    let strength = match mood {
+        Mood::Refused => look.glow_alpha * 0.8,
+        Mood::Done => look.glow_alpha * 1.2,
+        Mood::Acting => look.glow_alpha,
     };
+    let rings = look
+        .ring_radii
+        .iter()
+        .zip(look.ring_alphas)
+        .enumerate()
+        .map(move |(n, (radius, alpha))| {
+            let r = radius * scale;
+            let ring = div()
+                .absolute()
+                .left(px(-r))
+                .top(px(-r))
+                .size(px(2. * r))
+                .rounded(px(r))
+                .border_1()
+                .border_color(color.opacity(alpha));
+            if !loops {
+                return ring.into_any_element();
+            }
+            // Each ring a fifth of a breath ahead of the one inside it.
+            ring.with_animation(
+                SharedString::from(format!("ring-{set}-{n}")),
+                loop_of(7000, n as f32 * 0.2),
+                move |ring, phase| {
+                    let v = breath(phase);
+                    let r = r * (1. + 0.018 * v);
+                    ring.left(px(-r))
+                        .top(px(-r))
+                        .size(px(2. * r))
+                        .rounded(px(r))
+                        .opacity(1. - 0.28 * v)
+                },
+            )
+            .into_any_element()
+        });
     div()
         .absolute()
-        .top(px(center))
-        .left(relative(0.5))
         .size(px(0.))
         .child(
             div()
@@ -224,7 +394,7 @@ fn backdrop(mood: Mood, center: f32, compact: bool, t: &Theme) -> Div {
                 // A real radius: shadows do not round with `FULL`.
                 .rounded(px(glow / 2.))
                 .shadow(vec![
-                    BoxShadow::new(px(0.), px(0.), color.opacity(alpha))
+                    BoxShadow::new(px(0.), px(0.), color.opacity(strength))
                         .blur_radius(px(glow))
                         .spread_radius(px(glow * 0.35)),
                 ]),
@@ -232,8 +402,100 @@ fn backdrop(mood: Mood, center: f32, compact: bool, t: &Theme) -> Div {
         .children(rings)
 }
 
+/// The rings and the glow, centered on the handshake. A new mood cross-
+/// fades them; a new size moves them with the handshake; a connection
+/// sends one green ring rippling out.
+fn backdrop(
+    motion: &SetupMotion,
+    step: SetupStep,
+    compact: bool,
+    t: &Theme,
+) -> Div {
+    let scale = if compact { t.setup.compact_scale } else { 1. };
+    let loops = motion.loops();
+    let center_of = |scale: Scale| {
+        if step == SetupStep::Welcome && !compact {
+            WELCOME_CENTER
+        } else {
+            Size::of(scale, compact).center()
+        }
+    };
+    let (from, to) = (
+        center_of(motion.scale.previous),
+        center_of(motion.scale.current),
+    );
+    let mood = &motion.mood;
+    let now = ring_set("now", mood.current, scale, loops, t);
+    let mut anchor = div()
+        .absolute()
+        .left(relative(0.5))
+        .size(px(0.))
+        .when(mood.within(800), |anchor| {
+            anchor.child(
+                ring_set("was", mood.previous, scale, loops, t).with_animation(
+                    SharedString::from(format!("mood-out-{}", mood.epoch)),
+                    after(0, 800, curve::ease_in_out()),
+                    |set, e| set.opacity(1. - e),
+                ),
+            )
+        })
+        .child(if mood.changed() {
+            now.with_animation(
+                SharedString::from(format!("mood-in-{}", mood.epoch)),
+                after(0, 800, curve::ease_in_out()),
+                |set, e| set.opacity(e),
+            )
+            .into_any_element()
+        } else {
+            now.into_any_element()
+        });
+    let link = &motion.link;
+    if link.current == Link::Connected
+        && link.changed()
+        && !motion.reduce
+        && link.within(1500)
+    {
+        let green = t.green;
+        let r = 150. * scale;
+        anchor = anchor.child(
+            div()
+                .absolute()
+                .border(px(2.))
+                .border_color(green.opacity(0.8))
+                .with_animation(
+                    SharedString::from(format!("ripple-{}", link.epoch)),
+                    Animation::new(Duration::from_millis(1400)),
+                    move |ring, t| {
+                        let ms = t * 1400.;
+                        if ms < 300. {
+                            return ring.opacity(0.);
+                        }
+                        let e = curve::ripple()((ms - 300.) / 1100.);
+                        let r = r * lerp(0.35, 1.7, e);
+                        ring.left(px(-r))
+                            .top(px(-r))
+                            .size(px(2. * r))
+                            .rounded(px(r))
+                            .opacity(0.75 * (1. - e))
+                    },
+                ),
+        );
+    }
+    let layer = div().absolute().left_0().top_0().size_full();
+    if motion.scale.changed() && from != to && !motion.reduce {
+        layer.child(anchor.with_animation(
+            SharedString::from(format!("scene-move-{}", motion.scale.epoch)),
+            after(0, 550, curve::settle()),
+            move |anchor, e| anchor.top(px(lerp(from, to, e))),
+        ))
+    } else {
+        layer.child(anchor.top(px(to)))
+    }
+}
+
 /// tau, the four stages as segments (done green, current amber), and
-/// where you are. A phone shows the segments without their names.
+/// where you are. A segment whose state changed fills left to right in
+/// its new color. A phone shows the segments without their names.
 fn top_bar(
     ws: &Workspace,
     step: SetupStep,
@@ -242,41 +504,70 @@ fn top_bar(
     cx: &mut Context<Workspace>,
 ) -> Div {
     let look = &t.setup;
-    let stage = (step != SetupStep::Welcome).then(|| step.stage());
-    // GitHub can be skipped: then it is not done.
-    let signed_in = ws.setup.user().is_some();
-    let segments = SetupStep::STAGES.iter().enumerate().map(|(n, name)| {
-        let reached = stage.is_some_and(|stage| n <= stage);
-        let done = stage.is_some_and(|stage| n < stage) && (n > 0 || signed_in);
-        let current = stage == Some(n);
-        let color = if done {
-            t.green
-        } else if current {
-            t.accent
+    let motion = &ws.setup_motion;
+    let segments = &motion.segments;
+    let color = |segment: Segment| match segment {
+        Segment::Done => t.green,
+        Segment::Current => t.accent,
+        Segment::Ahead => look.track,
+    };
+    let label = |segment: Segment| {
+        if segment == Segment::Ahead {
+            look.idle
         } else {
-            look.track
+            t.dim
+        }
+    };
+    let width = if compact { 28. } else { 64. };
+    let reduce = motion.reduce;
+    let items = SetupStep::STAGES.iter().enumerate().map(|(n, name)| {
+        let (was, now) = (segments.previous[n], segments.current[n]);
+        let (base, fill) = (color(was), color(now));
+        let (from_label, to_label) = (label(was), label(now));
+        let item = move |share: f32, fade: f32, label: Hsla| {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(sp(1.75))
+                .child(
+                    div()
+                        .relative()
+                        .w(px(width))
+                        .h(px(3.))
+                        .rounded(radius::HAIRLINE)
+                        .overflow_hidden()
+                        .bg(base)
+                        .child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .top_0()
+                                .h_full()
+                                .w(relative(share))
+                                .bg(fill.opacity(fill.a * fade)),
+                        ),
+                )
+                .when(!compact, |item| {
+                    item.child(mono(*name, Type::MICRO, label))
+                })
         };
+        if was == now {
+            return item(1., 1., to_label).into_any_element();
+        }
         div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(sp(1.75))
-            .child(
-                div()
-                    .w(px(if compact { 28. } else { 64. }))
-                    .h(px(3.))
-                    .rounded(radius::HAIRLINE)
-                    .bg(color),
+            .with_animation(
+                SharedString::from(format!("segment-{n}-{}", segments.epoch)),
+                after(if reduce { 0 } else { 200 }, 450, curve::settle()),
+                move |slot, e| {
+                    // Reduced, the new color fades in over the old.
+                    let (share, fade) = if reduce { (1., e) } else { (e, 1.) };
+                    slot.child(item(share, fade, mix(from_label, to_label, e)))
+                },
             )
-            .when(!compact, |segment| {
-                segment.child(mono(
-                    *name,
-                    Type::MICRO,
-                    if reached { t.dim } else { look.idle },
-                ))
-            })
+            .into_any_element()
     });
-    let place = match stage {
+    let place = match (step != SetupStep::Welcome).then(|| step.stage()) {
         None => "welcome".to_owned(),
         Some(stage) if compact => {
             format!("{} · {}/4", SetupStep::STAGES[stage], stage + 1)
@@ -314,7 +605,7 @@ fn top_bar(
                 .items_start()
                 .gap(sp(if compact { 1.5 } else { 2.5 }))
                 .when(!compact, |row| row.pt(sp(3.)))
-                .children(segments),
+                .children(items),
         )
         .child(div().w(px(side)).flex().justify_end().child(mono(
             place,
@@ -349,80 +640,231 @@ fn tau_tile(size: f32, t: &Theme) -> Div {
         .child("τ")
 }
 
-/// The other side's tile: dark, edged in `edge`.
-fn service_tile(
-    inner: impl IntoElement,
-    size: f32,
-    edge: Hsla,
-    t: &Theme,
-) -> Div {
-    div()
-        .size(px(size))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(size * 30. / 112.))
-        .bg(t.setup.tile)
-        .border_1()
-        .border_color(edge)
-        .child(inner)
-}
-
 /// A company's mark, from its own artwork when it was built in; else a
-/// plain outlined circle holding its place. See [`Brand`].
-fn brand_mark(brand: Brand, size: f32, color: Hsla, t: &Theme) -> AnyElement {
+/// plain outlined circle holding its place. See [`Brand`]. `turn` is in
+/// radians, for an icon swapping in.
+fn brand_mark(
+    brand: Brand,
+    size: f32,
+    color: Hsla,
+    turn: f32,
+    t: &Theme,
+) -> AnyElement {
     match brand.svg() {
         Some(_) => svg()
             .path(brand.path())
             .size(px(size))
             .flex_shrink_0()
             .text_color(color)
+            .with_transformation(Transformation::rotate(radians(turn)))
             .into_any_element(),
         None => div()
             .size(px(size))
             .flex_shrink_0()
-            .rounded(radius::FULL)
+            .rounded(px(size / 2.))
             .border(px(1.5))
             .border_color(t.setup.faint)
             .into_any_element(),
     }
 }
 
-/// The line between the tiles, with a word above it and one under it.
-fn line(
-    link: Link,
-    size: Size,
-    above: Option<&'static str>,
-    below: Option<&'static str>,
+/// What stands for `service` in its tile, `tile` wide, at `scale` and
+/// turned by `turn` radians.
+fn service_icon(
+    service: Service,
+    tile: f32,
+    scale: f32,
+    turn: f32,
     t: &Theme,
-) -> Div {
+) -> AnyElement {
+    let glyph = |glyph: Icon, share: f32| {
+        svg()
+            .path(glyph.path())
+            .size(px(tile * share))
+            .flex_shrink_0()
+            .text_color(t.text_soft)
+            .with_transformation(
+                Transformation::scale(area(scale, scale))
+                    .with_rotation(radians(turn)),
+            )
+            .into_any_element()
+    };
+    match service {
+        Service::GitHub => {
+            brand_mark(Brand::GitHub, tile * 0.57 * scale, t.text, turn, t)
+        }
+        Service::ChatGpt | Service::None => {
+            brand_mark(Brand::ChatGpt, tile * 0.57 * scale, t.text, turn, t)
+        }
+        Service::Token => glyph(Icon::Key, 0.41),
+        Service::Repos => glyph(Icon::Repo, 0.42),
+        Service::FirstRun => glyph(Icon::Runs, 0.42),
+    }
+}
+
+/// The other side's tile, edged by how the link stands. It breathes with
+/// the comet while tau waits on it, and its icon swaps in when the
+/// service changes.
+fn service_tile(size: f32, beat: Beat, t: &Theme) -> AnyElement {
     let look = &t.setup;
-    let (color, below_color) = match link {
-        Link::Idle => (t.accent, look.faint.opacity(0.9)),
-        Link::Waiting | Link::Declined => (t.accent, t.accent),
-        Link::Connected => (t.green, t.green),
-        Link::Blocked => (t.red, t.red),
+    let edge = match beat.link {
+        Link::Waiting | Link::Declined => t.accent_border,
+        Link::Connected if beat.service == Service::ChatGpt => look.green_edge,
+        Link::Blocked => t.red_border,
+        _ => t.border,
     };
-    // Dashes 4 px long every 10 px, as CSS draws the artboard's.
-    let dashes = |alpha: f32| {
-        let count = (size.line / 10.).floor() as usize;
+    let inner = if beat.service_changed && !beat.reduce {
+        let (service, tile, theme) = (beat.service, size, t.clone());
         div()
-            .absolute()
-            .left_0()
-            .right_0()
-            .flex()
-            .gap(sp(1.5))
-            .children((0..count).map(|_| {
-                div()
-                    .w(px(4.))
-                    .h(px(2.))
-                    .flex_shrink_0()
-                    .bg(t.accent.opacity(alpha))
-            }))
+            .with_animation(
+                SharedString::from(format!("swap-{}", beat.service_epoch)),
+                Animation::new(Duration::from_millis(560)),
+                move |slot, t| {
+                    let ms = t * 560.;
+                    if ms < 180. {
+                        return slot.opacity(0.);
+                    }
+                    let e = curve::swap()((ms - 180.) / 380.);
+                    slot.opacity(e.clamp(0., 1.)).child(service_icon(
+                        service,
+                        tile,
+                        lerp(0.7, 1., e),
+                        lerp(-8., 0., e).to_radians(),
+                        &theme,
+                    ))
+                },
+            )
+            .into_any_element()
+    } else {
+        service_icon(beat.service, size, 1., 0., t)
     };
-    let medallion = |inner: AnyElement| {
-        let side = if size.tile < 100. { 32. } else { 40. };
+    let radius = size * 30. / 112.;
+    let tile = div()
+        .size(px(size))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(radius))
+        .bg(look.tile)
+        .border_1()
+        .border_color(edge)
+        .child(inner);
+    if beat.link != Link::Waiting || !beat.loops {
+        return tile.into_any_element();
+    }
+    let (quiet, lit, glow) = (t.border, look.waiting_edge, t.accent);
+    tile.with_animation(
+        "service-breath",
+        loop_of(1400, 0.),
+        move |tile, phase| {
+            let v = breath(phase);
+            tile.border_color(mix(quiet, lit, v)).shadow(vec![
+                BoxShadow::new(px(0.), px(0.), glow.opacity(0.07 * v))
+                    .spread_radius(px(6. * v)),
+            ])
+        },
+    )
+    .into_any_element()
+}
+
+/// Dashes 4 px long every 10 px, as the prototype's CSS draws them,
+/// `offset` px along toward the service.
+fn dash_row(line: f32, offset: f32, alpha: f32, t: &Theme) -> Div {
+    let count = (line / 10.).ceil() as usize + 2;
+    div()
+        .absolute()
+        .top_0()
+        .left(px(offset - 10.))
+        .flex()
+        .gap(sp(1.5))
+        .children((0..count).map(|_| {
+            div()
+                .w(px(4.))
+                .h(px(2.))
+                .flex_shrink_0()
+                .bg(t.accent.opacity(alpha))
+        }))
+}
+
+/// The dashes, clipped to the line; drifting while loops run.
+fn dashes(line: f32, alpha: f32, drift: bool, t: &Theme) -> AnyElement {
+    let track = div()
+        .absolute()
+        .left_0()
+        .top_0()
+        .w(px(line))
+        .h(px(2.))
+        .overflow_hidden();
+    if !drift {
+        return track
+            .child(dash_row(line, 10., alpha, t))
+            .into_any_element();
+    }
+    let theme = t.clone();
+    track
+        .with_animation("dash-drift", loop_of(1100, 0.), move |track, phase| {
+            // 20 px a loop: two dashes' worth.
+            track.child(dash_row(line, (phase * 20.) % 10., alpha, &theme))
+        })
+        .into_any_element()
+}
+
+/// The comet: a glowing streak with a fading tail, from τ to the service
+/// every 1.4 s.
+fn comet(line: f32, t: &Theme) -> AnyElement {
+    let amber = t.accent;
+    let (length, thick) = COMET;
+    div()
+        .absolute()
+        .top_0()
+        .w(px(length))
+        .h(px(thick))
+        .rounded(px(thick / 2.))
+        .bg(linear_gradient(
+            90.,
+            linear_color_stop(amber.opacity(0.), 0.),
+            linear_color_stop(amber.opacity(0.9), 1.),
+        ))
+        .shadow(vec![
+            BoxShadow::new(px(0.), px(0.), amber.opacity(0.8))
+                .blur_radius(px(16.)),
+        ])
+        .with_animation("comet", loop_of(1400, 0.), move |comet, t| {
+            let x = lerp(-length, line, curve::travel()(t));
+            let shown = if t < 0.15 {
+                t / 0.15
+            } else if t > 0.85 {
+                (1. - t) / 0.15
+            } else {
+                1.
+            };
+            comet.left(px(x)).opacity(shown)
+        })
+        .into_any_element()
+}
+
+/// The ✓, !, or ✕ in the middle of the line. It pops when the link just
+/// changed to it.
+fn medallion(size: Size, beat: Beat, color: Hsla, t: &Theme) -> AnyElement {
+    let side = if size.tile < 100. { 32. } else { 40. };
+    let ground = t.setup.ground;
+    let link = beat.link;
+    let build = move |scale: f32| {
+        let side = side * scale;
+        let mark = match link {
+            Link::Connected => icon(Icon::Check, IconSize(18. * scale), color)
+                .into_any_element(),
+            Link::Declined => div()
+                .typeset(
+                    Type::HEADING.sized(20. * scale).weighted(weight::STRONG),
+                )
+                .text_color(color)
+                .child("!")
+                .into_any_element(),
+            _ => icon(Icon::Close, IconSize(18. * scale), color)
+                .into_any_element(),
+        };
         div()
             .size(px(side))
             .flex_shrink_0()
@@ -430,59 +872,93 @@ fn line(
             .items_center()
             .justify_center()
             .rounded(px(side / 2.))
-            .bg(look.ground)
+            .bg(ground)
             .border(px(2.))
             .border_color(color)
-            .child(inner)
+            .child(mark)
+    };
+    if !beat.link_changed {
+        return build(1.).into_any_element();
+    }
+    let reduce = beat.reduce;
+    // The connection pops after the line has drawn; a refusal sooner.
+    let delay = if link == Link::Connected { 260. } else { 180. };
+    div()
+        .size(px(side))
+        .flex()
+        .items_center()
+        .justify_center()
+        .with_animation(
+            SharedString::from(format!("medal-{}", beat.link_epoch)),
+            Animation::new(Duration::from_millis(700)),
+            move |slot, t| {
+                let ms = t * 700.;
+                if reduce {
+                    return slot.opacity((ms / 200.).min(1.)).child(build(1.));
+                }
+                if ms < delay {
+                    return slot.opacity(0.);
+                }
+                let (scale, shown) =
+                    pop(((ms - delay) / 420.).min(1.), &curve::pop());
+                slot.opacity(shown).child(build(scale))
+            },
+        )
+        .into_any_element()
+}
+
+/// The words over and under the line.
+type Words = (Option<&'static str>, Option<&'static str>);
+
+/// The line between the tiles, with a word above it and one under it.
+fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
+    let look = &t.setup;
+    let link = beat.link;
+    let (color, below_color) = match link {
+        Link::Idle => (t.accent, look.faint),
+        Link::Waiting | Link::Declined => (t.accent, t.accent),
+        Link::Connected => (t.green, t.green),
+        Link::Blocked => (t.red, t.red),
+    };
+    let fresh = beat.link_changed && !beat.reduce;
+    let middle = size.tile / 2.;
+    // A layer the width of the line, 2 px high, on its middle.
+    let rail = || {
+        div()
+            .absolute()
+            .left_0()
+            .top(px(middle - 1.))
+            .w(px(size.line))
+            .h(px(2.))
     };
     let track = div()
         .w(px(size.line))
         .h(px(size.tile))
+        .flex_shrink_0()
         .relative()
         .flex()
         .items_center()
         .justify_center();
     let track = match link {
-        Link::Idle => track.child(dashes(0.55)),
+        Link::Idle => {
+            track.child(rail().child(dashes(size.line, 0.55, beat.loops, t)))
+        }
         Link::Waiting => {
-            let half = |from: Hsla, to: Hsla| {
-                div().w(relative(0.5)).h(px(2.)).bg(linear_gradient(
-                    90.,
-                    linear_color_stop(from, 0.),
-                    linear_color_stop(to, 1.),
-                ))
-            };
-            let clear = t.accent.opacity(0.);
-            track
-                .child(dashes(0.35))
-                .child(
+            let track =
+                track.child(rail().child(dashes(size.line, 0.28, false, t)));
+            if beat.loops {
+                track.child(
                     div()
                         .absolute()
-                        .top(px(size.tile / 2. - 1.))
-                        .left(relative(0.3))
-                        .w(relative(0.4))
-                        .h(px(2.))
-                        .flex()
-                        .shadow(vec![
-                            BoxShadow::new(
-                                px(0.),
-                                px(0.),
-                                t.accent.opacity(0.5),
-                            )
-                            .blur_radius(px(14.)),
-                        ])
-                        .child(half(clear, t.accent))
-                        .child(half(t.accent, clear))
-                        .with_animation(
-                            "setup-line-glow",
-                            Animation::new(Duration::from_millis(2400))
-                                .repeat()
-                                .with_easing(pulsating_between(0.35, 1.)),
-                            |glow, delta| glow.opacity(delta),
-                        ),
+                        .left_0()
+                        .top(px(middle - COMET.1 / 2.))
+                        .w(px(size.line))
+                        .h(px(COMET.1))
+                        .child(comet(size.line, t)),
                 )
-                .child(
-                    // The dot, in its halo.
+            } else {
+                // Still: a lit dot in its halo.
+                track.child(
                     div()
                         .size(px(HALO))
                         .flex()
@@ -503,48 +979,48 @@ fn line(
                                     )
                                     .blur_radius(px(22.)),
                                 ]),
-                        )
-                        .with_animation(
-                            "setup-line-dot",
-                            Animation::new(Duration::from_millis(2400))
-                                .repeat()
-                                .with_easing(pulsating_between(0.55, 1.)),
-                            |dot, delta| dot.opacity(delta),
                         ),
                 )
+            }
         }
-        Link::Connected => track
-            .child(
+        Link::Connected => {
+            let green = t.green;
+            let solid = move |share: f32| {
                 div()
                     .absolute()
                     .left_0()
-                    .right_0()
+                    .top_0()
+                    .w(relative(share))
                     .h(px(2.))
-                    .bg(t.green)
+                    .bg(green)
                     .shadow(vec![
-                        BoxShadow::new(px(0.), px(0.), t.green.opacity(0.55))
+                        BoxShadow::new(px(0.), px(0.), green.opacity(0.55))
                             .blur_radius(px(18.)),
-                    ]),
-            )
-            .child(medallion(
-                icon(Icon::Check, IconSize::XLARGE, t.green).into_any_element(),
-            )),
-        Link::Declined | Link::Blocked => {
-            let mark = if link == Link::Declined {
-                div()
-                    .typeset(Type::HEADING.weighted(weight::STRONG))
-                    .text_color(color)
-                    .child("!")
+                    ])
+            };
+            let drawn = if fresh {
+                rail()
+                    .with_animation(
+                        SharedString::from(format!("draw-{}", beat.link_epoch)),
+                        after(0, 300, curve::settle()),
+                        move |rail, e| rail.child(solid(e)),
+                    )
                     .into_any_element()
             } else {
-                icon(Icon::Close, IconSize::XLARGE, color).into_any_element()
+                rail().child(solid(1.)).into_any_element()
             };
-            track
-                .child(
+            track.child(drawn).child(medallion(size, beat, color, t))
+        }
+        Link::Declined | Link::Blocked => {
+            // Broken: the halves pull apart; a refusal wider.
+            let rest = if link == Link::Declined { 0.38 } else { 0.34 };
+            let halves = move |rail: Div, share: f32| {
+                rail.child(
                     div()
                         .absolute()
                         .left_0()
-                        .w(relative(0.38))
+                        .top_0()
+                        .w(relative(share))
                         .h(px(2.))
                         .bg(color.opacity(0.8)),
                 )
@@ -552,13 +1028,61 @@ fn line(
                     div()
                         .absolute()
                         .right_0()
-                        .w(relative(0.38))
+                        .top_0()
+                        .w(relative(share))
                         .h(px(2.))
                         .bg(color.opacity(0.25)),
                 )
-                .child(medallion(mark))
+            };
+            let broken = if fresh {
+                rail()
+                    .with_animation(
+                        SharedString::from(format!(
+                            "break-{}",
+                            beat.link_epoch
+                        )),
+                        after(0, 400, curve::settle()),
+                        move |rail, e| halves(rail, lerp(0.5, rest, e)),
+                    )
+                    .into_any_element()
+            } else {
+                halves(rail(), rest).into_any_element()
+            };
+            // Declined while waiting: the comet stops halfway and fades.
+            let stopped = (fresh
+                && link == Link::Declined
+                && beat.link_from == Link::Waiting)
+                .then(|| {
+                    let amber = t.accent;
+                    let (length, thick) = COMET;
+                    div()
+                        .absolute()
+                        .top(px(middle - thick / 2.))
+                        .left(px(size.line / 2. - length))
+                        .w(px(length))
+                        .h(px(thick))
+                        .rounded(px(thick / 2.))
+                        .bg(linear_gradient(
+                            90.,
+                            linear_color_stop(amber.opacity(0.), 0.),
+                            linear_color_stop(amber.opacity(0.9), 1.),
+                        ))
+                        .with_animation(
+                            SharedString::from(format!(
+                                "halt-{}",
+                                beat.link_epoch
+                            )),
+                            after(0, 450, curve::settle()),
+                            |comet, e| comet.opacity(1. - e),
+                        )
+                });
+            track
+                .child(broken)
+                .children(stopped)
+                .child(medallion(size, beat, color, t))
         }
     };
+    let inset = if size.tile < 100. { 4. } else { 16. };
     let word = |text: &'static str, color: Hsla| {
         div()
             .absolute()
@@ -568,41 +1092,113 @@ fn line(
             .justify_center()
             .child(mono(text, Type::MICRO, color))
     };
-    let inset = if size.tile < 100. { 4. } else { 16. };
+    let below = words.1.map(|text| {
+        let word = word(text, below_color).bottom(px(inset));
+        if fresh && link == Link::Connected {
+            word.with_animation(
+                SharedString::from(format!("linkword-{}", beat.link_epoch)),
+                after(500, 320, curve::rise()),
+                move |word, e| {
+                    word.opacity(e).bottom(px(inset + 12. * (1. - e)))
+                },
+            )
+            .into_any_element()
+        } else {
+            word.into_any_element()
+        }
+    });
     track
-        .when_some(above, |track, text| {
+        .when_some(words.0, |track, text| {
             track.child(word(text, t.dim).top(px(inset)))
         })
-        .when_some(below, |track, text| {
-            track.child(word(text, below_color).bottom(px(inset)))
-        })
+        .children(below)
 }
 
-/// τ, the line, and the other side.
-fn handshake(
-    link: Link,
-    size: Size,
-    words: (Option<&'static str>, Option<&'static str>),
-    other: impl IntoElement,
-    edge: Hsla,
-    t: &Theme,
-) -> Div {
+/// τ, the line and the other side, at `size`.
+fn handshake_at(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
     div()
-        .mt(px(size.top))
+        .pt(px(size.top))
         .flex()
         .items_center()
         .justify_center()
         .child(tau_tile(size.tile, t))
-        .child(line(link, size, words.0, words.1, t))
-        .child(service_tile(other, size.tile, edge, t))
+        .child(line(size, beat, words, t))
+        .child(service_tile(size.tile, beat, t))
+}
+
+/// The handshake. It is the same from step to step: moving between a
+/// big one and a small one, it shrinks or grows and slides into place.
+fn handshake(
+    ws: &Workspace,
+    words: Words,
+    compact: bool,
+    t: &Theme,
+) -> AnyElement {
+    let motion = &ws.setup_motion;
+    let beat = Beat::of(motion);
+    let (from, to) = (
+        Size::of(motion.scale.previous, compact),
+        Size::of(motion.scale.current, compact),
+    );
+    if !motion.scale.changed() || from == to || motion.reduce {
+        return handshake_at(to, beat, words, t).into_any_element();
+    }
+    let theme = t.clone();
+    div()
+        .with_animation(
+            SharedString::from(format!("handshake-{}", motion.scale.epoch)),
+            after(0, 550, curve::settle()),
+            move |slot, e| {
+                slot.child(handshake_at(
+                    Size::between(from, to, e),
+                    beat,
+                    words,
+                    &theme,
+                ))
+            },
+        )
+        .into_any_element()
+}
+
+// Entrances.
+
+/// `element`, rising 12 px into place and fading in, `delay` ms after
+/// its screen appears; reduced, a plain fade.
+fn rise(
+    motion: &SetupMotion,
+    key: &str,
+    delay: u64,
+    element: impl IntoElement,
+) -> AnyElement {
+    let reduce = motion.reduce;
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .child(element)
+        .with_animation(
+            SharedString::from(format!("rise-{}-{key}", motion.scene.epoch)),
+            entrance(delay, reduce),
+            move |slot, e| {
+                let slot = slot.opacity(e.clamp(0., 1.));
+                if reduce {
+                    slot
+                } else {
+                    slot.relative().top(px(12. * (1. - e)))
+                }
+            },
+        )
+        .into_any_element()
 }
 
 // Words.
 
-/// The headline and the sentence under it, centered.
+/// The headline and the sentence under it, centered, rising in turn.
 fn headline(
-    title: &str,
-    sub: &str,
+    motion: &SetupMotion,
+    delay: u64,
+    (title, sub): (&str, &str),
     style: Type,
     width: f32,
     compact: bool,
@@ -615,7 +1211,10 @@ fn headline(
         .items_center()
         .gap(sp(3.5))
         .text_center()
-        .child(
+        .child(rise(
+            motion,
+            "title",
+            delay,
             div()
                 .typeset(if compact {
                     Type::DISPLAY.weighted(weight::EMPHASIS)
@@ -625,15 +1224,18 @@ fn headline(
                 .leading(1.1)
                 .text_color(t.setup.light)
                 .child(title.to_owned()),
-        )
-        .child(
+        ))
+        .child(rise(
+            motion,
+            "sub",
+            delay + 40,
             div()
                 .max_w(px(width))
                 .typeset(if compact { Type::BODY } else { Type::SUBTITLE })
                 .leading(1.6)
                 .text_color(t.muted)
                 .child(sub.to_owned()),
-        )
+        ))
 }
 
 fn footnote(text: impl Into<SharedString>, t: &Theme) -> Div {
@@ -690,7 +1292,7 @@ fn chatgpt_button(
 ) -> Div {
     light_button(
         label,
-        Some(brand_mark(Brand::ChatGpt, 22., t.setup.on_light, t)),
+        Some(brand_mark(Brand::ChatGpt, 22., t.setup.on_light, 0., t)),
         false,
         compact,
         t,
@@ -854,7 +1456,8 @@ fn welcome(
     compact: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Screen {
+) -> Div {
+    let motion = &ws.setup_motion;
     let steps = [
         (
             "Sign in with GitHub",
@@ -888,23 +1491,24 @@ fn welcome(
                     .child(detail),
             )
     });
-    let (hero, center) = if compact {
-        let size = Size::big(true);
-        (
-            div().mt(px(size.top)).child(tau_tile(size.tile + 8., t)),
-            size.center() + 4.,
-        )
+    let hero = if compact {
+        let size = Size::of(Scale::Big, true);
+        div().pt(px(size.top)).child(tau_tile(size.tile + 8., t))
     } else {
-        (orbit(t), TOP_BAR + 196.)
+        orbit(t)
     };
-    let body = div()
+    div()
         .child(hero)
         .child(
             headline(
-                "Coding agents on your repositories",
-                "tau runs agents on the repositories you choose, on your \
-                 ChatGPT plan. Every turn is a change you can go back to, \
-                 fork or compare.",
+                motion,
+                0,
+                (
+                    "Coding agents on your repositories",
+                    "tau runs agents on the repositories you choose, on your \
+                     ChatGPT plan. Every turn is a change you can go back to, \
+                     fork or compare.",
+                ),
                 Type::HERO_LARGE,
                 560.,
                 compact,
@@ -920,7 +1524,10 @@ fn welcome(
                 .flex_col()
                 .items_center()
                 .gap(sp(5.5))
-                .child(
+                .child(rise(
+                    motion,
+                    "cards",
+                    80,
                     div()
                         .flex()
                         .justify_center()
@@ -929,8 +1536,11 @@ fn welcome(
                             row.w_full().flex_col().gap(sp(2.5))
                         })
                         .children(cards),
-                )
-                .child(
+                ))
+                .child(rise(
+                    motion,
+                    "actions",
+                    120,
                     actions(compact)
                         .child(
                             div()
@@ -942,6 +1552,7 @@ fn welcome(
                                         Brand::GitHub,
                                         18.,
                                         t.setup.on_light,
+                                        0.,
                                         t,
                                     )),
                                     true,
@@ -953,21 +1564,21 @@ fn welcome(
                                 })),
                         )
                         .child(skip_or_back(ws, t, cx)),
-                )
-                .child(footnote(
-                    format!(
-                        "Takes about a minute · tokens stay in {}, readable \
-                         only by you",
-                        ws.setup.config
+                ))
+                .child(rise(
+                    motion,
+                    "note",
+                    160,
+                    footnote(
+                        format!(
+                            "Takes about a minute · tokens stay in {}, \
+                             readable only by you",
+                            ws.setup.config
+                        ),
+                        t,
                     ),
-                    t,
                 )),
-        );
-    Screen {
-        mood: Mood::Acting,
-        center,
-        body,
-    }
+        )
 }
 
 /// The welcome's picture: τ in the middle, and what it connects to
@@ -989,7 +1600,18 @@ fn orbit(t: &Theme) -> Div {
             .flex_col()
             .items_center()
             .gap(sp(2.5))
-            .child(service_tile(inner, SAT, t.border, t))
+            .child(
+                div()
+                    .size(px(SAT))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(SAT * 30. / 112.))
+                    .bg(t.setup.tile)
+                    .border_1()
+                    .border_color(t.border)
+                    .child(inner),
+            )
             .child(mono(label, Type::MICRO, t.dim))
     };
     div()
@@ -1005,12 +1627,12 @@ fn orbit(t: &Theme) -> Div {
                 .w(px(2. * R))
                 .h(px(1.))
                 .flex()
-                .child(div().flex_1().bg(linear_gradient(
+                .child(div().w(relative(0.5)).h_full().bg(linear_gradient(
                     90.,
                     linear_color_stop(faint, 0.),
                     linear_color_stop(strong, 1.),
                 )))
-                .child(div().flex_1().bg(linear_gradient(
+                .child(div().w(relative(0.5)).h_full().bg(linear_gradient(
                     90.,
                     linear_color_stop(strong, 0.),
                     linear_color_stop(faint, 1.),
@@ -1032,7 +1654,7 @@ fn orbit(t: &Theme) -> Div {
         .child(sat(
             cx - R,
             cy,
-            brand_mark(Brand::GitHub, 40., t.text, t),
+            brand_mark(Brand::GitHub, 40., t.text, 0., t),
             "01 · GitHub",
         ))
         .child(sat(
@@ -1044,7 +1666,7 @@ fn orbit(t: &Theme) -> Div {
         .child(sat(
             cx + R,
             cy,
-            brand_mark(Brand::ChatGpt, 40., t.text, t),
+            brand_mark(Brand::ChatGpt, 40., t.text, 0., t),
             "02 · your plan",
         ))
         .child(
@@ -1065,41 +1687,76 @@ fn code_or_status(github: &GitHub) -> Result<&DeviceCode, &'static str> {
     }
 }
 
-fn open_device_page(code: &DeviceCode, cx: &mut gpui::App) {
+fn open_device_page(code: &DeviceCode, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(code.code.clone()));
     cx.open_url(&format!("https://{}", code.url));
 }
 
-/// The code, a character to a cell. Clicking it copies it.
-fn code_cells(code: &str, compact: bool, t: &Theme) -> Div {
+/// The code, a character to a cell. The characters rise in turn as the
+/// code arrives, and flash once each time it is copied.
+fn code_cells(
+    code: &str,
+    motion: &SetupMotion,
+    compact: bool,
+    t: &Theme,
+) -> Div {
     let (w, h, style) = if compact {
         (30., 42., Type::HEADLINE.mono())
     } else {
         (50., 64., Type::CODE_CELL)
     };
+    let (surface, border, flash) = (t.setup.surface, t.border, t.accent);
+    let copies = motion.copies;
+    let reduce = motion.reduce;
     div()
         .flex()
         .items_center()
         .gap(sp(if compact { 1. } else { 2. }))
-        .children(code.chars().map(|ch| {
-            if ch == '-' {
+        .children(code.chars().enumerate().map(|(n, ch)| {
+            let cell = if ch == '-' {
                 div()
                     .w(px(if compact { 10. } else { 16. }))
                     .h(px(2.))
                     .bg(t.border_strong)
+                    .into_any_element()
             } else {
-                div()
+                let cell = div()
                     .w(px(w))
                     .h(px(h))
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded(radius::CARD)
-                    .bg(t.setup.surface)
+                    .bg(surface)
                     .border_1()
-                    .border_color(t.border)
-                    .child(mono(ch.to_string(), style, t.setup.light))
-            }
+                    .border_color(border)
+                    .child(mono(ch.to_string(), style, t.setup.light));
+                if copies > 0 {
+                    cell.with_animation(
+                        SharedString::from(format!("flash-{copies}-{n}")),
+                        after(stagger(0, 25, n), 600, curve::ease_in_out()),
+                        move |cell, e| {
+                            cell.bg(mix(flash.opacity(0.35), surface, e))
+                                .border_color(mix(flash, border, e))
+                        },
+                    )
+                    .into_any_element()
+                } else {
+                    cell.into_any_element()
+                }
+            };
+            div().child(cell).with_animation(
+                SharedString::from(format!("code-{code}-{n}")),
+                entrance(stagger(0, 40, n), reduce),
+                move |slot, e| {
+                    let slot = slot.opacity(e.clamp(0., 1.));
+                    if reduce {
+                        slot
+                    } else {
+                        slot.relative().top(px(12. * (1. - e)))
+                    }
+                },
+            )
         }))
 }
 
@@ -1114,26 +1771,28 @@ fn github(
     compact: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Screen {
-    let size = Size::big(compact);
+) -> Div {
+    let motion = &ws.setup_motion;
     let code = code_or_status(&ws.setup.github).ok().cloned();
-    let (link, below, mood) = match &ws.setup.github {
-        GitHub::SignedIn { .. } => (Link::Connected, "signed in", Mood::Done),
-        GitHub::Failed(_) => (Link::Blocked, "failed", Mood::Refused),
-        _ => (Link::Waiting, "waiting for approval", Mood::Acting),
+    let below = match &ws.setup.github {
+        GitHub::SignedIn { .. } => "signed in",
+        GitHub::Failed(_) => "failed",
+        _ => "waiting for approval",
     };
     let shown = match (&code, code_or_status(&ws.setup.github)) {
         (Some(code), _) => div()
             .id("copy-code")
             .cursor_pointer()
-            .child(code_cells(&code.code, compact, t))
+            .child(code_cells(&code.code, motion, compact, t))
             .on_click({
                 let code = code.code.clone();
-                move |_, _, cx| {
+                cx.listener(move |ws, _, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(
                         code.clone(),
-                    ))
-                }
+                    ));
+                    ws.setup_motion.copies += 1;
+                    cx.notify();
+                })
             })
             .into_any_element(),
         (None, Err(status)) => div()
@@ -1187,20 +1846,22 @@ fn github(
                     ws.navigate(Route::Setup(SetupStep::Token), cx)
                 })),
         );
-    let body = div()
+    div()
         .child(handshake(
-            link,
-            size,
+            ws,
             (Some("device sign-in"), Some(below)),
-            brand_mark(Brand::GitHub, size.tile * 0.57, t.text, t),
-            t.border,
+            compact,
             t,
         ))
         .child(
             headline(
-                "Enter this code on GitHub",
-                "Open GitHub, type the code, and approve the tau app. This \
-                 screen moves on by itself.",
+                motion,
+                0,
+                (
+                    "Enter this code on GitHub",
+                    "Open GitHub, type the code, and approve the tau app. \
+                     This screen moves on by itself.",
+                ),
                 Type::HERO_MEDIUM,
                 560.,
                 compact,
@@ -1217,7 +1878,10 @@ fn github(
                 .items_center()
                 .gap(sp(6.))
                 .child(shown)
-                .child(
+                .child(rise(
+                    motion,
+                    "actions",
+                    80,
                     actions(compact)
                         .child(
                             div()
@@ -1230,11 +1894,13 @@ fn github(
                                     compact,
                                     t,
                                 ))
-                                .on_click(move |_, _, cx| {
+                                .on_click(cx.listener(move |ws, _, _, cx| {
                                     if let Some(code) = &open {
-                                        open_device_page(code, cx)
+                                        open_device_page(code, cx);
+                                        ws.setup_motion.copies += 1;
+                                        cx.notify();
                                     }
-                                }),
+                                })),
                         )
                         .child(
                             div()
@@ -1250,28 +1916,28 @@ fn github(
                                     cx.emit(WorkspaceEvent::GitHubCheck)
                                 })),
                         ),
-                )
+                ))
                 .children(status)
-                .child(permissions)
+                .child(rise(motion, "permissions", 120, permissions))
                 .children(code.as_ref().map(|code| {
-                    mono(
-                        format!(
-                            "{} · code expires in {} · only on the \
-                             repositories you pick next",
-                            code.url, code.expires
-                        ),
-                        Type::CAPTION,
-                        t.setup.faint,
+                    rise(
+                        motion,
+                        "where",
+                        160,
+                        mono(
+                            format!(
+                                "{} · code expires in {} · only on the \
+                                 repositories you pick next",
+                                code.url, code.expires
+                            ),
+                            Type::CAPTION,
+                            t.setup.faint,
+                        )
+                        .text_center(),
                     )
-                    .text_center()
                 }))
                 .child(skip_or_back(ws, t, cx)),
-        );
-    Screen {
-        mood,
-        center: size.center(),
-        body,
-    }
+        )
 }
 
 fn token(
@@ -1279,18 +1945,13 @@ fn token(
     compact: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Screen {
-    let size = Size::big(compact);
+) -> Div {
+    let motion = &ws.setup_motion;
     let look = &t.setup;
     let checking = ws.setup.github == GitHub::Checking;
     let failed = match &ws.setup.github {
         GitHub::Failed(error) => Some(error.clone()),
         _ => None,
-    };
-    let link = match (&failed, checking) {
-        (Some(_), _) => Link::Blocked,
-        (None, true) => Link::Waiting,
-        _ => Link::Idle,
     };
     let rows = PERMISSIONS.iter().enumerate().map(|(n, (name, _, level))| {
         div()
@@ -1342,20 +2003,23 @@ fn token(
                 div().typeset(Type::SMALL).text_color(t.red).child(error),
             )
         });
-    let body = div()
+    div()
         .child(handshake(
-            link,
-            size,
+            ws,
             (Some("personal access token"), None),
-            icon(Icon::Key, IconSize(size.tile * 0.41), t.text_soft),
-            t.border,
+            compact,
             t,
         ))
         .child(
             headline(
-                "Use a personal access token",
-                "A fine-grained token works in place of the GitHub App. Give \
-                 it these repository permissions, then paste it here.",
+                motion,
+                0,
+                (
+                    "Use a personal access token",
+                    "A fine-grained token works in place of the GitHub App. \
+                     Give it these repository permissions, then paste it \
+                     here.",
+                ),
                 Type::HERO_MEDIUM,
                 560.,
                 compact,
@@ -1371,8 +2035,11 @@ fn token(
                 .flex_col()
                 .items_center()
                 .gap(sp(5.))
-                .child(form)
-                .child(
+                .child(rise(motion, "form", 80, form))
+                .child(rise(
+                    motion,
+                    "actions",
+                    120,
                     actions(compact)
                         .child(
                             div()
@@ -1404,17 +2071,8 @@ fn token(
                                     )
                                 })),
                         ),
-                ),
-        );
-    Screen {
-        mood: if link == Link::Blocked {
-            Mood::Refused
-        } else {
-            Mood::Acting
-        },
-        center: size.center(),
-        body,
-    }
+                )),
+        )
 }
 
 /// The model step, in whichever state the ChatGPT sign-in is.
@@ -1423,72 +2081,64 @@ fn model(
     compact: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Screen {
-    let size = Size::big(compact);
-    let (link, words, edge, mood, title, sub, below) = match &ws.setup.model {
+) -> Div {
+    let motion = &ws.setup_motion;
+    // Once connected, the words wait for the line to draw.
+    let (words, words_at, title, sub, below) = match &ws.setup.model {
         ModelAccess::None | ModelAccess::Failed(_) => (
-            Link::Idle,
             (Some("plan usage"), Some("not connected")),
-            t.border,
-            Mood::Acting,
+            0,
             "Connect tau to ChatGPT",
             "Runs use your ChatGPT plan through OpenAI's Responses API. One \
              sign-in in the browser; nothing to paste, no key to keep.",
             model_start(ws, compact, t, cx),
         ),
         ModelAccess::SigningIn { url } => (
-            Link::Waiting,
             (Some("plan usage"), Some("waiting for the browser")),
-            t.accent_border,
-            Mood::Acting,
+            0,
             "Finish in your browser",
             "A ChatGPT page just opened. Allow plan use there and this screen \
              moves on by itself.",
             model_waiting(ws, url.clone(), compact, t, cx),
         ),
         ModelAccess::Connected { .. } => (
-            Link::Connected,
             (None, Some("connected")),
-            t.setup.green_edge,
-            Mood::Done,
+            350,
             "You're using your ChatGPT plan",
             "Eligible usage in tau now counts toward your plan. Pick the model \
              runs start with; you can change it per run.",
             model_signed_in(ws, compact, t, cx),
         ),
         ModelAccess::PlanDisabled { account } => (
-            Link::Declined,
             (None, Some("plan use off")),
-            t.accent_border,
-            Mood::Acting,
+            0,
             "Allow tau to use your plan",
             "You're signed in, but plan use wasn't allowed. tau runs only on \
              your ChatGPT plan, so it can't start a run without it.",
-            model_declined(account, compact, t, cx),
+            model_declined(motion, account, compact, t, cx),
         ),
         ModelAccess::NotEligible { account, detail } => (
-            Link::Blocked,
             (None, Some("not eligible")),
-            t.red_border,
-            Mood::Refused,
+            0,
             "This account can't share its plan",
             "OpenAI says ChatGPT plan use isn't available for this account or \
              workspace. Usually because:",
-            model_not_eligible(account, detail, compact, t, cx),
+            model_not_eligible(motion, account, detail, compact, t, cx),
         ),
     };
-    let body = div()
-        .child(handshake(
-            link,
-            size,
-            words,
-            brand_mark(Brand::ChatGpt, size.tile * 0.57, t.text, t),
-            edge,
-            t,
-        ))
+    div()
+        .child(handshake(ws, words, compact, t))
         .child(
-            headline(title, sub, Type::HERO, 560., compact, t)
-                .mt(sp(if compact { 8. } else { 18. })),
+            headline(
+                motion,
+                words_at,
+                (title, sub),
+                Type::HERO,
+                560.,
+                compact,
+                t,
+            )
+            .mt(sp(if compact { 8. } else { 18. })),
         )
         .child(
             below
@@ -1506,12 +2156,7 @@ fn model(
                     .child(text_button("Back", t))
                     .on_click(cx.listener(|ws, _, _, cx| ws.leave_setup(cx))),
             )
-        });
-    Screen {
-        mood,
-        center: size.center(),
-        body,
-    }
+        })
 }
 
 fn model_start(
@@ -1520,6 +2165,7 @@ fn model_start(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
+    let motion = &ws.setup_motion;
     let steps = [
         "Sign in to ChatGPT",
         "Pick a workspace",
@@ -1566,7 +2212,10 @@ fn model_start(
                     .child(error),
             )
         })
-        .child(
+        .child(rise(
+            motion,
+            "sign-in",
+            80,
             div()
                 .id("chatgpt-sign-in")
                 .when(compact, |button| button.w_full())
@@ -1577,11 +2226,17 @@ fn model_start(
                 .on_click(cx.listener(|ws, _, _, cx| {
                     ws.sign_in_chatgpt(None, false, cx)
                 })),
-        )
-        .child(timeline)
-        .child(footnote(
-            "Needs ChatGPT Plus or Pro · tau can't read your conversations",
-            t,
+        ))
+        .child(rise(motion, "timeline", 120, timeline))
+        .child(rise(
+            motion,
+            "note",
+            160,
+            footnote(
+                "Needs ChatGPT Plus or Pro · tau can't read your \
+                 conversations",
+                t,
+            ),
         ))
 }
 
@@ -1592,6 +2247,7 @@ fn model_waiting(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
+    let motion = &ws.setup_motion;
     let look = &t.setup;
     let again = match url {
         Some(url) => div()
@@ -1617,12 +2273,10 @@ fn model_waiting(
         .gap(sp(2.5))
         .px(sp(4.5))
         .py(sp(4.))
-        .child(
-            div()
-                .typeset(Type::SMALL)
-                .text_color(t.muted)
-                .child("Signing in on another device? Paste the address the browser ended on."),
-        )
+        .child(div().typeset(Type::SMALL).text_color(t.muted).child(
+            "Signing in on another device? Paste the address the browser \
+             ended on.",
+        ))
         .child(
             div()
                 .flex()
@@ -1665,7 +2319,10 @@ fn model_waiting(
         );
     div()
         .gap(sp(5.))
-        .child(
+        .child(rise(
+            motion,
+            "actions",
+            80,
             actions(compact).child(again).child(
                 div()
                     .id("chatgpt-cancel")
@@ -1674,9 +2331,12 @@ fn model_waiting(
                         ws.cancel_chatgpt_sign_in(cx)
                     })),
             ),
-        )
-        .child(paste)
-        .child(
+        ))
+        .child(rise(motion, "paste", 120, paste))
+        .child(rise(
+            motion,
+            "note",
+            160,
             mono(
                 "listening on this machine · nothing is saved until the \
                  browser comes back",
@@ -1684,7 +2344,7 @@ fn model_waiting(
                 look.faint,
             )
             .text_center(),
-        )
+        ))
 }
 
 fn model_signed_in(
@@ -1693,40 +2353,62 @@ fn model_signed_in(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
+    let motion = &ws.setup_motion;
     let look = &t.setup;
     let models = &ws.catalog().models;
     let current = models.settings.default_for("coder").model;
     let shown = models.shown("");
-    let pills: Vec<_> =
-        shown
-            .iter()
-            .map(|option| {
-                let picked = option.id == current;
-                let id = option.id.clone();
-                div()
-                    .id(SharedString::from(format!("setup-model-{id}")))
-                    .px(sp(3.))
-                    .py(sp(1.75))
-                    .rounded(radius::FULL)
-                    .border_1()
-                    .border_color(if picked { t.accent } else { t.border })
-                    .bg(if picked {
-                        t.accent.opacity(0.08)
-                    } else {
-                        look.surface
-                    })
-                    .cursor_pointer()
-                    .hover(|style| style.border_color(t.accent_border))
-                    .child(mono(
-                        option.id.clone(),
-                        Type::CODE,
-                        if picked { t.accent } else { look.soft },
-                    ))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.pick_setup_model(&id, cx)
-                    }))
-            })
-            .collect();
+    let pills: Vec<_> = shown
+        .iter()
+        .enumerate()
+        .map(|(n, option)| {
+            let picked = option.id == current;
+            let id = option.id.clone();
+            let pill = div()
+                .id(SharedString::from(format!("setup-model-{id}")))
+                .relative()
+                .px(sp(3.))
+                .py(sp(1.75))
+                .rounded(radius::FULL)
+                .border_1()
+                .border_color(if picked { t.accent } else { t.border })
+                .bg(if picked {
+                    t.accent.opacity(0.08)
+                } else {
+                    look.surface
+                })
+                .cursor_pointer()
+                .hover(|style| style.border_color(t.accent_border).top(px(-1.)))
+                .child(mono(
+                    option.id.clone(),
+                    Type::CODE,
+                    if picked { t.accent } else { look.soft },
+                ))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.pick_setup_model(&id, cx)
+                }));
+            // Rising one after another, 60 ms apart.
+            let reduce = motion.reduce;
+            div()
+                .child(pill)
+                .with_animation(
+                    SharedString::from(format!(
+                        "pill-{}-{n}",
+                        motion.scene.epoch
+                    )),
+                    entrance(stagger(550, 60, n), reduce),
+                    move |slot, e| {
+                        let slot = slot.opacity(e.clamp(0., 1.));
+                        if reduce {
+                            slot
+                        } else {
+                            slot.relative().top(px(12. * (1. - e)))
+                        }
+                    },
+                )
+                .into_any_element()
+        })
+        .collect();
     let listing = if !pills.is_empty() {
         div()
             .flex()
@@ -1759,10 +2441,18 @@ fn model_signed_in(
     div()
         .gap(sp(6.5))
         .children(models.access.active_account().map(|account| {
-            account_chip(&account.label, "plan use allowed", t.green, t)
+            rise(
+                motion,
+                "account",
+                450,
+                account_chip(&account.label, "plan use allowed", t.green, t),
+            )
         }))
         .child(listing)
-        .child(
+        .child(rise(
+            motion,
+            "actions",
+            900,
             actions(compact)
                 .gap(sp(4.5))
                 .child(
@@ -1782,10 +2472,11 @@ fn model_signed_in(
                             cx.listener(|ws, _, _, cx| ws.manage_usage(cx)),
                         ),
                 ),
-        )
+        ))
 }
 
 fn model_declined(
+    motion: &SetupMotion,
     account: &str,
     compact: bool,
     t: &Theme,
@@ -1793,8 +2484,16 @@ fn model_declined(
 ) -> Div {
     div()
         .gap(sp(6.5))
-        .child(account_chip(account, "plan use off", t.accent, t))
-        .child(
+        .child(rise(
+            motion,
+            "account",
+            80,
+            account_chip(account, "plan use off", t.accent, t),
+        ))
+        .child(rise(
+            motion,
+            "actions",
+            120,
             actions(compact)
                 .child(
                     div()
@@ -1821,15 +2520,21 @@ fn model_declined(
                             ws.sign_in_chatgpt(None, false, cx)
                         })),
                 ),
-        )
-        .child(footnote(
-            "Opens the same ChatGPT page, asking only for plan use · take it \
-             back any time in ChatGPT settings",
-            t,
+        ))
+        .child(rise(
+            motion,
+            "note",
+            160,
+            footnote(
+                "Opens the same ChatGPT page, asking only for plan use · take \
+                 it back any time in ChatGPT settings",
+                t,
+            ),
         ))
 }
 
 fn model_not_eligible(
+    motion: &SetupMotion,
     account: &str,
     detail: &str,
     compact: bool,
@@ -1845,9 +2550,17 @@ fn model_not_eligible(
     div()
         .gap(sp(6.))
         .when(!account.is_empty(), |col| {
-            col.child(account_chip(account, "not eligible", t.red, t))
+            col.child(rise(
+                motion,
+                "account",
+                80,
+                account_chip(account, "not eligible", t.red, t),
+            ))
         })
-        .child(
+        .child(rise(
+            motion,
+            "reasons",
+            120,
             div()
                 .flex()
                 .flex_wrap()
@@ -1866,8 +2579,11 @@ fn model_not_eligible(
                         .text_color(look.soft)
                         .child(reason)
                 })),
-        )
-        .child(
+        ))
+        .child(rise(
+            motion,
+            "actions",
+            160,
             actions(compact)
                 .gap(sp(3.5))
                 .child(
@@ -1890,10 +2606,53 @@ fn model_not_eligible(
                         .child(external_link("Learn more", t))
                         .on_click(|_, _, cx| cx.open_url(PLAN_HELP_URL)),
                 ),
-        )
-        .child(
+        ))
+        .child(rise(
+            motion,
+            "refusal",
+            200,
             mono(detail.to_owned(), Type::CAPTION, look.refusal).text_center(),
-        )
+        ))
+}
+
+/// A checkbox: 18 px, a little smaller while empty, filling with a small
+/// bounce.
+fn tick_box(name: &str, checked: bool, reduce: bool, t: &Theme) -> AnyElement {
+    const SIDE: f32 = 18.;
+    let (accent, empty, ink) = (t.accent, t.border_strong, t.setup.on_light);
+    let build = move |scale: f32| {
+        let tile = div()
+            .size(px(SIDE * scale))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(radius::TAG);
+        if checked {
+            tile.bg(accent)
+                .child(icon(Icon::Check, IconSize::SMALL, ink))
+        } else {
+            tile.border(px(1.5)).border_color(empty)
+        }
+    };
+    let slot = div()
+        .size(px(SIDE))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center();
+    if !checked {
+        return slot.child(build(0.92)).into_any_element();
+    }
+    if reduce {
+        return slot.child(build(1.)).into_any_element();
+    }
+    slot.with_animation(
+        SharedString::from(format!("tick-{name}")),
+        after(0, 180, curve::bounce()),
+        move |slot, e| slot.child(build(lerp(0.92, 1., e))),
+    )
+    .into_any_element()
 }
 
 fn repos(
@@ -1901,8 +2660,8 @@ fn repos(
     compact: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Screen {
-    let size = Size::small(compact);
+) -> Div {
+    let motion = &ws.setup_motion;
     let look = &t.setup;
     let filter = ws.repo_filter.read(cx).text().to_owned();
     let rows: Vec<_> = ws
@@ -1911,8 +2670,9 @@ fn repos(
         .enumerate()
         .map(|(n, repo)| {
             let name = repo.name.clone();
-            div()
+            let row = div()
                 .id(("repo", n))
+                .w_full()
                 .flex()
                 .items_center()
                 .gap(sp(3.5))
@@ -1922,7 +2682,7 @@ fn repos(
                 .cursor_pointer()
                 .when(repo.selected, |row| row.bg(t.accent.opacity(0.05)))
                 .hover(|style| style.bg(t.accent.opacity(0.03)))
-                .child(checkbox(repo.selected, compact, t))
+                .child(tick_box(&repo.name, repo.selected, motion.reduce, t))
                 .child(
                     div()
                         .flex_1()
@@ -1943,7 +2703,14 @@ fn repos(
                 .child(mono(repo.branch.clone(), Type::CAPTION, look.faint))
                 .on_click(
                     cx.listener(move |ws, _, _, cx| ws.toggle_repo(&name, cx)),
-                )
+                );
+            // The rows slide in one after another.
+            rise(
+                motion,
+                &format!("row-{}", repo.name),
+                460 + 50 * n.min(10) as u64,
+                row,
+            )
         })
         .collect();
     let count = ws.setup.selected().count();
@@ -1976,20 +2743,17 @@ fn repos(
                 )),
         )
         .children(rows);
-    let body = div()
-        .child(handshake(
-            Link::Connected,
-            size,
-            (None, None),
-            icon(Icon::Repo, IconSize(size.tile * 0.42), t.text_soft),
-            t.border,
-            t,
-        ))
+    div()
+        .child(handshake(ws, (None, None), compact, t))
         .child(
             headline(
-                "Pick repositories",
-                "tau clones each into its own storage, as a jj repository. \
-                 Runs work there, never in your checkouts.",
+                motion,
+                300,
+                (
+                    "Pick repositories",
+                    "tau clones each into its own storage, as a jj \
+                     repository. Runs work there, never in your checkouts.",
+                ),
                 Type::HERO_SMALL,
                 620.,
                 compact,
@@ -2005,8 +2769,11 @@ fn repos(
                 .flex_col()
                 .items_center()
                 .gap(sp(5.))
-                .child(panel)
-                .child(
+                .child(rise(motion, "panel", 400, panel))
+                .child(rise(
+                    motion,
+                    "actions",
+                    800,
                     actions(compact)
                         .gap(sp(4.))
                         .child(
@@ -2051,21 +2818,86 @@ fn repos(
                                     cx.open_url(&crate::github::install_url())
                                 }),
                         ),
-                )
+                ))
                 .child(footnote(
                     format!(
-                        "Cloned into {} · every turn of a run is a commit you \
-                         can go back to, fork from, or compare",
+                        "Cloned into {} · every turn of a run is a commit \
+                         you can go back to, fork from, or compare",
                         ws.setup.storage
                     ),
                     t,
                 )),
-        );
-    Screen {
-        mood: Mood::Acting,
-        center: size.center(),
-        body,
+        )
+}
+
+/// A clone's progress bar: it follows the clone's real progress, easing
+/// to each new share, with a sheen running along it while it clones.
+fn clone_bar(
+    name: &str,
+    motion: &SetupMotion,
+    color: Hsla,
+    cloning: bool,
+    t: &Theme,
+) -> AnyElement {
+    let track = t.setup.divider;
+    let Some(tracked) = motion.clones.get(name) else {
+        return bar(1., 4., color, track).into_any_element();
+    };
+    let (from, to) = (
+        tracked.previous.0 as f32 / 1000.,
+        tracked.current.0 as f32 / 1000.,
+    );
+    let sheen = cloning && motion.loops();
+    let light = t.setup.light;
+    let build = move |share: f32| {
+        div()
+            .relative()
+            .h(px(4.))
+            .w_full()
+            .rounded(radius::FULL)
+            .bg(track)
+            .child(
+                div()
+                    .relative()
+                    .h_full()
+                    .w(relative(share.clamp(0., 1.)))
+                    .rounded(radius::FULL)
+                    .overflow_hidden()
+                    .bg(color)
+                    .when(sheen, |fill| {
+                        fill.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .h_full()
+                                .w(relative(0.3))
+                                .bg(linear_gradient(
+                                    90.,
+                                    linear_color_stop(light.opacity(0.), 0.),
+                                    linear_color_stop(light.opacity(0.45), 1.),
+                                ))
+                                .with_animation(
+                                    "sheen",
+                                    loop_of(1600, 0.),
+                                    |sheen, p| {
+                                        sheen.left(relative(p * 1.3 - 0.3))
+                                    },
+                                ),
+                        )
+                    }),
+            )
+    };
+    if from == to || motion.reduce {
+        return build(to).into_any_element();
     }
+    div()
+        .w_full()
+        .with_animation(
+            SharedString::from(format!("bar-{name}-{}", tracked.epoch)),
+            after(0, 400, curve::settle()),
+            move |slot, e| slot.child(build(lerp(from, to, e))),
+        )
+        .into_any_element()
 }
 
 fn ready(
@@ -2073,24 +2905,24 @@ fn ready(
     compact: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Screen {
-    let size = Size::small(compact);
+) -> Div {
+    let motion = &ws.setup_motion;
     let look = &t.setup;
     let clones = ws.setup.clones.iter().map(|clone| {
-        let (state, share, color) = match &clone.state {
+        let (state, color, cloning) = match &clone.state {
             CloneState::Cloning { share, detail } => (
                 if detail.is_empty() {
                     format!("cloning · {:.0}%", share * 100.)
                 } else {
                     format!("cloning · {detail}")
                 },
-                *share,
                 t.accent,
+                true,
             ),
-            CloneState::Ready => ("ready".to_owned(), 1.0, t.green),
-            CloneState::Failed(error) => (error.clone(), 1.0, t.red),
+            CloneState::Ready => ("ready".to_owned(), t.green, false),
+            CloneState::Failed(error) => (error.clone(), t.red, false),
         };
-        glass(t)
+        let card = glass(t)
             .when(compact, |card| card.w_full())
             .when(!compact, |card| card.w(px(300.)))
             .gap(sp(2.5))
@@ -2108,7 +2940,33 @@ fn ready(
                     )
                     .child(mono(state, Type::CAPTION, color).flex_shrink_0()),
             )
-            .child(bar(share, 4., color, look.divider))
+            .child(clone_bar(&clone.name, motion, color, cloning, t));
+        // Done: the card flashes green, once.
+        let finished = motion.clones.get(&clone.name).filter(|tracked| {
+            tracked.current.1 && !tracked.previous.1 && !motion.reduce
+        });
+        match finished {
+            Some(tracked) => {
+                let (green, glass, edge) =
+                    (t.green, look.glass, look.surface_border);
+                card.with_animation(
+                    SharedString::from(format!(
+                        "done-{}-{}",
+                        clone.name, tracked.epoch
+                    )),
+                    after(0, 900, curve::ease_in_out()),
+                    move |card, e| {
+                        card.border_color(mix(green, edge, e)).bg(mix(
+                            green.opacity(0.14),
+                            glass,
+                            e,
+                        ))
+                    },
+                )
+                .into_any_element()
+            }
+            None => card.into_any_element(),
+        }
     });
     let repo = ws
         .setup
@@ -2128,6 +2986,24 @@ fn ready(
         .model_label()
         .map(|label| label.split(" · ").next().unwrap_or(label).to_owned());
     let on_plan = model.is_some();
+    // The ring grows while the field has the keyboard.
+    let ring = |focused: bool| if focused { 7. } else { 4. };
+    let composing = &motion.composing;
+    let (ring_from, ring_to) =
+        (ring(composing.previous), ring(composing.current));
+    let (amber, shade) = (t.accent, gpui::black());
+    let halo = move |spread: f32| {
+        vec![
+            BoxShadow::new(
+                px(0.),
+                px(0.),
+                amber.opacity(0.012 * spread + 0.03),
+            )
+            .spread_radius(px(spread)),
+            BoxShadow::new(px(0.), px(30.), shade.opacity(0.5))
+                .blur_radius(px(80.)),
+        ]
+    };
     let composer = div()
         .w_full()
         .max_w(px(720.))
@@ -2137,12 +3013,7 @@ fn ready(
         .bg(look.surface)
         .border_1()
         .border_color(t.border_strong)
-        .shadow(vec![
-            BoxShadow::new(px(0.), px(0.), t.accent.opacity(0.08))
-                .spread_radius(px(5.)),
-            BoxShadow::new(px(0.), px(30.), gpui::black().opacity(0.5))
-                .blur_radius(px(80.)),
-        ])
+        .shadow(halo(ring_to))
         .child(
             div()
                 .h(px(if compact { 88. } else { 108. }))
@@ -2200,20 +3071,31 @@ fn ready(
                         })),
                 ),
         );
-    let body = div()
-        .child(handshake(
-            Link::Connected,
-            size,
-            (None, None),
-            icon(Icon::Runs, IconSize(size.tile * 0.42), t.text_soft),
-            t.border,
-            t,
-        ))
+    let composer = if composing.changed() && !motion.reduce {
+        composer
+            .with_animation(
+                SharedString::from(format!("focus-{}", composing.epoch)),
+                after(0, 250, curve::settle()),
+                move |composer, e| {
+                    composer.shadow(halo(lerp(ring_from, ring_to, e)))
+                },
+            )
+            .into_any_element()
+    } else {
+        composer.into_any_element()
+    };
+    div()
+        .child(handshake(ws, (None, None), compact, t))
         .child(
             headline(
-                "Start your first run",
-                "Describe a task. tau works on a new change in the repository; \
-                 open a pull request when you like the result.",
+                motion,
+                300,
+                (
+                    "Start your first run",
+                    "Describe a task. tau works on a new change in the \
+                     repository; open a pull request when you like the \
+                     result.",
+                ),
                 Type::HERO_SMALL,
                 620.,
                 compact,
@@ -2230,7 +3112,10 @@ fn ready(
                 .items_center()
                 .gap(sp(5.5))
                 .when(!ws.setup.clones.is_empty(), |col| {
-                    col.child(
+                    col.child(rise(
+                        motion,
+                        "clones",
+                        380,
                         div()
                             .flex()
                             .flex_wrap()
@@ -2240,18 +3125,18 @@ fn ready(
                                 row.w_full().flex_col().gap(sp(2.5))
                             })
                             .children(clones),
-                    )
+                    ))
                 })
-                .child(composer)
-                .child(footnote(
-                    "⏎ to start · every turn is a commit you can go back to, \
-                     fork from, or compare",
-                    t,
+                .child(rise(motion, "composer", 440, composer))
+                .child(rise(
+                    motion,
+                    "note",
+                    500,
+                    footnote(
+                        "⏎ to start · every turn is a commit you can go back \
+                         to, fork from, or compare",
+                        t,
+                    ),
                 )),
-        );
-    Screen {
-        mood: Mood::Acting,
-        center: size.center(),
-        body,
-    }
+        )
 }

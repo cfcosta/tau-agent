@@ -495,6 +495,10 @@ pub struct Workspace {
     /// Why an onboarding step was opened from the app, if it was: once
     /// that is done, go back rather than on through onboarding.
     pub(crate) setup_goal: Option<SetupGoal>,
+    /// What onboarding showed last frame, for its transitions.
+    pub(crate) setup_motion: crate::motion::SetupMotion,
+    /// The user asked for less motion: no loops, and plain fades.
+    reduce_motion: bool,
     pub(crate) repo_path: Entity<TextInput>,
     /// The new rule's text and where it applies, on the Constitution
     /// screen.
@@ -664,6 +668,9 @@ impl Workspace {
             cx.observe(&memory_search, |_, _, cx| cx.notify()),
             cx.observe(&model_search, |_, _, cx| cx.notify()),
             cx.observe(&repo_filter, |_, _, cx| cx.notify()),
+            // Onboarding's loops pause while the window is in the
+            // background.
+            cx.observe_window_activation(window, |_, _, cx| cx.notify()),
             cx.observe(&sidebar_filter, |_, _, cx| cx.notify()),
             cx.subscribe(&repo_path, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(path) = event;
@@ -775,6 +782,8 @@ impl Workspace {
             sidebar_filter,
             adding_repo: false,
             setup_goal: None,
+            setup_motion: Default::default(),
+            reduce_motion: false,
             repo_path,
             rule_text,
             rule_on,
@@ -2252,6 +2261,22 @@ impl Workspace {
             .update(cx, |input, cx| input.set_text(address.to_owned(), cx));
         self.pair_code
             .update(cx, |input, cx| input.set_text(code.to_owned(), cx));
+    }
+
+    /// Asks for less motion: onboarding's loops, ripples and comets
+    /// stop, and its transitions become plain fades.
+    pub fn set_reduce_motion(&mut self, reduce: bool, cx: &mut Context<Self>) {
+        self.reduce_motion = reduce;
+        cx.notify();
+    }
+
+    pub fn reduce_motion(&self) -> bool {
+        self.reduce_motion
+    }
+
+    /// What onboarding showed when last drawn, and what changed.
+    pub fn setup_motion(&self) -> &crate::motion::SetupMotion {
+        &self.setup_motion
     }
 
     /// Leaves the model step once signed in: on to the repositories, or
@@ -3810,6 +3835,9 @@ impl Render for Workspace {
     ) -> impl IntoElement {
         self.sync_transcript();
         self.release_focus(window, cx);
+        if let Route::Setup(step) = self.route {
+            screens::setup::observe(self, step, window, cx);
+        }
         let t = theme(cx).clone();
         let width = match self.frame {
             Some((width, _)) => px(width),
