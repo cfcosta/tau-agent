@@ -97,55 +97,19 @@ pub struct Settings {
     pub prompt_cache_key: Option<String>,
 }
 
-/// A lane's `stream_id`: 1–256 characters from `[A-Za-z0-9_.-]`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct StreamId(String);
-
-/// A string that is not a valid [`StreamId`].
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("invalid stream_id {0:?}: need 1-256 characters from [A-Za-z0-9_.-]")]
-pub struct InvalidStreamId(pub String);
-
-impl StreamId {
-    pub fn new(id: impl Into<String>) -> Result<Self, InvalidStreamId> {
-        let id = id.into();
-        let valid = (1..=256).contains(&id.len())
-            && id.bytes().all(|b| {
-                b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-')
-            });
-        if valid {
-            Ok(Self(id))
-        } else {
-            Err(InvalidStreamId(id))
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Builds the `response.create` body for `input`, on the lane
-/// `stream_id` or on the default lane.
-pub fn body(
-    settings: &Settings,
-    input: Vec<Value>,
-    stream_id: Option<&StreamId>,
-) -> Body {
+/// Builds the `response.create` body for `input`.
+pub fn body(settings: &Settings, input: Vec<Value>) -> Body {
     Body::new(
-        Arc::new(fields(settings, stream_id)),
+        Arc::new(fields(settings)),
         input.into_iter().map(Arc::new).collect(),
     )
 }
 
 /// Every field of the `response.create` body but `input`. It depends
 /// only on `settings`, so a session builds it once.
-pub fn fields(settings: &Settings, stream_id: Option<&StreamId>) -> Fields {
+pub fn fields(settings: &Settings) -> Fields {
     let mut body = Map::new();
     body.insert("type".into(), json!("response.create"));
-    if let Some(stream_id) = stream_id {
-        body.insert("stream_id".into(), json!(stream_id.as_str()));
-    }
     body.insert("model".into(), json!(settings.model));
     body.insert("store".into(), json!(false));
     if let Some(instructions) = &settings.instructions {

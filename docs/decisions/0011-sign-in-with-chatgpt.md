@@ -67,7 +67,8 @@ The probe (`cargo run -p tau-ai --example chatgpt_probe`) ran on
 - Refresh works and rotates; `earliest_refresh_at` comes as Unix
   seconds.
 - `stream_id` was not checked: the plan client uses one lane per
-  connection.
+  connection. Since [0012](0012-chatgpt-sign-in-only.md) that is the
+  only client, and tau sends no `stream_id` at all.
 
 ## Consequences
 
@@ -79,7 +80,8 @@ The probe (`cargo run -p tau-ai --example chatgpt_probe`) ran on
   the fields the route rejects (`max_output_tokens`, `temperature`,
   `prompt_cache_retention`, …); tau sends no `system` items.
 - Plan errors carry a `Refusal`; only "retry later" retries. tau-ui
-  says what to do instead, and never switches to the API key.
+  says what to do instead. There is no other way of paying to switch
+  to: [0012](0012-chatgpt-sign-in-only.md) removed API keys.
 - `/v1/models` lists the account's models; the static Codex list is
   gone.
 - Signing in needs a browser on the same machine (the callback is on

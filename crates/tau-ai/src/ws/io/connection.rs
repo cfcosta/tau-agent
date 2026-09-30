@@ -25,27 +25,17 @@ use crate::{
 };
 
 /// Opens the byte stream a WebSocket runs over, and says how to upgrade
-/// it. The default connects with TLS to OpenAI; tests connect on a
-/// simulated network.
+/// it. [`crate::chatgpt::ChatGptConnector`] connects with TLS to OpenAI;
+/// tests connect on a simulated network.
 pub trait Connector: Send + Sync + 'static {
     type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;
 
+    /// Opens the stream. It may fail with an `io::Error` that wraps a
+    /// [`ChatGptError`]; the connection reports it as a [`Refusal`].
     fn connect(&self) -> impl Future<Output = io::Result<Self::Stream>> + Send;
 
     /// The upgrade request: the URL and headers such as `Authorization`.
     fn request(&self) -> http::Request<()>;
-
-    /// Whether requests name their lane with `stream_id`, so several lanes
-    /// share a connection. An endpoint that may not take `stream_id` (the
-    /// ChatGPT plan route, unverified) returns `false`; its client must
-    /// then allow one lane per connection, and frames go to the lane their
-    /// connection carries.
-    ///
-    /// `connect` may fail with an `io::Error` that wraps a
-    /// [`ChatGptError`]; the connection reports it as a [`Refusal`].
-    fn tags_lanes(&self) -> bool {
-        true
-    }
 }
 
 /// What a connection task reports to the driver.
@@ -73,13 +63,10 @@ pub enum ConnectionEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outgoing {
     Json(Value),
-    /// A request on a lane. It is serialized by the connection task, so
-    /// a full resend costs the driver, which every lane shares, nothing.
-    Request {
-        body: Body,
-        /// `None` on an endpoint that does not take `stream_id`.
-        stream_id: Option<Value>,
-    },
+    /// A request on the connection's lane. It is serialized by the
+    /// connection task, so a full resend costs the driver, which every
+    /// lane shares, nothing.
+    Request(Body),
 }
 
 impl From<Value> for Outgoing {
@@ -92,14 +79,7 @@ impl Outgoing {
     fn into_text(self) -> String {
         match self {
             Self::Json(frame) => frame.to_string(),
-            Self::Request {
-                body,
-                stream_id: Some(stream_id),
-            } => body.to_frame(&[("stream_id", &stream_id)]),
-            Self::Request {
-                body,
-                stream_id: None,
-            } => body.to_frame(&[]),
+            Self::Request(body) => body.to_frame(),
         }
     }
 }

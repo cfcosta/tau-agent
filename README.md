@@ -8,13 +8,16 @@ run is stored in SQLite, so you can query transcripts and costs later.
 
 ```rust
 use tau_agent::agent::Agent;
-use tau_ai::client::OpenAi;
+use tau_ai::{chatgpt::{self, ChatGpt}, client::OpenAi};
 use tau_store::Store;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = Store::open("runs.db").await?;
-    let agent = Agent::new(OpenAi::from_env()?)
+    // A saved Sign in with ChatGPT, with plan usage enabled.
+    let chatgpt = ChatGpt::new(chatgpt::Store::open_default()?);
+    let account = chatgpt.active()?.ok_or("sign in with ChatGPT first")?;
+    let agent = Agent::new(OpenAi::chatgpt(chatgpt, account))
         .name("haiku")
         .instructions("Answer in a single haiku.");
 
@@ -29,7 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **A library.** There is no CLI, TUI or server. Your program owns the
   control flow.
 - **OpenAI only.** It talks to the Responses API over its WebSocket mode
-  (`wss://api.openai.com/v1/responses`), authenticated with an API key.
+  (`wss://api.openai.com/v1/responses`), paid by the user's ChatGPT plan
+  through Sign in with ChatGPT. There are no API keys.
   WebSocket is the only transport, so networks that block WebSocket
   upgrades will not work.
 - **Embedded storage.** Runs, messages, forks and costs go to a SQLite
@@ -94,9 +98,10 @@ database is needed at build time: the sqlx query metadata is committed.
 use std::time::Duration;
 use tau_agent::{agent::Agent, limits::Limits};
 use tau_compaction::Compaction;
-use tau_ai::{client::OpenAi, responses::request::ReasoningEffort};
+use tau_ai::responses::request::ReasoningEffort;
 
-let agent = Agent::new(OpenAi::from_env()?)
+// `llm` is an `OpenAi` client, made as in the first example.
+let agent = Agent::new(llm.clone())
     .name("reviewer")              // shown in events and cost reports
     .model("gpt-5.5")              // the default
     .instructions("Review the diff. Be specific.")
@@ -353,7 +358,7 @@ directory, and relative paths resolve against it.
 ```rust
 use tau_tools::{path::Root, plugin::{CodingTools, Tool}};
 
-let coder = Agent::new(OpenAi::from_env()?)
+let coder = Agent::new(llm.clone())
     .name("coder")
     .plugin(CodingTools::new(Root::new("/path/to/repo")));
 

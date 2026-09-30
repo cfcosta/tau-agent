@@ -16,7 +16,7 @@
 
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     rc::Rc,
     time::Duration,
 };
@@ -60,7 +60,6 @@ pub enum Reply {
 /// OpenAI's limits per connection (`docs/reference/openai-websocket.md`,
 /// "Limits and lanes"), which the fake enforces.
 pub const MAX_IN_FLIGHT: usize = 16;
-pub const MAX_STREAMS: usize = 32;
 pub const MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 /// One request the server received.
@@ -94,8 +93,6 @@ struct State {
     connections: u32,
     /// Limits the client broke, which OpenAI would have refused.
     violations: Vec<String>,
-    /// Requests refused for a new stream id past `MAX_STREAMS`.
-    stream_limit_errors: u64,
 }
 
 /// A fake OpenAI endpoint. Clones share state.
@@ -206,12 +203,6 @@ impl FakeOpenAi {
         self.state.borrow().violations.clone()
     }
 
-    /// Requests refused with `websocket_stream_limit_reached`, for a new
-    /// stream id on a connection that had seen [`MAX_STREAMS`] of them.
-    pub fn stream_limit_errors(&self) -> u64 {
-        self.state.borrow().stream_limit_errors
-    }
-
     /// Connections accepted so far.
     pub fn connections(&self) -> u32 {
         self.state.borrow().connections
@@ -225,8 +216,6 @@ impl FakeOpenAi {
         let accepted = Instant::now();
         // Responses held by this connection: id -> full item list.
         let mut held: HashMap<String, Vec<Value>> = HashMap::new();
-        // Named stream ids this connection has seen.
-        let mut streams: HashSet<Value> = HashSet::new();
         // Delayed replies, still in flight: when each is due.
         let mut pending: Vec<Pending> = Vec::new();
         loop {
@@ -239,7 +228,7 @@ impl FakeOpenAi {
                         pending.drain(..).partition(|p| p.due <= now);
                     pending = later;
                     for p in ready {
-                        if !answer(&mut socket, &mut held, &p.stream_id, p.reply, p.rebuilt).await {
+                        if !answer(&mut socket, &mut held, p.reply, p.rebuilt).await {
                             return;
                         }
                     }
@@ -258,35 +247,17 @@ impl FakeOpenAi {
             if body["type"] != "response.create" {
                 continue;
             }
-            let stream_id = body.get("stream_id").cloned();
             let input = body["input"].as_array().cloned().unwrap_or_default();
 
             if pending.len() >= MAX_IN_FLIGHT {
                 self.state.borrow_mut().violations.push(format!(
                     "connection {connection}: a request beyond {MAX_IN_FLIGHT} in flight"
                 ));
-                let frame =
-                    error_frame(&stream_id, "fake_in_flight_limit_exceeded");
+                let frame = error_frame("fake_in_flight_limit_exceeded");
                 if send(&mut socket, frame).await.is_err() {
                     return;
                 }
                 continue;
-            }
-            if let Some(id) = &stream_id
-                && !streams.contains(id)
-            {
-                if streams.len() >= MAX_STREAMS {
-                    self.state.borrow_mut().stream_limit_errors += 1;
-                    let frame = error_frame(
-                        &stream_id,
-                        "websocket_stream_limit_reached",
-                    );
-                    if send(&mut socket, frame).await.is_err() {
-                        return;
-                    }
-                    continue;
-                }
-                streams.insert(id.clone());
             }
 
             let mut reply = self.state.borrow_mut().replies.pop_front();
@@ -315,8 +286,7 @@ impl FakeOpenAi {
                     self.state.borrow_mut().replies.push_front(reply);
                 }
                 held.clear();
-                let frame =
-                    error_frame(&stream_id, "previous_response_not_found");
+                let frame = error_frame("previous_response_not_found");
                 if send(&mut socket, frame).await.is_err() {
                     return;
                 }
@@ -326,20 +296,11 @@ impl FakeOpenAi {
             match reply {
                 Some(Reply::Delay(delay, reply)) => pending.push(Pending {
                     due: Instant::now() + delay,
-                    stream_id,
                     reply: Some(*reply),
                     rebuilt,
                 }),
                 reply => {
-                    if !answer(
-                        &mut socket,
-                        &mut held,
-                        &stream_id,
-                        reply,
-                        rebuilt,
-                    )
-                    .await
-                    {
+                    if !answer(&mut socket, &mut held, reply, rebuilt).await {
                         return;
                     }
                 }
@@ -351,7 +312,6 @@ impl FakeOpenAi {
 /// A reply held back by [`Reply::Delay`].
 struct Pending {
     due: Instant,
-    stream_id: Option<Value>,
     reply: Option<Reply>,
     rebuilt: Vec<Value>,
 }
@@ -361,7 +321,6 @@ struct Pending {
 async fn answer(
     socket: &mut tokio_tungstenite::WebSocketStream<turmoil::net::TcpStream>,
     held: &mut HashMap<String, Vec<Value>>,
-    stream_id: &Option<Value>,
     reply: Option<Reply>,
     rebuilt: Vec<Value>,
 ) -> bool {
@@ -372,10 +331,7 @@ async fn answer(
             output_items,
         }) => {
             for frame in frames {
-                if send(socket, with_stream_id(frame, stream_id))
-                    .await
-                    .is_err()
-                {
+                if send(socket, frame).await.is_err() {
                     return false;
                 }
             }
@@ -386,14 +342,11 @@ async fn answer(
         }
         Some(Reply::Error { code }) => {
             held.clear();
-            send(socket, error_frame(stream_id, &code)).await.is_ok()
+            send(socket, error_frame(&code)).await.is_ok()
         }
         Some(Reply::DropAfter { frames, after }) => {
             for frame in frames.into_iter().take(after) {
-                if send(socket, with_stream_id(frame, stream_id))
-                    .await
-                    .is_err()
-                {
+                if send(socket, frame).await.is_err() {
                     return false;
                 }
             }
@@ -401,10 +354,7 @@ async fn answer(
         }
         Some(Reply::StallAfter { frames, after }) => {
             for frame in frames.into_iter().take(after) {
-                if send(socket, with_stream_id(frame, stream_id))
-                    .await
-                    .is_err()
-                {
+                if send(socket, frame).await.is_err() {
                     return false;
                 }
             }
@@ -413,13 +363,12 @@ async fn answer(
         }
         Some(Reply::Delay(_, reply)) => {
             // A delay inside a delay: the outer one already waited.
-            Box::pin(answer(socket, held, stream_id, Some(*reply), rebuilt))
-                .await
+            Box::pin(answer(socket, held, Some(*reply), rebuilt)).await
         }
         Some(Reply::Evict) | None => {
             // Out of script: fail loudly in the test's assertions rather
             // than hang.
-            send(socket, error_frame(stream_id, "fake_script_exhausted"))
+            send(socket, error_frame("fake_script_exhausted"))
                 .await
                 .is_ok()
         }
@@ -433,25 +382,15 @@ async fn send(
     socket.send(Message::text(frame.to_string())).await
 }
 
-fn with_stream_id(mut frame: Value, stream_id: &Option<Value>) -> Value {
-    if let (Some(id), Value::Object(map)) = (stream_id, &mut frame) {
-        map.insert("stream_id".into(), id.clone());
-    }
-    frame
-}
-
 /// An error as the server sends it: the details nested in `error`.
-fn error_frame(stream_id: &Option<Value>, code: &str) -> Value {
-    with_stream_id(
-        json!({
-            "type": "error",
-            "status": 400,
-            "error": {
-                "type": "invalid_request_error",
-                "code": code,
-                "message": format!("fake error: {code}"),
-            },
-        }),
-        stream_id,
-    )
+fn error_frame(code: &str) -> Value {
+    json!({
+        "type": "error",
+        "status": 400,
+        "error": {
+            "type": "invalid_request_error",
+            "code": code,
+            "message": format!("fake error: {code}"),
+        },
+    })
 }

@@ -33,12 +33,6 @@ pub const PREVIOUS_RESPONSE_NOT_FOUND: &str = "previous_response_not_found";
 /// The server error that means the connection reached its maximum age.
 pub const CONNECTION_LIMIT_REACHED: &str = "websocket_connection_limit_reached";
 
-/// The server error that means the connection has as many named streams
-/// as it takes. Handled like [`CONNECTION_LIMIT_REACHED`]: whether the
-/// server counts streams in use or every stream id it has seen, another
-/// connection has room.
-pub const STREAM_LIMIT_REACHED: &str = "websocket_stream_limit_reached";
-
 /// Something that happened to the lane's current request or connection.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
@@ -93,7 +87,6 @@ pub enum LaneError {
 pub enum Recovery {
     PreviousResponseNotFound,
     ConnectionLimitReached,
-    StreamLimitReached,
     ConnectionLost,
 }
 
@@ -106,7 +99,6 @@ pub struct LaneStats {
     pub last_delta_items: u64,
     pub previous_response_not_found: u64,
     pub connection_limit_reached: u64,
-    pub stream_limit_reached: u64,
     pub connection_lost: u64,
 }
 
@@ -119,7 +111,6 @@ impl LaneStats {
             Recovery::ConnectionLimitReached => {
                 self.connection_limit_reached += 1
             }
-            Recovery::StreamLimitReached => self.stream_limit_reached += 1,
             Recovery::ConnectionLost => self.connection_lost += 1,
         }
     }
@@ -211,12 +202,6 @@ impl Lane {
                         if !request.output_started && !request.recovered =>
                     {
                         self.stats.count(Recovery::ConnectionLimitReached);
-                        Some(self.start_reconnect())
-                    }
-                    Some(STREAM_LIMIT_REACHED)
-                        if !request.output_started && !request.recovered =>
-                    {
-                        self.stats.count(Recovery::StreamLimitReached);
                         Some(self.start_reconnect())
                     }
                     _ => {

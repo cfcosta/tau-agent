@@ -2,21 +2,28 @@
 //! per connection, `Connection: close`, the body read whole or streamed
 //! (for server-sent events), chunked bodies decoded.
 //!
-//! The client already speaks TLS for its WebSocket; a general HTTP client
-//! would bring a second stack for a handful of small requests. The byte
-//! stream comes from a [`Dialer`]: [`Tls`] reaches the real hosts, tests
-//! dial a simulated network.
+//! The WebSocket already needs TLS; a general HTTP client would bring a
+//! second stack for a handful of small requests. The byte stream comes
+//! from a [`Dialer`]: [`Tls`] reaches the real hosts (the WebSocket
+//! dials through it too), tests dial a simulated network.
 
-use std::{fmt, future::Future, io};
+use std::{fmt, future::Future, io, sync::Arc};
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
 };
-use tokio_rustls::{client::TlsStream, rustls::pki_types::ServerName};
+use tokio_rustls::{
+    TlsConnector,
+    client::TlsStream,
+    rustls::{
+        ClientConfig,
+        RootCertStore,
+        crypto::ring,
+        pki_types::ServerName,
+    },
+};
 use url::Url;
-
-use crate::ws::io::tls::tls_connector;
 
 /// What tau sends as `User-Agent`.
 pub fn user_agent() -> String {
@@ -57,6 +64,22 @@ impl Dialer for Tls {
         })?;
         tls_connector().connect(name, tcp).await
     }
+}
+
+/// TLS with rustls, the `ring` provider and Mozilla's roots from
+/// `webpki-roots`: no system certificate store and no native crypto
+/// build.
+fn tls_connector() -> TlsConnector {
+    let roots = RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    let config =
+        ClientConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .expect("ring supports the default protocol versions")
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+    TlsConnector::from(Arc::new(config))
 }
 
 /// A request to send.

@@ -1,10 +1,14 @@
 //! The OpenAI client: one WebSocket transport per process, and one
 //! session per run.
 //!
-//! A [`Session`] holds a run's fixed [`Settings`] and its lane. Each call
-//! to [`Session::respond`] builds the full request from the transcript;
-//! the lane decides whether it goes out as a delta. When a response
-//! completes, its usage gets its cost from the model table.
+//! Every client spends a ChatGPT plan ([`OpenAi::chatgpt`]): tau reaches
+//! OpenAI only through Sign in with ChatGPT
+//! (`docs/decisions/0012-chatgpt-sign-in-only.md`). A [`Session`] holds a
+//! run's fixed [`Settings`] and its lane. Each call to
+//! [`Session::respond`] builds the full request from the transcript; the
+//! lane decides whether it goes out as a delta. When a response
+//! completes, its usage gets its cost from the model table: the plan's
+//! equivalent at API prices.
 
 use std::sync::Arc;
 
@@ -24,7 +28,6 @@ use crate::{
         io::{
             connection::Connector,
             driver::{LaneHandle, Response, Stopped, Transport},
-            tls::OpenAiConnector,
         },
         proto::{
             continuation::{Body, Fields},
@@ -33,47 +36,15 @@ use crate::{
     },
 };
 
-/// The environment variable [`OpenAi::from_env`] reads.
-pub const API_KEY_VAR: &str = "OPENAI_API_KEY";
-
-/// `OPENAI_API_KEY` is not set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("{API_KEY_VAR} is not set")]
-pub struct MissingApiKey;
-
-/// A client for OpenAI's Responses WebSocket mode. Clones share one
-/// connection pool. Must be created inside a tokio runtime.
+/// A client for OpenAI's Responses WebSocket mode on a ChatGPT plan.
+/// Clones share one connection pool. Must be created inside a tokio
+/// runtime.
 #[derive(Debug, Clone)]
 pub struct OpenAi {
     transport: Transport,
-    endpoint: Endpoint,
-}
-
-/// Which Responses endpoint a client talks to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Endpoint {
-    /// `api.openai.com`, with an API key.
-    Api,
-    /// `api.openai.com`, with a ChatGPT sign-in that uses the plan: the
-    /// same protocol, less [`UNSUPPORTED_FIELDS`].
-    ChatGptPlan,
 }
 
 impl OpenAi {
-    /// A client that authenticates with `api_key`.
-    pub fn new(api_key: impl Into<String>) -> Self {
-        Self::with_connector(OpenAiConnector::new(api_key), Limits::default())
-    }
-
-    /// A client that reads its key from `OPENAI_API_KEY`.
-    pub fn from_env() -> Result<Self, MissingApiKey> {
-        let key = std::env::var(API_KEY_VAR)
-            .ok()
-            .filter(|k| !k.is_empty())
-            .ok_or(MissingApiKey)?;
-        Ok(Self::new(key))
-    }
-
     /// A client that uses `account`'s ChatGPT plan (see
     /// [`crate::chatgpt`]). Its token is refreshed before each connection
     /// when it nears expiry; a sign-in without plan usage connects
@@ -81,28 +52,21 @@ impl OpenAi {
     pub fn chatgpt<D: Dialer>(chatgpt: ChatGpt<D>, account: AccountId) -> Self {
         Self::with_connector(
             ChatGptConnector::new(chatgpt, account),
-            single_lane_limits(),
+            Limits::default(),
         )
-        .endpoint(Endpoint::ChatGptPlan)
     }
 
     /// A client over any connector, such as a simulated network in tests.
+    /// Its requests follow the plan route's rules all the same.
     pub fn with_connector<C: Connector>(connector: C, limits: Limits) -> Self {
         Self {
             transport: Transport::start(connector, limits),
-            endpoint: Endpoint::Api,
         }
     }
 
-    /// Adapts sessions to `endpoint`'s requirements. [`Self::chatgpt`]
-    /// sets it; a test connector to a plan double needs it too.
-    pub fn endpoint(mut self, endpoint: Endpoint) -> Self {
-        self.endpoint = endpoint;
-        self
-    }
-
     /// Opens a session for one run. If the model is in the model table,
-    /// whether it reasons comes from there.
+    /// whether it reasons comes from there. The plan route takes no
+    /// `max_output_tokens`, so the settings lose it.
     pub async fn session(
         &self,
         mut settings: Settings,
@@ -111,16 +75,13 @@ impl OpenAi {
         if let Some(model) = model {
             settings.reasoning_model = model.reasoning;
         }
-        if self.endpoint == Endpoint::ChatGptPlan {
-            settings.max_output_tokens = None;
-        }
+        settings.max_output_tokens = None;
         Ok(Session {
             lane: self.transport.open_lane().await?,
-            fields: Arc::new(session_fields(&settings, self.endpoint)),
+            fields: Arc::new(session_fields(&settings)),
             settings,
             model,
             input: InputCache::new(),
-            endpoint: self.endpoint,
         })
     }
 
@@ -137,24 +98,12 @@ impl OpenAi {
     }
 }
 
-/// One response stream per connection, for an endpoint that does not
-/// take `stream_id`: lanes cannot share a connection.
-pub fn single_lane_limits() -> Limits {
-    Limits {
-        max_lanes: 1,
-        max_in_flight: 1,
-        ..Limits::default()
-    }
-}
-
-/// The request fields of a session on `endpoint`: on the plan route,
-/// without the fields it does not take, whatever the settings asked for.
-fn session_fields(settings: &Settings, endpoint: Endpoint) -> Fields {
-    let mut fields = fields(settings, None);
-    if endpoint == Endpoint::ChatGptPlan {
-        for name in UNSUPPORTED_FIELDS {
-            fields.remove(name);
-        }
+/// The request fields of a session: without the fields the plan route
+/// does not take, whatever the settings asked for.
+fn session_fields(settings: &Settings) -> Fields {
+    let mut fields = fields(settings);
+    for name in UNSUPPORTED_FIELDS {
+        fields.remove(name);
     }
     fields
 }
@@ -169,7 +118,6 @@ pub struct Session {
     fields: Arc<Fields>,
     model: Option<&'static Model>,
     input: InputCache,
-    endpoint: Endpoint,
 }
 
 impl Session {
@@ -224,7 +172,7 @@ impl Session {
             return;
         }
         self.settings.reasoning = effort;
-        self.fields = Arc::new(session_fields(&self.settings, self.endpoint));
+        self.fields = Arc::new(session_fields(&self.settings));
     }
 }
 

@@ -327,7 +327,7 @@ production uses the HTTP client, `tau_jev::TypeSafe`.
   per million input tokens. The client returns `Usage` with the cost
   filled in, which a plugin passes to `ctx.charge`.
 - **Key.** Given explicitly, or read with `from_env()` from
-  `TYPESAFE_API_KEY`, as `OpenAi` does. It never shows in `Debug`.
+  `TYPESAFE_API_KEY`. It never shows in `Debug`.
 - **TLS.** rustls with `ring` and Mozilla's roots, as for OpenAI: no
   system certificate store.
 - **Confidence.** Every answer exposes `confidence` (Choice and Score)
@@ -514,9 +514,9 @@ tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
     They make real model calls, which cost money: `--budget-usd` stops
     the run once that much is spent, and `--scenario`, `--arm`,
     `--variant` and `--trials N` pick what runs. `--help` lists the rest.
-    - The key is `OPENAI_API_KEY`, or tau's ChatGPT sign-in or saved
-      key; the model defaults to tau-ui's for that access. Without any,
-      nothing runs.
+    - Access is a saved ChatGPT sign-in with plan usage: `--chatgpt ID`,
+      or tau's active account. The model defaults to tau-ui's. Without
+      a sign-in, nothing runs.
     - Five scenarios in `crates/evals/memory-e2e`, each a small bash
       repository made in a temporary directory. The first run finds a
       fact by doing a task (the suite needs an environment variable,

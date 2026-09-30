@@ -65,25 +65,6 @@ impl Connector for SimConnector {
     }
 }
 
-/// `SimConnector` for an endpoint that rejects `stream_id`, as the ChatGPT plan route may.
-struct UntaggedConnector;
-
-impl Connector for UntaggedConnector {
-    type Stream = turmoil::net::TcpStream;
-
-    async fn connect(&self) -> io::Result<Self::Stream> {
-        SimConnector.connect().await
-    }
-
-    fn request(&self) -> http::Request<()> {
-        SimConnector.request()
-    }
-
-    fn tags_lanes(&self) -> bool {
-        false
-    }
-}
-
 /// A fault the server applies to one turn's first attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, hegel::PrettyPrintable)]
 enum Fault {
@@ -294,7 +275,7 @@ fn run_over_transport_body(tc: TestCase) {
                 if turn.fault.cuts_mid_stream() {
                     // The first attempt fails after output started: one
                     // Start, then the Error, then nothing.
-                    let full = body(&settings, to_input(&transcript), None);
+                    let full = body(&settings, to_input(&transcript));
                     let mut response = lane.request(
                         full,
                         turn.message.model.clone(),
@@ -331,7 +312,7 @@ fn run_over_transport_body(tc: TestCase) {
                         continue;
                     }
                 }
-                let full = body(&settings, to_input(&transcript), None);
+                let full = body(&settings, to_input(&transcript));
                 let mut response = lane.request(
                     full,
                     turn.message.model.clone(),
@@ -419,11 +400,7 @@ fn run_over_transport_body(tc: TestCase) {
             .iter()
             .all(|r| r.body.get("store") == Some(&json!(false)))
     );
-    assert!(received.iter().all(|r| {
-        r.body["stream_id"]
-            .as_str()
-            .is_some_and(|s| s.starts_with("tau-"))
-    }));
+    assert!(received.iter().all(|r| r.body.get("stream_id").is_none()));
     let _ = PREVIOUS_RESPONSE_NOT_FOUND;
 }
 
@@ -462,7 +439,7 @@ fn clean_run_is_all_deltas(tc: TestCase) {
             let mut transcript = vec![user("start")];
             for message in &messages {
                 let mut response = lane.request(
-                    body(&settings, to_input(&transcript), None),
+                    body(&settings, to_input(&transcript)),
                     message.model.clone(),
                     0,
                 );
@@ -524,68 +501,10 @@ async fn collect(
     accumulator.finish().unwrap()
 }
 
-/// Two lanes on one connection, their requests in flight together: each
-/// gets its own response back, routed by `stream_id`.
+/// Two runs get a connection each, no request names a lane, and each
+/// run gets the response its own connection carried.
 #[hegel::test(test_cases = 20)]
-fn two_lanes_share_a_connection(tc: TestCase) {
-    let (first, first_reply) = respond(&tc, "resp_a");
-    let (second, second_reply) = respond(&tc, "resp_b");
-    let got: Rc<RefCell<Vec<AssistantMessage>>> = Rc::default();
-    let seen = got.clone();
-    let first_label = (first.model.clone(), first.timestamp);
-    let second_label = (second.model.clone(), second.timestamp);
-    let fake = simulate(vec![first_reply, second_reply], async move {
-        let transport = Transport::start(SimConnector, Limits::default());
-        let a = transport.open_lane().await.unwrap();
-        let b = transport.open_lane().await.unwrap();
-        let settings = Settings {
-            model: "gpt-5.5".into(),
-            ..Settings::default()
-        };
-        let input = to_input(&[user("hi")]);
-        let ra = a.request(
-            body(&settings, input.clone(), None),
-            first_label.0,
-            first_label.1,
-        );
-        let rb = b.request(
-            body(&settings, input, None),
-            second_label.0,
-            second_label.1,
-        );
-        let (ma, mb) = tokio::join!(collect(ra), collect(rb));
-        seen.borrow_mut().extend([ma, mb]);
-        Ok(())
-    });
-    assert_eq!(fake.connections(), 1);
-    let received = fake.received();
-    let lane_of = |i: usize| received[i].body["stream_id"].clone();
-    assert_ne!(lane_of(0), lane_of(1));
-    // The fake answered the requests in arrival order; each lane must
-    // get the response that answered its own request.
-    let got = got.borrow();
-    // Lane a has stream id tau-0 and got `got[0]`; lane b got `got[1]`.
-    let by_lane = |stream: &Value| -> &AssistantMessage {
-        if stream == &json!("tau-0") {
-            &got[0]
-        } else {
-            &got[1]
-        }
-    };
-    let expected = [&first, &second];
-    for (i, r) in received.iter().enumerate() {
-        let mut want = expected[i].clone();
-        let have = by_lane(&r.body["stream_id"]);
-        want.usage.cost = have.usage.cost.clone();
-        assert_eq!(have, &want, "request {i}");
-    }
-}
-
-/// Without `stream_id` (the plan client), two runs get a connection each, no
-/// request names a lane, and each run gets the response its own
-/// connection carried.
-#[hegel::test(test_cases = 20)]
-fn untagged_lanes_get_a_connection_each(tc: TestCase) {
+fn runs_get_a_connection_each(tc: TestCase) {
     let (first, first_reply) = respond(&tc, "resp_a");
     let (second, second_reply) = respond(&tc, "resp_b");
     let got: Rc<RefCell<Vec<AssistantMessage>>> = Rc::default();
@@ -595,10 +514,7 @@ fn untagged_lanes_get_a_connection_each(tc: TestCase) {
         (second.model.clone(), second.timestamp),
     ];
     let fake = simulate(vec![first_reply, second_reply], async move {
-        let transport = Transport::start(
-            UntaggedConnector,
-            tau_ai::client::single_lane_limits(),
-        );
+        let transport = Transport::start(SimConnector, Limits::default());
         let settings = Settings {
             model: "gpt-5.5".into(),
             ..Settings::default()
@@ -609,11 +525,8 @@ fn untagged_lanes_get_a_connection_each(tc: TestCase) {
         let mut open = Vec::new();
         for (model, timestamp) in labels {
             let lane = transport.open_lane().await.unwrap();
-            let response = lane.request(
-                body(&settings, input.clone(), None),
-                model,
-                timestamp,
-            );
+            let response =
+                lane.request(body(&settings, input.clone()), model, timestamp);
             let message = collect(response).await;
             seen.borrow_mut().push(message);
             open.push(lane);
@@ -671,7 +584,7 @@ fn dropping_responses(tc: TestCase) {
             };
             let input = to_input(&[user("hi")]);
             let mut first = lane.request(
-                body(&settings, input.clone(), None),
+                body(&settings, input.clone()),
                 "gpt-5.5".into(),
                 0,
             );
@@ -682,7 +595,7 @@ fn dropping_responses(tc: TestCase) {
             drop(first);
             // Without the cancel, the lane would refuse this request.
             let second_response = lane.request(
-                body(&settings, input.clone(), None),
+                body(&settings, input.clone()),
                 labels[0].0.clone(),
                 labels[0].1,
             );
@@ -690,7 +603,7 @@ fn dropping_responses(tc: TestCase) {
             // A finished response dropped after the next request started
             // must not cancel it.
             let mut kept = lane.request(
-                body(&settings, input.clone(), None),
+                body(&settings, input.clone()),
                 labels[1].0.clone(),
                 labels[1].1,
             );
@@ -714,18 +627,14 @@ fn dropping_responses(tc: TestCase) {
     }
 }
 
-/// Dropping a lane handle closes the lane, freeing its place on the
-/// connection.
+/// Dropping a lane handle closes the lane, freeing its connection for
+/// the next one.
 #[test]
-fn dropping_a_lane_frees_its_place() {
+fn dropping_a_lane_frees_its_connection() {
     let stats: Rc<RefCell<Option<PoolStats>>> = Rc::default();
     let seen = stats.clone();
     simulate(vec![], async move {
-        let limits = Limits {
-            max_lanes: 1,
-            ..Limits::default()
-        };
-        let transport = Transport::start(SimConnector, limits);
+        let transport = Transport::start(SimConnector, Limits::default());
         let first = transport.open_lane().await.unwrap();
         drop(first);
         let _second = transport.open_lane().await.unwrap();
@@ -761,7 +670,7 @@ fn server_error_fails_with_start_and_error() {
                 ..Settings::default()
             };
             let mut response = lane.request(
-                body(&settings, to_input(&[user("hi")]), None),
+                body(&settings, to_input(&[user("hi")])),
                 "gpt-5.5".into(),
                 7,
             );
@@ -809,7 +718,7 @@ fn lost_connection_ends_the_skip(tc: TestCase) {
             };
             let input = to_input(&[user("hi")]);
             let mut first = lane.request(
-                body(&settings, input.clone(), None),
+                body(&settings, input.clone()),
                 "gpt-5.5".into(),
                 0,
             );
@@ -820,8 +729,7 @@ fn lost_connection_ends_the_skip(tc: TestCase) {
             drop(first);
             // Let the drop and the lost connection play out.
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let second =
-                lane.request(body(&settings, input, None), label.0, label.1);
+            let second = lane.request(body(&settings, input), label.0, label.1);
             *seen.borrow_mut() = Some(collect(second).await);
             Ok(())
         },
@@ -833,21 +741,13 @@ fn lost_connection_ends_the_skip(tc: TestCase) {
     assert_eq!(have, want);
 }
 
-/// Many runs at once against a server that enforces OpenAI's limits:
-/// a drawn number of lanes (up to 40) each send one request, and the
-/// server answers each after a drawn delay, so responses overlap. The
-/// pool never has more than 16 requests in flight on a connection (the
-/// fake records any excess as a violation), every request completes
-/// without an error, and the pool opens as many connections as the
-/// lane limit calls for.
+/// Many runs at once: a drawn number of lanes each send one request,
+/// and the server answers each after a drawn delay, so responses
+/// overlap. Each run gets a connection of its own, the server sees no
+/// broken limit, and every request completes without an error.
 #[hegel::test(test_cases = 15)]
-fn concurrent_runs_stay_within_the_server_limits(tc: TestCase) {
-    let lanes = tc.draw(gs::integers::<usize>().min_value(1).max_value(40));
-    if lanes <= 32 {
-        tc.event("over one connection");
-    } else {
-        tc.event("over two connections");
-    }
+fn concurrent_runs_get_a_connection_each(tc: TestCase) {
+    let lanes = tc.draw(gs::integers::<usize>().min_value(1).max_value(12));
     let mut replies = Vec::new();
     for i in 0..lanes {
         let (_, reply) = respond(&tc, &format!("resp_{i}"));
@@ -871,7 +771,7 @@ fn concurrent_runs_stay_within_the_server_limits(tc: TestCase) {
         };
         let requests = handles.iter().map(|lane| {
             let response = lane.request(
-                body(&settings, to_input(&[user("hi")]), None),
+                body(&settings, to_input(&[user("hi")])),
                 "gpt-5.5".into(),
                 0,
             );
@@ -895,19 +795,15 @@ fn concurrent_runs_stay_within_the_server_limits(tc: TestCase) {
     });
     assert_eq!(fake.violations(), Vec::<String>::new());
     let stats = stats.borrow_mut().take().unwrap();
-    assert_eq!(stats.connections_opened as usize, lanes.div_ceil(32));
-    assert_eq!(fake.stream_limit_errors(), 0);
+    assert_eq!(stats.connections_opened as usize, lanes);
+    assert_eq!(fake.connections() as usize, lanes);
 }
 
-/// Lane churn on one connection: runs start and end one after another,
-/// each on a new lane, so the connection sees more than 32 stream ids
-/// over its life though never more than one at a time. If the server
-/// counts every id it has seen, it refuses the 33rd with
-/// `websocket_stream_limit_reached`; the lane then moves to another
-/// connection and resends, and the caller never sees the refusal.
+/// Runs one after another reuse one connection: each run's lane closes
+/// before the next opens, and the next takes the connection it left.
 #[hegel::test(test_cases = 5)]
-fn lane_churn_past_the_stream_limit_is_invisible(tc: TestCase) {
-    let runs = tc.draw(gs::integers::<usize>().min_value(33).max_value(40));
+fn runs_one_after_another_reuse_a_connection(tc: TestCase) {
+    let runs = tc.draw(gs::integers::<usize>().min_value(2).max_value(6));
     let mut replies = Vec::new();
     for i in 0..runs {
         replies.push(respond(&tc, &format!("resp_{i}")).1);
@@ -923,7 +819,7 @@ fn lane_churn_past_the_stream_limit_is_invisible(tc: TestCase) {
         for _ in 0..runs {
             let lane = transport.open_lane().await.unwrap();
             let mut response = lane.request(
-                body(&settings, to_input(&[user("hi")]), None),
+                body(&settings, to_input(&[user("hi")])),
                 "gpt-5.5".into(),
                 0,
             );
@@ -942,8 +838,45 @@ fn lane_churn_past_the_stream_limit_is_invisible(tc: TestCase) {
         Ok(())
     });
     let stats = stats.borrow_mut().take().unwrap();
-    assert!(fake.stream_limit_errors() >= 1);
-    assert_eq!(stats.lanes.stream_limit_reached, fake.stream_limit_errors());
-    assert_eq!(stats.connections_opened, 2);
-    assert_eq!(fake.violations(), Vec::<String>::new());
+    assert_eq!(stats.connections_opened, 1);
+    assert_eq!(stats.connections_reused as usize, runs - 1);
+    assert_eq!(fake.connections(), 1);
+}
+
+/// A run cancelled mid-response leaves its tail streaming on the
+/// connection. The next run, placed on that connection, skips the tail
+/// and gets its own response.
+#[hegel::test(test_cases = 10)]
+fn the_next_run_skips_a_cancelled_tail(tc: TestCase) {
+    let (_, cut) = respond(&tc, "resp_1");
+    let (next, next_reply) = respond(&tc, "resp_2");
+    let label = (next.model.clone(), next.timestamp);
+    let got: Rc<RefCell<Option<AssistantMessage>>> = Rc::default();
+    let seen = got.clone();
+    let fake = simulate(vec![cut, next_reply], async move {
+        let transport = Transport::start(SimConnector, Limits::default());
+        let settings = Settings {
+            model: "gpt-5.5".into(),
+            ..Settings::default()
+        };
+        let input = to_input(&[user("hi")]);
+        let first = transport.open_lane().await.unwrap();
+        let mut response =
+            first.request(body(&settings, input.clone()), "gpt-5.5".into(), 0);
+        assert!(matches!(
+            response.next().await,
+            Some(AssistantEvent::Start { .. })
+        ));
+        drop(response);
+        drop(first);
+        let second = transport.open_lane().await.unwrap();
+        let response = second.request(body(&settings, input), label.0, label.1);
+        *seen.borrow_mut() = Some(collect(response).await);
+        Ok(())
+    });
+    assert_eq!(fake.connections(), 1);
+    let have = got.borrow_mut().take().unwrap();
+    let mut want = next.clone();
+    want.usage.cost = have.usage.cost.clone();
+    assert_eq!(have, want);
 }

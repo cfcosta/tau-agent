@@ -37,7 +37,7 @@ Dependency direction:
 Agent::start(input, &store)
   └─ Run task
        ├─ store: INSERT runs (status = running)
-       ├─ lane = pool.acquire_lane()                 # stream_id on a shared socket
+       ├─ lane = pool.acquire_lane()                 # a socket of its own
        └─ loop
             ├─ transcript: kept in memory; fork ancestors loaded once at start
             ├─ body = session fields (built once) + InputCache(transcript)
@@ -52,12 +52,15 @@ Agent::start(input, &store)
 
 ## Concurrency model
 
-- **One `OpenAi` client per process.** It owns a pool of WebSocket
-  connections.
-  - Each run gets a lane: a `stream_id` on one of those connections.
-    Requests on a lane are FIFO; different lanes run concurrently.
-  - Each connection is capped at 32 lanes and 16 in-flight responses.
-    Past either cap, the pool opens another connection.
+- **One `OpenAi` client per process.** It reaches OpenAI through a
+  ChatGPT sign-in, the only way in
+  ([0012](decisions/0012-chatgpt-sign-in-only.md)), and owns a pool of
+  WebSocket connections.
+  - Each run gets a lane: a connection of its own, with one response
+    in flight. tau sends no `stream_id`, which the plan route may not
+    take. Requests on a lane are FIFO; different lanes run concurrently.
+  - A new lane takes an open connection that has no lane and is not
+    draining, or the pool opens one.
 - **Each run is a tokio task.** A run owns:
   - a `CancellationToken`;
   - a bounded event channel;
@@ -79,7 +82,7 @@ The protocol logic in `tau-ai` does no I/O. It is written as plain state
 machines that take events and return actions:
 
 - **`ws::proto`** holds the lane and pool state: the delta rule, the
-  continuation per lane, the in-flight and lane limits, connection age,
+  continuation per lane, one lane per connection, connection age,
   and the recovery ladder. Its inputs are events such as "request
   submitted", "frame received", "connection closed", "timer fired" and
   "cancel". Its outputs are actions such as "send this frame", "open a
@@ -93,7 +96,8 @@ machines that take events and return actions:
   it to `ws::proto`, carry out the actions. Runs talk to it over
   channels, so no lock is shared between lanes.
 - **`Connector`** is the trait the driver uses to open a socket. The
-  default opens TLS to `wss://api.openai.com`. Tests pass a connector
+  product one, `ChatGptConnector`, gets the plan's token and opens TLS
+  to `wss://api.openai.com`. Tests pass a connector
   that opens a stream on a simulated network.
 
 This split is what makes the WebSocket layer testable: the rules that
@@ -122,7 +126,7 @@ the request stays identical. So:
 | -------------------------------------------------- | ------------------------------------------------------------------ |
 | `pi-ai` `AssistantMessageEvent` + shared `partial` | `tau-ai::AssistantEvent` (owned deltas) + `Accumulator`            |
 | `openai-responses-shared.ts`                       | `tau-ai::responses`                                                |
-| `openai-codex-responses.ts` WebSocket cache        | `tau-ai::ws` (API-key endpoint, lanes)                             |
+| `openai-codex-responses.ts` WebSocket cache        | `tau-ai::ws` (plan endpoint, one lane per connection)              |
 | `pi-agent-core` `Agent` / `agentLoop`              | `tau-agent::Agent` / `Run`                                         |
 | `AgentTool.execute(id, params, signal, onUpdate)`  | `AgentTool::call(args, ToolCtx { cancel, updates })`               |
 | `beforeToolCall` / `afterToolCall` / listeners     | `RunHook`                                                          |

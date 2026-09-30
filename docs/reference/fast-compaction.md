@@ -28,7 +28,7 @@ use tau_compaction::Compaction;
 use tau_fast_compaction::FastCompaction;
 use tau_jev::TypeSafe;
 
-let agent = Agent::new(OpenAi::from_env()?)
+let agent = Agent::new(llm) // an `OpenAi` on a ChatGPT sign-in
     .plugin(FastCompaction::new(TypeSafe::from_env()?))
     .plugin(Compaction::default()); // after: it takes what pruning declines
 ```
@@ -99,7 +99,7 @@ had seen when it made the call ([plugins.md](plugins.md)).
    omissions are marked; the kept chunks, verbatim and in order; one
    `[N lines omitted]` for each run of dropped lines; and a footer
    naming the archive, `[full output: <path> (read or grep it if
-   needed)]`. The archive is the file `bash` spilled to, or else a new
+needed)]`. The archive is the file `bash` spilled to, or else a new
    file in `Settings::archive_dir` (the temporary directory) that only
    its owner can read.
 7. **Replaces** the result only when the rendered text is estimated at
@@ -163,15 +163,15 @@ long command output, generated from a seed with synthetic noise (cargo,
 npm, pip, pytest, bundler and upload logs; no network), with **needles**:
 lines the task needs, each in the output exactly once.
 
-| Workload | Needles |
-|---|---|
-| `needle-error` | one error line deep in a cargo build |
-| `needle-detail` | a bundle hash the prompt asks to remember, among hundreds like it |
-| `summary-line` | npm's totals line, with post-install noise after it |
-| `structured-json` | one service's record in a large JSON registry |
-| `all-noise` | none: pruning should cut most of it |
-| `spilled-middle` | a failed step above the 2,000-line tail `bash` keeps |
-| `multi-needle` | three failing tests far apart |
+| Workload              | Needles                                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------------------- |
+| `needle-error`        | one error line deep in a cargo build                                                            |
+| `needle-detail`       | a bundle hash the prompt asks to remember, among hundreds like it                               |
+| `summary-line`        | npm's totals line, with post-install noise after it                                             |
+| `structured-json`     | one service's record in a large JSON registry                                                   |
+| `all-noise`           | none: pruning should cut most of it                                                             |
+| `spilled-middle`      | a failed step above the 2,000-line tail `bash` keeps                                            |
+| `multi-needle`        | three failing tests far apart                                                                   |
 | `earlier-requirement` | a checksum only an earlier `read` of a large runbook asks for, so the history comes in segments |
 
 The runner drives the real plugin through the agent loop, as the app
@@ -206,17 +206,17 @@ Its tests use fake Jevs and need no key.
 Results against the real Jev, three seeds of each workload (24 outputs
 of 21,000 to 96,000 estimated tokens, 3–8 requests each):
 
-| Workload | Recall | Tail recall | Reduction | Of whole | Replaced | Cost |
-|---|---|---|---|---|---|---|
-| `needle-error` | 3/3 | 2/3 | 95.8% | 98.2% | 3/3 | $0.0150 |
-| `needle-detail` | 3/3 | 1/3 | 93.1% | 97.1% | 3/3 | $0.0112 |
-| `summary-line` | 3/3 | 3/3 | 91.7% | 98.1% | 3/3 | $0.0210 |
-| `structured-json` | 12/12 | 4/12 | 96.6% | 98.1% | 3/3 | $0.0104 |
-| `all-noise` | — | — | 94.2% | 98.8% | 3/3 | $0.0160 |
-| `spilled-middle` | 3/3 | 0/3 | 92.4% | 98.2% | 3/3 | $0.0165 |
-| `multi-needle` | 9/9 | 3/9 | 92.1% | 97.4% | 3/3 | $0.0155 |
-| `earlier-requirement` | 3/3 | 3/3 | 91.3% | 91.3% | 3/3 | $0.0198 |
-| total | 36/36 | 16/36 | 93.4% | 97.2% | 24/24 | $0.1254 |
+| Workload              | Recall | Tail recall | Reduction | Of whole | Replaced | Cost    |
+| --------------------- | ------ | ----------- | --------- | -------- | -------- | ------- |
+| `needle-error`        | 3/3    | 2/3         | 95.8%     | 98.2%    | 3/3      | $0.0150 |
+| `needle-detail`       | 3/3    | 1/3         | 93.1%     | 97.1%    | 3/3      | $0.0112 |
+| `summary-line`        | 3/3    | 3/3         | 91.7%     | 98.1%    | 3/3      | $0.0210 |
+| `structured-json`     | 12/12  | 4/12        | 96.6%     | 98.1%    | 3/3      | $0.0104 |
+| `all-noise`           | —      | —           | 94.2%     | 98.8%    | 3/3      | $0.0160 |
+| `spilled-middle`      | 3/3    | 0/3         | 92.4%     | 98.2%    | 3/3      | $0.0165 |
+| `multi-needle`        | 9/9    | 3/9         | 92.1%     | 97.4%    | 3/3      | $0.0155 |
+| `earlier-requirement` | 3/3    | 3/3         | 91.3%     | 91.3%    | 3/3      | $0.0198 |
+| total                 | 36/36  | 16/36       | 93.4%     | 97.2%    | 24/24    | $0.1254 |
 
 Every needle's chunk was answered 0.90 or more; noise mostly under
 0.2, and 4 of 3,259 noise chunks at 0.5 or more (in `needle-detail`,
@@ -383,14 +383,14 @@ budget a state or request must fit uses the state estimate.
 `Settings` holds history pruning's settings (pi's defaults, above),
 `archive_dir` for both stages, and output pruning's, as `output`:
 
-| Setting | Default | |
-|---|---|---|
-| `archive_dir` | the temporary directory | where archives go |
-| `output.enabled` | `true` | |
-| `output.min_output_tokens` | 10,000 | the gate |
-| `output.chunk_lines` | 20 | lines per chunk |
-| `output.keep_threshold` | 0.5 | a Noul at or above keeps |
-| `output.max_state_tokens` | 25,000 | per state |
-| `output.max_request_tokens` | 30,000 | per request |
-| `output.max_output_requests` | 12 | per output |
-| `output.min_reduction_ratio` | 0.1 | of the whole output; nor larger than what the model would see |
+| Setting                      | Default                 |                                                               |
+| ---------------------------- | ----------------------- | ------------------------------------------------------------- |
+| `archive_dir`                | the temporary directory | where archives go                                             |
+| `output.enabled`             | `true`                  |                                                               |
+| `output.min_output_tokens`   | 10,000                  | the gate                                                      |
+| `output.chunk_lines`         | 20                      | lines per chunk                                               |
+| `output.keep_threshold`      | 0.5                     | a Noul at or above keeps                                      |
+| `output.max_state_tokens`    | 25,000                  | per state                                                     |
+| `output.max_request_tokens`  | 30,000                  | per request                                                   |
+| `output.max_output_requests` | 12                      | per output                                                    |
+| `output.min_reduction_ratio` | 0.1                     | of the whole output; nor larger than what the model would see |

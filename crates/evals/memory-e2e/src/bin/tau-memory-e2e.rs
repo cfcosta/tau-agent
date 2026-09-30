@@ -17,7 +17,7 @@ use tau_ai::{
 };
 use tau_memory_e2e::{
     E2eError,
-    access::{self, Access},
+    access,
     arm::{self, Arm},
     metrics::{self, Trial},
     runner::{self, Budget, Config},
@@ -49,9 +49,9 @@ Usage: tau-memory-e2e [options]
   --list            list the scenarios and arms, and exit
   --help            print this, and exit
 
-Access, first found: --chatgpt, OPENAI_API_KEY, tau's active ChatGPT
-account when it may use the plan ($XDG_CONFIG_HOME/tau/chatgpt), tau's saved
-API key ($XDG_CONFIG_HOME/tau/openai-key).
+Access is a saved ChatGPT sign-in with plan usage, first found of: --chatgpt,
+tau's active ChatGPT account ($XDG_CONFIG_HOME/tau/chatgpt). Sign in with tau
+first.
 ";
 
 struct Options {
@@ -92,8 +92,8 @@ enum CliError {
     #[error("{0:?} is not a variant: stable or changed")]
     NoVariant(String),
     #[error(
-        "no model access: set OPENAI_API_KEY, pass --chatgpt ID, or sign in \
-         with tau first. Nothing was run."
+        "no model access: sign in with ChatGPT in tau, with plan usage \
+         enabled, or pass --chatgpt ID. Nothing was run."
     )]
     NoAccess,
     #[error("{0:?} is not a ChatGPT account id")]
@@ -233,7 +233,6 @@ fn run() -> Result<(), CliError> {
 
     let Some(access) = access::resolve(
         options.chatgpt.clone(),
-        std::env::var("OPENAI_API_KEY").ok(),
         access::config_dir().as_deref(),
     ) else {
         return Err(CliError::NoAccess);
@@ -256,13 +255,10 @@ fn run() -> Result<(), CliError> {
     let llm: Arc<dyn Llm> = {
         // Clients must be created inside the runtime.
         let _guard = runtime.enter();
-        match &access {
-            Access::ChatGpt { store, account } => Arc::new(OpenAi::chatgpt(
-                ChatGpt::new(Store::open(store)?),
-                account.clone(),
-            )),
-            Access::ApiKey(key) => Arc::new(OpenAi::new(key.clone())),
-        }
+        Arc::new(OpenAi::chatgpt(
+            ChatGpt::new(Store::open(&access.store)?),
+            access.account.clone(),
+        ))
     };
 
     let work = options.work.clone().unwrap_or_else(std::env::temp_dir);

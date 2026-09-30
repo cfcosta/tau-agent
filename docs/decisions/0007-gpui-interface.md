@@ -67,9 +67,9 @@ reach into the loop.
   `set_pull_request_state`. The workspace moves to the next step when
   an answer completes one. These screens take the whole window,
   without the sidebar.
-- **The bundled host does what the libraries can.** It signs in to
-  ChatGPT (browser or device code) or saves an API key, then starts
-  agents. GitHub sign-in, clones and pull requests need a GitHub App
+- **The bundled host does what the libraries can.** It signs in with
+  ChatGPT in the browser, the only way to reach a model
+  ([0012](0012-chatgpt-sign-in-only.md)), then starts agents. GitHub sign-in, clones and pull requests need a GitHub App
   that tau does not have yet. Until then onboarding starts at the
   model, and the pull request button only shows when the catalog says
   the host can open one.

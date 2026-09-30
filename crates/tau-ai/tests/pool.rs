@@ -1,10 +1,10 @@
 //! The connection pool (`tau_ai::ws::proto::pool`), driven by a Hegel
-//! state machine under small limits and checked against a model built
-//! from the actions it returns, with a simulated server that keeps each
-//! connection's responses.
+//! state machine under small time limits and checked against a model
+//! built from the actions it returns, with a simulated server that keeps
+//! each connection's responses.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     time::Duration,
 };
 
@@ -45,9 +45,6 @@ struct Model {
     now: Duration,
     /// Lanes whose request was sent and has not finished, by connection.
     in_flight: BTreeMap<LaneId, ConnectionId>,
-    /// Lanes whose request was submitted but not yet sent, in submission
-    /// order, with the connection they wait on.
-    waiting: VecDeque<(LaneId, ConnectionId)>,
     lanes: BTreeSet<LaneId>,
     /// Lanes whose in-flight request has produced output.
     started: BTreeSet<LaneId>,
@@ -92,23 +89,13 @@ impl Model {
                         self.open.contains(connection),
                         "send on unknown connection"
                     );
-                    // A request that waited on this connection starts only
-                    // when every request that waited there before it has.
-                    if self.waiting.contains(&(*lane, *connection)) {
-                        let first = self
-                            .waiting
+                    // One request in flight per connection.
+                    assert!(
+                        self.in_flight
                             .iter()
-                            .find(|(_, c)| c == connection)
-                            .map(|(l, _)| *l);
-                        assert_eq!(
-                            first,
-                            Some(*lane),
-                            "lane {lane} overtook a request waiting on \
-                             {connection}"
-                        );
-                        tc.event("a waiting request started");
-                    }
-                    self.waiting.retain(|(l, _)| l != lane);
+                            .all(|(l, c)| l == lane || c != connection),
+                        "a second request on {connection}"
+                    );
                     self.in_flight.insert(*lane, *connection);
                     let input: Vec<Value> = body
                         .input
@@ -160,22 +147,18 @@ impl Model {
         }
     }
 
-    /// Lanes with no request in flight or waiting.
+    /// Lanes with no request in flight.
     fn idle_lanes(&self) -> Vec<LaneId> {
         self.lanes
             .iter()
             .copied()
-            .filter(|l| {
-                !self.in_flight.contains_key(l)
-                    && !self.waiting.iter().any(|(w, _)| w == l)
-            })
+            .filter(|l| !self.in_flight.contains_key(l))
             .collect()
     }
 
     /// Forgets a lane's request, as cancel and close do.
     fn drop_request(&mut self, lane: LaneId) {
         self.in_flight.remove(&lane);
-        self.waiting.retain(|(l, _)| *l != lane);
         self.sent.remove(&lane);
         self.started.remove(&lane);
     }
@@ -286,7 +269,7 @@ impl PoolMachine {
         }
         self.empty_since.retain(|c, _| open.contains(c));
         for &c in &self.model.open {
-            if self.pool.lane_count(c) == 0 && !self.pool.is_draining(c) {
+            if self.pool.lane_on(c).is_none() && !self.pool.is_draining(c) {
                 self.empty_since.entry(c).or_insert(now);
             } else {
                 self.empty_since.remove(&c);
@@ -349,8 +332,6 @@ impl PoolMachine {
             json!({"type": "message", "text": self.next_item.to_string()}),
         );
         self.model.submitted.insert(lane, input.clone());
-        let connection = self.pool.connection_of(lane).unwrap();
-        self.model.waiting.push_back((lane, connection));
         let actions = self
             .pool
             .submit(lane, with_input(Value::Array(input)))
@@ -534,65 +515,40 @@ impl PoolMachine {
         self.after(&tc, actions, false);
     }
 
-    /// Limits, counts and placement agree with the model after every step.
+    /// Counts and placement agree with the model after every step.
     #[invariant(always_run)]
     fn pool_matches_the_model(&self, _tc: TestCase) {
-        let limits = self.limits;
-        // A draining connection only keeps lanes with a request in flight.
+        // A draining connection only keeps a lane with a request in
+        // flight.
         for &c in &self.model.open {
-            if self.pool.is_draining(c) {
-                for &lane in &self.model.lanes {
-                    if self.pool.connection_of(lane) == Some(c) {
-                        assert!(
-                            self.model.in_flight.contains_key(&lane),
-                            "idle lane {lane} left on draining {c}"
-                        );
-                    }
-                }
+            if self.pool.is_draining(c)
+                && let Some(lane) = self.pool.lane_on(c)
+            {
+                assert!(
+                    self.model.in_flight.contains_key(&lane),
+                    "idle lane {lane} left on draining {c}"
+                );
             }
         }
-        // Limits hold on every connection.
-        for &c in &self.model.open {
-            assert!(
-                self.pool.lane_count(c) <= limits.max_lanes,
-                "lanes on {c}"
-            );
-            assert!(
-                self.pool.in_flight(c) <= limits.max_in_flight,
-                "in flight on {c}"
-            );
-        }
-        // The pool's in-flight count per connection matches the requests
-        // the model saw sent and not finished.
-        let mut per_connection: BTreeMap<ConnectionId, usize> = BTreeMap::new();
+        // Every in-flight request is on its lane's connection, and each
+        // connection carries the one lane placed on it.
         for (&lane, &connection) in &self.model.in_flight {
             assert_eq!(
                 self.pool.connection_of(lane),
                 Some(connection),
                 "lane {lane} moved silently"
             );
-            *per_connection.entry(connection).or_default() += 1;
         }
-        for &c in &self.model.open {
-            assert_eq!(
-                self.pool.in_flight(c),
-                per_connection.get(&c).copied().unwrap_or(0),
-                "connection {c}"
-            );
-        }
-        // Lane counts per connection match where the lanes live.
-        let mut lanes_on: BTreeMap<ConnectionId, usize> = BTreeMap::new();
+        let mut placed: BTreeSet<ConnectionId> = BTreeSet::new();
         for &lane in &self.model.lanes {
-            *lanes_on
-                .entry(self.pool.connection_of(lane).unwrap())
-                .or_default() += 1;
+            let c = self.pool.connection_of(lane).expect("known lane");
+            assert!(placed.insert(c), "two lanes on {c}");
+            assert_eq!(self.pool.lane_on(c), Some(lane), "lane on {c}");
         }
         for &c in &self.model.open {
-            assert_eq!(
-                self.pool.lane_count(c),
-                lanes_on.get(&c).copied().unwrap_or(0),
-                "lanes on {c}"
-            );
+            if let Some(lane) = self.pool.lane_on(c) {
+                assert!(self.model.lanes.contains(&lane), "closed lane on {c}");
+            }
         }
         // Request counters cover every lane, closed ones included.
         let stats = self.pool.stats();
@@ -603,60 +559,45 @@ impl PoolMachine {
             self.model.not_found
         );
         // Every lane lives on an open connection, or on one that opens
-        // with its first request: after a lost connection, idle lanes
-        // wait for a request before anything is opened for them.
+        // with its first request: after a lost connection, an idle lane
+        // waits for a request before anything is opened for it.
         for &lane in &self.model.lanes {
             let c = self.pool.connection_of(lane).expect("known lane");
             assert!(
                 self.model.open.contains(&c)
-                    || (self.pool.in_flight(c) == 0
-                        && !self.model.in_flight.values().any(|on| *on == c)),
+                    || !self.model.in_flight.contains_key(&lane),
                 "lane {lane} on closed connection {c}"
             );
             assert_eq!(
                 self.pool.is_busy(lane),
-                self.model.in_flight.contains_key(&lane)
-                    || self.model.waiting.iter().any(|(l, _)| *l == lane),
+                self.model.in_flight.contains_key(&lane),
                 "lane {lane}"
-            );
-        }
-        // A request waits only while its connection is full, on the
-        // connection it was submitted on.
-        for &(lane, connection) in &self.model.waiting {
-            let c = self.pool.connection_of(lane).unwrap();
-            assert_eq!(c, connection, "waiting lane {lane} moved silently");
-            assert_eq!(
-                self.pool.in_flight(c),
-                limits.max_in_flight,
-                "lane {lane} waits on a free connection"
             );
         }
     }
 }
 
-/// Under random operations and small limits, the pool keeps its lane and
-/// in-flight limits, starts waiting requests in submission order, only
-/// sends a delta on the connection that holds the response it continues
-/// (and the server rebuilds exactly the submitted input), resends in full
-/// after `previous_response_not_found`, and closes idle, stalled and aged
+/// Under random operations and small time limits, the pool keeps one
+/// lane and one request per connection, only sends a delta on the
+/// connection that holds the response it continues (and the server
+/// rebuilds exactly the submitted input), resends in full after
+/// `previous_response_not_found`, and closes idle, stalled and aged
 /// connections only on time.
 #[hegel::test(test_cases = 300)]
-fn pool_keeps_limits_and_order(tc: TestCase) {
-    pool_keeps_limits_and_order_body(tc)
+fn pool_keeps_one_lane_per_connection(tc: TestCase) {
+    pool_keeps_one_lane_per_connection_body(tc)
 }
 
-/// [`pool_keeps_limits_and_order`] with more cases, for the nightly tier.
+/// [`pool_keeps_one_lane_per_connection`] with more cases, for the
+/// nightly tier.
 #[hegel::test(profile = "nightly_slow")]
 #[ignore = "nightly"]
-fn pool_keeps_limits_and_order_nightly(tc: TestCase) {
-    pool_keeps_limits_and_order_body(tc)
+fn pool_keeps_one_lane_per_connection_nightly(tc: TestCase) {
+    pool_keeps_one_lane_per_connection_body(tc)
 }
 
-fn pool_keeps_limits_and_order_body(tc: TestCase) {
+fn pool_keeps_one_lane_per_connection_body(tc: TestCase) {
     let limits = Limits {
-        max_lanes: tc.draw(gs::integers::<usize>().min_value(1).max_value(4)),
-        max_in_flight: tc
-            .draw(gs::integers::<usize>().min_value(1).max_value(3)),
         rotate_after: Duration::from_secs(
             tc.draw(gs::integers::<u64>().min_value(1).max_value(100)),
         ),
@@ -672,63 +613,47 @@ fn pool_keeps_limits_and_order_body(tc: TestCase) {
         .run(tc);
 }
 
-/// Waiting requests on one connection start in submission order.
+/// Each lane gets a connection of its own; a closed lane's connection
+/// takes the next lane, and closes once it has had no lane for
+/// `idle_timeout`.
 #[test]
-fn waiting_requests_start_in_order() {
-    let mut pool = Pool::new(Limits {
-        max_lanes: 4,
-        max_in_flight: 1,
-        ..Limits::default()
-    });
-    let lanes: Vec<LaneId> = (0..3).map(|_| pool.open_lane().0).collect();
-    assert!(lanes.iter().all(|&l| pool.connection_of(l) == Some(0)));
-    let first = pool.submit(lanes[0], body(0)).unwrap();
-    assert!(
-        matches!(first[..], [PoolAction::Send { lane, .. }] if lane == lanes[0])
-    );
-    assert!(pool.submit(lanes[2], body(2)).unwrap().is_empty());
-    assert!(pool.submit(lanes[1], body(1)).unwrap().is_empty());
-    let done = |pool: &mut Pool, lane| {
-        pool.handle(
-            lane,
-            Event::Completed {
-                response_id: format!("resp_{lane}"),
-                output_items: vec![],
-            },
-        )
-        .unwrap()
-    };
-    let next = done(&mut pool, lanes[0]);
-    assert!(
-        matches!(next[..], [PoolAction::Send { lane, .. }] if lane == lanes[2])
-    );
-    let next = done(&mut pool, lanes[2]);
-    assert!(
-        matches!(next[..], [PoolAction::Send { lane, .. }] if lane == lanes[1])
+fn a_lane_per_connection_and_reuse() {
+    let mut pool = Pool::new(Limits::default());
+    let (first, opened) = pool.open_lane();
+    assert_eq!(opened, vec![PoolAction::Open(0)]);
+    let (second, opened) = pool.open_lane();
+    assert_eq!(opened, vec![PoolAction::Open(1)]);
+    assert_eq!(pool.lane_on(0), Some(first));
+    assert_eq!(pool.lane_on(1), Some(second));
+    assert!(pool.close_lane(first).unwrap().is_empty(), "stays open");
+    assert_eq!(pool.lane_on(0), None);
+    let (third, opened) = pool.open_lane();
+    assert!(opened.is_empty(), "{opened:?}");
+    assert_eq!(pool.connection_of(third), Some(0));
+    let stats = pool.stats();
+    assert_eq!((stats.connections_opened, stats.connections_reused), (2, 1));
+    pool.close_lane(third).unwrap();
+    assert!(pool.tick(Duration::from_secs(4 * 60)).is_empty());
+    assert_eq!(
+        pool.tick(Duration::from_secs(5 * 60)),
+        vec![PoolAction::Close(0)]
     );
 }
 
-/// A new lane opens a new connection once every connection is at a limit.
+/// A lane holds one request at a time.
 #[test]
-fn new_connection_when_full() {
-    let mut pool = Pool::new(Limits {
-        max_lanes: 2,
-        max_in_flight: 16,
-        ..Limits::default()
-    });
-    let (_, first) = pool.open_lane();
-    let (_, second) = pool.open_lane();
-    let (third_lane, third) = pool.open_lane();
-    assert_eq!(first, vec![PoolAction::Open(0)]);
-    assert!(second.is_empty());
-    assert_eq!(third, vec![PoolAction::Open(1)]);
-    assert_eq!(pool.connection_of(third_lane), Some(1));
-    let stats = pool.stats();
-    assert_eq!((stats.connections_opened, stats.connections_reused), (2, 1));
+fn a_busy_lane_takes_no_second_request() {
+    let mut pool = Pool::new(Limits::default());
+    let (lane, _) = pool.open_lane();
+    pool.submit(lane, body(1)).unwrap();
+    assert_eq!(pool.submit(lane, body(2)), Err(PoolError::Busy(lane)));
+    assert!(pool.is_busy(lane));
+    assert!(pool.cancel(lane).unwrap().is_empty());
+    assert!(!pool.is_busy(lane));
 }
 
 /// The connection limit moves the lane to a fresh connection, resends in
-/// full there, and the old connection takes no new lanes.
+/// full there, and closes the old connection.
 #[test]
 fn connection_limit_moves_the_lane() {
     let mut pool = Pool::new(Limits::default());
@@ -753,20 +678,15 @@ fn connection_limit_moves_the_lane() {
         ),
         "{actions:?}"
     );
-    assert_eq!(pool.in_flight(0), 0);
-    assert_eq!(pool.in_flight(1), 1);
-    let (other, _) = pool.open_lane();
-    assert_eq!(
-        pool.connection_of(other),
-        Some(1),
-        "draining connection took a lane"
-    );
+    assert_eq!(pool.lane_on(0), None);
+    assert_eq!(pool.lane_on(1), Some(lane));
+    assert!(pool.is_busy(lane));
 }
 
-/// Losing a connection moves every lane: requests without output resend
-/// in full, those with output fail, idle lanes just move.
+/// Losing a connection moves its lane: a request without output resends
+/// in full, one with output fails, and an idle lane just moves.
 #[test]
-fn lost_connection_moves_every_lane() {
+fn lost_connection_moves_its_lane() {
     let mut pool = Pool::new(Limits::default());
     let (quiet, _) = pool.open_lane();
     let (talking, _) = pool.open_lane();
@@ -774,19 +694,24 @@ fn lost_connection_moves_every_lane() {
     pool.submit(quiet, body(1)).unwrap();
     pool.submit(talking, body(2)).unwrap();
     pool.handle(talking, Event::Output).unwrap();
+
     let actions = pool.connection_lost(0);
-    assert_eq!(actions[0], PoolAction::Open(1));
-    assert!(actions.iter().any(
-        |a| matches!(a, PoolAction::Send { lane, connection: 1, body }
-        if *lane == quiet && body.previous_response_id.is_none())
-    ));
-    assert!(actions.iter().any(
-        |a| matches!(a, PoolAction::Fail { lane, .. } if *lane == talking)
-    ));
-    for lane in [quiet, talking, idle] {
-        assert_eq!(pool.connection_of(lane), Some(1));
-    }
-    assert_eq!(pool.in_flight(1), 1);
+    assert!(
+        matches!(
+            &actions[..],
+            [PoolAction::Open(3), PoolAction::Send { lane, connection: 3, body }]
+                if *lane == quiet && body.previous_response_id.is_none()
+        ),
+        "{actions:?}"
+    );
+    let actions = pool.connection_lost(1);
+    assert!(
+        matches!(&actions[..], [PoolAction::Fail { lane, .. }] if *lane == talking),
+        "{actions:?}"
+    );
+    assert_eq!(pool.connection_of(talking), Some(4));
+    assert!(pool.connection_lost(2).is_empty());
+    assert_eq!(pool.connection_of(idle), Some(5));
     assert_eq!(pool.stats().lanes.connection_lost, 1);
 }
 
@@ -801,52 +726,6 @@ fn unknown_lane_is_rejected() {
         Err(PoolError::UnknownLane(7))
     );
     assert!(pool.close_lane(7).is_err());
-}
-
-/// Cancelling one waiting request leaves the others waiting, in order.
-#[test]
-fn cancel_waiting_keeps_the_others() {
-    let mut pool = Pool::new(Limits {
-        max_lanes: 4,
-        max_in_flight: 1,
-        ..Limits::default()
-    });
-    let lanes: Vec<LaneId> = (0..3).map(|_| pool.open_lane().0).collect();
-    pool.submit(lanes[0], body(0)).unwrap();
-    pool.submit(lanes[1], body(1)).unwrap();
-    pool.submit(lanes[2], body(2)).unwrap();
-    assert!(pool.cancel(lanes[1]).unwrap().is_empty());
-    assert!(!pool.is_busy(lanes[1]));
-    assert!(pool.is_busy(lanes[2]));
-    let next = pool
-        .handle(
-            lanes[0],
-            Event::Completed {
-                response_id: "resp_0".into(),
-                output_items: vec![],
-            },
-        )
-        .unwrap();
-    assert!(
-        matches!(next[..], [PoolAction::Send { lane, .. }] if lane == lanes[2]),
-        "{next:?}"
-    );
-}
-
-/// A new lane skips a connection whose in-flight slots are all taken,
-/// even when it has room for more lanes.
-#[test]
-fn new_lane_skips_connection_with_full_in_flight() {
-    let mut pool = Pool::new(Limits {
-        max_lanes: 8,
-        max_in_flight: 1,
-        ..Limits::default()
-    });
-    let (first, _) = pool.open_lane();
-    pool.submit(first, body(1)).unwrap();
-    let (second, actions) = pool.open_lane();
-    assert_eq!(actions, vec![PoolAction::Open(1)]);
-    assert_eq!(pool.connection_of(second), Some(1));
 }
 
 /// Recovery counters survive closing the lane that recovered.
@@ -920,9 +799,9 @@ fn errors_display() {
     );
 }
 
-/// At `rotate_after`, idle lanes move at once, a busy lane moves when its
-/// request finishes, and the empty connection closes. The moved lane's
-/// next request is a full resend.
+/// At `rotate_after`, an idle lane moves at once, a busy lane moves when
+/// its request finishes, and the emptied connections close. A moved
+/// lane's next request is a full resend.
 #[test]
 fn rotation_moves_lanes_and_closes() {
     // Hours pass with a request in flight and no frames; stalls are
@@ -946,15 +825,15 @@ fn rotation_moves_lanes_and_closes() {
 
     assert!(pool.tick(Duration::from_secs(54 * 60)).is_empty());
     let actions = pool.tick(Duration::from_secs(55 * 60));
-    assert_eq!(actions, vec![PoolAction::Open(1)]);
-    assert_eq!(pool.connection_of(idle), Some(1));
+    assert_eq!(actions, vec![PoolAction::Open(2), PoolAction::Close(1)]);
+    assert_eq!(pool.connection_of(idle), Some(2));
     assert_eq!(pool.connection_of(busy), Some(0));
     assert!(pool.is_draining(0));
 
     let (fresh, _) = pool.open_lane();
     assert_eq!(
         pool.connection_of(fresh),
-        Some(1),
+        Some(3),
         "draining connection took a lane"
     );
 
@@ -967,15 +846,15 @@ fn rotation_moves_lanes_and_closes() {
             },
         )
         .unwrap();
-    assert_eq!(actions, vec![PoolAction::Close(0)]);
-    assert_eq!(pool.connection_of(busy), Some(1));
+    assert_eq!(actions, vec![PoolAction::Open(4), PoolAction::Close(0)]);
+    assert_eq!(pool.connection_of(busy), Some(4));
 
     let next = with_input(
         json!([{"type": "message", "text": "1"}, {"type": "message", "text": "more"}]),
     );
     let sent = pool.submit(idle, next).unwrap();
     assert!(
-        matches!(&sent[..], [PoolAction::Send { connection: 1, body, .. }]
+        matches!(&sent[..], [PoolAction::Send { connection: 2, body, .. }]
         if body.previous_response_id.is_none()),
         "{sent:?}"
     );
@@ -995,60 +874,6 @@ fn tick_ignores_earlier_times() {
     assert_eq!(pool.connection_of(lane), Some(1));
     let actions = pool.tick(Duration::from_secs(110 * 60));
     assert_eq!(actions, vec![PoolAction::Open(2), PoolAction::Close(1)]);
-}
-
-/// When one lane leaves for the age limit, the requests still in flight
-/// on the old connection keep their count.
-#[test]
-fn connection_limit_keeps_other_in_flight_count() {
-    let mut pool = Pool::new(Limits::default());
-    let (leaving, _) = pool.open_lane();
-    let (staying, _) = pool.open_lane();
-    pool.submit(leaving, body(1)).unwrap();
-    pool.submit(staying, body(2)).unwrap();
-    pool.handle(
-        leaving,
-        Event::ServerError {
-            code: Some(CONNECTION_LIMIT_REACHED.into()),
-        },
-    )
-    .unwrap();
-    assert_eq!(pool.connection_of(staying), Some(0));
-    assert_eq!(pool.in_flight(0), 1);
-    assert_eq!(pool.in_flight(1), 1);
-}
-
-/// A request waiting on a connection that starts draining moves with its
-/// lane, and the old connection never starts it.
-#[test]
-fn rotation_moves_waiting_requests() {
-    let mut pool = Pool::new(Limits {
-        stall_timeout: Duration::MAX,
-        max_lanes: 4,
-        max_in_flight: 1,
-        ..Limits::default()
-    });
-    let (busy, _) = pool.open_lane();
-    let (waiting, _) = pool.open_lane();
-    pool.submit(busy, body(1)).unwrap();
-    assert!(pool.submit(waiting, body(2)).unwrap().is_empty());
-    let actions = pool.tick(Duration::from_secs(55 * 60));
-    assert!(
-        matches!(&actions[..], [PoolAction::Open(1), PoolAction::Send { connection: 1, lane, .. }] if *lane == waiting),
-        "{actions:?}"
-    );
-    let actions = pool
-        .handle(
-            busy,
-            Event::Completed {
-                response_id: "resp_1".into(),
-                output_items: vec![],
-            },
-        )
-        .unwrap();
-    // Connection 1's only in-flight slot is taken, so by the placement
-    // rule the finished lane opens connection 2.
-    assert_eq!(actions, vec![PoolAction::Open(2), PoolAction::Close(0)]);
 }
 
 /// A lost connection's idle lanes open nothing until a request needs a

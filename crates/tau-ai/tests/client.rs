@@ -1,12 +1,12 @@
-//! The OpenAI client (`tau_ai::client`) over `FakeOpenAi`, and the TLS
-//! connector's upgrade request.
+//! The OpenAI client (`tau_ai::client`) over `FakeOpenAi`. The plan
+//! connector's own upgrade is in `chatgpt_transport.rs`.
 
 use std::{cell::RefCell, io, rc::Rc};
 
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_ai::{
-    client::{API_KEY_VAR, MissingApiKey, OpenAi},
+    client::OpenAi,
     cost,
     event::{AssistantEvent, DoneReason},
     message::{Message, StopReason, Usage, UserContent, UserMessage},
@@ -15,13 +15,7 @@ use tau_ai::{
         input::response_items,
         request::{ReasoningEffort, Settings},
     },
-    ws::{
-        io::{
-            connection::Connector,
-            tls::{OPENAI_URL, OpenAiConnector},
-        },
-        proto::pool::Limits,
-    },
+    ws::{io::connection::Connector, proto::pool::Limits},
 };
 use tau_testing::{
     fake_openai::{FakeOpenAi, PORT, Reply},
@@ -290,42 +284,6 @@ fn a_failed_warm_up_is_an_error() {
         Ok(())
     });
     sim.run().unwrap();
-}
-
-/// The TLS connector's upgrade request goes to OpenAI with a bearer
-/// token that is marked sensitive and never printed.
-#[test]
-fn tls_request_carries_the_key() {
-    let connector = OpenAiConnector::new("sk-test-123");
-    let request = connector.request();
-    assert_eq!(request.uri().to_string(), OPENAI_URL);
-    let auth = &request.headers()["authorization"];
-    assert_eq!(auth.to_str().unwrap(), "Bearer sk-test-123");
-    assert!(auth.is_sensitive());
-    assert_eq!(request.headers()["upgrade"], "websocket");
-    let shown = format!("{connector:?}");
-    assert!(!shown.contains("sk-test-123"), "{shown}");
-    assert!(shown.contains("<redacted>"));
-}
-
-/// Without `OPENAI_API_KEY`, `from_env` says so.
-#[test]
-fn from_env_without_key() {
-    // nextest runs each test in its own process, so changing the
-    // environment here cannot race with another test.
-    unsafe { std::env::remove_var(API_KEY_VAR) };
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    let _guard = runtime.enter();
-    let error = OpenAi::from_env().unwrap_err();
-    assert_eq!(error, MissingApiKey);
-    assert_eq!(error.to_string(), "OPENAI_API_KEY is not set");
-    // An empty key counts as missing; any other value is taken.
-    unsafe { std::env::set_var(API_KEY_VAR, "") };
-    assert_eq!(OpenAi::from_env().unwrap_err(), MissingApiKey);
-    unsafe { std::env::set_var(API_KEY_VAR, "sk-test") };
-    assert!(OpenAi::from_env().is_ok());
 }
 
 /// Through the `Llm` trait, `OpenAi` opens sessions with the settings

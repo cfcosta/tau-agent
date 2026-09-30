@@ -13,7 +13,7 @@ durations are estimates for one senior Rust engineer, and exclude tests.
 | `tau-ai`: types, events, accumulator                           |       0.8k |        2         | `serde_json` (`preserve_order`), `indexmap` |
 | `tau-ai`: Responses conversion + event processor               |       1.0k |        3         | `serde`, `jiter`                            |
 | `tau-ai`: WebSocket pool, lanes, continuation                  |       0.9k |        4         | `tokio-tungstenite` (rustls)                |
-| `tau-ai`: retry, cost, API-key auth, model table               |       0.4k |        2         | `tokio-util`                                |
+| `tau-ai`: retry, cost, auth, model table                       |       0.4k |        2         | `tokio-util`                                |
 | `tau-agent`: loop, `Agent`, `Run`, steering, cancel            |       1.3k |        3         | `tokio`, `futures`                          |
 | `tau-agent`: tool trait, coercion + validation, strict schemas |       0.7k |        3         | `jsonschema`, `schemars`                    |
 | `tau-agent`: typed results, sub-agents, limits, forks, hooks   |       0.9k |        3         | none                                        |
@@ -74,12 +74,11 @@ The hardest part is the WebSocket layer. It has to:
   - [x] a `Connector` trait, with TLS (rustls, ring, webpki-roots) as
         the default.
 - [x] Connection pool:
-  - [x] one socket carries many lanes, one `stream_id` per run;
-  - [x] at most 16 requests in flight per connection; a request past
-        that waits, in order, on its lane's connection;
+  - [x] one lane per socket and one request in flight on it, with no
+        `stream_id` (the plan route may not take one; see
+        [0012](decisions/0012-chatgpt-sign-in-only.md));
   - [x] connections rotate at 55 minutes;
-  - [x] a 33rd lane, or a lane with no free in-flight slot, opens a new
-        connection.
+  - [x] a new lane reuses an idle open connection, or opens one.
 - [x] Per-lane continuation and the delta rule (see
       [`reference/openai-websocket.md`](reference/openai-websocket.md)).
 - [x] Recovery ladder:

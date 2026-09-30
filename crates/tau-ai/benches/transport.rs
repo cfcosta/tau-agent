@@ -119,13 +119,12 @@ async fn serve(stream: DuplexStream, config: Config, counters: Arc<Counters>) {
             counters.full.fetch_add(1, Ordering::Relaxed);
         }
         next_id += 1;
-        let stream_id = body["stream_id"].clone();
         let frames = frames.clone();
         tokio::spawn(async move {
             if !config.think.is_zero() {
                 tokio::time::sleep(config.think).await;
             }
-            for frame in response(next_id, &stream_id, config.deltas) {
+            for frame in response(next_id, config.deltas) {
                 if frames.send(frame.to_string()).is_err() {
                     return;
                 }
@@ -134,7 +133,7 @@ async fn serve(stream: DuplexStream, config: Config, counters: Arc<Counters>) {
     }
 }
 
-fn response(id: u64, stream_id: &Value, deltas: u64) -> Vec<Value> {
+fn response(id: u64, deltas: u64) -> Vec<Value> {
     let response_id = format!("resp_{id}");
     let item_id = format!("msg_{id}");
     let mut text = String::new();
@@ -173,9 +172,6 @@ fn response(id: u64, stream_id: &Value, deltas: u64) -> Vec<Value> {
             "usage": {"input_tokens": 100, "output_tokens": deltas, "total_tokens": 100 + deltas},
         },
     }));
-    for frame in &mut frames {
-        frame["stream_id"] = stream_id.clone();
-    }
     frames
 }
 

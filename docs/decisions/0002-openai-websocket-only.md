@@ -1,6 +1,7 @@
-# 0002: OpenAI only, API keys only, Responses over WebSocket
+# 0002: OpenAI only, Responses over WebSocket
 
-- Status: accepted
+- Status: accepted. Its authentication is superseded by
+  [0012](0012-chatgpt-sign-in-only.md).
 - Date: 2026-09-26
 
 ## Context
@@ -28,8 +29,10 @@ This works with `store: false`.
 
 - **Provider:** OpenAI only.
 - **Authentication:** API keys, from `OPENAI_API_KEY` or passed in
-  explicitly (and, since [0011](0011-sign-in-with-chatgpt.md), a
-  ChatGPT plan's token).
+  explicitly. Superseded: since [0012](0012-chatgpt-sign-in-only.md)
+  the only authentication is a ChatGPT plan's token from Sign in with
+  ChatGPT ([0011](0011-sign-in-with-chatgpt.md)); there are no API
+  keys.
 - **API:** Responses only. Chat Completions has no WebSocket mode.
 - **Transport:** WebSocket only. There is no SSE fallback. A failed
   connection surfaces as an `error` event, and the retry policy handles
@@ -44,8 +47,10 @@ This works with `store: false`.
   Changing either breaks the continuation chain and forces a full resend.
 - Networks that block WebSocket upgrades stop every agent.
 - All model and API changes come from a single vendor.
-- Authentication grew one way since: a ChatGPT plan through Sign in with
+- Authentication changed since: a ChatGPT plan through Sign in with
   ChatGPT ([0011](0011-sign-in-with-chatgpt.md)), on the same endpoint
-  and the same WebSocket protocol with the plan's token as the bearer.
-  The transport stays WebSocket only.
+  and the same WebSocket protocol with the plan's token as the bearer,
+  and then that alone, with API keys removed
+  ([0012](0012-chatgpt-sign-in-only.md)). The transport stays
+  WebSocket only.
 - Protocol details: [`../reference/openai-websocket.md`](../reference/openai-websocket.md).

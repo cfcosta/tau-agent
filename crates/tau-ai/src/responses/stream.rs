@@ -2,7 +2,7 @@
 //!
 //! Ports pi's `processResponsesStream`
 //! (`packages/ai/src/api/openai-responses-shared.ts:434-770`) for the
-//! subset tau-agent speaks: OpenAI direct, WebSocket only, API keys only,
+//! subset tau-agent speaks: OpenAI direct, WebSocket only, a ChatGPT plan,
 //! `store: false`. No custom tools, no grammar-constrained sampling
 //! (`custom_tool_call*` items and events are ignored, like any other
 //! unsupported item type). Frames outside the protocol are not

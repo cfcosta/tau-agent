@@ -6,20 +6,23 @@ examples double as the acceptance tests for M4.
 ## Clients and store
 
 ```rust
-let llm = tau_ai::OpenAi::from_env()?;          // OPENAI_API_KEY; one WebSocket pool per process
-let plan = tau_ai::client::OpenAi::chatgpt(     // a ChatGPT plan, via Sign in with ChatGPT
-    tau_ai::chatgpt::ChatGpt::new(tau_ai::chatgpt::Store::open_default()?),
-    account,                                    // an AccountId from a finished sign-in
-);
+let chatgpt = tau_ai::chatgpt::ChatGpt::new(tau_ai::chatgpt::Store::open_default()?);
+let account = chatgpt.active()?.expect("signed in"); // an AccountId from a finished sign-in
+let llm = tau_ai::client::OpenAi::chatgpt(chatgpt, account); // the plan; one WebSocket pool per client
 let store = tau_store::Store::open("runs.db").await?;
 let test_store = tau_store::Store::memory().await?;
 ```
 
 `Agent::new` accepts anything implementing `tau_ai::llm::Llm`, by value.
 Two types do: `OpenAi` and `tau_testing::ScriptedModel`; both are cheap to
-clone and share their state between clones. A plan client stops a run on
-a usage limit or a dead sign-in without retrying; `OpenAi::refusal()`
-says why ([`chatgpt-sign-in.md`](chatgpt-sign-in.md)).
+clone and share their state between clones. `OpenAi::chatgpt` is the
+only way to reach OpenAI: a ChatGPT plan through Sign in with ChatGPT,
+with plan usage enabled. There is no API-key client
+([0012](../decisions/0012-chatgpt-sign-in-only.md)). Tests build one with
+`OpenAi::with_connector(connector, limits)` over a simulated network.
+The client stops a run on a usage limit or a dead sign-in without
+retrying; `OpenAi::refusal()` says why
+([`chatgpt-sign-in.md`](chatgpt-sign-in.md)).
 
 ## Agent
 

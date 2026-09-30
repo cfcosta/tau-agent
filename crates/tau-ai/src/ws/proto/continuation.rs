@@ -75,10 +75,9 @@ impl Body {
         map
     }
 
-    /// The body serialized as a frame, with `extra` fields added (such as
-    /// the lane's `stream_id`), without building it as one JSON value
-    /// first.
-    pub fn to_frame(&self, extra: &[(&str, &Value)]) -> String {
+    /// The body serialized as a frame, without building it as one JSON
+    /// value first.
+    pub fn to_frame(&self) -> String {
         let mut out = Vec::with_capacity(256);
         out.push(b'{');
         let mut first = true;
@@ -91,13 +90,6 @@ impl Body {
             out.push(b':');
         };
         for (name, value) in self.fields.iter() {
-            if extra.iter().any(|(k, _)| k == name) {
-                continue;
-            }
-            key(&mut out, name);
-            write_json(&mut out, value);
-        }
-        for (name, value) in extra {
             key(&mut out, name);
             write_json(&mut out, value);
         }

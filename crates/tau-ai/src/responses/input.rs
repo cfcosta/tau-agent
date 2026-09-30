@@ -2,7 +2,7 @@
 //!
 //! Ports pi's `convertResponsesMessages`
 //! (`packages/ai/src/api/openai-responses-shared.ts:145`) for the
-//! OpenAI Responses subset tau-agent speaks: API keys, WebSocket
+//! OpenAI Responses subset tau-agent speaks: a ChatGPT plan, WebSocket
 //! transport, `store: false`. Instructions are sent separately as the
 //! request's top-level `instructions`, so there is no system/developer
 //! item here (our [`Message`] has no such variant to begin with).

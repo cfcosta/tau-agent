@@ -4,11 +4,13 @@
   out and lists models; `OpenAi::chatgpt` runs inference on the plan
   over `wss://api.openai.com/v1/responses`; tau-ui signs in, switches
   accounts and shows the plan's state. It replaces the Codex backend
-  route (decision 0008, superseded), which is gone.
+  route (decision 0008, superseded), which is gone, and it is the only
+  way tau reaches OpenAI: there are no API keys (decision 0012).
 - Source: OpenAI, "ChatGPT plan usage for open-source apps",
   <https://developers.openai.com/siwc/token-sharing-open-source>, read
   on 2026-09-29.
-- Decision: [0011](../decisions/0011-sign-in-with-chatgpt.md)
+- Decisions: [0011](../decisions/0011-sign-in-with-chatgpt.md),
+  [0012](../decisions/0012-chatgpt-sign-in-only.md)
 
 ## Using it
 
@@ -26,17 +28,17 @@ let client = tau_ai::client::OpenAi::chatgpt(chatgpt, signed_in.account);
 
 ## Endpoints
 
-| What        | URL                                                           |
-| ----------- | ------------------------------------------------------------- |
-| Authorize   | `https://auth.openai.com/api/accounts/authorize`              |
-| Token       | `https://auth.openai.com/api/accounts/oauth/token`            |
-| Discovery   | `https://auth.openai.com/.well-known/openid-configuration`    |
-| JWKS        | the discovery document's `jwks_uri`                           |
-| Revocation  | the discovery document's `revocation_endpoint`                |
-| Models      | `GET https://api.openai.com/v1/models`                        |
-| Inference   | `wss://api.openai.com/v1/responses` (bearer token; tau's)     |
-| Issuer      | `https://auth.openai.com`                                     |
-| `resource`  | `https://api.openai.com/v1`, on authorize, exchange, refresh |
+| What       | URL                                                          |
+| ---------- | ------------------------------------------------------------ |
+| Authorize  | `https://auth.openai.com/api/accounts/authorize`             |
+| Token      | `https://auth.openai.com/api/accounts/oauth/token`           |
+| Discovery  | `https://auth.openai.com/.well-known/openid-configuration`   |
+| JWKS       | the discovery document's `jwks_uri`                          |
+| Revocation | the discovery document's `revocation_endpoint`               |
+| Models     | `GET https://api.openai.com/v1/models`                       |
+| Inference  | `wss://api.openai.com/v1/responses` (bearer token; tau's)    |
+| Issuer     | `https://auth.openai.com`                                    |
+| `resource` | `https://api.openai.com/v1`, on authorize, exchange, refresh |
 
 ## The host id
 
@@ -52,20 +54,20 @@ credential, and sent as `ext_agent_host_id` on every authorization.
 `ChatGpt::start_sign_in(account, redirect_uri, ask_consent)` builds the
 authorization URL with a fresh `state`, `nonce` and PKCE verifier:
 
-| Parameter               | First sign-in          | Returning (`account` given)     |
-| ----------------------- | ---------------------- | ------------------------------- |
-| `client_id`             | `dynamic_agent_client` | the saved issued id             |
-| `agent_name_hint`       | `tau`                  | omitted                         |
-| `ext_agent_host_id`     | this host's id         | this host's id                  |
-| `id_token_hint`         | omitted                | the saved ID token, if any      |
-| `login_hint`            | omitted                | the saved email, if any         |
-| `response_type`         | `code`                 | `code`                          |
-| `redirect_uri` | `http://127.0.0.1:<port>/auth/callback` | same |
-| `scope` | `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct` | same |
-| `resource` | `https://api.openai.com/v1` | same |
-| `state`, `nonce` | 32 random bytes, base64url | same |
-| `code_challenge(_method)` | S256 of the verifier | same |
-| `prompt` | `consent` only when `ask_consent` (enabling plan usage after a decline) | same |
+| Parameter                 | First sign-in                                                                   | Returning (`account` given) |
+| ------------------------- | ------------------------------------------------------------------------------- | --------------------------- |
+| `client_id`               | `dynamic_agent_client`                                                          | the saved issued id         |
+| `agent_name_hint`         | `tau`                                                                           | omitted                     |
+| `ext_agent_host_id`       | this host's id                                                                  | this host's id              |
+| `id_token_hint`           | omitted                                                                         | the saved ID token, if any  |
+| `login_hint`              | omitted                                                                         | the saved email, if any     |
+| `response_type`           | `code`                                                                          | `code`                      |
+| `redirect_uri`            | `http://127.0.0.1:<port>/auth/callback`                                         | same                        |
+| `scope`                   | `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct` | same                        |
+| `resource`                | `https://api.openai.com/v1`                                                     | same                        |
+| `state`, `nonce`          | 32 random bytes, base64url                                                      | same                        |
+| `code_challenge(_method)` | S256 of the verifier                                                            | same                        |
+| `prompt`                  | `consent` only when `ask_consent` (enabling plan usage after a decline)         | same                        |
 
 `Loopback::bind` listens on `127.0.0.1:1455`, or any free port if that
 is taken; only the port may vary. It answers other paths with a 404 and
@@ -129,7 +131,14 @@ renamed into place. A record has OpenAI's fields plus three of tau's:
   "expires_in": 3600,
   "expires_at": 1790003600,
   "earliest_refresh_at": null,
-  "scopes": ["chatgpt.tokens.use.direct", "email", "offline_access", "openid", "profile", "resource.invoke"],
+  "scopes": [
+    "chatgpt.tokens.use.direct",
+    "email",
+    "offline_access",
+    "openid",
+    "profile",
+    "resource.invoke"
+  ],
   "saved_at": "2026-09-29T12:00:00Z"
 }
 ```
@@ -158,11 +167,11 @@ replaces the access token, the refresh token, the expiry and the
 scopes together. A new ID token replaces the hint only if it validates
 as the same account.
 
-| Refresh error                                                                                                                       | What happens                                                  |
-| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `invalid_grant`, `invalid_refresh_token`, `token_expired`, `refresh_token_expired`, `refresh_token_invalidated`, `refresh_token_reused` | access and refresh tokens cleared; `SignInRequired`         |
-| `invalid_client`                                                                                                                    | `InvalidClient`; tokens kept                                  |
-| a network failure or 5xx                                                                                                            | `Network` / `OAuth`, recovery `RetryLater`; tokens kept       |
+| Refresh error                                                                                                                           | What happens                                            |
+| --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `invalid_grant`, `invalid_refresh_token`, `token_expired`, `refresh_token_expired`, `refresh_token_invalidated`, `refresh_token_reused` | access and refresh tokens cleared; `SignInRequired`     |
+| `invalid_client`                                                                                                                        | `InvalidClient`; tokens kept                            |
+| a network failure or 5xx                                                                                                                | `Network` / `OAuth`, recovery `RetryLater`; tokens kept |
 
 ## Signing out
 
@@ -185,18 +194,18 @@ as `ModelInfo { slug, display_name }`.
 
 `ChatGptError::recovery` and `ApiError::recovery` return a `Recovery`:
 
-| Returned                                                                   | Recovery          |
-| -------------------------------------------------------------------------- | ----------------- |
-| `subscription_sharing_usage_limit_exceeded` (429)                          | `UsageLimit`      |
-| `subscription_sharing_usage_unavailable`, `…_user_unavailable` (503)       | `RetryLater`      |
-| `subscription_sharing_user_not_eligible` (403)                             | `Restricted`      |
-| `chatpass_v2_scope_not_authorized`, `…_invalid_authorization_context` (403) | `Restricted`     |
-| `subscription_sharing_unsupported_capability` (400), `…_route_not_supported` (403) | `FixRequest` |
-| `subscription_sharing_invalid_user` (401)                                  | `SignInAgain`     |
-| `{"detail": …}` with 401 / 403 / 503                                       | `SignInAgain` / `Restricted` / `RetryLater` |
-| no documented code: 401 / 403 / 408, 409, 429, 5xx / other 4xx             | `SignInAgain` / `Restricted` / `RetryLater` / `FixRequest` |
-| a sign-in without plan usage                                               | `EnablePlanUsage` |
-| `invalid_client`, storage failures                                         | `FixClient`       |
+| Returned                                                                           | Recovery                                                   |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `subscription_sharing_usage_limit_exceeded` (429)                                  | `UsageLimit`                                               |
+| `subscription_sharing_usage_unavailable`, `…_user_unavailable` (503)               | `RetryLater`                                               |
+| `subscription_sharing_user_not_eligible` (403)                                     | `Restricted`                                               |
+| `chatpass_v2_scope_not_authorized`, `…_invalid_authorization_context` (403)        | `Restricted`                                               |
+| `subscription_sharing_unsupported_capability` (400), `…_route_not_supported` (403) | `FixRequest`                                               |
+| `subscription_sharing_invalid_user` (401)                                          | `SignInAgain`                                              |
+| `{"detail": …}` with 401 / 403 / 503                                               | `SignInAgain` / `Restricted` / `RetryLater`                |
+| no documented code: 401 / 403 / 408, 409, 429, 5xx / other 4xx                     | `SignInAgain` / `Restricted` / `RetryLater` / `FixRequest` |
+| a sign-in without plan usage                                                       | `EnablePlanUsage`                                          |
+| `invalid_client`, storage failures                                                 | `FixClient`                                                |
 
 A documented code decides whatever the status. `ApiError` keeps the
 status, the body verbatim, its shape (`Structured`, `Detail`, `Other`)
@@ -223,14 +232,15 @@ What the route asks, and how tau keeps it:
   `metadata`, `moderation`, `multi_agent`, `prompt`,
   `prompt_cache_retention`, `safety_identifier`, `temperature`,
   `top_logprobs`, `top_p`, `truncation` or `user`
-  (`chatgpt::UNSUPPORTED_FIELDS`): a plan session strips them from its
+  (`chatgpt::UNSUPPORTED_FIELDS`): every session strips them from its
   fields whatever its settings say.
 - No `system` input items: instructions go in `instructions`, and
   tau's input never has system items.
 - Continuation only within the connection that produced the response:
   that is how lanes work already; a lost connection means a full resend.
-- `stream_id`: unverified on this route, so the plan client takes one
-  lane per connection (`single_lane_limits`, `tags_lanes() == false`).
+- `stream_id`: unverified on this route, so tau never sends it. Each
+  run gets a connection of its own, with one response in flight, and
+  frames go to the run of the connection they came on.
 
 ### Refusals and retries
 
@@ -260,12 +270,12 @@ Nothing moves a run to another way of paying after a plan error.
 ## tau-ui
 
 - Runs use the active account's plan when it is signed in with plan
-  usage, else the saved API key (`accounts::Credentials::access`).
+  usage (`accounts::Credentials::access`), and nothing else.
 - The Models screen lists every saved account (label, state, the
   active one marked): "Continue with ChatGPT" / "Add account", switch,
   "Sign out" (revokes; says so when OpenAI did not confirm), "Manage
   usage", and for a sign-in without plan usage "Enable ChatGPT plan use"
-  (signs in again with `prompt=consent`) beside the API-key option.
+  (signs in again with `prompt=consent`).
 - Onboarding's model step: "Continue with ChatGPT" opens the browser;
   while it waits, the page can be opened again or the redirect pasted.
 - Once, after the first sign-in with plan usage: "You're using your
@@ -275,7 +285,8 @@ Nothing moves a run to another way of paying after a plan error.
 - A run stopped by a usage limit: "Usage limit reached — Review your
   plan or this app's limit in ChatGPT settings." with "Manage usage";
   a dead sign-in asks to sign in again; a sign-in without plan usage
-  offers to enable it or add a key; a restriction shows its message.
+  offers "Enable ChatGPT plan use", the only way forward; a restriction
+  shows its message.
 - The picker lists `models()` for the active account (display name,
   server order), listed again on a switch, without prices.
 - "Manage usage" opens `USAGE_SETTINGS_URL`
@@ -286,17 +297,17 @@ Nothing moves a run to another way of paying after a plan error.
 
 `crates/tau-ai/examples/chatgpt_probe.rs`, run by hand:
 
-| Command      | What it does                                                                                   |
-| ------------ | ---------------------------------------------------------------------------------------------- |
+| Command      | What it does                                                                                                                                                                        |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `sign-in`    | binds the loopback, prints and opens the URL, waits (or takes a pasted URL), saves the record. `--new` registers another account; `--consent` asks for plan usage again; `--port N` |
-| `accounts`   | the saved accounts, their status and scopes                                                    |
-| `models`     | `GET /v1/models`                                                                               |
-| `http`       | one streamed `POST /v1/responses` (`store: false`, `stream: true`), events until the terminal one |
-| `http-tools` | the same with a top-level function tool, one in a `namespace`, and one in an `additional_tools` input item |
-| `ws`         | the same request over `wss://api.openai.com/v1/responses`, then a second continuing with `previous_response_id` on the same connection |
-| `ws-tools`   | the three tool shapes over one WebSocket                                                       |
-| `refresh`    | a refresh now: new expiry, whether the refresh token rotated                                   |
-| `sign-out`   | revokes and clears                                                                             |
+| `accounts`   | the saved accounts, their status and scopes                                                                                                                                         |
+| `models`     | `GET /v1/models`                                                                                                                                                                    |
+| `http`       | one streamed `POST /v1/responses` (`store: false`, `stream: true`), events until the terminal one                                                                                   |
+| `http-tools` | the same with a top-level function tool, one in a `namespace`, and one in an `additional_tools` input item                                                                          |
+| `ws`         | the same request over `wss://api.openai.com/v1/responses`, then a second continuing with `previous_response_id` on the same connection                                              |
+| `ws-tools`   | the three tool shapes over one WebSocket                                                                                                                                            |
+| `refresh`    | a refresh now: new expiry, whether the refresh token rotated                                                                                                                        |
+| `sign-out`   | revokes and clears                                                                                                                                                                  |
 
 It prints statuses, request ids, error bodies and events verbatim, and
 never a token.
@@ -327,8 +338,8 @@ never a token.
 
 Each model takes its own efforts, and the server rejects any other
 with `unsupported_value`. `data/openai-reasoning-efforts.json` holds
-them, probed through both an API key and ChatGPT's Codex backend on
-2026-09-28; the two agree on every model they share. `Model::efforts` carries them, lowest
+them, probed on 2026-09-28 through both an API key (tau took one then)
+and ChatGPT's Codex backend; the two agree on every model they share. `Model::efforts` carries them, lowest
 first:
 
 | Models                                         | Efforts                             |
@@ -354,5 +365,6 @@ An `error` frame from the server nests its `code` and `message` under
 
 ## Not done yet
 
-- `stream_id` on the plan route: one lane per connection until checked.
+- `stream_id` on the plan route: unchecked, so tau keeps one run per
+  connection.
 - A device-code flow: OpenAI documents none for this route.

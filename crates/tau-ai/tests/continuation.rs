@@ -285,8 +285,7 @@ fn a_real_turn_continues_from_a_warm_up(tc: TestCase) {
     assert!(prepared.body.get("generate").is_none());
 }
 
-/// A body serialized as a frame is the body as one JSON object, plus
-/// the extra fields, which replace fields of the same name.
+/// A body serialized as a frame is the body as one JSON object.
 #[hegel::test(test_cases = 200)]
 fn a_frame_is_the_body_as_json(tc: TestCase) {
     let history = tc.draw(generators::lane::lane_history());
@@ -296,17 +295,9 @@ fn a_frame_is_the_body_as_json(tc: TestCase) {
     if tc.draw(gs::booleans()) {
         full.insert("previous_response_id".into(), json!("resp_1"));
     }
-    if tc.draw(gs::booleans()) {
-        full.insert("stream_id".into(), json!("stale"));
-    }
     let body = Body::from(full);
-    let stream_id = json!("tau-7");
-    let frame: Value =
-        serde_json::from_str(&body.to_frame(&[("stream_id", &stream_id)]))
-            .unwrap();
-    let mut expected = body.to_map();
-    expected.insert("stream_id".into(), stream_id);
-    assert_eq!(frame, Value::Object(expected));
+    let frame: Value = serde_json::from_str(&body.to_frame()).unwrap();
+    assert_eq!(frame, Value::Object(body.to_map()));
 }
 
 /// A JSON body splits into fields, input and `previous_response_id`, and

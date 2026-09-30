@@ -20,7 +20,6 @@ use tau_ai::ws::proto::{
         Lane,
         LaneError,
         PREVIOUS_RESPONSE_NOT_FOUND,
-        STREAM_LIMIT_REACHED,
     },
 };
 use tau_testing::generators::{
@@ -35,7 +34,6 @@ enum Fault {
     /// The server forgets every response before this request arrives.
     Evict,
     ConnectionLimit,
-    StreamLimit,
     LostBeforeOutput,
     LostAfterOutput,
     /// The connection is lost before any output, and the reconnect fails
@@ -69,7 +67,6 @@ impl Fault {
             Self::ConnectionLimit if second => {
                 Some(server(CONNECTION_LIMIT_REACHED))
             }
-            Self::StreamLimit if second => Some(server(STREAM_LIMIT_REACHED)),
             Self::LostBeforeOutput if second => Some(Failure::ConnectionLost {
                 before_first_event: true,
             }),
@@ -92,7 +89,6 @@ struct Log {
     last_delta_items: u64,
     previous_response_not_found: u64,
     connection_limit_reached: u64,
-    stream_limit_reached: u64,
     connection_lost: u64,
 }
 
@@ -208,9 +204,6 @@ impl LaneMachine {
                             Fault::ConnectionLimit => {
                                 self.log.connection_limit_reached += 1
                             }
-                            Fault::StreamLimit => {
-                                self.log.stream_limit_reached += 1
-                            }
                             Fault::LostBeforeOutput
                             | Fault::LostDuringReconnect => {
                                 self.log.connection_lost += 1
@@ -237,9 +230,6 @@ impl LaneMachine {
                         }
                         Fault::ConnectionLimit => {
                             lane.handle(refuse(CONNECTION_LIMIT_REACHED))
-                        }
-                        Fault::StreamLimit => {
-                            lane.handle(refuse(STREAM_LIMIT_REACHED))
                         }
                         Fault::LostBeforeOutput
                         | Fault::LostDuringReconnect => {
@@ -335,7 +325,6 @@ impl LaneMachine {
             stats.connection_limit_reached,
             log.connection_limit_reached
         );
-        assert_eq!(stats.stream_limit_reached, log.stream_limit_reached);
         assert_eq!(stats.connection_lost, log.connection_lost);
     }
 }
@@ -493,7 +482,7 @@ fn previous_response_not_found_on_full_request_fails() {
     ));
 }
 
-/// The connection and stream limits and a lost connection reconnect only
+/// The connection limit and a lost connection reconnect only
 /// before any output; the resend after reconnecting is full and counted.
 /// A second refusal after that one recovery fails the request.
 #[test]
@@ -504,12 +493,6 @@ fn reconnect_only_before_output() {
                 code: Some(CONNECTION_LIMIT_REACHED.into()),
             },
             "connection_limit_reached",
-        ),
-        (
-            Event::ServerError {
-                code: Some(STREAM_LIMIT_REACHED.into()),
-            },
-            "stream_limit_reached",
         ),
         (Event::ConnectionLost, "connection_lost"),
     ] {
@@ -524,7 +507,6 @@ fn reconnect_only_before_output() {
         let stats = lane.stats();
         let count = match counter {
             "connection_limit_reached" => stats.connection_limit_reached,
-            "stream_limit_reached" => stats.stream_limit_reached,
             _ => stats.connection_lost,
         };
         assert_eq!(count, 1, "{counter}");

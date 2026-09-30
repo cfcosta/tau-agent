@@ -7,8 +7,11 @@ on 2026-09-26. Re-check it before M1 starts; the mode is recent.
 ## Connection
 
 - **Endpoint:** `wss://api.openai.com/v1/responses`.
-- **Authentication:** `Authorization: Bearer $OPENAI_API_KEY`, sent on
-  the upgrade request.
+- **Authentication:** `Authorization: Bearer <token>`, sent on the
+  upgrade request. tau's token is always a ChatGPT plan's access token
+  from Sign in with ChatGPT ([`chatgpt-sign-in.md`](chatgpt-sign-in.md)),
+  refreshed before each connection. tau takes no API key
+  ([0012](../decisions/0012-chatgpt-sign-in-only.md)).
 - **Lifetime:** at most 60 minutes per connection. tau-agent rotates at
   55 minutes, which is the same margin pi uses.
 
@@ -19,7 +22,9 @@ Responses create body, with these differences:
 
 - **Forbidden fields:** `stream` and `background`.
 - **`stream_id`** is optional: 1–256 characters from `[A-Za-z0-9_.-]`.
-  Omit it to use the default lane.
+  Omit it to use the default lane. tau never sends it: the plan route
+  may not take it, so each run uses the default lane of a connection
+  of its own.
 - **`previous_response_id`** continues from a response the connection
   still holds.
 - **`store`:** tau-agent always sends `false`.
@@ -29,7 +34,6 @@ Responses create body, with these differences:
 ```json
 {
   "type": "response.create",
-  "stream_id": "run_01J…",
   "model": "gpt-5.5",
   "store": false,
   "instructions": "…",
@@ -53,7 +57,8 @@ Streaming events use the same `response.*` types as the SSE transport:
   `response.incomplete`
 
 Events on a named lane carry its `stream_id`, and events on the default
-lane omit it. Errors look like this:
+lane omit it. tau uses only the default lane, so a frame belongs to the
+run of the connection it came on. Errors look like this:
 
 ```json
 {
@@ -66,12 +71,12 @@ lane omit it. Errors look like this:
 
 ## Limits and lanes
 
-| Limit                              | Value                                              | tau-agent behaviour                                                                                                                                                                                                                                  |
-| ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| In-flight responses per connection | 16, across all lanes                               | The pool holds a semaphore per connection. A 17th concurrent run is placed on another connection.                                                                                                                                                    |
-| Named `stream_id`s per connection  | 32 (the default lane doesn't count)                | Past 32 the pool opens another connection. The error is `websocket_stream_limit_reached`; a lane that gets it moves to another connection and resends, as for the age limit, since the server may count every id it has seen, not only those in use. |
-| Ordering                           | FIFO within one `stream_id`; lanes run in parallel | One run = one lane. Parallel runs never queue behind each other.                                                                                                                                                                                     |
-| Connection age                     | 60 min                                             | The pool rotates at 55 min. The error is `websocket_connection_limit_reached`.                                                                                                                                                                       |
+| Limit                              | Value                                              | tau-agent behaviour                                                                                                                |
+| ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| In-flight responses per connection | 16, across all lanes                               | One run = one connection, with one response in flight. A new run takes an idle open connection that is not draining, or a new one. |
+| Named `stream_id`s per connection  | 32 (the default lane doesn't count)                | Not reached: tau sends no `stream_id`, so `websocket_stream_limit_reached` never comes and has no handling.                        |
+| Ordering                           | FIFO within one `stream_id`; lanes run in parallel | One run = one lane = one connection. Parallel runs never queue behind each other.                                                  |
+| Connection age                     | 60 min                                             | The pool rotates at 55 min. The error is `websocket_connection_limit_reached`.                                                     |
 
 ## Continuation state
 
@@ -140,13 +145,13 @@ Events that force a full resend:
 
 ## Recovery ladder
 
-| Condition                                    | Action                                                                                                                                          |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `previous_response_not_found`                | Clear the lane's continuation, then resend in full on the same connection.                                                                      |
-| `websocket_connection_limit_reached`         | Reconnect, then resend in full.                                                                                                                 |
-| Connection lost before any event was emitted | Reconnect, then resend in full. This counts as one retry attempt.                                                                               |
-| Connection lost mid-stream                   | Emit an `error` event with `stopReason = error`. The agent's retry policy decides what happens next.                                            |
-| Cancel                                       | Close the lane's continuation. If the socket has other live lanes, keep it open; otherwise close it. The next turn on that run resends in full. |
+| Condition                                    | Action                                                                                                                                      |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `previous_response_not_found`                | Clear the lane's continuation, then resend in full on the same connection.                                                                  |
+| `websocket_connection_limit_reached`         | Reconnect, then resend in full.                                                                                                             |
+| Connection lost before any event was emitted | Reconnect, then resend in full. This counts as one retry attempt.                                                                           |
+| Connection lost mid-stream                   | Emit an `error` event with `stopReason = error`. The agent's retry policy decides what happens next.                                        |
+| Cancel                                       | Close the lane's continuation and keep the connection; the driver skips the cancelled response's tail on it. The next turn resends in full. |
 
 ## Retries are invisible to the caller
 
@@ -173,7 +178,7 @@ per lane:
 | `delta_requests`     | requests sent as a delta with `previous_response_id` |
 | `last_delta_items`   | number of input items in the last delta request      |
 | `connections_opened` | sockets opened, including reconnects and rotations   |
-| `connections_reused` | requests placed on an existing socket                |
+| `connections_reused` | lanes placed on an open socket another lane left     |
 | `recoveries`         | recovery-ladder steps taken, by condition            |
 
 These counters are part of the API. Tests use them as an oracle, and
@@ -201,9 +206,9 @@ setup. It is optional and set per agent.
   reasoning when `store` is `false`.
 - Tool-call ids are `call_id|item_id`.
 - The idle timer and the maximum age are tracked per connection:
-  - a connection with no lanes for 5 minutes is closed (pi's cache
-    lifetime); one that still has lanes stays, since it holds their
-    continuations, and rotation bounds its age;
+  - a connection with no lane for 5 minutes is closed (pi's cache
+    lifetime); one that still has its lane stays, since it holds the
+    lane's continuation, and rotation bounds its age;
   - a connection with requests in flight that receives nothing for 5
     minutes (pi's idle timeout) is presumed dead and handled as lost: a
     request with no output yet is resent, pi's "idle before the first

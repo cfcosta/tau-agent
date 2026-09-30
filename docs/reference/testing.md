@@ -34,7 +34,7 @@ every test must meet. It covers:
    regression case before the fix lands. A surviving mutant is a
    missing assertion.
 7. **Tests run offline.** Nothing in the default test run needs
-   `OPENAI_API_KEY`, `DATABASE_URL` or network access.
+   a ChatGPT sign-in, `DATABASE_URL` or network access.
 8. **Test against reality at the edges.** A model we wrote can share
    our misunderstanding of the server. So the transport is tested
    over a simulated network against a fake server that keeps
@@ -251,7 +251,7 @@ tested on its own terms:
 
 - **`ws::proto`, with properties.** Hegel generates sequences of
   events for the pool and lane state machines: requests from several
-  runs, frames from interleaved lanes, cancels, closes, errors and timer
+  runs, each on a connection of its own, cancels, closes, errors and timer
   expiries with their timestamps. The properties compare the actions
   against a model. Because the state machine does no I/O, every
   ordering of concurrent events is just a different generated sequence,
@@ -328,31 +328,30 @@ list is a floor, not a ceiling.
 
 ### `tau-ai`
 
-| Property                                                                                                                                                                            | Oracle       |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| Message types: `from_json(to_json(m)) == m`, and the JSON uses pi's shape (camelCase, tagged by `role` / `type`)                                                                    | Round trip   |
-| `Accumulator` over any `AssistantEvent` stream built from a message gives back that message                                                                                         | Round trip   |
-| Re-chunking the deltas of a stream at arbitrary points does not change the accumulated message                                                                                      | Metamorphic  |
-| Event processor: render a generated response as `response.*` events, with arbitrary delta splits and interleaved lanes; processing gives back the response                          | Round trip   |
-| Every processed stream starts with `start` and ends with exactly one of `done` or `error`                                                                                           | Invariant    |
-| Incremental JSON parser, fed the arguments in any chunking, agrees with `serde_json` on the complete text                                                                           | Differential |
-| Each partial parse is consistent with the final value: no field seen early is later changed or dropped                                                                              | Invariant    |
-| Transcript → Responses input: tool-call ids split into `call_id` and `item_id`, and every tool output follows its call                                                              | Invariant    |
-| **Delta rule:** for any lane history, `baseline + sent_input` equals the full input the request would otherwise carry                                                               | Differential |
-| Delta rule: a change to anything other than `input`, or to the baseline prefix, forces a full resend with no `previous_response_id`                                                 | Metamorphic  |
-| Cancel, compaction, reconnect and `previous_response_not_found` each make the lane's next request a full resend                                                                     | Model        |
-| Pool (state machine): never more than 32 named lanes or 16 in-flight responses per connection; requests on a lane stay FIFO; no new work goes to a connection older than 55 minutes | Model        |
-| Backoff delay for attempt `n` lies in `[0, base × 2ⁿ]`, and the number of attempts never exceeds the limit                                                                          | Invariant    |
-| Every strict prefix of a valid event stream ends in `error`, never in `done`                                                                                                        | Metamorphic  |
-| Unknown server event types anywhere in a stream are ignored and do not change the result                                                                                            | Metamorphic  |
-| Converted input never holds a `function_call` without its output, or a reasoning item without the output item it belongs to, including after an aborted or errored turn             | Invariant    |
-| Every generated `stream_id` matches `[A-Za-z0-9_.-]{1,256}`                                                                                                                         | Invariant    |
-| **Transport (turmoil, against `FakeOpenAi`):** the input the server rebuilds from its cache plus each delta equals the full input of that turn                                      | Differential |
-| Transport: after any recovery, the caller sees exactly one `start` and no `error` for the turn, unless recovery gives up                                                            | Model        |
-| Transport: `PoolStats` matches the model: `delta_requests` equals requests minus the forced full resends, and connections are reused while under the limits                         | Model        |
-| Transport: `websocket_connection_limit_reached` reconnects once, and only before any output was emitted; after output it becomes an `error` event                                   | Model        |
-| A turn cancelled before its terminal event records zero usage                                                                                                                       | Model        |
-| Cost is additive: `cost(a + b) == cost(a) + cost(b)` for usages of the same model and tier                                                                                          | Algebraic    |
+| Property                                                                                                                                                                      | Oracle       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| Message types: `from_json(to_json(m)) == m`, and the JSON uses pi's shape (camelCase, tagged by `role` / `type`)                                                              | Round trip   |
+| `Accumulator` over any `AssistantEvent` stream built from a message gives back that message                                                                                   | Round trip   |
+| Re-chunking the deltas of a stream at arbitrary points does not change the accumulated message                                                                                | Metamorphic  |
+| Event processor: render a generated response as `response.*` events, with arbitrary delta splits; processing gives back the response                                          | Round trip   |
+| Every processed stream starts with `start` and ends with exactly one of `done` or `error`                                                                                     | Invariant    |
+| Incremental JSON parser, fed the arguments in any chunking, agrees with `serde_json` on the complete text                                                                     | Differential |
+| Each partial parse is consistent with the final value: no field seen early is later changed or dropped                                                                        | Invariant    |
+| Transcript → Responses input: tool-call ids split into `call_id` and `item_id`, and every tool output follows its call                                                        | Invariant    |
+| **Delta rule:** for any lane history, `baseline + sent_input` equals the full input the request would otherwise carry                                                         | Differential |
+| Delta rule: a change to anything other than `input`, or to the baseline prefix, forces a full resend with no `previous_response_id`                                           | Metamorphic  |
+| Cancel, compaction, reconnect and `previous_response_not_found` each make the lane's next request a full resend                                                               | Model        |
+| Pool (state machine): never more than one lane or one in-flight response per connection; requests on a lane stay FIFO; no new work goes to a connection older than 55 minutes | Model        |
+| Backoff delay for attempt `n` lies in `[0, base × 2ⁿ]`, and the number of attempts never exceeds the limit                                                                    | Invariant    |
+| Every strict prefix of a valid event stream ends in `error`, never in `done`                                                                                                  | Metamorphic  |
+| Unknown server event types anywhere in a stream are ignored and do not change the result                                                                                      | Metamorphic  |
+| Converted input never holds a `function_call` without its output, or a reasoning item without the output item it belongs to, including after an aborted or errored turn       | Invariant    |
+| **Transport (turmoil, against `FakeOpenAi`):** the input the server rebuilds from its cache plus each delta equals the full input of that turn                                | Differential |
+| Transport: after any recovery, the caller sees exactly one `start` and no `error` for the turn, unless recovery gives up                                                      | Model        |
+| Transport: `PoolStats` matches the model: `delta_requests` equals requests minus the forced full resends, and a new lane reuses a connection a closed lane left               | Model        |
+| Transport: `websocket_connection_limit_reached` reconnects once, and only before any output was emitted; after output it becomes an `error` event                             | Model        |
+| A turn cancelled before its terminal event records zero usage                                                                                                                 | Model        |
+| Cost is additive: `cost(a + b) == cost(a) + cost(b)` for usages of the same model and tier                                                                                    | Algebraic    |
 
 The delta rule is the riskiest code in the project. Its model test must
 also run in the nightly tier and under `cargo mutants`.
@@ -517,12 +516,13 @@ ladder run. TLS is not simulated; the live tier covers it.
   input the turn would have sent without continuation.
 - **Limits.** It enforces 16 in-flight responses per connection (a
   request past that is refused and recorded as a violation, which a
-  correct client never causes) and 32 named stream ids per connection,
-  counting every id it has seen (the 33rd gets
-  `websocket_stream_limit_reached`). On turmoil's clock it closes a
-  connection at 60 minutes. `Reply::Delay` holds a reply back while
-  the connection keeps reading, so responses overlap and the in-flight
-  limit means something.
+  correct client never causes). tau sends no `stream_id`, so the fake
+  tracks no named lanes. On turmoil's clock it closes a connection at
+  60 minutes. `Reply::Delay` holds a reply back while the connection
+  keeps reading, so responses on different connections overlap.
+- **Upgrades.** It records each upgrade's `Authorization` header and
+  can refuse an upgrade with a status and body. Plan tests pair it
+  with `FakeChatGpt`, which signs in and hands out the bearer token.
 - **Faults.** It can drop the connection before the first event or in
   the middle of a stream, delay events, and insert event types the
   client does not know. turmoil adds network faults: holding and
@@ -539,11 +539,15 @@ sockets in individual tests.
 ## Live tests
 
 Live tests run against `wss://api.openai.com/v1/responses` with the
-`live` feature and `OPENAI_API_KEY`. They check what no fake can: that
-the server accepts our requests and honours our continuation.
+`live` feature and a saved ChatGPT sign-in with plan usage. They check
+what no fake can: that the server accepts our requests and honours our
+continuation.
 
-- **Credentials** come only from `OPENAI_API_KEY`. Without it, live tests
-  fail with a clear message; they never read other files or tokens.
+- **Credentials** come only from the saved sign-in in
+  `$XDG_CONFIG_HOME/tau/chatgpt/` (`tau_ai::chatgpt::Store`), never
+  from an API key ([0012](../decisions/0012-chatgpt-sign-in-only.md)).
+  Without one, live tests fail with a clear message. They print no
+  token.
 - **Model and budget.** Use the cheapest model that supports the
   feature under test, and cap each test with `Limits::max_usd`.
 - **No retries.** A live test is not retried. A failure prints the
@@ -607,7 +611,6 @@ Required fixtures:
 - parallel function calls;
 - a `previous_response_not_found` error;
 - `response.incomplete` because the output-token limit was hit;
-- two lanes interleaved on one socket.
 
 The recorded fixtures also calibrate the stream generator. Every event
 type and field that appears in a fixture must be something the

@@ -2,11 +2,9 @@
 //! routes server frames to lanes, and turns them into [`AssistantEvent`]s
 //! for the runs.
 //!
-//! Each lane gets a `stream_id` (`tau-<lane>`), which the driver writes
-//! into every request it sends and reads back from every frame it
-//! receives. Frames for a lane with no request in flight are ignored. An
-//! endpoint that does not take `stream_id` gets one lane per connection
-//! instead, and a frame goes to the lane of the connection it came on.
+//! A connection carries one lane, so a frame goes to the lane of the
+//! connection it came on. Frames for a lane with no request in flight
+//! are ignored.
 //!
 //! A connection that could not open because it was refused (a
 //! [`Refusal`]: an upgrade answered with an HTTP error, or a sign-in with
@@ -20,12 +18,13 @@
 //! until a response completes ([`Transport::refusal`]).
 //!
 //! A cancelled request that was already sent keeps streaming on the
-//! server. Its tail arrives on the same `stream_id`, before the frames of
-//! the lane's next request, because the server answers a lane's requests
-//! in order. So after such a cancel, the driver skips the lane's frames
-//! until the cancelled response's terminal frame (`response.completed`,
-//! `response.failed`, `response.incomplete` or `error`) has gone by. The
-//! skip ends early if that connection closes.
+//! server. Its tail arrives on the same connection, before the frames of
+//! the next request there, because the server answers a connection's
+//! requests in order. So after such a cancel, the driver skips the
+//! connection's frames until the cancelled response's terminal frame
+//! (`response.completed`, `response.failed`, `response.incomplete` or
+//! `error`) has gone by, whichever lane the connection carries by then.
+//! The skip ends early if that connection closes.
 //!
 //! Recoveries are invisible to the caller
 //! (`docs/reference/openai-websocket.md`, "Retries are invisible to the
@@ -125,12 +124,10 @@ impl Transport {
         let (commands, receiver) = mpsc::unbounded_channel();
         let (connection_events, connection_receiver) =
             mpsc::unbounded_channel();
-        let tagged = connector.tags_lanes();
         let refusal = Arc::new(Mutex::new(None));
         let driver = Driver {
             refusal: refusal.clone(),
             refused: HashMap::new(),
-            tagged,
             connector: Arc::new(connector),
             pool: Pool::new(limits),
             connections: HashMap::new(),
@@ -238,12 +235,10 @@ struct Driver<C: Connector> {
     connections: HashMap<ConnectionId, ConnectionHandle>,
     connection_events: mpsc::UnboundedSender<ConnectionEvent>,
     lanes: HashMap<LaneId, Active>,
-    /// Lanes whose cancelled responses are still streaming: the
-    /// connection they stream on, and how many terminal frames to skip.
-    skipping: HashMap<LaneId, (ConnectionId, usize)>,
+    /// Connections whose cancelled responses are still streaming: how
+    /// many terminal frames to skip on each.
+    skipping: HashMap<ConnectionId, usize>,
     origin: Instant,
-    /// Whether requests carry `stream_id` ([`Connector::tags_lanes`]).
-    tagged: bool,
     refusal: Arc<Mutex<Option<Refusal>>>,
     /// Lanes whose connection was refused for a while: the error their
     /// request fails with if the reconnect fails too.
@@ -309,19 +304,6 @@ impl Active {
             class: refusal.class(),
         });
     }
-}
-
-fn stream_id(lane: LaneId) -> String {
-    format!("tau-{lane}")
-}
-
-fn lane_of(frame: &Value) -> Option<LaneId> {
-    frame
-        .get("stream_id")?
-        .as_str()?
-        .strip_prefix("tau-")?
-        .parse()
-        .ok()
 }
 
 impl<C: Connector> Driver<C> {
@@ -400,9 +382,7 @@ impl<C: Connector> Driver<C> {
                 if let Some(connection) = active.sent_on
                     && !active.processor.is_finished()
                 {
-                    let entry =
-                        self.skipping.entry(lane).or_insert((connection, 0));
-                    *entry = (connection, entry.1 + 1);
+                    *self.skipping.entry(connection).or_default() += 1;
                 }
                 if let Ok(actions) = self.pool.cancel(lane) {
                     self.apply(actions);
@@ -421,7 +401,7 @@ impl<C: Connector> Driver<C> {
                 connection,
                 refusal,
             } => {
-                self.skipping.retain(|_, (on, _)| *on != connection);
+                self.skipping.remove(&connection);
                 if let Some(refusal) = &refusal {
                     *self.refusal.lock().expect("not poisoned") =
                         Some(refusal.clone());
@@ -473,13 +453,7 @@ impl<C: Connector> Driver<C> {
         if let Some(refusal) = Refusal::from_frame(frame) {
             *self.refusal.lock().expect("not poisoned") = Some(refusal);
         }
-        let lane = if self.tagged {
-            lane_of(frame)
-        } else {
-            self.pool.only_lane(connection)
-        };
-        let Some(lane) = lane else { return };
-        if let Some((_, remaining)) = self.skipping.get_mut(&lane) {
+        if let Some(remaining) = self.skipping.get_mut(&connection) {
             let terminal = matches!(
                 frame.get("type").and_then(Value::as_str),
                 Some(
@@ -492,11 +466,14 @@ impl<C: Connector> Driver<C> {
             if terminal {
                 *remaining -= 1;
                 if *remaining == 0 {
-                    self.skipping.remove(&lane);
+                    self.skipping.remove(&connection);
                 }
             }
             return;
         }
+        let Some(lane) = self.pool.lane_on(connection) else {
+            return;
+        };
         let Some(active) = self.lanes.get_mut(&lane) else {
             return;
         };
@@ -571,12 +548,7 @@ impl<C: Connector> Driver<C> {
                     active.new_attempt();
                     active.sent_on = Some(connection);
                     if let Some(handle) = self.connections.get(&connection) {
-                        handle.send(Outgoing::Request {
-                            body,
-                            stream_id: self
-                                .tagged
-                                .then(|| Value::String(stream_id(lane))),
-                        });
+                        handle.send(Outgoing::Request(body));
                     }
                 }
                 PoolAction::Fail { lane, .. } => {

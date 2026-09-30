@@ -11,7 +11,6 @@ use tau_ai::responses::request::{
     PROMPT_CACHE_KEY_MAX_CHARS,
     ReasoningEffort,
     Settings,
-    StreamId,
     ToolDefinition,
 };
 use tau_testing::generators;
@@ -20,9 +19,8 @@ use tau_testing::generators;
 fn body(
     settings: &Settings,
     input: Vec<Value>,
-    lane: Option<&StreamId>,
 ) -> serde_json::Map<String, Value> {
-    tau_ai::responses::request::body(settings, input, lane).to_map()
+    tau_ai::responses::request::body(settings, input).to_map()
 }
 
 fn settings() -> impl PrintableGenerator<Settings> {
@@ -61,22 +59,6 @@ fn settings_unprinted(tc: &TestCase) -> Settings {
     }
 }
 
-fn stream_id() -> impl PrintableGenerator<StreamId> {
-    // StreamId is tau's own type, so its drawn values print through Debug.
-    stream_id_unprinted().print_as_debug()
-}
-
-#[hegel::composite]
-fn stream_id_unprinted(tc: &TestCase) -> StreamId {
-    let id: String = tc.draw(
-        gs::text()
-            .alphabet("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
-            .min_size(1)
-            .max_size(256),
-    );
-    StreamId::new(id).expect("drawn from the allowed alphabet")
-}
-
 fn input(tc: &TestCase) -> Vec<Value> {
     tc.draw(gs::vecs(generators::lane::item()).max_size(4))
 }
@@ -86,9 +68,8 @@ fn input(tc: &TestCase) -> Vec<Value> {
 #[hegel::test(test_cases = 300)]
 fn bodies_differ_only_in_input(tc: TestCase) {
     let settings = tc.draw(settings());
-    let lane = tc.draw(gs::optional(stream_id()));
-    let mut a = body(&settings, input(&tc), lane.as_ref());
-    let mut b = body(&settings, input(&tc), lane.as_ref());
+    let mut a = body(&settings, input(&tc));
+    let mut b = body(&settings, input(&tc));
     a.remove("input");
     b.remove("input");
     assert_eq!(a, b);
@@ -99,19 +80,16 @@ fn bodies_differ_only_in_input(tc: TestCase) {
 #[hegel::test(test_cases = 300)]
 fn bodies_follow_websocket_rules(tc: TestCase) {
     let settings = tc.draw(settings());
-    let lane = tc.draw(gs::optional(stream_id()));
     let items = input(&tc);
-    let body = body(&settings, items.clone(), lane.as_ref());
+    let body = body(&settings, items.clone());
     assert_eq!(body["type"], "response.create");
     assert_eq!(body["store"], false);
-    for forbidden in ["stream", "background", "previous_response_id"] {
+    for forbidden in
+        ["stream", "background", "previous_response_id", "stream_id"]
+    {
         assert!(!body.contains_key(forbidden), "{forbidden}");
     }
     assert_eq!(body["input"], Value::Array(items));
-    assert_eq!(
-        body.get("stream_id").and_then(Value::as_str),
-        lane.as_ref().map(StreamId::as_str)
-    );
     assert_eq!(body["model"], json!(settings.model));
     assert_eq!(
         body.get("instructions"),
@@ -143,7 +121,7 @@ fn bodies_follow_websocket_rules(tc: TestCase) {
 #[hegel::test(test_cases = 300)]
 fn encrypted_reasoning_follows_the_model(tc: TestCase) {
     let settings = tc.draw(settings());
-    let body = body(&settings, vec![], None);
+    let body = body(&settings, vec![]);
     assert_eq!(body.contains_key("include"), settings.reasoning_model);
     if settings.reasoning_model {
         assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
@@ -162,7 +140,7 @@ fn encrypted_reasoning_follows_the_model(tc: TestCase) {
 #[hegel::test(test_cases = 300)]
 fn wire_limits_are_clamped(tc: TestCase) {
     let settings = tc.draw(settings());
-    let body = body(&settings, vec![], None);
+    let body = body(&settings, vec![]);
     assert_eq!(
         body.get("max_output_tokens").and_then(Value::as_u64),
         settings.max_output_tokens.map(|m| m.max(MIN_OUTPUT_TOKENS))
@@ -191,45 +169,6 @@ fn wire_limits_are_clamped(tc: TestCase) {
     );
 }
 
-/// A stream id is accepted exactly when it is 1 to 256 characters from
-/// `[A-Za-z0-9_.-]`, and kept as given; anything else is rejected with
-/// the rule in the message.
-#[hegel::test(test_cases = 300)]
-#[hegel::explicit_test_case(id = "a".repeat(256))]
-#[hegel::explicit_test_case(id = "a".repeat(257))]
-#[hegel::explicit_test_case(id = String::new())]
-fn stream_id_is_valid_exactly_by_the_rule(tc: TestCase) {
-    let id: String = tc.draw(hegel::one_of!(
-        gs::from_regex("[A-Za-z0-9_.-]{1,256}"),
-        gs::text().max_size(300),
-        gs::text().alphabet("ab_.-/ é").max_size(8),
-    ));
-    let allowed = |c: char| c.is_ascii_alphanumeric() || "_.-".contains(c);
-    let valid =
-        (1..=256).contains(&id.chars().count()) && id.chars().all(allowed);
-    match StreamId::new(id.clone()) {
-        Ok(stream_id) => {
-            assert!(valid, "{id:?} was accepted");
-            assert_eq!(stream_id.as_str(), id);
-        }
-        Err(error) => {
-            assert!(!valid, "{id:?} was rejected");
-            assert!(error.to_string().contains("1-256 characters"));
-        }
-    }
-}
-
-/// Stream ids outside `[A-Za-z0-9_.-]{1,256}` are rejected.
-#[test]
-fn stream_id_rules() {
-    assert!(StreamId::new("run_01J.x-y").is_ok());
-    assert!(StreamId::new("a".repeat(256)).is_ok());
-    for bad in ["", "has space", "slash/", "ünïcode", &"a".repeat(257)] {
-        let error = StreamId::new(bad).unwrap_err();
-        assert!(error.to_string().contains("1-256 characters"), "{bad}");
-    }
-}
-
 /// A full body in the shape the WebSocket guide shows.
 #[test]
 fn golden_body() {
@@ -247,19 +186,16 @@ fn golden_body() {
         max_output_tokens: Some(8),
         ..Settings::default()
     };
-    let lane = StreamId::new("run_1").unwrap();
     let body = body(
         &settings,
         vec![
             json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
         ],
-        Some(&lane),
     );
     assert_eq!(
         Value::Object(body),
         json!({
             "type": "response.create",
-            "stream_id": "run_1",
             "model": "gpt-5.5",
             "store": false,
             "instructions": "Be brief.",
