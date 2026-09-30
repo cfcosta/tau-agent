@@ -55,3 +55,11 @@ gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = 
   "x11",
   "font-kit",
 ] }
+
+# Reads whether the desktop animates, through the settings portal;
+# GPUI's Linux backend already builds it with these features.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+ashpd = { version = "0.13", default-features = false, features = [
+  "async-io",
+  "settings",
+] }

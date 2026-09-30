@@ -58,6 +58,7 @@ pub mod markdown;
 pub mod memory;
 pub mod metered;
 pub mod models;
+pub mod motion;
 pub mod pairing;
 pub mod phone_server;
 pub mod phones;
