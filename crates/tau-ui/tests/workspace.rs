@@ -2054,25 +2054,20 @@ fn on_plan(ws: &mut Workspace, cx: &mut gpui::Context<Workspace>) {
 }
 
 /// On the plan, the note shows until "Got it", which saves that it was
-/// read; the composer says runs use the plan, and "Manage usage" opens
-/// ChatGPT's usage settings.
+/// read, and "Manage usage" opens ChatGPT's usage settings.
 #[gpui::test]
-fn the_plan_notice_shows_once_and_the_composer_says_so(
-    cx: &mut TestAppContext,
-) {
+fn the_plan_notice_shows_once(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::NewRun, cx);
         on_plan(ws, cx);
         assert!(ws.shows_plan_notice());
-        assert!(ws.uses_plan());
     });
-    // Drawn with the note and the line under the composer.
+    // Drawn with the note.
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {
         ws.dismiss_plan_notice(cx);
         assert!(!ws.shows_plan_notice());
-        assert!(ws.uses_plan(), "the line stays");
         ws.manage_usage(cx);
     });
     let saved = events.borrow().iter().rev().find_map(|event| match event {
@@ -2084,13 +2079,13 @@ fn the_plan_notice_shows_once_and_the_composer_says_so(
         cx.opened_url().as_deref(),
         Some(tau_ui::models::USAGE_SETTINGS_URL)
     );
-    // Off the plan, neither shows.
+    // Off the plan, the note does not show.
     workspace.update(&mut cx, |ws, cx| {
         let mut catalog = ws.catalog().clone();
         catalog.models.access.chatgpt = false;
         catalog.models.settings.plan_notice_seen = false;
         ws.set_catalog(catalog, cx);
-        assert!(!ws.shows_plan_notice() && !ws.uses_plan());
+        assert!(!ws.shows_plan_notice());
     });
     cx.run_until_parked();
 }

@@ -2716,11 +2716,6 @@ impl Workspace {
         models.access.shows_plan_notice(&models.settings)
     }
 
-    /// Whether runs use the ChatGPT plan, so the composer says so.
-    pub fn uses_plan(&self) -> bool {
-        self.catalog.models.access.chatgpt
-    }
-
     /// A run stopped on the ChatGPT plan: says what to do next. A
     /// temporary refusal, which the run already retried, says nothing
     /// more than the run's error.
@@ -2851,30 +2846,6 @@ impl Workspace {
                     .on_click(
                         cx.listener(|ws, _, _, cx| ws.dismiss_plan_notice(cx)),
                     ),
-            )
-    }
-
-    /// Under the composer while runs use the plan: `Using ChatGPT plan ·
-    /// Manage usage`.
-    fn plan_indicator(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(1.5))
-            .typeset(Type::CAPTION)
-            .text_color(t.muted)
-            .child(ui::icon(Icon::Chat, IconSize::SMALL, t.green))
-            .child(plan_usage::INDICATOR)
-            .child(ui::text("·", Type::CAPTION, t.dim))
-            .child(
-                div()
-                    .id("plan-manage-usage")
-                    .child(ui::text_link(
-                        plan_usage::MANAGE_USAGE,
-                        Type::CAPTION,
-                        t,
-                    ))
-                    .on_click(cx.listener(|ws, _, _, cx| ws.manage_usage(cx))),
             )
     }
 
@@ -3560,9 +3531,6 @@ impl Workspace {
                     )
                     .child(send),
             )
-            .when(self.uses_plan(), |bar| {
-                bar.child(self.plan_indicator(t, cx))
-            })
     }
 
     /// Above the composer while it writes a fork: the turn it forks

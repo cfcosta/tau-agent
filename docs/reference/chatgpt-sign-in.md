@@ -303,8 +303,6 @@ Nothing moves a run to another way of paying after a plan error.
   while it waits, the page can be opened again or the redirect pasted.
 - Once, after the first sign-in with plan usage: "You're using your
   ChatGPT plan", with "Got it" (saved in `models.json`).
-- Under the composer while runs use the plan: "Using ChatGPT plan ·
-  Manage usage".
 - A run stopped by a usage limit: "Usage limit reached — Review your
   plan or this app's limit in ChatGPT settings." with "Manage usage";
   a dead sign-in asks to sign in again; a sign-in without plan usage

@@ -1,7 +1,7 @@
 //! What the interface says about using a ChatGPT plan, in the words
 //! OpenAI's Sign in with ChatGPT guidelines ask for: the note shown once
-//! after the first sign-in that allows it, the line by the composer while
-//! runs use the plan, and what a run that stopped on the plan says next.
+//! after the first sign-in that allows it, and what a run that stopped on
+//! the plan says next.
 //!
 //! A plan error stops the run; the plan is the only way tau reaches a
 //! model. The alert says what to do instead: manage usage, sign in
@@ -14,9 +14,6 @@ use tau_ai::{refusal::Refusal, retry::Recovery};
 pub const NOTICE_TITLE: &str = "You're using your ChatGPT plan";
 pub const NOTICE_BODY: &str = "Eligible usage in this app uses your ChatGPT \
                                plan. Manage usage in your ChatGPT settings.";
-
-/// The line by the composer while runs use the plan.
-pub const INDICATOR: &str = "Using ChatGPT plan";
 
 /// The link to ChatGPT Settings → Usage, wherever it shows.
 pub const MANAGE_USAGE: &str = "Manage usage";
