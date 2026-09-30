@@ -23,6 +23,7 @@ use super::{
     dot,
     icon,
     link,
+    listing_card,
     log_card,
     mono,
     rich,
@@ -424,6 +425,9 @@ fn tool(
         ToolBody::Status(status) if !dropped => {
             status_card::summary(status, t, compact)
         }
+        ToolBody::Listing(listing) if !dropped => {
+            listing_card::summary(listing, &card.summary, t, compact)
+        }
         _ => mono(card.summary.clone(), Type::CAPTION, t.text_soft)
             .flex_1()
             .min_w(px(0.))
@@ -452,6 +456,7 @@ fn tool(
                 | ToolBody::Files(_)
                 | ToolBody::Commit(_)
                 | ToolBody::Status(_)
+                | ToolBody::Listing(_)
         );
     let open = !folds || ws.card_open(&run.id, &card.call_id);
     let header = div()
@@ -589,6 +594,9 @@ fn tool(
                     .into_any_element(),
             )
         }
+        (_, ToolBody::Listing(listing)) => open.then(|| {
+            listing_card::body(listing, t, compact).into_any_element()
+        }),
         (_, ToolBody::Status(status)) => open.then(|| {
             status_card::body(ws, run, card, status, t, compact, cx)
                 .into_any_element()

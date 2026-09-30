@@ -27,6 +27,7 @@ use crate::{
     change_diff::{self, ChangeDiff},
     change_log::{self, ChangeLog},
     change_status::{self, ChangeStatus},
+    listing::{self, DirListing},
 };
 
 /// One run, as the transcript, the inspector and the run list show it.
@@ -401,6 +402,8 @@ pub enum ToolBody {
     Status(Box<ChangeStatus>),
     /// A `delegate` result: the sub-agent, and what it landed.
     Delegated(Box<LandedCard>),
+    /// An `ls` result: the folders, then the files.
+    Listing(Box<DirListing>),
 }
 
 /// A command's terminal, from the `term` details of `bash`'s updates and
@@ -2237,6 +2240,17 @@ fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
         } else {
             ToolBody::Files(Box::new(diff))
         };
+        return;
+    }
+    let listing = (card.tool == listing::TOOL)
+        .then_some(output.details.as_ref())
+        .flatten()
+        .and_then(DirListing::parse);
+    if let Some(listing) = listing {
+        card.state = ToolState::Done {
+            summary: Some(listing.summary()),
+        };
+        card.body = ToolBody::Listing(Box::new(listing));
         return;
     }
     let diff = output

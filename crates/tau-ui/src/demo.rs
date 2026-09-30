@@ -2015,6 +2015,69 @@ fn workspace_tests() -> String {
 }
 
 /// An output that says how to sum itself up, as tools may.
+/// The session's `ls` of `crates/tau-ai/src`, before it greps: the
+/// folders and files there, `retry.rs` already modified in `@`.
+pub const LS_CALL: &str = "c1a";
+
+fn listing() -> ToolOutput {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64);
+    let dir = |name: &str, items: u64, hours: i64| {
+        json!({
+            "name": name, "kind": "dir", "items": items,
+            "modified": now - hours * 3_600,
+        })
+    };
+    let file = |name: &str, size: u64, hours: i64| {
+        json!({
+            "name": name, "kind": "file", "size": size,
+            "modified": now - hours * 3_600,
+        })
+    };
+    let mut retry = file("retry.rs", 15_620, 0);
+    retry["change"] = json!("modified");
+    retry["modified"] = json!(now - 240);
+    let entries = vec![
+        dir("chatgpt", 6, 30),
+        file("client.rs", 6_690, 52),
+        file("cost.rs", 5_216, 200),
+        file("event.rs", 11_458, 52),
+        file("http.rs", 19_503, 9),
+        file("lib.rs", 292, 400),
+        file("llm.rs", 5_047, 200),
+        file("message.rs", 7_300, 52),
+        file("model.rs", 13_683, 30),
+        file("partial_json.rs", 32_868, 900),
+        file("refusal.rs", 5_590, 200),
+        dir("responses", 3, 52),
+        file("responses.rs", 118, 900),
+        retry,
+        dir("ws", 4, 9),
+        file("ws.rs", 102, 900),
+    ];
+    let text = entries
+        .iter()
+        .map(|entry| {
+            let name = entry["name"].as_str().unwrap_or_default();
+            if entry["kind"] == "dir" {
+                format!("{name}/")
+            } else {
+                name.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    ToolOutput {
+        details: Some(json!({
+            "dir": "/home/me/tau-agent/crates/tau-ai/src",
+            "entries": entries,
+            "truncated": false,
+        })),
+        ..ToolOutput::text(text)
+    }
+}
+
 fn summarized(output: ToolOutput, summary: &str) -> ToolOutput {
     ToolOutput {
         details: Some(json!({ "summary": summary })),
@@ -2504,6 +2567,13 @@ pub fn script() -> Vec<Step> {
         "The note says we already decided `retry-after` should win over \
          our own backoff, capped at `max_delay`, and that the header can be \
          seconds or an HTTP date. I'll find where the loop reads it.",
+    );
+    s.tool(
+        120,
+        LS_CALL,
+        "ls",
+        json!({ "path": "crates/tau-ai/src" }),
+        listing(),
     );
     s.tool(
         250,
@@ -3011,6 +3081,26 @@ mod tests {
         assert_eq!(status.working_copy.info.change_id, LOG_PICKED);
         assert_eq!(status.files.len(), show.files.len());
         assert!(status.files.iter().all(|file| !file.hunks.is_empty()));
+    }
+
+    #[test]
+    fn the_ls_call_draws_as_a_listing() {
+        let mut run = retry_after();
+        for (_, update) in script() {
+            run.update(update);
+        }
+        let card = run.tool(LS_CALL).expect(LS_CALL);
+        let ToolBody::Listing(listing) = &card.body else {
+            panic!("{:?}", card.body);
+        };
+        assert_eq!(listing.dirs().count(), 3);
+        assert_eq!(listing.changed(), 1);
+        assert_eq!(
+            card.state,
+            ToolState::Done {
+                summary: Some("3 folders · 13 files · 121 KB".into())
+            }
+        );
     }
 
     #[test]
