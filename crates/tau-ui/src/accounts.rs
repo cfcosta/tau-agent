@@ -196,6 +196,9 @@ pub struct SignIns {
     pending: Rc<RefCell<Option<Pending>>>,
 }
 
+/// What a sign-in that was cancelled ends with.
+const CANCELLED: &str = "sign-in cancelled";
+
 /// How a sign-in on its own thread is going.
 enum Progress {
     /// The page to open.
@@ -236,6 +239,11 @@ impl SignIns {
                 if let Some(paste) = paste {
                     let _ = paste.send(url.clone());
                 }
+                true
+            }
+            WorkspaceEvent::ChatGptCancel => {
+                // Dropping it stops its listener.
+                self.pending.borrow_mut().take();
                 true
             }
             WorkspaceEvent::SwitchChatGpt { account } => {
@@ -297,7 +305,7 @@ impl SignIns {
                             done = browser_sign_in(
                                 &chatgpt, account, consent, pasted, &progress,
                             ) => done,
-                            _ = cancelled => Err("sign-in cancelled".into()),
+                            _ = cancelled => Err(CANCELLED.into()),
                         }
                     })
                 });
@@ -323,6 +331,9 @@ impl SignIns {
                             )
                         });
                     }
+                    // A cancelled attempt, or one a newer sign-in
+                    // replaced, has nothing to say.
+                    Progress::SignedIn(Err(error)) if error == CANCELLED => {}
                     Progress::SignedIn(done) => {
                         pending.borrow_mut().take();
                         let setup = match done {

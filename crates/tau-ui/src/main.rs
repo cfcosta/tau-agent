@@ -15,7 +15,8 @@
 //!   usage-limit, the ChatGPT plan's limit; plan-notice, the note shown
 //!   once on the plan; plan-disabled, the Models
 //!   screen with plan use not enabled; plan-signing-in, onboarding
-//!   waiting for the ChatGPT sign-in; a phone pairing: pair,
+//!   waiting for the ChatGPT sign-in; model-signed-in, plan-declined
+//!   and not-eligible, its other states; a phone pairing: pair,
 //!   pair-scan, pair-address, pair-paired or pair-unreachable; phones,
 //!   the computer's Phones screen;
 //!   models, picker, run-picker, fork-picker, log, status, show or diff
@@ -479,6 +480,30 @@ fn open_demo_screen(
             let mut setup = demo::setup(SetupStep::Model);
             setup.model = tau_ui::setup::ModelAccess::SigningIn {
                 url: Some(demo::DEMO_AUTHORIZE_URL.into()),
+            };
+            workspace.set_setup(setup, cx);
+            workspace.navigate(Route::Setup(SetupStep::Model), cx);
+            return;
+        }
+        // The model step's other states: signed in, plan use declined,
+        // and an account that cannot share its plan.
+        Some(
+            state @ ("model-signed-in" | "plan-declined" | "not-eligible"),
+        ) => {
+            use tau_ui::setup::ModelAccess;
+            let account = demo::chatgpt_accounts()[0].label.clone();
+            let mut setup = demo::setup(SetupStep::Model);
+            setup.model = match state {
+                "model-signed-in" => ModelAccess::Connected {
+                    label: "gpt-5.5 · ChatGPT plan".into(),
+                },
+                "plan-declined" => ModelAccess::PlanDisabled { account },
+                _ => ModelAccess::NotEligible {
+                    account,
+                    detail: "403 subscription_sharing_user_not_eligible · \
+                             request req_7f3a9c01"
+                        .into(),
+                },
             };
             workspace.set_setup(setup, cx);
             workspace.navigate(Route::Setup(SetupStep::Model), cx);

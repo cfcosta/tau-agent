@@ -300,6 +300,8 @@ pub enum WorkspaceEvent {
     ChatGptCallback {
         url: String,
     },
+    /// Give up on the ChatGPT sign-in waiting for the browser.
+    ChatGptCancel,
     /// Sign in with this saved ChatGPT account (its id) from now on.
     SwitchChatGpt {
         account: String,
@@ -2065,13 +2067,8 @@ impl Workspace {
             {
                 self.leave_setup(cx)
             }
-            Route::Setup(SetupStep::Model) if connected => {
-                if self.setup.repos.is_empty() {
-                    self.finish_setup(cx);
-                } else {
-                    self.navigate(Route::Setup(SetupStep::Repos), cx);
-                }
-            }
+            // Onboarding stays to show the account and pick the default
+            // model; "Continue" moves on.
             _ => cx.notify(),
         }
     }
@@ -2255,6 +2252,45 @@ impl Workspace {
             .update(cx, |input, cx| input.set_text(address.to_owned(), cx));
         self.pair_code
             .update(cx, |input, cx| input.set_text(code.to_owned(), cx));
+    }
+
+    /// Leaves the model step once signed in: on to the repositories, or
+    /// to a new run when there are none to pick.
+    pub fn continue_from_model(&mut self, cx: &mut Context<Self>) {
+        if self.setup_goal == Some(SetupGoal::Model) {
+            self.leave_setup(cx);
+        } else if self.setup.repos.is_empty() {
+            self.finish_setup(cx);
+        } else {
+            self.navigate(Route::Setup(SetupStep::Repos), cx);
+        }
+    }
+
+    /// Makes model `id`, one of the account's, the one runs start with:
+    /// the coder's default, as the picker sets it.
+    pub fn pick_setup_model(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(option) = self.catalog.models.find(id).cloned() else {
+            return;
+        };
+        let choice = ModelChoice {
+            model: option.id.clone(),
+            ..self.catalog.models.settings.default_for("coder")
+        }
+        .fitted();
+        if let ModelAccess::Connected { label } = &mut self.setup.model {
+            *label = format!("{} · ChatGPT plan", option.id);
+        }
+        self.set_default_model("coder", choice, cx);
+    }
+
+    /// Stops waiting for the browser, back to the start of the model
+    /// step.
+    pub fn cancel_chatgpt_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.setup.model = ModelAccess::None;
+        self.chatgpt_callback
+            .update(cx, |input, cx| input.clear(cx));
+        cx.emit(WorkspaceEvent::ChatGptCancel);
+        cx.notify();
     }
 
     /// Goes back to the screen an onboarding step was opened from.

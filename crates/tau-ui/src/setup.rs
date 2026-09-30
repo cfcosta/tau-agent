@@ -20,8 +20,8 @@ pub enum SetupStep {
 }
 
 impl SetupStep {
-    /// The stage the stepper marks: GitHub, Model, Repositories or
-    /// First run.
+    /// The stage the progress bar marks: GitHub, Model, Repositories or
+    /// Ready. The welcome comes before any.
     pub fn stage(self) -> usize {
         match self {
             Self::Welcome | Self::GitHub | Self::Token => 0,
@@ -31,8 +31,7 @@ impl SetupStep {
         }
     }
 
-    pub const STAGES: [&str; 4] =
-        ["GitHub", "Model", "Repositories", "First run"];
+    pub const STAGES: [&str; 4] = ["GitHub", "Model", "Repositories", "Ready"];
 
     /// The screen's name in the title bar and the phone's header.
     pub fn title(self) -> &'static str {
@@ -88,6 +87,15 @@ pub enum ModelAccess {
     /// cannot use the plan until it is enabled.
     PlanDisabled {
         account: String,
+    },
+    /// Signed in, but OpenAI says plan use is not available to this
+    /// account or workspace (`subscription_sharing_user_not_eligible`,
+    /// `tau_ai`'s `Recovery::Restricted`). Signing in again with the same
+    /// account will not help. `detail` is the refusal as OpenAI sent it:
+    /// status, code and request id.
+    NotEligible {
+        account: String,
+        detail: String,
     },
     Failed(String),
 }

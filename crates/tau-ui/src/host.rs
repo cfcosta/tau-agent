@@ -83,7 +83,8 @@ use crate::{
         plan_models,
     },
     pull_request::{PrCommit, PrState, PullRequest},
-    setup::{CloneState, RepoClone, SetupUpdate},
+    route::Route,
+    setup::{CloneState, ModelAccess, RepoClone, SetupStep, SetupUpdate},
     update::HostUpdate,
     view::{
         BranchCode,
@@ -408,6 +409,10 @@ pub struct Host {
     /// The ChatGPT account's models, as last listed: for the picker on
     /// the plan. Listed again when the account changes.
     plan_models: Arc<Mutex<Option<PlanModels>>>,
+    /// Why OpenAI refused the last listing because plan use is not
+    /// available to the account (`Recovery::Restricted`): the status,
+    /// code and request id. `None` otherwise.
+    not_eligible: Arc<Mutex<Option<String>>>,
     github: github::Api,
     /// Jev for tau-constitution, in place of TypeSafe's with the saved
     /// key: for tests.
@@ -595,6 +600,7 @@ impl Host {
             account: Mutex::new(Some(config.account.clone())),
             client: Mutex::new(None),
             plan_models: Arc::default(),
+            not_eligible: Arc::default(),
             github: github::Api::default(),
             jev: None,
             jev_meter: Arc::default(),
@@ -1369,16 +1375,23 @@ impl Host {
         drop(cached);
         let chatgpt = self.config.credentials.chatgpt();
         let slot = self.plan_models.clone();
+        let refused = self.not_eligible.clone();
         Some(self.runtime.spawn(async move {
             let listed = match chatgpt {
-                Ok(chatgpt) => chatgpt
-                    .models(&account)
-                    .await
-                    .map_err(|error| error.to_string()),
-                Err(error) => Err(error.to_string()),
+                Ok(chatgpt) => chatgpt.models(&account).await,
+                Err(error) => Err(error),
             };
+            *refused.lock().expect("not poisoned") =
+                listed.as_ref().err().and_then(not_eligible);
+            let listed = listed.map_err(|error| error.to_string());
             *slot.lock().expect("not poisoned") = Some((account, listed));
         }))
+    }
+
+    /// Why the last listing said plan use is not available to the
+    /// account, if it did.
+    pub fn not_eligible(&self) -> Option<String> {
+        self.not_eligible.lock().expect("not poisoned").clone()
     }
 
     /// The active account's models as last listed: `None` while they
@@ -3485,10 +3498,54 @@ fn list_plan_models(
     cx.spawn(async move |cx| {
         let _ = listing.await;
         let catalog = host.catalog();
-        let _ = workspace
-            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
+        let refused = host.not_eligible();
+        let _ = workspace.update(cx, |ws, cx| {
+            let account = catalog
+                .models
+                .access
+                .active_account()
+                .map(|account| account.label.clone())
+                .unwrap_or_default();
+            ws.apply(HostUpdate::catalog(catalog), cx);
+            // Onboarding just signed in: say the account cannot share its
+            // plan, rather than showing it as connected.
+            if let (Some(detail), Route::Setup(SetupStep::Model)) =
+                (refused, ws.route())
+            {
+                ws.update_setup(
+                    SetupUpdate::Model(ModelAccess::NotEligible {
+                        account,
+                        detail,
+                    }),
+                    cx,
+                );
+            }
+        });
     })
     .detach();
+}
+
+/// The refusal's words when `error` says plan use is not available to
+/// the account: `403 subscription_sharing_user_not_eligible · request
+/// req_…`. `None` for any other failure.
+fn not_eligible(error: &tau_ai::chatgpt::ChatGptError) -> Option<String> {
+    use tau_ai::chatgpt::ChatGptError;
+    if error.recovery() != tau_ai::retry::Recovery::Restricted {
+        return None;
+    }
+    Some(match error {
+        ChatGptError::Api(api) => {
+            let mut detail = api.status.to_string();
+            if let Some(code) = api.code() {
+                detail.push_str(&format!(" {code}"));
+            }
+            if let Some(id) = &api.request_id {
+                detail.push_str(&format!(" · request {id}"));
+            }
+            detail
+        }
+        other => other.to_string(),
+    })
 }
 
 /// Clones a GitHub repository on the host's runtime, reporting how it
@@ -3578,5 +3635,31 @@ mod tests {
             title("/goal --continuations 3 all tests pass"),
             "all-tests-pass"
         );
+    }
+
+    #[test]
+    fn only_restricted_refusals_are_not_eligible() {
+        use tau_ai::chatgpt::{ApiError, ChatGptError};
+        let refusal = |status, body: &str| {
+            ChatGptError::Api(Box::new(ApiError::new(
+                status,
+                Some("req_1".into()),
+                body.as_bytes(),
+            )))
+        };
+        let not_eligible = refusal(
+            403,
+            r#"{"error":{"code":"subscription_sharing_user_not_eligible"}}"#,
+        );
+        assert_eq!(
+            super::not_eligible(&not_eligible).as_deref(),
+            Some("403 subscription_sharing_user_not_eligible · request req_1")
+        );
+        let limit = refusal(
+            429,
+            r#"{"error":{"code":"subscription_sharing_usage_limit_exceeded"}}"#,
+        );
+        assert_eq!(super::not_eligible(&limit), None);
+        assert_eq!(super::not_eligible(&ChatGptError::PlanUsageDisabled), None);
     }
 }

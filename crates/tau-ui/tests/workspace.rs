@@ -69,6 +69,10 @@ fn setup_moves_on_as_sign_ins_land(cx: &mut TestAppContext) {
             SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
             cx,
         );
+        // Signed in: the step stays, to show the account and pick the
+        // default model, until "Continue to repositories".
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
+        ws.continue_from_model(cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Repos));
         ws.clone_selected(cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Ready));
@@ -99,6 +103,8 @@ fn setup_without_repositories_ends_at_a_new_run(cx: &mut TestAppContext) {
             SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
             cx,
         );
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
+        ws.continue_from_model(cx);
         assert_eq!(ws.route(), &Route::Home);
         assert!(!ws.can_go_back());
     });
@@ -764,6 +770,148 @@ fn github_sign_in_during_onboarding_moves_on_to_the_model(
         );
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
     });
+}
+
+/// Signed in, the model step picks the default model the way the
+/// picker does, and says which one runs start with.
+#[gpui::test]
+fn the_signed_in_model_step_picks_the_default_model(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.set_setup(demo::setup(SetupStep::Model), cx);
+        ws.start_setup(SetupStep::Model, cx);
+        ws.update_setup(
+            SetupUpdate::Model(ModelAccess::Connected {
+                label: "gpt-5.5 · ChatGPT plan".into(),
+            }),
+            cx,
+        );
+    });
+    // The step, with the account's models as pills.
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.pick_setup_model("gpt-5.6-sol", cx);
+        // One the account does not list changes nothing.
+        ws.pick_setup_model("no-such-model", cx);
+        let settings = &ws.catalog().models.settings;
+        assert_eq!(settings.default_for("coder").model, "gpt-5.6-sol");
+        assert_eq!(
+            ws.setup().model_label(),
+            Some("gpt-5.6-sol · ChatGPT plan")
+        );
+    });
+    let saved: Vec<_> = events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::SaveModelSettings(settings) => {
+                Some(settings.default_for("coder").model)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(saved, ["gpt-5.6-sol"]);
+}
+
+/// An account that cannot share its plan stays on the model step, with
+/// the refusal, and can sign in with another account.
+#[gpui::test]
+fn a_not_eligible_account_offers_another(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.set_setup(demo::setup(SetupStep::Model), cx);
+        ws.start_setup(SetupStep::Model, cx);
+        ws.update_setup(
+            SetupUpdate::Model(ModelAccess::NotEligible {
+                account: "you@example.com".into(),
+                detail: "403 subscription_sharing_user_not_eligible".into(),
+            }),
+            cx,
+        );
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
+    });
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| ws.sign_in_chatgpt(None, false, cx));
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::ChatGptSignIn {
+            account: None,
+            consent: false,
+        })
+    );
+}
+
+/// Cancelling the sign-in waiting for the browser goes back to the start
+/// of the model step and tells the host to stop listening.
+#[gpui::test]
+fn a_waiting_chatgpt_sign_in_can_be_cancelled(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.set_setup(demo::setup(SetupStep::Model), cx);
+        ws.start_setup(SetupStep::Model, cx);
+        ws.sign_in_chatgpt(None, false, cx);
+        ws.update_setup(
+            SetupUpdate::Model(ModelAccess::SigningIn {
+                url: Some(demo::DEMO_AUTHORIZE_URL.into()),
+            }),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.cancel_chatgpt_sign_in(cx);
+        assert_eq!(ws.setup().model, ModelAccess::None);
+    });
+    assert_eq!(events.borrow().last(), Some(&WorkspaceEvent::ChatGptCancel));
+}
+
+/// Every onboarding screen draws, on a desktop and on a phone.
+#[gpui::test]
+fn every_onboarding_screen_draws(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    let models = [
+        ModelAccess::None,
+        ModelAccess::SigningIn { url: None },
+        ModelAccess::SigningIn {
+            url: Some(demo::DEMO_AUTHORIZE_URL.into()),
+        },
+        ModelAccess::Connected { label: "m".into() },
+        ModelAccess::PlanDisabled {
+            account: "you@example.com".into(),
+        },
+        ModelAccess::NotEligible {
+            account: String::new(),
+            detail: "403".into(),
+        },
+        ModelAccess::Failed("no".into()),
+    ];
+    for phone in [false, true] {
+        workspace.update(&mut cx, |ws, cx| {
+            ws.set_frame(phone.then_some((390., 844.)), cx)
+        });
+        for step in [
+            SetupStep::Welcome,
+            SetupStep::GitHub,
+            SetupStep::Token,
+            SetupStep::Repos,
+            SetupStep::Ready,
+        ] {
+            workspace.update(&mut cx, |ws, cx| {
+                ws.set_setup(demo::setup(step), cx);
+                ws.start_setup(step, cx);
+            });
+            cx.run_until_parked();
+        }
+        for model in &models {
+            workspace.update(&mut cx, |ws, cx| {
+                let mut setup = demo::setup(SetupStep::Model);
+                setup.model = model.clone();
+                ws.set_setup(setup, cx);
+                ws.start_setup(SetupStep::Model, cx);
+            });
+            cx.run_until_parked();
+        }
+    }
 }
 
 /// Plays the demo run to its end.
