@@ -127,8 +127,19 @@ it, gpui-component 0.7 among them.
    - Replace `gpui 0.2.2` in tau-ui and tau-terminal with `gpui-pre`
      at one exact version (`package = "gpui-pre"` keeps `use gpui::`).
      Desktop windows then come from `gpui-pre-platform`.
-   - Expect API changes from eleven months of Zed, in the element
-     builders, the text system and the test support.
+   - Tried on 2026-09-30 with `gpui-pre =0.3.7`: 26 changed lines in
+     13 files, and every tau-ui and tau-terminal test passes (205).
+     The changes: `focus` takes the app context, `ShapedLine::paint`
+     takes an alignment, `flex_grow` takes a factor, `Corner` is
+     `Anchor`, a list's `max_offset_for_scrollbar` is a point, the
+     async context's `update` no longer fails, and `Application::new()`
+     is `gpui_platform::application()`.
+   - `gpui-pre-platform` needs its `wayland` and `x11` features, or
+     the Linux build has no window backend (its default is none).
+   - The renderer changes from blade to wgpu (Vulkan), and cosmic-text
+     from 0.14 to 0.19. Tests draw with GPUI's test platform, so only
+     running the app shows whether text and drawing still look
+     right.
    - Because the versions are pinned exactly, gpui-pre-mobile and
      gpui-pre only move together.
 2. **Decide where the agent runs on a phone.** Each option has a cost:
