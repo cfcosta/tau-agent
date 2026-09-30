@@ -27,6 +27,7 @@ tau-goal.workspace = true
 tau-jev.workspace = true
 tau-memory = { workspace = true, features = ["docbert"] }
 tau-reasoning.workspace = true
+tau-remote.workspace = true
 tau-fast-compaction.workspace = true
 tau-store.workspace = true
 # The product shows `bash` output as a terminal: commands run under a

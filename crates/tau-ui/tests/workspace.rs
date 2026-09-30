@@ -1997,3 +1997,150 @@ fn chatgpt_accounts_switch_and_sign_in(cx: &mut TestAppContext) {
         account: work.clone()
     }));
 }
+
+fn computer() -> tau_ui::pairing::Computer {
+    demo::computer()
+}
+
+#[gpui::test]
+fn scanning_pairs_then_opens_the_runs(cx: &mut TestAppContext) {
+    use tau_ui::pairing::{PairRequest, PairStep, PairingUpdate, Progress};
+
+    let (workspace, mut cx, events) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.start_pairing(PairStep::Welcome, cx);
+        ws.scan_pairing_code(cx);
+        assert_eq!(ws.route(), &Route::Pair(PairStep::Scan));
+        assert!(ws.pairing().busy());
+        ws.update_pairing(
+            PairingUpdate::Progress(Progress::Connecting {
+                address: computer().address,
+            }),
+            cx,
+        );
+        assert_eq!(ws.route(), &Route::Pair(PairStep::Scan));
+        ws.update_pairing(PairingUpdate::Paired(computer()), cx);
+        assert_eq!(ws.route(), &Route::Pair(PairStep::Paired));
+        // Paired is not a step to go back from.
+        assert!(!ws.can_go_back());
+    });
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| ws.open_tau(cx));
+    workspace.update(&mut cx, |ws, _| assert_eq!(ws.route(), &Route::Home));
+    // With no name typed, none is sent.
+    assert_eq!(
+        events.borrow().as_slice(),
+        [WorkspaceEvent::Pair(PairRequest::Scan)]
+    );
+}
+
+#[gpui::test]
+fn a_typed_address_compares_the_certificate_first(cx: &mut TestAppContext) {
+    use tau_ui::pairing::{PairRequest, PairStep, PairingUpdate, Progress};
+
+    let (workspace, mut cx, events) = open(cx);
+    let fingerprint = computer().fingerprint;
+    workspace.update(&mut cx, |ws, cx| {
+        ws.start_pairing(PairStep::Welcome, cx);
+        ws.type_address(cx);
+        // A code that is not one is caught before anything connects.
+        ws.pair_fields_for_test("100.84.12.7", "K7QM", cx);
+        ws.connect_typed(cx);
+        assert!(matches!(ws.pairing().progress, Progress::Failed(_)));
+        ws.pair_fields_for_test("100.84.12.7", "k7qm 2xpa", cx);
+        ws.connect_typed(cx);
+        assert!(ws.pairing().busy());
+        ws.update_pairing(
+            PairingUpdate::Progress(Progress::Compare {
+                address: computer().address,
+                fingerprint,
+            }),
+            cx,
+        );
+        ws.trust_certificate(cx);
+        assert!(ws.pairing().busy());
+    });
+    cx.run_until_parked();
+    let events = events.borrow();
+    let [
+        WorkspaceEvent::Pair(PairRequest::Typed { address, secret }),
+        WorkspaceEvent::Pair(PairRequest::Trust(trusted)),
+    ] = events.as_slice()
+    else {
+        panic!("{events:?}");
+    };
+    assert_eq!(address.to_string(), "100.84.12.7:7443");
+    assert_eq!(secret.to_string(), "K7QM-2XPA");
+    assert_eq!(*trusted, fingerprint);
+}
+
+#[gpui::test]
+fn leaving_a_pairing_halfway_cancels_it(cx: &mut TestAppContext) {
+    use tau_ui::pairing::{PairRequest, PairStep, Progress};
+
+    let (workspace, mut cx, events) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.start_pairing(PairStep::Welcome, cx);
+        ws.scan_pairing_code(cx);
+        ws.back(cx);
+        assert_eq!(ws.route(), &Route::Pair(PairStep::Welcome));
+        assert_eq!(ws.pairing().progress, Progress::Idle);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            WorkspaceEvent::Pair(PairRequest::Scan),
+            WorkspaceEvent::Pair(PairRequest::Cancel)
+        ]
+    );
+}
+
+#[gpui::test]
+fn an_unreachable_computer_leads_back_once_it_answers(cx: &mut TestAppContext) {
+    use tau_ui::pairing::{PairRequest, PairStep, PairingUpdate};
+
+    let (workspace, mut cx, events) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.update_pairing(
+            PairingUpdate::Unreachable {
+                computer: computer(),
+                tries: 3,
+            },
+            cx,
+        );
+        assert_eq!(ws.route(), &Route::Pair(PairStep::Unreachable));
+        ws.retry_connection(cx);
+        assert!(ws.pairing().busy());
+        // Tapping again while it tries asks nothing more.
+        ws.retry_connection(cx);
+        ws.update_pairing(PairingUpdate::Connected(computer()), cx);
+        assert_eq!(ws.route(), &Route::Home);
+        assert_eq!(ws.pairing().tries, 0);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        events.borrow().as_slice(),
+        [WorkspaceEvent::Pair(PairRequest::Retry)]
+    );
+}
+
+#[gpui::test]
+fn every_pairing_screen_draws(cx: &mut TestAppContext) {
+    use tau_ui::pairing::PairStep;
+
+    let (workspace, mut cx, _) = open(cx);
+    for step in [
+        PairStep::Welcome,
+        PairStep::Scan,
+        PairStep::Address,
+        PairStep::Paired,
+        PairStep::Unreachable,
+    ] {
+        workspace.update(&mut cx, |ws, cx| {
+            ws.set_pairing(demo::pairing(step), cx);
+            ws.start_pairing(step, cx);
+        });
+        cx.run_until_parked();
+    }
+}

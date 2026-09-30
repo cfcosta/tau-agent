@@ -43,6 +43,8 @@ pub enum Icon {
     Target,
     Pause,
     Pencil,
+    Camera,
+    Offline,
 }
 
 impl Icon {
@@ -81,6 +83,8 @@ impl Icon {
             Self::Target => "icons/target.svg",
             Self::Pause => "icons/pause.svg",
             Self::Pencil => "icons/pencil.svg",
+            Self::Camera => "icons/camera.svg",
+            Self::Offline => "icons/offline.svg",
         }
     }
 
@@ -156,13 +160,19 @@ impl Icon {
             }
             Self::Pause => r#"<path d="M9 5v14M15 5v14"/>"#,
             Self::Pencil => r#"<path d="M4 20h4L19 9l-4-4L4 16z"/>"#,
+            Self::Camera => {
+                r#"<path d="M14.5 4h-5L7 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2h-3z"/><circle cx="12" cy="13" r="3"/>"#
+            }
+            Self::Offline => {
+                r#"<path d="M2 2l20 20M8.5 16.5a5 5 0 017 0M5 12.9a10 10 0 015.2-2.8M19 12.9a10 10 0 00-2.3-1.6M12 20h.01"/>"#
+            }
             Self::Info => {
                 r#"<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>"#
             }
         }
     }
 
-    const ALL: [Self; 33] = [
+    const ALL: [Self; 35] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -196,6 +206,8 @@ impl Icon {
         Self::Target,
         Self::Pause,
         Self::Pencil,
+        Self::Camera,
+        Self::Offline,
     ];
 
     fn svg(self) -> String {

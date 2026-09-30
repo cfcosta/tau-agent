@@ -42,6 +42,7 @@ use crate::{
     catalog::{Catalog, PluginInfo, PluginScreen},
     input::{InputEvent, TextInput},
     models::{ModelChoice, ModelSettings, USAGE_SETTINGS_URL},
+    pairing::{PairRequest, PairStep, Pairing, PairingUpdate, Progress},
     plan_usage::{self, PlanAction, PlanAlert},
     pull_request::{PrState, PullRequest},
     route::{self, Route},
@@ -257,6 +258,9 @@ pub enum WorkspaceEvent {
     Query {
         sql: String,
     },
+    /// Pair this phone with the tau on a computer, or reach it again;
+    /// answer with [`Workspace::update_pairing`].
+    Pair(PairRequest),
     /// Start GitHub's device sign-in; answer with a
     /// [`GitHub::Waiting`] code, then [`GitHub::SignedIn`].
     GitHubSignIn,
@@ -443,6 +447,12 @@ pub struct Workspace {
     /// Child runs on their way to landing, by run.
     landings: HashMap<RunId, LandingState>,
     pub(crate) setup: Setup,
+    pub(crate) pairing: Pairing,
+    /// A computer's address and pairing code, typed.
+    pub(crate) pair_address: Entity<TextInput>,
+    pub(crate) pair_code: Entity<TextInput>,
+    /// This phone's name, as the computer lists it.
+    pub(crate) phone_name: Entity<TextInput>,
     pub(crate) pull_requests: HashMap<RunId, PullRequest>,
     /// The code of each comparison opened, by (run, fork).
     pub(crate) branch_code: HashMap<(RunId, RunId), CodeState>,
@@ -559,6 +569,12 @@ impl Workspace {
         });
         let repo_filter =
             cx.new(|cx| TextInput::new("Filter your repositories", cx));
+        let pair_address = cx
+            .new(|cx| TextInput::new("100.84.12.7:7443", cx).keep_on_submit());
+        let pair_code =
+            cx.new(|cx| TextInput::new("K7QM-2XPA", cx).keep_on_submit());
+        let phone_name =
+            cx.new(|cx| TextInput::new("Phone", cx).keep_on_submit());
         let first_task = cx.new(|cx| {
             TextInput::new(
                 "Describe the task, for example: the retry loop ignores \
@@ -659,6 +675,16 @@ impl Workspace {
                 let InputEvent::Submit(url) = event;
                 ws.submit_chatgpt_callback(url.clone(), cx);
             }),
+            // Enter in either pairing field connects.
+            cx.subscribe(&pair_address, |ws, _, _: &InputEvent, cx| {
+                ws.connect_typed(cx)
+            }),
+            cx.subscribe(&pair_code, |ws, _, _: &InputEvent, cx| {
+                ws.connect_typed(cx)
+            }),
+            cx.subscribe(&phone_name, |ws, _, _: &InputEvent, cx| {
+                ws.open_tau(cx)
+            }),
             cx.subscribe(&first_task, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(task) = event;
                 ws.start_first_run(task.clone(), cx);
@@ -708,6 +734,10 @@ impl Workspace {
             kept_branch: None,
             landings: HashMap::new(),
             setup: Setup::default(),
+            pairing: Pairing::default(),
+            pair_address,
+            pair_code,
+            phone_name,
             pull_requests: HashMap::new(),
             branch_code: HashMap::new(),
             github_token,
@@ -1094,6 +1124,17 @@ impl Workspace {
         }
         if !matches!(self.route, Route::Setup(_)) {
             self.setup_goal = None;
+        }
+        // Leaving a pairing half done stops it.
+        let pairing = matches!(
+            self.route,
+            Route::Pair(PairStep::Scan | PairStep::Address | PairStep::Paired)
+        );
+        let waiting = self.pairing.busy()
+            || matches!(self.pairing.progress, Progress::Compare { .. });
+        if !pairing && waiting {
+            self.pairing.progress = Progress::Idle;
+            cx.emit(WorkspaceEvent::Pair(PairRequest::Cancel));
         }
         self.mark_open_seen();
         self.repo_menu = None;
@@ -1933,6 +1974,159 @@ impl Workspace {
             }
             _ => cx.notify(),
         }
+    }
+
+    // Pairing a phone.
+
+    pub fn pairing(&self) -> &Pairing {
+        &self.pairing
+    }
+
+    /// Replaces what pairing knows, as when the phone starts paired.
+    pub fn set_pairing(&mut self, pairing: Pairing, cx: &mut Context<Self>) {
+        self.pairing = pairing;
+        cx.notify();
+    }
+
+    /// Opens pairing at `step`, with no way back to the runs until the
+    /// phone reaches a computer.
+    pub fn start_pairing(&mut self, step: PairStep, cx: &mut Context<Self>) {
+        self.back_stack.clear();
+        self.route = Route::Pair(step);
+        self.entered(cx);
+    }
+
+    /// Records what the phone's remote learned: once paired, the phone
+    /// is named; a computer that does not answer says so; one that
+    /// answers again leads back to the runs.
+    pub fn update_pairing(
+        &mut self,
+        update: PairingUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let next = match &update {
+            PairingUpdate::Paired(_) => Some(Route::Pair(PairStep::Paired)),
+            PairingUpdate::Unreachable { .. } => {
+                Some(Route::Pair(PairStep::Unreachable))
+            }
+            PairingUpdate::Connected(_) => {
+                matches!(self.route, Route::Pair(_)).then_some(Route::Home)
+            }
+            PairingUpdate::Progress(_) => None,
+        };
+        self.pairing.update(update);
+        match next {
+            Some(route) => {
+                self.back_stack.clear();
+                self.route = route;
+                self.entered(cx);
+            }
+            None => cx.notify(),
+        }
+    }
+
+    /// Opens the camera to read a computer's pairing code.
+    pub fn scan_pairing_code(&mut self, cx: &mut Context<Self>) {
+        self.pairing.progress = Progress::Scanning;
+        cx.emit(WorkspaceEvent::Pair(PairRequest::Scan));
+        self.navigate(Route::Pair(PairStep::Scan), cx);
+    }
+
+    /// Pairs by typing the address and the code instead.
+    pub fn type_address(&mut self, cx: &mut Context<Self>) {
+        self.pairing.progress = Progress::Idle;
+        self.navigate(Route::Pair(PairStep::Address), cx);
+    }
+
+    /// Connects to the typed address with the typed code.
+    pub fn connect_typed(&mut self, cx: &mut Context<Self>) {
+        if self.pairing.busy() {
+            return;
+        }
+        let address =
+            tau_remote::Address::typed(self.pair_address.read(cx).text());
+        let secret =
+            tau_remote::PairingSecret::typed(self.pair_code.read(cx).text());
+        self.pairing.progress = match (address, secret) {
+            (Ok(address), Ok(secret)) => {
+                cx.emit(WorkspaceEvent::Pair(PairRequest::Typed {
+                    address: address.clone(),
+                    secret,
+                }));
+                Progress::Connecting { address }
+            }
+            (Err(error), _) | (_, Err(error)) => {
+                Progress::Failed(error.to_string())
+            }
+        };
+        cx.notify();
+    }
+
+    /// The person compared the certificate with the computer's, and it
+    /// is the same: pair.
+    pub fn trust_certificate(&mut self, cx: &mut Context<Self>) {
+        if let Progress::Compare {
+            address,
+            fingerprint,
+        } = &self.pairing.progress
+        {
+            cx.emit(WorkspaceEvent::Pair(PairRequest::Trust(*fingerprint)));
+            self.pairing.progress = Progress::Pairing {
+                address: address.clone(),
+                fingerprint: *fingerprint,
+            };
+            cx.notify();
+        }
+    }
+
+    /// The certificate is not the computer's: stop before sending the
+    /// code.
+    pub fn distrust_certificate(&mut self, cx: &mut Context<Self>) {
+        cx.emit(WorkspaceEvent::Pair(PairRequest::Cancel));
+        self.pairing.progress = Progress::Failed(
+            "The certificate is not your computer's, so tau stopped before \
+             sending the code. Check the address, or scan the code instead."
+                .into(),
+        );
+        cx.notify();
+    }
+
+    /// Names the phone, if a name was typed, and goes to the runs.
+    pub fn open_tau(&mut self, cx: &mut Context<Self>) {
+        let name = self.phone_name.read(cx).text().trim().to_owned();
+        if !name.is_empty() {
+            cx.emit(WorkspaceEvent::Pair(PairRequest::Name(name)));
+        }
+        self.back_stack.clear();
+        self.route = Route::Home;
+        self.entered(cx);
+    }
+
+    /// Connects to the paired computer again.
+    pub fn retry_connection(&mut self, cx: &mut Context<Self>) {
+        if self.pairing.busy() {
+            return;
+        }
+        if let Some(computer) = &self.pairing.computer {
+            self.pairing.progress = Progress::Connecting {
+                address: computer.address.clone(),
+            };
+        }
+        cx.emit(WorkspaceEvent::Pair(PairRequest::Retry));
+        cx.notify();
+    }
+
+    /// Fills the pairing fields, as typing would: for tests.
+    pub fn pair_fields_for_test(
+        &mut self,
+        address: &str,
+        code: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.pair_address
+            .update(cx, |input, cx| input.set_text(address.to_owned(), cx));
+        self.pair_code
+            .update(cx, |input, cx| input.set_text(code.to_owned(), cx));
     }
 
     /// Goes back to the screen an onboarding step was opened from.
@@ -3202,7 +3396,7 @@ impl Workspace {
             Route::Ledger(run) => {
                 screens::ledger::render(self, run, compact, t, cx)
             }
-            Route::Setup(_) | Route::PullRequest(_) => {
+            Route::Setup(_) | Route::Pair(_) | Route::PullRequest(_) => {
                 self.focused(compact, t, cx)
             }
             Route::Models => screens::models::render(self, compact, t, cx),
@@ -3267,6 +3461,9 @@ impl Workspace {
         match &self.route {
             Route::Setup(step) => {
                 screens::setup::render(self, *step, compact, t, cx)
+            }
+            Route::Pair(step) => {
+                screens::pairing::render(self, *step, compact, t, cx)
             }
             Route::PullRequest(run) => {
                 screens::pull_request::render(self, run, compact, t, cx)

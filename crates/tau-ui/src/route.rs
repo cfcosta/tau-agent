@@ -3,7 +3,7 @@
 
 use tau_agent::tool::RunId;
 
-use crate::setup::SetupStep;
+use crate::{pairing::PairStep, setup::SetupStep};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
@@ -34,6 +34,9 @@ pub enum Route {
     Ledger(RunId),
     /// Onboarding: GitHub, a model, repositories, the first run.
     Setup(SetupStep),
+    /// A phone pairing with the tau on a computer, or failing to reach
+    /// it.
+    Pair(PairStep),
     /// A pull request from a run: the draft, then the opened one.
     PullRequest(RunId),
     /// Model settings: defaults, what the picker shows, what to ask about.
@@ -119,6 +122,7 @@ impl Route {
             Self::Constitution { .. } => "Constitution",
             Self::Ledger(_) => "Context ledger",
             Self::Setup(step) => step.title(),
+            Self::Pair(step) => step.title(),
             Self::PullRequest(_) => "Pull request",
             Self::Models => "Models",
         }
@@ -127,7 +131,7 @@ impl Route {
     /// Screens that take the whole window, without the sidebar: a task
     /// to finish before going back to the runs.
     pub fn is_focused(&self) -> bool {
-        matches!(self, Self::Setup(_) | Self::PullRequest(_))
+        matches!(self, Self::Setup(_) | Self::Pair(_) | Self::PullRequest(_))
     }
 
     /// Top-level screens get the phone's tab bar.

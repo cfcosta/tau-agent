@@ -38,6 +38,9 @@
 //! Onboarding ([`setup`]) and pull requests ([`pull_request`]) follow
 //! the same pattern: the workspace emits a request, the host answers
 //! with [`Workspace::update_setup`] or [`Workspace::set_pull_request`].
+//! So does a phone's pairing ([`pairing`]): the workspace emits a
+//! [`PairRequest`](pairing::PairRequest), and the phone's remote answers
+//! with [`Workspace::update_pairing`].
 
 pub mod accounts;
 pub mod assets;
@@ -55,6 +58,7 @@ pub mod markdown;
 pub mod memory;
 pub mod metered;
 pub mod models;
+pub mod pairing;
 pub mod picker;
 pub mod plan_usage;
 pub mod pull_request;

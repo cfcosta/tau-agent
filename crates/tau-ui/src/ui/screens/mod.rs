@@ -7,6 +7,7 @@ pub mod history;
 pub mod ledger;
 pub mod memory;
 pub mod models;
+pub mod pairing;
 pub mod plan;
 pub mod plugins;
 pub mod pull_request;

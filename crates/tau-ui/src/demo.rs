@@ -30,6 +30,14 @@ use crate::{
         StoreInfo,
     },
     models::{AccountState, ChatGptAccount},
+    pairing::{
+        Computer,
+        PairRequest,
+        PairStep,
+        Pairing,
+        PairingUpdate,
+        Progress,
+    },
     pull_request::{Checks, PrCommit, PrState, PullRequest},
     setup::{
         CloneState,
@@ -577,6 +585,11 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
         "model" => Route::Setup(SetupStep::Model),
         "repos" => Route::Setup(SetupStep::Repos),
         "ready" => Route::Setup(SetupStep::Ready),
+        "pair" => Route::Pair(PairStep::Welcome),
+        "pair-scan" => Route::Pair(PairStep::Scan),
+        "pair-address" => Route::Pair(PairStep::Address),
+        "pair-paired" => Route::Pair(PairStep::Paired),
+        "pair-unreachable" => Route::Pair(PairStep::Unreachable),
         "pr" | "pr-opened" => Route::PullRequest(run_id()),
         "models" => Route::Models,
         _ => return None,
@@ -618,6 +631,57 @@ fn repos() -> Vec<RepoChoice> {
         selected,
     })
     .collect()
+}
+
+/// The computer a demo phone pairs with.
+pub fn computer() -> Computer {
+    let mut fingerprint = [0; 32];
+    for (n, byte) in fingerprint.iter_mut().enumerate() {
+        *byte = (n as u8).wrapping_mul(67).wrapping_add(0x4f);
+    }
+    Computer {
+        name: "cfcosta-desk".into(),
+        address: tau_remote::Address {
+            host: "100.84.12.7".into(),
+            port: tau_remote::Address::DEFAULT_PORT,
+        },
+        fingerprint: tau_remote::Fingerprint(fingerprint),
+        via: Some("over Tailscale".into()),
+    }
+}
+
+/// Pairing as it stands when `step` opens: halfway for the camera, a
+/// certificate to compare for a typed address.
+pub fn pairing(step: PairStep) -> Pairing {
+    let computer = computer();
+    let (address, fingerprint) =
+        (computer.address.clone(), computer.fingerprint);
+    match step {
+        PairStep::Welcome => Pairing::default(),
+        PairStep::Scan => Pairing {
+            progress: Progress::Pairing {
+                address,
+                fingerprint,
+            },
+            ..Pairing::default()
+        },
+        PairStep::Address => Pairing {
+            progress: Progress::Compare {
+                address,
+                fingerprint,
+            },
+            ..Pairing::default()
+        },
+        PairStep::Paired => Pairing {
+            computer: Some(computer),
+            ..Pairing::default()
+        },
+        PairStep::Unreachable => Pairing {
+            computer: Some(computer),
+            tries: 3,
+            ..Pairing::default()
+        },
+    }
 }
 
 /// Onboarding as it stands when `step` opens.
@@ -720,6 +784,7 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                         .await;
                     let done = workspace.update(cx, |ws, cx| match answer {
                         Answer::Setup(update) => ws.update_setup(update, cx),
+                        Answer::Pair(update) => ws.update_pairing(update, cx),
                         Answer::Repo(repo) => ws.add_repo(repo, cx),
                         Answer::Pr(run, state) => {
                             ws.set_pull_request_state(&run, state, cx)
@@ -747,7 +812,45 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                 user: "cfcosta".into(),
             }))
         };
+        let computer = computer();
+        let progress =
+            |progress| Answer::Pair(PairingUpdate::Progress(progress));
+        let connecting = || {
+            progress(Progress::Connecting {
+                address: computer.address.clone(),
+            })
+        };
+        let certificate = Progress::Pairing {
+            address: computer.address.clone(),
+            fingerprint: computer.fingerprint,
+        };
         match event {
+            // The camera reads the code at once; the computer answers,
+            // its certificate matches, and it pairs.
+            WorkspaceEvent::Pair(PairRequest::Scan) => later(
+                vec![
+                    (900, connecting()),
+                    (700, progress(certificate)),
+                    (900, Answer::Pair(PairingUpdate::Paired(computer))),
+                ],
+                cx,
+            ),
+            WorkspaceEvent::Pair(PairRequest::Typed { .. }) => {
+                let compare = Progress::Compare {
+                    address: computer.address.clone(),
+                    fingerprint: computer.fingerprint,
+                };
+                later(vec![(700, progress(compare))], cx)
+            }
+            WorkspaceEvent::Pair(PairRequest::Trust(_)) => later(
+                vec![(800, Answer::Pair(PairingUpdate::Paired(computer)))],
+                cx,
+            ),
+            // The computer answers the second time.
+            WorkspaceEvent::Pair(PairRequest::Retry) => later(
+                vec![(1200, Answer::Pair(PairingUpdate::Connected(computer)))],
+                cx,
+            ),
             WorkspaceEvent::GitHubSignIn => later(
                 vec![
                     (
@@ -1032,6 +1135,7 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
 
 enum Answer {
     Setup(SetupUpdate),
+    Pair(PairingUpdate),
     Repo(Repo),
     Pr(RunId, PrState),
     Code(RunId, RunId, BranchCode),

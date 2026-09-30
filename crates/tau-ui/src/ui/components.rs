@@ -463,6 +463,21 @@ pub fn panel(steps: f32, t: &Theme) -> Div {
         .rounded(radius::CARD)
 }
 
+/// A 56 px glyph in a tinted tile, above a phone screen's title: done,
+/// or what went wrong.
+pub fn tile(glyph: Icon, color: Hsla, bg: Hsla, border: Hsla) -> Div {
+    div()
+        .size(px(56.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(radius::TILE)
+        .bg(bg)
+        .border_1()
+        .border_color(border)
+        .child(icon(glyph, IconSize(28.), color))
+}
+
 /// A small labelled number.
 pub fn stat(label: &str, value: impl Into<SharedString>, t: &Theme) -> Div {
     div()

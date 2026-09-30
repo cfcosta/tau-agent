@@ -15,7 +15,8 @@
 //!   usage-limit, the ChatGPT plan's limit; plan-notice, the note shown
 //!   once on the plan; plan-disabled, the Models
 //!   screen with plan use not enabled; plan-signing-in, onboarding
-//!   waiting for the ChatGPT sign-in;
+//!   waiting for the ChatGPT sign-in; a phone pairing: pair,
+//!   pair-scan, pair-address, pair-paired or pair-unreachable;
 //!   models, picker, run-picker, fork-picker, log, status, show or diff
 //!   (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
@@ -43,6 +44,7 @@ use tau_ui::{
     demo,
     host::{self, Host, HostConfig},
     models::AccountState,
+    pairing::PairStep,
     route::Route,
     setup::SetupStep,
 };
@@ -496,6 +498,14 @@ fn open_demo_screen(
         Some(Route::Setup(step)) => {
             workspace.set_setup(demo::setup(step), cx);
             workspace.navigate(Route::Setup(step), cx);
+        }
+        // Pairing starts at its welcome, so the others can go back.
+        Some(Route::Pair(step)) => {
+            workspace.start_pairing(PairStep::Welcome, cx);
+            workspace.set_pairing(demo::pairing(step), cx);
+            if step != PairStep::Welcome {
+                workspace.navigate(Route::Pair(step), cx);
+            }
         }
         Some(Route::PullRequest(run)) => {
             let mut pr = demo::pull_request();

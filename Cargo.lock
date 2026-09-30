@@ -9049,6 +9049,7 @@ dependencies = [
  "tau-jev",
  "tau-memory",
  "tau-reasoning",
+ "tau-remote",
  "tau-store",
  "tau-terminal",
  "tau-testing",
