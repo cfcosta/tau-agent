@@ -4,7 +4,9 @@
   [0014](0014-the-model-commits-and-runs-land-as-stacked-diffs.md):
   the model makes the commits (no commit per turn), tau starts the
   parent's turn that resolves a landing's conflicts, and sessions
-  merge into trunk.
+  merge into trunk. Amended by
+  [0015](0015-delegates-fork-their-caller.md): a sub-agent forks its
+  caller's transcript, and several run at once.
 - Date: 2026-09-29
 - Options, with commit graphs:
   [Landing Child Runs](https://claude.ai/artifact/XhxBri4hxYF34fAprH98hC);
