@@ -1981,7 +1981,7 @@ impl Host {
             .block_on(self.store.run(&child.0))?
             .ok_or_else(|| anyhow::anyhow!("No run {}", child.0))?;
         match record.kind {
-            RunKind::Fork { parent, .. } | RunKind::Subagent { parent } => {
+            RunKind::Fork { parent, .. } | RunKind::Subagent { parent, .. } => {
                 Ok(RunId(parent.into()))
             }
             RunKind::Root => anyhow::bail!("{} has no parent", child.0),
@@ -2000,7 +2000,8 @@ impl Host {
             .block_on(self.store.recent_runs(1000))?
             .into_iter()
             .filter(|other| match &other.kind {
-                RunKind::Fork { parent, .. } | RunKind::Subagent { parent } => {
+                RunKind::Fork { parent, .. }
+                | RunKind::Subagent { parent, .. } => {
                     parent.as_str() == &*run.0
                 }
                 RunKind::Root => false,

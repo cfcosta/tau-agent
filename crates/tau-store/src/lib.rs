@@ -57,9 +57,11 @@ pub enum RunKind {
         parent: String,
         fork_seq: i64,
     },
-    /// Started by `parent` as a tool; inherits nothing.
+    /// Started by `parent` as a tool. With a `fork_seq`, it inherits
+    /// `parent`'s messages up to it, as a fork does; without, nothing.
     Subagent {
         parent: String,
+        fork_seq: Option<i64>,
     },
 }
 
@@ -468,8 +470,8 @@ impl Store {
             RunKind::Fork { parent, fork_seq } => {
                 ("fork", Some(parent.as_str()), Some(*fork_seq))
             }
-            RunKind::Subagent { parent } => {
-                ("subagent", Some(parent.as_str()), None)
+            RunKind::Subagent { parent, fork_seq } => {
+                ("subagent", Some(parent.as_str()), *fork_seq)
             }
         };
         sqlx::query!(
@@ -605,7 +607,7 @@ impl Store {
                    UNION ALL
                    SELECT r.parent_run_id, r.fork_seq, chain.depth + 1
                    FROM chain JOIN runs r ON r.id = chain.run_id
-                   WHERE r.kind = 'fork'
+                   WHERE r.fork_seq IS NOT NULL
                )
                SELECT m.kind AS "kind!: String", m.role AS "role?: String",
                       m.plugin AS "plugin?: String", m.body AS "body!: String"
@@ -659,7 +661,7 @@ impl Store {
                    UNION ALL
                    SELECT r.parent_run_id, r.fork_seq, chain.depth + 1
                    FROM chain JOIN runs r ON r.id = chain.run_id
-                   WHERE r.kind = 'fork'
+                   WHERE r.fork_seq IS NOT NULL
                )
                SELECT m.body AS "body!: String"
                FROM chain JOIN messages m ON m.run_id = chain.run_id
@@ -892,7 +894,9 @@ fn run_kind(
         ("fork", Some(parent), Some(fork_seq)) => {
             RunKind::Fork { parent, fork_seq }
         }
-        ("subagent", Some(parent), _) => RunKind::Subagent { parent },
+        ("subagent", Some(parent), fork_seq) => {
+            RunKind::Subagent { parent, fork_seq }
+        }
         _ => RunKind::Root,
     }
 }

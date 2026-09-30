@@ -601,6 +601,7 @@ impl SubAgent {
         let launch = Launch {
             kind: RunKind::Subagent {
                 parent: ctx.run.0.to_string(),
+                fork_seq: None,
             },
             parent: Some(ctx.run.clone()),
             workflow: scope.workflow.clone(),
@@ -768,7 +769,7 @@ async fn run_task(
     let mut workflow = launch.workflow.as_deref().map(str::to_owned);
     let parent_run = match &launch.kind {
         RunKind::Root => None,
-        RunKind::Fork { parent, .. } | RunKind::Subagent { parent } => {
+        RunKind::Fork { parent, .. } | RunKind::Subagent { parent, .. } => {
             Some(parent.clone())
         }
     };

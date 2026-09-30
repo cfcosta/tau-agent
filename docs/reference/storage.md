@@ -25,7 +25,10 @@ repository's constitution, edited in tau's UI:
 - **A fork** is a run whose `parent_run_id` points at another run. It
   inherits the parent's messages with `seq <= fork_seq`, by reference,
   without copying them.
-- **A sub-agent run** also sets `parent_run_id`, but inherits nothing.
+- **A sub-agent run** also sets `parent_run_id`. With a `fork_seq`
+  (every `delegate` sub-agent sets one), it inherits as a fork does;
+  without (`Agent::as_tool`), it inherits nothing. Inheritance follows
+  any run that has a `fork_seq`, whatever its kind.
 - **A context rewrite** is a row in `messages` with `kind = 'context'`,
   naming the plugin that made it (compaction is one), followed by the
   rewritten transcript. When a run's transcript is loaded, everything
@@ -169,7 +172,7 @@ sqlx::query!(
            UNION ALL
            SELECT r.parent_run_id, r.fork_seq, chain.depth + 1
            FROM chain JOIN runs r ON r.id = chain.run_id
-           WHERE r.kind = 'fork'
+           WHERE r.fork_seq IS NOT NULL
        )
        SELECT m.kind AS "kind!: String", m.body AS "body!: String"
        FROM chain JOIN messages m ON m.run_id = chain.run_id

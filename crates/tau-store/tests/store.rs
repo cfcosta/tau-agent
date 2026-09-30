@@ -61,9 +61,11 @@ impl Model {
     fn chain(&self, run: &str) -> Vec<Entry> {
         let this = &self.runs[run];
         let mut entries = match &this.kind {
-            RunKind::Fork { parent, fork_seq } => {
-                self.chain_upto(parent, *fork_seq)
-            }
+            RunKind::Fork { parent, fork_seq }
+            | RunKind::Subagent {
+                parent,
+                fork_seq: Some(fork_seq),
+            } => self.chain_upto(parent, *fork_seq),
             _ => Vec::new(),
         };
         entries.extend(this.own.iter().cloned());
@@ -74,9 +76,11 @@ impl Model {
     fn chain_upto(&self, run: &str, cut: i64) -> Vec<Entry> {
         let this = &self.runs[run];
         let mut entries = match &this.kind {
-            RunKind::Fork { parent, fork_seq } => {
-                self.chain_upto(parent, *fork_seq)
-            }
+            RunKind::Fork { parent, fork_seq }
+            | RunKind::Subagent {
+                parent,
+                fork_seq: Some(fork_seq),
+            } => self.chain_upto(parent, *fork_seq),
             _ => Vec::new(),
         };
         let keep = usize::try_from(cut + 1).unwrap_or(0).min(this.own.len());
@@ -282,10 +286,16 @@ impl StoreMachine {
         self.create(&tc, RunKind::Fork { parent, fork_seq });
     }
 
+    /// A sub-agent that starts blank, or forks its parent as a
+    /// delegate does, anywhere in it.
     #[rule]
     fn create_subagent(&mut self, tc: TestCase) {
         let parent = self.pick(&tc);
-        self.create(&tc, RunKind::Subagent { parent });
+        let len = self.model.runs[&parent].own.len() as i64;
+        let fork_seq = tc.draw(gs::optional(
+            gs::integers::<i64>().min_value(-1).max_value(len + 1),
+        ));
+        self.create(&tc, RunKind::Subagent { parent, fork_seq });
     }
 
     /// Appending returns the `seq` of the last entry the run now holds.
@@ -687,9 +697,27 @@ fn subagents_are_found_by_their_parent() {
         let store = Store::memory().await.unwrap();
         for (id, kind) in [
             ("a", RunKind::Root),
-            ("b", RunKind::Subagent { parent: "a".into() }),
-            ("c", RunKind::Subagent { parent: "a".into() }),
-            ("d", RunKind::Subagent { parent: "c".into() }),
+            (
+                "b",
+                RunKind::Subagent {
+                    parent: "a".into(),
+                    fork_seq: None,
+                },
+            ),
+            (
+                "c",
+                RunKind::Subagent {
+                    parent: "a".into(),
+                    fork_seq: None,
+                },
+            ),
+            (
+                "d",
+                RunKind::Subagent {
+                    parent: "c".into(),
+                    fork_seq: None,
+                },
+            ),
             (
                 "e",
                 RunKind::Fork {
@@ -730,7 +758,13 @@ fn recent_runs_skip_subagents() {
         let store = Store::memory().await.unwrap();
         for (id, kind) in [
             ("a", RunKind::Root),
-            ("b", RunKind::Subagent { parent: "a".into() }),
+            (
+                "b",
+                RunKind::Subagent {
+                    parent: "a".into(),
+                    fork_seq: None,
+                },
+            ),
             (
                 "c",
                 RunKind::Fork {

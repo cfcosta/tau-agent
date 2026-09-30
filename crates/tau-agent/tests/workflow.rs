@@ -574,7 +574,8 @@ fn supervisor_with_sub_agents(tc: TestCase) {
             assert_eq!(
                 record.kind,
                 RunKind::Subagent {
-                    parent: lead_id.0.to_string()
+                    parent: lead_id.0.to_string(),
+                    fork_seq: None,
                 }
             );
             assert_eq!(record.workflow_id.as_deref(), Some("wf"));
