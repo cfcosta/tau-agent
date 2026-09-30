@@ -46,6 +46,8 @@ pub enum Icon {
     Camera,
     Offline,
     Phone,
+    /// Opens a page outside tau.
+    External,
 }
 
 impl Icon {
@@ -87,6 +89,7 @@ impl Icon {
             Self::Camera => "icons/camera.svg",
             Self::Offline => "icons/offline.svg",
             Self::Phone => "icons/phone.svg",
+            Self::External => "icons/external.svg",
         }
     }
 
@@ -171,13 +174,16 @@ impl Icon {
             Self::Offline => {
                 r#"<path d="M2 2l20 20M8.5 16.5a5 5 0 017 0M5 12.9a10 10 0 015.2-2.8M19 12.9a10 10 0 00-2.3-1.6M12 20h.01"/>"#
             }
+            Self::External => {
+                r#"<path d="M14 4h6v6M20 4l-8.5 8.5M18 14.5V20H4V6h5.5"/>"#
+            }
             Self::Info => {
                 r#"<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>"#
             }
         }
     }
 
-    const ALL: [Self; 36] = [
+    const ALL: [Self; 37] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -214,6 +220,7 @@ impl Icon {
         Self::Camera,
         Self::Offline,
         Self::Phone,
+        Self::External,
     ];
 
     fn svg(self) -> String {
@@ -224,11 +231,49 @@ impl Icon {
     }
 }
 
-/// Serves the icons to GPUI's `svg()` element.
+mod brand {
+    include!(concat!(env!("OUT_DIR"), "/brand.rs"));
+}
+
+/// Another company's mark, shown where tau signs in to it. The files are
+/// their owners' approved artwork, dropped into `assets/brand/` and
+/// embedded at build time (see `build.rs`); tau never draws its own
+/// version. Without the file, [`Brand::svg`] is `None` and a neutral
+/// placeholder stands in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Brand {
+    ChatGpt,
+    GitHub,
+}
+
+impl Brand {
+    const ALL: [Self; 2] = [Self::ChatGpt, Self::GitHub];
+
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::ChatGpt => "brand/chatgpt-mark.svg",
+            Self::GitHub => "brand/github-mark.svg",
+        }
+    }
+
+    /// The mark's SVG, when its file was there at build time.
+    pub fn svg(self) -> Option<&'static [u8]> {
+        match self {
+            Self::ChatGpt => brand::CHATGPT_MARK,
+            Self::GitHub => brand::GITHUB_MARK,
+        }
+    }
+}
+
+/// Serves the icons, and the brand marks that are present, to GPUI's
+/// `svg()` element.
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if let Some(mark) = Brand::ALL.into_iter().find(|b| b.path() == path) {
+            return Ok(mark.svg().map(Cow::Borrowed));
+        }
         Ok(Icon::ALL
             .into_iter()
             .find(|icon| icon.path() == path)
@@ -236,9 +281,14 @@ impl AssetSource for Assets {
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        let marks = Brand::ALL
+            .into_iter()
+            .filter(|mark| mark.svg().is_some())
+            .map(Brand::path);
         Ok(Icon::ALL
             .into_iter()
             .map(Icon::path)
+            .chain(marks)
             .filter(|icon| icon.starts_with(path))
             .map(SharedString::from)
             .collect())
@@ -278,5 +328,13 @@ mod tests {
             assert!(svg.starts_with("<svg"), "{icon:?}");
         }
         assert!(Assets.load("icons/missing.svg").unwrap().is_none());
+    }
+
+    #[test]
+    fn brand_marks_are_served_only_when_present() {
+        for mark in Brand::ALL {
+            let served = Assets.load(mark.path()).unwrap();
+            assert_eq!(served.is_some(), mark.svg().is_some(), "{mark:?}");
+        }
     }
 }
