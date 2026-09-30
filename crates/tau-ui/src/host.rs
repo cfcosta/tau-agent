@@ -232,11 +232,27 @@ struct Listed {
 }
 
 impl RepoList {
+    /// The list `path` keeps, without the local checkouts listed before
+    /// repositories came from GitHub alone: they stay out, open or not.
     fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
+        let list: Self = std::fs::read_to_string(path)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        list.github_only()
+    }
+
+    /// The list without repositories that did not come from GitHub, and
+    /// with only the listed ones open.
+    fn github_only(mut self) -> Self {
+        self.repos.retain(|listed| listed.github.is_some());
+        let listed: Vec<String> = self
+            .repos
+            .iter()
+            .map(|listed| listed.name.clone())
+            .collect();
+        self.open.retain(|name| listed.contains(name));
+        self
     }
 
     fn save(&self, path: &Path) -> anyhow::Result<()> {
@@ -4148,6 +4164,39 @@ pub fn branch_slug(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A saved list keeps only repositories from GitHub, and opens only
+    /// those it keeps: a local checkout listed before is dropped.
+    #[test]
+    fn a_saved_list_keeps_only_repositories_from_github() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("repos.json");
+        let listed = |name: &str, github: Option<&str>| Listed {
+            name: name.to_owned(),
+            path: dir.path().join(name),
+            hidden: false,
+            github: github.map(str::to_owned),
+            main: None,
+        };
+        RepoList {
+            repos: vec![
+                listed("tau-agent", None),
+                listed("ascend", Some("cfcosta/ascend")),
+            ],
+            open: vec!["tau-agent".into(), "ascend".into()],
+            ..RepoList::default()
+        }
+        .save(&path)
+        .unwrap();
+        let list = RepoList::load(&path);
+        let names: Vec<&str> = list
+            .repos
+            .iter()
+            .map(|listed| listed.name.as_str())
+            .collect();
+        assert_eq!(names, ["ascend"]);
+        assert_eq!(list.open, ["ascend"]);
+    }
 
     /// A sub-agent runs on the model its call asked for, else its
     /// caller's. An effort it asked for is kept when the model takes it
