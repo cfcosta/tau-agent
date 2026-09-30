@@ -153,6 +153,12 @@ impl Vcs {
         .await
     }
 
+    /// The paths the working copy (`@`) changes against its parents,
+    /// after snapshotting it.
+    pub async fn changes(&self) -> Result<Vec<crate::FileChange>, VcsError> {
+        self.call(crate::ops::changes).await
+    }
+
     /// The directory the workspace was opened at.
     pub fn root(&self) -> &Path {
         &self.inner.root

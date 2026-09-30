@@ -236,6 +236,16 @@ pub(crate) fn status(worker: &mut Worker) -> Result<Report, VcsError> {
     })
 }
 
+/// What `@` changes against its parents, after a snapshot.
+pub(crate) fn changes(
+    worker: &mut Worker,
+) -> Result<Vec<FileChange>, VcsError> {
+    let snapshot = session::snapshot(worker)?;
+    let wc = &snapshot.wc;
+    let parent_tree = block_on(wc.parent_tree(snapshot.repo.as_ref()))?;
+    diff::changed_paths(&parent_tree, &wc.tree(), &EverythingMatcher)
+}
+
 pub(crate) fn diff(
     worker: &mut Worker,
     change: Option<String>,

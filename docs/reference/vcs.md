@@ -213,6 +213,17 @@ A changed path is a `FileChange`:
 - Details: `operation` (the id that was undone), `tool`,
   `working_copy`.
 
+## ls
+
+The plugin also marks what `@` changes in each result of the coding
+tools' `ls` (`tools.md`, "ls"). After an `ls` of a directory inside the
+workspace, it snapshots the working copy and gives each entry that
+differs from `@`'s parents a `change` in the result's details: a file's
+`added` or `modified`, and `modified` for a directory with any change
+under it. The model's text stays as `ls` wrote it. When the snapshot
+fails, or the directory is outside the workspace, the listing goes on
+unmarked.
+
 ## Error strings
 
 In these messages, `<rev>` and `<path>` stand for the argument as the
