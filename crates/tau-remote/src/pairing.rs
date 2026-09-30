@@ -161,6 +161,20 @@ impl PairingSecret {
     /// No 0 or O, no 1 or I: it may be typed from a screen.
     pub const ALPHABET: &str = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
+    /// A new secret, from the system's random source.
+    pub fn random() -> Self {
+        let mut bytes = [0_u8; 8];
+        crate::random(&mut bytes);
+        let alphabet = Self::ALPHABET.as_bytes();
+        // 32 letters: a byte's low five bits pick one, evenly.
+        Self(
+            bytes
+                .iter()
+                .map(|byte| char::from(alphabet[usize::from(byte & 31)]))
+                .collect(),
+        )
+    }
+
     /// The secret as a person might type it: any case, with or without
     /// the dash and spaces.
     pub fn typed(text: &str) -> Result<Self, ParseError> {
@@ -255,6 +269,38 @@ impl fmt::Display for PairingCode {
     }
 }
 
+// Addresses and fingerprints are kept as the strings they read as.
+
+impl serde::Serialize for Address {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Address {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        d: D,
+    ) -> Result<Self, D::Error> {
+        let text = String::deserialize(d)?;
+        text.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl serde::Serialize for Fingerprint {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Fingerprint {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        d: D,
+    ) -> Result<Self, D::Error> {
+        let text = String::deserialize(d)?;
+        Self::from_hex(&text).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Percent-escapes all but unreserved characters (RFC 3986).
 fn escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
@@ -338,6 +384,8 @@ mod tests {
         // O and I are not in the alphabet; neither is a short code.
         assert_eq!(PairingSecret::typed("K7QM-2XPO"), Err(ParseError::Secret));
         assert_eq!(PairingSecret::typed("K7QM"), Err(ParseError::Secret));
+        let random = PairingSecret::random();
+        assert_eq!(PairingSecret::typed(random.as_str()), Ok(random));
     }
 
     #[test]
