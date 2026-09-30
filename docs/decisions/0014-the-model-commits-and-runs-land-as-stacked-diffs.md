@@ -52,12 +52,18 @@ keeps its change id.
   where a reviewer would want a boundary, with its own description.
   The tool exists already; its description says so, and the system
   prompt says that commits are how the run's work is seen and landed.
+- **Every message is written by a model.** Commits carry what a
+  reviewer reads, so tau never describes one itself: no
+  `tau: run <id> turn <n>`, and no run's answer pasted in as a
+  description.
 - **For sure at the end.** A run that would stop with uncommitted
   changes is held once: tau-vcs keeps it going (as a plugin holds a
   stop now) with "Commit your work with `vcs_commit` before you
-  finish." If it stops again with changes left, tau commits them
-  itself, described by the run's last answer, so no work is left
-  outside a change.
+  finish." If it stops again with changes left, tau still commits
+  them, so no work is left outside a change, but the message comes
+  from a model: one short call with the diff and the run's task, on
+  the run's own model, asked for a Conventional Commits message. The
+  call's cost is the run's.
 - **Delegating needs a clean working copy.** The sub-agent starts on
   the caller's newest commit and must see its work. `delegate`
   refuses while the caller's `@` holds changes and says to commit
@@ -148,7 +154,7 @@ id, and the old one stays in the operation log.
 - tau-ui grows a Merge action on sessions, and a way to show that a
   landing or merge waits on a resolving turn.
 - A run whose model never commits still ends with one change, made at
-  the end.
+  the end, with a message a model wrote from its diff.
 - The reference (`docs/reference/vcs.md`, "Runs and turns", "Landing a
   child run", "Delegating to a sub-agent") describes the code as it
   is; it changes with the code.
