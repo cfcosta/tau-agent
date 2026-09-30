@@ -319,7 +319,7 @@ fn escape_closes_an_alert_before_going_back(cx: &mut TestAppContext) {
 fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
     use tau_testing::scripted::ScriptedModel;
     use tau_ui::{
-        accounts::{Access, Credentials},
+        accounts::Credentials,
         host::{Host, HostConfig},
     };
 
@@ -333,7 +333,7 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
     let agent =
         tau_agent::agent::Agent::new(ScriptedModel::new()).name("coder");
     let config = HostConfig {
-        access: Access::ApiKey("sk-test".into()),
+        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(tempfile::tempdir().unwrap().keep()),
         model: Some("gpt-5.5".into()),
         root: std::env::temp_dir(),
@@ -373,26 +373,34 @@ fn open_with_models(
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         let mut catalog = ws.catalog().clone();
-        catalog.models = api_key_models();
+        catalog.models = more_models();
         ws.set_catalog(catalog, cx);
     });
     (workspace, cx, events)
 }
 
-/// The demo's models on an API key: tau-ai's table, priced per token,
-/// with gpt-5.5-pro locked, as a model the key's account cannot run.
-fn api_key_models() -> tau_ui::models::Models {
+/// The demo's models on an account that lists more of them, in the
+/// server's order.
+fn more_models() -> tau_ui::models::Models {
     let mut models = demo::models();
-    models.options = tau_ui::models::coding_models(|id| id != "gpt-5.5-pro");
-    let access = &mut models.access;
-    access.chatgpt = false;
-    access.api_key = true;
-    access.label = "OpenAI API key".into();
+    models.options = tau_ui::models::plan_models(
+        &[
+            "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+        ]
+        .map(|slug| tau_ai::chatgpt::ModelInfo {
+            slug: slug.into(),
+            display_name: slug.into(),
+        }),
+    );
     models
 }
 
-/// On the ChatGPT plan the picker offers the account's models and
-/// never asks about price.
+/// The picker offers the account's models, in its order, and picks one
+/// at once.
 #[gpui::test]
 fn the_plan_picker_offers_the_accounts_models(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
@@ -411,7 +419,7 @@ fn the_plan_picker_offers_the_accounts_models(cx: &mut TestAppContext) {
             .collect();
         assert_eq!(shown[0], "GPT-6-Astra", "the server's order and names");
         ws.pick_model("gpt-6-astra", cx);
-        assert!(ws.alert().is_none(), "no price check on the plan");
+        assert!(ws.alert().is_none(), "nothing to confirm");
         assert_eq!(ws.next_model().model, "gpt-6-astra");
     });
     // Drawn, with the plan's line under the composer.
@@ -441,31 +449,6 @@ fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_pricey_model_asks_first_and_a_locked_one_is_not_picked(
-    cx: &mut TestAppContext,
-) {
-    let (workspace, mut cx, _) = open_with_models(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        ws.show_picker(PickerTarget::Next, cx);
-        // Locked: the sign-in cannot run it.
-        ws.pick_model("gpt-5.5-pro", cx);
-        assert_eq!(ws.next_model().model, "gpt-5.5");
-        assert!(ws.alert().is_none());
-        // $50 per M out is above the $20 to ask about.
-        ws.pick_model("gpt-6-astra", cx);
-        let (title, _) = ws.alert().expect("a price check");
-        assert_eq!(title, "Use gpt-6-astra?");
-        assert_eq!(ws.next_model().model, "gpt-5.5", "not until confirmed");
-        ws.dismiss_alert(cx);
-        assert_eq!(ws.next_model().model, "gpt-5.5", "cancel keeps the model");
-        ws.pick_model("gpt-6-astra", cx);
-        ws.confirm_dialog(cx);
-        assert_eq!(ws.next_model().model, "gpt-6-astra");
-        assert!(ws.picker().is_none());
-    });
-}
-
-#[gpui::test]
 fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_with_models(cx);
     workspace.update(&mut cx, |ws, cx| {
@@ -474,7 +457,6 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         // The next run follows coder's new default until one is picked.
         assert_eq!(ws.next_model().model, "gpt-6-sol");
         ws.toggle_model_hidden("gpt-6-luna", cx);
-        ws.step_ask_above(1, cx);
     });
     let saved: Vec<ModelSettings> = events
         .borrow()
@@ -486,11 +468,10 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
             _ => None,
         })
         .collect();
-    assert_eq!(saved.len(), 3);
+    assert_eq!(saved.len(), 2);
     let last = saved.last().unwrap();
     assert_eq!(last.default_for("coder").model, "gpt-6-sol");
     assert!(last.is_hidden("gpt-6-luna"));
-    assert_eq!(last.ask_above, Some(50.));
 }
 
 #[gpui::test]
@@ -718,12 +699,9 @@ fn connecting_from_the_models_screen_comes_back_to_it(cx: &mut TestAppContext) {
             cx,
         );
         assert_eq!(ws.route(), &Route::Models);
-        ws.sign_out(tau_ui::models::AccessKind::ApiKey, cx);
+        ws.sign_out(cx);
     });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::SignOut(tau_ui::models::AccessKind::ApiKey))
-    );
+    assert_eq!(events.borrow().last(), Some(&WorkspaceEvent::SignOut));
 }
 
 #[gpui::test]
@@ -1697,8 +1675,6 @@ fn the_picker_offers_the_models_own_efforts(cx: &mut TestAppContext) {
         );
         // gpt-5.5 stops at xhigh, so max gives way to auto.
         ws.pick_model("gpt-5.5", cx);
-        // It costs more than the demo asks about.
-        ws.confirm_dialog(cx);
         assert_eq!(ws.next_model(), &ModelChoice::new("gpt-5.5", Effort::Auto));
     });
     assert_eq!(
@@ -1934,15 +1910,13 @@ fn a_usage_limit_offers_to_manage_usage(cx: &mut TestAppContext) {
     // to pay.
     assert!(!events.borrow().iter().any(|event| matches!(
         event,
-        WorkspaceEvent::SwitchChatGpt { .. }
-            | WorkspaceEvent::ApiKey { .. }
-            | WorkspaceEvent::SignOut(_)
+        WorkspaceEvent::SwitchChatGpt { .. } | WorkspaceEvent::SignOut
     )));
 }
 
 /// A sign-in OpenAI no longer takes asks to sign the active account in
 /// again; one without plan usage asks to enable it, from the model
-/// setup, or offers an API key.
+/// setup.
 #[gpui::test]
 fn plan_alerts_lead_to_signing_in(cx: &mut TestAppContext) {
     use tau_ui::plan_usage::{PlanAction, PlanAlert};

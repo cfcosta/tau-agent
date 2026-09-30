@@ -1,8 +1,8 @@
 //! Opens the interface.
 //!
-//! With a ChatGPT sign-in or an OpenAI API key, `tau-ui` runs a real
+//! With a ChatGPT sign-in that allows plan use, `tau-ui` runs a real
 //! coding agent in the current directory: type a task to start a run.
-//! Without either it opens onboarding to set one up. With `--demo` it
+//! Without one it opens onboarding to sign in. With `--demo` it
 //! replays the scripted session instead.
 //!
 //! - `--model <id>`: the model; gpt-5.5 by default.
@@ -91,16 +91,16 @@ fn args() -> Args {
 fn main() {
     let args = args();
     let credentials = Credentials::default_dir();
-    let access = if args.demo {
+    let account = if args.demo {
         None
     } else {
-        credentials.access()
+        credentials.plan_account()
     };
     let (model, root) = (args.model.clone(), args.root.clone());
     let saved = credentials.clone();
-    let config = move |access| HostConfig {
+    let config = move |account| HostConfig {
         model: model.clone(),
-        access,
+        account,
         credentials: saved.clone(),
         root: root.clone(),
         store: HostConfig::default_store(),
@@ -108,7 +108,7 @@ fn main() {
         settings: HostConfig::default_settings(),
         repo_list: HostConfig::default_repo_list(),
     };
-    let host = access.and_then(|access| match Host::new(config(access)) {
+    let host = account.and_then(|account| match Host::new(config(account)) {
         Ok(host) => Some(host),
         Err(error) => {
             eprintln!("tau-ui: cannot start agents: {error}");
@@ -189,7 +189,7 @@ fn main() {
                         args.model.clone(),
                         credentials.clone(),
                         cx,
-                        move |access, cx| match Host::new(config(access)) {
+                        move |account, cx| match Host::new(config(account)) {
                             Ok((host, events)) => {
                                 let catalog = host.catalog();
                                 entity.update(cx, |ws, cx| {

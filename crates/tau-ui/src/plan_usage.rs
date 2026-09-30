@@ -3,9 +3,9 @@
 //! after the first sign-in that allows it, the line by the composer while
 //! runs use the plan, and what a run that stopped on the plan says next.
 //!
-//! A plan error stops the run; nothing moves it to the API key. The
-//! alert says what to do instead: manage usage, sign in again, enable
-//! plan use, or read why it stopped.
+//! A plan error stops the run; the plan is the only way tau reaches a
+//! model. The alert says what to do instead: manage usage, sign in
+//! again, enable plan use, or read why it stopped.
 
 use tau_ai::{refusal::Refusal, retry::Recovery};
 
@@ -43,8 +43,6 @@ pub enum PlanAction {
     SignInAgain,
     /// Signs the active account in again, asking for plan usage.
     EnablePlanUsage,
-    /// Opens the model setup, to add an API key.
-    AddApiKey,
     /// Closes the alert.
     Close,
 }
@@ -84,8 +82,8 @@ impl PlanAlert {
                  keep using your plan. ({detail})"
             ),
             Self::EnablePlanUsage => "This sign-in does not allow tau to use \
-                                      your ChatGPT plan. Enable plan use, or \
-                                      add an OpenAI API key instead."
+                                      your ChatGPT plan. Enable plan use to \
+                                      keep going."
                 .into(),
             Self::Stopped { detail } => detail.clone(),
         }
@@ -107,10 +105,7 @@ impl PlanAlert {
 
     /// The other button.
     pub fn secondary(&self) -> (&'static str, PlanAction) {
-        match self {
-            Self::EnablePlanUsage => ("Use an API key", PlanAction::AddApiKey),
-            _ => ("Close", PlanAction::Close),
-        }
+        ("Close", PlanAction::Close)
     }
 }
 
@@ -152,7 +147,8 @@ mod tests {
         let enable =
             PlanAlert::of(&refusal(Recovery::EnablePlanUsage)).unwrap();
         assert_eq!(enable.primary().unwrap().1, PlanAction::EnablePlanUsage);
-        assert_eq!(enable.secondary().1, PlanAction::AddApiKey);
+        assert_eq!(enable.secondary().1, PlanAction::Close);
+        assert!(!enable.message().contains("API key"));
         for recovery in [
             Recovery::Restricted,
             Recovery::FixRequest,

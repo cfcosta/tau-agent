@@ -1,12 +1,11 @@
 //! How tau reaches a model: a ChatGPT plan through Sign in with ChatGPT
-//! (`tau_ai::chatgpt`), or an OpenAI API key; where each is kept; and
+//! (`tau_ai::chatgpt`), the only way; where sign-ins are kept; and
 //! signing in, switching accounts and signing out. Only what the user set
-//! up in tau counts; the environment is never read, so tau does not run
-//! on whatever key a shell exports.
+//! up in tau counts; the environment is never read.
 //!
 //! Runs use the active ChatGPT account's plan when it is signed in with
-//! plan usage, else the saved API key. A plan error never moves a run to
-//! the key: it stops, and says what to do.
+//! plan usage, and nothing otherwise. A plan error stops the run and says
+//! what to do.
 
 use std::{
     cell::RefCell,
@@ -30,51 +29,10 @@ use tau_ai::chatgpt::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    models::{AccessKind, AccountState, ChatGptAccount, DEFAULT_MODEL},
+    models::{AccountState, ChatGptAccount, DEFAULT_MODEL},
     setup::{ModelAccess, SetupStep, SetupUpdate},
     workspace::{Workspace, WorkspaceEvent},
 };
-
-/// How the host reaches a model.
-#[derive(Clone, PartialEq, Eq)]
-pub enum Access {
-    /// The plan of this ChatGPT account, in tau's store of sign-ins.
-    ChatGpt(AccountId),
-    /// An OpenAI API key.
-    ApiKey(String),
-}
-
-impl std::fmt::Debug for Access {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ChatGpt(account) => {
-                f.debug_tuple("ChatGpt").field(account).finish()
-            }
-            Self::ApiKey(_) => f.write_str("ApiKey(..)"),
-        }
-    }
-}
-
-impl Access {
-    pub fn kind(&self) -> AccessKind {
-        match self {
-            Self::ChatGpt(_) => AccessKind::ChatGpt,
-            Self::ApiKey(_) => AccessKind::ApiKey,
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::ChatGpt(_) => "ChatGPT plan",
-            Self::ApiKey(_) => "OpenAI API key",
-        }
-    }
-
-    /// How the model reads in onboarding: `gpt-5.5 · ChatGPT plan`.
-    pub fn short_label(&self, model: &str) -> String {
-        format!("{model} · {}", self.label())
-    }
-}
 
 /// Where tau keeps what the user signed in with, each readable only by
 /// them.
@@ -114,10 +72,6 @@ impl Credentials {
         dir.is_dir().then(|| Store::open(dir).ok()).flatten()
     }
 
-    pub fn api_key(&self) -> PathBuf {
-        self.dir.join("openai-key")
-    }
-
     pub fn github(&self) -> PathBuf {
         self.dir.join("github.json")
     }
@@ -143,16 +97,8 @@ impl Credentials {
         }
     }
 
-    /// What runs use: the active ChatGPT account's plan when it may be
-    /// used, else the saved API key.
-    pub fn access(&self) -> Option<Access> {
-        if let Some(account) = self.plan_account() {
-            return Some(Access::ChatGpt(account));
-        }
-        self.saved_key().map(Access::ApiKey)
-    }
-
-    /// The active ChatGPT account, when it is signed in with plan usage.
+    /// What runs use: the active ChatGPT account, when it is signed in
+    /// with plan usage.
     pub fn plan_account(&self) -> Option<AccountId> {
         let store = self.saved_store()?;
         let account = store.active().ok()??;
@@ -196,18 +142,6 @@ impl Credentials {
             .collect()
     }
 
-    /// Whether that kind of access is saved: a signed-in ChatGPT account
-    /// (with plan usage or not), or an API key.
-    pub fn has(&self, kind: AccessKind) -> bool {
-        match kind {
-            AccessKind::ChatGpt => self
-                .accounts()
-                .iter()
-                .any(|account| account.state != AccountState::SignedOut),
-            AccessKind::ApiKey => self.saved_key().is_some(),
-        }
-    }
-
     /// Makes `account` the one tau signs in with.
     pub fn switch(&self, account: &str) -> Result<(), String> {
         let id = AccountId::parse(account)
@@ -217,22 +151,6 @@ impl Credentials {
             .store()
             .set_active(&id)
             .map_err(|error| error.to_string())
-    }
-
-    fn saved_key(&self) -> Option<String> {
-        std::fs::read_to_string(self.api_key())
-            .ok()
-            .map(|key| key.trim().to_owned())
-            .filter(|key| !key.is_empty())
-    }
-
-    pub fn save_api_key(&self, key: &str) -> io::Result<()> {
-        write_private(&self.api_key(), key.trim().as_bytes())
-    }
-
-    /// Forgets the API key. Forgetting none is fine.
-    pub fn forget_api_key(&self) -> io::Result<()> {
-        remove(&self.api_key())
     }
 }
 
@@ -256,9 +174,9 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     options.open(path)?.write_all(bytes)
 }
 
-/// Called with what runs use now, after a sign-in, a switch or a
-/// sign-out: `None` when nothing is left.
-pub type Connected = Rc<dyn Fn(Option<Access>, &mut App)>;
+/// Called with the account runs use now, after a sign-in, a switch or a
+/// sign-out: `None` when none may be used.
+pub type Connected = Rc<dyn Fn(Option<AccountId>, &mut App)>;
 
 /// A ChatGPT sign-in waiting for the browser; dropping it cancels it.
 struct Pending {
@@ -268,8 +186,8 @@ struct Pending {
 }
 
 /// Carries out the model sign-ins the workspace asks for: ChatGPT in the
-/// browser (or a pasted redirect), switching and signing out of ChatGPT
-/// accounts, and API keys. Reports progress to the workspace's setup,
+/// browser (or a pasted redirect), and switching and signing out of
+/// ChatGPT accounts. Reports progress to the workspace's setup,
 /// and calls `connected` once what runs use changed. One per workspace:
 /// it holds the sign-in in progress.
 #[derive(Default)]
@@ -321,35 +239,15 @@ impl SignIns {
             }
             WorkspaceEvent::SwitchChatGpt { account } => {
                 match credentials.switch(account) {
-                    Ok(()) => connected(credentials.access(), cx),
+                    Ok(()) => connected(credentials.plan_account(), cx),
                     Err(error) => workspace.update(cx, |ws, cx| {
                         ws.show_alert("Could not switch accounts", error, cx)
                     }),
                 }
                 true
             }
-            WorkspaceEvent::SignOut(AccessKind::ChatGpt) => {
+            WorkspaceEvent::SignOut => {
                 sign_out(workspace, credentials, connected, cx);
-                true
-            }
-            WorkspaceEvent::ApiKey { key } => {
-                match credentials.save_api_key(key) {
-                    Ok(()) => {
-                        let access = Access::ApiKey(key.trim().to_owned());
-                        let label =
-                            access.short_label(model.unwrap_or(DEFAULT_MODEL));
-                        connected(Some(access), cx);
-                        workspace.update(cx, |ws, cx| {
-                            ws.update_setup(
-                                SetupUpdate::Model(ModelAccess::Connected {
-                                    label,
-                                }),
-                                cx,
-                            )
-                        });
-                    }
-                    Err(error) => fail(workspace, error.to_string(), cx),
-                }
                 true
             }
             _ => false,
@@ -419,7 +317,7 @@ impl SignIns {
                         pending.borrow_mut().take();
                         let setup = match done {
                             Ok(signed_in) => {
-                                connected(credentials.access(), cx);
+                                connected(credentials.plan_account(), cx);
                                 match signed_in.plan_usage {
                                     PlanUsage::Enabled => {
                                         ModelAccess::Connected {
@@ -506,7 +404,7 @@ fn sign_out(
     cx.spawn(async move |cx| {
         let Ok(revoked) = finished.await else { return };
         cx.update(|cx| {
-            let left = credentials.access();
+            let left = credentials.plan_account();
             connected(left.clone(), cx);
             let Some(workspace) = workspace.upgrade() else {
                 return;
@@ -536,12 +434,6 @@ fn sign_out(
         });
     })
     .detach();
-}
-
-fn fail(workspace: &Entity<Workspace>, error: String, cx: &mut App) {
-    workspace.update(cx, |ws, cx| {
-        ws.update_setup(SetupUpdate::Model(ModelAccess::Failed(error)), cx)
-    });
 }
 
 #[cfg(test)]
@@ -582,63 +474,40 @@ mod tests {
     fn access_comes_only_from_what_was_saved() {
         let dir = tempfile::tempdir().unwrap();
         let credentials = Credentials::new(dir.path());
-        assert_eq!(credentials.access(), None);
+        assert_eq!(credentials.plan_account(), None);
         assert!(!credentials.chatgpt_dir().exists(), "reading makes nothing");
-        std::fs::write(credentials.api_key(), "  \n").unwrap();
-        assert_eq!(credentials.access(), None, "a blank key is no key");
-        credentials.save_api_key("sk-saved\n").unwrap();
-        assert_eq!(
-            credentials.access(),
-            Some(Access::ApiKey("sk-saved".into()))
-        );
+        // A key left from before is never read.
+        std::fs::write(dir.path().join("openai-key"), "sk-saved\n").unwrap();
+        assert_eq!(credentials.plan_account(), None);
 
-        // A sign-in with plan usage comes first.
+        // A sign-in with plan usage is what runs use.
         let store = credentials.chatgpt().unwrap();
         let plan = record("a@example.com", "sub-a", PLAN, true);
         store.store().save(&plan).unwrap();
         store.store().set_active(&plan.id()).unwrap();
-        assert_eq!(credentials.access(), Some(Access::ChatGpt(plan.id())));
+        assert_eq!(credentials.plan_account(), Some(plan.id()));
 
-        // One without it leaves the key in use.
+        // One without it leaves nothing to run on.
         let declined = record("b@example.com", "sub-b", &["openid"], true);
         store.store().save(&declined).unwrap();
         credentials.switch(declined.id().as_str()).unwrap();
-        assert_eq!(
-            credentials.access().map(|a| a.kind()),
-            Some(AccessKind::ApiKey)
-        );
+        assert_eq!(credentials.plan_account(), None);
+        assert_eq!(credentials.active_account(), Some(declined.id()));
         let accounts = credentials.accounts();
         assert_eq!(accounts.len(), 2);
         assert_eq!(accounts[0].state, AccountState::Plan);
         assert!(!accounts[0].active);
         assert_eq!(accounts[1].state, AccountState::PlanDisabled);
         assert!(accounts[1].active);
-        assert!(credentials.has(AccessKind::ChatGpt));
 
-        // Signed out, and without a key: nothing.
+        // Signed out: nothing.
         store
             .store()
             .save(&record("b@example.com", "sub-b", &["openid"], false))
             .unwrap();
-        credentials.forget_api_key().unwrap();
-        credentials.forget_api_key().unwrap();
-        credentials.switch(declined.id().as_str()).unwrap();
-        assert_eq!(credentials.access(), None);
+        assert_eq!(credentials.plan_account(), None);
         assert_eq!(credentials.accounts()[1].state, AccountState::SignedOut);
         assert!(credentials.switch("../nope").is_err());
-    }
-
-    #[test]
-    fn labels_name_the_way_runs_pay() {
-        let plan = Access::ChatGpt(AccountId::parse("a").unwrap());
-        assert_eq!(plan.short_label("gpt-5.5"), "gpt-5.5 · ChatGPT plan");
-        assert_eq!(
-            Access::ApiKey("sk".into()).short_label("gpt-5.5"),
-            "gpt-5.5 · OpenAI API key"
-        );
-        assert!(
-            !format!("{:?}", Access::ApiKey("sk-1".into())).contains("sk-1")
-        );
     }
 
     #[cfg(unix)]
@@ -647,8 +516,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let credentials = Credentials::new(dir.path().join("tau"));
-        credentials.save_api_key("sk-x").unwrap();
-        let mode = std::fs::metadata(credentials.api_key())
+        credentials.set_jev_key(Some("ts-x")).unwrap();
+        let mode = std::fs::metadata(credentials.jev())
             .unwrap()
             .permissions()
             .mode();

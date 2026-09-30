@@ -59,7 +59,7 @@ use tau_vcs::{
 use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
-    accounts::{self, Access, Credentials},
+    accounts::{self, Credentials},
     catalog::{
         Catalog,
         Constitution as CatalogConstitution,
@@ -75,17 +75,15 @@ use crate::{
     memory::{Memories, stale_on_commit},
     models::{
         AccessInfo,
-        AccessKind,
         DEFAULT_MODEL,
         Effort,
         ModelChoice,
         ModelSettings,
         Models,
-        coding_models,
         plan_models,
     },
     pull_request::{PrCommit, PrState, PullRequest},
-    setup::{CloneState, ModelAccess, RepoClone, SetupStep, SetupUpdate},
+    setup::{CloneState, RepoClone, SetupUpdate},
     view::{
         BranchCode,
         ChildKind,
@@ -112,9 +110,9 @@ use crate::{
 /// What the host needs to start.
 #[derive(Debug, Clone)]
 pub struct HostConfig {
-    /// What runs use to reach a model at first; see
-    /// [`Host::set_access`].
-    pub access: Access,
+    /// The ChatGPT account whose plan runs use at first; see
+    /// [`Host::set_account`].
+    pub account: AccountId,
     /// Where sign-ins and keys are kept.
     pub credentials: Credentials,
     /// The model runs use when nothing else is chosen; `None` takes
@@ -399,8 +397,9 @@ pub struct Host {
     runtime: Runtime,
     /// The agent every run starts from; each run adds its own tools.
     base: Mutex<Agent>,
-    /// What runs reach models with; `None` after signing out of all.
-    access: Mutex<Option<Access>>,
+    /// The ChatGPT account runs reach models with; `None` after
+    /// signing out, or on an account without plan use.
+    account: Mutex<Option<AccountId>>,
     /// The client `base` reaches models with, for what it learns on the
     /// way: why the ChatGPT plan refused a run. `None` for an agent built
     /// elsewhere, as in tests.
@@ -457,22 +456,17 @@ const MAX_TURNS: u32 = 50;
 /// How many past runs history shows.
 const HISTORY: u32 = 50;
 
-/// The agent runs start from, reaching models with `access`, and the
-/// client it reaches them through.
+/// The agent runs start from, reaching models on `account`'s ChatGPT
+/// plan, and the client it reaches them through.
 fn coder(
     runtime: &Runtime,
-    access: &Access,
+    account: &AccountId,
     credentials: &Credentials,
     model: &str,
 ) -> anyhow::Result<(Agent, OpenAi)> {
     // Clients must be created inside the runtime.
     let _guard = runtime.enter();
-    let client = match access {
-        Access::ChatGpt(account) => {
-            OpenAi::chatgpt(credentials.chatgpt()?, account.clone())
-        }
-        Access::ApiKey(key) => OpenAi::new(key.clone()),
-    };
+    let client = OpenAi::chatgpt(credentials.chatgpt()?, account.clone());
     let agent = Agent::new(client.clone())
         .name("coder")
         .model(model)
@@ -515,7 +509,7 @@ impl Host {
         let store = runtime.block_on(Store::open(&config.store))?;
         let (agent, client) = coder(
             &runtime,
-            &config.access,
+            &config.account,
             &config.credentials,
             &config.default_model(),
         )?;
@@ -597,7 +591,7 @@ impl Host {
         let host = Self {
             runtime,
             base: Mutex::new(agent),
-            access: Mutex::new(Some(config.access.clone())),
+            account: Mutex::new(Some(config.account.clone())),
             client: Mutex::new(None),
             plan_models: Arc::default(),
             github: github::Api::default(),
@@ -1102,10 +1096,10 @@ impl Host {
         repo: &RepoSlot,
         workspace: Option<String>,
     ) -> anyhow::Result<(Agent, Option<String>)> {
-        if self.access().is_none() {
+        if self.account().is_none() {
             anyhow::bail!(
-                "tau is signed out of every model. Sign in with ChatGPT or \
-                 add an API key on the Models screen."
+                "tau has no ChatGPT plan to run on. Sign in with ChatGPT and \
+                 enable plan use on the Models screen."
             );
         }
         let mut agent = self
@@ -1343,17 +1337,15 @@ impl Host {
         Ok(())
     }
 
-    /// What runs reach models with, if anything.
-    pub fn access(&self) -> Option<Access> {
-        self.access.lock().expect("not poisoned").clone()
+    /// The ChatGPT account runs reach models with, if any.
+    pub fn account(&self) -> Option<AccountId> {
+        self.account.lock().expect("not poisoned").clone()
     }
 
     /// Why the ChatGPT plan last refused a run, while runs use it: a
     /// usage limit, a sign-in OpenAI no longer takes, a restriction.
     pub fn refusal(&self) -> Option<Refusal> {
-        if !matches!(self.access(), Some(Access::ChatGpt(_))) {
-            return None;
-        }
+        self.account()?;
         self.client
             .lock()
             .expect("not poisoned")
@@ -1366,9 +1358,7 @@ impl Host {
     /// the returned task ends when it is saved, and `None` means nothing
     /// was to be listed.
     pub fn list_plan_models(&self) -> Option<tokio::task::JoinHandle<()>> {
-        let Some(Access::ChatGpt(account)) = self.access() else {
-            return None;
-        };
+        let account = self.account()?;
         let cached = self.plan_models.lock().expect("not poisoned");
         if cached.as_ref().is_some_and(|(listed, models)| {
             *listed == account && models.is_ok()
@@ -1402,64 +1392,53 @@ impl Host {
     }
 
     fn access_label(&self) -> &'static str {
-        self.access().map_or("signed out", |access| access.label())
+        if self.account().is_some() {
+            "ChatGPT plan"
+        } else {
+            "signed out"
+        }
     }
 
-    /// Runs started from now on reach models with `access`; runs going
-    /// on keep theirs. `None` stops new runs until one is set.
-    pub fn set_access(&self, access: Option<Access>) -> anyhow::Result<()> {
-        if let Some(access) = &access {
+    /// Runs started from now on reach models on `account`'s plan; runs
+    /// going on keep theirs. `None` stops new runs until one is set.
+    pub fn set_account(
+        &self,
+        account: Option<AccountId>,
+    ) -> anyhow::Result<()> {
+        if let Some(account) = &account {
             let (agent, client) = coder(
                 &self.runtime,
-                access,
+                account,
                 &self.config.credentials,
                 &self.config.default_model(),
             )?;
             *self.base.lock().expect("not poisoned") = agent;
             *self.client.lock().expect("not poisoned") = Some(client);
         }
-        *self.access.lock().expect("not poisoned") = access;
+        *self.account.lock().expect("not poisoned") = account;
         Ok(())
-    }
-
-    /// Forgets the API key, and runs on what is left, if anything.
-    /// Signing out of ChatGPT revokes the session, which
-    /// [`accounts::SignIns`] does off the interface's thread.
-    pub fn forget_api_key(&self) -> anyhow::Result<Option<Access>> {
-        self.config.credentials.forget_api_key()?;
-        let left = self.config.credentials.access();
-        self.set_access(left.clone())?;
-        Ok(left)
     }
 
     /// The models the picker offers, with what this sign-in can run, and
     /// the user's choices.
     pub fn models(&self) -> Models {
-        let access = self.access();
+        let account = self.account();
         let credentials = &self.config.credentials;
-        let (options, models_error) = match &access {
-            // On the plan: the account's own models, once listed.
-            Some(Access::ChatGpt(account)) => {
-                match self.listed_plan_models(account) {
-                    Some(Ok(listed)) => (plan_models(&listed), None),
-                    Some(Err(error)) => (Vec::new(), Some(error)),
-                    None => (Vec::new(), None),
-                }
-            }
-            Some(Access::ApiKey(_)) => (coding_models(|_| true), None),
-            None => (coding_models(|_| false), None),
+        // The account's own models, once listed.
+        let (options, models_error) = match account
+            .as_ref()
+            .and_then(|account| self.listed_plan_models(account))
+        {
+            Some(Ok(listed)) => (plan_models(&listed), None),
+            Some(Err(error)) => (Vec::new(), Some(error)),
+            None => (Vec::new(), None),
         };
         Models {
             options,
             settings: self.settings.lock().expect("not poisoned").clone(),
             access: AccessInfo {
                 label: self.access_label().into(),
-                chatgpt: matches!(access, Some(Access::ChatGpt(_))),
-                api_key: matches!(access, Some(Access::ApiKey(_))),
-                saved: [AccessKind::ChatGpt, AccessKind::ApiKey]
-                    .into_iter()
-                    .filter(|kind| credentials.has(*kind))
-                    .collect(),
+                chatgpt: account.is_some(),
                 jev: credentials.jev_key().is_some(),
                 accounts: credentials.accounts(),
                 models_error,
@@ -2151,8 +2130,8 @@ impl Host {
         // screen changes what new runs use.
         let connected: accounts::Connected = {
             let (host, entity) = (host.clone(), workspace.downgrade());
-            std::rc::Rc::new(move |access, cx| {
-                let applied = host.set_access(access);
+            std::rc::Rc::new(move |account, cx| {
+                let applied = host.set_account(account);
                 let catalog = host.catalog();
                 let Some(workspace) = entity.upgrade() else {
                     return;
@@ -2191,29 +2170,6 @@ impl Host {
                     return;
                 }
                 match event {
-                WorkspaceEvent::SignOut(_) => match handler.forget_api_key() {
-                    Ok(left) => {
-                        let catalog = handler.catalog();
-                        workspace.update(cx, |ws, cx| {
-                            ws.set_catalog(catalog, cx);
-                            if left.is_none() {
-                                // Nothing left to run on: set it up again.
-                                ws.update_setup(
-                                    SetupUpdate::Model(ModelAccess::None),
-                                    cx,
-                                );
-                                ws.start_setup(SetupStep::Model, cx);
-                            }
-                        })
-                    }
-                    Err(error) => workspace.update(cx, |ws, cx| {
-                        ws.show_alert(
-                            "Could not sign out",
-                            format!("{error:#}"),
-                            cx,
-                        )
-                    }),
-                },
                 WorkspaceEvent::UpdateRepo { repo } => {
                     update_in_background(&handler, repo, &workspace, true, cx)
                 }
@@ -3485,9 +3441,9 @@ fn started(created_at: &str) -> String {
 }
 
 /// Carries out onboarding when no model is configured: Sign in with
-/// ChatGPT and API keys. Once one works and is
-/// saved, `ready` gets the new [`Access`] to build a [`Host`] from, and
-/// the host handles sign-ins from then on.
+/// ChatGPT. Once a sign-in with plan use is saved, `ready` gets its
+/// account to build a [`Host`] from, and the host handles sign-ins from
+/// then on.
 ///
 /// GitHub sign-ins work before a model is connected, so onboarding can
 /// start with them.
@@ -3496,16 +3452,16 @@ pub fn onboard(
     model: Option<String>,
     credentials: Credentials,
     cx: &mut App,
-    ready: impl Fn(Access, &mut App) + 'static,
+    ready: impl Fn(AccountId, &mut App) + 'static,
 ) {
     let done = std::rc::Rc::new(std::cell::Cell::new(false));
     let connected: accounts::Connected = {
         let done = done.clone();
-        std::rc::Rc::new(move |access, cx| {
+        std::rc::Rc::new(move |account, cx| {
             // A sign-in without plan usage connects nothing yet.
-            if let Some(access) = access {
+            if let Some(account) = account {
                 done.set(true);
-                ready(access, cx)
+                ready(account, cx)
             }
         })
     };

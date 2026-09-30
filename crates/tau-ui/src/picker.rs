@@ -1,7 +1,6 @@
 //! Choosing models in the workspace: the picker (a popover on a desktop,
-//! a sheet on a phone), the price check before an expensive model, the
-//! note that explains a run's fixed model, and the settings the choices
-//! go to.
+//! a sheet on a phone) over the ChatGPT account's models, the note that
+//! explains a run's fixed model, and the settings the choices go to.
 
 use gpui::{
     AnyElement,
@@ -18,12 +17,12 @@ use gpui::{
 
 use crate::{
     assets::Icon,
-    models::{Effort, ModelChoice, ModelOption, Tier},
+    models::{Effort, ModelChoice, ModelOption},
     route::Route,
     theme::{Design as _, IconSize, Theme, Type, control, radius, sp},
     ui::{self, ButtonKind},
     view::RunView,
-    workspace::{Confirm, Dialog, PickerTarget, Workspace, WorkspaceEvent},
+    workspace::{Dialog, PickerTarget, Workspace, WorkspaceEvent},
 };
 
 impl Workspace {
@@ -113,9 +112,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Picks model `id` for the open picker: at once, or after asking
-    /// when it costs more than the user's threshold. A model the sign-in
-    /// cannot run is not picked.
+    /// Picks model `id`, one of the account's, for the open picker.
     pub fn pick_model(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(target) = self.picker.clone() else {
             return;
@@ -123,30 +120,11 @@ impl Workspace {
         let Some(option) = self.catalog.models.find(id).cloned() else {
             return;
         };
-        if !option.available {
-            return;
-        }
         let choice = ModelChoice {
             model: option.id.clone(),
             ..self.choice_for(&target)
         }
         .fitted();
-        if self.catalog.models.needs_confirm(id) {
-            let limit =
-                self.catalog.models.settings.ask_above.unwrap_or_default();
-            self.dialog = Some(Dialog {
-                title: format!("Use {}?", option.id),
-                message: format!(
-                    "It costs {} per million tokens in and out, above the \
-                     ${limit:.0} per million output tokens you set to ask \
-                     about. Each run still stops at its own cost limit.",
-                    option.price()
-                ),
-                confirm: Some(Confirm::Model(target, choice)),
-            });
-            cx.notify();
-            return;
-        }
         self.apply_choice(target, choice, cx);
         self.close_picker(cx);
     }
@@ -161,18 +139,6 @@ impl Workspace {
             ..self.choice_for(&target)
         };
         self.apply_choice(target, choice, cx);
-    }
-
-    /// Confirms the open dialog's choice.
-    pub fn confirm_dialog(&mut self, cx: &mut Context<Self>) {
-        let Some(dialog) = self.dialog.take() else {
-            return;
-        };
-        if let Some(Confirm::Model(target, choice)) = dialog.confirm {
-            self.apply_choice(target, choice, cx);
-            self.close_picker(cx);
-        }
-        cx.notify();
     }
 
     fn apply_choice(
@@ -217,12 +183,6 @@ impl Workspace {
     /// Shows or hides a model in the picker, and saves it.
     pub fn toggle_model_hidden(&mut self, id: &str, cx: &mut Context<Self>) {
         self.catalog.models.settings.toggle_hidden(id);
-        self.save_model_settings(cx);
-    }
-
-    /// Moves the price to ask above one step, and saves it.
-    pub fn step_ask_above(&mut self, delta: i32, cx: &mut Context<Self>) {
-        self.catalog.models.settings.step_ask_above(delta);
         self.save_model_settings(cx);
     }
 
@@ -309,34 +269,13 @@ impl Workspace {
             if self.run(run).is_some_and(|view| view.status.is_live()));
         let models = &self.catalog.models;
         let filter = self.model_search.read(cx).text().to_owned();
-        let shown = models.shown(&filter);
-        let plan = models.on_plan();
-        let rows = Tier::ALL.into_iter().flat_map(|tier| {
-            // On the plan, one list in the account's order.
-            let in_tier: Vec<&ModelOption> = if plan {
-                if tier == Tier::Frontier {
-                    shown.clone()
-                } else {
-                    Vec::new()
-                }
-            } else {
-                shown.iter().copied().filter(|m| m.tier() == tier).collect()
-            };
-            let heading = (!in_tier.is_empty() && !plan).then(|| {
-                div()
-                    .px(sp(3.5))
-                    .pt(sp(2.5))
-                    .pb(sp(1.))
-                    .child(ui::text(tier.label(), Type::MICRO, t.dim))
-                    .into_any_element()
-            });
-            let rows: Vec<AnyElement> = in_tier
-                .into_iter()
-                .map(|option| model_row(option, &choice, plan, phone, t, cx))
-                .collect();
-            heading.into_iter().chain(rows)
-        });
-        let rows: Vec<AnyElement> = rows.collect();
+        let signed_in = models.access.chatgpt;
+        // One list, in the account's order.
+        let rows: Vec<AnyElement> = models
+            .shown(&filter)
+            .into_iter()
+            .map(|option| model_row(option, &choice, phone, t, cx))
+            .collect();
         let empty = rows.is_empty();
         let offered = Effort::offered(&choice.model);
         let columns = if phone { 4 } else { offered.len() as u16 };
@@ -375,9 +314,9 @@ impl Workspace {
             .typeset(Type::CAPTION)
             .text_color(t.muted)
             .child(ui::icon(
-                if plan { Icon::Chat } else { Icon::Key },
+                Icon::Chat,
                 IconSize::COMPACT,
-                t.green,
+                if signed_in { t.green } else { t.dim },
             ))
             .child(div().flex_1().min_w(px(0.)).child(ui::prose(
                 &format!(
@@ -421,11 +360,7 @@ impl Workspace {
                     .child(ui::icon(Icon::Search, IconSize::BASE, t.dim))
                     .child(self.model_search.clone())
                     .child(ui::mono(
-                        if plan {
-                            "on your ChatGPT plan"
-                        } else {
-                            "$ in / out per M"
-                        },
+                        "on your ChatGPT plan",
                         Type::MICRO,
                         t.dim,
                     )),
@@ -440,10 +375,14 @@ impl Workspace {
                     .overflow_y_scroll()
                     .when(empty, |list| {
                         list.child(ui::empty(
-                            match (&models.access.models_error, plan) {
+                            match (&models.access.models_error, signed_in) {
                                 (Some(error), _) => format!(
                                     "Could not list your ChatGPT models: {error}"
                                 ),
+                                (None, false) => "Sign in with ChatGPT and \
+                                                  enable plan use to see your \
+                                                  models."
+                                    .into(),
                                 (None, true) if filter.trim().is_empty() => {
                                     "Loading your ChatGPT models…".into()
                                 }
@@ -567,53 +506,26 @@ impl Workspace {
         backdrop.child(placed).into_any_element()
     }
 
-    /// A dialog, with OK, or Cancel and the choice to confirm.
+    /// A dialog, with OK.
     pub(crate) fn dialog_view(
         &self,
         dialog: Dialog,
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let actions = match &dialog.confirm {
-            None => div()
-                .id("alert-ok")
-                .child(ui::button("OK", ButtonKind::Primary, t))
-                .on_click(cx.listener(|ws, _, _, cx| ws.dismiss_alert(cx)))
-                .into_any_element(),
-            Some(Confirm::Model(_, choice)) => div()
-                .flex()
-                .gap(sp(2.))
-                .child(
-                    div()
-                        .id("dialog-cancel")
-                        .child(ui::button("Cancel", ButtonKind::Secondary, t))
-                        .on_click(
-                            cx.listener(|ws, _, _, cx| ws.dismiss_alert(cx)),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("dialog-confirm")
-                        .child(ui::button(
-                            format!("Use {}", choice.model),
-                            ButtonKind::Primary,
-                            t,
-                        ))
-                        .on_click(
-                            cx.listener(|ws, _, _, cx| ws.confirm_dialog(cx)),
-                        ),
-                )
-                .into_any_element(),
-        };
+        let actions = div()
+            .id("alert-ok")
+            .child(ui::button("OK", ButtonKind::Primary, t))
+            .on_click(cx.listener(|ws, _, _, cx| ws.dismiss_alert(cx)))
+            .into_any_element();
         ui::dialog(dialog.title, dialog.message, actions, t).into_any_element()
     }
 }
 
-/// One model in the picker: chosen, pickable, or locked behind an API key.
+/// One model in the picker: chosen, or pickable.
 fn model_row(
     option: &ModelOption,
     choice: &ModelChoice,
-    plan: bool,
     phone: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
@@ -622,12 +534,9 @@ fn model_row(
     let id = option.id.clone();
     let mark = if picked {
         ui::icon(Icon::Check, IconSize::BASE, t.accent).into_any_element()
-    } else if option.available {
-        div().w(px(14.)).into_any_element()
     } else {
-        ui::icon(Icon::Lock, IconSize::COMPACT, t.dim).into_any_element()
+        div().w(px(14.)).into_any_element()
     };
-    let name_color = if option.available { t.text } else { t.dim };
     let row = div()
         .id(SharedString::from(format!("model-{}", option.id)))
         .flex()
@@ -638,55 +547,20 @@ fn model_row(
         .child(mark);
     let row = if phone {
         row.child(
-            div()
+            ui::mono(option.label().to_owned(), Type::BODY, t.text)
                 .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .gap(sp(0.5))
-                .child(ui::mono(
-                    option.label().to_owned(),
-                    Type::BODY,
-                    name_color,
-                ))
-                .when(!plan, |column| {
-                    column.child(ui::mono(
-                        format!(
-                            "{} · {} per M",
-                            option.context_label(),
-                            option.price()
-                        ),
-                        Type::MICRO,
-                        t.muted,
-                    ))
-                }),
+                .min_w(px(0.)),
         )
     } else {
         row.child(
-            ui::mono(option.label().to_owned(), Type::SMALL, name_color)
-                .flex_1(),
+            ui::mono(option.label().to_owned(), Type::SMALL, t.text).flex_1(),
         )
         .when(option.context > 0, |row| {
             row.child(ui::mono(option.context_label(), Type::MICRO, t.dim))
         })
     };
-    let row = row
-        .when(!option.available, |row| {
-            row.child(ui::text("needs an API key", Type::MICRO, t.dim))
-        })
-        .when(!phone && !plan, |row| {
-            row.child(div().w(px(104.)).flex().justify_end().child(ui::mono(
-                option.price(),
-                Type::MICRO,
-                t.muted,
-            )))
-        });
-    if option.available {
-        row.cursor_pointer()
-            .hover(|style| style.bg(gpui::white().opacity(0.04)))
-            .on_click(cx.listener(move |ws, _, _, cx| ws.pick_model(&id, cx)))
-            .into_any_element()
-    } else {
-        row.into_any_element()
-    }
+    row.cursor_pointer()
+        .hover(|style| style.bg(gpui::white().opacity(0.04)))
+        .on_click(cx.listener(move |ws, _, _, cx| ws.pick_model(&id, cx)))
+        .into_any_element()
 }

@@ -30,9 +30,9 @@
 //!
 //! [`host::Host`] is that wiring for a real coding agent: a tokio runtime
 //! beside GPUI, `tau-tools` and `tau-compaction` as plugins, a ChatGPT
-//! plan through Sign in with ChatGPT or an API key, and the run store. `cargo run -p
-//! tau-ui` uses it when a model is configured, and opens onboarding to
-//! set one up when none is ([`host::onboard`]). With `--demo`, [`demo`]
+//! plan through Sign in with ChatGPT, and the run store. `cargo run -p
+//! tau-ui` uses it when a ChatGPT account with plan use is signed in,
+//! and opens onboarding to sign one in when none is ([`host::onboard`]). With `--demo`, [`demo`]
 //! replays a scripted session.
 //!
 //! Onboarding ([`setup`]) and pull requests ([`pull_request`]) follow

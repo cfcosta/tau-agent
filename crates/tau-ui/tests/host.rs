@@ -13,10 +13,10 @@ use tau_agent::{
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_ui::{
-    accounts::{Access, Credentials},
+    accounts::Credentials,
     github::{Api, Token},
     host::{Host, HostConfig},
-    models::{AccessKind, AccountState, Effort, ModelChoice},
+    models::{AccountState, Effort, ModelChoice},
     view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
 };
 use tau_vcs::{Identity, Project};
@@ -61,7 +61,7 @@ fn host_over(
 ) -> (Host, UnboundedReceiver<RunEvent>) {
     let agent = Agent::new(llm).name("coder");
     let config = HostConfig {
-        access: Access::ApiKey("sk-test".into()),
+        account: test_account(),
         credentials: Credentials::new(
             fresh_repo_list().with_extension("config"),
         ),
@@ -75,6 +75,12 @@ fn host_over(
         repo_list: fresh_repo_list(),
     };
     Host::with_agent(runtime, agent, store, config)
+}
+
+/// The ChatGPT account a host under test runs on; nothing connects
+/// until a run asks.
+fn test_account() -> tau_ai::chatgpt::AccountId {
+    tau_ai::chatgpt::AccountId::parse("test-account").unwrap()
 }
 
 /// A repository list of the test's own, so tests do not share one.
@@ -715,7 +721,7 @@ fn repositories_are_listed_and_remembered() {
 
 fn config_on(root: &Path, data: &Path) -> HostConfig {
     HostConfig {
-        access: Access::ApiKey("sk-test".into()),
+        account: test_account(),
         credentials: Credentials::new(data.join("config")),
         model: Some("gpt-5.5".into()),
         root: root.to_owned(),
@@ -771,16 +777,14 @@ fn models_follow_the_sign_in_and_settings_persist() {
     let dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
 
-    // An API key runs every model.
     let (host, _events) =
         Host::new(config_on(dir.path(), data.path())).unwrap();
     let models = host.models();
-    assert!(models.options.iter().all(|option| option.available));
     // No settings yet: coder runs on the model the host was given.
     assert_eq!(models.settings.default_for("coder").model, "gpt-5.5");
     let mut settings = models.settings.clone();
     settings.set_default("coder", ModelChoice::new("gpt-6-sol", Effort::Low));
-    settings.ask_above = None;
+    settings.toggle_hidden("gpt-5.5");
     host.save_settings(settings.clone()).unwrap();
     drop(host);
 
@@ -789,7 +793,7 @@ fn models_follow_the_sign_in_and_settings_persist() {
     let credentials = config_on(dir.path(), data.path()).credentials;
     let account = sign_in_saved(&credentials, "a@example.com", PLAN);
     let config = HostConfig {
-        access: Access::ChatGpt(account.clone()),
+        account: account.clone(),
         ..config_on(dir.path(), data.path())
     };
     let (host, _events) = Host::new(config).unwrap();
@@ -797,7 +801,7 @@ fn models_follow_the_sign_in_and_settings_persist() {
     assert_eq!(models.settings, settings);
     assert!(models.options.is_empty(), "not listed yet");
     assert_eq!(models.access.models_error, None);
-    assert!(models.access.chatgpt && models.on_plan());
+    assert!(models.access.chatgpt);
     assert_eq!(models.access.label, "ChatGPT plan");
     let accounts = &models.access.accounts;
     assert_eq!(accounts.len(), 1);
@@ -841,43 +845,38 @@ fn sign_in_saved(
 }
 
 #[test]
-fn runs_use_the_plan_first_and_never_a_declined_one() {
+fn runs_use_the_plan_and_never_a_declined_one() {
     let dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let config = config_on(dir.path(), data.path());
     let credentials = config.credentials.clone();
-    credentials.save_api_key("sk-saved").unwrap();
+    // A key saved by an older tau is never read.
+    std::fs::create_dir_all(&credentials.dir).unwrap();
+    std::fs::write(credentials.dir.join("openai-key"), "sk-saved").unwrap();
     let plan = sign_in_saved(&credentials, "a@example.com", PLAN);
-    let access = credentials.access().unwrap();
-    assert_eq!(access, Access::ChatGpt(plan.clone()));
-    let (host, _events) = Host::new(HostConfig { access, ..config }).unwrap();
-    let saved = |host: &Host| host.models().access.saved;
+    let account = credentials.plan_account().unwrap();
+    assert_eq!(account, plan);
+    let (host, _events) = Host::new(HostConfig { account, ..config }).unwrap();
     assert!(host.models().access.chatgpt);
-    assert_eq!(saved(&host), [AccessKind::ChatGpt, AccessKind::ApiKey]);
 
-    // Switching to an account that declined plan usage runs on the key.
+    // Switching to an account that declined plan usage leaves nothing
+    // to run on: no model is offered and runs do not start.
     let declined = sign_in_saved(&credentials, "b@example.com", &["openid"]);
-    let left = credentials.access();
-    assert_eq!(left, Some(Access::ApiKey("sk-saved".into())));
-    host.set_access(left).unwrap();
+    let left = credentials.plan_account();
+    assert_eq!(left, None);
+    host.set_account(left).unwrap();
     let models = host.models();
-    assert!(models.access.api_key && !models.access.chatgpt);
-    assert!(models.options.iter().all(|option| option.available));
+    assert!(!models.access.chatgpt);
+    assert!(models.options.is_empty());
     let active = models.access.active_account().unwrap();
     assert_eq!(active.id, declined.to_string());
     assert_eq!(active.state, AccountState::PlanDisabled);
-
-    // Forgetting the key leaves nothing: no model is available and runs
-    // do not start.
-    assert_eq!(host.forget_api_key().unwrap(), None);
-    assert_eq!(saved(&host), [AccessKind::ChatGpt]);
-    assert!(host.models().options.iter().all(|option| !option.available));
     let error = host.start("hi", &ModelChoice::default(), "").unwrap_err();
-    assert!(error.to_string().contains("signed out"), "{error}");
+    assert!(error.to_string().contains("no ChatGPT plan"), "{error}");
 
     // Back on the plan account, runs use the plan again.
     credentials.switch(plan.as_str()).unwrap();
-    host.set_access(credentials.access()).unwrap();
+    host.set_account(credentials.plan_account()).unwrap();
     assert!(host.models().access.chatgpt);
 }
 

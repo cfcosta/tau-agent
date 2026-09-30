@@ -218,7 +218,7 @@ fn welcome(
         ),
         (
             "Connect a model",
-            "Your ChatGPT plan, through Sign in with ChatGPT, or an OpenAI API key.",
+            "Your ChatGPT plan, through Sign in with ChatGPT.",
         ),
         (
             "Pick repositories",
@@ -768,15 +768,8 @@ fn token(
         .into_any_element()
 }
 
-/// One way to pay for a model.
-fn option(
-    glyph: Icon,
-    name: &str,
-    detail: &str,
-    badge: Option<&str>,
-    selected: bool,
-    t: &Theme,
-) -> Div {
+/// The way tau reaches a model: the ChatGPT plan.
+fn option(glyph: Icon, name: &str, detail: &str, t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -784,8 +777,8 @@ fn option(
         .p(sp(5.))
         .rounded(radius::CARD)
         .border_1()
-        .border_color(if selected { t.accent } else { t.border })
-        .bg(if selected { t.accent_soft } else { t.panel })
+        .border_color(t.accent)
+        .bg(t.accent_soft)
         .child(
             div()
                 .flex()
@@ -797,18 +790,7 @@ fn option(
                         .flex_1()
                         .font_weight(weight::STRONG)
                         .child(name.to_owned()),
-                )
-                .children(badge.map(|badge| {
-                    div()
-                        .px(sp(2.))
-                        .py(sp(0.5))
-                        .rounded(radius::LARGE)
-                        .border_1()
-                        .border_color(t.accent_border)
-                        .typeset(Type::MICRO)
-                        .text_color(t.accent)
-                        .child(badge.to_owned())
-                })),
+                ),
         )
         .child(
             div()
@@ -885,7 +867,7 @@ fn model(
                     Icon::Warning,
                     format!(
                         "Signed in as {account}, but ChatGPT plan use isn't \
-                         enabled. Enable it, or add an OpenAI API key."
+                         enabled. Enable it to run tasks on your plan."
                     ),
                     t.accent,
                     Type::SMALL,
@@ -920,9 +902,7 @@ fn model(
         Icon::Chat,
         "ChatGPT plan",
         "Sign in with ChatGPT to use your plan. Eligible usage counts \
-         against your plan's limits, not an API bill.",
-        Some("Recommended"),
-        true,
+         against your plan's limits.",
         t,
     )
     .child(
@@ -945,43 +925,7 @@ fn model(
             )
             .children(chatgpt_state),
     );
-    let api = option(
-        Icon::Key,
-        "OpenAI API key",
-        "Pay per token on your OpenAI account. tau keeps the key in its \
-         config directory, readable only by you.",
-        None,
-        false,
-        t,
-    )
-    .child(
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(2.5))
-            .child(label("API key", t))
-            .child(field(&ws.api_key, true, t))
-            .child(
-                div()
-                    .id("use-key")
-                    .child(big_button(
-                        "Use this key",
-                        None,
-                        ButtonKind::Secondary,
-                        t,
-                    ))
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        ws.submit_api_key_from_button(cx)
-                    })),
-            ),
-    );
-    let options = div()
-        .flex()
-        .gap(sp(4.))
-        .when(compact, |row| row.flex_col())
-        .child(chatgpt.flex_1().min_w(px(0.)))
-        .child(api.flex_1().min_w(px(0.)));
-    column(960., 6., compact)
+    column(640., 6., compact)
         .when(ws.setup_goal.is_some(), |col| {
             col.child(
                 div().flex().child(
@@ -1011,12 +955,12 @@ fn model(
         })
         .child(heading_block(
             "Connect a model",
-            "Runs talk to OpenAI's Responses API over a WebSocket. Pick how \
-             tau pays for it.",
+            "Runs use your ChatGPT plan through OpenAI's Responses API. \
+             Sign in with ChatGPT and allow plan use.",
             compact,
             t,
         ))
-        .child(options)
+        .child(chatgpt)
         .child(
             div()
                 .flex()

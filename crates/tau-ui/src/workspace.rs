@@ -41,7 +41,7 @@ use crate::{
     assets::Icon,
     catalog::{Catalog, PluginInfo, PluginScreen},
     input::{InputEvent, TextInput},
-    models::{AccessKind, ModelChoice, ModelSettings, USAGE_SETTINGS_URL},
+    models::{ModelChoice, ModelSettings, USAGE_SETTINGS_URL},
     plan_usage::{self, PlanAction, PlanAlert},
     pull_request::{PrState, PullRequest},
     route::{self, Route},
@@ -219,8 +219,7 @@ pub enum WorkspaceEvent {
         prompt: String,
         model: ModelChoice,
     },
-    /// Keep the user's model choices: defaults, hidden models, and the
-    /// price to ask above.
+    /// Keep the user's model choices: defaults and hidden models.
     SaveModelSettings(ModelSettings),
     /// Keep this branch of a fork and drop the others.
     KeepBranch {
@@ -290,16 +289,12 @@ pub enum WorkspaceEvent {
         url: String,
     },
     /// Sign in with this saved ChatGPT account (its id) from now on.
-    /// Use an OpenAI API key.
-    ApiKey {
-        key: String,
-    },
     SwitchChatGpt {
         account: String,
     },
-    /// Sign out of the active ChatGPT account (revoking its session), or
-    /// forget the API key; runs use what is left, if anything.
-    SignOut(AccessKind),
+    /// Sign out of the active ChatGPT account, revoking its session;
+    /// runs use what is left, if anything.
+    SignOut,
     /// Clone these repositories (`owner/name`) into tau's storage.
     CloneRepos {
         repos: Vec<String>,
@@ -345,7 +340,7 @@ fn inherited_items(run: &RunView, turn: u32) -> Vec<crate::view::Item> {
 /// What an onboarding step opened from the app is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupGoal {
-    /// Sign in to ChatGPT or add an API key.
+    /// Sign in to ChatGPT.
     Model,
     /// Sign in to GitHub.
     GitHub,
@@ -358,15 +353,6 @@ pub enum SetupGoal {
 pub struct Dialog {
     pub title: String,
     pub message: String,
-    /// What confirming does; `None` for a plain alert with OK.
-    pub confirm: Option<Confirm>,
-}
-
-/// A choice a dialog asks to confirm.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Confirm {
-    /// Use this model, which costs more than the user's threshold.
-    Model(PickerTarget, ModelChoice),
 }
 
 /// Where a model picker's choice goes.
@@ -418,7 +404,7 @@ pub struct Workspace {
     pub(crate) hovered_run: Option<RunId>,
     /// The composer is writing a fork of this run, after this turn.
     pub(crate) forking: Option<(RunId, u32)>,
-    /// A dialog over the app: something failed, or a choice to confirm.
+    /// A dialog over the app: something failed.
     pub(crate) dialog: Option<Dialog>,
     /// The model the next run starts on, and whether the user picked it
     /// (else it follows coder's default).
@@ -461,7 +447,6 @@ pub struct Workspace {
     /// The code of each comparison opened, by (run, fork).
     pub(crate) branch_code: HashMap<(RunId, RunId), CodeState>,
     pub(crate) github_token: Entity<TextInput>,
-    pub(crate) api_key: Entity<TextInput>,
     /// Where the ChatGPT sign-in's redirect URL can be pasted.
     pub(crate) chatgpt_callback: Entity<TextInput>,
     /// What a run that stopped on the ChatGPT plan asks of the user.
@@ -568,7 +553,6 @@ impl Workspace {
         let model_search = cx.new(|cx| TextInput::new("Search models", cx));
         let github_token =
             cx.new(|cx| TextInput::new("github_pat_…", cx).masked());
-        let api_key = cx.new(|cx| TextInput::new("sk-…", cx).masked());
         let chatgpt_callback = cx.new(|cx| {
             TextInput::new("http://127.0.0.1:1455/auth/callback?code=…", cx)
                 .masked()
@@ -671,10 +655,6 @@ impl Workspace {
                 let InputEvent::Submit(token) = event;
                 ws.submit_token(token.clone(), cx);
             }),
-            cx.subscribe(&api_key, |ws, _, event: &InputEvent, cx| {
-                let InputEvent::Submit(key) = event;
-                ws.submit_api_key(key.clone(), cx);
-            }),
             cx.subscribe(&chatgpt_callback, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(url) = event;
                 ws.submit_chatgpt_callback(url.clone(), cx);
@@ -731,7 +711,6 @@ impl Workspace {
             pull_requests: HashMap::new(),
             branch_code: HashMap::new(),
             github_token,
-            api_key,
             chatgpt_callback,
             plan_alert: None,
             repo_filter,
@@ -2028,7 +2007,7 @@ impl Workspace {
     }
 
     /// Opens the model step of onboarding from the Models screen, to
-    /// sign in to ChatGPT or add an API key, coming back once done.
+    /// sign in to ChatGPT, coming back once done.
     pub fn connect_model(&mut self, cx: &mut Context<Self>) {
         self.setup.model = ModelAccess::None;
         self.navigate(Route::Setup(SetupStep::Model), cx);
@@ -2140,8 +2119,8 @@ impl Workspace {
         )
     }
 
-    pub fn sign_out(&mut self, kind: AccessKind, cx: &mut Context<Self>) {
-        cx.emit(WorkspaceEvent::SignOut(kind));
+    pub fn sign_out(&mut self, cx: &mut Context<Self>) {
+        cx.emit(WorkspaceEvent::SignOut);
     }
 
     /// Signs in with ChatGPT in the browser: `account` again, or a new
@@ -2264,7 +2243,6 @@ impl Workspace {
                 self.sign_in_chatgpt(active, false, cx);
             }
             PlanAction::EnablePlanUsage => self.enable_plan_usage(cx),
-            PlanAction::AddApiKey => self.connect_model(cx),
             PlanAction::Close => {}
         }
         cx.notify();
@@ -2388,29 +2366,6 @@ impl Workspace {
             )
     }
 
-    pub(crate) fn submit_api_key(
-        &mut self,
-        key: String,
-        cx: &mut Context<Self>,
-    ) {
-        let key = key.trim().to_owned();
-        if key.is_empty() {
-            return;
-        }
-        self.api_key.update(cx, |input, cx| input.clear(cx));
-        self.setup.model = ModelAccess::SigningIn { url: None };
-        cx.emit(WorkspaceEvent::ApiKey { key });
-        cx.notify();
-    }
-
-    pub(crate) fn submit_api_key_from_button(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) {
-        let key = self.api_key.read(cx).text().to_owned();
-        self.submit_api_key(key, cx);
-    }
-
     pub fn toggle_repo(&mut self, name: &str, cx: &mut Context<Self>) {
         self.setup.toggle(name);
         cx.notify();
@@ -2482,7 +2437,6 @@ impl Workspace {
         self.dialog = Some(Dialog {
             title: title.into(),
             message: message.into(),
-            confirm: None,
         });
         cx.notify();
     }

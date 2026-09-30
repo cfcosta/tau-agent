@@ -799,12 +799,6 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     ws.set_catalog(catalog, cx);
                 });
             }
-            WorkspaceEvent::ApiKey { .. } => {
-                let connected = ModelAccess::Connected {
-                    label: "gpt-5.5 · API key".into(),
-                };
-                later(vec![(600, setup(SetupUpdate::Model(connected)))], cx)
-            }
             WorkspaceEvent::CloneRepos { repos } => {
                 let steps = (1..=10)
                     .flat_map(|tenth| {
@@ -994,24 +988,16 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     ws.replay(run, steps, cx);
                 });
             }
-            // Signing out leaves what else is saved in use.
-            WorkspaceEvent::SignOut(kind) => {
-                let kind = *kind;
+            // Signing out leaves the active account signed out.
+            WorkspaceEvent::SignOut => {
                 workspace.update(cx, |ws, cx| {
                     let mut catalog = ws.catalog().clone();
                     let access = &mut catalog.models.access;
-                    access.saved.retain(|saved| *saved != kind);
-                    match kind {
-                        crate::models::AccessKind::ChatGpt => {
-                            access.chatgpt = false;
-                            for account in &mut access.accounts {
-                                if account.active {
-                                    account.state = AccountState::SignedOut;
-                                }
-                            }
-                        }
-                        crate::models::AccessKind::ApiKey => {
-                            access.api_key = false
+                    access.chatgpt = false;
+                    access.label = "signed out".into();
+                    for account in &mut access.accounts {
+                        if account.active {
+                            account.state = AccountState::SignedOut;
                         }
                     }
                     ws.set_catalog(catalog, cx);
@@ -1492,8 +1478,6 @@ pub fn models() -> crate::models::Models {
         access: AccessInfo {
             label: "ChatGPT plan".into(),
             chatgpt: true,
-            api_key: false,
-            saved: vec![crate::models::AccessKind::ChatGpt],
             jev: true,
             accounts: chatgpt_accounts(),
             models_error: None,

@@ -74,8 +74,7 @@ pub enum ModelAccess {
     #[default]
     None,
     /// A ChatGPT sign-in is open in the browser at `url`, once known;
-    /// its redirect can also be pasted. An API key being saved has no
-    /// `url`.
+    /// its redirect can also be pasted.
     SigningIn {
         url: Option<String>,
     },
@@ -84,7 +83,7 @@ pub enum ModelAccess {
         label: String,
     },
     /// Signed in to ChatGPT as `account`, but without plan usage: runs
-    /// cannot use the plan until it is enabled, or an API key is added.
+    /// cannot use the plan until it is enabled.
     PlanDisabled {
         account: String,
     },
