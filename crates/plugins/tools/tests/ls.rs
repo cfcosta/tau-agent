@@ -11,7 +11,7 @@ use tau_agent::{
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
 use tau_tools::{
-    ls::Ls,
+    ls::{EntryKind, Listing, Ls},
     path::Root,
     truncate::{MAX_BYTES, format_size, truncate_head},
 };
@@ -40,6 +40,13 @@ fn call(root: &Root, args: serde_json::Value) -> Result<String, ToolError> {
             .await
             .map(|out| text_of(&out).to_owned())
     })
+}
+
+fn listing(root: &Root, args: serde_json::Value) -> Listing {
+    let output =
+        block_on(Ls::new(root.clone()).call(args, ctx())).expect("ls runs");
+    serde_json::from_value(output.details.expect("a listing"))
+        .expect("the details are a listing")
 }
 
 /// The tool's identity and pinned description string, verbatim from
@@ -229,4 +236,59 @@ fn names_equal_but_for_case_list_in_byte_order() {
     let root = Root::new(dir.path());
     let output = call(&root, json!({})).unwrap();
     assert_eq!(output, "N\nn\nNn\nnN\nÉ\né");
+}
+
+/// The details carry each entry the model got, in its order, with its
+/// kind, a file's size, a directory's entry count, a symlink's target
+/// and whether `.gitignore` leaves it out (`docs/reference/tools.md`,
+/// "ls").
+#[cfg(unix)]
+#[test]
+fn details_describe_each_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".gitignore"), "build/\n").unwrap();
+    std::fs::write(dir.path().join("notes.md"), "hello").unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/a.rs"), "").unwrap();
+    std::fs::write(dir.path().join("src/b.rs"), "").unwrap();
+    std::fs::create_dir(dir.path().join("build")).unwrap();
+    std::os::unix::fs::symlink("notes.md", dir.path().join("link")).unwrap();
+    std::os::unix::fs::symlink("src", dir.path().join("code")).unwrap();
+    let root = Root::new(dir.path());
+
+    let listing = listing(&root, json!({}));
+    let names: Vec<&str> =
+        listing.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [".gitignore", "build", "code", "link", "notes.md", "src"]
+    );
+    let get =
+        |name: &str| listing.entries.iter().find(|e| e.name == name).unwrap();
+    assert_eq!(get("notes.md").kind, EntryKind::File);
+    assert_eq!(get("notes.md").size, Some(5));
+    assert!(get("notes.md").modified.is_some());
+    assert_eq!(get("src").kind, EntryKind::Dir);
+    assert_eq!(get("src").items, Some(2));
+    assert_eq!(get("src").size, None);
+    assert!(get("build").ignored);
+    assert!(!get("src").ignored);
+    assert_eq!(get("link").kind, EntryKind::Symlink);
+    assert_eq!(get("link").target.as_deref(), Some("notes.md"));
+    assert_eq!(get("code").kind, EntryKind::SymlinkDir);
+    assert!(!listing.truncated);
+}
+
+/// A listing cut at the entry limit holds only what the model got,
+/// and says it was cut.
+#[test]
+fn details_stop_where_the_text_does() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    let root = Root::new(dir.path());
+    let listing = listing(&root, json!({"limit": 2}));
+    assert_eq!(listing.entries.len(), 2);
+    assert!(listing.truncated);
 }

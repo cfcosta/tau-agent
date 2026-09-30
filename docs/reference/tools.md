@@ -255,6 +255,15 @@ Creates parent directories, then writes the file. Returns
   and dotfiles are included.
 - The "limit reached" notice appears only when there actually were more
   entries, as for `find`.
+- **Result details:** a `Listing` for callers that draw it: `dir` (the
+  resolved directory), `entries` and `truncated` (the entry limit or the
+  byte cap cut the listing). `entries` are the ones the model got, in
+  its order, each with `name`, `kind` (`dir`, `file`, `symlink` or
+  `symlink_dir`), and when they apply `size` (files, in bytes),
+  `modified` (Unix seconds), `items` (a directory's entry count),
+  `target` (a symlink's) and `ignored` (`.gitignore` leaves it out, by
+  the rules `find` and `grep` walk by). With `tau-vcs`, each entry that
+  differs in `@` also gets a `change` (`vcs.md`, "ls").
 
 ## Error strings
 

@@ -1,9 +1,14 @@
 //! `ls`: list directory contents (`docs/reference/tools.md`, "ls"),
-//! ported from pi's `ls.ts`.
+//! ported from pi's `ls.ts`. The model reads pi's names; callers get a
+//! [`Listing`] in the details, with each entry's kind, size, age and
+//! whether `.gitignore` leaves it out.
+
+use std::{collections::HashSet, fs::Metadata, path::Path, time::UNIX_EPOCH};
 
 use async_trait::async_trait;
+use ignore::WalkBuilder;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::{
     error::ToolError,
@@ -28,6 +33,56 @@ pub struct LsArgs {
     pub path: Option<String>,
     /// Maximum number of entries to return (default: 500)
     pub limit: Option<u32>,
+}
+
+/// What `ls` found, for callers that draw it (`docs/reference/tools.md`,
+/// "ls"). The model never sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Listing {
+    /// The directory listed, resolved against the root.
+    pub dir: String,
+    /// The entries the model got, in its order.
+    pub entries: Vec<Entry>,
+    /// The listing stopped at the entry limit or the byte cap.
+    pub truncated: bool,
+}
+
+/// One entry of a [`Listing`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Entry {
+    pub name: String,
+    pub kind: EntryKind,
+    /// A file's size in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// When it last changed, in seconds since the Unix epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified: Option<i64>,
+    /// How many entries a directory holds, when it can be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<u64>,
+    /// Where a symlink points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// `.gitignore` leaves it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ignored: bool,
+}
+
+/// What an entry is. A symlink says whether it leads to a directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryKind {
+    Dir,
+    File,
+    Symlink,
+    SymlinkDir,
+}
+
+impl EntryKind {
+    pub fn is_dir(self) -> bool {
+        matches!(self, Self::Dir | Self::SymlinkDir)
+    }
 }
 
 /// Lists a directory's contents (`docs/reference/tools.md`, "ls").
@@ -66,10 +121,12 @@ impl AgentTool for Ls {
         let args: LsArgs = serde_json::from_value(args)?;
         let root = self.root.clone();
         let cancel = ctx.cancel.clone();
-        let text =
+        let (text, listing) =
             tokio::task::spawn_blocking(move || run(&root, args, &cancel))
                 .await??;
-        Ok(ToolOutput::text(text))
+        let mut output = ToolOutput::text(text);
+        output.details = listing.map(serde_json::to_value).transpose()?;
+        Ok(output)
     }
 }
 
@@ -77,7 +134,7 @@ fn run(
     root: &Root,
     args: LsArgs,
     cancel: &CancellationToken,
-) -> Result<String, ToolError> {
+) -> Result<(String, Option<Listing>), ToolError> {
     if cancel.is_cancelled() {
         return Err(ToolError::from(ABORTED));
     }
@@ -117,7 +174,9 @@ fn run(
             .then_with(|| a.cmp(b))
     });
 
+    let kept = unignored(&dir_path);
     let mut results: Vec<String> = Vec::new();
+    let mut entries: Vec<Entry> = Vec::new();
     let mut limit_reached = false;
     for name in &names {
         if cancel.is_cancelled() {
@@ -133,16 +192,20 @@ fn run(
         };
         let suffix = if meta.is_dir() { "/" } else { "" };
         results.push(format!("{name}{suffix}"));
+        entries.push(entry(name, &full, &meta, &kept));
     }
 
     if results.is_empty() {
-        return Ok("(empty directory)".to_owned());
+        return Ok(("(empty directory)".to_owned(), None));
     }
 
     let raw = results.join("\n");
     let truncation = truncate_head(&raw, usize::MAX, MAX_BYTES);
     let truncated = truncation.truncated();
     let mut text = truncation.content;
+    // The byte cap cuts whole lines: the model saw as many entries
+    // as it got lines.
+    entries.truncate(text.lines().count());
 
     let mut notices = Vec::new();
     if limit_reached {
@@ -157,5 +220,70 @@ fn run(
     if !notices.is_empty() {
         text.push_str(&format!("\n\n[{}]", notices.join(". ")));
     }
-    Ok(text)
+    let listing = Listing {
+        dir: dir_path.to_string_lossy().into_owned(),
+        entries,
+        truncated: limit_reached || truncated,
+    };
+    Ok((text, Some(listing)))
+}
+
+/// What the listing says of `name`. `meta` follows symlinks, as the
+/// model's `/` does.
+fn entry(
+    name: &str,
+    full: &Path,
+    meta: &Metadata,
+    kept: &Option<HashSet<String>>,
+) -> Entry {
+    let target = std::fs::symlink_metadata(full)
+        .is_ok_and(|link| link.file_type().is_symlink())
+        .then(|| std::fs::read_link(full).ok())
+        .flatten()
+        .map(|target| target.to_string_lossy().into_owned());
+    let kind = match (&target, meta.is_dir()) {
+        (Some(_), true) => EntryKind::SymlinkDir,
+        (Some(_), false) => EntryKind::Symlink,
+        (None, true) => EntryKind::Dir,
+        (None, false) => EntryKind::File,
+    };
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .and_then(|age| i64::try_from(age.as_secs()).ok());
+    let items = meta
+        .is_dir()
+        .then(|| std::fs::read_dir(full).ok())
+        .flatten()
+        .map(|read_dir| read_dir.count() as u64);
+    Entry {
+        name: name.to_owned(),
+        kind,
+        size: meta.is_file().then_some(meta.len()),
+        modified,
+        items,
+        target,
+        ignored: kept.as_ref().is_some_and(|kept| !kept.contains(name)),
+    }
+}
+
+/// The names in `dir` that `.gitignore` keeps, with the rules `find`
+/// and `grep` walk by. `None` when the walk fails, so nothing reads as
+/// ignored.
+fn unignored(dir: &Path) -> Option<HashSet<String>> {
+    let mut walk = WalkBuilder::new(dir);
+    walk.hidden(false)
+        .require_git(false)
+        .git_global(false)
+        .git_exclude(false)
+        .max_depth(Some(1));
+    let mut kept = HashSet::new();
+    for result in walk.build() {
+        let entry = result.ok()?;
+        if entry.depth() == 1 {
+            kept.insert(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    Some(kept)
 }
