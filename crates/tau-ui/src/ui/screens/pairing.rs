@@ -97,7 +97,7 @@ fn spacer() -> Div {
 
 fn welcome(t: &Theme, cx: &mut Context<Workspace>) -> Div {
     let steps = [
-        "Open tau › Settings › Phones",
+        "Open tau › Phones",
         "Turn on Allow phones",
         "Show the pairing code",
     ];
@@ -497,7 +497,7 @@ fn unreachable(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         ),
         (
             "Is Allow phones on?",
-            "tau › Settings › Phones on your computer.",
+            "tau › Phones on your computer.",
         ),
         ("Away from home?", "Connect your VPN on this phone."),
     ];

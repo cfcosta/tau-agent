@@ -1,6 +1,6 @@
 # 0013: Phones connect to a running tau
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-30
 - Builds on [0007](0007-gpui-interface.md) ("Phones"): agents do not run
   on the phone. Research:
@@ -146,3 +146,30 @@ A phone is another interface on the same host.
 4. "Allow phones" in tau-ui: the listener, the QR code, and the list of
    paired phones.
 5. The Android build of tau-ui with a `Remote`, in the flake.
+
+## As built
+
+All five steps are in. Where the code went its own way:
+
+- **One enum downstream.** `HostUpdate` carries the run events too
+  (`HostUpdate::Event`), so a phone applies one stream in order.
+- **The server numbers the messages**, not the store: numbers start from
+  the clock, so they only grow across restarts. It keeps the last 4096
+  for phones that come back, and a phone that missed more gets a new
+  snapshot.
+- **The snapshot is the computer's Workspace**: its runs and its catalog,
+  as `HostUpdate::Snapshot`, rather than timelines for the phone to
+  rebuild. Onboarding's updates stay on the computer.
+- **What a phone may ask for** is `WorkspaceEvent::from_phone`: not
+  signing in or out, keys, pairing, or paths on the computer. A phone
+  also sends its name, which renames it in the computer's list.
+- **Allow phones is on a Phones screen** in the sidebar, not under a
+  Settings screen, which tau does not have. Its settings, the
+  certificate and the paired phones' token hashes are in
+  `~/.config/tau/phones`.
+- **The phone scans with the camera app**: one photo, read with `rqrr`,
+  so it asks for no camera permission. Typing the address instead shows
+  the whole certificate to compare.
+- **The phone keeps its token in the app's private directory**, not yet
+  in the Android Keystore.
+
