@@ -2510,3 +2510,37 @@ fn a_new_repository_lists_its_main_chat(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// The effort picked for a chat's next message stays picked after the
+/// message is sent, even on a chat read back from the store (or a main
+/// chat that has never run), whose plan is empty.
+#[gpui::test]
+fn a_picked_effort_stays_after_sending(cx: &mut TestAppContext) {
+    use tau_agent::tool::RunId;
+    use tau_ui::{
+        models::Effort,
+        view::{RunStatus, RunView},
+    };
+
+    let (workspace, mut cx, events) = open(cx);
+    let id = RunId("stored".into());
+    let mut stored = RunView::new(id.clone(), "stored", "coder", "gpt-5.5");
+    stored.status = RunStatus::Finished(StopReason::Stop);
+    assert!(stored.plan.is_empty(), "read back without a plan");
+    workspace.update_in(&mut cx, |ws, window, cx| {
+        ws.add_history(vec![stored], cx);
+        ws.navigate(Route::Run(id.clone()), cx);
+        ws.open_picker(PickerTarget::Run(id.clone()), window, cx);
+        ws.pick_effort(Effort::High, cx);
+        ws.submit_prompt("go on".into(), cx);
+    });
+    assert!(matches!(
+        events.borrow().last(),
+        Some(WorkspaceEvent::Resume { model, .. }) if model.effort == Effort::High
+    ));
+    workspace.read_with(&cx, |ws, _| {
+        let choice = ws.choice_for(&PickerTarget::Run(id.clone()));
+        assert_eq!(choice.effort, Effort::High, "still high after sending");
+        assert_eq!(choice.model, "gpt-5.5");
+    });
+}

@@ -1130,14 +1130,22 @@ impl RunView {
     /// messages; the conversation carries over.
     pub fn switch_model(&mut self, model: &str, effort: &str) {
         self.model = model.to_owned();
-        for field in &mut self.plan {
-            match field.name.as_str() {
-                "model" => field.value = model.to_owned(),
-                "reasoning" => {
-                    field.value = effort.to_owned();
+        // A run read back from the store has no plan yet: its fields are
+        // added, so the choice is still there for the next message.
+        for (name, value) in [("reasoning", effort), ("model", model)] {
+            match self.plan.iter_mut().find(|field| field.name == name) {
+                Some(field) => {
+                    field.value = value.to_owned();
                     field.set_by = None;
                 }
-                _ => {}
+                None => self.plan.insert(
+                    0,
+                    PlanField {
+                        name: name.into(),
+                        value: value.to_owned(),
+                        set_by: None,
+                    },
+                ),
             }
         }
         if let Some(found) = tau_ai::model::find(model) {
