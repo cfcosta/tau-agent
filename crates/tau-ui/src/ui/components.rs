@@ -7,6 +7,7 @@
 
 use gpui::{
     AnyElement,
+    BoxShadow,
     Context,
     Div,
     Entity,
@@ -16,6 +17,8 @@ use gpui::{
     Stateful,
     Svg,
     div,
+    linear_color_stop,
+    linear_gradient,
     prelude::*,
     px,
     relative,
@@ -30,6 +33,141 @@ use crate::{
     theme::{Design, IconSize, MONO, Theme, Type, control, radius, sp, weight},
     workspace::Workspace,
 };
+
+// Depth.
+
+/// Which side of the window a piece of chrome sits on: the side its
+/// shadow falls away from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    /// The title bar: its shadow falls down onto the content.
+    Top,
+    /// The status bar: its shadow falls up.
+    Bottom,
+    /// The sidebar: its shadow falls right.
+    Left,
+    /// The inspector: its shadow falls left.
+    Right,
+}
+
+/// A shadow `x` and `y` px off, blurred by `blur`.
+fn shade(x: f32, y: f32, blur: f32, color: Hsla) -> BoxShadow {
+    BoxShadow::new(px(x), px(y), color).blur_radius(px(blur))
+}
+
+/// Top to bottom, from `top` to `bottom`.
+fn fall(top: Hsla, bottom: Hsla) -> gpui::Background {
+    linear_gradient(
+        180.,
+        linear_color_stop(top, 0.),
+        linear_color_stop(bottom, 1.),
+    )
+}
+
+/// The milled look (see [`crate::theme::Depth`]) for any element: how
+/// it rises out of the ground or sinks into it.
+pub trait Material: Styled + Sized {
+    /// A raised panel: cards, menus, notes. Lit along its top edge,
+    /// shaded along its bottom, and casting a soft shadow.
+    fn raised(self, t: &Theme) -> Self {
+        let d = &t.depth;
+        self.bg(fall(d.panel_top, t.card)).shadow(vec![
+            shade(0., 1., 0., d.highlight).inset(),
+            shade(0., -1., 0., d.shade).inset(),
+            shade(0., 2., 4., d.drop),
+            shade(0., 10., 24., d.drop.opacity(0.6)),
+        ])
+    }
+
+    /// A well sunk into its surface: fields, meters, the terminal.
+    fn well(self, t: &Theme) -> Self {
+        let d = &t.depth;
+        self.bg(d.well).shadow(vec![
+            shade(0., 2., 6., d.inner).inset(),
+            BoxShadow::new(px(0.), px(0.), d.shade)
+                .spread_radius(px(1.))
+                .inset(),
+            shade(0., 1., 0., d.highlight.opacity(0.8)),
+        ])
+    }
+
+    /// A key: buttons, chips, the user's bubble. Rounded over from a
+    /// lit top to a darker bottom, on a small shadow.
+    fn key(self, t: &Theme) -> Self {
+        let d = &t.depth;
+        self.bg(fall(d.key_top, d.key_bottom))
+            .border_1()
+            .border_color(d.key_border)
+            .shadow(key_shadows(t))
+    }
+
+    /// The accent key: the one thing to do. Its light spills around it.
+    fn accent_key(self, t: &Theme) -> Self {
+        let d = &t.depth;
+        self.bg(fall(d.accent_top, d.accent_bottom)).shadow(vec![
+            shade(0., 1., 0., gpui::white().opacity(0.45)).inset(),
+            shade(0., -2., 0., d.accent_edge).inset(),
+            shade(0., 4., 12., d.accent_glow),
+        ])
+    }
+
+    /// A danger key: stopping or throwing away.
+    fn danger_key(self, t: &Theme) -> Self {
+        let d = &t.depth;
+        self.bg(fall(d.danger_top, d.danger_bottom))
+            .border_1()
+            .border_color(t.red_border)
+            .shadow(key_shadows(t))
+    }
+
+    /// Pressed in: the selected row of a list.
+    fn pressed(self, t: &Theme) -> Self {
+        let d = &t.depth;
+        self.bg(t.selected).shadow(vec![
+            shade(0., 2., 5., d.inner.opacity(0.85)).inset(),
+            shade(0., 1., 0., d.highlight.opacity(0.8)),
+        ])
+    }
+
+    /// Chrome on one `edge` of the window: lit from above, with a seam
+    /// and a shadow toward what it frames.
+    fn chrome(self, edge: Edge, t: &Theme) -> Self {
+        let d = &t.depth;
+        let (x, y) = match edge {
+            Edge::Top => (0., 1.),
+            Edge::Bottom => (0., -1.),
+            Edge::Left => (1., 0.),
+            Edge::Right => (-1., 0.),
+        };
+        self.bg(fall(d.chrome_top, t.panel)).shadow(vec![
+            shade(0., 1., 0., d.highlight.opacity(0.7)).inset(),
+            shade(x, y, 0., d.seam),
+            shade(x * 6., y * 4., 20., d.drop.opacity(0.75)),
+        ])
+    }
+
+    /// A light around a small shape in `color`: a live dot.
+    fn glow(self, color: Hsla) -> Self {
+        self.shadow(vec![shade(0., 0., 6., color)])
+    }
+}
+
+impl<E: Styled> Material for E {}
+
+/// The inner shadow of a meter's `track`.
+fn track_shade(track: Hsla) -> Hsla {
+    gpui::black().opacity(0.55 * track.a.max(0.6))
+}
+
+/// The shadows under a key.
+fn key_shadows(t: &Theme) -> Vec<BoxShadow> {
+    let d = &t.depth;
+    vec![
+        shade(0., 1., 0., d.highlight.opacity(1.5)).inset(),
+        shade(0., 1., 2., d.inner.opacity(0.85)),
+        shade(0., 3., 8., d.drop.opacity(0.75)),
+    ]
+}
 
 // Text.
 
@@ -214,17 +352,15 @@ fn base_button(
         .child(label);
     match kind {
         ButtonKind::Primary => button
-            .bg(t.accent)
+            .accent_key(t)
             .font_weight(weight::STRONG)
-            .hover(|style| style.opacity(0.9)),
-        ButtonKind::Secondary | ButtonKind::Danger => button
-            .border_1()
-            .border_color(match (kind, big) {
-                (ButtonKind::Danger, _) => t.red_border,
-                (_, true) => t.border_strong,
-                _ => t.border,
-            })
-            .hover(|style| style.bg(gpui::white().opacity(0.04))),
+            .hover(|style| style.opacity(0.92)),
+        ButtonKind::Secondary => button
+            .key(t)
+            .hover(|style| style.border_color(t.border_strong)),
+        ButtonKind::Danger => button
+            .danger_key(t)
+            .hover(|style| style.border_color(t.red)),
     }
 }
 
@@ -247,11 +383,16 @@ pub fn round_button(
         .rounded(radius::FULL)
         .cursor_pointer();
     match border {
-        Some(border) => button.border_1().border_color(border).child(icon(
+        Some(border) => button.key(t).border_color(border).child(icon(
             glyph,
             IconSize::BASE,
             color,
         )),
+        None if color == t.accent => {
+            button
+                .accent_key(t)
+                .child(icon(glyph, IconSize::XLARGE, t.bg))
+        }
         None => button.bg(color).child(icon(glyph, IconSize::XLARGE, t.bg)),
     }
 }
@@ -287,7 +428,7 @@ pub fn logo(t: &Theme, size: f32) -> Div {
         .items_center()
         .justify_center()
         .rounded(px(size / 4.))
-        .bg(t.accent)
+        .accent_key(t)
         .text_color(t.bg)
         .font_family(MONO)
         .text_size(px(size * 0.6))
@@ -314,6 +455,10 @@ pub fn repo_mark(repo: &Repo, size: f32, t: &Theme) -> Div {
         radius::TAG
     })
     .bg(t.mark(&repo.name))
+    .shadow(vec![
+        shade(0., 1., 0., gpui::white().opacity(0.35)).inset(),
+        shade(0., 1., 2., t.depth.shade),
+    ])
     .font_weight(weight::EMPHASIS)
 }
 
@@ -340,6 +485,11 @@ pub fn dot(color: Hsla, size: f32) -> Div {
         .bg(color)
 }
 
+/// A dot that glows: something running now.
+pub fn live_dot(color: Hsla, size: f32) -> Div {
+    dot(color, size).glow(color)
+}
+
 /// A status: a dot and words, on a tinted pill.
 pub fn pill(text: impl Into<SharedString>, color: Hsla, bg: Hsla) -> Div {
     div()
@@ -352,7 +502,7 @@ pub fn pill(text: impl Into<SharedString>, color: Hsla, bg: Hsla) -> Div {
         .bg(bg)
         .text_color(color)
         .typeset(Type::CAPTION)
-        .child(dot(color, 6.))
+        .child(live_dot(color, 6.))
         .child(text.into())
 }
 
@@ -388,7 +538,7 @@ pub fn chip(
         .px(sp(2.5))
         .py(sp(1.25))
         .rounded(radius::CONTROL)
-        .bg(t.raised)
+        .key(t)
         .children(glyph.map(|glyph| icon(glyph, IconSize::COMPACT, color)))
         .child(mono(text, style, color))
 }
@@ -414,8 +564,7 @@ pub fn bubble(t: &Theme) -> Div {
     div()
         .px(sp(3.5))
         .py(sp(3.))
-        .bg(t.raised)
-        .border_1()
+        .key(t)
         .border_color(t.border_soft)
         .rounded(radius::LARGE)
         .leading(1.55)
@@ -429,22 +578,27 @@ pub fn bar(share: f32, height: f32, fill: Hsla, track: Hsla) -> Div {
         .w_full()
         .rounded(radius::FULL)
         .bg(track)
+        .shadow(vec![shade(0., 1., 2., track_shade(track)).inset()])
         .child(
             div()
                 .h(px(height))
                 .w(relative(share.clamp(0.0, 1.0)))
                 .rounded(radius::FULL)
-                .bg(fill),
+                .bg(fill)
+                .shadow(vec![
+                    shade(0., 1., 0., gpui::white().opacity(0.3)).inset(),
+                ]),
         )
 }
 
 // Surfaces.
 
-/// A bordered box, clipping what it holds.
+/// A raised, bordered box, clipping what it holds.
 pub fn card(t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
+        .raised(t)
         .border_1()
         .border_color(t.border)
         .rounded(radius::BOX)
@@ -457,7 +611,7 @@ pub fn panel(steps: f32, t: &Theme) -> Div {
         .flex()
         .flex_col()
         .p(sp(steps))
-        .bg(t.panel)
+        .raised(t)
         .border_1()
         .border_color(t.border)
         .rounded(radius::CARD)
@@ -644,9 +798,7 @@ pub fn field(input: &Entity<TextInput>, mono: bool, t: &Theme) -> Div {
         .h(control::LARGE)
         .px(sp(3.))
         .rounded(radius::BOX)
-        .border_1()
-        .border_color(t.border_strong)
-        .bg(t.bg)
+        .well(t)
         .typeset(if mono { Type::SMALL.mono() } else { Type::BODY })
         .child(input.clone())
 }
@@ -661,14 +813,10 @@ pub fn switch(on: bool, t: &Theme) -> Div {
         .items_center()
         .p(sp(0.5))
         .rounded(radius::FULL)
-        .bg(if on { t.accent } else { t.border_strong })
-        .when(on, |track| track.justify_end())
+        .when(on, |track| track.accent_key(t).justify_end())
+        .when(!on, |track| track.well(t))
         .cursor_pointer()
-        .child(div().size(px(16.)).rounded(radius::FULL).bg(if on {
-            t.bg
-        } else {
-            t.muted
-        }))
+        .child(div().size(px(16.)).rounded(radius::FULL).key(t))
 }
 
 /// A checkbox: 18 px, or 20 px for a phone's touch rows.
@@ -682,7 +830,7 @@ pub fn checkbox(checked: bool, large: bool, t: &Theme) -> Div {
         .justify_center()
         .rounded(radius::SMALL);
     if checked {
-        checkbox.bg(t.accent).child(icon(
+        checkbox.accent_key(t).child(icon(
             Icon::Check,
             if large {
                 IconSize::BASE
@@ -692,7 +840,7 @@ pub fn checkbox(checked: bool, large: bool, t: &Theme) -> Div {
             t.bg,
         ))
     } else {
-        checkbox.border(px(1.5)).border_color(t.border_strong)
+        checkbox.well(t)
     }
 }
 

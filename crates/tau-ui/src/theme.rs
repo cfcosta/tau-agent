@@ -92,6 +92,69 @@ pub struct Theme {
     pub term: TermLook,
     /// Onboarding's look: the handshake screens.
     pub setup: SetupLook,
+    /// How surfaces stand out of the ground or sink into it.
+    pub depth: Depth,
+}
+
+/// The milled look: surfaces lit from above. Panels and buttons rise
+/// with a light top edge and a shadow under them; fields, meters and
+/// the terminal sink into wells; the chrome casts a shadow onto what it
+/// frames.
+#[derive(Debug, Clone)]
+pub struct Depth {
+    /// The light along a raised surface's top edge.
+    pub highlight: Hsla,
+    /// The dark along a raised surface's bottom edge.
+    pub shade: Hsla,
+    /// The shadow a raised surface casts.
+    pub drop: Hsla,
+    /// The shadow a pressed or sunken surface holds inside.
+    pub inner: Hsla,
+    /// The seam where the chrome meets what it frames.
+    pub seam: Hsla,
+    /// A panel's top; it falls to [`Theme::card`].
+    pub panel_top: Hsla,
+    /// The chrome's top; it falls to [`Theme::panel`].
+    pub chrome_top: Hsla,
+    /// A well's floor: fields, meters, the terminal.
+    pub well: Hsla,
+    /// A key's top and bottom: buttons, chips, bubbles.
+    pub key_top: Hsla,
+    pub key_bottom: Hsla,
+    pub key_border: Hsla,
+    /// The accent key's top and bottom, and its lower edge.
+    pub accent_top: Hsla,
+    pub accent_bottom: Hsla,
+    pub accent_edge: Hsla,
+    /// The light the accent key and live dots throw.
+    pub accent_glow: Hsla,
+    /// The danger key's top and bottom.
+    pub danger_top: Hsla,
+    pub danger_bottom: Hsla,
+}
+
+impl Depth {
+    fn graphite() -> Self {
+        Self {
+            highlight: c(rgba(0xffffff0f)),
+            shade: c(rgba(0x00000080)),
+            drop: c(rgba(0x00000066)),
+            inner: c(rgba(0x000000b3)),
+            seam: c(rgb(0x0c0d0f)),
+            panel_top: c(rgb(0x1e1f24)),
+            chrome_top: c(rgb(0x202126)),
+            well: c(rgb(0x101114)),
+            key_top: c(rgb(0x2c2d33)),
+            key_bottom: c(rgb(0x212228)),
+            key_border: c(rgb(0x34353c)),
+            accent_top: c(rgb(0xf3bb67)),
+            accent_bottom: c(rgb(0xd9922f)),
+            accent_edge: c(rgba(0x78460a59)),
+            accent_glow: c(rgba(0xe5a54a4d)),
+            danger_top: c(rgb(0x241a19)),
+            danger_bottom: c(rgb(0x1b1514)),
+        }
+    }
 }
 
 /// How onboarding looks: a near-black ground with faint rings and a glow
@@ -289,6 +352,7 @@ impl Theme {
             ],
             term: TermLook::graphite(),
             setup: SetupLook::graphite(),
+            depth: Depth::graphite(),
         }
     }
 
