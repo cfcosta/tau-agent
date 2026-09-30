@@ -13,6 +13,7 @@ CREATE TABLE runs (
   turns         INTEGER NOT NULL DEFAULT 0,  -- model turns so far; a resumed run keeps counting
   result        TEXT,                       -- final output; JSON when typed
   error         TEXT,
+  title         TEXT,                       -- a model's short name for the run, once written
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 ) STRICT;

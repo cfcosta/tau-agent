@@ -162,6 +162,8 @@ pub struct RunRecord {
     pub turns: i64,
     pub result: Option<String>,
     pub error: Option<String>,
+    /// A model's short name for the run, once one is written.
+    pub title: Option<String>,
     /// When the run started, as SQLite's `strftime` writes it
     /// (`2026-09-28T14:03:11.402Z`).
     pub created_at: String,
@@ -684,6 +686,21 @@ impl Store {
         Ok(())
     }
 
+    /// Names the run `title`, in place of any name it had.
+    pub async fn set_title(&self, run: &str, title: &str) -> Result<()> {
+        let updated = sqlx::query!(
+            "UPDATE runs SET title = ?2 WHERE id = ?1",
+            run,
+            title
+        )
+        .execute(&mut *self.writer().await?)
+        .await?;
+        if updated.rows_affected() == 0 {
+            return Err(StoreError::UnknownRun(run.to_owned()));
+        }
+        Ok(())
+    }
+
     /// Opens a finished run again, to go on from where it stopped on
     /// `model`: it is `running` again, without its result or error, and
     /// keeps its transcript, usage and turn count. Returns it as it now
@@ -720,7 +737,7 @@ impl Store {
             r#"SELECT id AS "id!: String", workflow_id, agent, kind,
                       parent_run_id, fork_seq, model, status,
                       input_tokens, output_tokens, cost_usd, turns, result,
-                      error, created_at
+                      error, title, created_at
                FROM runs WHERE kind = 'subagent' AND parent_run_id = ?1
                ORDER BY created_at, id"#,
             parent
@@ -742,6 +759,7 @@ impl Store {
                 turns: row.turns,
                 result: row.result,
                 error: row.error,
+                title: row.title,
                 created_at: row.created_at,
             })
             .collect())
@@ -752,7 +770,7 @@ impl Store {
             r#"SELECT id AS "id!: String", workflow_id, agent, kind,
                       parent_run_id, fork_seq, model, status,
                       input_tokens, output_tokens, cost_usd, turns, result,
-                      error, created_at
+                      error, title, created_at
                FROM runs WHERE id = ?1"#,
             run
         )
@@ -771,6 +789,7 @@ impl Store {
             turns: row.turns,
             result: row.result,
             error: row.error,
+            title: row.title,
             created_at: row.created_at,
         }))
     }
@@ -782,7 +801,7 @@ impl Store {
             r#"SELECT id AS "id!: String", workflow_id, agent, kind,
                       parent_run_id, fork_seq, model, status,
                       input_tokens, output_tokens, cost_usd, turns, result,
-                      error, created_at
+                      error, title, created_at
                FROM runs WHERE kind != 'subagent'
                ORDER BY updated_at DESC, id DESC
                LIMIT ?1"#,
@@ -805,6 +824,7 @@ impl Store {
                 turns: row.turns,
                 result: row.result,
                 error: row.error,
+                title: row.title,
                 created_at: row.created_at,
             })
             .collect())

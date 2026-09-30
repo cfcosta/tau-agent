@@ -48,6 +48,7 @@ struct ModelRun {
     model: &'static str,
     result: Option<String>,
     error: Option<String>,
+    title: Option<String>,
 }
 
 #[derive(Default)]
@@ -258,6 +259,7 @@ impl StoreMachine {
                 model: "gpt-5.5",
                 result: None,
                 error: None,
+                title: None,
             },
         );
     }
@@ -375,6 +377,28 @@ impl StoreMachine {
         }
     }
 
+    /// Naming a run replaces its title and leaves everything else;
+    /// naming one that does not exist fails.
+    #[rule]
+    fn name(&mut self, tc: TestCase) {
+        let title = tc.draw(gs::text().min_size(1).max_size(8));
+        if tc.draw(gs::booleans()) {
+            let result = self
+                .runtime
+                .block_on(self.store.set_title("run_missing", &title));
+            assert!(
+                matches!(result, Err(StoreError::UnknownRun(_))),
+                "{result:?}"
+            );
+            return;
+        }
+        let run = self.pick(&tc);
+        self.runtime
+            .block_on(self.store.set_title(&run, &title))
+            .unwrap();
+        self.model.runs.get_mut(&run).unwrap().title = Some(title);
+    }
+
     /// Every read matches the model, after every operation.
     #[invariant(always_run)]
     fn reads_match_the_model(&self, _tc: TestCase) {
@@ -423,6 +447,7 @@ impl StoreMachine {
             assert_eq!(record.workflow_id.as_deref(), m.workflow);
             assert_eq!(record.result, m.result, "result of {id}");
             assert_eq!(record.error, m.error, "error of {id}");
+            assert_eq!(record.title, m.title, "title of {id}");
         }
         for workflow in ["wf_1", "wf_2"] {
             let mut expected: BTreeMap<&str, (i64, f64)> = BTreeMap::new();
