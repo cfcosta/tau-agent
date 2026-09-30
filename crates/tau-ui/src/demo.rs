@@ -510,14 +510,18 @@ pub fn fork_run(
             cost: 0.04,
         },
     );
-    let mut view =
-        RunView::new(id, crate::host::title(prompt), "coder", &model.model)
-            .in_repo(from.repo.clone())
-            .started("just now")
-            .with_origin(Origin::Fork {
-                from: from.id.clone(),
-                turn,
-            });
+    let mut view = RunView::new(
+        id,
+        crate::titles::placeholder(prompt),
+        "coder",
+        &model.model,
+    )
+    .in_repo(from.repo.clone())
+    .started("just now")
+    .with_origin(Origin::Fork {
+        from: from.id.clone(),
+        turn,
+    });
     view.plan = vec![PlanField {
         name: "reasoning".into(),
         value: model.effort.label().into(),

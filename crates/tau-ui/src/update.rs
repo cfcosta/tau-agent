@@ -68,6 +68,11 @@ pub enum HostUpdate {
     },
     /// A run asked to go on could not.
     ResumeFailed(RunId),
+    /// A model wrote a run's title.
+    Titled {
+        run: RunId,
+        title: String,
+    },
     /// A repository was added.
     Repo(Repo),
     /// Onboarding moved on. Only the machine being set up shows it.
@@ -133,7 +138,11 @@ mod tests {
                 run: run.clone(),
                 result: Err("it has children".into()),
             },
-            HostUpdate::ResumeFailed(run),
+            HostUpdate::ResumeFailed(run.clone()),
+            HostUpdate::Titled {
+                run,
+                title: "Fix the retry loop".into(),
+            },
         ];
         for update in updates {
             assert_eq!(round_trip(&update), update);

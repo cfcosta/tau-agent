@@ -1645,7 +1645,7 @@ impl Host {
         // And a record to draw the landing's card from, in history.
         let record = LandingRecord {
             from: child.0.to_string(),
-            title: title(&self.stored_prompt(child)?),
+            title: self.title_of(child)?,
             landing: landing.clone(),
         };
         let mut entries = entries;
@@ -1761,6 +1761,19 @@ impl Host {
             );
         }
         Ok(())
+    }
+
+    /// `run`'s title: the one a model wrote, or until then the
+    /// placeholder for the words it started with.
+    fn title_of(&self, run: &RunId) -> anyhow::Result<String> {
+        let written = self
+            .runtime
+            .block_on(self.store.run(&run.0))?
+            .and_then(|record| record.title);
+        match written {
+            Some(title) => Ok(title),
+            None => Ok(crate::titles::placeholder(&self.stored_prompt(run)?)),
+        }
     }
 
     /// The words `run` was started with, from its stored transcript.
@@ -1979,9 +1992,14 @@ impl Host {
                 ModelChoice::new(self.config.default_model(), Effort::Auto)
             });
         let repo = self.slot_of_run(&id);
-        let mut view = RunView::new(id, title(prompt), "coder", &choice.model)
-            .in_repo(repo.name.clone())
-            .started("just now");
+        let mut view = RunView::new(
+            id,
+            crate::titles::placeholder(prompt),
+            "coder",
+            &choice.model,
+        )
+        .in_repo(repo.name.clone())
+        .started("just now");
         view.push_user(prompt);
         view.limits = ViewLimits {
             max_turns: Some(MAX_TURNS),
@@ -2183,7 +2201,9 @@ impl Host {
                     repo,
                 } => match handler.start(prompt, model, repo) {
                     Ok(view) => {
-                        workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Run(Box::new(view)), cx))
+                        let run = view.id.clone();
+                        workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Run(Box::new(view)), cx));
+                        title_in_background(&handler, &run, prompt, &workspace, cx);
                     }
                     Err(error) => workspace.update(cx, |ws, cx| {
                         ws.apply(HostUpdate::alert("Could not start the run", format!("{error:#}")), cx)
@@ -2402,7 +2422,9 @@ impl Host {
                     model,
                 } => match handler.fork(run, *turn, prompt, model) {
                     Ok(view) => {
-                        workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Run(Box::new(view)), cx))
+                        let run = view.id.clone();
+                        workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Run(Box::new(view)), cx));
+                        title_in_background(&handler, &run, prompt, &workspace, cx);
                     }
                     Err(error) => workspace.update(cx, |ws, cx| {
                         ws.apply(HostUpdate::alert("Could not fork the run", format!("{error:#}")), cx)
@@ -2554,6 +2576,63 @@ impl Host {
 /// Updates repository `name` off the UI thread, saying so in the status
 /// bar. An update the user asked for says what went wrong in a dialog;
 /// one at startup only in the status bar.
+/// Has a model write `run`'s title from `prompt`, keeps it in the store
+/// and shows it. Without a client, as in tests, or when the call fails,
+/// the run keeps its placeholder. The run's record is written as it
+/// starts, well before the model answers.
+fn title_in_background(
+    host: &Arc<Host>,
+    run: &RunId,
+    prompt: &str,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let Some(client) = host.client.lock().expect("not poisoned").clone() else {
+        return;
+    };
+    let model = host
+        .choices
+        .lock()
+        .expect("not poisoned")
+        .get(run)
+        .map_or_else(
+            || host.config.default_model(),
+            |choice| choice.model.clone(),
+        );
+    let job = {
+        let (writer, run, prompt) =
+            (host.clone(), run.clone(), prompt.to_owned());
+        host.runtime.spawn(async move {
+            let title = crate::titles::write(&client, &model, &prompt).await?;
+            writer.store.set_title(&run.0, &title).await?;
+            anyhow::Ok(title)
+        })
+    };
+    let run = run.clone();
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let title = match job.await {
+            Ok(Ok(title)) => title,
+            Ok(Err(error)) => {
+                return eprintln!(
+                    "tau-ui: cannot title run {}: {error:#}",
+                    run.0
+                );
+            }
+            Err(error) => {
+                return eprintln!(
+                    "tau-ui: cannot title run {}: {error}",
+                    run.0
+                );
+            }
+        };
+        let _ = workspace.update(cx, |ws, cx| {
+            ws.apply(HostUpdate::Titled { run, title }, cx)
+        });
+    })
+    .detach();
+}
+
 fn update_in_background(
     host: &Arc<Host>,
     name: &str,
@@ -2734,7 +2813,7 @@ impl Host {
         let turns = view.as_ref().map_or(0, |view| view.turn);
         let head = format!(
             "tau/{}-{}",
-            title(&prompt),
+            branch_slug(&prompt),
             run.0
                 .chars()
                 .rev()
@@ -2751,7 +2830,7 @@ impl Host {
             mergeable,
             summary: format!(
                 "{} changed {} files over {turns} turns.",
-                title(&prompt),
+                self.title_of(run)?,
                 changed.len()
             ),
             tests: tests_passed(&answer),
@@ -3274,7 +3353,10 @@ async fn stored_view(
     let prompt = prompt_of(&record.kind, messages.iter().copied());
     let mut view = RunView::from_timeline(
         RunId(record.id.clone().into()),
-        title(&prompt),
+        record
+            .title
+            .clone()
+            .unwrap_or_else(|| crate::titles::placeholder(&prompt)),
         &record.agent,
         &record.model,
         &timeline,
@@ -3585,8 +3667,9 @@ fn clone_into_tau(
     .detach();
 }
 
-/// A short run title from the prompt: its first words, or its goal's.
-pub fn title(prompt: &str) -> String {
+/// A branch name's words from the prompt: its first four, or its
+/// goal's, lowercase and joined by dashes.
+pub fn branch_slug(prompt: &str) -> String {
     let goal = tau_goal::set_message(prompt);
     let prompt = goal.as_deref().unwrap_or(prompt);
     let words: Vec<&str> = prompt
@@ -3606,11 +3689,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn titles_come_from_the_first_words() {
-        assert_eq!(title("Fix the retry loop, please!"), "fix-the-retry-loop");
-        assert_eq!(title("  ?! "), "untitled");
+    fn branch_slugs_come_from_the_first_words() {
         assert_eq!(
-            title("/goal --continuations 3 all tests pass"),
+            branch_slug("Fix the retry loop, please!"),
+            "fix-the-retry-loop"
+        );
+        assert_eq!(branch_slug("  ?! "), "untitled");
+        assert_eq!(
+            branch_slug("/goal --continuations 3 all tests pass"),
             "all-tests-pass"
         );
     }

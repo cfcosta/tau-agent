@@ -950,6 +950,7 @@ impl Workspace {
                 self.set_branch_code(&main, &fork, code, cx)
             }
             HostUpdate::ResumeFailed(run) => self.resume_failed(&run, cx),
+            HostUpdate::Titled { run, title } => self.retitle(&run, title, cx),
             HostUpdate::Repo(repo) => self.add_repo(repo, cx),
             HostUpdate::Setup(update) => self.update_setup(update, cx),
             HostUpdate::Snapshot { runs, catalog } => {
@@ -1036,7 +1037,7 @@ impl Workspace {
                 .unwrap_or_default();
             let mut child = RunView::new(
                 run.clone(),
-                crate::host::title(&task),
+                crate::titles::placeholder(&task),
                 agent.to_string(),
                 view.model.clone(),
             )
@@ -1865,6 +1866,26 @@ impl Workspace {
 
     /// The host could not go on with the run: it ends as it had, without
     /// the message.
+    /// Names `run` `title`, in the list and under its parent.
+    pub fn retitle(
+        &mut self,
+        run: &RunId,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        for view in &mut self.runs {
+            if &view.id == run {
+                view.title.clone_from(&title);
+            }
+            for child in &mut view.children {
+                if &child.id == run {
+                    child.title.clone_from(&title);
+                }
+            }
+        }
+        cx.notify();
+    }
+
     pub fn resume_failed(&mut self, run: &RunId, cx: &mut Context<Self>) {
         let Some(status) = self.resuming.remove(run) else {
             return;

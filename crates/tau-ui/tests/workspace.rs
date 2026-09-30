@@ -271,7 +271,7 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
                 turn: 2
             }
         );
-        assert_eq!(fork.title, "double-the-delay-instead");
+        assert_eq!(fork.title, "double the delay instead");
         // It runs on its run's model, which the fork kept.
         assert_eq!(fork.model, "gpt-5.5");
         assert!(!fork.status.is_live(), "the fork played to its end");
@@ -304,6 +304,25 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
             .collect();
         assert_eq!(&turns[..3], [1, 2, 3], "{turns:?}");
         assert!(turns.windows(2).all(|pair| pair[0] < pair[1]), "{turns:?}");
+    });
+    // A written title replaces the placeholder, in the list and under
+    // the parent.
+    let fork =
+        workspace.read_with(&cx, |ws, _| ws.current().unwrap().id.clone());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply(
+            tau_ui::update::HostUpdate::Titled {
+                run: fork.clone(),
+                title: "Double the retry delay".into(),
+            },
+            cx,
+        )
+    });
+    workspace.read_with(&cx, |ws, _| {
+        assert_eq!(ws.run(&fork).unwrap().title, "Double the retry delay");
+        let parent = ws.run(&run).unwrap();
+        let child = parent.children.iter().find(|child| child.id == fork);
+        assert_eq!(child.unwrap().title, "Double the retry delay");
     });
 }
 

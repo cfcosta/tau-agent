@@ -118,6 +118,32 @@ fn until_end(events: &mut UnboundedReceiver<RunEvent>) -> Vec<RunEvent> {
     panic!("no RunEnd within {WAIT:?}: {seen:?}");
 }
 
+/// A run shows its prompt's first line until a model writes its title;
+/// a written title comes back with history.
+#[test]
+fn written_titles_come_back_in_history() {
+    let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("runs.db");
+    let (host, mut events) = host_with_store(llm, &std::env::temp_dir(), &db);
+    let view = host
+        .start("Say hello\nto everyone", &ModelChoice::default(), "")
+        .unwrap();
+    assert_eq!(view.title, "Say hello");
+    until_end(&mut events);
+    wait_until_done(&host, &view.id);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let store = Store::open(&db).await.unwrap();
+            store.set_title(&view.id.0, "Greet everyone").await.unwrap();
+        });
+    let history = host.history().unwrap();
+    assert_eq!(history[0].title, "Greet everyone");
+}
+
 #[test]
 fn a_run_streams_into_its_view() {
     let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
@@ -125,7 +151,7 @@ fn a_run_streams_into_its_view() {
     let mut view = host
         .start("Say hello, please", &ModelChoice::default(), "")
         .unwrap();
-    assert_eq!(view.title, "say-hello-please");
+    assert_eq!(view.title, "Say hello, please");
     assert!(
         matches!(view.items.first(), Some(Item::User(text)) if text == "Say hello, please")
     );
@@ -252,7 +278,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     let history = host.history().unwrap();
     let ids: Vec<_> = history.iter().map(|view| view.id.clone()).collect();
     assert_eq!(ids, [fork.id.clone(), main.id.clone()]);
-    assert_eq!(history[0].title, "try-it-another-way");
+    assert_eq!(history[0].title, "try it another way");
     assert_eq!(history[0].origin, fork.origin);
     assert_eq!(history[0].status, RunStatus::Finished(StopReason::Stop));
     assert!(history.iter().all(|view| view.repo == host.home()));
@@ -419,7 +445,7 @@ fn a_fork_lands_on_its_parent_and_closes() {
         "{turn_end:?}"
     );
     assert_eq!(card.from, fork.id);
-    assert_eq!(card.title, "write-c-instead");
+    assert_eq!(card.title, "write c instead");
     assert!(!waiting(&host), "landed, it no longer waits");
     assert_eq!(card.changes.len(), 1);
 }
@@ -614,7 +640,7 @@ fn a_failed_sub_agent_comes_back_from_history() {
             parent: main.id.clone()
         }
     );
-    assert_eq!(view.title, "write-c-txt");
+    assert_eq!(view.title, "write c.txt");
     assert!(
         matches!(&view.status, RunStatus::Finished(StopReason::Error(_))),
         "{:?}",
@@ -1010,7 +1036,7 @@ fn a_finished_run_goes_on_in_its_workspace() {
     assert_eq!(history.len(), 1, "one chat, not two");
     let view = &history[0];
     assert_eq!(view.id, chat.id);
-    assert_eq!(view.title, "write-a-txt");
+    assert_eq!(view.title, "write a.txt");
     assert_eq!(
         view.model, "gpt-6-sol",
         "it reloads on the model it went on"
@@ -1544,7 +1570,7 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
 
     let prompt = "/goal --continuations 3 the tests pass";
     let mut view = host.start(prompt, &ModelChoice::default(), "").unwrap();
-    assert_eq!(view.title, "the-tests-pass");
+    assert_eq!(view.title, "the tests pass");
     for event in until_end(&mut events) {
         view.apply(&event);
     }

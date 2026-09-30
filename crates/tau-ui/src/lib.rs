@@ -74,6 +74,7 @@ pub mod search;
 pub mod setup;
 pub mod slash;
 pub mod theme;
+pub mod titles;
 pub mod ui;
 pub mod update;
 pub mod view;
