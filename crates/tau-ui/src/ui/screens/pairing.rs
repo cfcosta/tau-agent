@@ -193,7 +193,8 @@ fn check(mark: Mark, text: &str, detail: Option<String>, t: &Theme) -> Div {
     )
 }
 
-/// The camera's frame: the preview sits under it on a phone.
+/// The camera's frame. tau's viewfinder opens over this screen and
+/// reads the code; this stands in for it once it closes.
 fn viewfinder(t: &Theme) -> Div {
     let corner = |top: bool, left: bool| {
         let side = px(3.);
@@ -298,6 +299,19 @@ fn scan(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
                     .on_click(
                         cx.listener(|ws, _, _, cx| ws.scan_pairing_code(cx)),
                     ),
+                )
+                // Without the camera, as when it is not allowed.
+                .child(
+                    full(
+                        "pair-rescan-type",
+                        big_button(
+                            "Enter the address instead",
+                            None,
+                            ButtonKind::Secondary,
+                            t,
+                        ),
+                    )
+                    .on_click(cx.listener(|ws, _, _, cx| ws.type_address(cx))),
                 )
         })
         .child(
