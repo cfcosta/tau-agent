@@ -172,14 +172,25 @@ fn mark(details: &mut Value, prefix: &str, changes: &[FileChange]) {
         let Some(name) = entry.get("name").and_then(Value::as_str) else {
             continue;
         };
-        let change = changes.iter().find_map(|change| {
-            let rest = change.path.strip_prefix(prefix)?.strip_prefix(name)?;
-            match rest {
-                "" => Some(change.kind),
-                rest if rest.starts_with('/') => Some(ChangeKind::Modified),
-                _ => None,
-            }
+        let path = format!("{prefix}{name}");
+        let exact = changes
+            .iter()
+            .find(|change| change.path == path)
+            .map(|change| change.kind);
+        let below = changes.iter().any(|change| {
+            change
+                .path
+                .strip_prefix(&path)
+                .is_some_and(|rest| rest.starts_with('/'))
         });
+        let dir = entry.get("kind").and_then(Value::as_str) == Some("dir");
+        let change = match exact {
+            // A directory that was a file has the file's removal at its
+            // own path: it is `modified` all the same.
+            Some(_) if dir => Some(ChangeKind::Modified),
+            Some(kind) => Some(kind),
+            None => below.then_some(ChangeKind::Modified),
+        };
         if let Some(kind) = change
             && let Ok(kind) = serde_json::to_value(kind)
         {
@@ -190,6 +201,7 @@ fn mark(details: &mut Value, prefix: &str, changes: &[FileChange]) {
 
 #[cfg(test)]
 mod tests {
+    use hegel::generators as gs;
     use serde_json::json;
 
     use super::*;
@@ -240,6 +252,120 @@ mod tests {
             marks("", &changes),
             [Value::Null, json!("modified"), Value::Null, Value::Null]
         );
+    }
+
+    /// A tree: each file's path and contents.
+    type Tree = std::collections::BTreeMap<String, u8>;
+
+    /// A tree of a few files over a small alphabet, so that names share
+    /// prefixes (`a`, `a.rs`) and a path is a file in one tree and a
+    /// directory in another. No file lies under another.
+    #[hegel::composite]
+    fn tree(tc: &hegel::TestCase) -> Tree {
+        let segment = || gs::sampled_from(vec!["a", "b", "a.rs"]);
+        let paths: Vec<Vec<&str>> = tc.draw(
+            gs::vecs(gs::vecs(segment()).min_size(1).max_size(3)).max_size(6),
+        );
+        let mut tree = Tree::new();
+        for path in paths {
+            let path = path.join("/");
+            let blocked = tree.keys().any(|file| {
+                under(&path, file) || under(file, &path) || *file == path
+            });
+            if !blocked {
+                let contents = tc.draw(gs::integers::<u8>().max_value(2));
+                tree.insert(path, contents);
+            }
+        }
+        tree
+    }
+
+    /// `path` lies strictly under the directory `dir`.
+    fn under(path: &str, dir: &str) -> bool {
+        path.strip_prefix(dir)
+            .is_some_and(|rest| rest.starts_with('/'))
+    }
+
+    /// The changes from `before` to `after`, in jj's path order: by
+    /// component, so `a/b` sorts before `a.rs`.
+    fn diff(before: &Tree, after: &Tree) -> Vec<FileChange> {
+        let mut paths: Vec<&String> =
+            before.keys().chain(after.keys()).collect();
+        paths.sort_by(|x, y| x.split('/').cmp(y.split('/')));
+        paths.dedup();
+        paths
+            .into_iter()
+            .filter_map(|path| {
+                let kind = match (before.get(path), after.get(path)) {
+                    (None, Some(_)) => ChangeKind::Added,
+                    (Some(_), None) => ChangeKind::Removed,
+                    (Some(old), Some(new)) if old != new => {
+                        ChangeKind::Modified
+                    }
+                    _ => return None,
+                };
+                Some(change(path, kind))
+            })
+            .collect()
+    }
+
+    /// Each entry of an `ls` of `prefix` in the tree `after` takes the
+    /// mark the reference gives it (`docs/reference/vcs.md`, "ls"),
+    /// read off the trees and not the change list: a file is `added`
+    /// or `modified` as it differs from `before`, a directory
+    /// `modified` when anything at or under it does.
+    #[hegel::test(test_cases = 500)]
+    fn a_listing_is_marked_as_the_reference_says(tc: hegel::TestCase) {
+        let before = tc.draw(tree());
+        let after = tc.draw(tree());
+        let prefix: &str = tc.draw(gs::sampled_from(vec!["", "a/", "b/a/"]));
+
+        let mut names: Vec<(String, bool)> = Vec::new();
+        for path in after.keys() {
+            let Some(rest) = path.strip_prefix(prefix) else {
+                continue;
+            };
+            let (name, dir) = match rest.split_once('/') {
+                Some((name, _)) => (name, true),
+                None => (rest, false),
+            };
+            if !names.iter().any(|(seen, _)| seen == name) {
+                names.push((name.to_owned(), dir));
+            }
+        }
+        let entries: Vec<Value> = names
+            .iter()
+            .map(|(name, dir)| {
+                json!({ "name": name, "kind": if *dir { "dir" } else { "file" } })
+            })
+            .collect();
+        let mut details = json!({ "entries": entries });
+        mark(&mut details, prefix, &diff(&before, &after));
+
+        for ((name, dir), entry) in
+            names.iter().zip(details["entries"].as_array().unwrap())
+        {
+            let path = format!("{prefix}{name}");
+            let expected = if *dir {
+                let differs = |x: &Tree, y: &Tree| {
+                    x.iter().any(|(file, contents)| {
+                        (*file == path || under(file, &path))
+                            && y.get(file) != Some(contents)
+                    })
+                };
+                (differs(&before, &after) || differs(&after, &before))
+                    .then_some(json!("modified"))
+            } else {
+                match before.get(&path) {
+                    None => Some(json!("added")),
+                    Some(old) if *old != after[&path] => {
+                        Some(json!("modified"))
+                    }
+                    Some(_) => None,
+                }
+            };
+            assert_eq!(entry.get("change"), expected.as_ref(), "{path}");
+        }
     }
 
     #[test]
