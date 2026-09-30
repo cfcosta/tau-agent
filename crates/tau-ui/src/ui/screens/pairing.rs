@@ -495,10 +495,7 @@ fn unreachable(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
             "Is tau open on your computer?",
             "Phones reach tau only while the app runs.",
         ),
-        (
-            "Is Allow phones on?",
-            "tau › Phones on your computer.",
-        ),
+        ("Is Allow phones on?", "tau › Phones on your computer."),
         ("Away from home?", "Connect your VPN on this phone."),
     ];
     let tries = match pairing.tries {

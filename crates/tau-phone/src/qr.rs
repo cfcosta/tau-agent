@@ -49,7 +49,8 @@ mod tests {
         let colors = code.to_colors();
         let side = (width + 8) * scale;
         GrayImage::from_fn(side, side, |x, y| {
-            let (mx, my) = ((x / scale).wrapping_sub(4), (y / scale).wrapping_sub(4));
+            let (mx, my) =
+                ((x / scale).wrapping_sub(4), (y / scale).wrapping_sub(4));
             let dark = mx < width
                 && my < width
                 && colors[(my * width + mx) as usize] == qrcode::Color::Dark;
