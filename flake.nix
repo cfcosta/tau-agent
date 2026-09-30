@@ -47,6 +47,40 @@
 
               rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
+              # The phone build (docs/decisions/0013-phones-connect-to-a-running-tau.md):
+              # the same toolchain with the Android target, and an Android
+              # SDK with the NDK. The SDK is unfree and needs its license
+              # accepted, so it gets a nixpkgs of its own, and only the
+              # opt-in `android` dev shell pulls it in.
+              androidRust = rust.override { targets = [ "aarch64-linux-android" ]; };
+              androidPkgs = import nixpkgs {
+                inherit system;
+                config = {
+                  allowUnfree = true;
+                  android_sdk.accept_license = true;
+                };
+              };
+              # What gpui-pre-mobile's Gradle project asks for: compileSdk
+              # 34 and Android Gradle Plugin 9 (build tools 36). The NDK
+              # links the Rust library (minSdk 26).
+              androidSdk =
+                (androidPkgs.androidenv.composeAndroidPackages {
+                  platformVersions = [
+                    "34"
+                    "35"
+                    "36"
+                  ];
+                  buildToolsVersions = [
+                    "34.0.0"
+                    "35.0.0"
+                    "36.0.0"
+                  ];
+                  includeNDK = true;
+                  ndkVersions = [ "29.0.14206865" ];
+                  includeEmulator = false;
+                  includeSystemImages = false;
+                }).androidsdk;
+
               # tau-ui (GPUI) links xcb and xkbcommon, and loads Vulkan,
               # Wayland and X11 at runtime.
               guiLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (
@@ -168,6 +202,8 @@
             in
             {
               inherit
+                androidRust
+                androidSdk
                 formatter
                 guiLibs
                 libghostty-vt
@@ -203,6 +239,8 @@
 
       devShells = forEachSupportedSystem (
         {
+          androidRust,
+          androidSdk,
           pkgs,
           rust,
           formatter,
@@ -211,6 +249,37 @@
           ...
         }:
         {
+          # `nix develop .#android`: the phone build. Kept apart from the
+          # default shell, which it would grow by several gigabytes.
+          android =
+            let
+              sdk = "${androidSdk}/libexec/android-sdk";
+            in
+            pkgs.mkShell {
+              name = "tau-agent-android";
+
+              buildInputs = with pkgs; [
+                formatter
+                androidRust
+                androidSdk
+                cargo-ndk
+                jdk21
+                zig
+              ];
+
+              nativeBuildInputs = [ pkgs.pkg-config ];
+
+              ANDROID_HOME = sdk;
+              ANDROID_SDK_ROOT = sdk;
+              ANDROID_NDK_HOME = "${sdk}/ndk/29.0.14206865";
+              ANDROID_NDK_ROOT = "${sdk}/ndk/29.0.14206865";
+              JAVA_HOME = pkgs.jdk21.home;
+              # Gradle's own aapt2 comes from Maven, dynamically linked
+              # against a filesystem NixOS does not have; the SDK's is
+              # patched for Nix.
+              GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${sdk}/build-tools/36.0.0/aapt2";
+            };
+
           default = pkgs.mkShell {
             name = "tau-agent";
 
