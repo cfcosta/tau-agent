@@ -820,6 +820,35 @@ impl Host {
             .any(|listed| listed.main.as_deref() == Some(&*run.0))
     }
 
+    /// The bookmark `run`'s commits move: trunk's for a main chat, which
+    /// commits on it, else `tau/<run>`.
+    fn bookmark_of(
+        &self,
+        run: &RunId,
+        project: &Project,
+    ) -> anyhow::Result<String> {
+        if self.is_main(run) {
+            return Ok(project.trunk_name()?);
+        }
+        Ok(bookmark(run))
+    }
+
+    /// Brings a main chat's workspace, `name`, up to trunk, which moves
+    /// without it on an update from GitHub: its work in `@` goes onto
+    /// trunk's head, so its next commit moves trunk forward, not aside.
+    fn catch_up(&self, project: &Project, name: &str) -> anyhow::Result<()> {
+        if !project.workspaces()?.iter().any(|known| known == name) {
+            return Ok(());
+        }
+        let vcs = tau_vcs::Vcs::open(project.workspace_dir(name), identity())?;
+        self.runtime.block_on(vcs.move_onto(
+            project.trunk()?,
+            project.trunk_name()?,
+            true,
+        ))?;
+        Ok(())
+    }
+
     fn slot(&self, name: &str) -> Option<RepoSlot> {
         self.repos
             .lock()
@@ -1268,6 +1297,7 @@ impl Host {
         choice: &ModelChoice,
         repo: &RepoSlot,
         workspace: Option<String>,
+        main: bool,
     ) -> anyhow::Result<(Agent, String)> {
         if self.account().is_none() {
             anyhow::bail!(
@@ -1336,6 +1366,12 @@ impl Host {
             }
         };
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
+        // A main chat commits on trunk: it has nothing to land.
+        let workspace = if main {
+            workspace.commits_to(project.trunk_name()?)
+        } else {
+            workspace
+        };
         let delegate = {
             let on_workspace = on_workspace.clone();
             let caller = choice.clone();
@@ -1351,7 +1387,7 @@ impl Host {
                 },
             )
         };
-        let agent = on_workspace(agent.tool(delegate), workspace, true);
+        let agent = on_workspace(agent.tool(delegate), workspace, !main);
         Ok((with_plugin(agent, goal), name))
     }
 
@@ -1666,7 +1702,8 @@ impl Host {
     ) -> anyhow::Result<RunView> {
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
-        let (agent, workspace) = self.agent_for_run(choice, repo, None)?;
+        let (agent, workspace) =
+            self.agent_for_run(choice, repo, None, false)?;
         let _guard = self.runtime.enter();
         let forked = agent
             .fork(&Checkpoint::at(source.clone(), seq))
@@ -1729,10 +1766,16 @@ impl Host {
             Some(name) => Some(name),
             None => self.link(run, None)?.map(|(_, link)| link.workspace),
         };
+        // A main chat catches up with trunk first: its commits move
+        // trunk, which may have moved without it.
+        let main = self.is_main(run);
+        if main && let Some(name) = &workspace {
+            self.catch_up(&repo.project()?, name)?;
+        }
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
         let (agent, workspace) =
-            self.agent_for_run(choice, &repo, workspace)?;
+            self.agent_for_run(choice, &repo, workspace, main)?;
         let _guard = self.runtime.enter();
         let resumed = agent.resume(run).start(prompt, &self.store);
         self.track(resumed, workspace, choice, &repo.name);
@@ -1763,9 +1806,10 @@ impl Host {
     /// that would conflict. Changes nothing.
     pub fn preview_landing(&self, child: &RunId) -> anyhow::Result<Landing> {
         let landing = self.landing(child)?;
+        let into = self.bookmark_of(&landing.parent, &landing.project)?;
         Ok(self.runtime.block_on(landing.parent_vcs.land(
             &landing.child_head,
-            bookmark(&landing.parent),
+            into,
             false,
         ))?)
     }
@@ -1776,9 +1820,10 @@ impl Host {
     /// bookmark. Both runs must be idle.
     pub fn land(&self, child: &RunId) -> anyhow::Result<Landing> {
         let plan = self.landing(child)?;
+        let into = self.bookmark_of(&plan.parent, &plan.project)?;
         let landing = self.runtime.block_on(plan.parent_vcs.land(
             &plan.child_head,
-            bookmark(&plan.parent),
+            into,
             true,
         ))?;
         // The landed changes join the parent's links, oldest first, at
@@ -1856,6 +1901,11 @@ impl Host {
         &self,
         run: &RunId,
     ) -> anyhow::Result<(Project, tau_vcs::Vcs, String)> {
+        if self.is_main(run) {
+            anyhow::bail!(
+                "The main chat commits on main: it has nothing to merge"
+            );
+        }
         self.settle(run);
         if self.is_running(run) {
             anyhow::bail!("{} is still running; merge it once it stops", run.0);
@@ -2015,7 +2065,9 @@ impl Host {
         let project = self.slot_of_run(child)?.project()?;
         self.no_open_children(child, &project)?;
         if let Some(head) = project.bookmark(&bookmark(child))? {
-            let keep = match project.bookmark(&bookmark(&parent))? {
+            let keep = match project
+                .bookmark(&self.bookmark_of(&parent, &project)?)?
+            {
                 Some(keep) => keep,
                 None => project.trunk()?,
             };
@@ -2068,7 +2120,7 @@ impl Host {
             })
             .map(|other| other.id)
             .collect();
-        let head = project.bookmark(&bookmark(run))?;
+        let head = project.bookmark(&self.bookmark_of(run, project)?)?;
         let mut open = Vec::new();
         for id in children {
             let child = RunId(id.clone().into());
@@ -2167,6 +2219,10 @@ impl Host {
             project.bookmark(&bookmark(child))?.ok_or_else(|| {
                 anyhow::anyhow!("{} has no changes to land", child.0)
             })?;
+        // A main chat takes landings on trunk as it is now.
+        if self.is_main(&parent) {
+            self.catch_up(&project, &parent_workspace)?;
+        }
         let parent_vcs =
             project.add_workspace(&parent_workspace, &project.trunk()?)?;
         Ok(LandingPlan {

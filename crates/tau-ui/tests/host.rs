@@ -142,16 +142,23 @@ fn until_end(events: &mut UnboundedReceiver<RunEvent>) -> Vec<RunEvent> {
 
 /// Each repository has a main chat from the start: finished, empty and
 /// open for good. A new chat forks it, at its start while it has no
-/// turn, then at its latest.
+/// turn, then at its latest. The main chat commits on trunk: a chat that
+/// lands on it moves trunk, so do its own commits, and it has nothing
+/// to merge.
 #[test]
 fn new_chats_fork_the_repository_main_chat() {
-    let write = serde_json::json!({ "path": "a.txt", "content": "a\n" });
+    let write = |path: &str| serde_json::json!({ "path": path, "content": format!("{path}\n") });
+    let commit = |message: &str| serde_json::json!({ "message": message });
     let llm = ScriptedModel::new()
         .turn(|t| t.text("first"))
         .turn(|t| t.text("hello back"))
         .turn(|t| t.text("second"))
-        .turn(|t| t.tool_call("write", write.clone()))
-        .turn(|t| t.text("wrote a"));
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
+        .turn(|t| t.text("wrote a"))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
+        .turn(|t| t.text("wrote b"));
     let (host, mut events) = host(llm.clone());
     let main = host.main_of(REPO).unwrap();
     assert_eq!(host.main_of(REPO).unwrap(), main, "made once");
@@ -206,7 +213,27 @@ fn new_chats_fork_the_repository_main_chat() {
     wait_until_done(&host, &third.id);
     host.land(&third.id).unwrap();
     let dir = host.workspace(&main).unwrap();
-    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "a\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "a.txt\n"
+    );
+    let project = host.project_of(REPO).unwrap();
+    let on_trunk = |path: &str| {
+        project
+            .file_at(&project.trunk().unwrap(), path)
+            .unwrap()
+            .map(|(bytes, _)| bytes)
+    };
+    assert_eq!(on_trunk("a.txt").as_deref(), Some(&b"a.txt\n"[..]));
+
+    // The main chat's own commit moves trunk too; it never merges.
+    host.resume(&main, "write b", &ModelChoice::default())
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    assert_eq!(on_trunk("b.txt").as_deref(), Some(&b"b.txt\n"[..]));
+    assert!(host.merge(&main).is_err(), "main has nothing to merge");
+    llm.assert_exhausted();
 }
 
 /// A run shows its prompt's first line until a model writes its title;

@@ -254,6 +254,19 @@ impl Project {
         Ok(id.hex())
     }
 
+    /// The name of trunk's bookmark: the default branch, else `main`,
+    /// `master` or `trunk`, whichever is set; the default branch, else
+    /// `main`, when none is.
+    pub fn trunk_name(&self) -> Result<String, VcsError> {
+        let repo = self.load()?;
+        Ok(self
+            .trunk_bookmark(&repo)
+            .map(|(name, _)| name)
+            .unwrap_or_else(|| {
+                self.default_branch().unwrap_or_else(|| "main".to_owned())
+            }))
+    }
+
     /// Trunk's bookmark and the commit it names: the default branch, else
     /// `main`, `master` or `trunk`.
     fn trunk_bookmark(

@@ -16,8 +16,11 @@ use crate::{
 
 /// Where `run` lands, as its buttons name it: its parent's title for a
 /// fork, `main` for a top-level run. None for a sub-agent, which lands
-/// as it returns.
+/// as it returns, and for a main chat, which commits on trunk.
 pub fn target(ws: &Workspace, run: &RunView) -> Option<String> {
+    if ws.is_main(&run.id) {
+        return None;
+    }
     match &run.origin {
         Origin::Fork { from, .. } => Some(ws.run(from).map_or_else(
             || "its parent".to_owned(),

@@ -126,6 +126,9 @@ pub struct RunWorkspace {
     pending: Arc<Mutex<Vec<Pending>>>,
     /// The run the workspace serves, once it has started.
     run: Arc<Mutex<Option<RunId>>>,
+    /// The bookmark the run's commits move, instead of `tau/<run>`: a
+    /// main chat's, which commits on trunk.
+    commits_to: Option<String>,
 }
 
 impl fmt::Debug for RunWorkspace {
@@ -155,7 +158,21 @@ impl RunWorkspace {
             base: None,
             pending: Arc::default(),
             run: Arc::default(),
+            commits_to: None,
         })
+    }
+
+    /// Moves `bookmark` with the run's commits instead of `tau/<run>`:
+    /// a repository's main chat commits on trunk's bookmark.
+    pub fn commits_to(mut self, bookmark: impl Into<String>) -> Self {
+        self.commits_to = Some(bookmark.into());
+        self
+    }
+
+    /// The bookmark `run`'s commits move: [`Self::commits_to`]'s, else
+    /// [`bookmark`]'s.
+    pub fn bookmark_of(&self, run: &RunId) -> String {
+        self.commits_to.clone().unwrap_or_else(|| bookmark(run))
     }
 
     /// Starts a new run's workspace on `commit` (a full commit id in
@@ -254,6 +271,7 @@ impl Plugin for RunWorkspace {
             model: plan.model().to_owned(),
             since,
             held: false,
+            bookmark: self.bookmark_of(&ctx.run),
         }))
     }
 }
@@ -269,6 +287,8 @@ struct Turns {
     since: Option<String>,
     /// The run was asked once to commit before stopping.
     held: bool,
+    /// The bookmark the run's commits move.
+    bookmark: String,
 }
 
 #[async_trait]
@@ -300,7 +320,7 @@ impl PluginRun for Turns {
         }
         let record = match self
             .vcs
-            .end_turn(bookmark(&ctx.run), self.since.clone())
+            .end_turn(self.bookmark.clone(), self.since.clone())
             .await
         {
             Ok(snapshot) => {
@@ -406,7 +426,7 @@ impl PluginRun for Turns {
         }
         let _ = self
             .vcs
-            .commit_all(message.trim(), bookmark(&ctx.run))
+            .commit_all(message.trim(), self.bookmark.clone())
             .await;
     }
 }

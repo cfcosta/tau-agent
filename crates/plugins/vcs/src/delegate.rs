@@ -201,7 +201,7 @@ impl AgentTool for Delegate {
             model: args["model"].as_str().map(str::to_owned),
             effort: args["effort"].as_str().and_then(ReasoningEffort::parse),
         };
-        let parent_bookmark = bookmark(&ctx.run);
+        let parent_bookmark = self.parent.bookmark_of(&ctx.run);
         let project = self.parent.project().clone();
 
         // 1. The caller's committed work, as the sub-agent's base. The

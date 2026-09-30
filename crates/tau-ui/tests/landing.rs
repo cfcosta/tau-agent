@@ -1,8 +1,8 @@
-//! Landing and merging through the real host and the workspace
-//! (ADR 0014): a run proposes its landing with `vcs_land` and its card
-//! opens once it stops; a top-level run merges into main; a merge that
-//! conflicts starts the run's own turn to resolve, and trunk moves once
-//! that turn ends.
+//! Landing through the real host and the workspace (ADR 0014): a run
+//! proposes its landing with `vcs_land` and its card opens once it
+//! stops. Every chat forks its repository's main chat, which commits on
+//! trunk, so landing on it moves main; a landing that conflicts starts
+//! the main chat's turn to resolve it, and its commit moves main too.
 
 use std::{path::Path, process::Command, time::Duration};
 
@@ -87,7 +87,7 @@ fn landing(
 }
 
 #[gpui::test]
-fn runs_propose_merge_and_resolve_into_main(cx: &mut TestAppContext) {
+fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let src = tempfile::tempdir().unwrap();
     git(src.path(), &["init", "--quiet"]);
@@ -147,7 +147,7 @@ fn runs_propose_merge_and_resolve_into_main(cx: &mut TestAppContext) {
     cx.update(|_, cx| host.attach(&workspace, events, cx));
 
     // The first run proposed its landing: once it stops, the card opens
-    // with what merging into main would do.
+    // with what landing on the main chat would do.
     let one = start(&workspace, &mut cx, "write one");
     finished(&workspace, &mut cx, &one);
     until(&mut cx, "the proposed landing's preview", |cx| {
@@ -164,17 +164,23 @@ fn runs_propose_merge_and_resolve_into_main(cx: &mut TestAppContext) {
     assert_eq!(preview.changes.len(), 1);
     assert!(preview.conflicts.is_empty());
 
-    // The second run merges into main first, cleanly.
+    // Every chat forks the main chat, which commits on trunk: landing
+    // on it moves main.
+    let main = workspace.read_with(&cx, |ws, _| {
+        ws.catalog().repos[0].main.clone().expect("a main chat")
+    });
+
+    // The second run lands on the main chat first, cleanly: main moves.
     let two = start(&workspace, &mut cx, "write two");
     finished(&workspace, &mut cx, &two);
     workspace.update(&mut cx, |ws, cx| ws.land(&two, cx));
-    until(&mut cx, "the second run to merge", |cx| {
+    until(&mut cx, "the second run to land", |cx| {
         workspace.read_with(cx, |ws, _| ws.is_closed(&two))
     });
     workspace.read_with(&cx, |ws, _| {
-        let items = &ws.run(&two).unwrap().items;
+        let items = &ws.run(&main).unwrap().items;
         assert!(
-            matches!(items.last(), Some(Item::Merged(card)) if card.into == "main"),
+            matches!(items.last(), Some(Item::Landed(card)) if card.from == two),
             "{items:?}"
         );
     });
@@ -184,8 +190,8 @@ fn runs_propose_merge_and_resolve_into_main(cx: &mut TestAppContext) {
         b"two\n"
     );
 
-    // Now the first run's merge conflicts: it resolves in a turn tau
-    // starts, and main moves to it once that turn ends.
+    // Now the first run's landing conflicts: the main chat resolves it
+    // in a turn tau starts, and its commit moves main.
     workspace.update(&mut cx, |ws, cx| ws.preview_landing(&one, cx));
     until(&mut cx, "the new preview", |cx| {
         matches!(
@@ -200,22 +206,24 @@ fn runs_propose_merge_and_resolve_into_main(cx: &mut TestAppContext) {
     };
     assert_eq!(preview.conflicts, ["README.md"]);
     workspace.update(&mut cx, |ws, cx| ws.land(&one, cx));
-    until(&mut cx, "the first run to merge", |cx| {
-        workspace.read_with(cx, |ws, _| ws.is_closed(&one))
+    until(&mut cx, "the main chat to resolve", |cx| {
+        project
+            .file_at(&project.trunk().unwrap(), "README.md")
+            .unwrap()
+            .is_some_and(|(bytes, _)| bytes == b"one and two\n")
+            && workspace.read_with(cx, |ws, _| {
+                ws.is_closed(&one)
+                    && ws.run(&main).is_some_and(|view| !view.status.is_live())
+            })
     });
     workspace.read_with(&cx, |ws, _| {
-        let items = &ws.run(&one).unwrap().items;
+        let items = &ws.run(&main).unwrap().items;
         let tau = items.iter().find_map(|item| match item {
             Item::Tau(text) => Some(text.clone()),
             _ => None,
         });
         let tau = tau.expect("tau's resolving turn");
         assert!(tau.contains("`README.md`"), "{tau}");
-        assert!(
-            matches!(items.last(), Some(Item::Merged(_))),
-            "{:?}",
-            items.last()
-        );
     });
     llm.assert_exhausted();
     let trunk = project.trunk().unwrap();

@@ -400,6 +400,21 @@ the run itself does the moving and the resolving:
   its ancestors: `<name> has moved on past this run; merge it again`.
 - Merging is local: nothing is pushed.
 
+## A repository's main chat
+
+Each repository has a main chat, a top-level run that every other chat
+forks from. It commits on trunk: its `RunWorkspace` is built with
+`commits_to(project.trunk_name())`, so its commits, its turns'
+snapshots, the chats that land on it and its sub-agents all move
+trunk's bookmark, not `tau/<run>`. It has nothing to land or merge: it
+does not get `vcs_land`, the host refuses to merge it, and its bar
+offers neither.
+
+Trunk can move without it, when an update brings commits from GitHub.
+Before each of its turns, and before a chat lands on it, the host moves
+its workspace onto trunk's head (`Vcs::move_onto`), so its next commit
+moves trunk forward rather than aside.
+
 ## Delegating to a sub-agent
 
 `Delegate` is the `delegate` tool (`{ task, model?, effort? }`): a run
