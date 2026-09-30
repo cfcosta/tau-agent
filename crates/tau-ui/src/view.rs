@@ -14,9 +14,12 @@ use tau_agent::{
     event::{LimitKind, RunEvent, StopReason},
     tool::{RunId, ToolOutput},
 };
-use tau_ai::{
-    codex::limits::{RateLimits, Window},
-    message::{AssistantBlock, InputBlock, Message, Usage, UserContent},
+use tau_ai::message::{
+    AssistantBlock,
+    InputBlock,
+    Message,
+    Usage,
+    UserContent,
 };
 
 use crate::{
@@ -64,9 +67,6 @@ pub struct RunView {
     pub constitution: ConstitutionStats,
     /// The conversation's goal, from tau-goal's reports and records.
     pub goal: Option<tau_goal::Goal>,
-    /// The ChatGPT plan's limits when the run started, to tell what it
-    /// used of them; `None` when none were known.
-    pub limits_at_start: Option<RateLimits>,
     /// What the pruning plugin said about its pass, for the rewrite it
     /// explains, which comes right after.
     pending_rewrite: Option<String>,
@@ -725,57 +725,6 @@ impl ContextParts {
     }
 }
 
-/// A usage window's name: `5-hour window`, `This week`.
-pub fn window_label(minutes: u64) -> String {
-    match minutes {
-        10_080 => "This week".into(),
-        1_440 => "Today".into(),
-        minutes if minutes % 1_440 == 0 => {
-            format!("{}-day window", minutes / 1_440)
-        }
-        minutes if minutes % 60 == 0 => format!("{}-hour window", minutes / 60),
-        minutes => format!("{minutes}-minute window"),
-    }
-}
-
-/// How long until `resets_at`, from `now`, both in seconds since the
-/// Unix epoch: `resets in 1h 48m`.
-pub fn resets_in(resets_at: i64, now: i64) -> String {
-    let left = (resets_at - now).max(0) as u64;
-    let (days, hours, minutes) =
-        (left / 86_400, left % 86_400 / 3_600, left % 3_600 / 60);
-    match (days, hours) {
-        (0, 0) if minutes == 0 => "resets in under a minute".into(),
-        (0, 0) => format!("resets in {minutes}m"),
-        (0, _) => format!("resets in {hours}h {minutes}m"),
-        _ => format!("resets in {days}d {hours}h"),
-    }
-}
-
-/// A ChatGPT plan's name as the person knows it: `pro` is `ChatGPT
-/// Pro`.
-pub fn plan_label(plan: Option<&str>) -> String {
-    match plan {
-        None | Some("") => "ChatGPT".into(),
-        Some(plan) => {
-            let mut chars = plan.chars();
-            let first = chars.next().map(|c| c.to_uppercase().to_string());
-            format!("ChatGPT {}{}", first.unwrap_or_default(), chars.as_str())
-        }
-    }
-}
-
-/// The points of `window` a run used since `start`: `None` when the
-/// window was not known then, or reset since.
-pub fn used_since(window: &Window, start: &RateLimits) -> Option<f64> {
-    let before = start
-        .windows
-        .iter()
-        .find(|then| then.minutes == window.minutes)?;
-    (before.resets_at == window.resets_at)
-        .then(|| (window.used_percent - before.used_percent).max(0.0))
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginStatus {
     pub name: String,
@@ -932,7 +881,6 @@ impl RunView {
             cost_before: 0.0,
             constitution: ConstitutionStats::default(),
             goal: None,
-            limits_at_start: None,
             pending_rewrite: None,
         }
     }
@@ -3375,34 +3323,5 @@ mod tests {
         view.context.used = 100;
         let parts = view.context_parts().unwrap();
         assert_eq!((parts.fixed, parts.conversation), (0, 100));
-    }
-
-    #[test]
-    fn limits_read_as_people_say_them() {
-        assert_eq!(window_label(300), "5-hour window");
-        assert_eq!(window_label(10_080), "This week");
-        assert_eq!(resets_in(1_000 + 6_480, 1_000), "resets in 1h 48m");
-        assert_eq!(resets_in(1_000 + 1_320, 1_000), "resets in 22m");
-        assert_eq!(
-            resets_in(1_000 + 3 * 86_400 + 7_200, 1_000),
-            "resets in 3d 2h"
-        );
-        assert_eq!(resets_in(0, 1_000), "resets in under a minute");
-        assert_eq!(plan_label(Some("pro")), "ChatGPT Pro");
-        assert_eq!(plan_label(None), "ChatGPT");
-
-        let window = |used, resets_at| Window {
-            used_percent: used,
-            minutes: 300,
-            resets_at,
-        };
-        let start = RateLimits {
-            plan: None,
-            limit_reached: false,
-            windows: vec![window(40.0, 9)],
-            credits: None,
-        };
-        assert_eq!(used_since(&window(61.0, 9), &start), Some(21.0));
-        assert_eq!(used_since(&window(3.0, 99), &start), None, "it reset");
     }
 }

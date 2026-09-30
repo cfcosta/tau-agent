@@ -73,14 +73,20 @@ pub enum GitHub {
 pub enum ModelAccess {
     #[default]
     None,
-    /// A browser sign-in is open at `url`, or a device code is waiting.
+    /// A ChatGPT sign-in is open in the browser at `url`, once known;
+    /// its redirect can also be pasted. An API key being saved has no
+    /// `url`.
     SigningIn {
         url: Option<String>,
-        device: Option<DeviceCode>,
     },
-    /// Runs can start. `label` reads like `gpt-5.5 · Codex`.
+    /// Runs can start. `label` reads like `gpt-5.5 · ChatGPT plan`.
     Connected {
         label: String,
+    },
+    /// Signed in to ChatGPT as `account`, but without plan usage: runs
+    /// cannot use the plan until it is enabled, or an API key is added.
+    PlanDisabled {
+        account: String,
     },
     Failed(String),
 }

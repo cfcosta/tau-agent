@@ -218,7 +218,7 @@ fn welcome(
         ),
         (
             "Connect a model",
-            "A ChatGPT Plus or Pro sign-in, or an OpenAI API key.",
+            "Your ChatGPT plan, through Sign in with ChatGPT, or an OpenAI API key.",
         ),
         (
             "Pick repositories",
@@ -824,39 +824,103 @@ fn model(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let codex_state = match &ws.setup.model {
-        ModelAccess::SigningIn {
-            device: Some(code), ..
-        } => Some(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(sp(1.5))
-                .child(mono(code.code.clone(), Type::HEADLINE, t.text))
-                .child(div().typeset(Type::SMALL).child(prose(
-                    &format!("Enter it at `{}`", code.url),
-                    t.muted,
-                    t,
-                ))),
-        ),
-        ModelAccess::SigningIn { .. } => Some(notice(
+    let chatgpt_state = match &ws.setup.model {
+        ModelAccess::SigningIn { url: Some(url) } => {
+            let url = url.clone();
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(2.5))
+                    .child(notice(
+                        Icon::Spinner,
+                        "Finish signing in in your browser…",
+                        t.accent,
+                        Type::SMALL,
+                        t,
+                    ))
+                    .child(
+                        div()
+                            .id("chatgpt-open-again")
+                            .child(text_link(
+                                "The page did not open? Open it again",
+                                Type::SMALL,
+                                t,
+                            ))
+                            .on_click(move |_, _, cx| cx.open_url(&url)),
+                    )
+                    .child(label(
+                        "Or paste the address the browser ended on",
+                        t,
+                    ))
+                    .child(field(&ws.chatgpt_callback, true, t))
+                    .child(
+                        div()
+                            .id("chatgpt-paste")
+                            .child(big_button(
+                                "Finish signing in",
+                                None,
+                                ButtonKind::Secondary,
+                                t,
+                            ))
+                            .on_click(cx.listener(|ws, _, _, cx| {
+                                ws.submit_chatgpt_callback_from_button(cx)
+                            })),
+                    ),
+            )
+        }
+        ModelAccess::SigningIn { url: None } => Some(div().child(notice(
             Icon::Spinner,
-            "Finish signing in in your browser…",
+            "Opening the sign-in page…",
             t.accent,
             Type::SMALL,
             t,
-        )),
-        ModelAccess::Failed(error) => {
-            Some(notice(Icon::Warning, error.clone(), t.red, Type::SMALL, t))
-        }
+        ))),
+        ModelAccess::PlanDisabled { account } => Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(sp(2.5))
+                .child(notice(
+                    Icon::Warning,
+                    format!(
+                        "Signed in as {account}, but ChatGPT plan use isn't \
+                         enabled. Enable it, or add an OpenAI API key."
+                    ),
+                    t.accent,
+                    Type::SMALL,
+                    t,
+                ))
+                .child(
+                    div()
+                        .id("chatgpt-enable")
+                        .child(big_button(
+                            "Enable ChatGPT plan use",
+                            None,
+                            ButtonKind::Secondary,
+                            t,
+                        ))
+                        .on_click(
+                            cx.listener(|ws, _, _, cx| {
+                                ws.enable_plan_usage(cx)
+                            }),
+                        ),
+                ),
+        ),
+        ModelAccess::Failed(error) => Some(div().child(notice(
+            Icon::Warning,
+            error.clone(),
+            t.red,
+            Type::SMALL,
+            t,
+        ))),
         _ => None,
     };
-    let codex = option(
+    let chatgpt = option(
         Icon::Chat,
-        "ChatGPT Plus or Pro",
-        "Use your subscription through OpenAI Codex. Runs count against \
-         your plan's limits, not an API bill.",
+        "ChatGPT plan",
+        "Sign in with ChatGPT to use your plan. Eligible usage counts \
+         against your plan's limits, not an API bill.",
         Some("Recommended"),
         true,
         t,
@@ -868,32 +932,18 @@ fn model(
             .gap(sp(2.5))
             .child(
                 div()
-                    .id("codex-sign-in")
+                    .id("chatgpt-sign-in")
                     .child(big_button(
-                        "Sign in with ChatGPT",
+                        "Continue with ChatGPT",
                         Some(Icon::Arrow),
                         ButtonKind::Primary,
                         t,
                     ))
-                    .on_click(
-                        cx.listener(|ws, _, _, cx| ws.sign_in_codex(false, cx)),
-                    ),
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        ws.sign_in_chatgpt(None, false, cx)
+                    })),
             )
-            .child(
-                div().flex().justify_center().child(
-                    div()
-                        .id("codex-device")
-                        .child(text_link(
-                            "No browser here? Use a device code",
-                            Type::SMALL,
-                            t,
-                        ))
-                        .on_click(cx.listener(|ws, _, _, cx| {
-                            ws.sign_in_codex(true, cx)
-                        })),
-                ),
-            )
-            .children(codex_state),
+            .children(chatgpt_state),
     );
     let api = option(
         Icon::Key,
@@ -929,7 +979,7 @@ fn model(
         .flex()
         .gap(sp(4.))
         .when(compact, |row| row.flex_col())
-        .child(codex.flex_1().min_w(px(0.)))
+        .child(chatgpt.flex_1().min_w(px(0.)))
         .child(api.flex_1().min_w(px(0.)));
     column(960., 6., compact)
         .when(ws.setup_goal.is_some(), |col| {
@@ -938,7 +988,9 @@ fn model(
                     div()
                         .id("setup-back")
                         .child(text_link("Back", Type::SMALL, t))
-                        .on_click(cx.listener(|ws, _, _, cx| ws.leave_setup(cx))),
+                        .on_click(
+                            cx.listener(|ws, _, _, cx| ws.leave_setup(cx)),
+                        ),
                 ),
             )
         })
@@ -959,8 +1011,8 @@ fn model(
         })
         .child(heading_block(
             "Connect a model",
-            "Runs talk to OpenAI's Responses API over one WebSocket per run. \
-             Pick how tau pays for it.",
+            "Runs talk to OpenAI's Responses API over a WebSocket. Pick how \
+             tau pays for it.",
             compact,
             t,
         ))
@@ -979,11 +1031,15 @@ fn model(
                 .typeset(Type::SMALL)
                 .text_color(t.muted)
                 .line_height(relative(1.5))
-                .child(div().mt(sp(0.25)).child(icon(Icon::Info, IconSize::MEDIUM, t.muted)))
+                .child(div().mt(sp(0.25)).child(icon(
+                    Icon::Info,
+                    IconSize::MEDIUM,
+                    t.muted,
+                )))
                 .child(div().flex_1().min_w(px(0.)).child(
-                    "Signed in to the Codex CLI already? tau does not reuse its \
-                     sign-in: refreshing a shared token would sign the CLI out. \
-                     Sign in here once instead.",
+                    "tau keeps each ChatGPT sign-in in its config directory, \
+                     readable only by you. You can review what apps use of \
+                     your plan in ChatGPT settings.",
                 )),
         )
         .into_any_element()

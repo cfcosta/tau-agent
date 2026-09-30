@@ -10,10 +10,7 @@ use tau_agent::{
     event::{RunEvent, StopReason},
     tool::{RunId, ToolOutput},
 };
-use tau_ai::{
-    codex::limits::{RateLimits, Window},
-    message::{Usage, UsageCost},
-};
+use tau_ai::message::{Usage, UsageCost};
 
 use crate::{
     Workspace,
@@ -32,6 +29,7 @@ use crate::{
         Seam,
         StoreInfo,
     },
+    models::{AccountState, ChatGptAccount},
     pull_request::{Checks, PrCommit, PrState, PullRequest},
     setup::{
         CloneState,
@@ -92,41 +90,7 @@ pub fn retry_after() -> RunView {
         before: None,
     };
     view.plugins = plugins(["waiting", "waiting", "watching edits", "idle"]);
-    view.limits_at_start = Some(rate_limits_at(57.0, 21.0));
     view
-}
-
-/// A ChatGPT Plus plan's limits as the demo shows them: a five-hour
-/// window 61% used, resetting in an hour and 48 minutes, and the week
-/// 23% used.
-pub fn rate_limits() -> RateLimits {
-    rate_limits_at(61.0, 23.0)
-}
-
-/// The demo plan with its five hours and its week used this much.
-fn rate_limits_at(hours: f64, week: f64) -> RateLimits {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() as i64);
-    // Whole minutes ahead, plus a little, so the countdown reads evenly.
-    let reset = |minutes: i64| (now / 60 + minutes) * 60 + 30;
-    RateLimits {
-        plan: Some("plus".into()),
-        limit_reached: false,
-        windows: vec![
-            Window {
-                used_percent: hours,
-                minutes: 300,
-                resets_at: reset(108),
-            },
-            Window {
-                used_percent: week,
-                minutes: 10_080,
-                resets_at: reset(4 * 1_440 + 180),
-            },
-        ],
-        credits: None,
-    }
 }
 
 /// A goal's records as tau-goal stores them: `working` (two checks, not
@@ -674,7 +638,7 @@ pub fn setup(step: SetupStep) -> Setup {
     };
     if stage >= 2 {
         setup.model = ModelAccess::Connected {
-            label: "gpt-5.5 · Codex".into(),
+            label: "gpt-5.5 · ChatGPT plan".into(),
         };
     }
     if stage >= 3 {
@@ -801,25 +765,39 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
             | WorkspaceEvent::GitHubToken { .. } => {
                 later(vec![(600, signed_in())], cx)
             }
-            WorkspaceEvent::CodexSignIn { device } => {
+            // The browser never opens in the demo: the page waits, and a
+            // pasted redirect finishes it.
+            WorkspaceEvent::ChatGptSignIn { .. } => {
                 let pending = ModelAccess::SigningIn {
-                    url: None,
-                    device: device.then(|| DeviceCode {
-                        code: "K7PX-2QRM".into(),
-                        url: "auth.openai.com/codex/device".into(),
-                        expires: "15 minutes".into(),
-                    }),
+                    url: Some(DEMO_AUTHORIZE_URL.into()),
                 };
+                later(vec![(300, setup(SetupUpdate::Model(pending)))], cx)
+            }
+            WorkspaceEvent::ChatGptCallback { .. } => {
                 let connected = ModelAccess::Connected {
-                    label: "gpt-5.5 · Codex".into(),
+                    label: "gpt-5.5 · ChatGPT plan".into(),
                 };
-                later(
-                    vec![
-                        (300, setup(SetupUpdate::Model(pending))),
-                        (2500, setup(SetupUpdate::Model(connected))),
-                    ],
-                    cx,
-                )
+                later(vec![(600, setup(SetupUpdate::Model(connected)))], cx)
+            }
+            WorkspaceEvent::SwitchChatGpt { account } => {
+                let account = account.clone();
+                workspace.update(cx, |ws, cx| {
+                    let mut catalog = ws.catalog().clone();
+                    let access = &mut catalog.models.access;
+                    for known in &mut access.accounts {
+                        known.active = known.id == account;
+                    }
+                    access.chatgpt =
+                        access.active_account().is_some_and(|active| {
+                            active.state == AccountState::Plan
+                        });
+                    access.label = if access.chatgpt {
+                        "ChatGPT plan".into()
+                    } else {
+                        "signed out".into()
+                    };
+                    ws.set_catalog(catalog, cx);
+                });
             }
             WorkspaceEvent::ApiKey { .. } => {
                 let connected = ModelAccess::Connected {
@@ -1025,7 +1003,12 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     access.saved.retain(|saved| *saved != kind);
                     match kind {
                         crate::models::AccessKind::ChatGpt => {
-                            access.chatgpt = false
+                            access.chatgpt = false;
+                            for account in &mut access.accounts {
+                                if account.active {
+                                    account.state = AccountState::SignedOut;
+                                }
+                            }
                         }
                         crate::models::AccessKind::ApiKey => {
                             access.api_key = false
@@ -1423,8 +1406,65 @@ fn tau_agent_rules(rule: RuleFn<'_>) -> Constitution {
     }
 }
 
-/// The models the demo offers: tau-ai's, as a ChatGPT Pro sign-in sees
-/// them, with defaults for each of the demo's agents.
+/// Where the demo's ChatGPT sign-in would open: OpenAI's authorization
+/// page, without the parameters of a real attempt.
+pub const DEMO_AUTHORIZE_URL: &str =
+    "https://auth.openai.com/api/accounts/authorize";
+
+/// What the plan route answers when the plan's usage limit is reached,
+/// as the transport keeps it.
+pub fn usage_limit() -> tau_ai::refusal::Refusal {
+    tau_ai::refusal::Refusal {
+        recovery: tau_ai::retry::Recovery::UsageLimit,
+        status: Some(429),
+        code: Some("subscription_sharing_usage_limit_exceeded".into()),
+        request_id: Some("req_demo".into()),
+        body: String::new(),
+        message: "OpenAI refused the request: HTTP 429 \
+                  subscription_sharing_usage_limit_exceeded (request req_demo)"
+            .into(),
+    }
+}
+
+/// The models a ChatGPT Plus account listed on 2026-09-29, in the
+/// server's order.
+pub fn plan_model_list() -> Vec<tau_ai::chatgpt::ModelInfo> {
+    [
+        ("gpt-6-astra", "GPT-6-Astra"),
+        ("gpt-5.6-sol", "GPT-5.6-Sol"),
+        ("gpt-5.6-terra", "GPT-5.6-Terra"),
+        ("gpt-5.6-luna", "GPT-5.6-Luna"),
+        ("gpt-5.5", "gpt-5.5"),
+    ]
+    .into_iter()
+    .map(|(slug, name)| tau_ai::chatgpt::ModelInfo {
+        slug: slug.into(),
+        display_name: name.into(),
+    })
+    .collect()
+}
+
+/// The demo's ChatGPT sign-ins: a personal account whose plan runs use,
+/// and a work one.
+pub fn chatgpt_accounts() -> Vec<ChatGptAccount> {
+    vec![
+        ChatGptAccount {
+            id: "oaiapp_demo1-1a2b3c".into(),
+            label: "you@example.com".into(),
+            state: AccountState::Plan,
+            active: true,
+        },
+        ChatGptAccount {
+            id: "oaiapp_demo2-4d5e6f".into(),
+            label: "you@work.example".into(),
+            state: AccountState::PlanDisabled,
+            active: false,
+        },
+    ]
+}
+
+/// The models the demo offers: the plan's, as a ChatGPT Plus account
+/// lists them, with defaults for each of the demo's agents.
 pub fn models() -> crate::models::Models {
     use crate::models::{
         AccessInfo,
@@ -1432,7 +1472,7 @@ pub fn models() -> crate::models::Models {
         ModelChoice,
         ModelSettings,
         Models,
-        coding_models,
+        plan_models,
     };
     let mut settings = ModelSettings::default();
     settings.set_default(
@@ -1443,15 +1483,20 @@ pub fn models() -> crate::models::Models {
         "tau-memory",
         ModelChoice::new("gpt-5.6-luna", Effort::Low),
     );
+    // The note on the plan shows only where asked for (`--open
+    // plan-notice`).
+    settings.plan_notice_seen = true;
     Models {
-        options: coding_models(|id| tau_ai::codex::MODELS.contains(&id)),
+        options: plan_models(&plan_model_list()),
         settings,
         access: AccessInfo {
-            label: "ChatGPT Pro".into(),
+            label: "ChatGPT plan".into(),
             chatgpt: true,
             api_key: false,
             saved: vec![crate::models::AccessKind::ChatGpt],
             jev: true,
+            accounts: chatgpt_accounts(),
+            models_error: None,
         },
         agents: vec![
             ("coder".into(), "Runs you start from the composer.".into()),

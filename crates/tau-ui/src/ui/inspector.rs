@@ -1,14 +1,11 @@
 //! The run's side panel: one column of what the run is doing and what
-//! it may still spend. From the top: its goal, the ChatGPT plan's usage
-//! limits, the context window and what fills it, the run's own limits
+//! it may still spend. From the top: its goal, the context window and
+//! what fills it, the run's own limits
 //! and outcome, its plan, its sub-agents, and its plugins. The event log
 //! opens from a bar pinned under it. The phone layout shows the same
 //! column in a bottom sheet.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use gpui::{Context, Div, Hsla, SharedString, div, prelude::*, px, relative};
-use tau_ai::codex::limits::RateLimits;
+use gpui::{Context, Div, SharedString, div, prelude::*, px, relative};
 
 use super::{
     bar,
@@ -24,19 +21,7 @@ use crate::{
     assets::Icon,
     route::Route,
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
-    view::{
-        ChildKind,
-        Item,
-        Pruned,
-        RunStatus,
-        RunView,
-        plan_label,
-        resets_in,
-        tokens,
-        usd,
-        used_since,
-        window_label,
-    },
+    view::{ChildKind, Item, Pruned, RunStatus, RunView, tokens, usd},
     workspace::Workspace,
 };
 
@@ -86,162 +71,9 @@ pub fn content(
     } else {
         body
     };
-    let body = match ws.rate_limits() {
-        Some(limits) => body.child(subscription(run, limits, t)),
-        None => body,
-    };
     let body = body.child(context(run, t, cx));
     let body = run_section(ws, run, body, t, cx);
     plugins_section(ws, run, body, t, cx)
-}
-
-/// How far the level `used` (0 to 100) is toward the limit, as a color:
-/// calm, then amber past three quarters, red past nine tenths.
-fn level(used: f64, t: &Theme) -> Hsla {
-    if used >= 90.0 {
-        t.red
-    } else if used >= 75.0 {
-        t.accent
-    } else {
-        t.blue
-    }
-}
-
-/// The ChatGPT plan's usage windows: how much of each is used, when it
-/// resets, and what this run took of it. A window near its end gets a
-/// warning on top.
-fn subscription(run: &RunView, limits: &RateLimits, t: &Theme) -> Div {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() as i64);
-    let fullest = limits
-        .windows
-        .iter()
-        .max_by(|a, b| a.used_percent.total_cmp(&b.used_percent));
-    let warning = fullest
-        .filter(|window| limits.limit_reached || window.used_percent >= 90.0)
-        .map(|window| {
-            let name = window_label(window.minutes);
-            let (title, detail) = if limits.limit_reached {
-                (
-                    format!("{name}: used up"),
-                    format!(
-                        "Requests wait until it resets; it {}.",
-                        resets_in(window.resets_at, now)
-                    ),
-                )
-            } else {
-                (
-                    format!("{name}: almost used"),
-                    format!(
-                        "At 100% requests wait until it resets; it {}.",
-                        resets_in(window.resets_at, now)
-                    ),
-                )
-            };
-            div()
-                .flex()
-                .gap(sp(2.5))
-                .p(sp(3.))
-                .rounded(radius::BOX)
-                .border_1()
-                .border_color(t.red_border)
-                .bg(t.danger_surface)
-                .child(icon(Icon::Warning, IconSize::SMALL, t.red))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(sp(1.))
-                        .child(
-                            div()
-                                .typeset(Type::SMALL)
-                                .text_color(t.removed_text)
-                                .child(title),
-                        )
-                        .child(
-                            div()
-                                .typeset(Type::CAPTION)
-                                .text_color(t.muted)
-                                .line_height(relative(1.5))
-                                .child(detail),
-                        ),
-                )
-        });
-    let windows = limits.windows.iter().map(|window| {
-        let color = level(window.used_percent, t);
-        let mut detail = resets_in(window.resets_at, now);
-        if let Some(used) = run
-            .limits_at_start
-            .as_ref()
-            .and_then(|start| used_since(window, start))
-            .filter(|used| *used >= 1.0)
-        {
-            detail.push_str(&format!(" · this run used about {used:.0}%"));
-        }
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(1.5))
-            .child(
-                div()
-                    .flex()
-                    .typeset(Type::SMALL)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(t.text_soft)
-                            .child(window_label(window.minutes)),
-                    )
-                    .child(mono(
-                        format!("{:.0}%", window.used_percent),
-                        Type::SMALL,
-                        if color == t.blue { t.text } else { color },
-                    )),
-            )
-            .child(bar(
-                (window.used_percent / 100.0) as f32,
-                6.,
-                color,
-                t.raised,
-            ))
-            .child(mono(detail, Type::MICRO, t.dim))
-    });
-    let credits = limits
-        .credits
-        .as_ref()
-        .filter(|credits| credits.has_credits || credits.unlimited)
-        .map(|credits| {
-            let value = if credits.unlimited {
-                "unlimited".to_owned()
-            } else {
-                credits.balance.clone()
-            };
-            div()
-                .flex()
-                .typeset(Type::CAPTION)
-                .text_color(t.muted)
-                .child(div().flex_1().child("Credits"))
-                .child(mono(value, Type::CAPTION, t.text))
-        });
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(3.))
-        .children(warning)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .child(heading("Subscription", t).flex_1())
-                .child(super::badge(
-                    plan_label(limits.plan.as_deref()),
-                    t.accent,
-                    t.accent_border,
-                )),
-        )
-        .children(windows)
-        .children(credits)
 }
 
 /// The context window: how full it is, what fills it, where pruning

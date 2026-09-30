@@ -64,7 +64,7 @@ fn setup_moves_on_as_sign_ins_land(cx: &mut TestAppContext) {
             cx,
         );
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
-        ws.sign_in_codex(true, cx);
+        ws.sign_in_chatgpt(None, false, cx);
         ws.update_setup(
             SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
             cx,
@@ -74,7 +74,13 @@ fn setup_moves_on_as_sign_ins_land(cx: &mut TestAppContext) {
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Ready));
     });
     let events = events.borrow();
-    assert_eq!(events[1], WorkspaceEvent::CodexSignIn { device: true });
+    assert_eq!(
+        events[1],
+        WorkspaceEvent::ChatGptSignIn {
+            account: None,
+            consent: false,
+        }
+    );
     assert_eq!(
         events[2],
         WorkspaceEvent::CloneRepos {
@@ -367,10 +373,49 @@ fn open_with_models(
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         let mut catalog = ws.catalog().clone();
-        catalog.models = demo::models();
+        catalog.models = api_key_models();
         ws.set_catalog(catalog, cx);
     });
     (workspace, cx, events)
+}
+
+/// The demo's models on an API key: tau-ai's table, priced per token,
+/// with gpt-5.5-pro locked, as a model the key's account cannot run.
+fn api_key_models() -> tau_ui::models::Models {
+    let mut models = demo::models();
+    models.options = tau_ui::models::coding_models(|id| id != "gpt-5.5-pro");
+    let access = &mut models.access;
+    access.chatgpt = false;
+    access.api_key = true;
+    access.label = "OpenAI API key".into();
+    models
+}
+
+/// On the ChatGPT plan the picker offers the account's models and
+/// never asks about price.
+#[gpui::test]
+fn the_plan_picker_offers_the_accounts_models(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.models = demo::models();
+        ws.set_catalog(catalog, cx);
+        ws.navigate(Route::NewRun, cx);
+        ws.show_picker(PickerTarget::Next, cx);
+        let shown: Vec<String> = ws
+            .catalog()
+            .models
+            .shown("")
+            .iter()
+            .map(|option| option.label().to_owned())
+            .collect();
+        assert_eq!(shown[0], "GPT-6-Astra", "the server's order and names");
+        ws.pick_model("gpt-6-astra", cx);
+        assert!(ws.alert().is_none(), "no price check on the plan");
+        assert_eq!(ws.next_model().model, "gpt-6-astra");
+    });
+    // Drawn, with the plan's line under the composer.
+    cx.run_until_parked();
 }
 
 #[gpui::test]
@@ -402,7 +447,7 @@ fn a_pricey_model_asks_first_and_a_locked_one_is_not_picked(
     let (workspace, mut cx, _) = open_with_models(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.show_picker(PickerTarget::Next, cx);
-        // Locked: the ChatGPT sign-in cannot run it.
+        // Locked: the sign-in cannot run it.
         ws.pick_model("gpt-5.5-pro", cx);
         assert_eq!(ws.next_model().model, "gpt-5.5");
         assert!(ws.alert().is_none());
@@ -1809,39 +1854,172 @@ fn search_opens_again_after_escape(cx: &mut TestAppContext) {
     assert!(searching(&mut cx), "ctrl+k works after the picker");
 }
 
-/// The side panel shows the ChatGPT plan's limits once the host reports
-/// them, each run records them as it starts, and the event log opens
-/// and closes from its bar.
+/// The demo's catalog on the ChatGPT plan, with the note on it not yet
+/// read.
+fn on_plan(ws: &mut Workspace, cx: &mut gpui::Context<Workspace>) {
+    let mut catalog = ws.catalog().clone();
+    catalog.models.settings.plan_notice_seen = false;
+    ws.set_catalog(catalog, cx);
+}
+
+/// On the plan, the note shows until "Got it", which saves that it was
+/// read; the composer says runs use the plan, and "Manage usage" opens
+/// ChatGPT's usage settings.
 #[gpui::test]
-fn the_panel_follows_the_plans_limits(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open(cx);
-    let run = demo::run_id();
+fn the_plan_notice_shows_once_and_the_composer_says_so(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, events) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
-        ws.navigate(Route::Run(run.clone()), cx);
-        assert!(ws.rate_limits().is_none());
-        ws.set_rate_limits(Some(demo::rate_limits()), cx);
-        ws.apply_event(
-            &tau_agent::event::RunEvent::RunStart {
-                run: run.clone(),
-                parent: None,
-                agent: "coder".into(),
-            },
+        ws.navigate(Route::NewRun, cx);
+        on_plan(ws, cx);
+        assert!(ws.shows_plan_notice());
+        assert!(ws.uses_plan());
+    });
+    // Drawn with the note and the line under the composer.
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.dismiss_plan_notice(cx);
+        assert!(!ws.shows_plan_notice());
+        assert!(ws.uses_plan(), "the line stays");
+        ws.manage_usage(cx);
+    });
+    let saved = events.borrow().iter().rev().find_map(|event| match event {
+        WorkspaceEvent::SaveModelSettings(settings) => Some(settings.clone()),
+        _ => None,
+    });
+    assert!(saved.is_some_and(|settings| settings.plan_notice_seen));
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some(tau_ui::models::USAGE_SETTINGS_URL)
+    );
+    // Off the plan, neither shows.
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.models.access.chatgpt = false;
+        catalog.models.settings.plan_notice_seen = false;
+        ws.set_catalog(catalog, cx);
+        assert!(!ws.shows_plan_notice() && !ws.uses_plan());
+    });
+    cx.run_until_parked();
+}
+
+/// A run stopped on the plan's usage limit says so, with "Manage usage"
+/// first; a temporary refusal, already retried, says nothing more.
+#[gpui::test]
+fn a_usage_limit_offers_to_manage_usage(cx: &mut TestAppContext) {
+    use tau_ui::plan_usage::{PlanAction, PlanAlert};
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let mut busy = demo::usage_limit();
+        busy.recovery = tau_ai::retry::Recovery::RetryLater;
+        ws.show_plan_refusal(&busy, cx);
+        assert_eq!(ws.plan_alert(), None);
+        ws.show_plan_refusal(&demo::usage_limit(), cx);
+        let alert = ws.plan_alert().unwrap();
+        assert_eq!(alert, &PlanAlert::UsageLimit);
+        assert_eq!(alert.title(), "Usage limit reached");
+    });
+    // Drawn over the app.
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.plan_action(PlanAction::ManageUsage, cx);
+        assert_eq!(ws.plan_alert(), None);
+    });
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some(tau_ui::models::USAGE_SETTINGS_URL)
+    );
+    // Never a silent switch: nothing asked the host to use another way
+    // to pay.
+    assert!(!events.borrow().iter().any(|event| matches!(
+        event,
+        WorkspaceEvent::SwitchChatGpt { .. }
+            | WorkspaceEvent::ApiKey { .. }
+            | WorkspaceEvent::SignOut(_)
+    )));
+}
+
+/// A sign-in OpenAI no longer takes asks to sign the active account in
+/// again; one without plan usage asks to enable it, from the model
+/// setup, or offers an API key.
+#[gpui::test]
+fn plan_alerts_lead_to_signing_in(cx: &mut TestAppContext) {
+    use tau_ui::plan_usage::{PlanAction, PlanAlert};
+    let (workspace, mut cx, events) = open_demo(cx);
+    let active = demo::chatgpt_accounts()[0].id.clone();
+    workspace.update(&mut cx, |ws, cx| {
+        let mut refusal = demo::usage_limit();
+        refusal.recovery = tau_ai::retry::Recovery::SignInAgain;
+        ws.show_plan_refusal(&refusal, cx);
+        assert!(matches!(
+            ws.plan_alert(),
+            Some(PlanAlert::SignInAgain { .. })
+        ));
+        ws.plan_action(PlanAction::SignInAgain, cx);
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
+        assert_eq!(ws.setup().model, ModelAccess::SigningIn { url: None });
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::ChatGptSignIn {
+            account: Some(active.clone()),
+            consent: false,
+        })
+    );
+    workspace.update(&mut cx, |ws, cx| {
+        let mut refusal = demo::usage_limit();
+        refusal.recovery = tau_ai::retry::Recovery::EnablePlanUsage;
+        ws.show_plan_refusal(&refusal, cx);
+        assert_eq!(ws.plan_alert(), Some(&PlanAlert::EnablePlanUsage));
+        ws.plan_action(PlanAction::EnablePlanUsage, cx);
+    });
+    assert_eq!(
+        events.borrow().last(),
+        Some(&WorkspaceEvent::ChatGptSignIn {
+            account: Some(active),
+            consent: true,
+        })
+    );
+}
+
+/// The account picker: switching asks the host, a sign-in without plan
+/// usage stays on the model step, and a pasted redirect finishes the
+/// sign-in in progress.
+#[gpui::test]
+fn chatgpt_accounts_switch_and_sign_in(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let work = demo::chatgpt_accounts()[1].id.clone();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Models, cx);
+    });
+    // The Models screen, with the accounts.
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.switch_chatgpt(&work, cx);
+        ws.connect_model(cx);
+        ws.sign_in_chatgpt(None, false, cx);
+        ws.update_setup(
+            SetupUpdate::Model(ModelAccess::SigningIn {
+                url: Some(demo::DEMO_AUTHORIZE_URL.into()),
+            }),
             cx,
         );
-        assert_eq!(
-            ws.run(&run).unwrap().limits_at_start,
-            Some(demo::rate_limits())
-        );
-        assert!(!ws.events_open());
-        ws.toggle_events(cx);
-        assert!(ws.events_open());
     });
-    // Drawn with the limits, the context and the open log.
+    // The step waiting for the browser, with the paste field.
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {
-        ws.set_rate_limits(None, cx);
-        ws.toggle_events(cx);
-        assert!(ws.rate_limits().is_none() && !ws.events_open());
+        ws.update_setup(
+            SetupUpdate::Model(ModelAccess::PlanDisabled {
+                account: "you@work.example".into(),
+            }),
+            cx,
+        );
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
     });
     cx.run_until_parked();
+    let events = events.borrow();
+    assert!(events.contains(&WorkspaceEvent::SwitchChatGpt {
+        account: work.clone()
+    }));
 }

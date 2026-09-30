@@ -307,10 +307,19 @@ impl Workspace {
         let models = &self.catalog.models;
         let filter = self.model_search.read(cx).text().to_owned();
         let shown = models.shown(&filter);
+        let plan = models.on_plan();
         let rows = Tier::ALL.into_iter().flat_map(|tier| {
-            let in_tier: Vec<&ModelOption> =
-                shown.iter().copied().filter(|m| m.tier() == tier).collect();
-            let heading = (!in_tier.is_empty()).then(|| {
+            // On the plan, one list in the account's order.
+            let in_tier: Vec<&ModelOption> = if plan {
+                if tier == Tier::Frontier {
+                    shown.clone()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                shown.iter().copied().filter(|m| m.tier() == tier).collect()
+            };
+            let heading = (!in_tier.is_empty() && !plan).then(|| {
                 div()
                     .px(sp(3.5))
                     .pt(sp(2.5))
@@ -320,7 +329,7 @@ impl Workspace {
             });
             let rows: Vec<AnyElement> = in_tier
                 .into_iter()
-                .map(|option| model_row(option, &choice, phone, t, cx))
+                .map(|option| model_row(option, &choice, plan, phone, t, cx))
                 .collect();
             heading.into_iter().chain(rows)
         });
@@ -363,11 +372,7 @@ impl Workspace {
             .typeset(Type::CAPTION)
             .text_color(t.muted)
             .child(ui::icon(
-                if models.access.chatgpt {
-                    Icon::Chat
-                } else {
-                    Icon::Key
-                },
+                if plan { Icon::Chat } else { Icon::Key },
                 IconSize::COMPACT,
                 t.green,
             ))
@@ -412,7 +417,15 @@ impl Workspace {
                     .border_color(t.border)
                     .child(ui::icon(Icon::Search, IconSize::BASE, t.dim))
                     .child(self.model_search.clone())
-                    .child(ui::mono("$ in / out per M", Type::MICRO, t.dim)),
+                    .child(ui::mono(
+                        if plan {
+                            "on your ChatGPT plan"
+                        } else {
+                            "$ in / out per M"
+                        },
+                        Type::MICRO,
+                        t.dim,
+                    )),
             )
             .child(
                 div()
@@ -423,7 +436,18 @@ impl Workspace {
                     .max_h(px(if phone { 380. } else { 420. }))
                     .overflow_y_scroll()
                     .when(empty, |list| {
-                        list.child(ui::empty("No model matches.", t))
+                        list.child(ui::empty(
+                            match (&models.access.models_error, plan) {
+                                (Some(error), _) => format!(
+                                    "Could not list your ChatGPT models: {error}"
+                                ),
+                                (None, true) if filter.trim().is_empty() => {
+                                    "Loading your ChatGPT models…".into()
+                                }
+                                _ => "No model matches.".into(),
+                            },
+                            t,
+                        ))
                     })
                     .children(rows),
             )
@@ -586,6 +610,7 @@ impl Workspace {
 fn model_row(
     option: &ModelOption,
     choice: &ModelChoice,
+    plan: bool,
     phone: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
@@ -616,26 +641,37 @@ fn model_row(
                 .flex()
                 .flex_col()
                 .gap(sp(0.5))
-                .child(ui::mono(option.id.clone(), Type::BODY, name_color))
                 .child(ui::mono(
-                    format!(
-                        "{} · {} per M",
-                        option.context_label(),
-                        option.price()
-                    ),
-                    Type::MICRO,
-                    t.muted,
-                )),
+                    option.label().to_owned(),
+                    Type::BODY,
+                    name_color,
+                ))
+                .when(!plan, |column| {
+                    column.child(ui::mono(
+                        format!(
+                            "{} · {} per M",
+                            option.context_label(),
+                            option.price()
+                        ),
+                        Type::MICRO,
+                        t.muted,
+                    ))
+                }),
         )
     } else {
-        row.child(ui::mono(option.id.clone(), Type::SMALL, name_color).flex_1())
-            .child(ui::mono(option.context_label(), Type::MICRO, t.dim))
+        row.child(
+            ui::mono(option.label().to_owned(), Type::SMALL, name_color)
+                .flex_1(),
+        )
+        .when(option.context > 0, |row| {
+            row.child(ui::mono(option.context_label(), Type::MICRO, t.dim))
+        })
     };
     let row = row
         .when(!option.available, |row| {
             row.child(ui::text("needs an API key", Type::MICRO, t.dim))
         })
-        .when(!phone, |row| {
+        .when(!phone && !plan, |row| {
             row.child(div().w(px(104.)).flex().justify_end().child(ui::mono(
                 option.price(),
                 Type::MICRO,

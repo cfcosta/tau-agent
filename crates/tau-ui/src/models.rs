@@ -140,6 +140,9 @@ impl Tier {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelOption {
     pub id: String,
+    /// What the picker shows: the ChatGPT account's `display_name` on
+    /// the plan; `None` shows the id.
+    pub name: Option<String>,
     pub context: u64,
     /// USD per million input tokens.
     pub input: f64,
@@ -152,6 +155,11 @@ pub struct ModelOption {
 }
 
 impl ModelOption {
+    /// What the picker shows for it.
+    pub fn label(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.id)
+    }
+
     pub fn tier(&self) -> Tier {
         if self.output >= 40. {
             Tier::Frontier
@@ -196,6 +204,9 @@ pub struct ModelSettings {
     pub defaults: Vec<(String, ModelChoice)>,
     /// Models the picker leaves out.
     pub hidden: Vec<String>,
+    /// The user read the note on using their ChatGPT plan, shown once
+    /// after the first sign-in that allows it.
+    pub plan_notice_seen: bool,
     /// Ask before a model whose output costs more than this, in USD per
     /// million tokens; never when `None`.
     pub ask_above: Option<f64>,
@@ -218,6 +229,7 @@ impl Default for ModelSettings {
             .into_iter()
             .map(str::to_owned)
             .collect(),
+            plan_notice_seen: false,
             ask_above: Some(20.),
         }
     }
@@ -271,19 +283,47 @@ impl ModelSettings {
 /// A way to reach models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccessKind {
-    /// A ChatGPT sign-in, through Codex.
+    /// A ChatGPT sign-in, using the plan.
     ChatGpt,
     /// An OpenAI API key.
     ApiKey,
+}
+
+/// Where ChatGPT users review and limit what apps use of their plan
+/// (ChatGPT Settings → Usage).
+pub const USAGE_SETTINGS_URL: &str = tau_ai::chatgpt::USAGE_SETTINGS_URL;
+
+/// What a saved ChatGPT sign-in can do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountState {
+    /// Signed in, and the plan may be used.
+    Plan,
+    /// Signed in, but the user did not allow plan usage: runs cannot use
+    /// it until they enable it, or add an API key.
+    PlanDisabled,
+    /// Signed out, or the sign-in died: sign in again.
+    SignedOut,
+}
+
+/// A saved ChatGPT sign-in, for the account picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatGptAccount {
+    /// Its id in tau's store of sign-ins.
+    pub id: String,
+    /// Its email, kept distinct from the other accounts' labels.
+    pub label: String,
+    pub state: AccountState,
+    /// The account tau signs in with.
+    pub active: bool,
 }
 
 /// How the host reaches models, for the picker's footer and the
 /// accounts on the Models screen.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AccessInfo {
-    /// What runs use: `ChatGPT (Codex)`, `OpenAI API key`, or empty.
+    /// What runs use: `ChatGPT plan`, `OpenAI API key`, or empty.
     pub label: String,
-    /// Runs go through the ChatGPT sign-in.
+    /// Runs use the active ChatGPT account's plan.
     pub chatgpt: bool,
     /// Runs go through the API key.
     pub api_key: bool,
@@ -291,6 +331,23 @@ pub struct AccessInfo {
     pub saved: Vec<AccessKind>,
     /// A TypeSafe key is saved, so tau-constitution checks runs.
     pub jev: bool,
+    /// The saved ChatGPT sign-ins, by label.
+    pub accounts: Vec<ChatGptAccount>,
+    /// Why the plan's models could not be listed, when they could not.
+    pub models_error: Option<String>,
+}
+
+impl AccessInfo {
+    /// The account tau signs in with, if one is saved.
+    pub fn active_account(&self) -> Option<&ChatGptAccount> {
+        self.accounts.iter().find(|account| account.active)
+    }
+
+    /// Whether the note on using the plan shows: runs use it, and the
+    /// user has not dismissed the note yet.
+    pub fn shows_plan_notice(&self, settings: &ModelSettings) -> bool {
+        self.chatgpt && !settings.plan_notice_seen
+    }
 }
 
 /// Everything about models the interface shows.
@@ -308,8 +365,15 @@ impl Models {
         self.options.iter().find(|option| option.id == id)
     }
 
-    /// The models the picker shows for `filter`, in tier order, hidden
-    /// ones left out.
+    /// Whether runs use the ChatGPT plan: the picker lists the
+    /// account's models in the server's order, and nothing is priced
+    /// per token.
+    pub fn on_plan(&self) -> bool {
+        self.access.chatgpt
+    }
+
+    /// The models the picker shows for `filter`, hidden ones left out:
+    /// in tier order, or in the server's order on the plan.
     pub fn shown<'a>(&'a self, filter: &str) -> Vec<&'a ModelOption> {
         let filter = filter.trim().to_lowercase();
         let mut shown: Vec<&ModelOption> = self
@@ -317,20 +381,50 @@ impl Models {
             .iter()
             .filter(|option| !self.settings.is_hidden(&option.id))
             .filter(|option| {
-                filter.is_empty() || option.id.to_lowercase().contains(&filter)
+                filter.is_empty()
+                    || option.id.to_lowercase().contains(&filter)
+                    || option.label().to_lowercase().contains(&filter)
             })
             .collect();
-        shown.sort_by_key(|option| option.tier());
+        if !self.on_plan() {
+            shown.sort_by_key(|option| option.tier());
+        }
         shown
     }
 
-    /// Whether choosing `id` asks first, for its price.
+    /// Whether choosing `id` asks first, for its price. Never on the
+    /// plan: it is not billed per token.
     pub fn needs_confirm(&self, id: &str) -> bool {
+        if self.on_plan() {
+            return false;
+        }
         match (self.settings.ask_above, self.find(id)) {
             (Some(limit), Some(option)) => option.output > limit,
             _ => false,
         }
     }
+}
+
+/// The picker's models on the ChatGPT plan: the account's, in the
+/// server's order, named as it names them, with the context and prices
+/// tau-ai's table knows for them.
+pub fn plan_models(listed: &[tau_ai::chatgpt::ModelInfo]) -> Vec<ModelOption> {
+    listed
+        .iter()
+        .map(|info| {
+            let known = tau_ai::model::find(&info.slug);
+            ModelOption {
+                id: info.slug.clone(),
+                name: Some(info.display_name.clone())
+                    .filter(|name| *name != info.slug),
+                context: known.map_or(0, |model| model.context_window),
+                input: known.map_or(0., |model| model.pricing.input),
+                output: known.map_or(0., |model| model.pricing.output),
+                reasoning: known.is_some_and(|model| model.reasoning),
+                available: true,
+            }
+        })
+        .collect()
 }
 
 /// The models worth offering for coding, from tau-ai's table: reasoning
@@ -349,6 +443,7 @@ pub fn coding_models(available: impl Fn(&str) -> bool) -> Vec<ModelOption> {
         })
         .map(|model| ModelOption {
             id: model.id.clone(),
+            name: None,
             context: model.context_window,
             input: model.pricing.input,
             output: model.pricing.output,
@@ -368,6 +463,7 @@ mod tests {
     fn option(id: &str, output: f64) -> ModelOption {
         ModelOption {
             id: id.into(),
+            name: None,
             context: 1_050_000,
             input: 1.,
             output,
@@ -448,5 +544,54 @@ mod tests {
         assert!(models.iter().any(|m| m.id == "gpt-6-sol" && !m.available));
         assert!(models.iter().all(|m| !m.id.contains("chat-latest")));
         assert!(models.iter().all(|m| m.context >= 200_000));
+    }
+
+    fn listed(slug: &str, name: &str) -> tau_ai::chatgpt::ModelInfo {
+        tau_ai::chatgpt::ModelInfo {
+            slug: slug.into(),
+            display_name: name.into(),
+        }
+    }
+
+    /// On the plan, the picker keeps the account's models in the
+    /// server's order, by their display names, and never asks about
+    /// price.
+    #[test]
+    fn plan_models_keep_the_servers_order_and_names() {
+        let options = plan_models(&[
+            listed("gpt-6-astra", "GPT-6-Astra"),
+            listed("gpt-5.5", "gpt-5.5"),
+            listed("gpt-next", "GPT Next"),
+        ]);
+        let labels: Vec<&str> = options.iter().map(|o| o.label()).collect();
+        assert_eq!(labels, ["GPT-6-Astra", "gpt-5.5", "GPT Next"]);
+        assert!(options.iter().all(|o| o.available));
+        assert_eq!(options[2].context, 0, "unknown to tau-ai's table");
+        let mut models = Models {
+            options,
+            ..Models::default()
+        };
+        models.access.chatgpt = true;
+        let shown: Vec<&str> =
+            models.shown("").iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(shown, ["gpt-6-astra", "gpt-5.5", "gpt-next"]);
+        assert_eq!(models.shown("astra").len(), 1, "names are searched");
+        assert!(!models.needs_confirm("gpt-6-astra"));
+    }
+
+    /// The note on using the plan shows while runs use it, until it is
+    /// dismissed.
+    #[test]
+    fn the_plan_notice_shows_once() {
+        let mut settings = ModelSettings::default();
+        let mut access = AccessInfo::default();
+        assert!(!access.shows_plan_notice(&settings), "not on the plan");
+        access.chatgpt = true;
+        assert!(access.shows_plan_notice(&settings));
+        settings.plan_notice_seen = true;
+        assert!(!access.shows_plan_notice(&settings));
+        let text = serde_json::to_string(&settings).unwrap();
+        let back: ModelSettings = serde_json::from_str(&text).unwrap();
+        assert!(back.plan_notice_seen, "saved with the settings");
     }
 }

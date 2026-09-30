@@ -33,10 +33,11 @@ use tau_agent::{
     tool::RunId,
 };
 use tau_ai::{
+    chatgpt::{AccountId, ModelInfo},
     client::OpenAi,
-    codex::{CodexAuth, CodexCredentials, limits::RateLimits},
     message::Message,
     model::find,
+    refusal::Refusal,
 };
 use tau_compaction::Compaction;
 use tau_constitution::{Constitution, ConstitutionPlugin, Live, RuleError};
@@ -75,11 +76,13 @@ use crate::{
     models::{
         AccessInfo,
         AccessKind,
+        DEFAULT_MODEL,
         Effort,
         ModelChoice,
         ModelSettings,
         Models,
         coding_models,
+        plan_models,
     },
     pull_request::{PrCommit, PrState, PullRequest},
     setup::{CloneState, ModelAccess, RepoClone, SetupStep, SetupUpdate},
@@ -114,8 +117,8 @@ pub struct HostConfig {
     pub access: Access,
     /// Where sign-ins and keys are kept.
     pub credentials: Credentials,
-    /// The model runs use when nothing else is chosen; `None` takes the
-    /// sign-in's default ([`Access::default_model`]).
+    /// The model runs use when nothing else is chosen; `None` takes
+    /// [`DEFAULT_MODEL`].
     pub model: Option<String>,
     /// The checkout runs work on. The host clones it into a project of
     /// its own and gives each run a workspace there; if it cannot (not
@@ -132,11 +135,11 @@ pub struct HostConfig {
 }
 
 impl HostConfig {
-    /// The model runs on `access` use when nothing else is chosen.
-    pub fn model_for(&self, access: &Access) -> String {
+    /// The model runs use when nothing else is chosen.
+    pub fn default_model(&self) -> String {
         self.model
             .clone()
-            .unwrap_or_else(|| access.default_model().to_owned())
+            .unwrap_or_else(|| DEFAULT_MODEL.to_owned())
     }
 
     /// `$XDG_DATA_HOME/tau`, or `~/.local/share/tau`.
@@ -164,11 +167,9 @@ impl HostConfig {
         Self::data_dir().join("repos.json")
     }
 
-    /// `models.json` beside the sign-in, in tau's config directory.
+    /// `models.json` in tau's config directory.
     pub fn default_settings() -> PathBuf {
-        CodexCredentials::default_path()
-            .and_then(|path| path.parent().map(|dir| dir.join("models.json")))
-            .unwrap_or_else(|| PathBuf::from("models.json"))
+        Credentials::default_dir().dir.join("models.json")
     }
 
     /// The project directory for `root`.
@@ -401,9 +402,12 @@ pub struct Host {
     /// What runs reach models with; `None` after signing out of all.
     access: Mutex<Option<Access>>,
     /// The client `base` reaches models with, for what it learns on the
-    /// way: a ChatGPT plan's usage limits. `None` for an agent built
+    /// way: why the ChatGPT plan refused a run. `None` for an agent built
     /// elsewhere, as in tests.
     client: Mutex<Option<OpenAi>>,
+    /// The ChatGPT account's models, as last listed: for the picker on
+    /// the plan. Listed again when the account changes.
+    plan_models: Arc<Mutex<Option<PlanModels>>>,
     github: github::Api,
     /// Jev for tau-constitution, in place of TypeSafe's with the saved
     /// key: for tests.
@@ -445,6 +449,9 @@ pub struct Host {
     events: mpsc::UnboundedSender<RunEvent>,
 }
 
+/// An account's models, as listed: or why they could not be.
+type PlanModels = (AccountId, Result<Vec<ModelInfo>, String>);
+
 const MAX_TURNS: u32 = 50;
 
 /// How many past runs history shows.
@@ -455,12 +462,15 @@ const HISTORY: u32 = 50;
 fn coder(
     runtime: &Runtime,
     access: &Access,
+    credentials: &Credentials,
     model: &str,
 ) -> anyhow::Result<(Agent, OpenAi)> {
     // Clients must be created inside the runtime.
     let _guard = runtime.enter();
     let client = match access {
-        Access::Codex(path) => OpenAi::codex(CodexAuth::from_file(path)?),
+        Access::ChatGpt(account) => {
+            OpenAi::chatgpt(credentials.chatgpt()?, account.clone())
+        }
         Access::ApiKey(key) => OpenAi::new(key.clone()),
     };
     let agent = Agent::new(client.clone())
@@ -503,8 +513,12 @@ impl Host {
             std::fs::create_dir_all(parent)?;
         }
         let store = runtime.block_on(Store::open(&config.store))?;
-        let (agent, client) =
-            coder(&runtime, &config.access, &config.model_for(&config.access))?;
+        let (agent, client) = coder(
+            &runtime,
+            &config.access,
+            &config.credentials,
+            &config.default_model(),
+        )?;
         let (mut host, events) =
             Self::with_agent(runtime, agent, store, config);
         host.client = Mutex::new(Some(client));
@@ -566,8 +580,7 @@ impl Host {
         config: HostConfig,
     ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
-        let settings =
-            load_settings(&config.settings, &config.model_for(&config.access));
+        let settings = load_settings(&config.settings, &config.default_model());
         // The checkout the host starts in is always listed.
         let mut list = RepoList::load(&config.repo_list);
         let home = list.list(&config.root);
@@ -586,6 +599,7 @@ impl Host {
             base: Mutex::new(agent),
             access: Mutex::new(Some(config.access.clone())),
             client: Mutex::new(None),
+            plan_models: Arc::default(),
             github: github::Api::default(),
             jev: None,
             jev_meter: Arc::default(),
@@ -1334,17 +1348,57 @@ impl Host {
         self.access.lock().expect("not poisoned").clone()
     }
 
-    /// The ChatGPT plan's usage limits as the latest response gave them,
-    /// while runs reach models through a ChatGPT sign-in.
-    pub fn rate_limits(&self) -> Option<RateLimits> {
-        if !matches!(self.access(), Some(Access::Codex(_))) {
+    /// Why the ChatGPT plan last refused a run, while runs use it: a
+    /// usage limit, a sign-in OpenAI no longer takes, a restriction.
+    pub fn refusal(&self) -> Option<Refusal> {
+        if !matches!(self.access(), Some(Access::ChatGpt(_))) {
             return None;
         }
         self.client
             .lock()
             .expect("not poisoned")
             .as_ref()?
-            .rate_limits()
+            .refusal()
+    }
+
+    /// Lists the active ChatGPT account's models for the picker, unless
+    /// they are listed already. The listing runs on the host's runtime;
+    /// the returned task ends when it is saved, and `None` means nothing
+    /// was to be listed.
+    pub fn list_plan_models(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let Some(Access::ChatGpt(account)) = self.access() else {
+            return None;
+        };
+        let cached = self.plan_models.lock().expect("not poisoned");
+        if cached.as_ref().is_some_and(|(listed, models)| {
+            *listed == account && models.is_ok()
+        }) {
+            return None;
+        }
+        drop(cached);
+        let chatgpt = self.config.credentials.chatgpt();
+        let slot = self.plan_models.clone();
+        Some(self.runtime.spawn(async move {
+            let listed = match chatgpt {
+                Ok(chatgpt) => chatgpt
+                    .models(&account)
+                    .await
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            *slot.lock().expect("not poisoned") = Some((account, listed));
+        }))
+    }
+
+    /// The active account's models as last listed: `None` while they
+    /// have not been.
+    fn listed_plan_models(
+        &self,
+        account: &AccountId,
+    ) -> Option<Result<Vec<ModelInfo>, String>> {
+        let cached = self.plan_models.lock().expect("not poisoned");
+        let (listed, models) = cached.as_ref()?;
+        (listed == account).then(|| models.clone())
     }
 
     fn access_label(&self) -> &'static str {
@@ -1355,8 +1409,12 @@ impl Host {
     /// on keep theirs. `None` stops new runs until one is set.
     pub fn set_access(&self, access: Option<Access>) -> anyhow::Result<()> {
         if let Some(access) = &access {
-            let (agent, client) =
-                coder(&self.runtime, access, &self.config.model_for(access))?;
+            let (agent, client) = coder(
+                &self.runtime,
+                access,
+                &self.config.credentials,
+                &self.config.default_model(),
+            )?;
             *self.base.lock().expect("not poisoned") = agent;
             *self.client.lock().expect("not poisoned") = Some(client);
         }
@@ -1364,10 +1422,11 @@ impl Host {
         Ok(())
     }
 
-    /// Forgets that kind of access, and runs on what is left, if
-    /// anything.
-    pub fn sign_out(&self, kind: AccessKind) -> anyhow::Result<Option<Access>> {
-        self.config.credentials.forget(kind)?;
+    /// Forgets the API key, and runs on what is left, if anything.
+    /// Signing out of ChatGPT revokes the session, which
+    /// [`accounts::SignIns`] does off the interface's thread.
+    pub fn forget_api_key(&self) -> anyhow::Result<Option<Access>> {
+        self.config.credentials.forget_api_key()?;
         let left = self.config.credentials.access();
         self.set_access(left.clone())?;
         Ok(left)
@@ -1377,24 +1436,33 @@ impl Host {
     /// the user's choices.
     pub fn models(&self) -> Models {
         let access = self.access();
-        let codex = matches!(access, Some(Access::Codex(_)));
         let credentials = &self.config.credentials;
+        let (options, models_error) = match &access {
+            // On the plan: the account's own models, once listed.
+            Some(Access::ChatGpt(account)) => {
+                match self.listed_plan_models(account) {
+                    Some(Ok(listed)) => (plan_models(&listed), None),
+                    Some(Err(error)) => (Vec::new(), Some(error)),
+                    None => (Vec::new(), None),
+                }
+            }
+            Some(Access::ApiKey(_)) => (coding_models(|_| true), None),
+            None => (coding_models(|_| false), None),
+        };
         Models {
-            options: coding_models(|id| match &access {
-                None => false,
-                Some(Access::Codex(_)) => tau_ai::codex::MODELS.contains(&id),
-                Some(Access::ApiKey(_)) => true,
-            }),
+            options,
             settings: self.settings.lock().expect("not poisoned").clone(),
             access: AccessInfo {
                 label: self.access_label().into(),
-                chatgpt: codex,
+                chatgpt: matches!(access, Some(Access::ChatGpt(_))),
                 api_key: matches!(access, Some(Access::ApiKey(_))),
                 saved: [AccessKind::ChatGpt, AccessKind::ApiKey]
                     .into_iter()
                     .filter(|kind| credentials.has(*kind))
                     .collect(),
                 jev: credentials.jev_key().is_some(),
+                accounts: credentials.accounts(),
+                models_error,
             },
             agents: vec![(
                 "coder".into(),
@@ -1939,10 +2007,7 @@ impl Host {
             .get(&id)
             .cloned()
             .unwrap_or_else(|| {
-                ModelChoice::new(
-                    self.config.model_for(&self.config.access),
-                    Effort::Auto,
-                )
+                ModelChoice::new(self.config.default_model(), Effort::Auto)
             });
         let repo = self.slot_of_run(&id);
         let mut view = RunView::new(id, title(prompt), "coder", &choice.model)
@@ -2081,13 +2146,19 @@ impl Host {
         }
         github::restore(workspace, &host.config.credentials, &host.github, cx);
         let handler = host.clone();
-        // A sign-in from the Models screen changes what new runs use.
+        list_plan_models(&host, workspace, cx);
+        // A sign-in, a switch of account or a sign-out from the Models
+        // screen changes what new runs use.
         let connected: accounts::Connected = {
-            let (host, workspace) = (host.clone(), workspace.downgrade());
+            let (host, entity) = (host.clone(), workspace.downgrade());
             std::rc::Rc::new(move |access, cx| {
-                let applied = host.set_access(Some(access));
+                let applied = host.set_access(access);
                 let catalog = host.catalog();
-                let _ = workspace.update(cx, |ws, cx| {
+                let Some(workspace) = entity.upgrade() else {
+                    return;
+                };
+                list_plan_models(&host, &workspace, cx);
+                workspace.update(cx, |ws, cx| {
                     ws.set_catalog(catalog, cx);
                     if let Err(error) = applied {
                         ws.show_alert(
@@ -2099,10 +2170,11 @@ impl Host {
                 });
             })
         };
+        let sign_ins = accounts::SignIns::default();
         cx.subscribe(
             workspace,
             move |workspace, event: &WorkspaceEvent, cx| {
-                if accounts::handle_sign_in(
+                if sign_ins.handle(
                     event,
                     &workspace,
                     &handler.config.credentials,
@@ -2119,7 +2191,7 @@ impl Host {
                     return;
                 }
                 match event {
-                WorkspaceEvent::SignOut(kind) => match handler.sign_out(*kind) {
+                WorkspaceEvent::SignOut(_) => match handler.forget_api_key() {
                     Ok(left) => {
                         let catalog = handler.catalog();
                         workspace.update(cx, |ws, cx| {
@@ -2531,11 +2603,19 @@ impl Host {
                         }
                     });
                 }
-                // Each response may bring the plan's limits up to date.
-                let limits = host.rate_limits();
+                // A run the ChatGPT plan stopped says what to do next.
+                let refusal = match &event {
+                    RunEvent::RunEnd {
+                        stop: StopReason::Error(_),
+                        ..
+                    } => host.refusal(),
+                    _ => None,
+                };
                 let applied = workspace.update(cx, |ws, cx| {
-                    ws.set_rate_limits(limits, cx);
-                    ws.apply_event(&event, cx)
+                    ws.apply_event(&event, cx);
+                    if let Some(refusal) = &refusal {
+                        ws.show_plan_refusal(refusal, cx);
+                    }
                 });
                 if applied.is_err() {
                     break;
@@ -3404,8 +3484,8 @@ fn started(created_at: &str) -> String {
     )
 }
 
-/// Carries out onboarding when no model is configured: the ChatGPT
-/// sign-in (browser or device code) and API keys. Once one works and is
+/// Carries out onboarding when no model is configured: Sign in with
+/// ChatGPT and API keys. Once one works and is
 /// saved, `ready` gets the new [`Access`] to build a [`Host`] from, and
 /// the host handles sign-ins from then on.
 ///
@@ -3422,10 +3502,14 @@ pub fn onboard(
     let connected: accounts::Connected = {
         let done = done.clone();
         std::rc::Rc::new(move |access, cx| {
-            done.set(true);
-            ready(access, cx)
+            // A sign-in without plan usage connects nothing yet.
+            if let Some(access) = access {
+                done.set(true);
+                ready(access, cx)
+            }
         })
     };
+    let sign_ins = accounts::SignIns::default();
     let api = github::Api::default();
     github::restore(workspace, &credentials, &api, cx);
     cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
@@ -3433,7 +3517,7 @@ pub fn onboard(
         if done.get() {
             return;
         }
-        let _ = accounts::handle_sign_in(
+        let _ = sign_ins.handle(
             event,
             &workspace,
             &credentials,
@@ -3441,6 +3525,26 @@ pub fn onboard(
             &connected,
             cx,
         ) || github::handle(event, &workspace, &credentials, &api, cx);
+    })
+    .detach();
+}
+
+/// Lists the active ChatGPT account's models on the host's runtime, then
+/// shows them in the picker. Nothing happens off the plan, or when they
+/// are listed already.
+fn list_plan_models(
+    host: &Arc<Host>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let Some(listing) = host.list_plan_models() else {
+        return;
+    };
+    let (host, workspace) = (host.clone(), workspace.downgrade());
+    cx.spawn(async move |cx| {
+        let _ = listing.await;
+        let catalog = host.catalog();
+        let _ = workspace.update(cx, |ws, cx| ws.set_catalog(catalog, cx));
     })
     .detach();
 }

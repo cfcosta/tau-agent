@@ -5,14 +5,17 @@
 //! Without either it opens onboarding to set one up. With `--demo` it
 //! replays the scripted session instead.
 //!
-//! - `--model <id>`: the model; by default gpt-6-sol on a ChatGPT sign-in,
-//!   gpt-5.5 on an API key.
+//! - `--model <id>`: the model; gpt-5.5 by default.
 //! - `--root <dir>`: where the coding tools work.
 //! - `--prompt <text>`: start a run with this task right away.
 //! - `--demo`: the scripted session; `--finished` opens it done.
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
 //!   compare, plan or ledger; onboarding's welcome, github, token,
 //!   model, repos or ready; pr and pr-opened; alert, a sample dialog; attach-alert, a long one on New run;
+//!   usage-limit, the ChatGPT plan's limit; plan-notice, the note shown
+//!   once on the plan; plan-disabled, the Models
+//!   screen with plan use not enabled; plan-signing-in, onboarding
+//!   waiting for the ChatGPT sign-in;
 //!   models, picker, run-picker, fork-picker, log, status, show or diff
 //!   (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
@@ -40,6 +43,7 @@ use tau_ui::{
     catalog::Catalog,
     demo,
     host::{self, Host, HostConfig},
+    models::AccountState,
     route::Route,
     setup::SetupStep,
 };
@@ -52,7 +56,7 @@ struct Args {
     prompt: Option<String>,
     frame: Option<(f32, f32)>,
     steps: Option<usize>,
-    /// `None` takes the sign-in's default.
+    /// `None` takes gpt-5.5.
     model: Option<String>,
     root: PathBuf,
 }
@@ -227,7 +231,6 @@ fn demo_workspace(
         Workspace::new("tau-agent", runs, demo::catalog(), window, cx);
     workspace.set_phone_preview(args.phone, cx);
     workspace.set_frame(args.frame, cx);
-    workspace.set_rate_limits(Some(demo::rate_limits()), cx);
     if let Some(steps) = args.steps {
         for (_, update) in demo::script().into_iter().take(steps) {
             workspace.update_run(&demo::run_id(), update, cx);
@@ -443,6 +446,43 @@ fn open_demo_screen(
             cx,
         );
         return;
+    }
+    // The ChatGPT plan's states.
+    match args.open.as_deref() {
+        Some("usage-limit") => {
+            workspace.navigate(Route::Run(demo::run_id()), cx);
+            workspace.show_plan_refusal(&demo::usage_limit(), cx);
+            return;
+        }
+        Some("plan-disabled") => {
+            let mut catalog = workspace.catalog().clone();
+            let access = &mut catalog.models.access;
+            access.chatgpt = false;
+            access.label = "signed out".into();
+            for account in &mut access.accounts {
+                account.active = account.state == AccountState::PlanDisabled;
+            }
+            workspace.set_catalog(catalog, cx);
+            workspace.navigate(Route::Models, cx);
+            return;
+        }
+        Some("plan-notice") => {
+            let mut catalog = workspace.catalog().clone();
+            catalog.models.settings.plan_notice_seen = false;
+            workspace.set_catalog(catalog, cx);
+            workspace.navigate(Route::NewRun, cx);
+            return;
+        }
+        Some("plan-signing-in") => {
+            let mut setup = demo::setup(SetupStep::Model);
+            setup.model = tau_ui::setup::ModelAccess::SigningIn {
+                url: Some(demo::DEMO_AUTHORIZE_URL.into()),
+            };
+            workspace.set_setup(setup, cx);
+            workspace.navigate(Route::Setup(SetupStep::Model), cx);
+            return;
+        }
+        _ => {}
     }
     if args.open.as_deref() == Some("alert") {
         workspace.show_alert(

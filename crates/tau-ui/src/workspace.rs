@@ -41,7 +41,8 @@ use crate::{
     assets::Icon,
     catalog::{Catalog, PluginInfo, PluginScreen},
     input::{InputEvent, TextInput},
-    models::{AccessKind, ModelChoice, ModelSettings},
+    models::{AccessKind, ModelChoice, ModelSettings, USAGE_SETTINGS_URL},
+    plan_usage::{self, PlanAction, PlanAlert},
     pull_request::{PrState, PullRequest},
     route::{self, Route},
     setup::{
@@ -277,16 +278,27 @@ pub enum WorkspaceEvent {
         prompt: String,
         model: ModelChoice,
     },
-    /// Sign in to ChatGPT for Codex, in the browser or with a device
-    /// code.
-    CodexSignIn {
-        device: bool,
+    /// Sign in with ChatGPT in the browser: `account` again (its id), or
+    /// a new account with `None`. `consent` asks again for plan usage.
+    ChatGptSignIn {
+        account: Option<String>,
+        consent: bool,
     },
+    /// The redirect URL of the ChatGPT sign-in in progress, pasted from
+    /// the browser, for when the browser cannot reach tau.
+    ChatGptCallback {
+        url: String,
+    },
+    /// Sign in with this saved ChatGPT account (its id) from now on.
     /// Use an OpenAI API key.
     ApiKey {
         key: String,
     },
-    /// Forget that kind of access; runs use what is left, if anything.
+    SwitchChatGpt {
+        account: String,
+    },
+    /// Sign out of the active ChatGPT account (revoking its session), or
+    /// forget the API key; runs use what is left, if anything.
     SignOut(AccessKind),
     /// Clone these repositories (`owner/name`) into tau's storage.
     CloneRepos {
@@ -391,9 +403,6 @@ pub struct Workspace {
     pub(crate) memory_search: Entity<TextInput>,
     /// Whether the side panel shows the event log open.
     events_open: bool,
-    /// The ChatGPT plan's usage limits, while runs reach models with a
-    /// ChatGPT sign-in and a response has reported them.
-    rate_limits: Option<tau_ai::codex::limits::RateLimits>,
     sheet_open: bool,
     /// Steering messages sent but not yet seen by the run, per run.
     queued: HashMap<RunId, String>,
@@ -453,6 +462,10 @@ pub struct Workspace {
     pub(crate) branch_code: HashMap<(RunId, RunId), CodeState>,
     pub(crate) github_token: Entity<TextInput>,
     pub(crate) api_key: Entity<TextInput>,
+    /// Where the ChatGPT sign-in's redirect URL can be pasted.
+    pub(crate) chatgpt_callback: Entity<TextInput>,
+    /// What a run that stopped on the ChatGPT plan asks of the user.
+    pub(crate) plan_alert: Option<PlanAlert>,
     pub(crate) repo_filter: Entity<TextInput>,
     pub(crate) first_task: Entity<TextInput>,
     pub(crate) pr_title: Entity<TextInput>,
@@ -556,6 +569,10 @@ impl Workspace {
         let github_token =
             cx.new(|cx| TextInput::new("github_pat_…", cx).masked());
         let api_key = cx.new(|cx| TextInput::new("sk-…", cx).masked());
+        let chatgpt_callback = cx.new(|cx| {
+            TextInput::new("http://127.0.0.1:1455/auth/callback?code=…", cx)
+                .masked()
+        });
         let repo_filter =
             cx.new(|cx| TextInput::new("Filter your repositories", cx));
         let first_task = cx.new(|cx| {
@@ -658,6 +675,10 @@ impl Workspace {
                 let InputEvent::Submit(key) = event;
                 ws.submit_api_key(key.clone(), cx);
             }),
+            cx.subscribe(&chatgpt_callback, |ws, _, event: &InputEvent, cx| {
+                let InputEvent::Submit(url) = event;
+                ws.submit_chatgpt_callback(url.clone(), cx);
+            }),
             cx.subscribe(&first_task, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(task) = event;
                 ws.start_first_run(task.clone(), cx);
@@ -682,7 +703,6 @@ impl Workspace {
             attachments: Vec::new(),
             memory_search,
             events_open: false,
-            rate_limits: None,
             sheet_open: false,
             queued: HashMap::new(),
             resuming: HashMap::new(),
@@ -712,6 +732,8 @@ impl Workspace {
             branch_code: HashMap::new(),
             github_token,
             api_key,
+            chatgpt_callback,
+            plan_alert: None,
             repo_filter,
             first_task,
             pr_title,
@@ -907,14 +929,6 @@ impl Workspace {
         }
         for run in &mut self.runs {
             run.apply(event);
-        }
-        // What the plan's limits were as the run started, to tell what
-        // it used of them.
-        if let RunEvent::RunStart { run, .. } = event
-            && let Some(view) =
-                self.runs.iter_mut().find(|view| &view.id == run)
-        {
-            view.limits_at_start = self.rate_limits.clone();
         }
         // A command's screen takes the output its card gained.
         if let RunEvent::ToolUpdate { run, call_id, .. }
@@ -1611,22 +1625,6 @@ impl Workspace {
         self.events_open
     }
 
-    /// The ChatGPT plan's usage limits as the host last saw them.
-    pub fn set_rate_limits(
-        &mut self,
-        limits: Option<tau_ai::codex::limits::RateLimits>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.rate_limits != limits {
-            self.rate_limits = limits;
-            cx.notify();
-        }
-    }
-
-    pub fn rate_limits(&self) -> Option<&tau_ai::codex::limits::RateLimits> {
-        self.rate_limits.as_ref()
-    }
-
     /// Submits `text` as if typed into the composer: it steers the open
     /// run if one is live, or starts a new run.
     /// What the composer holds.
@@ -2146,13 +2144,248 @@ impl Workspace {
         cx.emit(WorkspaceEvent::SignOut(kind));
     }
 
-    pub fn sign_in_codex(&mut self, device: bool, cx: &mut Context<Self>) {
-        self.setup.model = ModelAccess::SigningIn {
-            url: None,
-            device: None,
-        };
-        cx.emit(WorkspaceEvent::CodexSignIn { device });
+    /// Signs in with ChatGPT in the browser: `account` again, or a new
+    /// account with `None`; `consent` asks again for plan usage.
+    pub fn sign_in_chatgpt(
+        &mut self,
+        account: Option<String>,
+        consent: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.setup.model = ModelAccess::SigningIn { url: None };
+        self.chatgpt_callback
+            .update(cx, |input, cx| input.clear(cx));
+        cx.emit(WorkspaceEvent::ChatGptSignIn { account, consent });
         cx.notify();
+    }
+
+    /// Finishes the ChatGPT sign-in with a redirect URL pasted from the
+    /// browser.
+    pub(crate) fn submit_chatgpt_callback(
+        &mut self,
+        url: String,
+        cx: &mut Context<Self>,
+    ) {
+        let url = url.trim().to_owned();
+        if url.is_empty() {
+            return;
+        }
+        self.chatgpt_callback
+            .update(cx, |input, cx| input.clear(cx));
+        cx.emit(WorkspaceEvent::ChatGptCallback { url });
+        cx.notify();
+    }
+
+    pub(crate) fn submit_chatgpt_callback_from_button(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        let url = self.chatgpt_callback.read(cx).text().to_owned();
+        self.submit_chatgpt_callback(url, cx);
+    }
+
+    /// Signs in with this saved ChatGPT account from now on.
+    pub fn switch_chatgpt(&mut self, account: &str, cx: &mut Context<Self>) {
+        cx.emit(WorkspaceEvent::SwitchChatGpt {
+            account: account.to_owned(),
+        });
+    }
+
+    /// Asks again for plan usage on the active ChatGPT account, from the
+    /// model setup, coming back once done.
+    pub fn enable_plan_usage(&mut self, cx: &mut Context<Self>) {
+        let account = self
+            .catalog
+            .models
+            .access
+            .active_account()
+            .map(|account| account.id.clone());
+        self.connect_model(cx);
+        self.sign_in_chatgpt(account, true, cx);
+    }
+
+    /// Opens ChatGPT Settings → Usage, where the user reviews and limits
+    /// what apps use of their plan.
+    pub fn manage_usage(&mut self, cx: &mut Context<Self>) {
+        cx.open_url(USAGE_SETTINGS_URL);
+    }
+
+    /// Dismisses the note on using the ChatGPT plan for good.
+    pub fn dismiss_plan_notice(&mut self, cx: &mut Context<Self>) {
+        self.catalog.models.settings.plan_notice_seen = true;
+        cx.emit(WorkspaceEvent::SaveModelSettings(
+            self.catalog.models.settings.clone(),
+        ));
+        cx.notify();
+    }
+
+    /// Whether the note on using the ChatGPT plan shows.
+    pub fn shows_plan_notice(&self) -> bool {
+        let models = &self.catalog.models;
+        models.access.shows_plan_notice(&models.settings)
+    }
+
+    /// Whether runs use the ChatGPT plan, so the composer says so.
+    pub fn uses_plan(&self) -> bool {
+        self.catalog.models.access.chatgpt
+    }
+
+    /// A run stopped on the ChatGPT plan: says what to do next. A
+    /// temporary refusal, which the run already retried, says nothing
+    /// more than the run's error.
+    pub fn show_plan_refusal(
+        &mut self,
+        refusal: &tau_ai::refusal::Refusal,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(alert) = PlanAlert::of(refusal) {
+            self.plan_alert = Some(alert);
+            cx.notify();
+        }
+    }
+
+    pub fn plan_alert(&self) -> Option<&PlanAlert> {
+        self.plan_alert.as_ref()
+    }
+
+    /// Carries out a button of the plan alert, and closes it.
+    pub fn plan_action(&mut self, action: PlanAction, cx: &mut Context<Self>) {
+        self.plan_alert = None;
+        let active = self
+            .catalog
+            .models
+            .access
+            .active_account()
+            .map(|account| account.id.clone());
+        match action {
+            PlanAction::ManageUsage => self.manage_usage(cx),
+            PlanAction::SignInAgain => {
+                self.connect_model(cx);
+                self.sign_in_chatgpt(active, false, cx);
+            }
+            PlanAction::EnablePlanUsage => self.enable_plan_usage(cx),
+            PlanAction::AddApiKey => self.connect_model(cx),
+            PlanAction::Close => {}
+        }
+        cx.notify();
+    }
+
+    /// The plan alert, over the app.
+    fn plan_alert_view(
+        &self,
+        alert: &PlanAlert,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let (secondary, other) = alert.secondary();
+        let actions = div()
+            .flex()
+            .gap(sp(2.))
+            .child(
+                div()
+                    .id("plan-alert-secondary")
+                    .child(ui::button(secondary, ButtonKind::Secondary, t))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.plan_action(other, cx)
+                    })),
+            )
+            .children(alert.primary().map(|(label, action)| {
+                div()
+                    .id("plan-alert-primary")
+                    .child(ui::button(label, ButtonKind::Primary, t))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.plan_action(action, cx)
+                    }))
+            }));
+        let glyph = match alert {
+            PlanAlert::UsageLimit => {
+                ui::icon(Icon::Warning, IconSize::LARGE, t.accent)
+            }
+            _ => ui::icon(Icon::Chat, IconSize::LARGE, t.muted),
+        };
+        ui::modal(glyph, alert.title(), alert.message(), None, actions, t)
+    }
+
+    /// The note shown once after signing in with plan usage: what the
+    /// plan pays for, where to manage it, and "Got it".
+    fn plan_notice(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        div()
+            .flex()
+            .items_start()
+            .gap(sp(2.5))
+            .px(sp(3.5))
+            .py(sp(3.))
+            .rounded(radius::BOX)
+            .border_1()
+            .border_color(t.blue_border)
+            .bg(t.blue_soft)
+            .child(div().mt(sp(0.25)).child(ui::icon(
+                Icon::Chat,
+                IconSize::MEDIUM,
+                t.blue,
+            )))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex()
+                    .flex_col()
+                    .gap(sp(1.))
+                    .child(ui::text(
+                        plan_usage::NOTICE_TITLE,
+                        Type::SMALL,
+                        t.text,
+                    ))
+                    .child(ui::text(
+                        plan_usage::NOTICE_BODY,
+                        Type::CAPTION,
+                        t.muted,
+                    ))
+                    .child(
+                        div()
+                            .id("plan-notice-manage")
+                            .child(ui::text_link(
+                                plan_usage::MANAGE_USAGE,
+                                Type::CAPTION,
+                                t,
+                            ))
+                            .on_click(
+                                cx.listener(|ws, _, _, cx| ws.manage_usage(cx)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .id("plan-notice-dismiss")
+                    .child(ui::button("Got it", ButtonKind::Secondary, t))
+                    .on_click(
+                        cx.listener(|ws, _, _, cx| ws.dismiss_plan_notice(cx)),
+                    ),
+            )
+    }
+
+    /// Under the composer while runs use the plan: `Using ChatGPT plan ·
+    /// Manage usage`.
+    fn plan_indicator(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        div()
+            .flex()
+            .items_center()
+            .gap(sp(1.5))
+            .typeset(Type::CAPTION)
+            .text_color(t.muted)
+            .child(ui::icon(Icon::Chat, IconSize::SMALL, t.green))
+            .child(plan_usage::INDICATOR)
+            .child(ui::text("·", Type::CAPTION, t.dim))
+            .child(
+                div()
+                    .id("plan-manage-usage")
+                    .child(ui::text_link(
+                        plan_usage::MANAGE_USAGE,
+                        Type::CAPTION,
+                        t,
+                    ))
+                    .on_click(cx.listener(|ws, _, _, cx| ws.manage_usage(cx))),
+            )
     }
 
     pub(crate) fn submit_api_key(
@@ -2165,10 +2398,7 @@ impl Workspace {
             return;
         }
         self.api_key.update(cx, |input, cx| input.clear(cx));
-        self.setup.model = ModelAccess::SigningIn {
-            url: None,
-            device: None,
-        };
+        self.setup.model = ModelAccess::SigningIn { url: None };
         cx.emit(WorkspaceEvent::ApiKey { key });
         cx.notify();
     }
@@ -2278,6 +2508,8 @@ impl Workspace {
         } else if self.slash_dismiss(cx) {
         } else if self.dialog.is_some() {
             self.dismiss_alert(cx);
+        } else if self.plan_alert.take().is_some() {
+            cx.notify();
         } else if self.searching {
             self.close_search(cx);
         } else if self.adding_repo {
@@ -2707,6 +2939,9 @@ impl Workspace {
             .when_some(self.composer_target().filter(|_| compact), |bar, target| {
                 bar.child(div().flex().child(self.model_chip(target, t, cx)))
             })
+            .when(self.shows_plan_notice(), |bar| {
+                bar.child(self.plan_notice(t, cx))
+            })
             .when_some(self.fork_banner(t, cx), |bar, banner| bar.child(banner))
             .when(!self.attachments.is_empty(), |bar| {
                 bar.child(
@@ -2826,6 +3061,9 @@ impl Workspace {
                     )
                     .child(send),
             )
+            .when(self.uses_plan(), |bar| {
+                bar.child(self.plan_indicator(t, cx))
+            })
     }
 
     /// Above the composer while it writes a fork: the turn it forks
@@ -3285,6 +3523,9 @@ impl Render for Workspace {
             .when(self.searching, |body| body.child(self.search_view(&t, cx)))
             .when(self.adding_jev_key, |body| {
                 body.child(self.jev_key_view(&t, cx))
+            })
+            .when_some(self.plan_alert.clone(), |body, alert| {
+                body.child(self.plan_alert_view(&alert, &t, cx))
             })
             .when_some(self.dialog.clone(), |body, dialog| {
                 body.child(self.dialog_view(dialog, &t, cx))

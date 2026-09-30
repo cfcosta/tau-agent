@@ -16,7 +16,7 @@ use tau_ui::{
     accounts::{Access, Credentials},
     github::{Api, Token},
     host::{Host, HostConfig},
-    models::{AccessKind, Effort, ModelChoice},
+    models::{AccessKind, AccountState, Effort, ModelChoice},
     view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
 };
 use tau_vcs::{Identity, Project};
@@ -784,76 +784,101 @@ fn models_follow_the_sign_in_and_settings_persist() {
     host.save_settings(settings.clone()).unwrap();
     drop(host);
 
-    // A ChatGPT sign-in runs only what Codex serves; the saved choices
-    // come back.
-    let credentials = data.path().join("codex.json");
-    std::fs::write(
-        &credentials,
-        serde_json::json!({
-            "access": "a", "refresh": "r", "expires": 0, "accountId": "x"
-        })
-        .to_string(),
-    )
-    .unwrap();
+    // On a ChatGPT plan the picker waits for the account's own models;
+    // the saved choices come back.
+    let credentials = config_on(dir.path(), data.path()).credentials;
+    let account = sign_in_saved(&credentials, "a@example.com", PLAN);
     let config = HostConfig {
-        access: Access::Codex(credentials),
+        access: Access::ChatGpt(account.clone()),
         ..config_on(dir.path(), data.path())
     };
     let (host, _events) = Host::new(config).unwrap();
     let models = host.models();
     assert_eq!(models.settings, settings);
-    for option in &models.options {
-        assert_eq!(
-            option.available,
-            tau_ai::codex::MODELS.contains(&option.id.as_str()),
-            "{}",
-            option.id
-        );
-    }
-    assert!(models.access.chatgpt);
+    assert!(models.options.is_empty(), "not listed yet");
+    assert_eq!(models.access.models_error, None);
+    assert!(models.access.chatgpt && models.on_plan());
+    assert_eq!(models.access.label, "ChatGPT plan");
+    let accounts = &models.access.accounts;
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].id, account.to_string());
+    assert!(accounts[0].active);
+    assert_eq!(accounts[0].state, AccountState::Plan);
+    assert_eq!(host.refusal(), None);
+}
+
+/// Scopes of a sign-in that allows plan usage.
+const PLAN: &[&str] = &["chatgpt.tokens.use.direct", "email", "openid"];
+
+/// Saves a signed-in ChatGPT record for `email` with `scopes`, as a
+/// finished sign-in would, and makes it the active account.
+fn sign_in_saved(
+    credentials: &Credentials,
+    email: &str,
+    scopes: &[&str],
+) -> tau_ai::chatgpt::AccountId {
+    let record = tau_ai::chatgpt::Credentials {
+        label: email.into(),
+        email: Some(email.into()),
+        issuer: "https://auth.openai.com".into(),
+        subject: format!("sub-{email}"),
+        client_id: "oaiapp_test".into(),
+        ext_agent_host_id: tau_ai::chatgpt::HostId::new_uuid(),
+        id_token: None,
+        access_token: Some("at".into()),
+        refresh_token: Some("rt".into()),
+        token_type: None,
+        expires_in: None,
+        expires_at: Some(u64::MAX),
+        earliest_refresh_at: None,
+        scopes: scopes.iter().map(|scope| (*scope).to_owned()).collect(),
+        saved_at: String::new(),
+    };
+    let chatgpt = credentials.chatgpt().unwrap();
+    chatgpt.store().save(&record).unwrap();
+    chatgpt.store().set_active(&record.id()).unwrap();
+    record.id()
 }
 
 #[test]
-fn signing_out_runs_on_what_is_left() {
+fn runs_use_the_plan_first_and_never_a_declined_one() {
     let dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let config = config_on(dir.path(), data.path());
     let credentials = config.credentials.clone();
     credentials.save_api_key("sk-saved").unwrap();
-    std::fs::write(
-        credentials.codex(),
-        serde_json::json!({
-            "access": "a", "refresh": "r", "expires": 0, "accountId": "x"
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let plan = sign_in_saved(&credentials, "a@example.com", PLAN);
     let access = credentials.access().unwrap();
+    assert_eq!(access, Access::ChatGpt(plan.clone()));
     let (host, _events) = Host::new(HostConfig { access, ..config }).unwrap();
     let saved = |host: &Host| host.models().access.saved;
     assert!(host.models().access.chatgpt);
     assert_eq!(saved(&host), [AccessKind::ChatGpt, AccessKind::ApiKey]);
 
-    // Signing out of ChatGPT leaves the key, which runs every model.
-    let left = host.sign_out(AccessKind::ChatGpt).unwrap();
+    // Switching to an account that declined plan usage runs on the key.
+    let declined = sign_in_saved(&credentials, "b@example.com", &["openid"]);
+    let left = credentials.access();
     assert_eq!(left, Some(Access::ApiKey("sk-saved".into())));
-    assert!(!credentials.codex().exists());
+    host.set_access(left).unwrap();
     let models = host.models();
     assert!(models.access.api_key && !models.access.chatgpt);
-    assert_eq!(models.access.saved, [AccessKind::ApiKey]);
     assert!(models.options.iter().all(|option| option.available));
+    let active = models.access.active_account().unwrap();
+    assert_eq!(active.id, declined.to_string());
+    assert_eq!(active.state, AccountState::PlanDisabled);
 
-    // Nothing left: no model is available and runs do not start.
-    assert_eq!(host.sign_out(AccessKind::ApiKey).unwrap(), None);
-    assert!(saved(&host).is_empty());
+    // Forgetting the key leaves nothing: no model is available and runs
+    // do not start.
+    assert_eq!(host.forget_api_key().unwrap(), None);
+    assert_eq!(saved(&host), [AccessKind::ChatGpt]);
     assert!(host.models().options.iter().all(|option| !option.available));
     let error = host.start("hi", &ModelChoice::default(), "").unwrap_err();
     assert!(error.to_string().contains("signed out"), "{error}");
 
-    // Signing in again brings runs back.
-    host.set_access(Some(Access::ApiKey("sk-new".into())))
-        .unwrap();
-    assert!(host.models().access.api_key);
+    // Back on the plan account, runs use the plan again.
+    credentials.switch(plan.as_str()).unwrap();
+    host.set_access(credentials.access()).unwrap();
+    assert!(host.models().access.chatgpt);
 }
 
 #[test]
