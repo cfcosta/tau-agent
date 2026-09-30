@@ -2479,3 +2479,39 @@ fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
         .collect();
     assert_eq!(closed, [RunId("chat-6".into())]);
 }
+
+/// A repository added after tau started (cloned during onboarding, or
+/// from the sidebar) comes with its main chat, and the sidebar lists
+/// that chat first under it, before any run has touched it.
+#[gpui::test]
+fn a_new_repository_lists_its_main_chat(cx: &mut TestAppContext) {
+    use tau_agent::tool::RunId;
+    use tau_ui::{catalog::Repo, update::HostUpdate, view::RunView};
+
+    let (workspace, mut cx, _) = open(cx);
+    let main = RunId("main-of-hello".into());
+    let mut repo = Repo::new("hello", "/repos/hello");
+    repo.main = Some(main.clone());
+    let view =
+        RunView::new(main.clone(), "main", "coder", "gpt-5.5").in_repo("hello");
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply(
+            HostUpdate::Repo {
+                repo,
+                main: Some(Box::new(view)),
+            },
+            cx,
+        );
+        let rows = ws.repo_rows("");
+        let hello = rows
+            .iter()
+            .find(|rows| rows.repo.name == "hello")
+            .expect("the repository is listed");
+        assert!(hello.open, "a new repository opens");
+        assert_eq!(
+            hello.runs.first().map(|run| run.id.clone()),
+            Some(main.clone()),
+            "its main chat comes first"
+        );
+    });
+}

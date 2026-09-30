@@ -2325,6 +2325,21 @@ impl Host {
     }
 
     /// Runs from earlier sessions, newest first, rebuilt from the store.
+    /// The view of `repo`'s main chat, as history shows it.
+    pub fn main_view(&self, repo: &Repo) -> anyhow::Result<Option<RunView>> {
+        let Some(main) = &repo.main else {
+            return Ok(None);
+        };
+        self.runtime.block_on(async {
+            match self.store.run(&main.0).await? {
+                Some(record) => {
+                    Ok(Some(stored_view(&self.store, &record).await?))
+                }
+                None => Ok(None),
+            }
+        })
+    }
+
     pub fn history(&self) -> anyhow::Result<Vec<RunView>> {
         self.runtime.block_on(history(&self.store, &self.mains()))
     }
@@ -4110,8 +4125,11 @@ fn clone_into_tau(
     });
     let job = {
         let (cloner, name) = (host.clone(), name.to_owned());
-        host.runtime
-            .spawn_blocking(move || cloner.clone_github(&name))
+        host.runtime.spawn_blocking(move || {
+            let repo = cloner.clone_github(&name)?;
+            let main = cloner.main_view(&repo)?;
+            anyhow::Ok((repo, main))
+        })
     };
     let (host, name) = (host.clone(), name.to_owned());
     let workspace = workspace.downgrade();
@@ -4125,12 +4143,13 @@ fn clone_into_tau(
         };
         cx.update(|cx| {
             let state = match cloned {
-                Ok(repo) => {
+                Ok((repo, main)) => {
                     if let Some(slot) = host.slot(&repo.name) {
                         refresh_when_imported(&host, &slot, &workspace, cx);
                     }
+                    let main = main.map(Box::new);
                     workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::Repo(repo), cx)
+                        ws.apply(HostUpdate::Repo { repo, main }, cx)
                     });
                     CloneState::Ready
                 }

@@ -84,8 +84,12 @@ pub enum HostUpdate {
         run: RunId,
         title: String,
     },
-    /// A repository was added.
-    Repo(Repo),
+    /// A repository was added, with its main chat: the sidebar lists
+    /// the chat under it, so it needs the chat's view as well as its id.
+    Repo {
+        repo: Repo,
+        main: Option<Box<RunView>>,
+    },
     /// Onboarding moved on. Only the machine being set up shows it.
     Setup(SetupUpdate),
     /// Everything an interface shows, for one that just connected: the

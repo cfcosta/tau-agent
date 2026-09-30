@@ -956,7 +956,12 @@ impl Workspace {
             }
             HostUpdate::ResumeFailed(run) => self.resume_failed(&run, cx),
             HostUpdate::Titled { run, title } => self.retitle(&run, title, cx),
-            HostUpdate::Repo(repo) => self.add_repo(repo, cx),
+            HostUpdate::Repo { repo, main } => {
+                if let Some(main) = main {
+                    self.add_history(vec![*main], cx);
+                }
+                self.add_repo(repo, cx)
+            }
             HostUpdate::Setup(update) => self.update_setup(update, cx),
             HostUpdate::Snapshot { runs, catalog } => {
                 self.set_catalog(*catalog, cx);

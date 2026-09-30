@@ -1937,3 +1937,22 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// A repository's main chat has a view to send with it when the
+/// repository is added: the sidebar lists the chat from that view.
+#[test]
+fn a_repository_main_chat_has_a_view() {
+    let (host, _events) = host(ScriptedModel::new());
+    let repo = host
+        .catalog()
+        .repos
+        .into_iter()
+        .find(|repo| repo.name == REPO)
+        .expect("the repository is listed");
+    let main = repo.main.clone().expect("it has a main chat");
+    let view = host.main_view(&repo).unwrap().expect("the chat is stored");
+    assert_eq!(view.id, main);
+    assert_eq!(view.title, "main");
+    assert_eq!(view.repo, REPO);
+    assert_eq!(view.origin, Origin::Root);
+}
