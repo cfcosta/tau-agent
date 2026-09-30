@@ -155,9 +155,15 @@ async fn sign_in(chatgpt: &ChatGpt, args: &Args) -> Result<(), Error> {
     );
     let (paste_tx, paste_rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
+        // Blank lines are skipped; at end of input (no terminal) only the
+        // browser can finish.
         let mut line = String::new();
-        if std::io::stdin().read_line(&mut line).is_ok() {
-            let _ = paste_tx.send(line);
+        while matches!(std::io::stdin().read_line(&mut line), Ok(n) if n > 0) {
+            if !line.trim().is_empty() {
+                let _ = paste_tx.send(line);
+                return;
+            }
+            line.clear();
         }
     });
     let callback = tokio::select! {
