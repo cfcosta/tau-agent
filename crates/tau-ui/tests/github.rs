@@ -100,10 +100,10 @@ fn a_disabled_device_flow_is_explained() {
 #[test]
 fn repositories_come_from_the_apps_installations() {
     let (base, _) = fake(|line| match line {
-        "GET /user/installations?per_page=100" => {
+        "GET /user/installations?per_page=100&page=1" => {
             (200, json!({ "installations": [{ "id": 7 }, { "id": 9 }] }))
         }
-        "GET /user/installations/7/repositories?per_page=100" => (
+        "GET /user/installations/7/repositories?per_page=100&page=1" => (
             200,
             json!({ "repositories": [
                 { "full_name": "cfcosta/tau-agent", "description": "agents",
@@ -112,7 +112,7 @@ fn repositories_come_from_the_apps_installations() {
                   "default_branch": "trunk" }
             ]}),
         ),
-        "GET /user/installations/9/repositories?per_page=100" => (
+        "GET /user/installations/9/repositories?per_page=100&page=1" => (
             200,
             json!({ "repositories": [
                 { "full_name": "cfcosta/tau-agent", "default_branch": "main" }
@@ -134,12 +134,77 @@ fn repositories_come_from_the_apps_installations() {
     assert_eq!(repos[1].description, "agents");
 }
 
+/// A full page means there may be more: every page is read, until one
+/// comes back short, for installations, their repositories and a
+/// personal token's repositories alike.
+#[test]
+fn every_page_of_repositories_is_read() {
+    let full: Vec<_> = (0..100)
+        .map(|n| json!({ "full_name": format!("cfcosta/old-{n:03}") }))
+        .collect();
+    let (base, seen) = fake(move |line| match line {
+        "GET /user/installations?per_page=100&page=1" => {
+            (200, json!({ "installations": [{ "id": 7 }] }))
+        }
+        "GET /user/installations/7/repositories?per_page=100&page=1" => {
+            (200, json!({ "repositories": full.clone() }))
+        }
+        "GET /user/installations/7/repositories?per_page=100&page=2" => (
+            200,
+            json!({ "repositories": [
+                { "full_name": "cfcosta/tau-agent", "default_branch": "main" }
+            ]}),
+        ),
+        _ => (404, json!({})),
+    });
+    let repos = runtime()
+        .block_on(Api::at(&base, &base).repos("ghu_token"))
+        .unwrap();
+    assert_eq!(repos.len(), 101);
+    assert!(repos.iter().any(|repo| repo.name == "cfcosta/tau-agent"));
+    // A short page ends the list: no third page is asked for.
+    assert!(seen.lock().unwrap().iter().all(|r| !r.contains("page=3")));
+
+    let (base, _) = fake(|line| match line {
+        "GET /user/installations?per_page=100&page=1" => (403, json!({})),
+        "GET /user/repos?sort=pushed&per_page=100&page=1" => {
+            (
+                200,
+                json!((0..100)
+                .map(|n| json!({ "full_name": format!("octocat/r{n:03}") }))
+                .collect::<Vec<_>>()),
+            )
+        }
+        "GET /user/repos?sort=pushed&per_page=100&page=2" => (200, json!([])),
+        _ => (404, json!({})),
+    });
+    let repos = runtime()
+        .block_on(Api::at(&base, &base).repos("github_pat_x"))
+        .unwrap();
+    assert_eq!(repos.len(), 100);
+}
+
+/// A page that fails is an error, not a shorter list.
+#[test]
+fn a_failed_page_is_an_error() {
+    let (base, _) = fake(|line| match line {
+        "GET /user/installations?per_page=100&page=1" => {
+            (200, json!({ "installations": [{ "id": 7 }] }))
+        }
+        _ => (502, json!({})),
+    });
+    let error = runtime()
+        .block_on(Api::at(&base, &base).repos("ghu_token"))
+        .unwrap_err();
+    assert!(error.contains("502"), "{error}");
+}
+
 #[test]
 fn a_personal_token_lists_the_users_repositories() {
     let (base, _) = fake(|line| match line {
         // Personal tokens cannot list app installations.
-        "GET /user/installations?per_page=100" => (403, json!({})),
-        "GET /user/repos?per_page=100&sort=pushed" => (
+        "GET /user/installations?per_page=100&page=1" => (403, json!({})),
+        "GET /user/repos?sort=pushed&per_page=100&page=1" => (
             200,
             json!([{ "full_name": "octocat/hello", "default_branch": "main" }]),
         ),

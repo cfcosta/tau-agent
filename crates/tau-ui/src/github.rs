@@ -28,6 +28,8 @@ use crate::{
 /// The GitHub App tau signs in through.
 pub const CLIENT_ID: &str = "Iv23lisaZLq1FOECQUNe";
 pub const APP_SLUG: &str = "ascend-repository-cfcosta";
+/// Items per page of a GitHub list: its maximum.
+pub const PER_PAGE: usize = 100;
 
 /// Where to give the app access to more repositories.
 pub fn install_url() -> String {
@@ -311,51 +313,85 @@ impl Api {
         }
     }
 
-    /// The repositories the token reaches: those the app is installed
-    /// on, or, for a personal token, the user's.
-    pub async fn repos(&self, token: &str) -> Result<Vec<RepoChoice>, String> {
-        let (status, installations) =
-            self.get(token, "/user/installations?per_page=100").await?;
-        let mut found = Vec::new();
-        if status == 200 {
-            let ids = installations
-                .get("installations")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|installation| installation.get("id")?.as_u64());
-            for id in ids.collect::<Vec<_>>() {
-                let (_, page) = self
-                    .get(
-                        token,
-                        &format!(
-                            "/user/installations/{id}/repositories?per_page=100"
-                        ),
-                    )
-                    .await?;
-                found.extend(
-                    page.get("repositories")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(repo_choice),
-                );
-            }
-        } else {
-            let (status, page) = self
-                .get(token, "/user/repos?per_page=100&sort=pushed")
+    /// Every item of a paged list: `path` page by page, [`PER_PAGE`] at a time, until a page comes back
+    /// short. `key` names the array in each page, or `None` when the
+    /// page is the array. `Err` carries the status of a page that failed.
+    async fn all_pages(
+        &self,
+        token: &str,
+        path: &str,
+        key: Option<&str>,
+    ) -> Result<Result<Vec<Value>, u16>, String> {
+        let join = if path.contains('?') { '&' } else { '?' };
+        let mut items = Vec::new();
+        for page in 1.. {
+            let (status, value) = self
+                .get(
+                    token,
+                    &format!("{path}{join}per_page={PER_PAGE}&page={page}"),
+                )
                 .await?;
             if status != 200 {
-                return Err(format!(
-                    "GitHub answered {status} for your repositories"
-                ));
+                return Ok(Err(status));
             }
-            found.extend(
-                page.as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(repo_choice),
-            );
+            let list = match key {
+                Some(key) => value.get(key),
+                None => Some(&value),
+            }
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+            let short = list.len() < PER_PAGE;
+            items.extend(list);
+            if short {
+                break;
+            }
+        }
+        Ok(Ok(items))
+    }
+
+    /// The repositories the token reaches: those the app is installed
+    /// on, or, for a personal token, the user's. Every page of each.
+    pub async fn repos(&self, token: &str) -> Result<Vec<RepoChoice>, String> {
+        let mut found = Vec::new();
+        match self
+            .all_pages(token, "/user/installations", Some("installations"))
+            .await?
+        {
+            Ok(installations) => {
+                let ids: Vec<u64> = installations
+                    .iter()
+                    .filter_map(|installation| installation.get("id")?.as_u64())
+                    .collect();
+                for id in ids {
+                    let repositories = self
+                        .all_pages(
+                            token,
+                            &format!("/user/installations/{id}/repositories"),
+                            Some("repositories"),
+                        )
+                        .await?
+                        .map_err(|status| {
+                            format!(
+                                "GitHub answered {status} for the \
+                                 repositories of installation {id}"
+                            )
+                        })?;
+                    found.extend(repositories.iter().filter_map(repo_choice));
+                }
+            }
+            // Personal tokens cannot list app installations.
+            Err(_) => {
+                let repositories = self
+                    .all_pages(token, "/user/repos?sort=pushed", None)
+                    .await?
+                    .map_err(|status| {
+                        format!(
+                            "GitHub answered {status} for your repositories"
+                        )
+                    })?;
+                found.extend(repositories.iter().filter_map(repo_choice));
+            }
         }
         found.sort_by(|a, b| a.name.cmp(&b.name));
         found.dedup_by(|a, b| a.name == b.name);
