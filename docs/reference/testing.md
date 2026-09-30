@@ -386,7 +386,6 @@ also run in the nightly tier and under `cargo mutants`.
 | The token estimate never decreases when a message is appended                                                                                                          | Invariant    |
 | With no reported usage anywhere, the estimate is `chars / 4` over every message                                                                                        | Differential |
 | A summary that stops with `length` or `error`, or that calls a tool, fails compaction and writes nothing                                                               | Model        |
-| The summary request's output limit never exceeds the model's maximum output                                                                                            | Invariant    |
 | Repeated compactions: a second compaction runs only when the kept messages no longer fit, and summarizes messages the first one kept once they leave the recent window | Model        |
 
 ### `tau-store`

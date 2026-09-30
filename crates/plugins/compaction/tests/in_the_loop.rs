@@ -148,8 +148,6 @@ fn threshold_compaction_summarizes_older_messages() {
         assert!(summary.settings.tools.is_empty());
         assert_eq!(summary.settings.model, "gpt-5.4-mini");
         assert_eq!(summary.settings.reasoning, Some(ReasoningEffort::High));
-        // 0.8 of the reserve; the model allows more.
-        assert_eq!(summary.settings.max_output_tokens, Some(80));
         assert_eq!(summary.transcript.len(), 1);
         let asked = text(&summary.transcript[0]);
         assert!(asked.starts_with("<conversation>\n[User]: go"), "{asked}");
@@ -260,11 +258,6 @@ fn a_split_turn_gets_a_prefix_summary() {
         let requests = llm.requests();
         let asked = text(&requests[2].transcript[0]);
         assert!(asked.ends_with(TURN_PREFIX_SUMMARIZATION_PROMPT), "{asked}");
-        assert_eq!(
-            requests[2].settings.max_output_tokens,
-            Some(50),
-            "half the reserve"
-        );
         let opening = text(&requests[3].transcript[0]);
         assert!(
             opening.contains(

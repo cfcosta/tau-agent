@@ -63,10 +63,10 @@ estimated with `chars / 4`.
   `[... N more characters truncated]`.
 - **Prior summary.** If one exists, the request uses the "update" variant
   of the prompt and includes the prior summary.
-- **Output limit.** `max_output_tokens` is the smaller of
-  `0.8 × reserve_tokens` and the model's maximum output tokens. A
-  split turn's prefix summary gets `0.5 × reserve_tokens`, capped the
-  same way.
+- **Output limit.** None is sent. The ChatGPT plan route rejects
+  `max_output_tokens` ([0011](../decisions/0011-sign-in-with-chatgpt.md)),
+  so the summary is as long as the model makes it. A summary cut off by
+  the model's own limit stops with `length` and is rejected (below).
 - **Retries.** The request goes through the run's retry policy, so a
   dropped connection is retried like any other turn.
 - **Rejected summaries.** Compaction fails, and writes nothing, when the

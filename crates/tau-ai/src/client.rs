@@ -65,8 +65,7 @@ impl OpenAi {
     }
 
     /// Opens a session for one run. If the model is in the model table,
-    /// whether it reasons comes from there. The plan route takes no
-    /// `max_output_tokens`, so the settings lose it.
+    /// whether it reasons comes from there.
     pub async fn session(
         &self,
         mut settings: Settings,
@@ -75,7 +74,6 @@ impl OpenAi {
         if let Some(model) = model {
             settings.reasoning_model = model.reasoning;
         }
-        settings.max_output_tokens = None;
         Ok(Session {
             lane: self.transport.open_lane().await?,
             fields: Arc::new(session_fields(&settings)),

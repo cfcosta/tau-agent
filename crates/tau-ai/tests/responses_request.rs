@@ -7,7 +7,6 @@ use hegel::{
 };
 use serde_json::{Value, json};
 use tau_ai::responses::request::{
-    MIN_OUTPUT_TOKENS,
     PROMPT_CACHE_KEY_MAX_CHARS,
     ReasoningEffort,
     Settings,
@@ -52,7 +51,6 @@ fn settings_unprinted(tc: &TestCase) -> Settings {
             ReasoningEffort::Xhigh,
             ReasoningEffort::Max,
         ])).print_as_debug()),
-        max_output_tokens: tc.draw(gs::optional(gs::integers::<u64>().max_value(200_000))),
         text_format: tc.draw(gs::optional(gs::just(json!({"type": "json_schema", "name": "T", "schema": {}, "strict": true})))),
         service_tier: tc.draw(gs::optional(gs::sampled_from(vec!["flex".to_owned(), "priority".to_owned()]))),
         prompt_cache_key: tc.draw(gs::optional(generators::text(100))),
@@ -135,16 +133,14 @@ fn encrypted_reasoning_follows_the_model(tc: TestCase) {
     assert_eq!(body.get("reasoning").cloned(), expected);
 }
 
-/// Wire limits: `max_output_tokens` is raised to 16, and
-/// `prompt_cache_key` is cut to its first 64 characters.
+/// Wire limits: `prompt_cache_key` is cut to its first 64 characters,
+/// and no request asks for `max_output_tokens`, which the plan route
+/// rejects.
 #[hegel::test(test_cases = 300)]
 fn wire_limits_are_clamped(tc: TestCase) {
     let settings = tc.draw(settings());
     let body = body(&settings, vec![]);
-    assert_eq!(
-        body.get("max_output_tokens").and_then(Value::as_u64),
-        settings.max_output_tokens.map(|m| m.max(MIN_OUTPUT_TOKENS))
-    );
+    assert!(!body.contains_key("max_output_tokens"));
     if let Some(key) = &settings.prompt_cache_key {
         let sent = body["prompt_cache_key"].as_str().unwrap();
         assert_eq!(
@@ -183,7 +179,6 @@ fn golden_body() {
         }],
         reasoning_model: true,
         reasoning: Some(ReasoningEffort::High),
-        max_output_tokens: Some(8),
         ..Settings::default()
     };
     let body = body(
@@ -208,7 +203,6 @@ fn golden_body() {
             }],
             "reasoning": {"effort": "high", "summary": "auto"},
             "include": ["reasoning.encrypted_content"],
-            "max_output_tokens": 16,
             "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
         })
     );

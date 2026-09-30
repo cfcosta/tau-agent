@@ -621,36 +621,6 @@ pub fn merge_split_turn_summary(history: &str, turn_prefix: &str) -> String {
     )
 }
 
-/// The largest `max_output_tokens` a summary request may ask for
-/// (`docs/reference/compaction.md`, "Output limit"): the smaller of
-/// `0.8 * reserve_tokens` and the model's maximum output tokens. A
-/// `model_max_output_tokens` of `0` means the model has no documented
-/// cap (pi's `model.maxTokens > 0 ? model.maxTokens : Infinity`).
-pub fn summary_max_output_tokens(
-    reserve_tokens: u64,
-    model_max_output_tokens: u64,
-) -> u64 {
-    capped_budget(0.8, reserve_tokens, model_max_output_tokens)
-}
-
-/// The largest `max_output_tokens` a split-turn prefix summary may ask
-/// for: pi budgets it at half the reserve, not 0.8 of it.
-pub fn turn_prefix_max_output_tokens(
-    reserve_tokens: u64,
-    model_max_output_tokens: u64,
-) -> u64 {
-    capped_budget(0.5, reserve_tokens, model_max_output_tokens)
-}
-
-fn capped_budget(share: f64, reserve_tokens: u64, model_max: u64) -> u64 {
-    let budget = (share * reserve_tokens as f64).floor() as u64;
-    if model_max == 0 {
-        budget
-    } else {
-        budget.min(model_max)
-    }
-}
-
 // ============================================================================
 // Rejected summaries
 // ============================================================================

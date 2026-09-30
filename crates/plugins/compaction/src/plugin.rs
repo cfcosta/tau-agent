@@ -36,8 +36,6 @@ use crate::{
     merge_split_turn_summary,
     plan,
     should_compact,
-    summary_max_output_tokens,
-    turn_prefix_max_output_tokens,
 };
 
 /// The name compaction goes by in events and stored rewrites.
@@ -63,7 +61,6 @@ impl Plugin for Compaction {
             settings: *self,
             model: plan.model().to_owned(),
             reasoning: plan.reasoning,
-            max_output: known.map_or(0, |model| model.max_output),
             window: self
                 .context_window
                 .or(known.map(|model| model.context_window)),
@@ -77,7 +74,6 @@ struct CompactionRun {
     settings: Compaction,
     model: String,
     reasoning: Option<ReasoningEffort>,
-    max_output: u64,
     /// The context window to compact against, if known. Without one,
     /// only an overflow compacts.
     window: Option<u64>,
@@ -152,21 +148,13 @@ impl CompactionRun {
             previous.unwrap_or("No prior history.").to_owned()
         } else {
             let request = build_summary_request(history, previous, None);
-            let budget = summary_max_output_tokens(
-                self.settings.reserve_tokens,
-                self.max_output,
-            );
-            self.summarize(request, budget, ctx).await?
+            self.summarize(request, ctx).await?
         };
         if let Some(prefix) = plan.turn_prefix.clone() {
             let prefix = &transcript[prefix];
             files.extract_from_messages(prefix);
             let request = build_turn_prefix_summary_request(prefix);
-            let budget = turn_prefix_max_output_tokens(
-                self.settings.reserve_tokens,
-                self.max_output,
-            );
-            let text = self.summarize(request, budget, ctx).await?;
+            let text = self.summarize(request, ctx).await?;
             summary = merge_split_turn_summary(&summary, &text);
         }
         let (read_files, modified_files) = files.file_lists();
@@ -191,14 +179,12 @@ impl CompactionRun {
     async fn summarize(
         &self,
         request: String,
-        max_output_tokens: u64,
         ctx: &PluginCtx,
     ) -> Result<String, CompactionError> {
         let settings = Settings {
             model: self.model.clone(),
             instructions: Some(SUMMARIZATION_SYSTEM_PROMPT.to_owned()),
             reasoning: self.reasoning,
-            max_output_tokens: Some(max_output_tokens),
             ..Settings::default()
         };
         let input = [Message::User(UserMessage {

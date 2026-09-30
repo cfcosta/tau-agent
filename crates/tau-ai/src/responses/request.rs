@@ -11,7 +11,6 @@
 //!   so a full resend can replay its reasoning. pi only asks for it when a
 //!   reasoning effort is set; without it, a full resend after a lost
 //!   continuation would drop the reasoning.
-//! - `max_output_tokens` is at least 16, which OpenAI requires (pi #6265).
 //! - `prompt_cache_key` is cut to 64 characters, OpenAI's limit.
 //!
 //! Every field except `input` depends only on [`Settings`], so two turns
@@ -22,9 +21,6 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 
 use crate::ws::proto::continuation::{Body, Fields};
-
-/// OpenAI rejects `max_output_tokens` below this (pi #6265).
-pub const MIN_OUTPUT_TOKENS: u64 = 16;
 
 /// OpenAI's maximum `prompt_cache_key` length, in characters.
 pub const PROMPT_CACHE_KEY_MAX_CHARS: usize = 64;
@@ -90,7 +86,6 @@ pub struct Settings {
     pub reasoning_model: bool,
     /// The effort to ask for. `None` leaves it to the server.
     pub reasoning: Option<ReasoningEffort>,
-    pub max_output_tokens: Option<u64>,
     /// The `text.format` of a typed run.
     pub text_format: Option<Value>,
     pub service_tier: Option<String>,
@@ -139,12 +134,6 @@ pub fn fields(settings: &Settings) -> Fields {
             );
         }
         body.insert("include".into(), json!(["reasoning.encrypted_content"]));
-    }
-    if let Some(max) = settings.max_output_tokens {
-        body.insert(
-            "max_output_tokens".into(),
-            json!(max.max(MIN_OUTPUT_TOKENS)),
-        );
     }
     if let Some(format) = &settings.text_format {
         body.insert("text".into(), json!({ "format": format }));

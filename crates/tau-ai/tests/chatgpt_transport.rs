@@ -191,12 +191,10 @@ fn clones_share_one_refresh() {
 /// it does not take, `store: false`, and no `stream_id`.
 #[hegel::test(test_cases = 5)]
 fn unsupported_fields_never_go_out(tc: TestCase) {
-    let max_output_tokens = tc.draw(gs::optional(gs::integers::<u64>()));
     let prompt_cache_key =
         tc.draw(gs::optional(gs::text().min_size(1).max_size(80)));
     let tools = tc.draw(gs::booleans());
     let settings = Settings {
-        max_output_tokens,
         prompt_cache_key,
         tools: if tools {
             vec![ToolDefinition {

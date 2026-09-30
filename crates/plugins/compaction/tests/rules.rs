@@ -48,8 +48,6 @@ use tau_compaction::{
     plan,
     serialize_conversation,
     should_compact,
-    summary_max_output_tokens,
-    turn_prefix_max_output_tokens,
 };
 use tau_testing::generators;
 
@@ -726,45 +724,8 @@ fn format_file_operations_wraps_each_list_and_is_empty_when_both_are() {
 }
 
 // =============================================================================
-// Summary request (testing.md: output limit, prompt variant)
+// Summary request (testing.md: prompt variant)
 // =============================================================================
-
-/// The summary request's output limit is exactly `floor(0.8 *
-/// reserve_tokens)`, capped by the model's maximum output when it has
-/// one, and the split-turn prefix's is the same with half the reserve
-/// (`docs/reference/testing.md`; `docs/reference/compaction.md`,
-/// "Output limit"). `0` means the model has no documented cap. The
-/// reference is integer arithmetic, so float rounding cannot hide in
-/// both sides.
-#[hegel::test(test_cases = 500)]
-fn summary_output_limit_is_the_capped_share_of_the_reserve(tc: TestCase) {
-    let reserve_tokens =
-        tc.draw(gs::integers::<u64>().max_value(1_000_000_000_000));
-    let model_max_output_tokens = tc.draw(hegel::one_of!(
-        gs::just(0u64),
-        gs::integers::<u64>().max_value(1_000_000_000_000),
-    ));
-    let cap = |budget: u64| {
-        if model_max_output_tokens == 0 {
-            budget
-        } else {
-            budget.min(model_max_output_tokens)
-        }
-    };
-    let summary = cap(reserve_tokens * 4 / 5);
-    let prefix = cap(reserve_tokens / 2);
-    if model_max_output_tokens != 0 && summary == model_max_output_tokens {
-        tc.event("capped by the model");
-    }
-    assert_eq!(
-        summary_max_output_tokens(reserve_tokens, model_max_output_tokens),
-        summary
-    );
-    assert_eq!(
-        turn_prefix_max_output_tokens(reserve_tokens, model_max_output_tokens),
-        prefix
-    );
-}
 
 /// With no prior summary, the request uses the initial prompt and has no
 /// `<previous-summary>` section (`docs/reference/compaction.md`, "Prior
@@ -1102,19 +1063,6 @@ fn merge_split_turn_summary_joins_with_the_expected_separator() {
         merge_split_turn_summary("history text", "prefix text"),
         "history text\n\n---\n\n**Turn Context (split turn):**\n\nprefix text"
     );
-}
-
-/// `summary_max_output_tokens` is exactly `min(floor(0.8 * reserve),
-/// model_max)`, with `0` treated as "no cap" — not a constant.
-#[test]
-fn summary_max_output_tokens_exact_values() {
-    assert_eq!(summary_max_output_tokens(100, 1000), 80);
-    assert_eq!(summary_max_output_tokens(100, 0), 80);
-    assert_eq!(summary_max_output_tokens(100, 50), 50);
-    assert_eq!(summary_max_output_tokens(0, 1000), 0);
-    assert_eq!(turn_prefix_max_output_tokens(100, 1000), 50);
-    assert_eq!(turn_prefix_max_output_tokens(100, 0), 50);
-    assert_eq!(turn_prefix_max_output_tokens(101, 40), 40);
 }
 
 /// `plan` partitions the unsummarized messages
