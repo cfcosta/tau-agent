@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use gpui::Context;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
 use tau_constitution::{Trial, rules::Target};
@@ -27,7 +28,7 @@ const TRIAL_CALLS: usize = 6;
 const TRIAL_ANSWERS: usize = 3;
 
 /// Thresholds by name. The editor offers these first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Preset {
     Lenient,
     Balanced,
@@ -56,14 +57,14 @@ impl Preset {
 }
 
 /// Which threshold a nudge moves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mark {
     Review,
     Block,
 }
 
 /// What trying the rule gave.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum Trying {
     #[default]
     Not,
@@ -76,7 +77,7 @@ pub enum Trying {
 }
 
 /// A rule being written (or rewritten), in the editor.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuleDraft {
     pub repo: String,
     /// The rule being edited, or `None` for a new one.
@@ -102,7 +103,9 @@ impl RuleDraft {
 }
 
 /// Which list the Constitution screen shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
 pub enum RulesTab {
     #[default]
     Rules,
@@ -110,7 +113,7 @@ pub enum RulesTab {
 }
 
 /// What a repository's runs say about its constitution.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RulesStats {
     pub runs: usize,
     /// Calls and final answers checked.
@@ -127,7 +130,7 @@ pub struct RulesStats {
 }
 
 /// A flagged call or answer that waits for a person.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReviewItem {
     pub run: RunId,
     pub run_title: String,
@@ -142,7 +145,7 @@ pub struct ReviewItem {
 }
 
 /// Something the rules dealt with on their own, or a person marked.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Handled {
     pub what: HandledKind,
     pub shown: String,
@@ -150,7 +153,7 @@ pub struct Handled {
     pub run_title: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HandledKind {
     Blocked,
     Held,

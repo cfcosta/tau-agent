@@ -22,6 +22,7 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore, crypto::ring};
 use crate::{
     accounts::{Credentials, write_private},
     setup::{DeviceCode, GitHub, RepoChoice, SetupUpdate},
+    update::HostUpdate,
     workspace::{Workspace, WorkspaceEvent},
 };
 
@@ -791,8 +792,10 @@ pub fn handle(
             cx.spawn(async move |cx| {
                 while let Some(code) = shown.recv().await {
                     let _ = workspace_for_codes.update(cx, |ws, cx| {
-                        ws.update_setup(
-                            SetupUpdate::GitHub(GitHub::Waiting(code)),
+                        ws.apply(
+                            HostUpdate::Setup(SetupUpdate::GitHub(
+                                GitHub::Waiting(code),
+                            )),
                             cx,
                         )
                     });
@@ -830,8 +833,8 @@ pub fn handle(
                 Err(error) => GitHub::Failed(error.to_string()),
             };
             workspace.update(cx, |ws, cx| {
-                ws.update_setup(SetupUpdate::GitHub(update), cx);
-                ws.update_setup(SetupUpdate::Repos(Vec::new()), cx);
+                ws.apply(HostUpdate::Setup(SetupUpdate::GitHub(update)), cx);
+                ws.apply(HostUpdate::Setup(SetupUpdate::Repos(Vec::new())), cx);
             });
             true
         }
@@ -861,15 +864,20 @@ fn finish(
         let Ok(token) = result else {
             let error = result.err().unwrap_or_default();
             let _ = workspace.update(cx, |ws, cx| {
-                ws.update_setup(SetupUpdate::GitHub(GitHub::Failed(error)), cx)
+                ws.apply(
+                    HostUpdate::Setup(SetupUpdate::GitHub(GitHub::Failed(
+                        error,
+                    ))),
+                    cx,
+                )
             });
             return;
         };
         let _ = workspace.update(cx, |ws, cx| {
-            ws.update_setup(
-                SetupUpdate::GitHub(GitHub::SignedIn {
+            ws.apply(
+                HostUpdate::Setup(SetupUpdate::GitHub(GitHub::SignedIn {
                     user: token.user.clone(),
-                }),
+                })),
                 cx,
             )
         });
@@ -890,10 +898,10 @@ pub fn restore(
         return;
     };
     workspace.update(cx, |ws, cx| {
-        ws.update_setup(
-            SetupUpdate::GitHub(GitHub::SignedIn {
+        ws.apply(
+            HostUpdate::Setup(SetupUpdate::GitHub(GitHub::SignedIn {
                 user: token.user.clone(),
-            }),
+            })),
             cx,
         )
     });
@@ -915,7 +923,7 @@ async fn list_repos(
     .await
     .unwrap_or_else(|_| Err("stopped".into()));
     let _ = workspace.update(cx, |ws, cx| match repos {
-        Ok(repos) => ws.update_setup(SetupUpdate::Repos(repos), cx),
+        Ok(repos) => ws.apply(HostUpdate::Setup(SetupUpdate::Repos(repos)), cx),
         Err(error) => {
             eprintln!("tau-ui: cannot list GitHub repositories: {error}")
         }

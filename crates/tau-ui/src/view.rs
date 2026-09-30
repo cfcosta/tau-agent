@@ -9,6 +9,7 @@
 
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::{
     event::{LimitKind, RunEvent, StopReason},
@@ -29,7 +30,7 @@ use crate::{
 };
 
 /// One run, as the transcript, the inspector and the run list show it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunView {
     pub id: RunId,
     /// What the run list calls it.
@@ -73,7 +74,7 @@ pub struct RunView {
 }
 
 /// tau-constitution's work in one run, from its reports.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ConstitutionStats {
     /// Tool calls checked, and final answers checked.
     pub calls: u32,
@@ -94,7 +95,7 @@ pub struct ConstitutionStats {
 }
 
 /// A final answer flagged for review.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FlaggedAnswer {
     pub rule: String,
     pub text: String,
@@ -131,10 +132,10 @@ impl ConstitutionStats {
 }
 
 /// One run event, as the Events tab lists it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogLine {
     pub turn: u32,
-    pub kind: &'static str,
+    pub kind: std::borrow::Cow<'static, str>,
     pub text: String,
 }
 
@@ -142,7 +143,7 @@ pub struct LogLine {
 const LOG_LIMIT: usize = 200;
 
 /// Where a run came from.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Origin {
     #[default]
     Root,
@@ -167,7 +168,7 @@ impl Origin {
 }
 
 /// One tool call as context pruning judged it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LedgerEntry {
     pub call_id: String,
     pub turn: u32,
@@ -182,7 +183,7 @@ pub struct LedgerEntry {
     pub decision: Decision,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Decision {
     Pinned,
     Keep,
@@ -201,7 +202,7 @@ impl Decision {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RunStatus {
     /// Plugins are preparing the run; the session is not open yet.
     Planning,
@@ -216,7 +217,7 @@ impl RunStatus {
 }
 
 /// One entry of the transcript, in the order it happened.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Item {
     User(String),
     /// The person set a goal (`/goal`).
@@ -288,7 +289,7 @@ impl LandedCard {
 }
 
 /// A child run that landed on this run: what it brought.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LandedCard {
     pub from: RunId,
     /// The child's title, as the run list called it.
@@ -299,7 +300,7 @@ pub struct LandedCard {
     pub conflicts: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCard {
     pub call_id: String,
     pub tool: String,
@@ -324,7 +325,7 @@ pub struct ToolCard {
 
 /// A result fast compaction pruned as it arrived: the lines the model
 /// saw of the whole output, and the file holding the whole of it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputCut {
     pub kept: usize,
     pub lines: usize,
@@ -342,7 +343,7 @@ impl OutputCut {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ToolState {
     Running,
     Done {
@@ -364,7 +365,7 @@ pub enum ToolState {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Pruned {
     Kept,
     ResultDropped,
@@ -381,7 +382,7 @@ impl Pruned {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum ToolBody {
     #[default]
     None,
@@ -404,7 +405,7 @@ pub enum ToolBody {
 
 /// A command's terminal, from the `term` details of `bash`'s updates and
 /// result (`docs/reference/tools.md`, "bash: terminal mode").
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TermOutput {
     pub cols: u16,
     pub rows: u16,
@@ -420,7 +421,7 @@ pub struct TermOutput {
     pub seen: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TermEnd {
     pub status: TermStatus,
     /// The exit code; `None` on a timeout or a cancel.
@@ -430,7 +431,7 @@ pub struct TermEnd {
     pub snapshot: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TermStatus {
     Exited,
     TimedOut,
@@ -548,7 +549,7 @@ impl TermOutput {
 }
 
 /// A line of the text the model saw.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SeenLine {
     Text(String),
     /// A run of lines fast compaction left out.
@@ -562,13 +563,13 @@ fn decode(text: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(text).ok()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffLine {
     pub kind: DiffKind,
     pub text: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiffKind {
     Context,
     Added,
@@ -577,7 +578,7 @@ pub enum DiffKind {
 
 /// A plugin speaking in the transcript. Lighter than a tool card, and
 /// always named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginNote {
     pub plugin: String,
     pub text: String,
@@ -587,7 +588,7 @@ pub struct PluginNote {
     pub body: NoteBody,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum NoteBody {
     #[default]
     None,
@@ -606,13 +607,15 @@ pub enum NoteBody {
     Proposals(Vec<Proposal>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Proposal {
     pub title: String,
     pub detail: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
 pub enum Tone {
     #[default]
     Info,
@@ -622,7 +625,7 @@ pub enum Tone {
     Quiet,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanField {
     pub name: String,
     pub value: String,
@@ -630,7 +633,7 @@ pub struct PlanField {
     pub set_by: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Limits {
     pub max_turns: Option<u32>,
     pub max_tokens: Option<u64>,
@@ -639,7 +642,7 @@ pub struct Limits {
     pub elapsed: Duration,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Totals {
     pub tokens: u64,
     pub cost: f64,
@@ -647,7 +650,7 @@ pub struct Totals {
     pub plugin_cost: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ContextWindow {
     pub used: u64,
     pub window: Option<u64>,
@@ -659,7 +662,9 @@ pub struct ContextWindow {
 
 /// What fills the context, estimated at four characters a token and
 /// scaled to the model's own count ([`ContextWindow::used`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
 pub struct ContextParts {
     /// What the transcript does not account for: the instructions, the
     /// tool definitions, and the reasoning the model carries between
@@ -725,14 +730,14 @@ impl ContextParts {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginStatus {
     pub name: String,
     pub state: String,
     pub tone: Tone,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChildRun {
     pub id: RunId,
     pub title: String,
@@ -740,14 +745,14 @@ pub struct ChildRun {
     pub status: RunStatus,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChildKind {
     SubAgent,
     Fork,
 }
 
 /// How a file changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileKind {
     Added,
     Modified,
@@ -766,7 +771,7 @@ impl FileKind {
 }
 
 /// A changed file, with its line counts.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileStat {
     pub path: String,
     pub kind: FileKind,
@@ -775,14 +780,14 @@ pub struct FileStat {
 }
 
 /// A changed file and its diff.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileChange {
     pub stat: FileStat,
     pub lines: Vec<DiffLine>,
 }
 
 /// The code of a run and one of its forks, side by side.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct BranchCode {
     /// What the run changed after the fork point.
     pub main: Vec<FileStat>,
@@ -793,7 +798,7 @@ pub struct BranchCode {
 }
 
 /// Where the code of a comparison is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CodeState {
     Loading,
     Ready(BranchCode),
@@ -803,7 +808,7 @@ pub enum CodeState {
 
 /// Anything that changes a [`RunView`]: a run event, or what the host
 /// knows that no event carries yet.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RunUpdate {
     Event(RunEvent),
     /// The user's message. Run events never carry it.
@@ -845,7 +850,7 @@ impl From<RunEvent> for RunUpdate {
 
 /// One entry of a stored run, in order: a message, or a record a
 /// plugin kept.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Stored {
     Message(Message),
     Record { plugin: String, body: Value },
@@ -1526,7 +1531,7 @@ impl RunView {
         };
         self.log.push(LogLine {
             turn: self.turn,
-            kind,
+            kind: kind.into(),
             text,
         });
         if self.log.len() > LOG_LIMIT {
@@ -1607,7 +1612,7 @@ impl RunView {
 }
 
 /// One limit, ready to draw.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Meter {
     pub kind: LimitKind,
     pub label: &'static str,

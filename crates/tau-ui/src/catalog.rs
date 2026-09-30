@@ -3,9 +3,11 @@
 //! store. The host fills it from its agents and plugin crates;
 //! [`crate::demo`] has an example.
 
+use serde::{Deserialize, Serialize};
+
 use crate::view::Proposal;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Catalog {
     /// The agent the plugin screen describes.
     pub agent: String,
@@ -49,7 +51,7 @@ impl Catalog {
 
 /// A repository runs work on: its memory and constitution belong to it
 /// alone.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Repo {
     /// What the sidebar calls it; unique in the catalog.
     pub name: String,
@@ -78,7 +80,7 @@ impl Repo {
 }
 
 /// Where the host's runs work, for the status bar.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ProjectStatus {
     /// No host, or one that says nothing.
     #[default]
@@ -95,7 +97,7 @@ pub enum ProjectStatus {
 }
 
 /// The seams a plugin can use, in the order the loop reaches them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Seam {
     Start,
     Tools,
@@ -131,7 +133,7 @@ impl Seam {
 }
 
 /// Which screen explains a plugin's work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginScreen {
     /// The run plan: what `start` decided.
     Plan,
@@ -141,7 +143,7 @@ pub enum PluginScreen {
     Ledger,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginInfo {
     pub name: String,
     pub description: String,
@@ -151,7 +153,7 @@ pub struct PluginInfo {
     pub screen: Option<PluginScreen>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct JevStats {
     pub model: String,
     /// Where the key comes from.
@@ -165,7 +167,7 @@ pub struct JevStats {
     pub failed: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Memory {
     /// The notes directory.
     pub path: String,
@@ -215,7 +217,7 @@ impl Memory {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Note {
     pub id: String,
     pub title: String,
@@ -238,13 +240,13 @@ impl Note {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Link {
     pub to: String,
     pub why: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Constitution {
     pub rules: Vec<Rule>,
     pub max_continuations: u32,
@@ -253,7 +255,7 @@ pub struct Constitution {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rule {
     pub id: String,
     pub text: String,
@@ -263,7 +265,7 @@ pub struct Rule {
     pub block: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct StoreInfo {
     pub path: String,
     pub size: String,

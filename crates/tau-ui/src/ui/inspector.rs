@@ -659,7 +659,7 @@ fn event_log(run: &RunView, t: &Theme) -> Div {
                             .w(px(24.)),
                     )
                     .child(
-                        mono(line.kind, Type::MICRO, color(line.kind))
+                        mono(line.kind.clone(), Type::MICRO, color(&line.kind))
                             .w(px(80.)),
                     )
                     .child(

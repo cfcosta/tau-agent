@@ -1,15 +1,17 @@
 //! A pull request made from a run: the draft the host writes from the
 //! run's commits, and what GitHub says once it is open.
 
+use serde::{Deserialize, Serialize};
+
 /// A commit the pull request carries, with its line counts.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrCommit {
     pub title: String,
     pub added: u32,
     pub removed: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Checks {
     Running,
     Passed,
@@ -18,7 +20,7 @@ pub enum Checks {
     None,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrState {
     /// The user is still editing it.
     Draft,
@@ -31,7 +33,7 @@ pub enum PrState {
     Failed(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullRequest {
     /// `owner/name`.
     pub repo: String,

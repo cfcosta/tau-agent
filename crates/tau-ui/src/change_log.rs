@@ -11,7 +11,7 @@ use tau_vcs::{ChangeInfo, tools::Log};
 /// The tool whose results read as a [`ChangeLog`].
 pub const TOOL: &str = Log::NAME;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChangeLog {
     /// The working copy (`@`), pinned above the stack.
     pub working_copy: Option<Change>,
@@ -24,14 +24,14 @@ pub struct ChangeLog {
 }
 
 /// Changes next to each other in the log that share a scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScopeRun {
     /// The commit scope, else its type (`docs: …`), else none.
     pub scope: Option<String>,
     pub changes: Vec<Change>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Change {
     pub info: ChangeInfo,
     /// The conventional commit type (`feat`), when the first line has

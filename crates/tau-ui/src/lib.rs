@@ -70,6 +70,7 @@ pub mod setup;
 pub mod slash;
 pub mod theme;
 pub mod ui;
+pub mod update;
 pub mod view;
 pub mod workspace;
 

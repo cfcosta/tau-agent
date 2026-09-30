@@ -19,7 +19,7 @@ base64.workspace = true
 pulldown-cmark.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tau-agent.workspace = true
+tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
 tau-compaction.workspace = true
 tau-constitution.workspace = true

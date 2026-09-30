@@ -21,7 +21,7 @@ pub const DIFF_TOOL: &str = Diff::NAME;
 /// parents.
 pub const SHOW_TOOL: &str = Show::NAME;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChangeDiff {
     pub change: Change,
     /// Empty for `vcs_diff`, which does not send them.
@@ -33,13 +33,13 @@ pub struct ChangeDiff {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
 pub struct Author {
     pub name: String,
     pub email: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileDiff {
     pub path: String,
     pub kind: ChangeKind,
@@ -50,14 +50,14 @@ pub struct FileDiff {
     pub binary: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Hunk {
     /// `@@ -38,7 +38,12 @@`.
     pub header: String,
     pub lines: Vec<HunkLine>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HunkLine {
     pub kind: DiffKind,
     /// The line's number before the change; none for an added line.

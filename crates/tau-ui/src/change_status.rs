@@ -16,7 +16,7 @@ use crate::{
 /// The tool whose results read as a [`ChangeStatus`].
 pub const TOOL: &str = Status::NAME;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChangeStatus {
     pub working_copy: Change,
     /// One for a change, two or more for a merge.

@@ -84,6 +84,7 @@ use crate::{
     },
     pull_request::{PrCommit, PrState, PullRequest},
     setup::{CloneState, RepoClone, SetupUpdate},
+    update::HostUpdate,
     view::{
         BranchCode,
         ChildKind,
@@ -2111,7 +2112,8 @@ impl Host {
         cx: &mut App,
     ) {
         match self.history() {
-            Ok(runs) => workspace.update(cx, |ws, cx| ws.add_history(runs, cx)),
+            Ok(runs) => workspace
+                .update(cx, |ws, cx| ws.apply(HostUpdate::History(runs), cx)),
             Err(error) => eprintln!("tau-ui: cannot read past runs: {error:#}"),
         }
         let host = Arc::new(self);
@@ -2138,11 +2140,13 @@ impl Host {
                 };
                 list_plan_models(&host, &workspace, cx);
                 workspace.update(cx, |ws, cx| {
-                    ws.set_catalog(catalog, cx);
+                    ws.apply(HostUpdate::catalog(catalog), cx);
                     if let Err(error) = applied {
-                        ws.show_alert(
-                            "Could not use the new sign-in",
-                            format!("{error:#}"),
+                        ws.apply(
+                            HostUpdate::alert(
+                                "Could not use the new sign-in",
+                                format!("{error:#}"),
+                            ),
                             cx,
                         );
                     }
@@ -2184,14 +2188,10 @@ impl Host {
                     repo,
                 } => match handler.start(prompt, model, repo) {
                     Ok(view) => {
-                        workspace.update(cx, |ws, cx| ws.push_run(view, cx))
+                        workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Run(Box::new(view)), cx))
                     }
                     Err(error) => workspace.update(cx, |ws, cx| {
-                        ws.show_alert(
-                            "Could not start the run",
-                            format!("{error:#}"),
-                            cx,
-                        )
+                        ws.apply(HostUpdate::alert("Could not start the run", format!("{error:#}")), cx)
                     }),
                 },
                 WorkspaceEvent::AddRule {
@@ -2206,13 +2206,9 @@ impl Host {
                     });
                     let catalog = handler.catalog();
                     workspace.update(cx, |ws, cx| {
-                        ws.set_catalog(catalog, cx);
+                        ws.apply(HostUpdate::catalog(catalog), cx);
                         if let Err(error) = added {
-                            ws.show_alert(
-                                "Could not add the rule",
-                                format!("{error:#}"),
-                                cx,
-                            );
+                            ws.apply(HostUpdate::alert("Could not add the rule", format!("{error:#}")), cx);
                         }
                     });
                 }
@@ -2229,13 +2225,9 @@ impl Host {
                     });
                     let catalog = handler.catalog();
                     workspace.update(cx, |ws, cx| {
-                        ws.set_catalog(catalog, cx);
+                        ws.apply(HostUpdate::catalog(catalog), cx);
                         if let Err(error) = saved {
-                            ws.show_alert(
-                                "Could not save the rule",
-                                format!("{error:#}"),
-                                cx,
-                            );
+                            ws.apply(HostUpdate::alert("Could not save the rule", format!("{error:#}")), cx);
                         }
                     });
                 }
@@ -2262,7 +2254,7 @@ impl Host {
                         let result =
                             job.await.unwrap_or_else(|e| Err(e.to_string()));
                         let _ = workspace
-                            .update(cx, |ws, cx| ws.set_rule_trial(result, cx));
+                            .update(cx, |ws, cx| ws.apply(HostUpdate::RuleTrial(result), cx));
                     })
                     .detach();
                 }
@@ -2280,10 +2272,10 @@ impl Host {
                             Err(error) => Err(error.to_string()),
                         };
                         let _ = workspace.update(cx, |ws, cx| match prepared {
-                            Ok(draft) => ws.set_pull_request(&run, draft, cx),
+                            Ok(draft) => ws.apply(HostUpdate::PullRequest { run: run.clone(), pr: Box::new(draft) }, cx),
                             Err(error) => {
                                 ws.back(cx);
-                                ws.show_alert("Could not write the pull request", error, cx)
+                                ws.apply(HostUpdate::alert("Could not write the pull request", error), cx)
                             }
                         });
                     })
@@ -2334,7 +2326,7 @@ impl Host {
                             Err(error) => PrState::Failed(error),
                         };
                         let _ = workspace.update(cx, |ws, cx| {
-                            ws.set_pull_request_state(&run, state, cx)
+                            ws.apply(HostUpdate::PullRequestState { run: run.clone(), state }, cx)
                         });
                         if opened {
                             watch_checks(host, run, workspace, cx).await;
@@ -2353,7 +2345,7 @@ impl Host {
                     cx.spawn(async move |cx| {
                         let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
                         let _ = workspace
-                            .update(cx, |ws, cx| ws.set_query_result(result, cx));
+                            .update(cx, |ws, cx| ws.apply(HostUpdate::QueryResult(result), cx));
                     })
                     .detach();
                 }
@@ -2364,13 +2356,9 @@ impl Host {
                     });
                     let catalog = handler.catalog();
                     workspace.update(cx, |ws, cx| {
-                        ws.set_catalog(catalog, cx);
+                        ws.apply(HostUpdate::catalog(catalog), cx);
                         if let Err(error) = removed {
-                            ws.show_alert(
-                                "Could not remove the rule",
-                                format!("{error:#}"),
-                                cx,
-                            );
+                            ws.apply(HostUpdate::alert("Could not remove the rule", format!("{error:#}")), cx);
                         }
                     });
                 }
@@ -2379,13 +2367,9 @@ impl Host {
                         handler.config.credentials.set_jev_key(key.as_deref());
                     let catalog = handler.catalog();
                     workspace.update(cx, |ws, cx| {
-                        ws.set_catalog(catalog, cx);
+                        ws.apply(HostUpdate::catalog(catalog), cx);
                         if let Err(error) = saved {
-                            ws.show_alert(
-                                "Could not save the TypeSafe key",
-                                error.to_string(),
-                                cx,
-                            );
+                            ws.apply(HostUpdate::alert("Could not save the TypeSafe key", error.to_string()), cx);
                         }
                     });
                 }
@@ -2411,12 +2395,8 @@ impl Host {
                     let _ = handler.set_closed(run, false);
                     if let Err(error) = handler.resume(run, prompt, model) {
                         workspace.update(cx, |ws, cx| {
-                            ws.resume_failed(run, cx);
-                            ws.show_alert(
-                                "Could not go on with the run",
-                                format!("{error:#}"),
-                                cx,
-                            )
+                            ws.apply(HostUpdate::ResumeFailed(run.clone()), cx);
+                            ws.apply(HostUpdate::alert("Could not go on with the run", format!("{error:#}")), cx)
                         })
                     }
                 }
@@ -2427,14 +2407,10 @@ impl Host {
                     model,
                 } => match handler.fork(run, *turn, prompt, model) {
                     Ok(view) => {
-                        workspace.update(cx, |ws, cx| ws.push_run(view, cx))
+                        workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Run(Box::new(view)), cx))
                     }
                     Err(error) => workspace.update(cx, |ws, cx| {
-                        ws.show_alert(
-                            "Could not fork the run",
-                            format!("{error:#}"),
-                            cx,
-                        )
+                        ws.apply(HostUpdate::alert("Could not fork the run", format!("{error:#}")), cx)
                     }),
                 },
                 WorkspaceEvent::CompareCode { main, fork } => {
@@ -2453,7 +2429,7 @@ impl Host {
                             }
                         };
                         let _ = workspace.update(cx, |ws, cx| {
-                            ws.set_branch_code(&main, &fork, code, cx)
+                            ws.apply(HostUpdate::BranchCode { main: main.clone(), fork: fork.clone(), code }, cx)
                         });
                     })
                     .detach();
@@ -2462,11 +2438,7 @@ impl Host {
                     if let Err(error) = handler.save_settings(settings.clone())
                     {
                         workspace.update(cx, |ws, cx| {
-                            ws.show_alert(
-                                "Could not save the model settings",
-                                format!("{error:#}"),
-                                cx,
-                            )
+                            ws.apply(HostUpdate::alert("Could not save the model settings", format!("{error:#}")), cx)
                         });
                     }
                 }
@@ -2475,19 +2447,19 @@ impl Host {
                         .preview_landing(run)
                         .map_err(|error| format!("{error:#}"));
                     workspace.update(cx, |ws, cx| {
-                        ws.set_landing_preview(run, preview, cx)
+                        ws.apply(HostUpdate::LandingPreview { run: run.clone(), preview }, cx)
                     });
                 }
                 WorkspaceEvent::Land { run } => {
                     let landed =
                         handler.land(run).map_err(|error| format!("{error:#}"));
-                    workspace.update(cx, |ws, cx| ws.landed(run, landed, cx));
+                    workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Landed { run: run.clone(), landing: landed }, cx));
                 }
                 WorkspaceEvent::DropChild { run } => {
                     let dropped = handler
                         .drop_child(run)
                         .map_err(|error| format!("{error:#}"));
-                    workspace.update(cx, |ws, cx| ws.dropped(run, dropped, cx));
+                    workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Dropped { run: run.clone(), result: dropped }, cx));
                 }
                 WorkspaceEvent::KeepBranch { run } => {
                     if let Err(error) = handler.keep_branch(run) {
@@ -2504,14 +2476,10 @@ impl Host {
                                     &handler, &slot, &workspace, cx,
                                 );
                             }
-                            workspace.update(cx, |ws, cx| ws.add_repo(repo, cx))
+                            workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Repo(repo), cx))
                         }
                         Err(error) => workspace.update(cx, |ws, cx| {
-                            ws.show_alert(
-                                "Could not add the repository",
-                                format!("{error:#}"),
-                                cx,
-                            )
+                            ws.apply(HostUpdate::alert("Could not add the repository", format!("{error:#}")), cx)
                         }),
                     }
                 }
@@ -2543,8 +2511,9 @@ impl Host {
                 // follows.
                 if matches!(event, RunEvent::RunEnd { .. }) {
                     let catalog = host.catalog();
-                    let _ = workspace
-                        .update(cx, |ws, cx| ws.set_catalog(catalog, cx));
+                    let _ = workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::catalog(catalog), cx)
+                    });
                 }
                 // A pull request that keeps pushing takes the turn.
                 if let RunEvent::TurnEnd { run, .. } = &event
@@ -2568,9 +2537,9 @@ impl Host {
                     _ => None,
                 };
                 let applied = workspace.update(cx, |ws, cx| {
-                    ws.apply_event(&event, cx);
+                    ws.apply(HostUpdate::Event(event.clone()), cx);
                     if let Some(refusal) = &refusal {
-                        ws.show_plan_refusal(refusal, cx);
+                        ws.apply(HostUpdate::PlanRefusal(refusal.clone()), cx);
                     }
                 });
                 if applied.is_err() {
@@ -2602,7 +2571,7 @@ fn update_in_background(
         updating.push(name.to_owned());
     }
     let catalog = host.catalog();
-    workspace.update(cx, |ws, cx| ws.set_catalog(catalog, cx));
+    workspace.update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
     let job = {
         let (updater, name) = (host.clone(), name.to_owned());
         host.runtime
@@ -2630,9 +2599,15 @@ fn update_in_background(
         *host.last_update.lock().expect("not poisoned") = Some(summary);
         let catalog = host.catalog();
         let _ = workspace.update(cx, |ws, cx| {
-            ws.set_catalog(catalog, cx);
+            ws.apply(HostUpdate::catalog(catalog), cx);
             if let (true, Err(error)) = (asked, result) {
-                ws.show_alert(format!("Could not update {name}"), error, cx);
+                ws.apply(
+                    HostUpdate::alert(
+                        format!("Could not update {name}"),
+                        error,
+                    ),
+                    cx,
+                );
             }
         });
     })
@@ -3084,12 +3059,14 @@ async fn watch_checks(
             if let Some(pr) = ws.pull_request(&run).cloned()
                 && let PrState::Opened { number, url, .. } = pr.state
             {
-                ws.set_pull_request_state(
-                    &run,
-                    PrState::Opened {
-                        number,
-                        url,
-                        checks,
+                ws.apply(
+                    HostUpdate::PullRequestState {
+                        run: run.clone(),
+                        state: PrState::Opened {
+                            number,
+                            url,
+                            checks,
+                        },
                     },
                     cx,
                 );
@@ -3122,7 +3099,8 @@ fn refresh_when_imported(
     cx.spawn(async move |cx| {
         let _ = wait.await;
         let catalog = host.catalog();
-        let _ = workspace.update(cx, |ws, cx| ws.set_catalog(catalog, cx));
+        let _ = workspace
+            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
     })
     .detach();
 }
@@ -3500,7 +3478,8 @@ fn list_plan_models(
     cx.spawn(async move |cx| {
         let _ = listing.await;
         let catalog = host.catalog();
-        let _ = workspace.update(cx, |ws, cx| ws.set_catalog(catalog, cx));
+        let _ = workspace
+            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
     })
     .detach();
 }
@@ -3520,11 +3499,11 @@ fn clone_into_tau(
         })
     };
     workspace.update(cx, |ws, cx| {
-        ws.update_setup(
-            report(CloneState::Cloning {
+        ws.apply(
+            HostUpdate::Setup(report(CloneState::Cloning {
                 share: 0.3,
                 detail: "fetching from GitHub".into(),
-            }),
+            })),
             cx,
         )
     });
@@ -3549,13 +3528,16 @@ fn clone_into_tau(
                     if let Some(slot) = host.slot(&repo.name) {
                         refresh_when_imported(&host, &slot, &workspace, cx);
                     }
-                    workspace.update(cx, |ws, cx| ws.add_repo(repo, cx));
+                    workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::Repo(repo), cx)
+                    });
                     CloneState::Ready
                 }
                 Err(error) => CloneState::Failed(error),
             };
             let update = SetupUpdate::Clone(RepoClone { name, state });
-            workspace.update(cx, |ws, cx| ws.update_setup(update, cx));
+            workspace
+                .update(cx, |ws, cx| ws.apply(HostUpdate::Setup(update), cx));
         });
     })
     .detach();

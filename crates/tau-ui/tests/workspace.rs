@@ -2144,3 +2144,42 @@ fn every_pairing_screen_draws(cx: &mut TestAppContext) {
         cx.run_until_parked();
     }
 }
+
+#[gpui::test]
+fn a_mirrored_workspace_echoes_what_the_host_applies(cx: &mut TestAppContext) {
+    use tau_ui::update::HostUpdate;
+
+    let (workspace, mut cx, _) = open(cx);
+    let echoed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = echoed.clone();
+    cx.update(|_, cx| {
+        cx.subscribe(&workspace, move |_, update: &HostUpdate, _| {
+            seen.borrow_mut().push(update.clone())
+        })
+        .detach()
+    });
+    let alert = HostUpdate::alert("Could not start the run", "no model");
+    workspace.update(&mut cx, |ws, cx| {
+        // Not mirrored: nothing is echoed.
+        ws.apply(alert.clone(), cx);
+        ws.set_mirrored(true);
+        ws.apply(alert.clone(), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(echoed.borrow().as_slice(), [alert]);
+}
+
+#[gpui::test]
+fn a_snapshot_replaces_the_runs(cx: &mut TestAppContext) {
+    let (desktop, mut desktop_cx, _) = open(cx);
+    let (phone, mut phone_cx, _) = open(cx);
+    let snapshot = desktop.update(&mut desktop_cx, |ws, cx| {
+        ws.add_history(demo::history(), cx);
+        ws.snapshot()
+    });
+    phone.update(&mut phone_cx, |ws, cx| ws.apply(snapshot, cx));
+    let desktop_runs =
+        desktop.update(&mut desktop_cx, |ws, _| ws.runs().to_vec());
+    let phone_runs = phone.update(&mut phone_cx, |ws, _| ws.runs().to_vec());
+    assert_eq!(phone_runs, desktop_runs);
+}

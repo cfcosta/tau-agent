@@ -115,15 +115,18 @@ fn welcome(t: &Theme, cx: &mut Context<Workspace>) -> Div {
              phone shows and steers them.",
             t,
         ))
-        .child(panel(3.5, t).gap(sp(2.5)).child(heading("On your computer", t)).children(
-            steps.into_iter().enumerate().map(|(n, step)| {
-                div()
-                    .flex()
-                    .gap(sp(2.5))
-                    .child(mono((n + 1).to_string(), Type::BODY, t.accent))
-                    .child(step)
-            }),
-        ))
+        .child(
+            panel(3.5, t)
+                .gap(sp(2.5))
+                .child(heading("On your computer", t))
+                .children(steps.into_iter().enumerate().map(|(n, step)| {
+                    div()
+                        .flex()
+                        .gap(sp(2.5))
+                        .child(mono((n + 1).to_string(), Type::BODY, t.accent))
+                        .child(step)
+                })),
+        )
         .child(spacer())
         .child(
             div()
@@ -173,26 +176,21 @@ fn check(mark: Mark, text: &str, detail: Option<String>, t: &Theme) -> Div {
         Mark::Now => icon(Icon::Spinner, IconSize::MEDIUM, t.accent),
         Mark::Later => icon(Icon::Spinner, IconSize::MEDIUM, t.border_strong),
     };
-    div()
-        .flex()
-        .items_start()
-        .gap(sp(2.5))
-        .child(glyph)
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .gap(sp(0.5))
-                .text_color(match mark {
-                    Mark::Now => t.accent,
-                    Mark::Done => t.text,
-                    Mark::Later => t.dim,
-                })
-                .child(text.to_owned())
-                .children(detail.map(|d| mono(d, Type::CAPTION, t.dim))),
-        )
+    div().flex().items_start().gap(sp(2.5)).child(glyph).child(
+        div()
+            .flex_1()
+            .min_w(px(0.))
+            .flex()
+            .flex_col()
+            .gap(sp(0.5))
+            .text_color(match mark {
+                Mark::Now => t.accent,
+                Mark::Done => t.text,
+                Mark::Later => t.dim,
+            })
+            .child(text.to_owned())
+            .children(detail.map(|d| mono(d, Type::CAPTION, t.dim))),
+    )
 }
 
 /// The camera's frame: the preview sits under it on a phone.
@@ -303,10 +301,14 @@ fn scan(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
                 )
         })
         .child(
-            div().typeset(Type::CAPTION).text_color(t.dim).leading(1.5).child(
-                "The code works once and expires in a few minutes. If the \
+            div()
+                .typeset(Type::CAPTION)
+                .text_color(t.dim)
+                .leading(1.5)
+                .child(
+                    "The code works once and expires in a few minutes. If the \
                  certificate doesn't match, tau stops here and tells you.",
-            ),
+                ),
         )
 }
 
@@ -493,7 +495,10 @@ fn unreachable(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
             "Is tau open on your computer?",
             "Phones reach tau only while the app runs.",
         ),
-        ("Is Allow phones on?", "tau › Settings › Phones on your computer."),
+        (
+            "Is Allow phones on?",
+            "tau › Settings › Phones on your computer.",
+        ),
         ("Away from home?", "Connect your VPN on this phone."),
     ];
     let tries = match pairing.tries {

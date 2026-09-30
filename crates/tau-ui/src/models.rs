@@ -118,7 +118,7 @@ impl Default for ModelChoice {
 pub const DEFAULT_MODEL: &str = "gpt-5.5";
 
 /// One model the picker can offer.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelOption {
     pub id: String,
     /// What the picker shows: the ChatGPT account's `display_name`;
@@ -217,7 +217,7 @@ impl ModelSettings {
 pub const USAGE_SETTINGS_URL: &str = tau_ai::chatgpt::USAGE_SETTINGS_URL;
 
 /// What a saved ChatGPT sign-in can do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccountState {
     /// Signed in, and the plan may be used.
     Plan,
@@ -229,7 +229,7 @@ pub enum AccountState {
 }
 
 /// A saved ChatGPT sign-in, for the account picker.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatGptAccount {
     /// Its id in tau's store of sign-ins.
     pub id: String,
@@ -242,7 +242,7 @@ pub struct ChatGptAccount {
 
 /// How the host reaches models, for the picker's footer and the
 /// accounts on the Models screen.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessInfo {
     /// What runs use: `ChatGPT plan`, or `signed out`.
     pub label: String,
@@ -270,7 +270,7 @@ impl AccessInfo {
 }
 
 /// Everything about models the interface shows.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Models {
     pub options: Vec<ModelOption>,
     pub settings: ModelSettings,

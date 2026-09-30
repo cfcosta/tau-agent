@@ -7,6 +7,7 @@
 //! model. The alert says what to do instead: manage usage, sign in
 //! again, enable plan use, or read why it stopped.
 
+use serde::{Deserialize, Serialize};
 use tau_ai::{refusal::Refusal, retry::Recovery};
 
 /// The note shown once after the first sign-in with plan usage.
@@ -21,7 +22,7 @@ pub const INDICATOR: &str = "Using ChatGPT plan";
 pub const MANAGE_USAGE: &str = "Manage usage";
 
 /// What a run that stopped on the plan asks of the user.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlanAlert {
     /// The plan's usage limit, or this app's.
     UsageLimit,
@@ -35,7 +36,7 @@ pub enum PlanAlert {
 }
 
 /// What an alert's buttons do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlanAction {
     /// Opens ChatGPT Settings → Usage.
     ManageUsage,

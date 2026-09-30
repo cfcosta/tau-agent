@@ -17,9 +17,10 @@ use pulldown_cmark::{
     Tag,
     TagEnd,
 };
+use serde::{Deserialize, Serialize};
 
 /// How a table column's cells line up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Align {
     Left,
     Center,
@@ -27,7 +28,7 @@ pub enum Align {
 }
 
 /// A run of text with one style.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     pub text: String,
     pub bold: bool,
@@ -66,7 +67,7 @@ pub fn plain(inline: &[Span]) -> String {
     inline.iter().map(|span| span.text.as_str()).collect()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Block {
     Paragraph(Inline),
     /// Level 1 to 6.

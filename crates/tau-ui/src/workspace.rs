@@ -76,6 +76,7 @@ use crate::{
         screens,
         transcript,
     },
+    update::HostUpdate,
     view::{
         ChildKind,
         ChildRun,
@@ -130,7 +131,7 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 /// What the user asked for. The host subscribes and acts on these.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WorkspaceEvent {
     /// Change a conversation's goal: pause, resume, extend or clear it.
     /// The host stores the record for tau-goal, which reads it at its
@@ -260,6 +261,8 @@ pub enum WorkspaceEvent {
     },
     /// Pair this phone with the tau on a computer, or reach it again;
     /// answer with [`Workspace::update_pairing`].
+    /// Handled on the phone, never sent up.
+    #[serde(skip)]
     Pair(PairRequest),
     /// Start GitHub's device sign-in; answer with a
     /// [`GitHub::Waiting`] code, then [`GitHub::SignedIn`].
@@ -519,6 +522,8 @@ pub struct Workspace {
     replays: Vec<Task<()>>,
     /// Draw the phone layout in a phone-sized frame, whatever the width.
     phone_preview: bool,
+    /// Echo what the host applies, for phones.
+    mirrored: bool,
     /// Lay out at exactly this size, pinned to the top left: for
     /// comparing screens against their designs.
     frame: Option<(f32, f32)>,
@@ -529,6 +534,10 @@ pub struct Workspace {
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
+
+/// What the host applied, echoed while [`Workspace::set_mirrored`] is
+/// on: the desktop passes it on to phones.
+impl EventEmitter<HostUpdate> for Workspace {}
 
 impl Focusable for Workspace {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -775,6 +784,7 @@ impl Workspace {
             focus: cx.focus_handle(),
             replays: Vec::new(),
             phone_preview: false,
+            mirrored: false,
             frame: None,
             width: NARROW_MAX,
             _subscriptions: subscriptions,
@@ -879,6 +889,87 @@ impl Workspace {
         }
         self.runs.insert(0, run);
         self.navigate(Route::Run(id), cx);
+    }
+
+    /// Applies what the host says, and echoes it while mirrored.
+    pub fn apply(&mut self, update: HostUpdate, cx: &mut Context<Self>) {
+        if self.mirrored {
+            cx.emit(update.clone());
+        }
+        match update {
+            HostUpdate::Event(event) => self.apply_event(&event, cx),
+            HostUpdate::History(runs) => self.add_history(runs, cx),
+            HostUpdate::Run(run) => self.push_run(*run, cx),
+            HostUpdate::Catalog(catalog) => self.set_catalog(*catalog, cx),
+            HostUpdate::Alert { title, message } => {
+                self.show_alert(title, message, cx)
+            }
+            HostUpdate::PlanRefusal(refusal) => {
+                self.show_plan_refusal(&refusal, cx)
+            }
+            HostUpdate::RuleTrial(result) => self.set_rule_trial(result, cx),
+            HostUpdate::QueryResult(result) => {
+                self.set_query_result(result, cx)
+            }
+            HostUpdate::PullRequest { run, pr } => {
+                self.set_pull_request(&run, *pr, cx)
+            }
+            HostUpdate::PullRequestState { run, state } => {
+                self.set_pull_request_state(&run, state, cx)
+            }
+            HostUpdate::LandingPreview { run, preview } => {
+                self.set_landing_preview(&run, preview, cx)
+            }
+            HostUpdate::Landed { run, landing } => {
+                self.landed(&run, landing, cx)
+            }
+            HostUpdate::Dropped { run, result } => {
+                self.dropped(&run, result, cx)
+            }
+            HostUpdate::BranchCode { main, fork, code } => {
+                self.set_branch_code(&main, &fork, code, cx)
+            }
+            HostUpdate::ResumeFailed(run) => self.resume_failed(&run, cx),
+            HostUpdate::Repo(repo) => self.add_repo(repo, cx),
+            HostUpdate::Setup(update) => self.update_setup(update, cx),
+            HostUpdate::Snapshot { runs, catalog } => {
+                self.set_catalog(*catalog, cx);
+                self.replace_runs(runs, cx);
+            }
+        }
+    }
+
+    /// Echo what the host applies as [`HostUpdate`] events, or stop.
+    pub fn set_mirrored(&mut self, mirrored: bool) {
+        self.mirrored = mirrored;
+    }
+
+    /// What this workspace shows, for an interface that just connected.
+    pub fn snapshot(&self) -> HostUpdate {
+        HostUpdate::Snapshot {
+            runs: self.runs.clone(),
+            catalog: Box::new(self.catalog.clone()),
+        }
+    }
+
+    /// Shows `runs` in place of the ones shown, as a host that
+    /// reconnected has them; the screen stays if its run is still there.
+    fn replace_runs(&mut self, runs: Vec<RunView>, cx: &mut Context<Self>) {
+        self.runs = runs;
+        if self
+            .current
+            .as_ref()
+            .is_none_or(|id| self.run(id).is_none())
+        {
+            self.current = self.runs.first().map(|run| run.id.clone());
+        }
+        if self.route.run().is_some_and(|id| self.run(id).is_none()) {
+            self.back_stack.clear();
+            self.route = Route::Home;
+            self.entered(cx);
+        }
+        self.listed = None;
+        cx.notify();
     }
 
     /// Adds runs from earlier sessions below the ones already shown.

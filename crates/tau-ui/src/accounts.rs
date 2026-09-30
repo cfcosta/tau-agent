@@ -31,6 +31,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::{
     models::{AccountState, ChatGptAccount, DEFAULT_MODEL},
     setup::{ModelAccess, SetupStep, SetupUpdate},
+    update::HostUpdate,
     workspace::{Workspace, WorkspaceEvent},
 };
 
@@ -241,7 +242,13 @@ impl SignIns {
                 match credentials.switch(account) {
                     Ok(()) => connected(credentials.plan_account(), cx),
                     Err(error) => workspace.update(cx, |ws, cx| {
-                        ws.show_alert("Could not switch accounts", error, cx)
+                        ws.apply(
+                            HostUpdate::alert(
+                                "Could not switch accounts",
+                                error,
+                            ),
+                            cx,
+                        )
                     }),
                 }
                 true
@@ -310,7 +317,10 @@ impl SignIns {
                         cx.open_url(&url);
                         let pending = ModelAccess::SigningIn { url: Some(url) };
                         workspace.update(cx, |ws, cx| {
-                            ws.update_setup(SetupUpdate::Model(pending), cx)
+                            ws.apply(
+                                HostUpdate::Setup(SetupUpdate::Model(pending)),
+                                cx,
+                            )
                         });
                     }
                     Progress::SignedIn(done) => {
@@ -336,7 +346,10 @@ impl SignIns {
                             Err(error) => ModelAccess::Failed(error),
                         };
                         workspace.update(cx, |ws, cx| {
-                            ws.update_setup(SetupUpdate::Model(setup), cx)
+                            ws.apply(
+                                HostUpdate::Setup(SetupUpdate::Model(setup)),
+                                cx,
+                            )
                         });
                     }
                 });
@@ -411,23 +424,19 @@ fn sign_out(
             };
             workspace.update(cx, |ws, cx| {
                 match revoked {
-                    Ok(Revocation::Unconfirmed { reason }) => ws.show_alert(
-                        "Signed out of ChatGPT",
-                        format!(
+                    Ok(Revocation::Unconfirmed { reason }) => ws.apply(HostUpdate::alert("Signed out of ChatGPT", format!(
                             "tau forgot this account's tokens, but OpenAI did \
                              not confirm the end of the session ({reason}). \
                              You can disconnect tau in ChatGPT Settings."
-                        ),
-                        cx,
-                    ),
+                        )), cx),
                     Ok(_) => {}
                     Err(error) => {
-                        ws.show_alert("Could not sign out", error, cx)
+                        ws.apply(HostUpdate::alert("Could not sign out", error), cx)
                     }
                 }
                 if left.is_none() {
                     // Nothing left to run on: set it up again.
-                    ws.update_setup(SetupUpdate::Model(ModelAccess::None), cx);
+                    ws.apply(HostUpdate::Setup(SetupUpdate::Model(ModelAccess::None)), cx);
                     ws.start_setup(SetupStep::Model, cx);
                 }
             });

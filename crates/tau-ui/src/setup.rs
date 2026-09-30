@@ -4,8 +4,10 @@
 //! The host fills it in as sign-ins and clones progress, through
 //! [`Workspace::update_setup`](crate::Workspace::update_setup).
 
+use serde::{Deserialize, Serialize};
+
 /// The screens of onboarding, in order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SetupStep {
     Welcome,
     GitHub,
@@ -46,7 +48,7 @@ impl SetupStep {
 }
 
 /// A code to enter on another page, for a device sign-in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceCode {
     pub code: String,
     /// Where to enter it, without the scheme: `github.com/login/device`.
@@ -55,7 +57,7 @@ pub struct DeviceCode {
     pub expires: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GitHub {
     #[default]
     SignedOut,
@@ -69,7 +71,7 @@ pub enum GitHub {
     Failed(String),
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelAccess {
     #[default]
     None,
@@ -91,7 +93,7 @@ pub enum ModelAccess {
 }
 
 /// A repository the user can pick.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoChoice {
     /// `owner/name`.
     pub name: String,
@@ -100,7 +102,7 @@ pub struct RepoChoice {
     pub selected: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CloneState {
     /// How far the clone is, from 0 to 1, and what it is doing.
     Cloning {
@@ -111,13 +113,13 @@ pub enum CloneState {
     Failed(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepoClone {
     pub name: String,
     pub state: CloneState,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Setup {
     pub github: GitHub,
     pub model: ModelAccess,
@@ -143,7 +145,7 @@ impl Default for Setup {
 }
 
 /// What the host learned while the user set up.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SetupUpdate {
     GitHub(GitHub),
     Model(ModelAccess),
