@@ -104,6 +104,16 @@
               # `dev` output holds the static library and the `.pc` files.
               libghostty-vt = ghostty.packages.${system}.libghostty-vt;
 
+              # Nix builds libghostty-vt for the host only. For the phone,
+              # `libghostty-vt-sys` builds it itself from the same Ghostty
+              # source, with the Zig and the Zig packages Ghostty pins, so
+              # the build never fetches.
+              ghosttyVendor = {
+                GHOSTTY_SOURCE_DIR = "${ghostty}";
+                GHOSTTY_ZIG_SYSTEM_DIR = "${libghostty-vt.deps}";
+                zig = ghostty.inputs.nixpkgs.legacyPackages.${system}.zig_0_15;
+              };
+
               rustPlatform = pkgs.makeRustPlatform {
                 cargo = rust;
                 rustc = rust;
@@ -205,6 +215,7 @@
                 androidRust
                 androidSdk
                 formatter
+                ghosttyVendor
                 guiLibs
                 libghostty-vt
                 pkgs
@@ -244,6 +255,7 @@
           pkgs,
           rust,
           formatter,
+          ghosttyVendor,
           guiLibs,
           libghostty-vt,
           ...
@@ -266,7 +278,7 @@
                 androidSdk
                 cargo-ndk
                 jdk21
-                zig
+                ghosttyVendor.zig
               ];
 
               nativeBuildInputs = [ pkgs.pkg-config ];
@@ -276,6 +288,7 @@
               ANDROID_NDK_HOME = "${sdk}/ndk/29.0.14206865";
               ANDROID_NDK_ROOT = "${sdk}/ndk/29.0.14206865";
               JAVA_HOME = pkgs.jdk21.home;
+              inherit (ghosttyVendor) GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
               # Gradle's own aapt2 comes from Maven, dynamically linked
               # against a filesystem NixOS does not have; the SDK's is
               # patched for Nix.
