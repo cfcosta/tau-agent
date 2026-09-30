@@ -3427,9 +3427,9 @@ impl Workspace {
             .gap(sp(2.))
             .children(self.slash_popover(compact, t, cx))
             .px(sp(if compact { 3. } else { 6. }))
-            .pt(sp(if compact { 2.5 } else { 0. }))
+            .pt(sp(if compact { 2.5 } else { 3. }))
             .pb(sp(if compact { 4.5 } else { 4. }))
-            .when(compact, |bar| bar.border_t_1().border_color(t.border))
+            .chrome(ui::Edge::Bottom, t)
             .when_some(self.composer_target().filter(|_| compact), |bar, target| {
                 bar.child(div().flex().child(self.model_chip(target, t, cx)))
             })

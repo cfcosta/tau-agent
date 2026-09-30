@@ -185,7 +185,7 @@ impl Workspace {
                 .px(sp(3.))
                 .py(sp(2.5))
                 .rounded(radius::BOX)
-                .bg(bg)
+                .lit(bg, t)
                 .border_1()
                 .border_color(border)
                 .child(ui::icon(Icon::Target, IconSize::BASE, tone))

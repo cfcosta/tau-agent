@@ -146,6 +146,16 @@ pub trait Material: Styled + Sized {
         ])
     }
 
+    /// A tinted band, `fill` at its top fading down, lit along its top
+    /// edge: a banner.
+    fn lit(self, fill: Hsla, t: &Theme) -> Self {
+        let d = &t.depth;
+        self.bg(fall(fill, fill.opacity(0.55))).shadow(vec![
+            shade(0., 1., 0., d.highlight.opacity(0.7)).inset(),
+            shade(0., 4., 12., d.drop.opacity(0.6)),
+        ])
+    }
+
     /// A light around a small shape in `color`: a live dot.
     fn glow(self, color: Hsla) -> Self {
         self.shadow(vec![shade(0., 0., 6., color)])
