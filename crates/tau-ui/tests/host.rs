@@ -65,7 +65,7 @@ fn host_over(
         credentials: Credentials::new(
             fresh_repo_list().with_extension("config"),
         ),
-        model: Some("gpt-5.5".into()),
+        model: Some("gpt-6-luna".into()),
         root: root.to_owned(),
         store: std::env::temp_dir().join("unused.db"),
         // Tau's directory for repositories, where memory lives too: the
@@ -243,7 +243,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         last.reasoning,
         Some(tau_ai::responses::request::ReasoningEffort::High)
     );
-    assert_eq!(asked[0].settings.model, "gpt-5.5");
+    assert_eq!(asked[0].settings.model, "gpt-6.1-sol");
     assert_eq!(
         std::fs::read_to_string(fork_dir.join("a.txt")).unwrap(),
         "one\n"
@@ -723,7 +723,7 @@ fn config_on(root: &Path, data: &Path) -> HostConfig {
     HostConfig {
         account: test_account(),
         credentials: Credentials::new(data.join("config")),
-        model: Some("gpt-5.5".into()),
+        model: Some("gpt-6-luna".into()),
         root: root.to_owned(),
         store: data.join("runs.db"),
         repos: data.join("repos"),
@@ -781,15 +781,15 @@ fn models_follow_the_sign_in_and_settings_persist() {
         Host::new(config_on(dir.path(), data.path())).unwrap();
     let models = host.models();
     // No settings yet: coder runs on the model the host was given.
-    assert_eq!(models.settings.default_for("coder").model, "gpt-5.5");
+    assert_eq!(models.settings.default_for("coder").model, "gpt-6-luna");
     let mut settings = models.settings.clone();
-    settings.set_default("coder", ModelChoice::new("gpt-6-sol", Effort::Low));
-    settings.toggle_hidden("gpt-5.5");
+    settings.set_default("coder", ModelChoice::new("gpt-6-astra", Effort::Low));
+    settings.toggle_hidden("gpt-5.6-terra");
     host.save_settings(settings.clone()).unwrap();
     drop(host);
 
-    // On a ChatGPT plan the picker waits for the account's own models;
-    // the saved choices come back.
+    // On a ChatGPT plan the picker offers the plan's models from the
+    // model table at once; the saved choices come back.
     let credentials = config_on(dir.path(), data.path()).credentials;
     let account = sign_in_saved(&credentials, "a@example.com", PLAN);
     let config = HostConfig {
@@ -799,8 +799,7 @@ fn models_follow_the_sign_in_and_settings_persist() {
     let (host, _events) = Host::new(config).unwrap();
     let models = host.models();
     assert_eq!(models.settings, settings);
-    assert!(models.options.is_empty(), "not listed yet");
-    assert_eq!(models.access.models_error, None);
+    assert_eq!(models.options, tau_ui::models::plan_models());
     assert!(models.access.chatgpt);
     assert_eq!(models.access.label, "ChatGPT plan");
     let accounts = &models.access.accounts;

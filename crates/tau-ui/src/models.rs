@@ -102,7 +102,7 @@ impl ModelChoice {
         }
     }
 
-    /// `gpt-5.5 · auto`.
+    /// `gpt-6.1-sol · auto`.
     pub fn label(&self) -> String {
         format!("{} · {}", self.model, self.effort.label())
     }
@@ -114,15 +114,16 @@ impl Default for ModelChoice {
     }
 }
 
-/// What agents run on when nothing else is chosen.
-pub const DEFAULT_MODEL: &str = "gpt-5.5";
+/// What agents run on when nothing else is chosen: the first of the
+/// plan's models, [`tau_ai::model::plan_models`].
+pub const DEFAULT_MODEL: &str = "gpt-6.1-sol";
 
 /// One model the picker can offer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelOption {
     pub id: String,
-    /// What the picker shows: the ChatGPT account's `display_name`;
-    /// `None` shows the id.
+    /// What the picker shows: the model table's name for it; `None`
+    /// shows the id.
     pub name: Option<String>,
     pub context: u64,
     /// Whether it accepts a reasoning effort.
@@ -164,31 +165,33 @@ impl Default for ModelSettings {
     fn default() -> Self {
         Self {
             defaults: vec![("coder".into(), ModelChoice::default())],
-            // Older generations, kept out of the way until wanted.
-            hidden: [
-                "gpt-5",
-                "gpt-5-mini",
-                "gpt-5-nano",
-                "gpt-5-pro",
-                "gpt-5.1",
-                "gpt-5.2",
-                "gpt-5.2-pro",
-            ]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
+            hidden: Vec::new(),
             plan_notice_seen: false,
         }
     }
 }
 
 impl ModelSettings {
-    /// `agent`'s default, or [`ModelChoice::default`].
+    /// `agent`'s default, or [`ModelChoice::default`]. A saved model
+    /// the plan no longer offers falls back to the first it does.
     pub fn default_for(&self, agent: &str) -> ModelChoice {
-        self.defaults
+        let saved = self
+            .defaults
             .iter()
             .find(|(name, _)| name == agent)
-            .map_or_else(ModelChoice::default, |(_, choice)| choice.clone())
+            .map_or_else(ModelChoice::default, |(_, choice)| choice.clone());
+        let offered = tau_ai::model::plan_models();
+        if offered.iter().any(|model| model.id == saved.model) {
+            return saved;
+        }
+        match offered.first() {
+            Some(first) => ModelChoice {
+                model: first.id.clone(),
+                ..saved
+            }
+            .fitted(),
+            None => saved,
+        }
     }
 
     pub fn set_default(&mut self, agent: &str, choice: ModelChoice) {
@@ -252,8 +255,6 @@ pub struct AccessInfo {
     pub jev: bool,
     /// The saved ChatGPT sign-ins, by label.
     pub accounts: Vec<ChatGptAccount>,
-    /// Why the plan's models could not be listed, when they could not.
-    pub models_error: Option<String>,
 }
 
 impl AccessInfo {
@@ -285,7 +286,7 @@ impl Models {
     }
 
     /// The models the picker shows for `filter`, hidden ones left out,
-    /// in the server's order.
+    /// in the plan's order.
     pub fn shown<'a>(&'a self, filter: &str) -> Vec<&'a ModelOption> {
         let filter = filter.trim().to_lowercase();
         self.options
@@ -300,21 +301,20 @@ impl Models {
     }
 }
 
-/// The picker's models: the ChatGPT account's, in the server's order,
-/// named as it names them, with the context tau-ai's table knows for
-/// them.
-pub fn plan_models(listed: &[tau_ai::chatgpt::ModelInfo]) -> Vec<ModelOption> {
-    listed
-        .iter()
-        .map(|info| {
-            let known = tau_ai::model::find(&info.slug);
-            ModelOption {
-                id: info.slug.clone(),
-                name: Some(info.display_name.clone())
-                    .filter(|name| *name != info.slug),
-                context: known.map_or(0, |model| model.context_window),
-                reasoning: known.is_some_and(|model| model.reasoning),
-            }
+/// The picker's models: the plan's, from tau-ai's model table
+/// ([`tau_ai::model::plan_models`]), one per family, in its order and
+/// named as it names them.
+///
+/// Not the account's `GET /v1/models`: that catalog leaves out models
+/// the plan runs.
+pub fn plan_models() -> Vec<ModelOption> {
+    tau_ai::model::plan_models()
+        .into_iter()
+        .map(|model| ModelOption {
+            id: model.id.clone(),
+            name: Some(model.name.clone()),
+            context: model.context_window,
+            reasoning: model.reasoning,
         })
         .collect()
 }
@@ -340,7 +340,7 @@ mod tests {
         };
         assert_eq!(model.context_label(), "400k");
         assert_eq!(option("n").context_label(), "1.05M");
-        assert_eq!(ModelChoice::default().label(), "gpt-5.5 · auto");
+        assert_eq!(ModelChoice::default().label(), "gpt-6.1-sol · auto");
     }
 
     #[test]
@@ -375,33 +375,36 @@ mod tests {
         assert_eq!(old, ModelSettings::default());
     }
 
-    fn listed(slug: &str, name: &str) -> tau_ai::chatgpt::ModelInfo {
-        tau_ai::chatgpt::ModelInfo {
-            slug: slug.into(),
-            display_name: name.into(),
-        }
-    }
-
-    /// The picker keeps the account's models in the server's order, by
-    /// their display names.
+    /// The picker offers the plan's four, from the model table, by
+    /// the table's names; the default is the first of them.
     #[test]
-    fn plan_models_keep_the_servers_order_and_names() {
-        let options = plan_models(&[
-            listed("gpt-6-astra", "GPT-6-Astra"),
-            listed("gpt-5.5", "gpt-5.5"),
-            listed("gpt-next", "GPT Next"),
-        ]);
+    fn plan_models_come_from_the_table() {
+        let options = plan_models();
         let labels: Vec<&str> = options.iter().map(|o| o.label()).collect();
-        assert_eq!(labels, ["GPT-6-Astra", "gpt-5.5", "GPT Next"]);
-        assert_eq!(options[2].context, 0, "unknown to tau-ai's table");
+        assert_eq!(
+            labels,
+            ["GPT-6.1 Sol", "GPT-6 Luna", "GPT-6 Astra", "GPT-5.6 Terra"]
+        );
+        assert_eq!(options[0].id, DEFAULT_MODEL);
+        assert!(options.iter().all(|o| o.context > 0));
         let models = Models {
             options,
             ..Models::default()
         };
-        let shown: Vec<&str> =
-            models.shown("").iter().map(|o| o.id.as_str()).collect();
-        assert_eq!(shown, ["gpt-6-astra", "gpt-5.5", "gpt-next"]);
         assert_eq!(models.shown("astra").len(), 1, "names are searched");
+    }
+
+    /// A saved default the plan no longer offers falls back to the first
+    /// model it does; one it offers stays.
+    #[test]
+    fn a_default_off_the_plan_falls_back_to_the_first() {
+        let mut settings = ModelSettings::default();
+        settings
+            .set_default("coder", ModelChoice::new("gpt-5.5", Effort::Auto));
+        assert_eq!(settings.default_for("coder").model, DEFAULT_MODEL);
+        settings
+            .set_default("coder", ModelChoice::new("gpt-6-luna", Effort::Auto));
+        assert_eq!(settings.default_for("coder").model, "gpt-6-luna");
     }
 
     /// The note on using the plan shows while runs use it, until it is

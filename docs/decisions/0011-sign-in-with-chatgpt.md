@@ -82,8 +82,11 @@ The probe (`cargo run -p tau-ai --example chatgpt_probe`) ran on
 - Plan errors carry a `Refusal`; only "retry later" retries. tau-ui
   says what to do instead. There is no other way of paying to switch
   to: [0012](0012-chatgpt-sign-in-only.md) removed API keys.
-- `/v1/models` lists the account's models; the static Codex list is
-  gone.
+- The plan's models come from tau's model table, the newest of each
+  plan family (`tau_ai::model::plan_models`), not from `/v1/models`,
+  which leaves out models the plan runs; `/v1/models` is called once
+  per sign-in only to learn whether the account is eligible. The static
+  Codex list is gone.
 - Signing in needs a browser on the same machine (the callback is on
   `127.0.0.1`). A remote host signs in locally and copies its record,
   keeping its own host id. There is no device-code flow.

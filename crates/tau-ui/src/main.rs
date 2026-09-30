@@ -5,7 +5,7 @@
 //! Without one it opens onboarding to sign in. With `--demo` it
 //! replays the scripted session instead.
 //!
-//! - `--model <id>`: the model; gpt-5.5 by default.
+//! - `--model <id>`: the model; gpt-6.1-sol by default.
 //! - `--root <dir>`: where the coding tools work.
 //! - `--prompt <text>`: start a run with this task right away.
 //! - `--demo`: the scripted session; `--finished` opens it done.
@@ -65,7 +65,7 @@ struct Args {
     prompt: Option<String>,
     frame: Option<(f32, f32)>,
     steps: Option<usize>,
-    /// `None` takes gpt-5.5.
+    /// `None` takes gpt-6.1-sol.
     model: Option<String>,
     root: PathBuf,
     reduce_motion: bool,
@@ -528,7 +528,7 @@ fn open_demo_screen(
                     ws.update_setup(
                         tau_ui::setup::SetupUpdate::Model(
                             tau_ui::setup::ModelAccess::Connected {
-                                label: "gpt-5.5 · ChatGPT plan".into(),
+                                label: "gpt-6.1-sol · ChatGPT plan".into(),
                             },
                         ),
                         cx,
@@ -557,7 +557,7 @@ fn open_demo_screen(
             let mut setup = demo::setup(SetupStep::Model);
             setup.model = match state {
                 "model-signed-in" => ModelAccess::Connected {
-                    label: "gpt-5.5 · ChatGPT plan".into(),
+                    label: "gpt-6.1-sol · ChatGPT plan".into(),
                 },
                 "plan-declined" => ModelAccess::PlanDisabled { account },
                 _ => ModelAccess::NotEligible {

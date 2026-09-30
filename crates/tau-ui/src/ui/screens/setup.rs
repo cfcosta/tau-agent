@@ -2418,18 +2418,12 @@ fn model_signed_in(
             .max_w(px(700.))
             .children(pills)
     } else {
-        let (text, color) = match &models.access.models_error {
-            Some(error) => {
-                (format!("Could not list your models: {error}"), t.red)
-            }
-            None => ("Listing your plan's models…".to_owned(), look.faint),
-        };
         div()
             .max_w(px(560.))
             .text_center()
             .typeset(Type::SMALL)
-            .text_color(color)
-            .child(text)
+            .text_color(look.faint)
+            .child("Every model is hidden; the Models screen shows them again.")
     };
     let next = if ws.setup_goal.is_some() {
         "Done"

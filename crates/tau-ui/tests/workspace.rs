@@ -379,36 +379,16 @@ fn open_with_models(
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         let mut catalog = ws.catalog().clone();
-        catalog.models = more_models();
+        catalog.models = demo::models();
         ws.set_catalog(catalog, cx);
     });
     (workspace, cx, events)
 }
 
-/// The demo's models on an account that lists more of them, in the
-/// server's order.
-fn more_models() -> tau_ui::models::Models {
-    let mut models = demo::models();
-    models.options = tau_ui::models::plan_models(
-        &[
-            "gpt-6-astra",
-            "gpt-6-sol",
-            "gpt-6-luna",
-            "gpt-5.6-luna",
-            "gpt-5.5",
-        ]
-        .map(|slug| tau_ai::chatgpt::ModelInfo {
-            slug: slug.into(),
-            display_name: slug.into(),
-        }),
-    );
-    models
-}
-
-/// The picker offers the account's models, in its order, and picks one
-/// at once.
+/// The picker offers the plan's models from the model table, one per
+/// family, and picks one at once.
 #[gpui::test]
-fn the_plan_picker_offers_the_accounts_models(cx: &mut TestAppContext) {
+fn the_plan_picker_offers_the_plan_models(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         let mut catalog = ws.catalog().clone();
@@ -423,7 +403,11 @@ fn the_plan_picker_offers_the_accounts_models(cx: &mut TestAppContext) {
             .iter()
             .map(|option| option.label().to_owned())
             .collect();
-        assert_eq!(shown[0], "GPT-6-Astra", "the server's order and names");
+        assert_eq!(
+            shown,
+            ["GPT-6.1 Sol", "GPT-6 Luna", "GPT-6 Astra", "GPT-5.6 Terra"],
+            "the table's order and names"
+        );
         ws.pick_model("gpt-6-astra", cx);
         assert!(ws.alert().is_none(), "nothing to confirm");
         assert_eq!(ws.next_model().model, "gpt-6-astra");
@@ -437,10 +421,13 @@ fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_with_models(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::NewRun, cx);
-        assert_eq!(ws.next_model(), &ModelChoice::new("gpt-5.5", Effort::Auto));
+        assert_eq!(
+            ws.next_model(),
+            &ModelChoice::new("gpt-6.1-sol", Effort::Auto)
+        );
         ws.show_picker(PickerTarget::Next, cx);
         ws.pick_effort(Effort::Low, cx);
-        ws.pick_model("gpt-6-sol", cx);
+        ws.pick_model("gpt-6-luna", cx);
         assert!(ws.picker().is_none(), "picking a model closes the picker");
         ws.submit_prompt("fix it".into(), cx);
     });
@@ -448,7 +435,7 @@ fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
         events.borrow().last(),
         Some(&WorkspaceEvent::NewRun {
             prompt: "fix it".into(),
-            model: ModelChoice::new("gpt-6-sol", Effort::Low),
+            model: ModelChoice::new("gpt-6-luna", Effort::Low),
             repo: String::new(),
         })
     );
@@ -459,10 +446,10 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_with_models(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.show_picker(PickerTarget::Default("coder".into()), cx);
-        ws.pick_model("gpt-6-sol", cx);
+        ws.pick_model("gpt-6-luna", cx);
         // The next run follows coder's new default until one is picked.
-        assert_eq!(ws.next_model().model, "gpt-6-sol");
-        ws.toggle_model_hidden("gpt-6-luna", cx);
+        assert_eq!(ws.next_model().model, "gpt-6-luna");
+        ws.toggle_model_hidden("gpt-6-astra", cx);
     });
     let saved: Vec<ModelSettings> = events
         .borrow()
@@ -476,8 +463,8 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         .collect();
     assert_eq!(saved.len(), 2);
     let last = saved.last().unwrap();
-    assert_eq!(last.default_for("coder").model, "gpt-6-sol");
-    assert!(last.is_hidden("gpt-6-luna"));
+    assert_eq!(last.default_for("coder").model, "gpt-6-luna");
+    assert!(last.is_hidden("gpt-6-astra"));
 }
 
 #[gpui::test]
@@ -493,7 +480,7 @@ fn a_fork_can_run_on_another_model(cx: &mut TestAppContext) {
         assert_eq!(ws.composer_target(), Some(PickerTarget::Run(run.clone())));
         ws.start_fork_at(&run, 3, cx);
         ws.show_picker(PickerTarget::Fork, cx);
-        ws.pick_model("gpt-6-sol", cx);
+        ws.pick_model("gpt-6-luna", cx);
         ws.submit_prompt("same task, other model".into(), cx);
     });
     match events.borrow().last() {
@@ -501,7 +488,7 @@ fn a_fork_can_run_on_another_model(cx: &mut TestAppContext) {
             assert_eq!(*turn, Some(3));
             // tau-reasoning picked high for the run; the fork is scored
             // again.
-            assert_eq!(model, &ModelChoice::new("gpt-6-sol", Effort::Auto));
+            assert_eq!(model, &ModelChoice::new("gpt-6-luna", Effort::Auto));
         }
         other => panic!("expected a fork, got {other:?}"),
     }
@@ -782,7 +769,7 @@ fn the_signed_in_model_step_picks_the_default_model(cx: &mut TestAppContext) {
         ws.start_setup(SetupStep::Model, cx);
         ws.update_setup(
             SetupUpdate::Model(ModelAccess::Connected {
-                label: "gpt-5.5 · ChatGPT plan".into(),
+                label: "gpt-6.1-sol · ChatGPT plan".into(),
             }),
             cx,
         );
@@ -790,14 +777,14 @@ fn the_signed_in_model_step_picks_the_default_model(cx: &mut TestAppContext) {
     // The step, with the account's models as pills.
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {
-        ws.pick_setup_model("gpt-5.6-sol", cx);
+        ws.pick_setup_model("gpt-6-astra", cx);
         // One the account does not list changes nothing.
         ws.pick_setup_model("no-such-model", cx);
         let settings = &ws.catalog().models.settings;
-        assert_eq!(settings.default_for("coder").model, "gpt-5.6-sol");
+        assert_eq!(settings.default_for("coder").model, "gpt-6-astra");
         assert_eq!(
             ws.setup().model_label(),
-            Some("gpt-5.6-sol · ChatGPT plan")
+            Some("gpt-6-astra · ChatGPT plan")
         );
     });
     let saved: Vec<_> = events
@@ -810,7 +797,7 @@ fn the_signed_in_model_step_picks_the_default_model(cx: &mut TestAppContext) {
             _ => None,
         })
         .collect();
-    assert_eq!(saved, ["gpt-5.6-sol"]);
+    assert_eq!(saved, ["gpt-6-astra"]);
 }
 
 /// An account that cannot share its plan stays on the model step, with
@@ -1872,16 +1859,19 @@ fn the_picker_offers_the_models_own_efforts(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::NewRun, cx);
         ws.show_picker(PickerTarget::Next, cx);
-        ws.pick_model("gpt-6-sol", cx);
+        ws.pick_model("gpt-6-luna", cx);
         ws.show_picker(PickerTarget::Next, cx);
-        ws.pick_effort(Effort::Max, cx);
+        ws.pick_effort(Effort::None, cx);
         assert_eq!(
             ws.next_model(),
-            &ModelChoice::new("gpt-6-sol", Effort::Max)
+            &ModelChoice::new("gpt-6-luna", Effort::None)
         );
-        // gpt-5.5 stops at xhigh, so max gives way to auto.
-        ws.pick_model("gpt-5.5", cx);
-        assert_eq!(ws.next_model(), &ModelChoice::new("gpt-5.5", Effort::Auto));
+        // gpt-6.1-sol starts at low, so none gives way to auto.
+        ws.pick_model("gpt-6.1-sol", cx);
+        assert_eq!(
+            ws.next_model(),
+            &ModelChoice::new("gpt-6.1-sol", Effort::Auto)
+        );
     });
     assert_eq!(
         Effort::offered("gpt-6-sol"),
@@ -1909,11 +1899,11 @@ fn a_chat_goes_on_on_another_model(cx: &mut TestAppContext) {
         assert_eq!(ws.composer_target(), Some(PickerTarget::Run(run.clone())));
         // Live: the pick waits for the next message.
         ws.show_picker(PickerTarget::Run(run.clone()), cx);
-        ws.pick_model("gpt-6-sol", cx);
+        ws.pick_model("gpt-6-luna", cx);
         assert_eq!(ws.run(&run).unwrap().model, "gpt-5.5");
         assert_eq!(
             ws.choice_for(&PickerTarget::Run(run.clone())).model,
-            "gpt-6-sol"
+            "gpt-6-luna"
         );
     });
     finish_demo_run(&workspace, &mut cx);
@@ -1922,7 +1912,7 @@ fn a_chat_goes_on_on_another_model(cx: &mut TestAppContext) {
         ws.submit_prompt("go on".into(), cx);
         assert_eq!(ws.runs().len(), runs, "no fork, no new run");
         let view = ws.run(&run).unwrap();
-        assert_eq!(view.model, "gpt-6-sol");
+        assert_eq!(view.model, "gpt-6-luna");
         let reasoning =
             view.plan.iter().find(|f| f.name == "reasoning").unwrap();
         // Picked while the run was still on auto, so tau-reasoning
@@ -1934,15 +1924,15 @@ fn a_chat_goes_on_on_another_model(cx: &mut TestAppContext) {
         Some(&WorkspaceEvent::Resume {
             run: run.clone(),
             prompt: "go on".into(),
-            model: ModelChoice::new("gpt-6-sol", Effort::Auto),
+            model: ModelChoice::new("gpt-6-luna", Effort::Auto),
         })
     );
-    // The pick was spent: the next message stays on gpt-6-sol from the
+    // The pick was spent: the next message stays on gpt-6-luna from the
     // run itself.
     workspace.update(&mut cx, |ws, _| {
         assert_eq!(
             ws.choice_for(&PickerTarget::Run(run.clone())),
-            ModelChoice::new("gpt-6-sol", Effort::Auto)
+            ModelChoice::new("gpt-6-luna", Effort::Auto)
         );
     });
 }

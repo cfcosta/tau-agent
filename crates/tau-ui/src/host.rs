@@ -33,7 +33,7 @@ use tau_agent::{
     tool::RunId,
 };
 use tau_ai::{
-    chatgpt::{AccountId, ModelInfo},
+    chatgpt::AccountId,
     client::OpenAi,
     message::Message,
     model::find,
@@ -412,12 +412,10 @@ pub struct Host {
     /// way: why the ChatGPT plan refused a run. `None` for an agent built
     /// elsewhere, as in tests.
     client: Mutex<Option<OpenAi>>,
-    /// The ChatGPT account's models, as last listed: for the picker on
-    /// the plan. Listed again when the account changes.
-    plan_models: Arc<Mutex<Option<PlanModels>>>,
-    /// Why OpenAI refused the last listing because plan use is not
-    /// available to the account (`Recovery::Restricted`): the status,
-    /// code and request id. `None` otherwise.
+    /// Why OpenAI refused the eligibility check at the last sign-in
+    /// because plan use is not available to the account
+    /// (`Recovery::Restricted`): the status, code and request id. `None`
+    /// otherwise.
     not_eligible: Arc<Mutex<Option<String>>>,
     github: github::Api,
     /// Jev for tau-constitution, in place of TypeSafe's with the saved
@@ -459,9 +457,6 @@ pub struct Host {
     settings: Arc<Mutex<ModelSettings>>,
     events: mpsc::UnboundedSender<RunEvent>,
 }
-
-/// An account's models, as listed: or why they could not be.
-type PlanModels = (AccountId, Result<Vec<ModelInfo>, String>);
 
 const MAX_TURNS: u32 = 50;
 
@@ -605,7 +600,6 @@ impl Host {
             base: Mutex::new(agent),
             account: Mutex::new(Some(config.account.clone())),
             client: Mutex::new(None),
-            plan_models: Arc::default(),
             not_eligible: Arc::default(),
             github: github::Api::default(),
             jev: None,
@@ -1366,49 +1360,30 @@ impl Host {
             .refusal()
     }
 
-    /// Lists the active ChatGPT account's models for the picker, unless
-    /// they are listed already. The listing runs on the host's runtime;
-    /// the returned task ends when it is saved, and `None` means nothing
-    /// was to be listed.
-    pub fn list_plan_models(&self) -> Option<tokio::task::JoinHandle<()>> {
+    /// Checks, once per sign-in, whether the active account may use
+    /// its plan here: `GET /v1/models`, whose listing is not shown (the
+    /// picker offers the model table's, [`plan_models`]); only a
+    /// restricted refusal matters. The check runs on the host's runtime
+    /// and the returned task ends when it is saved; `None` means no
+    /// account is active.
+    pub fn check_eligibility(&self) -> Option<tokio::task::JoinHandle<()>> {
         let account = self.account()?;
-        let cached = self.plan_models.lock().expect("not poisoned");
-        if cached.as_ref().is_some_and(|(listed, models)| {
-            *listed == account && models.is_ok()
-        }) {
-            return None;
-        }
-        drop(cached);
         let chatgpt = self.config.credentials.chatgpt();
-        let slot = self.plan_models.clone();
         let refused = self.not_eligible.clone();
         Some(self.runtime.spawn(async move {
-            let listed = match chatgpt {
-                Ok(chatgpt) => chatgpt.models(&account).await,
+            let checked = match chatgpt {
+                Ok(chatgpt) => chatgpt.models(&account).await.map(drop),
                 Err(error) => Err(error),
             };
             *refused.lock().expect("not poisoned") =
-                listed.as_ref().err().and_then(not_eligible);
-            let listed = listed.map_err(|error| error.to_string());
-            *slot.lock().expect("not poisoned") = Some((account, listed));
+                checked.err().as_ref().and_then(not_eligible);
         }))
     }
 
-    /// Why the last listing said plan use is not available to the
-    /// account, if it did.
+    /// Why the last eligibility check said plan use is not available to
+    /// the account, if it did.
     pub fn not_eligible(&self) -> Option<String> {
         self.not_eligible.lock().expect("not poisoned").clone()
-    }
-
-    /// The active account's models as last listed: `None` while they
-    /// have not been.
-    fn listed_plan_models(
-        &self,
-        account: &AccountId,
-    ) -> Option<Result<Vec<ModelInfo>, String>> {
-        let cached = self.plan_models.lock().expect("not poisoned");
-        let (listed, models) = cached.as_ref()?;
-        (listed == account).then(|| models.clone())
     }
 
     fn access_label(&self) -> &'static str {
@@ -1444,24 +1419,19 @@ impl Host {
     pub fn models(&self) -> Models {
         let account = self.account();
         let credentials = &self.config.credentials;
-        // The account's own models, once listed.
-        let (options, models_error) = match account
-            .as_ref()
-            .and_then(|account| self.listed_plan_models(account))
-        {
-            Some(Ok(listed)) => (plan_models(&listed), None),
-            Some(Err(error)) => (Vec::new(), Some(error)),
-            None => (Vec::new(), None),
-        };
         Models {
-            options,
+            // The plan's models, from the model table, while signed in.
+            options: if account.is_some() {
+                plan_models()
+            } else {
+                Vec::new()
+            },
             settings: self.settings.lock().expect("not poisoned").clone(),
             access: AccessInfo {
                 label: self.access_label().into(),
                 chatgpt: account.is_some(),
                 jev: credentials.jev_key().is_some(),
                 accounts: credentials.accounts(),
-                models_error,
             },
             agents: vec![(
                 "coder".into(),
@@ -2153,7 +2123,6 @@ impl Host {
         }
         github::restore(workspace, &host.config.credentials, &host.github, cx);
         let handler = host.clone();
-        list_plan_models(&host, workspace, cx);
         // A sign-in, a switch of account or a sign-out from the Models
         // screen changes what new runs use.
         let connected: accounts::Connected = {
@@ -2164,7 +2133,7 @@ impl Host {
                 let Some(workspace) = entity.upgrade() else {
                     return;
                 };
-                list_plan_models(&host, &workspace, cx);
+                check_eligibility(&host, &workspace, cx);
                 workspace.update(cx, |ws, cx| {
                     ws.apply(HostUpdate::catalog(catalog), cx);
                     if let Err(error) = applied {
@@ -3489,20 +3458,20 @@ pub fn onboard(
     .detach();
 }
 
-/// Lists the active ChatGPT account's models on the host's runtime, then
-/// shows them in the picker. Nothing happens off the plan, or when they
-/// are listed already.
-fn list_plan_models(
+/// Checks on the host's runtime whether the account just signed in may
+/// use its plan, then, if onboarding is on the model step and it may
+/// not, says so. Nothing happens signed out.
+fn check_eligibility(
     host: &Arc<Host>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
-    let Some(listing) = host.list_plan_models() else {
+    let Some(check) = host.check_eligibility() else {
         return;
     };
     let (host, workspace) = (host.clone(), workspace.downgrade());
     cx.spawn(async move |cx| {
-        let _ = listing.await;
+        let _ = check.await;
         let catalog = host.catalog();
         let refused = host.not_eligible();
         let _ = workspace.update(cx, |ws, cx| {

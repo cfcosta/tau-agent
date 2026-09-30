@@ -375,18 +375,11 @@ impl Workspace {
                     .overflow_y_scroll()
                     .when(empty, |list| {
                         list.child(ui::empty(
-                            match (&models.access.models_error, signed_in) {
-                                (Some(error), _) => format!(
-                                    "Could not list your ChatGPT models: {error}"
-                                ),
-                                (None, false) => "Sign in with ChatGPT and \
-                                                  enable plan use to see your \
-                                                  models."
-                                    .into(),
-                                (None, true) if filter.trim().is_empty() => {
-                                    "Loading your ChatGPT models…".into()
-                                }
-                                _ => "No model matches.".into(),
+                            if signed_in {
+                                "No model matches."
+                            } else {
+                                "Sign in with ChatGPT and enable plan use to \
+                                 see your models."
                             },
                             t,
                         ))

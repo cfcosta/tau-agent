@@ -188,7 +188,21 @@ its client id and the host id stay for the next sign-in.
 
 `ChatGpt::models` sends `GET /v1/models` with the access token and keeps
 the `models` entries with `visibility: "list"`, in the server's order,
-as `ModelInfo { slug, display_name }`.
+as `ModelInfo { slug, display_name }`. tau-ui calls it once per sign-in
+as the eligibility check only, and does not show what it lists: the
+account's catalog leaves out models the plan route runs (`gpt-6-sol`,
+`gpt-6.1-sol` and `gpt-6-luna` completed on 2026-09-29 without being
+listed).
+
+What a plan offers comes from tau's own model table instead:
+`tau_ai::model::plan_models()` takes, for each family in
+`PLAN_FAMILIES` (`sol`, `luna`, `astra`, `terra`, in that order), the
+model `gpt-<version>-<family>` with the highest version, compared number
+by number (`6.1` > `6` > `5.6`). Excluded ids and models without tool
+calling are not in the table. Today that is `gpt-6.1-sol` (GPT-6.1 Sol),
+`gpt-6-luna` (GPT-6 Luna), `gpt-6-astra` (GPT-6 Astra) and
+`gpt-5.6-terra` (GPT-5.6 Terra). An account that cannot run one of them
+finds out when a run asks for it (see below).
 
 ## Errors
 
@@ -211,6 +225,15 @@ A documented code decides whatever the status. `ApiError` keeps the
 status, the body verbatim, its shape (`Structured`, `Detail`, `Other`)
 and `x-request-id`. `Recovery::of_code` classifies the code of a
 `response.failed` event the same way.
+
+A model the plan does not run: checked live on 2026-09-30 with
+`gpt-0-nope`, `POST /v1/responses` answers HTTP 400, no request id,
+`{"detail": "The 'gpt-0-nope' model is not supported when using Codex
+with a ChatGPT account."}` (`FixRequest`). No code names it, so
+`chatgpt::refuses_model` matches those words for the model the request
+asked for; the stream processor then reports the `error` or
+`response.failed` frame as `gpt-0-nope isn't available on your plan`,
+fatal, so the run stops once without retrying.
 
 ## Inference
 
@@ -287,8 +310,14 @@ Nothing moves a run to another way of paying after a plan error.
   a dead sign-in asks to sign in again; a sign-in without plan usage
   offers "Enable ChatGPT plan use", the only way forward; a restriction
   shows its message.
-- The picker lists `models()` for the active account (display name,
-  server order), listed again on a switch, without prices.
+- The picker, and onboarding's signed-in model step, offer
+  `tau_ai::model::plan_models()` while signed in (the table's names, in
+  family order), without prices. `DEFAULT_MODEL` is the first of them;
+  a saved default the plan no longer offers falls back to it.
+- Each sign-in or switch of account calls `ChatGpt::models` once as the
+  eligibility check: a restricted refusal (`Recovery::Restricted`) keeps
+  onboarding on the model step as not eligible. Its listing is not
+  shown.
 - "Manage usage" opens `USAGE_SETTINGS_URL`
   (`https://chatgpt.com/#settings/Usage`): the docs name the page but
   not its address, so this is a guess kept in one constant.
@@ -331,8 +360,13 @@ never a token.
   or mid-stream stops without retry, a temporary refusal is retryable
   with its details, a dead sign-in and a sign-in without plan usage
   connect nothing.
+- `crates/tau-ai/tests/plan_models.rs`: a Hegel property that, for any
+  table, `newest_per_family` keeps at most one model per plan family,
+  in family order, at its highest version; and today's four pinned.
 - tau-ui: `plan_usage` and `models` unit tests, and workspace tests for
-  the notice, the composer line, the alerts and the account picker.
+  the notice, the composer line, the alerts, the account picker, the
+  plan's models in the picker and on the model step, and the not
+  eligible state.
 
 ## Reasoning efforts
 

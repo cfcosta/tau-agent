@@ -79,7 +79,7 @@ pub enum ModelAccess {
     SigningIn {
         url: Option<String>,
     },
-    /// Runs can start. `label` reads like `gpt-5.5 · ChatGPT plan`.
+    /// Runs can start. `label` reads like `gpt-6.1-sol · ChatGPT plan`.
     Connected {
         label: String,
     },

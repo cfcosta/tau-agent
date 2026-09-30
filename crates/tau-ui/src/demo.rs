@@ -745,7 +745,7 @@ pub fn setup(step: SetupStep) -> Setup {
     };
     if stage >= 2 {
         setup.model = ModelAccess::Connected {
-            label: "gpt-5.5 · ChatGPT plan".into(),
+            label: "gpt-6.1-sol · ChatGPT plan".into(),
         };
     }
     if stage >= 3 {
@@ -921,7 +921,7 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
             }
             WorkspaceEvent::ChatGptCallback { .. } => {
                 let connected = ModelAccess::Connected {
-                    label: "gpt-5.5 · ChatGPT plan".into(),
+                    label: "gpt-6.1-sol · ChatGPT plan".into(),
                 };
                 later(vec![(600, setup(SetupUpdate::Model(connected)))], cx)
             }
@@ -1559,24 +1559,6 @@ pub fn usage_limit() -> tau_ai::refusal::Refusal {
     }
 }
 
-/// The models a ChatGPT Plus account listed on 2026-09-29, in the
-/// server's order.
-pub fn plan_model_list() -> Vec<tau_ai::chatgpt::ModelInfo> {
-    [
-        ("gpt-6-astra", "GPT-6-Astra"),
-        ("gpt-5.6-sol", "GPT-5.6-Sol"),
-        ("gpt-5.6-terra", "GPT-5.6-Terra"),
-        ("gpt-5.6-luna", "GPT-5.6-Luna"),
-        ("gpt-5.5", "gpt-5.5"),
-    ]
-    .into_iter()
-    .map(|(slug, name)| tau_ai::chatgpt::ModelInfo {
-        slug: slug.into(),
-        display_name: name.into(),
-    })
-    .collect()
-}
-
 /// The demo's ChatGPT sign-ins: a personal account whose plan runs use,
 /// and a work one.
 pub fn chatgpt_accounts() -> Vec<ChatGptAccount> {
@@ -1596,8 +1578,8 @@ pub fn chatgpt_accounts() -> Vec<ChatGptAccount> {
     ]
 }
 
-/// The models the demo offers: the plan's, as a ChatGPT Plus account
-/// lists them, with defaults for each of the demo's agents.
+/// The models the demo offers: the plan's, from the model table, with
+/// defaults for each of the demo's agents.
 pub fn models() -> crate::models::Models {
     use crate::models::{
         AccessInfo,
@@ -1612,22 +1594,19 @@ pub fn models() -> crate::models::Models {
         "reviewer",
         ModelChoice::new("gpt-6-luna", Effort::Medium),
     );
-    settings.set_default(
-        "tau-memory",
-        ModelChoice::new("gpt-5.6-luna", Effort::Low),
-    );
+    settings
+        .set_default("tau-memory", ModelChoice::new("gpt-6-luna", Effort::Low));
     // The note on the plan shows only where asked for (`--open
     // plan-notice`).
     settings.plan_notice_seen = true;
     Models {
-        options: plan_models(&plan_model_list()),
+        options: plan_models(),
         settings,
         access: AccessInfo {
             label: "ChatGPT plan".into(),
             chatgpt: true,
             jev: true,
             accounts: chatgpt_accounts(),
-            models_error: None,
         },
         agents: vec![
             ("coder".into(), "Runs you start from the composer.".into()),
