@@ -2117,6 +2117,13 @@ impl Host {
             Err(error) => eprintln!("tau-ui: cannot read past runs: {error:#}"),
         }
         let host = Arc::new(self);
+        // Phones reach this host once allowed.
+        crate::phone_server::serve(
+            host.runtime.handle().clone(),
+            host.config.credentials.dir.join("phones"),
+            workspace,
+            cx,
+        );
         // Once a repository is imported, the plugins and the status bar
         // change.
         let slots = host.repos.lock().expect("not poisoned").clone();

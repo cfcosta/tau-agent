@@ -43,6 +43,7 @@ use crate::{
     input::{InputEvent, TextInput},
     models::{ModelChoice, ModelSettings, USAGE_SETTINGS_URL},
     pairing::{PairRequest, PairStep, Pairing, PairingUpdate, Progress},
+    phones::{Phones, PhonesRequest},
     plan_usage::{self, PlanAction, PlanAlert},
     pull_request::{PrState, PullRequest},
     route::{self, Route},
@@ -264,6 +265,10 @@ pub enum WorkspaceEvent {
     /// Handled on the phone, never sent up.
     #[serde(skip)]
     Pair(PairRequest),
+    /// Allow phones, show the pairing code, revoke a phone: the
+    /// computer's own, never sent up.
+    #[serde(skip)]
+    Phones(PhonesRequest),
     /// Start GitHub's device sign-in; answer with a
     /// [`GitHub::Waiting`] code, then [`GitHub::SignedIn`].
     GitHubSignIn,
@@ -451,6 +456,9 @@ pub struct Workspace {
     landings: HashMap<RunId, LandingState>,
     pub(crate) setup: Setup,
     pub(crate) pairing: Pairing,
+    /// The phones that may reach this computer, as the Phones screen
+    /// shows them.
+    pub(crate) phones: Phones,
     /// A computer's address and pairing code, typed.
     pub(crate) pair_address: Entity<TextInput>,
     pub(crate) pair_code: Entity<TextInput>,
@@ -744,6 +752,7 @@ impl Workspace {
             landings: HashMap::new(),
             setup: Setup::default(),
             pairing: Pairing::default(),
+            phones: Phones::default(),
             pair_address,
             pair_code,
             phone_name,
@@ -2065,6 +2074,25 @@ impl Workspace {
             }
             _ => cx.notify(),
         }
+    }
+
+    // Phones, on the computer.
+
+    pub fn phones(&self) -> &Phones {
+        &self.phones
+    }
+
+    pub fn set_phones(&mut self, phones: Phones, cx: &mut Context<Self>) {
+        self.phones = phones;
+        cx.notify();
+    }
+
+    pub fn ask_phones(
+        &mut self,
+        request: PhonesRequest,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(WorkspaceEvent::Phones(request));
     }
 
     // Pairing a phone.
@@ -3491,6 +3519,7 @@ impl Workspace {
                 self.focused(compact, t, cx)
             }
             Route::Models => screens::models::render(self, compact, t, cx),
+            Route::Phones => screens::phones::render(self, compact, t, cx),
         }
     }
 

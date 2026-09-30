@@ -41,6 +41,8 @@ pub enum Route {
     PullRequest(RunId),
     /// Model settings: defaults, what the picker shows, what to ask about.
     Models,
+    /// Allow phones, pair one, and see those paired.
+    Phones,
 }
 
 /// The phone's bottom tabs.
@@ -104,7 +106,7 @@ impl Route {
         match self {
             Self::History => Tab::History,
             Self::Plugins => Tab::Plugins,
-            Self::Models => Tab::Models,
+            Self::Models | Self::Phones => Tab::Models,
             _ => Tab::Runs,
         }
     }
@@ -125,6 +127,7 @@ impl Route {
             Self::Pair(step) => step.title(),
             Self::PullRequest(_) => "Pull request",
             Self::Models => "Models",
+            Self::Phones => "Phones",
         }
     }
 

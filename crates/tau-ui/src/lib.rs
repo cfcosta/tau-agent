@@ -59,6 +59,8 @@ pub mod memory;
 pub mod metered;
 pub mod models;
 pub mod pairing;
+pub mod phone_server;
+pub mod phones;
 pub mod picker;
 pub mod plan_usage;
 pub mod pull_request;

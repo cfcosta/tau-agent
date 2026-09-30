@@ -38,6 +38,8 @@ grep-matcher = "0.1.9"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.17"
 hegeltest = { version = "0.48.1", features = ["serde_json", "static-engine"] }
+# The computer's addresses a phone could reach it at (tau-ui's Phones).
+if-addrs = "0.15.0"
 ignore = "0.4.33"
 libc = "0.2.189"
 # The terminal emulator behind tau-terminal
@@ -62,6 +64,8 @@ pollster = "1.0.1"
 # Model replies are CommonMark with GitHub's tables; only the parser, no
 # HTML output (tau-ui).
 pulldown-cmark = { version = "0.13.4", default-features = false }
+# The pairing code, drawn as a QR code; only its matrix, no images.
+qrcode = { version = "0.14.1", default-features = false }
 regex = "1.13.1"
 rustix = { version = "1.1.5", default-features = false, features = [
   "process",

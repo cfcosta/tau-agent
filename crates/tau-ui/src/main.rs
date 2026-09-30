@@ -16,7 +16,8 @@
 //!   once on the plan; plan-disabled, the Models
 //!   screen with plan use not enabled; plan-signing-in, onboarding
 //!   waiting for the ChatGPT sign-in; a phone pairing: pair,
-//!   pair-scan, pair-address, pair-paired or pair-unreachable;
+//!   pair-scan, pair-address, pair-paired or pair-unreachable; phones,
+//!   the computer's Phones screen;
 //!   models, picker, run-picker, fork-picker, log, status, show or diff
 //!   (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
@@ -498,6 +499,10 @@ fn open_demo_screen(
         Some(Route::Setup(step)) => {
             workspace.set_setup(demo::setup(step), cx);
             workspace.navigate(Route::Setup(step), cx);
+        }
+        Some(Route::Phones) => {
+            workspace.set_phones(demo::phones(), cx);
+            workspace.navigate(Route::Phones, cx);
         }
         // Pairing starts at its welcome, so the others can go back.
         Some(Route::Pair(step)) => {

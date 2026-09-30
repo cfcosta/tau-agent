@@ -968,3 +968,48 @@ pub fn md_heading(level: u8, content: AnyElement, t: &Theme) -> Div {
 pub fn rule(t: &Theme) -> Div {
     div().w_full().h(px(1.)).my(sp(1.)).bg(t.border)
 }
+
+/// `text` as a QR code, `size` px square: black modules on a white
+/// plate with a quiet zone, whatever the theme, so any camera reads it.
+/// `None` if the text does not fit a QR code.
+pub fn qr_code(text: &str, size: f32) -> Option<Div> {
+    let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
+    let width = code.width();
+    let dark: Vec<bool> = code
+        .to_colors()
+        .into_iter()
+        .map(|color| color == qrcode::Color::Dark)
+        .collect();
+    // Four modules of quiet zone on each side, as the standard asks.
+    let module = size / (width + 8) as f32;
+    let modules = gpui::canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let black = gpui::rgb(0x000000);
+            for (n, _) in dark.iter().enumerate().filter(|(_, dark)| **dark) {
+                let (x, y) = ((n % width) as f32, (n / width) as f32);
+                let origin = gpui::point(
+                    bounds.left() + px(x * module),
+                    bounds.top() + px(y * module),
+                );
+                // A hair wider, so neighbours meet without seams.
+                let side = gpui::size(px(module + 0.3), px(module + 0.3));
+                window.paint_quad(gpui::fill(
+                    gpui::Bounds::new(origin, side),
+                    black,
+                ));
+            }
+        },
+    )
+    .size(px(module * width as f32));
+    Some(
+        div()
+            .size(px(size))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(radius::BOX)
+            .bg(gpui::rgb(0xffffff))
+            .child(modules),
+    )
+}

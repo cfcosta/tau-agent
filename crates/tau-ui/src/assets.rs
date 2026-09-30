@@ -45,6 +45,7 @@ pub enum Icon {
     Pencil,
     Camera,
     Offline,
+    Phone,
 }
 
 impl Icon {
@@ -85,6 +86,7 @@ impl Icon {
             Self::Pencil => "icons/pencil.svg",
             Self::Camera => "icons/camera.svg",
             Self::Offline => "icons/offline.svg",
+            Self::Phone => "icons/phone.svg",
         }
     }
 
@@ -163,6 +165,9 @@ impl Icon {
             Self::Camera => {
                 r#"<path d="M14.5 4h-5L7 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2h-3z"/><circle cx="12" cy="13" r="3"/>"#
             }
+            Self::Phone => {
+                r#"<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/>"#
+            }
             Self::Offline => {
                 r#"<path d="M2 2l20 20M8.5 16.5a5 5 0 017 0M5 12.9a10 10 0 015.2-2.8M19 12.9a10 10 0 00-2.3-1.6M12 20h.01"/>"#
             }
@@ -172,7 +177,7 @@ impl Icon {
         }
     }
 
-    const ALL: [Self; 35] = [
+    const ALL: [Self; 36] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -208,6 +213,7 @@ impl Icon {
         Self::Pencil,
         Self::Camera,
         Self::Offline,
+        Self::Phone,
     ];
 
     fn svg(self) -> String {

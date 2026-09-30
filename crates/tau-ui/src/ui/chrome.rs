@@ -244,6 +244,7 @@ pub fn sidebar(
         (Route::History, Icon::History, "History", "all repos"),
         (Route::Plugins, Icon::Plug, "Plugins", ""),
         (Route::Models, Icon::Settings, "Models", ""),
+        (Route::Phones, Icon::Phone, "Phones", ""),
     ];
 
     div()
