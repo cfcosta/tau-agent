@@ -1,8 +1,9 @@
 //! tau-ui on an Android phone.
 //!
-//! It opens on pairing with the tau on a computer (decision 0013). For
-//! now nothing connects: the demo answers pairing the way a remote
-//! would, then shows its session, as `tau-ui --demo` has it.
+//! The phone runs no agent: it pairs with the tau on a computer and
+//! shows and steers its runs (decision 0013), through tau-ui's
+//! [`remote`](tau_ui::remote). Pairing reads the computer's code from a
+//! photo the camera app takes ([`qr`]).
 //!
 //! To build the APK, in the flake's `android` shell (`nix develop
 //! .#android`), from the repository's root:
@@ -16,62 +17,7 @@
 //! The APK is `crates/tau-phone/android/app/build/outputs/apk/debug/app-debug.apk`;
 //! `adb install` it.
 
-#![cfg(target_os = "android")]
+pub mod qr;
 
-use gpui::{App, AppContext, Application, WindowOptions};
-use gpui_mobile::android::jni;
-use tau_ui::{Workspace, assets::Assets, demo, pairing::PairStep};
-
-/// Called by `android-activity` on its own thread once NativeActivity
-/// loads this library. Returns when the activity is gone.
-#[unsafe(no_mangle)]
-fn android_main(app: android_activity::AndroidApp) {
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("tau"),
-    );
-    jni::install_panic_hook();
-
-    let _platform = jni::init_platform(&app);
-    let Some(platform) = jni::shared_platform() else {
-        log::error!("tau: no Android platform");
-        return;
-    };
-
-    // Blocks, driving Android's event loop. The closure runs once the
-    // system hands over a surface.
-    Application::with_platform(platform.into_rc())
-        .with_assets(Assets)
-        .run(|cx: &mut App| {
-            tau_ui::init(cx);
-            // The system gives the window its size.
-            let options = WindowOptions {
-                window_bounds: None,
-                ..Default::default()
-            };
-            let opened = cx.open_window(options, |window, cx| {
-                cx.new(|cx| {
-                    let mut runs = vec![demo::retry_after()];
-                    runs.extend(demo::history());
-                    let mut workspace = Workspace::new(
-                        "tau-agent",
-                        runs,
-                        demo::catalog(),
-                        window,
-                        cx,
-                    );
-                    workspace.replay(demo::run_id(), demo::script(), cx);
-                    workspace.start_pairing(PairStep::Welcome, cx);
-                    workspace
-                })
-            });
-            match opened.and_then(|window| window.entity(cx)) {
-                Ok(workspace) => demo::respond(&workspace, cx),
-                Err(error) => {
-                    log::error!("tau: could not open a window: {error:#}")
-                }
-            }
-            cx.activate(true);
-        });
-}
+#[cfg(target_os = "android")]
+mod android;
