@@ -402,32 +402,44 @@ the run itself does the moving and the resolving:
 
 ## Delegating to a sub-agent
 
-`Delegate` is the `delegate` tool (`{ task }`): a run hands a task to
-a sub-agent, a child run in a chat of its own
-([ADR 0009](../decisions/0009-child-runs-land-on-their-parent.md)).
-Build it on the run's `RunWorkspace`, with a closure that builds the
-sub-agent's `Agent` around the sub-agent's own `RunWorkspace`.
+`Delegate` is the `delegate` tool (`{ task, model?, effort? }`): a run
+hands a task to a sub-agent, a child run in a chat of its own that
+forks the caller's conversation
+([ADR 0009](../decisions/0009-child-runs-land-on-their-parent.md),
+[ADR 0015](../decisions/0015-delegates-fork-their-caller.md)). Build it
+on the run's `RunWorkspace`, with the model ids a call may pick from,
+and a closure that builds the sub-agent's `Agent` around the
+sub-agent's own `RunWorkspace` on the `ChildModel` its call asked for.
+tau-ui builds it on the model and effort asked for, or the caller's,
+and refuses an effort the model does not take.
 
 1. The caller's work must be committed (ADR 0014): with changes in its
    `@`, the tool refuses and says to commit with `vcs_commit` first.
    The sub-agent's workspace starts on the caller's newest commit
    (`RunWorkspace::with_base`), so it sees the caller's work.
-2. The sub-agent runs through `Agent::as_tool`: a `Subagent` run of the
-   caller, its events forwarded to the caller's; it commits its work
-   on its own stack, under its own bookmark.
-3. When it finishes, its changes land on the caller with `Vcs::land`.
-   The caller has not moved, so nothing is rewritten and nothing can
-   conflict. The tool's text is the sub-agent's answer and a line on
-   what landed; its details hold `run` and the `landing`.
-4. When it fails, its changes are abandoned and the caller gets the
-   error.
-5. Either way the sub-agent closes: its workspace is forgotten and its
+2. The sub-agent runs through `Agent::as_tool(…).forking()`: a
+   `Subagent` run of the caller with a `fork_seq`, its events forwarded
+   to the caller's. It is asked on the caller's transcript, the turn
+   that made the call with an output for each call in it, and then its
+   task. It commits its work on its own stack, under its own bookmark.
+3. The tool is `ExecutionMode::Grouped`: the calls in one batch run side
+   by side, up to `MAX_RUNNING` (4) at once, and the batch's other tools
+   run before or after them, never while a landing moves the caller's
+   working copy.
+4. As each finishes, its changes land on the caller with `Vcs::land`,
+   one landing at a time, in the order they finish. The first cannot
+   conflict. A later one whose changes clash with an earlier one's
+   lands its conflicts, and its result names the conflicted files for
+   the caller to resolve. The tool's text is the sub-agent's answer and
+   a line on what landed; its details hold `run` and the `landing`.
+5. When it fails, or the caller is cancelled before it lands, its
+   changes are abandoned and the caller gets the error.
+6. Either way the sub-agent closes: its workspace is forgotten and its
    bookmark removed.
 
 The caller's links record what came to its stack during the turn: each
 landed change with `from` naming the sub-agent, then the turn's
-snapshot. The tool runs one
-call at a time, since it moves the caller's working copy.
+snapshot. Sub-agents do not get `delegate`: they do not nest.
 
 ## Left to the host and the UI
 

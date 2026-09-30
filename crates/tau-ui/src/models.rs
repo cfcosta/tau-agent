@@ -47,7 +47,7 @@ impl Effort {
         }
     }
 
-    fn of(effort: ReasoningEffort) -> Self {
+    pub fn of(effort: ReasoningEffort) -> Self {
         match effort {
             ReasoningEffort::None => Self::None,
             ReasoningEffort::Minimal => Self::Minimal,

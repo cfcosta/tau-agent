@@ -54,6 +54,7 @@ use tau_vcs::{
     Project,
     RunWorkspace,
     VcsPlugin,
+    delegate::ChildModel,
     run_workspace::{PLUGIN as WORKSPACE_PLUGIN, bookmark},
 };
 use tokio::{runtime::Runtime, sync::mpsc};
@@ -284,6 +285,73 @@ pub const REPO_PLUGIN: &str = "repo";
 
 /// A repository's main chat's title.
 pub const MAIN_TITLE: &str = "main";
+
+/// `base` on `choice`: its model and effort (left to tau-reasoning on
+/// auto, when there is Jev to ask), and compaction by the model's
+/// window, pruning with Jev first when there is a key.
+fn for_model(
+    base: Agent,
+    choice: &ModelChoice,
+    jev: Option<Arc<dyn tau_jev::Jev>>,
+    archive_dir: &Path,
+    repo: &str,
+) -> Agent {
+    let mut agent = base.model(&choice.model);
+    // "auto" leaves the effort to tau-reasoning, when it can ask Jev.
+    if choice.effort == Effort::Auto
+        && let Some(jev) = &jev
+    {
+        agent = agent.plugin(tau_reasoning::Reasoning::new(jev.clone()));
+    }
+    if let Some(effort) = choice.effort.reasoning() {
+        agent = agent.reasoning(effort);
+    }
+    // Compaction steps in by the run's own model's window.
+    let mut compaction = Compaction::default();
+    if let Some(model) = find(&choice.model) {
+        compaction = compaction.context_window(model.context_window);
+    }
+    // Pruning with Jev first, when there is a key: it is cheaper than
+    // a summary, and summarizing follows when pruning cannot help.
+    if let Some(jev) = &jev {
+        let settings = tau_fast_compaction::Settings {
+            context_window: find(&choice.model)
+                .map(|model| model.context_window),
+            archive_dir: archive_dir.to_owned(),
+            ..tau_fast_compaction::Settings::default()
+        };
+        agent = agent.plugin(
+            tau_fast_compaction::FastCompaction::shared(jev.clone())
+                .settings(settings),
+        );
+    }
+    agent.plugin(compaction).plugin(RepoTag(repo.to_owned()))
+}
+
+/// The model and effort a sub-agent runs on: what its call asked for,
+/// else its caller's. An effort the model does not take is refused;
+/// the caller's, on another model that does not take it, goes to auto.
+fn child_choice(
+    caller: &ModelChoice,
+    asked: &ChildModel,
+) -> Result<ModelChoice, tau_agent::tool::ToolError> {
+    let model = asked.model.clone().unwrap_or_else(|| caller.model.clone());
+    let Some(effort) = asked.effort else {
+        return Ok(ModelChoice::new(model, caller.effort).fitted());
+    };
+    let effort = Effort::of(effort);
+    let offered = Effort::offered(&model);
+    if !offered.contains(&effort) {
+        let offered: Vec<&str> = offered.iter().map(|e| e.label()).collect();
+        return Err(format!(
+            "{model} does not take effort {}; it takes {}",
+            effort.label(),
+            offered.join(", ")
+        )
+        .into());
+    }
+    Ok(ModelChoice::new(model, effort))
+}
 
 /// Records the repository a run works on, so history can list the run
 /// under it.
@@ -1207,42 +1275,25 @@ impl Host {
                  enable plan use on the Models screen."
             );
         }
-        let mut agent = self
-            .base
-            .lock()
-            .expect("not poisoned")
-            .clone()
-            .model(&choice.model);
         let jev = self.jev();
-        // "auto" leaves the effort to tau-reasoning, when it can ask Jev.
-        if choice.effort == Effort::Auto
-            && let Some(jev) = &jev
-        {
-            agent = agent.plugin(tau_reasoning::Reasoning::new(jev.clone()));
-        }
-        if let Some(effort) = choice.effort.reasoning() {
-            agent = agent.reasoning(effort);
-        }
-        // Compaction steps in by the run's own model's window.
-        let mut compaction = Compaction::default();
-        if let Some(model) = find(&choice.model) {
-            compaction = compaction.context_window(model.context_window);
-        }
-        // Pruning with Jev first, when there is a key: it is cheaper than
-        // a summary, and summarizing follows when pruning cannot help.
-        if let Some(jev) = &jev {
-            let settings = tau_fast_compaction::Settings {
-                context_window: find(&choice.model)
-                    .map(|model| model.context_window),
-                archive_dir: self.archive_dir(repo),
-                ..tau_fast_compaction::Settings::default()
-            };
-            agent = agent.plugin(
-                tau_fast_compaction::FastCompaction::shared(jev.clone())
-                    .settings(settings),
-            );
-        }
-        let agent = agent.plugin(compaction).plugin(RepoTag(repo.name.clone()));
+        // What hangs on the model: its effort, and compaction by its
+        // window. A sub-agent can run on another model than its caller.
+        let for_model = {
+            let base = self.base.lock().expect("not poisoned").clone();
+            let jev = jev.clone();
+            let archive_dir = self.archive_dir(repo);
+            let repo = repo.name.clone();
+            move |choice: &ModelChoice| {
+                for_model(
+                    base.clone(),
+                    choice,
+                    jev.clone(),
+                    &archive_dir,
+                    &repo,
+                )
+            }
+        };
+        let agent = for_model(choice);
         // The repository's rules, checked with Jev when there is a key.
         // Rules that cannot be read fail the run: they are never skipped.
         let constitution = match jev {
@@ -1286,10 +1337,19 @@ impl Host {
         };
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
         let delegate = {
-            let (base, on_workspace) = (agent.clone(), on_workspace.clone());
-            Delegate::new(workspace.clone(), identity(), move |child| {
-                Ok(on_workspace(base.clone(), child, false))
-            })
+            let on_workspace = on_workspace.clone();
+            let caller = choice.clone();
+            let models: Vec<String> =
+                plan_models().into_iter().map(|model| model.id).collect();
+            Delegate::new(
+                workspace.clone(),
+                identity(),
+                &models,
+                move |child, asked| {
+                    let choice = child_choice(&caller, asked)?;
+                    Ok(on_workspace(for_model(&choice), child, false))
+                },
+            )
         };
         let agent = on_workspace(agent.tool(delegate), workspace, true);
         Ok((with_plugin(agent, goal), name))
@@ -4030,6 +4090,53 @@ pub fn branch_slug(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sub-agent runs on the model its call asked for, else its
+    /// caller's. An effort it asked for is kept when the model takes it
+    /// and refused when not; without one, it gets the caller's, or auto
+    /// where the model does not take that.
+    #[hegel::test(test_cases = 300)]
+    fn a_sub_agent_runs_on_what_its_call_asked(tc: hegel::TestCase) {
+        use hegel::generators::{self as gs, Generator as _};
+        use tau_ai::responses::request::ReasoningEffort;
+        let ids: Vec<String> =
+            plan_models().into_iter().map(|model| model.id).collect();
+        let caller_model: String = tc.draw(gs::sampled_from(ids.clone()));
+        let caller_effort = tc.draw(
+            gs::sampled_from(Effort::offered(&caller_model)).print_as_debug(),
+        );
+        let caller = ModelChoice::new(caller_model, caller_effort);
+        let asked = ChildModel {
+            model: tc.draw(gs::optional(gs::sampled_from(ids))),
+            effort: tc.draw(gs::optional(
+                gs::sampled_from(ReasoningEffort::ALL.to_vec())
+                    .print_as_debug(),
+            )),
+        };
+        let model = asked.model.clone().unwrap_or(caller.model.clone());
+        let offered = Effort::offered(&model);
+        match (child_choice(&caller, &asked), asked.effort) {
+            (Ok(choice), Some(effort)) => {
+                assert_eq!(choice.model, model);
+                assert_eq!(choice.effort, Effort::of(effort));
+                assert!(offered.contains(&choice.effort));
+            }
+            (Err(error), Some(effort)) => {
+                assert!(!offered.contains(&Effort::of(effort)));
+                assert!(error.to_string().contains(&model), "{error}");
+            }
+            (Ok(choice), None) => {
+                assert_eq!(choice.model, model);
+                let kept = if offered.contains(&caller.effort) {
+                    caller.effort
+                } else {
+                    Effort::Auto
+                };
+                assert_eq!(choice.effort, kept);
+            }
+            (Err(error), None) => panic!("refused without an effort: {error}"),
+        }
+    }
 
     #[test]
     fn branch_slugs_come_from_the_first_words() {

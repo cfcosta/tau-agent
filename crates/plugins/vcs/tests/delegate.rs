@@ -1,10 +1,21 @@
 //! The `delegate` tool (ADR 0009): a sub-agent works on the caller's
 //! code, its changes land on the caller's stack, and it closes.
 
-use std::{path::Path, process::Command};
+use std::{
+    collections::VecDeque,
+    path::Path,
+    process::Command,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-use serde_json::json;
-use tau_agent::{agent::Agent, tool::ToolError};
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use tau_agent::{
+    agent::Agent,
+    tool::{AgentTool, ToolCtx, ToolError, ToolOutput},
+};
+use tau_ai::responses::request::ReasoningEffort;
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_tools::{path::Root, plugin::CodingTools};
@@ -15,6 +26,7 @@ use tau_vcs::{
     Project,
     RunWorkspace,
     VcsPlugin,
+    delegate::ChildModel,
     run_workspace::{PLUGIN, bookmark},
 };
 
@@ -67,7 +79,8 @@ fn delegating(
     coder(llm, workspace).tool(Delegate::new(
         workspace.clone(),
         Identity::default(),
-        child,
+        &[],
+        move |workspace, _: &ChildModel| child(workspace),
     ))
 }
 
@@ -109,6 +122,17 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
         .unwrap();
         assert_eq!(outcome.text, "done");
 
+        // The sub-agent forked the caller: it was asked on the caller's
+        // conversation, told which call it runs, and then its task.
+        let asked = format!("{:?}", llm.requests()[3].transcript);
+        assert!(
+            asked.contains("write parent.txt, then delegate child.txt"),
+            "{asked}"
+        );
+        assert!(
+            asked.contains("You are the sub-agent running this call"),
+            "{asked}"
+        );
         // The sub-agent read the caller's file: it worked on its code.
         let read = format!("{:?}", llm.requests()[4].transcript);
         assert!(read.contains("parent.txt\\n"), "{read}");
@@ -263,6 +287,243 @@ fn delegating_needs_a_clean_working_copy() {
         assert!(
             result.contains("Commit your work with vcs_commit"),
             "{result}"
+        );
+    });
+}
+
+/// Sub-agents that each write their own file, one scripted model each,
+/// handed out in the order they start.
+fn writers(files: &[&str]) -> Arc<Mutex<VecDeque<ScriptedModel>>> {
+    let scripts = files
+        .iter()
+        .map(|file| {
+            let file = (*file).to_owned();
+            ScriptedModel::new()
+                .turn(move |t| t.tool_call("write", write(&file)))
+                .turn(|t| t.tool_call("vcs_commit", commit("feat: part")))
+                .turn(|t| t.text("written"))
+        })
+        .collect();
+    Arc::new(Mutex::new(scripts))
+}
+
+/// A caller whose sub-agents take the next of `scripts` each.
+fn delegating_to(
+    llm: ScriptedModel,
+    workspace: &RunWorkspace,
+    scripts: Arc<Mutex<VecDeque<ScriptedModel>>>,
+) -> Agent {
+    delegating(llm, workspace, move |workspace| {
+        let script = scripts.lock().unwrap().pop_front().unwrap();
+        Ok(coder(script, &workspace))
+    })
+}
+
+/// Two sub-agents called in one batch run side by side, and both land:
+/// the caller ends up with each one's file and commit on its stack.
+#[test]
+fn sub_agents_in_one_batch_both_land() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("delegate", json!({ "task": "write a.txt" }))
+                    .tool_call("delegate", json!({ "task": "write b.txt" }))
+            })
+            .turn(|t| t.text("done"));
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let outcome =
+            delegating_to(llm.clone(), &parent, writers(&["a.txt", "b.txt"]))
+                .run("split the work", &store)
+                .await
+                .unwrap();
+        assert_eq!(outcome.text, "done");
+        let results = format!("{:?}", llm.requests()[1].transcript);
+        assert_eq!(results.matches("Its 1 change landed").count(), 2);
+        assert!(!results.contains("with conflicts"), "{results}");
+        for file in ["a.txt", "b.txt"] {
+            assert!(parent.dir().join(file).exists(), "{file}");
+        }
+        assert_eq!(project.workspaces().unwrap(), ["parent"]);
+        let head = project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap();
+        assert_eq!(project.stack(&head).unwrap().len(), 2);
+    });
+}
+
+/// Two sub-agents that write the same file: the first lands clean, the
+/// second lands its conflict, and its result names the file for the
+/// caller to resolve.
+#[test]
+fn a_clashing_sub_agent_lands_its_conflict() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("delegate", json!({ "task": "one" }))
+                    .tool_call("delegate", json!({ "task": "two" }))
+            })
+            .turn(|t| t.text("done"));
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let scripts = ["one\n", "two\n"]
+            .into_iter()
+            .map(|content| {
+                ScriptedModel::new()
+                    .turn(move |t| {
+                        t.tool_call(
+                            "write",
+                            json!({ "path": "shared.txt", "content": content }),
+                        )
+                    })
+                    .turn(|t| t.tool_call("vcs_commit", commit("feat: shared")))
+                    .turn(|t| t.text("written"))
+            })
+            .collect();
+        let outcome =
+            delegating_to(llm.clone(), &parent, Arc::new(Mutex::new(scripts)))
+                .run("clash", &store)
+                .await
+                .unwrap();
+        assert_eq!(outcome.text, "done");
+        let results = format!("{:?}", llm.requests()[1].transcript);
+        assert_eq!(results.matches("Its 1 change landed").count(), 2);
+        assert_eq!(
+            results.matches("with conflicts in shared.txt").count(),
+            1,
+            "{results}"
+        );
+        assert_eq!(project.workspaces().unwrap(), ["parent"]);
+    });
+}
+
+/// Counts the calls running at once, and the most it saw.
+#[derive(Clone, Default)]
+struct Gauge {
+    now: Arc<Mutex<(usize, usize)>>,
+}
+
+#[async_trait]
+impl AgentTool for Gauge {
+    fn name(&self) -> &str {
+        "gauge"
+    }
+    fn description(&self) -> &str {
+        "Waits a little."
+    }
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::LazyLock<Value> =
+            std::sync::LazyLock::new(|| json!({ "type": "object" }));
+        &SCHEMA
+    }
+    async fn call(
+        &self,
+        _args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        {
+            let mut now = self.now.lock().unwrap();
+            now.0 += 1;
+            now.1 = now.1.max(now.0);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        self.now.lock().unwrap().0 -= 1;
+        Ok(ToolOutput::text("waited"))
+    }
+}
+
+/// Six sub-agents in one batch: no more than four run at once, and all
+/// of them finish.
+#[test]
+fn at_most_four_sub_agents_run_at_once() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|mut t| {
+                for n in 0..6 {
+                    t = t.tool_call(
+                        "delegate",
+                        json!({ "task": format!("{n}") }),
+                    );
+                }
+                t
+            })
+            .turn(|t| t.text("done"));
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let gauge = Gauge::default();
+        let child_gauge = gauge.clone();
+        let outcome = delegating(llm.clone(), &parent, move |workspace| {
+            let script = ScriptedModel::new()
+                .turn(|t| t.tool_call("gauge", json!({})))
+                .turn(|t| t.text("waited"));
+            Ok(coder(script, &workspace).tool(child_gauge.clone()))
+        })
+        .run("fan out", &store)
+        .await
+        .unwrap();
+        assert_eq!(outcome.text, "done");
+        let results = format!("{:?}", llm.requests()[1].transcript);
+        assert_eq!(results.matches("It changed no files").count(), 6);
+        let (running, most) = *gauge.now.lock().unwrap();
+        assert_eq!(running, 0);
+        assert_eq!(most, 4);
+        assert_eq!(project.workspaces().unwrap(), ["parent"]);
+    });
+}
+
+/// A call's model and effort reach the host's builder; left out, they
+/// stay the caller's.
+#[test]
+fn a_call_can_pick_its_model_and_effort() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call(
+                    "delegate",
+                    json!({ "task": "a", "model": "gpt-5.5-mini", "effort": "low" }),
+                )
+            })
+            .turn(|t| t.tool_call("delegate", json!({ "task": "b" })))
+            .turn(|t| t.text("done"));
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let seen = asked.clone();
+        let agent = coder(llm.clone(), &parent).tool(Delegate::new(
+            parent.clone(),
+            Identity::default(),
+            &["gpt-5.5".to_owned(), "gpt-5.5-mini".to_owned()],
+            move |workspace, model: &ChildModel| {
+                seen.lock().unwrap().push(model.clone());
+                let script = ScriptedModel::new().turn(|t| t.text("ok"));
+                Ok(coder(script, &workspace))
+            },
+        ));
+        let outcome = agent.run("pick", &store).await.unwrap();
+        assert_eq!(outcome.text, "done");
+        assert_eq!(
+            asked.lock().unwrap().clone(),
+            [
+                ChildModel {
+                    model: Some("gpt-5.5-mini".into()),
+                    effort: Some(ReasoningEffort::Low),
+                },
+                ChildModel::default(),
+            ]
         );
     });
 }

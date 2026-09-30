@@ -82,7 +82,10 @@ library users that call one agent from another.
 
 ### Several delegates run at once
 
-- The tool is `Parallel`. A semaphore lets **four** sub-agents per
+- The tool is `Grouped`, a new execution mode: the delegate calls in
+  a batch run side by side, and the batch's other tools run before or
+  after them, so no tool edits the caller's files while a landing
+  moves its working copy. A semaphore lets **four** sub-agents per
   caller run at a time; the rest wait for a slot.
 - Every sub-agent in a batch starts on the caller's head at the call.
   The caller waits for the batch, so its head does not move until

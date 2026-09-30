@@ -1,17 +1,25 @@
 //! [`Delegate`]: the `delegate` tool, which hands a task to a sub-agent
-//! that works on a copy of the caller's code and lands its changes on
-//! the caller's stack when it returns (ADR 0009).
+//! that forks the caller's conversation, works on a copy of its code,
+//! and lands its changes on the caller's stack when it returns (ADR
+//! 0009, 0015).
 //!
 //! 1. The caller's work must be committed (ADR 0014): the tool refuses
 //!    while `@` holds changes. The sub-agent's workspace starts on the
 //!    caller's newest commit.
 //! 2. The sub-agent runs as a child run of the caller, in a chat of its
-//!    own, and commits its work on its own stack.
-//! 3. When it finishes, its changes land on the caller: the caller has
-//!    not moved, so nothing is rewritten and nothing can conflict. The
-//!    caller links them at the end of its turn, and the sub-agent
-//!    closes: its workspace and bookmark go.
-//! 4. When it fails, its changes are dropped and it closes the same way.
+//!    own. It forks the caller: it sees the conversation, the batch its
+//!    call is in, and then its task. It commits its work on its own
+//!    stack.
+//! 3. Several calls in one batch run side by side, up to
+//!    [`MAX_RUNNING`] at once, and apart from the batch's other tools.
+//!    Each starts on the caller's head at the call.
+//! 4. When one finishes, its changes land on the caller, one landing at
+//!    a time, in the order they finish. The first cannot conflict; a
+//!    later one that does lands its conflicts for the caller to
+//!    resolve. The caller links them at the end of its turn, and the
+//!    sub-agent closes: its workspace and bookmark go.
+//! 5. When it fails, or the caller is cancelled, its changes are
+//!    dropped and it closes the same way.
 
 use std::sync::{
     Arc,
@@ -25,6 +33,8 @@ use tau_agent::{
     error::ToolError,
     tool::{AgentTool, ExecutionMode, ToolCtx, ToolOutput},
 };
+use tau_ai::responses::request::ReasoningEffort;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
     Landing,
@@ -34,13 +44,27 @@ use crate::{
     vcs::Identity,
 };
 
-/// Builds a sub-agent's agent around its workspace: the tools and
-/// plugins it runs with, the workspace among them.
-pub type ChildAgent =
-    Arc<dyn Fn(RunWorkspace) -> Result<Agent, ToolError> + Send + Sync>;
+/// What a call asks of its sub-agent's model. `None` keeps the
+/// caller's.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChildModel {
+    pub model: Option<String>,
+    pub effort: Option<ReasoningEffort>,
+}
+
+/// Builds a sub-agent's agent around its workspace, on the model its
+/// call asks for: the tools and plugins it runs with, the workspace
+/// among them.
+pub type ChildAgent = Arc<
+    dyn Fn(RunWorkspace, &ChildModel) -> Result<Agent, ToolError> + Send + Sync,
+>;
 
 /// The name the model calls the tool by.
 pub const NAME: &str = "delegate";
+
+/// Sub-agents of one caller that run at once. Calls past it wait for a
+/// slot.
+pub const MAX_RUNNING: usize = 4;
 
 /// Hands a task to a sub-agent working on the caller's code. Build one
 /// per run, on that run's [`RunWorkspace`].
@@ -49,17 +73,27 @@ pub struct Delegate {
     identity: Identity,
     child: ChildAgent,
     parameters: Value,
+    /// Slots for the sub-agents running at once.
+    running: Arc<Semaphore>,
+    /// Held while a sub-agent lands, so landings go one at a time.
+    landing: Arc<Mutex<()>>,
 }
 
 impl Delegate {
+    /// `models` are the ids a call may pick a model from.
     pub fn new(
         parent: RunWorkspace,
         identity: Identity,
-        child: impl Fn(RunWorkspace) -> Result<Agent, ToolError>
+        models: &[String],
+        child: impl Fn(RunWorkspace, &ChildModel) -> Result<Agent, ToolError>
         + Send
         + Sync
         + 'static,
     ) -> Self {
+        let efforts: Vec<&str> = ReasoningEffort::ALL
+            .iter()
+            .map(|effort| effort.as_str())
+            .collect();
         Self {
             parent,
             identity,
@@ -69,14 +103,28 @@ impl Delegate {
                 "properties": {
                     "task": {
                         "type": "string",
-                        "description": "The task, with everything the \
-                            sub-agent needs to do it: it does not see this \
-                            conversation.",
+                        "description": "What the sub-agent does. It sees \
+                            this conversation, so name the task and what \
+                            sets it apart from the others you delegate.",
+                    },
+                    "model": {
+                        "type": "string",
+                        "enum": models,
+                        "description": "The model it runs on; yours if \
+                            left out.",
+                    },
+                    "effort": {
+                        "type": "string",
+                        "enum": efforts,
+                        "description": "Its reasoning effort; yours if \
+                            left out.",
                     },
                 },
                 "required": ["task"],
                 "additionalProperties": false,
             }),
+            running: Arc::new(Semaphore::new(MAX_RUNNING)),
+            landing: Arc::default(),
         }
     }
 }
@@ -96,6 +144,23 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(move || work(&project)).await?
 }
 
+/// What the caller reads about a landing, after the sub-agent's answer.
+fn landing_note(landing: &Landing) -> String {
+    let landed = match landing.changes.len() {
+        0 => return "[It changed no files.]".to_owned(),
+        1 => "Its 1 change landed on top of yours".to_owned(),
+        n => format!("Its {n} changes landed on top of yours"),
+    };
+    if landing.conflicts.is_empty() {
+        return format!("[{landed}.]");
+    }
+    format!(
+        "[{landed}, with conflicts in {}: resolve their conflict markers, \
+         then commit.]",
+        landing.conflicts.join(", ")
+    )
+}
+
 #[async_trait]
 impl AgentTool for Delegate {
     fn name(&self) -> &str {
@@ -103,21 +168,27 @@ impl AgentTool for Delegate {
     }
 
     fn description(&self) -> &str {
-        "Hand a self-contained task to a sub-agent. It works in a chat of \
-         its own on a copy of your committed code: commit your work with \
-         `vcs_commit` first. When it finishes, its commits land on top of \
-         yours and its answer comes back; if it fails, its changes are \
-         dropped. It does not see this conversation, so give it everything \
-         it needs in `task`."
+        "Hand a task to a sub-agent. It forks this conversation, so it \
+         knows what you know and `task` can be short. It works in a chat \
+         of its own on a copy of your committed code: commit your work \
+         with `vcs_commit` first. Call it several times in one turn to \
+         run up to 4 sub-agents side by side, each on its own part. As \
+         each finishes, its commits land on top of yours and its answer \
+         comes back; changes that clash with an earlier one land as \
+         conflicts for you to resolve. If it fails, its changes are \
+         dropped. It runs on your model and effort unless `model` or \
+         `effort` say otherwise; another model cannot reuse your prompt \
+         cache, so it reads this whole conversation at full price."
     }
 
     fn parameters(&self) -> &Value {
         &self.parameters
     }
 
-    // It moves the caller's working copy: nothing may edit files beside it.
+    // Sub-agents run side by side; the caller's other tools stay out of
+    // the way of the landings, which move its working copy.
     fn execution_mode(&self) -> ExecutionMode {
-        ExecutionMode::Sequential
+        ExecutionMode::Grouped
     }
 
     async fn call(
@@ -126,6 +197,10 @@ impl AgentTool for Delegate {
         ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
         let task = args["task"].as_str().unwrap_or_default().to_owned();
+        let asked = ChildModel {
+            model: args["model"].as_str().map(str::to_owned),
+            effort: args["effort"].as_str().and_then(ReasoningEffort::parse),
+        };
         let parent_bookmark = bookmark(&ctx.run);
         let project = self.parent.project().clone();
 
@@ -139,25 +214,46 @@ impl AgentTool for Delegate {
             );
         }
         let head = working_copy.head;
+
+        // 2. A slot, then the sub-agent, forking the caller.
+        let slot = tokio::select! {
+            biased;
+            _ = ctx.cancel.cancelled() => {
+                return Err("cancelled before it started".into());
+            }
+            slot = self.running.clone().acquire_owned() => {
+                slot.expect("the semaphore is never closed")
+            }
+        };
         let name = child_name(self.parent.name());
         let workspace =
             RunWorkspace::new(project.clone(), &name, self.identity.clone())?
                 .with_base(head.clone());
-
-        // 2. The sub-agent, as a child run of the caller.
-        let outcome = match (self.child)(workspace.clone()) {
+        let cancel = ctx.cancel.clone();
+        let outcome = match (self.child)(workspace.clone(), &asked) {
             Ok(agent) => {
                 agent
                     .as_tool(NAME, "")
+                    .forking()
                     .call(json!({ "input": task }), ctx)
                     .await
             }
             Err(error) => Err(error),
         };
+        drop(slot);
         let child_bookmark = workspace.run().map(|run| bookmark(&run));
 
+        // 3. Landings go one at a time, in the order sub-agents finish.
+        //    Nothing lands once the caller is cancelled.
+        let turn = self.landing.lock().await;
+        let outcome = match outcome {
+            Ok(_) if cancel.is_cancelled() => {
+                Err("cancelled before it landed".into())
+            }
+            outcome => outcome,
+        };
         let output = match outcome {
-            // 3. Its changes land on the caller.
+            // 4. Its changes land on the caller.
             Ok(output) => {
                 let landing = match child_bookmark.clone() {
                     Some(name) => {
@@ -189,11 +285,6 @@ impl AgentTool for Delegate {
                             from: from.clone(),
                         }
                     }));
-                let note = match landing.changes.len() {
-                    0 => "[It changed no files.]".to_owned(),
-                    1 => "[Its 1 change landed on top of yours.]".to_owned(),
-                    n => format!("[Its {n} changes landed on top of yours.]"),
-                };
                 let text: String = output
                     .content
                     .iter()
@@ -209,10 +300,13 @@ impl AgentTool for Delegate {
                         "run": from,
                         "landing": landing,
                     })),
-                    ..ToolOutput::text(format!("{text}\n\n{note}"))
+                    ..ToolOutput::text(format!(
+                        "{text}\n\n{}",
+                        landing_note(&landing)
+                    ))
                 })
             }
-            // 4. Or they are dropped.
+            // 5. Or they are dropped.
             Err(error) => {
                 let base = head.clone();
                 let workspace_name = name.clone();
@@ -226,6 +320,7 @@ impl AgentTool for Delegate {
                 Err(error)
             }
         };
+        drop(turn);
 
         // Closed, landed or dropped: its workspace and bookmark go.
         blocking(&project, move |p| {
@@ -237,5 +332,56 @@ impl AgentTool for Delegate {
         })
         .await?;
         output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hegel::generators as gs;
+
+    use super::*;
+    use crate::ChangeInfo;
+
+    /// The note says how many changes landed and, when some conflict,
+    /// names every conflicted path; a landing with nothing in it says
+    /// so, whatever else it holds.
+    #[hegel::test(test_cases = 200)]
+    fn the_note_says_what_landed(tc: hegel::TestCase) {
+        let changes: usize = tc.draw(gs::integers().max_value(5));
+        let conflicts: Vec<String> = tc.draw(
+            gs::vecs(gs::from_regex("[a-z]{1,6}\\.rs").fullmatch(true))
+                .max_size(3),
+        );
+        let change = |n: usize| ChangeInfo {
+            change_id: format!("k{n}"),
+            commit_id: format!("c{n}"),
+            description: String::new(),
+            empty: false,
+            conflict: false,
+            immutable: false,
+            working_copy: false,
+            divergent: false,
+            bookmarks: Vec::new(),
+        };
+        let landing = Landing {
+            changes: (0..changes).map(change).collect(),
+            conflicts: conflicts.clone(),
+            head: "h".into(),
+        };
+        let note = landing_note(&landing);
+        if changes == 0 {
+            assert_eq!(note, "[It changed no files.]");
+            return;
+        }
+        let count = if changes == 1 {
+            "Its 1 change landed".to_owned()
+        } else {
+            format!("Its {changes} changes landed")
+        };
+        assert!(note.starts_with(&format!("[{count}")), "{note}");
+        assert_eq!(note.contains("conflicts"), !conflicts.is_empty(), "{note}");
+        for path in &conflicts {
+            assert!(note.contains(path.as_str()), "{note}");
+        }
     }
 }
