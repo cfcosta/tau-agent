@@ -15,8 +15,8 @@ use tau_memory::{
     memory::{Draft, WriteError},
     note::{By, Link, LinkType, NoteType, Source},
 };
-use tau_ui::memory::{Memories, ago, catalog, now, stale_on_commit};
-use tau_vcs::TurnCommit;
+use tau_ui::memory::{Memories, ago, catalog, now, stale_on_turn};
+use tau_vcs::TurnSnapshot;
 
 const TITLES: [&str; 5] = [
     "lanes drain in order",
@@ -221,11 +221,11 @@ fn ago_names_the_largest_whole_unit(tc: TestCase) {
     assert_eq!(ago(then, then + long), "just now", "a future time is now");
 }
 
-fn commit(paths: &[&str]) -> TurnCommit {
-    TurnCommit {
+fn commit(paths: &[&str]) -> TurnSnapshot {
+    TurnSnapshot {
         commit_id: "0".repeat(40),
         change_id: "k".repeat(32),
-        changed: !paths.is_empty(),
+        head: "1".repeat(40),
         paths: paths.iter().map(|path| (*path).to_owned()).collect(),
     }
 }
@@ -276,7 +276,7 @@ fn commits_mark_only_notes_older_than_their_turn() {
         .unwrap();
     wait_a_moment();
 
-    let observe = stale_on_commit(plugin);
+    let observe = stale_on_turn(plugin);
     wait_a_moment();
     observe(&commit(&[]));
     assert!(

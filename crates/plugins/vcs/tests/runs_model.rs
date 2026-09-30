@@ -353,6 +353,7 @@ impl Machine {
             change_id: commit.change_id.clone().expect("a known change"),
             changed: true,
             from: None,
+            snapshot: false,
         }
     }
 
@@ -501,7 +502,7 @@ impl Machine {
         }
         self.runs[run].turns += 1;
         let r = &self.runs[run];
-        let turn = block_on(r.vcs.checkpoint(
+        let turn = block_on(r.vcs.commit_all(
             format!("tau: run {} turn {}", r.name, r.turns),
             r.bookmark(),
         ))
@@ -576,6 +577,7 @@ impl Machine {
                 change_id: turn.change_id,
                 changed: turn.changed,
                 from: None,
+                snapshot: false,
             },
             at,
         ));
@@ -755,6 +757,7 @@ impl Machine {
                     change_id: change.change_id.clone(),
                     changed: true,
                     from: Some(from.clone()),
+                    snapshot: false,
                 },
                 at,
             ));
@@ -1056,10 +1059,10 @@ fn a_landed_conflict_shows_markers() {
     let child = m.project.add_workspace("c", &trunk).unwrap();
     let dir = m.project.workspace_dir("p");
     std::fs::write(dir.join("c.txt"), "").unwrap();
-    block_on(parent.checkpoint("p1", "tau/p")).unwrap();
+    block_on(parent.commit_all("p1", "tau/p")).unwrap();
     std::fs::write(m.project.workspace_dir("c").join("c.txt"), "two\n")
         .unwrap();
-    let head = block_on(child.checkpoint("c1", "tau/c")).unwrap();
+    let head = block_on(child.commit_all("c1", "tau/c")).unwrap();
     let landing =
         block_on(parent.land(&head.commit_id, "tau/p", true)).unwrap();
     assert_eq!(landing.conflicts, ["c.txt"]);
@@ -1085,20 +1088,20 @@ fn a_turn_keeps_a_conflict_it_did_not_touch() {
     let parent = m.project.add_workspace("p", &trunk).unwrap();
     let dir = m.project.workspace_dir("p");
     std::fs::write(dir.join("a.txt"), "").unwrap();
-    let turn = block_on(parent.checkpoint("p1", "tau/p")).unwrap();
+    let turn = block_on(parent.commit_all("p1", "tau/p")).unwrap();
     let child = m.project.add_workspace("c", &turn.commit_id).unwrap();
     let child_dir = m.project.workspace_dir("c");
     std::fs::write(dir.join("dir/b.txt"), "").unwrap();
     std::fs::remove_file(dir.join("a.txt")).unwrap();
-    block_on(parent.checkpoint("p2", "tau/p")).unwrap();
+    block_on(parent.commit_all("p2", "tau/p")).unwrap();
     std::fs::write(child_dir.join("a.txt"), "one\n").unwrap();
-    block_on(child.checkpoint("c1", "tau/c")).unwrap();
+    block_on(child.commit_all("c1", "tau/c")).unwrap();
     std::fs::remove_file(child_dir.join("dir/b.txt")).unwrap();
-    let head = block_on(child.checkpoint("c2", "tau/c")).unwrap();
+    let head = block_on(child.commit_all("c2", "tau/c")).unwrap();
     let landing =
         block_on(parent.land(&head.commit_id, "tau/p", true)).unwrap();
     assert_eq!(landing.conflicts, ["a.txt", "dir/b.txt"]);
     std::fs::remove_file(dir.join("a.txt")).unwrap();
-    let turn = block_on(parent.checkpoint("p3", "tau/p")).unwrap();
+    let turn = block_on(parent.commit_all("p3", "tau/p")).unwrap();
     assert_eq!(turn.paths, ["a.txt"], "the turn only deleted a.txt");
 }

@@ -225,10 +225,14 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     .unwrap();
 
     let write = |content: &str| serde_json::json!({ "path": "a.txt", "content": content });
+    let commit = |message: &str| serde_json::json!({ "message": message });
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("write", write("one\n")))
         .turn(|t| t.tool_call("write", write("two\n")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a.txt says two")))
         .turn(|t| t.text("done"))
+        // The fork starts on turn 1's files, uncommitted, and keeps them.
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a.txt says one")))
         .turn(|t| t.text("forked"));
     let (host, mut events) = host_on(llm.clone(), src.path());
     let host = host.with_project(project);
@@ -284,7 +288,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     assert!(history.iter().all(|view| view.repo == host.home()));
     let old_main = &history[1];
     assert_eq!(old_main.children.len(), 1);
-    assert_eq!(old_main.turn, 3);
+    assert_eq!(old_main.turn, 4);
     let writes = old_main
         .items
         .iter()
@@ -358,11 +362,14 @@ fn a_fork_lands_on_its_parent_and_closes() {
 
     let write =
         |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("write", write("a.txt")))
         .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a and b")))
         .turn(|t| t.text("done"))
         .turn(|t| t.tool_call("write", write("c.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a and c")))
         .turn(|t| t.text("forked"));
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_project(project.clone());
@@ -441,7 +448,7 @@ fn a_fork_lands_on_its_parent_and_closes() {
         panic!("no landed card before the stop: {items:?}");
     };
     assert!(
-        matches!(turn_end, Item::TurnEnd { turn: 3 }),
+        matches!(turn_end, Item::TurnEnd { turn: 4 }),
         "{turn_end:?}"
     );
     assert_eq!(card.from, fork.id);
@@ -469,12 +476,16 @@ fn a_child_lands_after_its_children() {
 
     let write =
         |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
         .turn(|t| t.text("done"))
         .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a and b")))
         .turn(|t| t.text("forked"))
         .turn(|t| t.tool_call("write", write("c.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a, b and c")))
         .turn(|t| t.text("forked again"));
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_project(project.clone());
@@ -541,6 +552,13 @@ fn a_run_delegates_and_the_sub_agent_lands() {
             t.tool_call(
                 "write",
                 serde_json::json!({ "path": "c.txt", "content": "c\n" }),
+            )
+        })
+        // The sub-agent commits its work; it lands as it returns.
+        .turn(|t| {
+            t.tool_call(
+                "vcs_commit",
+                serde_json::json!({ "message": "feat: add c.txt" }),
             )
         })
         .turn(|t| t.text("wrote c.txt"))
@@ -997,10 +1015,13 @@ fn a_finished_run_goes_on_in_its_workspace() {
     .unwrap();
     let write =
         |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
         .turn(|t| t.text("wrote a"))
         .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
         .turn(|t| t.text("wrote b"));
     let (host, mut events) = host_on(llm.clone(), src.path());
     let host = host.with_project(project);
@@ -1022,7 +1043,7 @@ fn a_finished_run_goes_on_in_its_workspace() {
             _ => None,
         })
         .collect();
-    assert_eq!(turns, [3, 4], "turns keep counting");
+    assert_eq!(turns, [4, 5, 6], "turns keep counting");
     wait_until_done(&host, &chat.id);
     // The same workspace, with both turns' files.
     assert_eq!(host.workspace(&chat.id).unwrap(), dir);
@@ -1041,7 +1062,7 @@ fn a_finished_run_goes_on_in_its_workspace() {
         view.model, "gpt-6-sol",
         "it reloads on the model it went on"
     );
-    assert_eq!(view.turn, 4);
+    assert_eq!(view.turn, 6);
     let prompts: Vec<&str> = view
         .items
         .iter()
@@ -1341,10 +1362,13 @@ fn a_run_becomes_a_pull_request_on_github() {
     });
     let write =
         |path: &str| serde_json::json!({ "path": path, "content": "new\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("write", write("src.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: add src.txt")))
         .turn(|t| t.text("Wrote src.txt. cargo test: 3 passed."))
         .turn(|t| t.tool_call("write", write("more.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: add more.txt")))
         .turn(|t| t.text("Added more.txt."));
     let home = tempfile::tempdir().unwrap();
     let (host, mut events) = host_on(llm, home.path());
@@ -1380,6 +1404,7 @@ fn a_run_becomes_a_pull_request_on_github() {
     assert_eq!(draft.tests.as_deref(), Some("3 tests passed"));
     assert!(draft.body.starts_with("Wrote src.txt."), "{}", draft.body);
     assert_eq!(draft.commits.len(), 1);
+    assert_eq!(draft.commits[0].title, "feat: add src.txt");
     assert_eq!((draft.commits[0].added, draft.commits[0].removed), (1, 0));
 
     let (opened, head) = host
@@ -1415,7 +1440,8 @@ fn a_run_becomes_a_pull_request_on_github() {
     assert!(tree.contains("\"base_tree\":\"tree-base\""), "{tree}");
     assert!(tree.contains("\"path\":\"src.txt\""), "{tree}");
     let commit = find("POST /repos/cfcosta/hello/git/commits");
-    assert!(commit.contains("Write src.txt (turn 1)"), "{commit}");
+    // The model's own message.
+    assert!(commit.contains("feat: add src.txt"), "{commit}");
     let base = project_base(&host, &repo.name);
     assert!(commit.contains(&base), "{commit}");
     assert!(find("POST /repos/cfcosta/hello/git/refs").contains(&draft.head));
@@ -1429,13 +1455,13 @@ fn a_run_becomes_a_pull_request_on_github() {
             .contains("alice")
     );
 
-    // A later turn of the run goes to the same branch.
+    // A later commit of the run goes to the same branch.
     assert!(host.keeps_pushing(&run.id));
     host.resume(&run.id, "add more.txt", &ModelChoice::default())
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &run.id);
-    assert!(host.push_later_turns(&run.id).unwrap());
+    assert!(host.push_later_commits(&run.id).unwrap());
     let requests = seen.lock().unwrap().clone();
     let trees = requests
         .iter()
@@ -1448,7 +1474,7 @@ fn a_run_becomes_a_pull_request_on_github() {
         request.starts_with("PATCH /repos/cfcosta/hello/git/refs/heads/")
             || request.starts_with("POST /repos/cfcosta/hello/git/refs")
     }));
-    assert!(!host.push_later_turns(&run.id).unwrap(), "nothing new");
+    assert!(!host.push_later_commits(&run.id).unwrap(), "nothing new");
 }
 
 /// The credentials directory the test hosts use.

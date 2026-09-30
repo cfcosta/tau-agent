@@ -247,26 +247,149 @@ impl Project {
     /// repository. A full commit id, in hex.
     pub fn trunk(&self) -> Result<String, VcsError> {
         let repo = self.load()?;
-        let head =
-            std::fs::read_to_string(self.inner.root.join(GIT).join("HEAD"))
-                .unwrap_or_default();
-        let branch = head
-            .trim()
-            .strip_prefix("ref: refs/heads/")
-            .map(str::to_owned);
-        let view = repo.view();
-        let target = branch
-            .iter()
-            .map(String::as_str)
-            .chain(["main", "master", "trunk"])
-            .find_map(|name| {
-                view.get_local_bookmark(RefName::new(name))
-                    .as_normal()
-                    .cloned()
-            });
-        let id =
-            target.unwrap_or_else(|| repo.store().root_commit_id().clone());
+        let id = self
+            .trunk_bookmark(&repo)
+            .map(|(_, id)| id)
+            .unwrap_or_else(|| repo.store().root_commit_id().clone());
         Ok(id.hex())
+    }
+
+    /// Trunk's bookmark and the commit it names: the default branch, else
+    /// `main`, `master` or `trunk`.
+    fn trunk_bookmark(
+        &self,
+        repo: &ReadonlyRepo,
+    ) -> Option<(String, CommitId)> {
+        let view = repo.view();
+        self.default_branch()
+            .into_iter()
+            .chain(["main", "master", "trunk"].map(str::to_owned))
+            .find_map(|name| {
+                let id = view
+                    .get_local_bookmark(RefName::new(&name))
+                    .as_normal()
+                    .cloned()?;
+                Some((name, id))
+            })
+    }
+
+    /// Moves trunk's bookmark forward to `head` (a full commit id in hex):
+    /// merging a run into trunk (ADR 0014). Refuses unless trunk is
+    /// `head` or one of its ancestors, so nothing on trunk is lost.
+    /// Returns the bookmark's name; an empty repository gets `main`.
+    pub fn fast_forward_trunk(&self, head: &str) -> Result<String, VcsError> {
+        let repo = self.load()?;
+        let head_id = CommitId::try_from_hex(head)
+            .ok_or_else(|| VcsError::NotCommitId(head.to_owned()))?;
+        let (name, trunk) = self.trunk_bookmark(&repo).unwrap_or_else(|| {
+            (
+                self.default_branch().unwrap_or_else(|| "main".to_owned()),
+                repo.store().root_commit_id().clone(),
+            )
+        });
+        if !block_on(repo.index().is_ancestor(&trunk, &head_id))? {
+            return Err(VcsError::NotFastForward(name));
+        }
+        let mut tx = repo.start_transaction();
+        tx.repo_mut().set_local_bookmark_target(
+            RefName::new(&name),
+            jj_lib::op_store::RefTarget::normal(head_id),
+        );
+        block_on(tx.commit(format!("tau: move {name} forward")))?;
+        Ok(name)
+    }
+
+    /// The changes `head` (a full commit id in hex) has that trunk lacks,
+    /// oldest first: a run's stack, as a pull request pushes it.
+    pub fn stack(&self, head: &str) -> Result<Vec<StackChange>, VcsError> {
+        use futures_util::StreamExt as _;
+        use jj_lib::revset::ResolvedRevsetExpression;
+
+        let repo = self.load()?;
+        let head = commit(&repo, head)?;
+        let trunk =
+            CommitId::try_from_hex(self.trunk()?).ok_or(VcsError::NotHex)?;
+        let ids: Vec<CommitId> = {
+            let revset = ResolvedRevsetExpression::commit(head.id().clone())
+                .ancestors()
+                .minus(&ResolvedRevsetExpression::commit(trunk).ancestors())
+                .evaluate(repo.as_ref())?;
+            block_on(revset.stream().collect::<Vec<_>>())
+                .into_iter()
+                .collect::<Result<_, _>>()?
+        };
+        ids.iter()
+            .rev()
+            .map(|id| {
+                let commit = repo.store().get_commit(id)?;
+                Ok(StackChange {
+                    commit_id: id.hex(),
+                    change_id: commit.change_id().reverse_hex(),
+                    description: commit.description().to_owned(),
+                    conflict: commit.has_conflict(),
+                })
+            })
+            .collect()
+    }
+
+    /// Makes a fork's workspace from `snapshot`, a turn's snapshot of
+    /// another run's `@` (ADR 0014): a new change with the snapshot's
+    /// files, uncommitted, on the snapshot's parent as it is now. A
+    /// landing may have restacked that parent since; its new files and
+    /// the turn's work are then merged. Opens the workspace as it is if
+    /// it exists already.
+    pub fn add_workspace_from_snapshot(
+        &self,
+        name: &str,
+        snapshot: &str,
+    ) -> Result<Vcs, VcsError> {
+        let dir = self.workspace_dir(name);
+        if dir.join(".jj").is_dir() {
+            return Vcs::open(dir, self.inner.identity.clone());
+        }
+        std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
+            path: dir.clone(),
+            source,
+        })?;
+        let main = self.main()?;
+        let repo = block_on(main.repo_loader().load_at_head())?;
+        let (mut workspace, repo) =
+            block_on(Workspace::init_workspace_with_existing_repo(
+                &dir,
+                main.repo_path(),
+                &repo,
+                &*default_working_copy_factory(),
+                WorkspaceNameBuf::from(name),
+            ))
+            .map_err(VcsError::AddWorkspace)?;
+        let turn = commit(&repo, snapshot)?;
+        let then = turn.parent_ids().first().ok_or(VcsError::NoParent)?;
+        let then = repo.store().get_commit(then)?;
+        let now =
+            visible(repo.as_ref(), &then)?.unwrap_or_else(|| then.clone());
+        let tree = if now.id() == then.id() {
+            turn.tree()
+        } else {
+            block_on(jj_lib::merged_tree::MergedTree::merge(
+                jj_lib::merge::Merge::from_vec(vec![
+                    (now.tree(), "the parent now".to_owned()),
+                    (then.tree(), "the parent then".to_owned()),
+                    (turn.tree(), "the turn".to_owned()),
+                ]),
+            ))?
+        };
+        let mut tx = repo.start_transaction();
+        let wc = block_on(
+            tx.repo_mut()
+                .new_commit(vec![now.id().clone()], tree)
+                .write(),
+        )?;
+        block_on(tx.repo_mut().edit(WorkspaceNameBuf::from(name), &wc))?;
+        block_on(tx.repo_mut().rebase_descendants())?;
+        let repo = block_on(tx.commit(format!("tau: add workspace {name}")))?;
+        block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
+            .map_err(VcsError::CheckOut)?;
+        Vcs::open(dir, self.inner.identity.clone())
     }
 
     /// `links` with each `commit_id` moved to where its change is now.
@@ -283,6 +406,11 @@ impl Project {
         links
             .into_iter()
             .map(|mut link| {
+                // A turn's snapshot is that very commit: `@` has moved on
+                // under the same change id.
+                if link.snapshot {
+                    return Ok(link);
+                }
                 let change = ChangeId::try_from_reverse_hex(&link.change_id)
                     .ok_or_else(|| {
                         VcsError::NotChangeId(link.change_id.clone())
@@ -619,6 +747,35 @@ fn split_files(text: &str, changes: Vec<FileChange>) -> Vec<FileDiff> {
             }
         })
         .collect()
+}
+
+/// The visible commit `commit`'s change names now: itself, or what it
+/// was rewritten into. None when the change is gone.
+fn visible(
+    repo: &ReadonlyRepo,
+    commit: &Commit,
+) -> Result<Option<Commit>, VcsError> {
+    let Some(targets) = block_on(repo.resolve_change_id(commit.change_id()))?
+    else {
+        return Ok(None);
+    };
+    let ids: Vec<CommitId> = targets
+        .visible_with_offsets()
+        .map(|(_, id)| id.clone())
+        .collect();
+    match ids.as_slice() {
+        [id] => Ok(Some(repo.store().get_commit(id)?)),
+        _ => Ok(None),
+    }
+}
+
+/// One change on a run's stack, for [`Project::stack`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StackChange {
+    pub commit_id: String,
+    pub change_id: String,
+    pub description: String,
+    pub conflict: bool,
 }
 
 /// The commit a full hex id names.

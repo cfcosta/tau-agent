@@ -69,7 +69,7 @@ impl Run<'_> {
     fn turn(&self) -> String {
         block(
             self.vcs
-                .checkpoint(format!("{} turn", self.name), self.bookmark()),
+                .commit_all(format!("{} turn", self.name), self.bookmark()),
         )
         .commit_id
     }
@@ -182,9 +182,10 @@ fn a_conflict_shows_in_the_preview_and_lands_as_data() {
     assert!(text.contains("<<<<<<<"), "{text}");
 }
 
-/// The parent's working copy must hold nothing: landing is between turns.
+/// The parent's uncommitted work stays uncommitted, on top of what
+/// landed (ADR 0014): the model makes the commits.
 #[test]
-fn landing_waits_for_the_parents_turn_to_end() {
+fn the_parents_uncommitted_work_moves_on_top() {
     let home = tempfile::tempdir().unwrap();
     let (project, trunk) = project(home.path());
     let parent = run(&project, "parent", &trunk);
@@ -192,12 +193,66 @@ fn landing_waits_for_the_parents_turn_to_end() {
     child.write("c.txt", "c\n");
     let child_head = child.turn();
     parent.write("b.txt", "b\n");
-    let err = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(parent.vcs.land(&child_head, parent.bookmark(), true))
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("after the parent's turn ends"), "{err}");
+    let landing = block(parent.vcs.land(&child_head, parent.bookmark(), true));
+    assert_eq!(landing.changes.len(), 1);
+    assert!(landing.conflicts.is_empty());
+    // Both files are there, and only the parent's is uncommitted.
+    assert_eq!(parent.read("c.txt").as_deref(), Some("c\n"));
+    assert_eq!(parent.read("b.txt").as_deref(), Some("b\n"));
+    let working_copy = block(parent.vcs.working_copy());
+    assert_eq!(working_copy.paths, ["b.txt"]);
+    assert_eq!(working_copy.head, landing.head);
+}
+
+/// Merging a run into trunk (ADR 0014): its changes move onto trunk's
+/// newest commit, previewed first, then trunk moves forward to the run.
+#[test]
+fn a_run_merges_into_trunk() {
+    let home = tempfile::tempdir().unwrap();
+    let (project, trunk) = project(home.path());
+    let session = run(&project, "session", &trunk);
+    let other = run(&project, "other", &trunk);
+    session.write("s.txt", "s\n");
+    session.turn();
+    // Trunk moves on while the session works.
+    other.write("t.txt", "t\n");
+    let moved = other.turn();
+    project.fast_forward_trunk(&moved).unwrap();
+    let trunk = project.trunk().unwrap();
+    assert_eq!(trunk, moved);
+
+    let preview =
+        block(session.vcs.move_onto(&trunk, session.bookmark(), false));
+    assert_eq!(preview.changes.len(), 1);
+    assert!(preview.conflicts.is_empty());
+    assert_eq!(session.read("t.txt"), None, "a preview changes nothing");
+
+    let merged = block(session.vcs.move_onto(&trunk, session.bookmark(), true));
+    assert_eq!(session.read("t.txt").as_deref(), Some("t\n"));
+    assert_eq!(session.read("s.txt").as_deref(), Some("s\n"));
+    assert_eq!(
+        project.bookmark(&session.bookmark()).unwrap(),
+        Some(merged.head.clone())
+    );
+    assert_eq!(project.fast_forward_trunk(&merged.head).unwrap(), "main");
+    assert_eq!(project.trunk().unwrap(), merged.head);
+}
+
+/// Trunk only moves forward: a head that trunk is not under is refused.
+#[test]
+fn trunk_does_not_move_sideways() {
+    let home = tempfile::tempdir().unwrap();
+    let (project, trunk) = project(home.path());
+    let one = run(&project, "one", &trunk);
+    let two = run(&project, "two", &trunk);
+    one.write("a.txt", "one\n");
+    let first = one.turn();
+    two.write("a.txt", "two\n");
+    let second = two.turn();
+    project.fast_forward_trunk(&first).unwrap();
+    let err = project.fast_forward_trunk(&second).unwrap_err().to_string();
+    assert!(err.contains("has moved on"), "{err}");
+    // Moved onto the new trunk, the other run conflicts, as data.
+    let preview = block(two.vcs.move_onto(&first, two.bookmark(), false));
+    assert_eq!(preview.conflicts, ["a.txt"]);
 }

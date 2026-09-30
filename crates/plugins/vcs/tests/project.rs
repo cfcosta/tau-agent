@@ -258,8 +258,12 @@ fn agent(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
         .plugin(workspace.clone())
 }
 
+/// Turns are snapshots, not commits (ADR 0014): the run's work stays in
+/// `@` until the model commits, or until the end, when what is left is
+/// committed with a message the model writes. A fork starts from a
+/// turn's snapshot.
 #[test]
-fn turns_are_commits_and_forks_start_from_one() {
+fn turns_are_snapshots_and_forks_start_from_one() {
     let src = tempfile::tempdir().unwrap();
     source(src.path());
     let home = tempfile::tempdir().unwrap();
@@ -269,6 +273,7 @@ fn turns_are_commits_and_forks_start_from_one() {
         Identity::default(),
     )
     .unwrap();
+    let trunk = project.trunk().unwrap();
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -278,26 +283,34 @@ fn turns_are_commits_and_forks_start_from_one() {
         let store = Store::memory().await.unwrap();
 
         // Two turns that each write a file, and a turn that only talks;
-        // an observer hears what each turn's commit changed.
+        // an observer hears what each turn changed.
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
         let first =
             RunWorkspace::new(project.clone(), "first", Identity::default())
                 .unwrap()
-                .on_commit({
+                .on_turn({
                     let heard = heard.clone();
-                    move |commit| {
-                        heard.lock().unwrap().push(commit.paths.clone())
-                    }
+                    move |turn| heard.lock().unwrap().push(turn.paths.clone())
                 });
         let llm = ScriptedModel::new()
             .turn(|t| t.tool_call("write", write("a.txt", "one\n")))
             .turn(|t| t.tool_call("write", write("a.txt", "two\n")))
-            .turn(|t| t.text("done"));
-        let outcome = agent(llm, &first)
+            .turn(|t| t.text("done"))
+            // Asked to commit, it answers again without committing; the
+            // model then writes the message tau commits with.
+            .turn(|t| t.text("still done"))
+            .turn(|t| t.text("feat: write a.txt"));
+        let outcome = agent(llm.clone(), &first)
             .run("write a.txt twice", &store)
             .await
             .unwrap();
-        assert_eq!(outcome.text, "done");
+        llm.assert_exhausted();
+        assert_eq!(outcome.text, "still done");
+        let asked = format!("{:?}", llm.requests()[3].transcript);
+        assert!(
+            asked.contains("Commit your work with `vcs_commit`"),
+            "{asked}"
+        );
         let dir = first.dir();
         assert_eq!(
             std::fs::read_to_string(dir.join("a.txt")).unwrap(),
@@ -306,40 +319,60 @@ fn turns_are_commits_and_forks_start_from_one() {
 
         let turns =
             links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
-        let changed: Vec<(u32, bool)> = turns
+        let changed: Vec<(u32, bool, bool)> = turns
             .iter()
-            .map(|(_, link)| (link.turn, link.changed))
+            .map(|(_, link)| (link.turn, link.changed, link.snapshot))
             .collect();
-        assert_eq!(changed, [(1, true), (2, true), (3, false)]);
+        assert_eq!(
+            changed,
+            [
+                (1, true, true),
+                (2, true, true),
+                (3, false, true),
+                (4, false, true)
+            ]
+        );
         assert_eq!(
             *heard.lock().unwrap(),
-            [vec!["a.txt".to_owned()], vec!["a.txt".to_owned()], vec![]]
+            [
+                vec!["a.txt".to_owned()],
+                vec!["a.txt".to_owned()],
+                vec![],
+                vec![]
+            ]
         );
-        // A turn that changed nothing points at the commit before it.
+        // A turn that changed nothing snapshots the same commit.
         assert_eq!(turns[2].1.commit_id, turns[1].1.commit_id);
         assert_ne!(turns[0].1.commit_id, turns[1].1.commit_id);
-        // The run's bookmark follows its newest commit.
+        // Nothing was committed during the run; at the end, one change.
         assert_eq!(
-            project.bookmark(&bookmark(&outcome.run)).unwrap(),
-            Some(turns[1].1.commit_id.clone())
+            project.parent_of(&turns[1].1.commit_id).unwrap(),
+            Some(trunk.clone())
         );
+        let head = project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap();
+        let stack = project.stack(&head).unwrap();
+        assert_eq!(stack.len(), 1);
+        assert_eq!(stack[0].description.trim(), "feat: write a.txt");
 
-        // A fork at turn 1 starts from turn 1's files, in a workspace of
-        // its own, and leaves the first run's alone.
+        // A fork at turn 1 starts from turn 1's files, uncommitted, in a
+        // workspace of its own, and leaves the first run's alone.
         let (seq, _) = turns[0].clone();
         let fork =
             RunWorkspace::new(project.clone(), "fork", Identity::default())
                 .unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| t.tool_call("read", json!({"path": "a.txt"})))
-            .turn(|t| t.text("forked"));
+            .turn(|t| t.text("forked"))
+            .turn(|t| t.text("still forked"))
+            .turn(|t| t.text("feat: keep turn 1"));
         let forked = agent(llm.clone(), &fork)
             .fork(&Checkpoint::at(outcome.run.clone(), seq))
             .start("what does a.txt say?", &store)
             .outcome()
             .await
             .unwrap();
-        assert_eq!(forked.text, "forked");
+        llm.assert_exhausted();
+        assert_eq!(forked.text, "still forked");
         assert_eq!(
             std::fs::read_to_string(fork.dir().join("a.txt")).unwrap(),
             "one\n"
@@ -351,15 +384,15 @@ fn turns_are_commits_and_forks_start_from_one() {
         let mut names = project.workspaces().unwrap();
         names.sort();
         assert_eq!(names, ["first", "fork"]);
-        // The fork changed nothing, so its bookmark is where it started;
-        // the first run's has not moved.
-        assert_eq!(
-            project.bookmark(&bookmark(&forked.run)).unwrap(),
-            Some(turns[0].1.commit_id.clone())
-        );
+        // The fork's one commit holds turn 1's files, on trunk.
+        let fork_head =
+            project.bookmark(&bookmark(&forked.run)).unwrap().unwrap();
+        let fork_stack = project.stack(&fork_head).unwrap();
+        assert_eq!(fork_stack.len(), 1);
+        assert_eq!(fork_stack[0].description.trim(), "feat: keep turn 1");
         assert_eq!(
             project.bookmark(&bookmark(&outcome.run)).unwrap(),
-            Some(turns[1].1.commit_id.clone())
+            Some(head)
         );
     });
 }
@@ -383,7 +416,7 @@ fn diffs_between_commits_count_lines_per_file() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(vcs.checkpoint("turn 1", "tau/r1"))
+        .block_on(vcs.commit_all("turn 1", "tau/r1"))
         .unwrap();
     assert!(turn.changed);
     assert_eq!(turn.paths, ["README.md", "new.txt"]);
@@ -546,7 +579,7 @@ fn check_diff_counts(fixture: &DiffFixture, files: &[Sides]) {
             }
         }
         runtime
-            .block_on(vcs.checkpoint(format!("side {side}"), "tau/sides"))
+            .block_on(vcs.commit_all(format!("side {side}"), "tau/sides"))
             .unwrap()
             .commit_id
     };
@@ -629,7 +662,7 @@ fn links_follow_their_change() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(vcs.checkpoint("turn 1", "tau/r1"))
+        .block_on(vcs.commit_all("turn 1", "tau/r1"))
         .unwrap();
     let link = Link {
         turn: 1,
@@ -638,6 +671,7 @@ fn links_follow_their_change() {
         change_id: turn.change_id.clone(),
         changed: true,
         from: None,
+        snapshot: false,
     };
     assert_eq!(project.current([link.clone()]).unwrap()[0], link);
 

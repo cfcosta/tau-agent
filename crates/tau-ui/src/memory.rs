@@ -24,7 +24,7 @@ use tau_memory::{
     plugin::Scope,
     store::Notes,
 };
-use tau_vcs::TurnCommit;
+use tau_vcs::TurnSnapshot;
 
 use crate::catalog::{Link, Memory as CatalogMemory, Note};
 
@@ -123,13 +123,13 @@ pub fn now() -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// Marks notes about the files each turn's commit changed as possibly
-/// stale, for [`tau_vcs::RunWorkspace::on_commit`]. Notes written since
-/// the previous commit (or since the run began) are left alone: the
-/// change may have come before them.
-pub fn stale_on_commit(
+/// Marks notes about the files each turn changed as possibly stale, for
+/// [`tau_vcs::RunWorkspace::on_turn`]. Notes written since the previous
+/// turn (or since the run began) are left alone: the change may have
+/// come before them.
+pub fn stale_on_turn(
     plugin: MemoryPlugin,
-) -> impl Fn(&TurnCommit) + Send + Sync + 'static {
+) -> impl Fn(&TurnSnapshot) + Send + Sync + 'static {
     let since = Arc::new(Mutex::new(plugin.now()));
     move |commit| {
         let written_by = std::mem::replace(

@@ -42,10 +42,12 @@ pub enum VcsError {
     #[error("A commit id is not hex")]
     NotHex,
     #[error(
-        "The parent's working copy has changes; land the child after the \
-         parent's turn ends"
+        "Your working copy has uncommitted changes ({0}). Commit your work \
+         with vcs_commit first."
     )]
-    ParentChanged,
+    Uncommitted(String),
+    #[error("{0} has moved on past this run; merge it again")]
+    NotFastForward(String),
     #[error("The parent's working copy is a merge")]
     ParentMerge,
     #[error("The child's changes do not form one stack")]

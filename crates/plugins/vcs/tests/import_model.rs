@@ -254,7 +254,7 @@ fn a_project_mirrors_its_source(tc: TestCase) {
     let run_dir = project.workspace_dir("run");
     std::fs::write(run_dir.join("run.txt"), "run\n").unwrap();
     let turn =
-        block_on(vcs.checkpoint("tau: run 1 turn 1", "tau/run")).unwrap();
+        block_on(vcs.commit_all("tau: run 1 turn 1", "tau/run")).unwrap();
     let wc = project.workspace_head("run").unwrap();
 
     for op in &after {
@@ -291,7 +291,7 @@ fn a_project_mirrors_its_source(tc: TestCase) {
     // It can go on working.
     std::fs::write(run_dir.join("run.txt"), "more\n").unwrap();
     let next =
-        block_on(vcs.checkpoint("tau: run 1 turn 2", "tau/run")).unwrap();
+        block_on(vcs.commit_all("tau: run 1 turn 2", "tau/run")).unwrap();
     assert!(next.changed);
     assert_eq!(
         project.parent_of(&next.commit_id).unwrap(),

@@ -1,8 +1,10 @@
 //! Turns and forks through the real plugin (`docs/reference/vcs.md`,
 //! "Runs and turns"): an agent with `RunWorkspace` runs drawn turns of
-//! file writes, then a fork at a drawn turn continues from it with
-//! `Checkpoint::at`, as the host forks. The model is the files after
-//! each turn.
+//! file writes without committing, then a fork at a drawn turn continues
+//! from it with `Checkpoint::at`, as the host forks. The model is the
+//! files after each turn. Each turn is a snapshot of `@`, never a commit
+//! (ADR 0014); what the run leaves uncommitted is committed at the end,
+//! with a message its model writes.
 
 use std::{collections::BTreeMap, path::Path, process::Command};
 
@@ -58,8 +60,13 @@ fn agent(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
 }
 
 /// A script: each drawn turn writes its files (or only reads, when it
-/// has none), and a last turn answers.
-fn script(turns: &[Vec<(&'static str, &'static str)>]) -> ScriptedModel {
+/// has none), and a last turn answers. A run that would stop with
+/// uncommitted files is asked to commit: it answers again without
+/// committing, and the model then writes the message tau commits with.
+fn script(
+    turns: &[Vec<(&'static str, &'static str)>],
+    dirty: bool,
+) -> ScriptedModel {
     let mut llm = ScriptedModel::new();
     for writes in turns {
         let writes = writes.clone();
@@ -76,7 +83,13 @@ fn script(turns: &[Vec<(&'static str, &'static str)>]) -> ScriptedModel {
             t
         });
     }
-    llm.turn(|t| t.text("done"))
+    let llm = llm.turn(|t| t.text("done"));
+    if dirty {
+        llm.turn(|t| t.text("still done"))
+            .turn(|t| t.text("feat: the drawn writes"))
+    } else {
+        llm
+    }
 }
 
 fn files(dir: &Path) -> Tree {
@@ -119,10 +132,11 @@ fn turn(tc: &TestCase) -> Vec<(&'static str, &'static str)> {
     )
 }
 
-/// Every turn links a commit holding that turn's files; a turn that
-/// changed nothing links the commit before it; the bookmark names the
-/// newest commit; a fork at any turn starts on exactly that turn's
-/// files, and neither run sees the other's edits.
+/// Every turn links a snapshot holding that turn's files, on trunk,
+/// since nothing is committed during the run; work left uncommitted is
+/// one commit at the end, which the bookmark names; a fork at any turn
+/// starts on exactly that turn's files, uncommitted, and neither run
+/// sees the other's edits.
 #[hegel::test(
     test_cases = 20,
     suppress_health_check = [hegel::HealthCheck::TooSlow]
@@ -140,61 +154,76 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
-        let first =
-            RunWorkspace::new(project.clone(), "first", Identity::default())
-                .unwrap();
-        let outcome = agent(script(&turns), &first)
-            .run("write", &store)
-            .await
-            .unwrap();
-
         // The model: the files after each turn, the answer's included.
-        let mut trees = vec![Tree::from([("a.txt", "one\n")])];
+        let start = Tree::from([("a.txt", "one\n")]);
+        let mut trees = vec![start.clone()];
         for writes in turns.iter().chain([&Vec::new()]) {
             let mut tree = trees.last().unwrap().clone();
             tree.extend(writes.iter().copied());
             trees.push(tree);
         }
+        let dirty = *trees.last().unwrap() != start;
+
+        let store = Store::memory().await.unwrap();
+        let first =
+            RunWorkspace::new(project.clone(), "first", Identity::default())
+                .unwrap();
+        let llm = script(&turns, dirty);
+        let outcome = agent(llm.clone(), &first)
+            .run("write", &store)
+            .await
+            .unwrap();
+        llm.assert_exhausted();
+
         let turns_linked =
             links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
-        assert_eq!(turns_linked.len(), turns.len() + 1, "one link per turn");
-        let mut previous = trunk.clone();
+        // Asked to commit, the run answered once more: one more turn.
+        let expected = turns.len() + 1 + usize::from(dirty);
+        assert_eq!(turns_linked.len(), expected, "one link per turn");
         for (n, (_, link)) in turns_linked.iter().enumerate() {
-            let (before, after) = (&trees[n], &trees[n + 1]);
+            let at = (n + 1).min(trees.len() - 1);
+            let (before, after) = (&trees[at - 1], &trees[at]);
+            assert!(link.snapshot, "turn {} links a snapshot", n + 1);
             assert_eq!(link.turn as usize, n + 1);
             assert_eq!(link.changed, before != after, "turn {}", n + 1);
             if link.changed {
                 tc.event("a turn changes files");
-                assert_eq!(
-                    project.parent_of(&link.commit_id).unwrap(),
-                    Some(previous.clone()),
-                    "turn {} is not on the turn before",
-                    n + 1
-                );
             } else {
                 tc.event("a turn changes nothing");
-                assert_eq!(link.commit_id, previous, "turn {}", n + 1);
             }
+            assert_eq!(
+                project.parent_of(&link.commit_id).unwrap(),
+                Some(trunk.clone()),
+                "turn {}: nothing was committed under it",
+                n + 1
+            );
             assert_eq!(&at_commit(&project, &link.commit_id), after);
-            previous = link.commit_id.clone();
         }
-        assert_eq!(
-            project.bookmark(&bookmark(&outcome.run)).unwrap(),
-            Some(previous.clone()),
-            "the bookmark names the newest commit"
-        );
+        let head = project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap();
+        if dirty {
+            tc.event("the run left work to commit");
+            let stack = project.stack(&head).unwrap();
+            assert_eq!(stack.len(), 1, "one commit, at the end");
+            assert_eq!(stack[0].description.trim(), "feat: the drawn writes");
+            assert_eq!(&at_commit(&project, &head), trees.last().unwrap());
+        } else {
+            assert_eq!(head, trunk, "nothing to commit");
+        }
         assert_eq!(files(&first.dir()), *trees.last().unwrap());
 
         // A fork at a drawn turn.
         let k =
             tc.draw(gs::integers::<usize>().max_value(turns_linked.len() - 1));
         let (seq, link) = turns_linked[k].clone();
+        let base = trees[(k + 1).min(trees.len() - 1)].clone();
+        let mut want = base.clone();
+        want.extend(fork_writes.iter().copied());
         let fork =
             RunWorkspace::new(project.clone(), "fork", Identity::default())
                 .unwrap();
-        let llm = script(&[Vec::new(), fork_writes.clone()]);
-        let forked = agent(llm, &fork)
+        let fork_llm =
+            script(&[Vec::new(), fork_writes.clone()], want != start);
+        let forked = agent(fork_llm, &fork)
             .fork(&Checkpoint::at(outcome.run.clone(), seq))
             .start("go on", &store)
             .outcome()
@@ -202,18 +231,24 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
             .unwrap();
         let fork_links =
             links(&store.plugin_entries(&forked.run.0, PLUGIN).await.unwrap());
-        // The fork's first own turn only read: it links the turn it
-        // started from, so it started on that turn's commit.
+        // The fork's first own turn only read: its snapshot holds the
+        // files of the turn it started from.
         let own: Vec<&Link> = fork_links
             .iter()
             .map(|(_, link)| link)
             .filter(|l| l.workspace == "fork")
             .collect();
-        assert_eq!(own.len(), 3, "{fork_links:?}");
-        assert!(!own[0].changed);
-        assert_eq!(own[0].commit_id, link.commit_id, "the fork's base");
-        let mut want = trees[k + 1].clone();
-        want.extend(fork_writes.iter().copied());
+        assert!(own.len() >= 3, "{fork_links:?}");
+        assert_eq!(
+            at_commit(&project, &own[0].commit_id),
+            base,
+            "the fork's base"
+        );
+        assert_eq!(
+            project.parent_of(&own[0].commit_id).unwrap(),
+            project.parent_of(&link.commit_id).unwrap(),
+            "the fork is on the snapshot's parent"
+        );
         assert_eq!(files(&fork.dir()), want, "the fork's files");
         assert_eq!(
             files(&first.dir()),
@@ -222,11 +257,7 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
         );
         assert_eq!(
             project.bookmark(&bookmark(&outcome.run)).unwrap(),
-            Some(previous),
-        );
-        assert_eq!(
-            project.bookmark(&bookmark(&forked.run)).unwrap(),
-            Some(own[2].commit_id.clone())
+            Some(head),
         );
     });
 }

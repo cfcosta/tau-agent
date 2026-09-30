@@ -21,6 +21,7 @@ use crate::{
         Commit,
         Describe,
         Diff,
+        Land,
         Log,
         New,
         Restore,
@@ -43,11 +44,23 @@ const LS: &str = "ls";
 pub struct VcsPlugin {
     vcs: Vcs,
     write: bool,
+    landing: bool,
 }
 
 impl VcsPlugin {
     pub fn new(vcs: Vcs) -> Self {
-        Self { vcs, write: true }
+        Self {
+            vcs,
+            write: true,
+            landing: false,
+        }
+    }
+
+    /// Adds `vcs_land`, for a run that lands on a parent or merges into
+    /// trunk when it finishes (ADR 0014).
+    pub fn landing(mut self) -> Self {
+        self.landing = true;
+        self
     }
 
     /// Keeps only `vcs_status`, `vcs_diff`, `vcs_log` and `vcs_show`.
@@ -83,6 +96,9 @@ impl Plugin for VcsPlugin {
                 tool(Restore(vcs.clone())),
                 tool(Undo(vcs.clone())),
             ]);
+            if self.landing {
+                tools.push(tool(Land(vcs.clone())));
+            }
         }
         tools
     }

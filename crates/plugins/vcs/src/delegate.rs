@@ -2,10 +2,11 @@
 //! that works on a copy of the caller's code and lands its changes on
 //! the caller's stack when it returns (ADR 0009).
 //!
-//! 1. The caller's work so far is committed, and the sub-agent's
-//!    workspace starts on that commit.
+//! 1. The caller's work must be committed (ADR 0014): the tool refuses
+//!    while `@` holds changes. The sub-agent's workspace starts on the
+//!    caller's newest commit.
 //! 2. The sub-agent runs as a child run of the caller, in a chat of its
-//!    own, with its turns committed on its own stack.
+//!    own, and commits its work on its own stack.
 //! 3. When it finishes, its changes land on the caller: the caller has
 //!    not moved, so nothing is rewritten and nothing can conflict. The
 //!    caller links them at the end of its turn, and the sub-agent
@@ -103,10 +104,11 @@ impl AgentTool for Delegate {
 
     fn description(&self) -> &str {
         "Hand a self-contained task to a sub-agent. It works in a chat of \
-         its own on a copy of your code as it is now, your edits included. \
-         When it finishes, its changes land on top of yours and its answer \
-         comes back; if it fails, its changes are dropped. It does not see \
-         this conversation, so give it everything it needs in `task`."
+         its own on a copy of your committed code: commit your work with \
+         `vcs_commit` first. When it finishes, its commits land on top of \
+         yours and its answer comes back; if it fails, its changes are \
+         dropped. It does not see this conversation, so give it everything \
+         it needs in `task`."
     }
 
     fn parameters(&self) -> &Value {
@@ -127,26 +129,20 @@ impl AgentTool for Delegate {
         let parent_bookmark = bookmark(&ctx.run);
         let project = self.parent.project().clone();
 
-        // 1. The caller's work so far, as the sub-agent's base.
-        let head = self
-            .parent
-            .vcs()
-            .checkpoint(
-                format!("tau: run {}, before delegating", ctx.run.0),
-                &parent_bookmark,
-            )
-            .await?;
-        if head.changed {
-            self.parent.queue([Pending {
-                commit_id: head.commit_id.clone(),
-                change_id: head.change_id.clone(),
-                from: None,
-            }]);
+        // 1. The caller's committed work, as the sub-agent's base. The
+        //    model makes the commits (ADR 0014): with work still in `@`,
+        //    the sub-agent could not see it, so it commits first.
+        let working_copy = self.parent.vcs().working_copy().await?;
+        if !working_copy.paths.is_empty() {
+            return Err(
+                VcsError::Uncommitted(working_copy.paths.join(", ")).into()
+            );
         }
+        let head = working_copy.head;
         let name = child_name(self.parent.name());
         let workspace =
             RunWorkspace::new(project.clone(), &name, self.identity.clone())?
-                .with_base(head.commit_id.clone());
+                .with_base(head.clone());
 
         // 2. The sub-agent, as a child run of the caller.
         let outcome = match (self.child)(workspace.clone()) {
@@ -182,7 +178,7 @@ impl AgentTool for Delegate {
                 let landing = landing.unwrap_or_else(|| Landing {
                     changes: Vec::new(),
                     conflicts: Vec::new(),
-                    head: head.commit_id.clone(),
+                    head: head.clone(),
                 });
                 let from = workspace.run().map(|run| run.0.to_string());
                 self.parent
@@ -218,7 +214,7 @@ impl AgentTool for Delegate {
             }
             // 4. Or they are dropped.
             Err(error) => {
-                let base = head.commit_id.clone();
+                let base = head.clone();
                 let workspace_name = name.clone();
                 blocking(&project, move |p| {
                     if let Some(wc) = p.workspace_head(&workspace_name)? {

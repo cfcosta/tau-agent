@@ -14,6 +14,7 @@ use tau_vcs::{
     Link,
     Project,
     RunWorkspace,
+    VcsPlugin,
     run_workspace::{PLUGIN, bookmark},
 };
 
@@ -40,6 +41,10 @@ fn project(home: &Path) -> Project {
         .unwrap()
 }
 
+fn commit(message: &str) -> serde_json::Value {
+    json!({ "message": message })
+}
+
 fn write(path: &str) -> serde_json::Value {
     json!({ "path": path, "content": format!("{path}\n") })
 }
@@ -49,6 +54,7 @@ fn coder(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
     Agent::new(llm)
         .name("coder")
         .plugin(CodingTools::new(Root::new(workspace.dir())))
+        .plugin(VcsPlugin::new(workspace.vcs().clone()))
         .plugin(workspace.clone())
 }
 
@@ -79,14 +85,16 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
-            // The caller writes a file, then delegates in its next turn.
+            // The caller writes a file and commits it, then delegates.
             .turn(|t| t.tool_call("write", write("parent.txt")))
+            .turn(|t| t.tool_call("vcs_commit", commit("feat: parent")))
             .turn(|t| {
                 t.tool_call("delegate", json!({ "task": "write child.txt" }))
             })
-            // The sub-agent sees the caller's file, and writes its own.
+            // The sub-agent sees the caller's file, and commits its own.
             .turn(|t| t.tool_call("read", json!({ "path": "parent.txt" })))
             .turn(|t| t.tool_call("write", write("child.txt")))
+            .turn(|t| t.tool_call("vcs_commit", commit("feat: child")))
             .turn(|t| t.text("child.txt is written"))
             .turn(|t| t.text("done"));
         let parent =
@@ -102,10 +110,10 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
         assert_eq!(outcome.text, "done");
 
         // The sub-agent read the caller's file: it worked on its code.
-        let read = format!("{:?}", llm.requests()[3].transcript);
+        let read = format!("{:?}", llm.requests()[4].transcript);
         assert!(read.contains("parent.txt\\n"), "{read}");
         // Its answer came back, with what landed.
-        let result = format!("{:?}", llm.requests()[5].transcript);
+        let result = format!("{:?}", llm.requests()[7].transcript);
         assert!(result.contains("child.txt is written"), "{result}");
         assert!(
             result.contains("Its 1 change landed on top of yours"),
@@ -118,8 +126,8 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
         }
         assert_eq!(project.workspaces().unwrap(), ["parent"]);
 
-        // The caller's links: its turn 1, then in turn 2 the landed
-        // change from the sub-agent, then its own turns.
+        // The caller's links: a snapshot a turn, and in turn 3 the change
+        // that landed from the sub-agent before that turn's snapshot.
         let links: Vec<Link> = store
             .plugin_entries(&outcome.run.0, PLUGIN)
             .await
@@ -127,31 +135,35 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
             .iter()
             .filter_map(|(_, body)| Link::parse(body))
             .collect();
-        let shape: Vec<(u32, bool, bool)> = links
+        let shape: Vec<(u32, bool, bool, bool)> = links
             .iter()
-            .map(|link| (link.turn, link.changed, link.from.is_some()))
+            .map(|link| {
+                (link.turn, link.changed, link.from.is_some(), link.snapshot)
+            })
             .collect();
         assert_eq!(
             shape,
             [
-                (1, true, false),
-                (2, true, true),
-                (2, false, false),
-                (3, false, false)
+                (1, true, false, true),
+                (2, false, false, true),
+                (3, true, true, false),
+                (3, true, false, true),
+                (4, false, false, true),
             ]
         );
-        let child = links[1].from.clone().unwrap();
+        let child = links[2].from.clone().unwrap();
         let child_bookmark = format!("tau/{child}");
         assert_eq!(project.bookmark(&child_bookmark).unwrap(), None);
-        assert_eq!(
-            project.bookmark(&bookmark(&outcome.run)).unwrap(),
-            Some(links[1].commit_id.clone())
-        );
-        assert_eq!(
-            project.parent_of(&links[1].commit_id).unwrap(),
-            Some(links[0].commit_id.clone()),
-            "the landed change sits on the caller's turn 1"
-        );
+        // The caller's stack: its own commit, then the sub-agent's on it.
+        let head = project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap();
+        assert_eq!(head, links[2].commit_id);
+        let stack: Vec<String> = project
+            .stack(&head)
+            .unwrap()
+            .into_iter()
+            .map(|change| change.description.trim().to_owned())
+            .collect();
+        assert_eq!(stack, ["feat: parent", "feat: child"]);
     });
 }
 
@@ -222,5 +234,35 @@ fn a_sub_agent_that_fails_leaves_no_changes() {
             .filter_map(|(_, body)| Link::parse(body))
             .collect();
         assert!(links.iter().all(|link| link.from.is_none()));
+    });
+}
+
+/// A caller with uncommitted work is told to commit before delegating.
+#[test]
+fn delegating_needs_a_clean_working_copy() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| t.tool_call("write", write("parent.txt")))
+            .turn(|t| t.tool_call("delegate", json!({ "task": "anything" })))
+            .turn(|t| t.tool_call("vcs_commit", commit("feat: parent")))
+            .turn(|t| t.text("done"));
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let outcome = delegating(llm.clone(), &parent, |_| {
+            panic!("no sub-agent starts before the caller commits")
+        })
+        .run("write, then delegate", &store)
+        .await
+        .unwrap();
+        assert_eq!(outcome.text, "done");
+        let result = format!("{:?}", llm.requests()[2].transcript);
+        assert!(
+            result.contains("Commit your work with vcs_commit"),
+            "{result}"
+        );
     });
 }

@@ -116,19 +116,67 @@ impl Vcs {
         Self::spawn(dir.into(), identity)
     }
 
-    /// Ends a turn: commits what it changed, if anything, starts an
-    /// empty working copy on top, and points the local bookmark
-    /// `bookmark` at the run's newest commit, all in one operation. See
-    /// [`crate::TurnCommit`].
-    pub async fn checkpoint(
+    /// Commits whatever `@` holds, starts an empty working copy on top,
+    /// and points the local bookmark `bookmark` at the run's newest
+    /// commit, in one operation. See [`crate::Committed`].
+    pub async fn commit_all(
         &self,
         message: impl Into<String>,
         bookmark: impl Into<String>,
-    ) -> Result<crate::TurnCommit, VcsError> {
+    ) -> Result<crate::Committed, VcsError> {
         let message = message.into();
         let bookmark = bookmark.into();
         self.call(move |worker| {
-            crate::ops::checkpoint(worker, message, &bookmark)
+            crate::ops::commit_all(worker, message, &bookmark)
+        })
+        .await
+    }
+
+    /// Ends a turn: snapshots `@`, which stays uncommitted, and points
+    /// `bookmark` at the run's newest commit. See
+    /// [`crate::TurnSnapshot`].
+    pub async fn end_turn(
+        &self,
+        bookmark: impl Into<String>,
+        since: Option<String>,
+    ) -> Result<crate::TurnSnapshot, VcsError> {
+        let bookmark = bookmark.into();
+        self.call(move |worker| {
+            crate::ops::end_turn(worker, &bookmark, since.as_deref())
+        })
+        .await
+    }
+
+    /// What `@` holds, after a snapshot.
+    pub async fn working_copy(
+        &self,
+    ) -> Result<crate::ops::WorkingCopy, VcsError> {
+        self.call(crate::ops::working_copy).await
+    }
+
+    /// `@`'s diff against its parent, as text for a model, cut at the
+    /// tools' size.
+    pub async fn working_copy_diff(&self) -> Result<String, VcsError> {
+        self.call(|worker| {
+            crate::ops::diff(worker, None, Vec::new()).map(|report| report.text)
+        })
+        .await
+    }
+
+    /// Moves this run's own changes, up to `@`, onto `onto` (a full
+    /// commit id in hex), and points `bookmark` at the run's newest
+    /// commit there: what merging into trunk does first. With `confirm`
+    /// off it changes nothing and says what moving would do.
+    pub async fn move_onto(
+        &self,
+        onto: impl Into<String>,
+        bookmark: impl Into<String>,
+        confirm: bool,
+    ) -> Result<crate::Landing, VcsError> {
+        let onto = onto.into();
+        let bookmark = bookmark.into();
+        self.call(move |worker| {
+            crate::land::move_onto(worker, &onto, &bookmark, confirm)
         })
         .await
     }

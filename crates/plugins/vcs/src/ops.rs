@@ -472,37 +472,38 @@ pub(crate) fn new(
     })
 }
 
-/// The `tau.vcs.tool` value of a turn's checkpoint. The host makes it,
-/// not the model's tools, so `vcs_undo` treats it as someone else's.
+/// The `tau.vcs.tool` value of what the host writes, not the model's
+/// tools: a turn's snapshot, and a run's last commit. `vcs_undo` treats
+/// it as someone else's.
 pub(crate) const CHECKPOINT: &str = "checkpoint";
 
-/// Where a turn left the code: the commit holding its files.
+/// A change the host committed for the run: the one holding the files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
-pub struct TurnCommit {
+pub struct Committed {
     pub commit_id: String,
     pub change_id: String,
-    /// The turn changed files, so a new commit was made for it.
+    /// `@` held changes, so a new commit was made for them.
     pub changed: bool,
-    /// The paths the turn added, changed or removed.
+    /// The paths the commit added, changed or removed.
     pub paths: Vec<String>,
 }
 
-/// Ends a turn: snapshots the working copy and, if it changed anything,
-/// commits it (described as `message` unless the model described it)
-/// and starts an empty working copy on top. Returns the commit that
-/// holds the turn's files: the new one, or the working copy's parent
-/// when the turn changed nothing.
-pub(crate) fn checkpoint(
+/// Commits whatever `@` holds (described as `message` unless the model
+/// described it), starts an empty working copy on top, and points
+/// `bookmark` at the run's newest commit. With nothing in `@`, the
+/// commit is `@`'s parent, and only the bookmark may move. For a run's
+/// last commit, and for tests.
+pub(crate) fn commit_all(
     worker: &mut Worker,
     message: String,
     bookmark: &str,
-) -> Result<TurnCommit, VcsError> {
+) -> Result<Committed, VcsError> {
     let name = workspace_name(worker)?;
-    let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, wc| {
-        let turn = if block_on(wc.is_empty(tx.repo()))? {
+    let (_, committed) = session::mutate(worker, CHECKPOINT, |tx, wc| {
+        let committed = if block_on(wc.is_empty(tx.repo()))? {
             let parent = wc.parent_ids().first().ok_or(VcsError::NoParent)?;
             let parent = tx.repo().store().get_commit(parent)?;
-            TurnCommit {
+            Committed {
                 commit_id: parent.id().hex(),
                 change_id: parent.change_id().reverse_hex(),
                 changed: false,
@@ -528,33 +529,110 @@ pub(crate) fn checkpoint(
             })?;
             block_on(tx.repo_mut().rebase_descendants())?;
             block_on(tx.repo_mut().check_out(name, &committed))?;
-            TurnCommit {
+            Committed {
                 commit_id: committed.id().hex(),
                 change_id: committed.change_id().reverse_hex(),
                 changed: true,
                 paths,
             }
         };
-        // The run's bookmark names its newest commit, so its work
-        // stays findable after its workspace is gone. A turn that
-        // changed nothing finds it there already, and writes nothing.
-        let head =
-            CommitId::try_from_hex(&turn.commit_id).ok_or(VcsError::NotHex)?;
-        let name = RefName::new(bookmark);
-        if tx.repo().view().get_local_bookmark(name).as_normal() != Some(&head)
-        {
-            tx.repo_mut()
-                .set_local_bookmark_target(name, RefTarget::normal(head));
-            if !turn.changed {
-                tx.set_attribute(
-                    BOOKMARK_ATTRIBUTE.to_owned(),
-                    bookmark.to_owned(),
-                );
-            }
+        point_bookmark(tx, bookmark, &committed.commit_id, !committed.changed)?;
+        Ok(committed)
+    })?;
+    Ok(committed)
+}
+
+/// Points `bookmark` at `commit` (hex) if it points elsewhere. `quiet`
+/// marks an operation that does nothing else, for undo to pass over.
+fn point_bookmark(
+    tx: &mut Transaction,
+    bookmark: &str,
+    commit: &str,
+    quiet: bool,
+) -> Result<(), VcsError> {
+    let head = CommitId::try_from_hex(commit).ok_or(VcsError::NotHex)?;
+    let name = RefName::new(bookmark);
+    if tx.repo().view().get_local_bookmark(name).as_normal() != Some(&head) {
+        tx.repo_mut()
+            .set_local_bookmark_target(name, RefTarget::normal(head));
+        if quiet {
+            tx.set_attribute(
+                BOOKMARK_ATTRIBUTE.to_owned(),
+                bookmark.to_owned(),
+            );
         }
-        Ok(turn)
+    }
+    Ok(())
+}
+
+/// Where a turn left the code: a snapshot of `@`, which the model's
+/// commits stack under (ADR 0014).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct TurnSnapshot {
+    /// The snapshot: `@` as the turn left it. Later snapshots rewrite
+    /// `@` under the same change id, so this commit is found by its id.
+    pub commit_id: String,
+    pub change_id: String,
+    /// The run's newest commit, under `@`, which its bookmark names.
+    pub head: String,
+    /// The paths the turn added, changed or removed.
+    pub paths: Vec<String>,
+}
+
+/// Ends a turn: snapshots `@` without committing it, and points
+/// `bookmark` at the run's newest commit. `since` is the turn before's
+/// snapshot, to tell what this turn changed; without it, `@`'s own
+/// changes count.
+pub(crate) fn end_turn(
+    worker: &mut Worker,
+    bookmark: &str,
+    since: Option<&str>,
+) -> Result<TurnSnapshot, VcsError> {
+    let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, wc| {
+        let head = wc.parent_ids().first().ok_or(VcsError::NoParent)?.clone();
+        let before = match since.and_then(CommitId::try_from_hex) {
+            Some(id) => tx.repo().store().get_commit(&id)?.tree(),
+            None => block_on(wc.parent_tree(tx.repo()))?,
+        };
+        let paths =
+            diff::changed_paths(&before, &wc.tree(), &EverythingMatcher)?
+                .into_iter()
+                .map(|change| change.path)
+                .collect();
+        point_bookmark(tx, bookmark, &head.hex(), true)?;
+        Ok(TurnSnapshot {
+            commit_id: wc.id().hex(),
+            change_id: wc.change_id().reverse_hex(),
+            head: head.hex(),
+            paths,
+        })
     })?;
     Ok(turn)
+}
+
+/// What `@` holds, after a snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkingCopy {
+    /// The paths `@` changes against its parent: none when all the work
+    /// is committed.
+    pub paths: Vec<String>,
+    /// `@`'s parent, the run's newest commit, in hex.
+    pub head: String,
+}
+
+pub(crate) fn working_copy(
+    worker: &mut Worker,
+) -> Result<WorkingCopy, VcsError> {
+    let snapshot = session::snapshot(worker)?;
+    let wc = &snapshot.wc;
+    let head = wc.parent_ids().first().ok_or(VcsError::NoParent)?.hex();
+    let parent_tree = block_on(wc.parent_tree(snapshot.repo.as_ref()))?;
+    let paths =
+        diff::changed_paths(&parent_tree, &wc.tree(), &EverythingMatcher)?
+            .into_iter()
+            .map(|change| change.path)
+            .collect();
+    Ok(WorkingCopy { paths, head })
 }
 
 pub(crate) fn restore(

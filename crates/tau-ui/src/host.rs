@@ -72,7 +72,7 @@ use crate::{
         StoreInfo,
     },
     github,
-    memory::{Memories, stale_on_commit},
+    memory::{Memories, stale_on_turn},
     models::{
         AccessInfo,
         DEFAULT_MODEL,
@@ -491,7 +491,11 @@ fn coder(
 const INSTRUCTIONS: &str = "You are tau, a coding agent working in the \
     user's repository. Use the tools to read and change files and to run \
     commands, and the vcs tools for version control, never `git` or `jj` \
-    in bash. Be concise, and say which tests you ran.";
+    in bash. Nothing is committed for you: your commits are how your work \
+    is reviewed and landed, so commit with `vcs_commit` wherever a \
+    reviewer would want a boundary, each with a Conventional Commits \
+    message, and commit everything before you finish. Be concise, and say \
+    which tests you ran.";
 
 fn identity() -> Identity {
     Identity {
@@ -1171,18 +1175,21 @@ impl Host {
         let on_workspace = {
             let memory = memory.clone();
             let constitution = constitution.clone();
-            move |agent: Agent, workspace: RunWorkspace| {
-                // Notes about the files a turn's commit changed may be
-                // stale.
+            // `lands`: the run proposes its own landing with `vcs_land`
+            // (ADR 0014). Sub-agents land as they return, without it.
+            move |agent: Agent, workspace: RunWorkspace, lands: bool| {
+                // Notes about the files a turn changed may be stale.
                 let workspace = match &memory {
                     Some(memory) => {
-                        workspace.on_commit(stale_on_commit(memory.clone()))
+                        workspace.on_turn(stale_on_turn(memory.clone()))
                     }
                     None => workspace,
                 };
+                let vcs = VcsPlugin::new(workspace.vcs().clone());
+                let vcs = if lands { vcs.landing() } else { vcs };
                 let agent = agent
                     .plugin(CodingTools::new(Root::new(workspace.dir())))
-                    .plugin(VcsPlugin::new(workspace.vcs().clone()))
+                    .plugin(vcs)
                     .plugin(workspace);
                 let agent = with_plugin(agent, memory.clone());
                 with_plugin(agent, constitution.clone())
@@ -1192,10 +1199,10 @@ impl Host {
         let delegate = {
             let (base, on_workspace) = (agent.clone(), on_workspace.clone());
             Delegate::new(workspace.clone(), identity(), move |child| {
-                Ok(on_workspace(base.clone(), child))
+                Ok(on_workspace(base.clone(), child, false))
             })
         };
-        let agent = on_workspace(agent.tool(delegate), workspace);
+        let agent = on_workspace(agent.tool(delegate), workspace, true);
         Ok((with_plugin(agent, goal), Some(name)))
     }
 
@@ -1635,6 +1642,7 @@ impl Host {
                     change_id: change.change_id.clone(),
                     changed: true,
                     from: Some(child.0.to_string()),
+                    snapshot: false,
                 };
                 Ok(Entry::Plugin {
                     plugin: WORKSPACE_PLUGIN.to_owned(),
@@ -2535,13 +2543,14 @@ impl Host {
                         ws.apply(HostUpdate::catalog(catalog), cx)
                     });
                 }
-                // A pull request that keeps pushing takes the turn.
+                // A pull request that keeps pushing takes the commits the
+                // turn made.
                 if let RunEvent::TurnEnd { run, .. } = &event
                     && host.keeps_pushing(run)
                 {
                     let (pusher, run) = (host.clone(), run.clone());
                     host.runtime.spawn_blocking(move || {
-                        if let Err(error) = pusher.push_later_turns(&run) {
+                        if let Err(error) = pusher.push_later_commits(&run) {
                             eprintln!(
                                 "tau-ui: cannot push the turn: {error:#}"
                             );
@@ -2698,9 +2707,10 @@ struct OpenPr {
     branch: String,
     title: String,
     keep_pushing: bool,
-    /// The branch's commit on GitHub, and the run's last turn in it.
+    /// The branch's commit on GitHub, and the change id of the run's
+    /// last commit in it.
     head: String,
-    turn: u32,
+    change: String,
 }
 
 /// What the host needs to push a run's commits.
@@ -2708,8 +2718,8 @@ struct Pushing {
     project: Project,
     repo: String,
     token: String,
-    /// Changed turns, in order, after the ones pushed already.
-    links: Vec<Link>,
+    /// The run's commits, oldest first, after the ones pushed already.
+    changes: Vec<tau_vcs::StackChange>,
     /// The local commit the first of them builds on, and its commit on
     /// GitHub.
     local_parent: String,
@@ -2719,23 +2729,17 @@ struct Pushing {
 }
 
 impl Host {
-    /// The turns `run` took that changed files, its own and the ones it
-    /// inherits as a fork, in order, each at the commit its change has
-    /// now.
-    fn changed_turns(
+    /// The commits on `run`'s stack, oldest first: the model's, and
+    /// those its children landed (ADR 0014).
+    fn stack(
         &self,
         run: &RunId,
         project: &Project,
-    ) -> anyhow::Result<Vec<Link>> {
-        let bodies = self
-            .runtime
-            .block_on(self.store.records(&run.0, WORKSPACE_PLUGIN))?;
-        Ok(project.current(
-            bodies
-                .iter()
-                .filter_map(|body| Link::parse(body))
-                .filter(|link| link.changed),
-        )?)
+    ) -> anyhow::Result<Vec<tau_vcs::StackChange>> {
+        let Some(head) = project.bookmark(&bookmark(run))? else {
+            return Ok(Vec::new());
+        };
+        Ok(project.stack(&head)?)
     }
 
     /// Writes a pull request draft from `run`: its changed turns as
@@ -2759,10 +2763,11 @@ impl Host {
             .project
             .wait()
             .ok_or_else(|| anyhow::anyhow!("{} has no project", slot.name))?;
-        let links = self.changed_turns(run, &project)?;
-        let (Some(first), Some(last)) = (links.first(), links.last()) else {
+        let changes = self.stack(run, &project)?;
+        let (Some(first), Some(last)) = (changes.first(), changes.last())
+        else {
             anyhow::bail!(
-                "The run changed no files, so there is nothing to propose"
+                "The run has no commits, so there is nothing to propose"
             );
         };
         let base = project.parent_of(&first.commit_id)?.ok_or_else(|| {
@@ -2787,14 +2792,19 @@ impl Host {
                 .all(|file| !changed.contains(&file.path));
         let mut commits = Vec::new();
         let mut previous = base.clone();
-        for link in &links {
-            let files = project.diff(&previous, &link.commit_id)?;
+        for change in &changes {
+            let files = project.diff(&previous, &change.commit_id)?;
             commits.push(PrCommit {
-                title: format!("Turn {}", link.turn),
+                title: change
+                    .description
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned(),
                 added: files.iter().map(|file| file.added as u32).sum(),
                 removed: files.iter().map(|file| file.removed as u32).sum(),
             });
-            previous = link.commit_id.clone();
+            previous = change.commit_id.clone();
         }
         let view = self.history()?.into_iter().find(|view| &view.id == run);
         let prompt = view
@@ -2870,7 +2880,7 @@ impl Host {
         reviewers: &[String],
     ) -> anyhow::Result<(github::Opened, String)> {
         let pushing = self.pushing(run, &draft.repo, title, None)?;
-        let (head, turn) =
+        let (head, change) =
             self.runtime
                 .block_on(push(&self.github, &pushing, &draft.head))?;
         let token = pushing.token.clone();
@@ -2902,20 +2912,20 @@ impl Host {
                 title: title.to_owned(),
                 keep_pushing,
                 head: head.clone(),
-                turn,
+                change,
             },
         );
         Ok((opened, head))
     }
 
     /// What pushing `run` needs, after `from` (a commit on GitHub and
-    /// the run's last turn in it), or from its base.
+    /// the change id of the run's last commit in it), or from its base.
     fn pushing(
         &self,
         run: &RunId,
         repo: &str,
         title: &str,
-        from: Option<(&str, u32)>,
+        from: Option<(&str, &str)>,
     ) -> anyhow::Result<Pushing> {
         let slot = self.slot_of_run(run);
         let token = github::Token::load(&self.config.credentials)
@@ -2924,23 +2934,21 @@ impl Host {
             .project
             .wait()
             .ok_or_else(|| anyhow::anyhow!("{} has no project", slot.name))?;
-        let all = self.changed_turns(run, &project)?;
+        let all = self.stack(run, &project)?;
         let first = all
             .first()
-            .ok_or_else(|| anyhow::anyhow!("The run changed no files"))?;
+            .ok_or_else(|| anyhow::anyhow!("The run has no commits"))?;
         let base = project.parent_of(&first.commit_id)?.ok_or_else(|| {
             anyhow::anyhow!("The run's first commit has no parent")
         })?;
-        let (local_parent, remote_parent, links) = match from {
+        let (local_parent, remote_parent, changes) = match from {
             None => (base.clone(), base, all),
-            Some((remote, turn)) => {
-                let local = all
-                    .iter()
-                    .rev()
-                    .find(|link| link.turn <= turn)
-                    .map_or(base, |link| link.commit_id.clone());
-                let later =
-                    all.into_iter().filter(|link| link.turn > turn).collect();
+            Some((remote, pushed)) => {
+                // Changes keep their ids when a landing restacks them.
+                let at =
+                    all.iter().position(|change| change.change_id == pushed);
+                let local = at.map_or(base, |at| all[at].commit_id.clone());
+                let later = at.map_or(all.clone(), |at| all[at + 1..].to_vec());
                 (local, remote.to_owned(), later)
             }
         };
@@ -2949,16 +2957,16 @@ impl Host {
             project,
             repo: repo.to_owned(),
             token: token.token,
-            links,
+            changes,
             local_parent,
             remote_parent,
             title,
         })
     }
 
-    /// Pushes the turns `run` took since its pull request's last push,
-    /// if it has one that keeps pushing. Returns whether it pushed.
-    pub fn push_later_turns(&self, run: &RunId) -> anyhow::Result<bool> {
+    /// Pushes the commits `run` made since its pull request's last
+    /// push, if it has one that keeps pushing. Returns whether it pushed.
+    pub fn push_later_commits(&self, run: &RunId) -> anyhow::Result<bool> {
         let Some(open) =
             self.prs.lock().expect("not poisoned").get(run).cloned()
         else {
@@ -2971,12 +2979,12 @@ impl Host {
             run,
             &open.repo,
             &open.title,
-            Some((&open.head, open.turn)),
+            Some((&open.head, &open.change)),
         )?;
-        if pushing.links.is_empty() {
+        if pushing.changes.is_empty() {
             return Ok(false);
         }
-        let (head, turn) = self.runtime.block_on(push(
+        let (head, change) = self.runtime.block_on(push(
             &self.github,
             &pushing,
             &open.branch,
@@ -2984,7 +2992,7 @@ impl Host {
         if let Some(open) = self.prs.lock().expect("not poisoned").get_mut(run)
         {
             open.head = head;
-            open.turn = turn;
+            open.change = change;
         }
         Ok(true)
     }
@@ -3025,7 +3033,7 @@ async fn push(
     api: &github::Api,
     pushing: &Pushing,
     branch: &str,
-) -> anyhow::Result<(String, u32)> {
+) -> anyhow::Result<(String, String)> {
     let (token, repo) = (&pushing.token, &pushing.repo);
     let mut remote = pushing.remote_parent.clone();
     let mut tree = api
@@ -3033,12 +3041,12 @@ async fn push(
         .await
         .map_err(anyhow::Error::msg)?;
     let mut local = pushing.local_parent.clone();
-    let mut turn = 0;
-    for link in &pushing.links {
+    let mut pushed = String::new();
+    for change in &pushing.changes {
         let mut files = Vec::new();
-        for file in pushing.project.diff(&local, &link.commit_id)? {
+        for file in pushing.project.diff(&local, &change.commit_id)? {
             let blob =
-                match pushing.project.file_at(&link.commit_id, &file.path)? {
+                match pushing.project.file_at(&change.commit_id, &file.path)? {
                     Some((content, executable)) => Some((
                         api.create_blob(token, repo, &content)
                             .await
@@ -3059,18 +3067,22 @@ async fn push(
             .create_tree(token, repo, &tree, &files)
             .await
             .map_err(anyhow::Error::msg)?;
-        let message = format!("{} (turn {})", pushing.title, link.turn);
+        // The model's own message (ADR 0014).
+        let message = match change.description.trim() {
+            "" => pushing.title.clone(),
+            described => described.to_owned(),
+        };
         remote = api
             .create_commit(token, repo, &message, &tree, &remote)
             .await
             .map_err(anyhow::Error::msg)?;
-        local = link.commit_id.clone();
-        turn = link.turn;
+        local = change.commit_id.clone();
+        pushed = change.change_id.clone();
     }
     api.set_branch(token, repo, branch, &remote)
         .await
         .map_err(anyhow::Error::msg)?;
-    Ok((remote, turn))
+    Ok((remote, pushed))
 }
 
 /// A pull request's title from the run's prompt: its first line, up to

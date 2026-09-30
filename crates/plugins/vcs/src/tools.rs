@@ -189,7 +189,7 @@ pub struct Commit(pub Vcs);
 impl TypedTool for Commit {
     type Args = CommitArgs;
     const NAME: &'static str = "vcs_commit";
-    const DESCRIPTION: &'static str = "Finish the working-copy change (@): set its description to message, then start a new empty change on top of it for further work. Use it where a reviewer would want a commit boundary.";
+    const DESCRIPTION: &'static str = "Commit the working-copy change (@): set its description to message, then start a new empty change on top of it for further work. Nothing is committed for you: commit where a reviewer would want a boundary, with a Conventional Commits message (`type(scope): summary`, then a body saying what changed and why), and commit everything before you finish.";
 
     async fn call(
         &self,
@@ -200,6 +200,47 @@ impl TypedTool for Commit {
             ops::commit(worker, args.message)
         })
         .await
+    }
+}
+
+/// `vcs_land`'s arguments: none.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LandArgs {}
+
+/// Proposes landing the run's commits: on the run it was forked from, or
+/// into trunk for a top-level run (ADR 0014). The person confirms;
+/// nothing moves here.
+pub struct Land(pub Vcs);
+
+#[async_trait]
+impl TypedTool for Land {
+    type Args = LandArgs;
+    const NAME: &'static str = "vcs_land";
+    const DESCRIPTION: &'static str = "When your work is finished and committed, propose landing it: your commits go onto the run you were forked from, or into main for a run started on its own. The person sees what would land and confirms; nothing moves until they do. Call it last, with everything committed.";
+
+    async fn call(
+        &self,
+        _args: LandArgs,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        if ctx.cancel.is_cancelled() {
+            return Err(ABORTED.into());
+        }
+        let working_copy = self.0.working_copy().await?;
+        if !working_copy.paths.is_empty() {
+            return Err(
+                VcsError::Uncommitted(working_copy.paths.join(", ")).into()
+            );
+        }
+        let mut output = ToolOutput::text(
+            "Proposed landing your commits. The person sees what would land \
+             and confirms it; you can stop here.",
+        );
+        output.details = Some(serde_json::json!({
+            "proposed": true,
+            "head": working_copy.head,
+        }));
+        Ok(output)
     }
 }
 

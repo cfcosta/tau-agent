@@ -1,8 +1,12 @@
 //! Landing a child run on its parent (ADR 0009): the child's changes,
 //! from where it started up to its head, are rebased onto the parent's
 //! newest commit, keeping their change ids, and the parent's working
-//! copy starts again on top. It runs in the parent's workspace, so the
-//! parent's files follow in the same operation.
+//! copy, with whatever it holds, moves on top (ADR 0014). It runs in the
+//! parent's workspace, so the parent's files follow in the same
+//! operation.
+//!
+//! Merging a run into trunk moves the other way: the run's own changes
+//! go onto trunk's head ([`move_onto`]), in the run's workspace.
 
 use std::collections::HashSet;
 
@@ -69,11 +73,9 @@ fn restack(
     child_head: &CommitId,
     bookmark: &str,
 ) -> Result<Landing, VcsError> {
-    // Landing happens between turns, when the parent's work is all
-    // committed; anything in its working copy would be buried.
-    if !block_on(wc.is_empty(tx.repo()))? {
-        return Err(VcsError::ParentChanged);
-    }
+    // The parent's uncommitted work stays in its working copy, which
+    // moves onto the landed changes.
+    let dirty = !block_on(wc.is_empty(tx.repo()))?;
     let head = match wc.parent_ids() {
         [head] => head.clone(),
         _ => return Err(VcsError::ParentMerge),
@@ -128,7 +130,17 @@ fn restack(
     // The child's head, where it is now: its change id names it.
     let old_head = tx.repo().store().get_commit(child_head)?;
     let new_head = current(tx.repo(), &old_head)?;
-    block_on(tx.repo_mut().check_out(workspace.to_owned(), &new_head))?;
+    if dirty {
+        let wc = current(tx.repo(), wc)?;
+        block_on(rebase_commit(
+            tx.repo_mut(),
+            wc,
+            vec![new_head.id().clone()],
+        ))?;
+        block_on(tx.repo_mut().rebase_descendants())?;
+    } else {
+        block_on(tx.repo_mut().check_out(workspace.to_owned(), &new_head))?;
+    }
     tx.repo_mut().set_local_bookmark_target(
         RefName::new(bookmark),
         RefTarget::normal(new_head.id().clone()),
@@ -173,4 +185,105 @@ fn conflicts(commit: &Commit) -> Vec<String> {
         .conflicts()
         .map(|(path, _)| path.as_internal_file_string().to_owned())
         .collect()
+}
+
+/// Moves this workspace's run, its changes up to `@`, onto `onto` (a
+/// full commit id in hex), and points `bookmark` at its newest commit
+/// there. The run's changes are what `@` has that `onto` lacks. With
+/// `confirm` off, nothing changes.
+pub(crate) fn move_onto(
+    worker: &mut Worker,
+    onto: &str,
+    bookmark: &str,
+    confirm: bool,
+) -> Result<Landing, VcsError> {
+    let onto = CommitId::try_from_hex(onto)
+        .ok_or_else(|| VcsError::NotCommitId(onto.to_owned()))?;
+    let name = worker.workspace()?.workspace_name().to_owned();
+    if confirm {
+        let (_, moved) = session::mutate(worker, "merge", |tx, wc| {
+            rebase_run(tx, wc, &name, &onto, bookmark)
+        })?;
+        return Ok(moved);
+    }
+    let snapshot = session::snapshot(worker)?;
+    let mut tx = snapshot.repo.start_transaction();
+    rebase_run(&mut tx, &snapshot.wc, &name, &onto, bookmark)
+}
+
+fn rebase_run(
+    tx: &mut Transaction,
+    wc: &Commit,
+    workspace: &jj_lib::ref_name::WorkspaceName,
+    onto: &CommitId,
+    bookmark: &str,
+) -> Result<Landing, VcsError> {
+    let moving: Vec<CommitId> = {
+        let revset = ResolvedRevsetExpression::commit(wc.id().clone())
+            .ancestors()
+            .minus(&ResolvedRevsetExpression::commit(onto.clone()).ancestors())
+            .evaluate(tx.repo())?;
+        block_on(revset.stream().collect::<Vec<_>>())
+            .into_iter()
+            .collect::<Result<_, _>>()?
+    };
+    let set: HashSet<&CommitId> = moving.iter().collect();
+    let mut roots = Vec::new();
+    for id in moving.iter().rev() {
+        let commit = tx.repo().store().get_commit(id)?;
+        if commit
+            .parent_ids()
+            .iter()
+            .all(|parent| !set.contains(parent))
+        {
+            roots.push(commit);
+        }
+    }
+    if roots.len() > 1 {
+        return Err(VcsError::NotOneStack);
+    }
+    for root in roots {
+        if root.parent_ids() == std::slice::from_ref(onto) {
+            continue;
+        }
+        block_on(rebase_commit(tx.repo_mut(), root, vec![onto.clone()]))?;
+    }
+    block_on(tx.repo_mut().rebase_descendants())?;
+
+    let wc_id = tx
+        .repo()
+        .view()
+        .get_wc_commit_id(workspace)
+        .cloned()
+        .ok_or(VcsError::NoWorkingCopy)?;
+    let new_wc = tx.repo().store().get_commit(&wc_id)?;
+    let head = match new_wc.parent_ids() {
+        [head] => tx.repo().store().get_commit(head)?,
+        _ => return Err(VcsError::ParentMerge),
+    };
+    tx.repo_mut().set_local_bookmark_target(
+        RefName::new(bookmark),
+        RefTarget::normal(head.id().clone()),
+    );
+    let mut changes = Vec::new();
+    for id in &moving {
+        if id == wc.id() {
+            continue;
+        }
+        let old = tx.repo().store().get_commit(id)?;
+        let new = current(tx.repo(), &old)?;
+        changes.push(ChangeInfo::of(tx.repo(), &new, &wc_id)?);
+    }
+    // The run's own work in `@` can conflict too.
+    let mut found = conflicts(&head);
+    for path in conflicts(&new_wc) {
+        if !found.contains(&path) {
+            found.push(path);
+        }
+    }
+    Ok(Landing {
+        changes,
+        conflicts: found,
+        head: head.id().hex(),
+    })
 }

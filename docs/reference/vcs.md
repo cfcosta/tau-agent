@@ -1,9 +1,11 @@
 # Version-control tools (`tau-vcs`, optional)
 
 - Status: implemented in `crates/plugins/vcs`, on `jj-lib` 0.45.1.
-- Design study: [jj-lib.md](../research/jj-lib.md). This crate is the
-  study's read path and write tools on one workspace. Workspaces per
-  run, turn snapshots and link records are not built yet.
+- Design study: [jj-lib.md](../research/jj-lib.md). Decisions:
+  [0009](../decisions/0009-child-runs-land-on-their-parent.md) (child
+  runs land on their parent) and
+  [0014](../decisions/0014-the-model-commits-and-runs-land-as-stacked-diffs.md)
+  (the model commits; runs land as stacked diffs).
 
 The model reaches version control only through these tools. It never
 runs `jj` or `git` in a shell. The tools work on a jj repository, so
@@ -180,6 +182,21 @@ A changed path is a `FileChange`:
   not change.
 - An empty message is refused: `The description must not be empty`.
 - Details: `committed` and `working_copy`.
+- Nothing is committed for the model (ADR 0014): its commits are how a
+  run's work is reviewed, landed and pushed, so the description asks
+  for a Conventional Commits message at each boundary a reviewer would
+  want, and everything committed before the run finishes.
+
+### vcs_land: `{}`
+
+- Only with `VcsPlugin::landing()`: for runs that land on a parent or
+  merge into trunk when they finish. Sub-agents land as they return and
+  do not get it.
+- Proposes landing the run's commits. It moves nothing: it refuses
+  while `@` holds changes (`Your working copy has uncommitted changes
+(…). Commit your work with vcs_commit first.`), and otherwise returns
+  `{ "proposed": true, "head": <@'s parent> }` for the host, which
+  shows the person what would land and waits for them to confirm.
 
 ### vcs_new: `{ message? }`
 
@@ -280,15 +297,17 @@ the user's checkout.
 run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
 `vcs()` (it loads on first use, after the run has made it).
 
-- **At start** it makes the run's workspace: on the commit of the
-  latest `Link` the run inherits (a fork), else on `trunk()`.
-- **After each turn** (`TurnEnd`) it ends the turn: if the working copy
-  changed, it is committed (described `tau: run <id> turn <n>` unless
-  the model described it) and an empty working copy starts on top.
-  In the same operation it points the run's local bookmark,
-  `tau/<run id>`, at the run's newest commit, so the run's work stays
-  findable by name after its workspace is gone. Then it stores a
-  `Link` record under the plugin name `workspace`:
+- **At start** it makes the run's workspace: from the snapshot of the
+  turn a fork inherits (see below), on the commit a link names (a
+  landed change), on `with_base` (a sub-agent), else on `trunk()`.
+- **The model makes the commits**
+  ([ADR 0014](../decisions/0014-the-model-commits-and-runs-land-as-stacked-diffs.md)).
+  A turn commits nothing.
+- **After each turn** (`TurnEnd`) it snapshots `@` and points the run's
+  local bookmark, `tau/<run id>`, at the run's newest commit (`@`'s
+  parent), so the run's work stays findable by name after its
+  workspace is gone. Then it stores a `Link` record under the plugin
+  name `workspace`:
 
   ```json
   {
@@ -297,22 +316,39 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
     "commit_id": "…",
     "change_id": "…",
     "changed": true,
-    "from": null
+    "from": null,
+    "snapshot": true
   }
   ```
 
-  A turn that changed nothing links to the commit before it.
-  `Project::current` moves a link to where its change is now, since
-  rewriting a commit (restacking it, say) keeps its change id but not
-  its commit id. Forks, pull requests and the compare view read links
-  through it. A failed
-  commit stores `{ "turn": n, "error": "…" }` and the run goes on.
+  `commit_id` is the snapshot: `@` as the turn left it. Later snapshots
+  rewrite `@` under the same change id, so a snapshot link is found by
+  its commit id, and `Project::current` leaves it as it is. `changed`
+  says whether the turn changed files since the turn before. Links a
+  landing stores (`from` set, `snapshot` false) name changes, and
+  `Project::current` moves them to where their change is now. A failed
+  snapshot stores `{ "turn": n, "error": "…" }` and the run goes on.
+  Observers given with `on_turn` hear each `TurnSnapshot`, with the
+  paths the turn changed.
 
+- **Before it stops** with changes in `@`, the run is held once, with
+  `COMMIT_FIRST` and the paths as the next user message.
+- **When it finishes** normally or at a limit with changes still in
+  `@`, they are committed (`Vcs::commit_all`), with a message the run's
+  model writes from the diff and the task: one short `PluginCtx::ask`.
+  tau never writes a commit message itself; without an answer, the work
+  stays uncommitted. A failed or cancelled run keeps its work as it is.
 - **Forking at a turn**: read the run's links with
   `Store::plugin_entries(run, "workspace")`, take the `seq` of the
   turn's link, and fork with `Checkpoint::at(run, seq)` and a new
   `RunWorkspace`. The fork inherits the transcript and links up to that
-  turn, so it starts on that turn's code.
+  turn, and `Project::add_workspace_from_snapshot` starts it on a new
+  change holding the snapshot's files, uncommitted, on the snapshot's
+  parent as it is now: if a landing restacked that parent since, its
+  new files and the turn's work are merged.
+- `Project::stack(head)` lists a run's commits, oldest first: what
+  `head` has that trunk lacks. Pull requests push those, one GitHub
+  commit per commit, with the model's message.
 
 ## Landing a child run
 
@@ -328,8 +364,8 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   `land`), so the parent's files follow.
 - A child that already sits on the parent's head (the parent waited on
   it) is not rewritten.
-- It refuses while the parent's working copy holds changes: landing is
-  between the parent's turns.
+- The parent's uncommitted work stays uncommitted: its working copy
+  moves onto the landed changes. Landing is between the parent's turns.
 - The host's `Host::land` records each landed change as a `Link` in
   the parent, at the parent's latest turn, with `from` naming the
   child, so forks, the compare view and pull requests read them as the
@@ -348,6 +384,22 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   (`conflicts`), and the new head. Confirmed, conflicts land as jj
   conflicts for the parent's next turn to resolve.
 
+## Merging a run into trunk
+
+A top-level run is a child of trunk (ADR 0014). Trunk has no model, so
+the run itself does the moving and the resolving:
+
+- `Vcs::move_onto(trunk, bookmark, confirm)`, on the run's `Vcs`,
+  rebases the run's changes, up to `@`, onto trunk's newest commit, and
+  points the run's bookmark at its newest commit there. With `confirm`
+  off it changes nothing and returns what it would do, as a `Landing`;
+  its `conflicts` include any in `@`.
+- `Project::fast_forward_trunk(head)` then moves trunk's bookmark (the
+  default branch, else `main`, `master` or `trunk`; `main` in an empty
+  repository) to `head`. It refuses unless trunk is `head` or one of
+  its ancestors: `<name> has moved on past this run; merge it again`.
+- Merging is local: nothing is pushed.
+
 ## Delegating to a sub-agent
 
 `Delegate` is the `delegate` tool (`{ task }`): a run hands a task to
@@ -356,12 +408,13 @@ a sub-agent, a child run in a chat of its own
 Build it on the run's `RunWorkspace`, with a closure that builds the
 sub-agent's `Agent` around the sub-agent's own `RunWorkspace`.
 
-1. The caller's work so far is committed ("before delegating") and
-   the sub-agent's workspace starts on that commit
-   (`RunWorkspace::with_base`), so it sees the caller's edits.
+1. The caller's work must be committed (ADR 0014): with changes in its
+   `@`, the tool refuses and says to commit with `vcs_commit` first.
+   The sub-agent's workspace starts on the caller's newest commit
+   (`RunWorkspace::with_base`), so it sees the caller's work.
 2. The sub-agent runs through `Agent::as_tool`: a `Subagent` run of the
-   caller, its events forwarded to the caller's, its turns committed
-   on its own stack under its own bookmark.
+   caller, its events forwarded to the caller's; it commits its work
+   on its own stack, under its own bookmark.
 3. When it finishes, its changes land on the caller with `Vcs::land`.
    The caller has not moved, so nothing is rewritten and nothing can
    conflict. The tool's text is the sub-agent's answer and a line on
@@ -371,9 +424,9 @@ sub-agent's `Agent` around the sub-agent's own `RunWorkspace`.
 5. Either way the sub-agent closes: its workspace is forgotten and its
    bookmark removed.
 
-The caller's links record what came to its stack during the turn: its
-own commit from before delegating, then each landed change with `from`
-naming the sub-agent, then the turn's own commit. The tool runs one
+The caller's links record what came to its stack during the turn: each
+landed change with `from` naming the sub-agent, then the turn's
+snapshot. The tool runs one
 call at a time, since it moves the caller's working copy.
 
 ## Left to the host and the UI
