@@ -54,6 +54,8 @@ pub use error::{
     IdTokenError,
     OAuthError,
     Recovery,
+    refuses_model,
+    unavailable_model,
 };
 use id_token::{Expected, Identity, Jwks, Jwt, check_claims};
 use serde::Deserialize;

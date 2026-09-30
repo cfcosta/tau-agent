@@ -146,6 +146,7 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 
 use crate::{
+    chatgpt::{refuses_model, unavailable_model},
     event::{AssistantEvent, DoneReason, ErrorReason},
     message::{
         TextContent,
@@ -731,7 +732,11 @@ impl StreamProcessor {
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("no message");
-            format!("{code}: {msg}")
+            if refuses_model(msg, &self.model) {
+                unavailable_model(&self.model)
+            } else {
+                format!("{code}: {msg}")
+            }
         } else if let Some(reason) = response
             .and_then(|r| r.get("incomplete_details"))
             .and_then(|d| d.get("reason"))
@@ -769,7 +774,11 @@ impl StreamProcessor {
         let field = |name| details.get(name).and_then(Value::as_str);
         let code = field("code");
         self.error_code = code.map(str::to_owned);
-        let message = field("message").unwrap_or("");
+        // Direct-route admission words its refusals as `detail`.
+        let message = field("message")
+            .or_else(|| field("detail"))
+            .or_else(|| frame.get("detail").and_then(Value::as_str))
+            .unwrap_or("");
         let code_text = code.unwrap_or("unknown");
         self.finished = true;
         let class = classify(&Failure::Api {
@@ -782,7 +791,11 @@ impl StreamProcessor {
         });
         events.push(AssistantEvent::Error {
             reason: ErrorReason::Error,
-            message: format!("Error Code {code_text}: {message}"),
+            message: if refuses_model(message, &self.model) {
+                unavailable_model(&self.model)
+            } else {
+                format!("Error Code {code_text}: {message}")
+            },
             usage: Usage::default(),
             class,
         });

@@ -61,6 +61,21 @@ impl ErrorBody {
     }
 }
 
+/// Whether `text`, the words of a refused request for `model`, say the
+/// plan does not run that model. The plan route answers an unknown or
+/// unavailable model with HTTP 400 and, verbatim, `{"detail": "The
+/// 'gpt-0-nope' model is not supported when using Codex with a ChatGPT
+/// account."}`: no code to act on, so the words are matched, for the
+/// model the request named only.
+pub fn refuses_model(text: &str, model: &str) -> bool {
+    text.starts_with(&format!("The '{model}' model is not supported"))
+}
+
+/// What a run reports when the plan does not run `model`.
+pub fn unavailable_model(model: &str) -> String {
+    format!("{model} isn't available on your plan")
+}
+
 /// A failed request to `api.openai.com`, kept as it came: status, body,
 /// request id.
 #[derive(Debug, Clone, PartialEq, Eq)]

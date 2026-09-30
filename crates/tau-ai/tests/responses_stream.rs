@@ -436,6 +436,46 @@ fn a_nested_error_frame_keeps_its_code_and_message() {
     );
 }
 
+/// A model the plan does not run stops the turn once, fatally, and says
+/// so in words a person reads. The plan route words it as a `detail`
+/// (seen live over HTTP for `gpt-0-nope`); the message and the frame's
+/// top level are read too. The same words about another model are kept
+/// as they came.
+#[test]
+fn a_model_off_the_plan_reads_as_unavailable() {
+    let words = "The 'gpt-0-nope' model is not supported when using Codex \
+                 with a ChatGPT account.";
+    let frames = [
+        json!({"type": "error", "status": 400, "error": {
+            "type": "invalid_request_error", "message": words,
+        }}),
+        json!({"type": "error", "status": 400, "error": {"detail": words}}),
+        json!({"type": "error", "status": 400, "detail": words}),
+        json!({"type": "response.failed", "response": {"error": {
+            "code": "model_not_found", "message": words,
+        }}}),
+    ];
+    for frame in &frames {
+        let mut processor = StreamProcessor::new("gpt-0-nope".to_owned(), 0);
+        let events = processor.push(frame);
+        let [
+            AssistantEvent::Start { .. },
+            AssistantEvent::Error { message, class, .. },
+        ] = events.as_slice()
+        else {
+            panic!("one error for {frame}: {events:?}");
+        };
+        assert_eq!(message, "gpt-0-nope isn't available on your plan");
+        assert_eq!(*class, Class::Fatal, "{frame}");
+    }
+    let mut other = StreamProcessor::new("gpt-6-sol".to_owned(), 0);
+    let events = other.push(&frames[0]);
+    let [_, AssistantEvent::Error { message, .. }] = events.as_slice() else {
+        panic!("one error");
+    };
+    assert_eq!(message, &format!("Error Code unknown: {words}"));
+}
+
 /// A `response.failed` frame carries the provider's error, and its code
 /// is exposed too. pi: `openai-responses-terminal-event.test.ts`
 /// ("rejects failed terminal events with the provider error").
