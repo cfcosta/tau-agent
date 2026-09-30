@@ -1327,7 +1327,7 @@ impl Host {
         &self,
         choice: &ModelChoice,
         repo: &RepoSlot,
-        workspace: Option<String>,
+        name: String,
         main: bool,
         delegates: bool,
     ) -> anyhow::Result<(Agent, String)> {
@@ -1369,7 +1369,6 @@ impl Host {
         let goal = self.jev().map(tau_goal::GoalPlugin::new);
         let memory = self.memory_plugin(repo);
         let project = repo.project()?;
-        let name = workspace.unwrap_or_else(workspace_name);
         // A run and its sub-agents work the same way, each in its own
         // workspace: tools, memory and the repository's rules. Only the
         // run itself keeps the conversation's goal and can delegate, so
@@ -1745,9 +1744,12 @@ impl Host {
     ) -> anyhow::Result<RunView> {
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
+        // Named after what it was asked, so the workspace says what it is
+        // for.
+        let name = workspace_name(&branch_slug(prompt));
         // A fork is a chat under a top-level run: it delegates to none.
         let (agent, workspace) =
-            self.agent_for_run(choice, repo, None, false, false)?;
+            self.agent_for_run(choice, repo, name, false, false)?;
         let _guard = self.runtime.enter();
         let forked = agent
             .fork(&Checkpoint::at(source.clone(), seq))
@@ -1819,6 +1821,13 @@ impl Host {
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
         let delegates = self.is_top_level(run)?;
+        // A run without a workspace yet (a main chat's first turn) gets
+        // one: `main` for a main chat, else named after the message.
+        let workspace = match workspace {
+            Some(name) => name,
+            None if main => workspace_name(MAIN_TITLE),
+            None => workspace_name(&branch_slug(prompt)),
+        };
         let (agent, workspace) =
             self.agent_for_run(choice, &repo, workspace, main, delegates)?;
         let _guard = self.runtime.enter();
@@ -2251,7 +2260,7 @@ impl Host {
             // gets its workspace, on trunk, from the first chat that
             // lands on it.
             Err(_) if self.is_main(&parent) => {
-                let name = workspace_name();
+                let name = workspace_name(MAIN_TITLE);
                 self.workspaces
                     .lock()
                     .expect("not poisoned")
@@ -3822,13 +3831,14 @@ fn load_settings(path: &std::path::Path, model: &str) -> ModelSettings {
 }
 
 /// A new workspace's name: unique, and sorting by when it was made.
-fn workspace_name() -> String {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static COUNT: AtomicU32 = AtomicU32::new(0);
+/// A name for a new workspace: `slug` (a message's first words, or
+/// `main`), then the time in hex, so it says what it is for and stays
+/// unique.
+fn workspace_name(slug: &str) -> String {
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_millis());
-    format!("run-{millis:x}-{}", COUNT.fetch_add(1, Ordering::Relaxed))
+    format!("{slug}-{millis:x}")
 }
 
 /// One stored run, rebuilt as the interface shows it.
@@ -4291,6 +4301,16 @@ mod tests {
             }
             (Err(error), None) => panic!("refused without an effort: {error}"),
         }
+    }
+
+    #[test]
+    fn workspace_names_start_with_the_slug_and_end_in_hex() {
+        let name = workspace_name("fix-the-retry-loop");
+        let hex = name
+            .strip_prefix("fix-the-retry-loop-")
+            .expect("the slug first");
+        assert!(!hex.is_empty());
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()), "{name}");
     }
 
     #[test]
