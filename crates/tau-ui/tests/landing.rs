@@ -1,0 +1,234 @@
+//! Landing and merging through the real host and the workspace
+//! (ADR 0014): a run proposes its landing with `vcs_land` and its card
+//! opens once it stops; a top-level run merges into main; a merge that
+//! conflicts starts the run's own turn to resolve, and trunk moves once
+//! that turn ends.
+
+use std::{path::Path, process::Command, time::Duration};
+
+use gpui::{Entity, TestAppContext, VisualTestContext};
+use serde_json::json;
+use tau_agent::tool::RunId;
+use tau_testing::scripted::ScriptedModel;
+use tau_ui::{
+    Workspace,
+    accounts::Credentials,
+    catalog::Catalog,
+    host::{Host, HostConfig},
+    route::Route,
+    view::Item,
+    workspace::LandingState,
+};
+use tau_vcs::{Identity, Project};
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(["-c", "init.defaultBranch=main"])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("git runs");
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+}
+
+/// Runs GPUI until `done` holds, while runs work on the host's threads.
+fn until(
+    cx: &mut VisualTestContext,
+    what: &str,
+    mut done: impl FnMut(&mut VisualTestContext) -> bool,
+) {
+    for _ in 0..600 {
+        cx.run_until_parked();
+        if done(cx) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!("timed out waiting for {what}");
+}
+
+fn start(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+    prompt: &str,
+) -> RunId {
+    let before = workspace.read_with(cx, |ws, _| ws.runs().len());
+    workspace.update(cx, |ws, cx| {
+        ws.navigate(Route::NewRun, cx);
+        ws.submit_prompt(prompt.to_owned(), cx);
+    });
+    until(cx, "the run to start", |cx| {
+        workspace.read_with(cx, |ws, _| ws.runs().len() > before)
+    });
+    workspace.read_with(cx, |ws, _| ws.runs()[0].id.clone())
+}
+
+fn finished(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+    run: &RunId,
+) {
+    until(cx, "the run to finish", |cx| {
+        workspace.read_with(cx, |ws, _| {
+            ws.run(run).is_some_and(|view| !view.status.is_live())
+        })
+    });
+}
+
+fn landing(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+    run: &RunId,
+) -> Option<LandingState> {
+    workspace.read_with(cx, |ws, _| ws.landing(run).cloned())
+}
+
+#[gpui::test]
+fn runs_propose_merge_and_resolve_into_main(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+
+    let readme = |text: &str| json!({ "path": "README.md", "content": text });
+    let commit = |message: &str| json!({ "message": message });
+    let llm = ScriptedModel::new()
+        // The first run commits, and proposes its landing.
+        .turn(|t| t.tool_call("write", readme("one\n")))
+        .turn(|t| t.tool_call("vcs_commit", commit("docs: one")))
+        .turn(|t| t.tool_call("vcs_land", json!({})))
+        .turn(|t| t.text("one is done"))
+        // The second changes the same line.
+        .turn(|t| t.tool_call("write", readme("two\n")))
+        .turn(|t| t.tool_call("vcs_commit", commit("docs: two")))
+        .turn(|t| t.text("two is done"))
+        // The first run's resolving turn.
+        .turn(|t| t.tool_call("write", readme("one and two\n")))
+        .turn(|t| t.tool_call("vcs_commit", commit("docs: keep both")))
+        .turn(|t| t.text("resolved"));
+
+    cx.update(tau_ui::init);
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("tau", Vec::new(), Catalog::default(), window, cx)
+    });
+    let workspace = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store::Store::memory()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let config = HostConfig {
+        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
+        credentials: Credentials::new(dir.path().join("config")),
+        model: Some("gpt-5.5".into()),
+        root: src.path().to_owned(),
+        store: dir.path().join("unused.db"),
+        repos: dir.path().join("repos"),
+        settings: dir.path().join("models.json"),
+        repo_list: dir.path().join("repos.json"),
+    };
+    let agent = tau_agent::agent::Agent::new(llm.clone()).name("coder");
+    let (host, events) = Host::with_agent(runtime, agent, store, config);
+    let host = host.with_project(project.clone());
+    cx.update(|_, cx| host.attach(&workspace, events, cx));
+
+    // The first run proposed its landing: once it stops, the card opens
+    // with what merging into main would do.
+    let one = start(&workspace, &mut cx, "write one");
+    finished(&workspace, &mut cx, &one);
+    until(&mut cx, "the proposed landing's preview", |cx| {
+        matches!(
+            landing(&workspace, cx, &one),
+            Some(LandingState::Preview(_))
+        )
+    });
+    let Some(LandingState::Preview(Ok(preview))) =
+        landing(&workspace, &mut cx, &one)
+    else {
+        panic!("{:?}", landing(&workspace, &mut cx, &one));
+    };
+    assert_eq!(preview.changes.len(), 1);
+    assert!(preview.conflicts.is_empty());
+
+    // The second run merges into main first, cleanly.
+    let two = start(&workspace, &mut cx, "write two");
+    finished(&workspace, &mut cx, &two);
+    workspace.update(&mut cx, |ws, cx| ws.land(&two, cx));
+    until(&mut cx, "the second run to merge", |cx| {
+        workspace.read_with(cx, |ws, _| ws.is_closed(&two))
+    });
+    workspace.read_with(&cx, |ws, _| {
+        let items = &ws.run(&two).unwrap().items;
+        assert!(
+            matches!(items.last(), Some(Item::Merged(card)) if card.into == "main"),
+            "{items:?}"
+        );
+    });
+    let trunk = project.trunk().unwrap();
+    assert_eq!(
+        project.file_at(&trunk, "README.md").unwrap().unwrap().0,
+        b"two\n"
+    );
+
+    // Now the first run's merge conflicts: it resolves in a turn tau
+    // starts, and main moves to it once that turn ends.
+    workspace.update(&mut cx, |ws, cx| ws.preview_landing(&one, cx));
+    until(&mut cx, "the new preview", |cx| {
+        matches!(
+            landing(&workspace, cx, &one),
+            Some(LandingState::Preview(_))
+        )
+    });
+    let Some(LandingState::Preview(Ok(preview))) =
+        landing(&workspace, &mut cx, &one)
+    else {
+        panic!("{:?}", landing(&workspace, &mut cx, &one));
+    };
+    assert_eq!(preview.conflicts, ["README.md"]);
+    workspace.update(&mut cx, |ws, cx| ws.land(&one, cx));
+    until(&mut cx, "the first run to merge", |cx| {
+        workspace.read_with(cx, |ws, _| ws.is_closed(&one))
+    });
+    workspace.read_with(&cx, |ws, _| {
+        let items = &ws.run(&one).unwrap().items;
+        let tau = items.iter().find_map(|item| match item {
+            Item::Tau(text) => Some(text.clone()),
+            _ => None,
+        });
+        let tau = tau.expect("tau's resolving turn");
+        assert!(tau.contains("`README.md`"), "{tau}");
+        assert!(
+            matches!(items.last(), Some(Item::Merged(_))),
+            "{:?}",
+            items.last()
+        );
+    });
+    llm.assert_exhausted();
+    let trunk = project.trunk().unwrap();
+    assert_eq!(
+        project.file_at(&trunk, "README.md").unwrap().unwrap().0,
+        b"one and two\n"
+    );
+    let log: Vec<String> = project
+        .stack(&trunk)
+        .unwrap()
+        .into_iter()
+        .map(|change| change.description.trim().to_owned())
+        .collect();
+    assert!(log.is_empty(), "trunk is the stack's end: {log:?}");
+}

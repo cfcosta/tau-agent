@@ -59,8 +59,9 @@ keeps its change id.
 - **For sure at the end.** A run that would stop with uncommitted
   changes is held once: tau-vcs keeps it going (as a plugin holds a
   stop now) with "Commit your work with `vcs_commit` before you
-  finish." If it stops again with changes left, tau still commits
-  them, so no work is left outside a change, but the message comes
+  finish." If it stops again with changes left (having finished, or
+  reached a limit; a run that failed or was cancelled keeps its work as
+  it is), tau still commits them, so no work is left outside a change, but the message comes
   from a model: one short call with the diff and the run's task, on
   the run's own model, asked for a Conventional Commits message. The
   call's cost is the run's.
@@ -117,6 +118,21 @@ id, and the old one stays in the operation log.
   a fast-forward, and the session closes.
 - A session merged into trunk is pushed only if the person pushes;
   merging is local.
+
+### How the person lands and merges
+
+- **The run's bar** holds it, beside "Fork here", in the accent the Send
+  button has: **Land on `<parent>`** on a finished fork, **Merge into
+  main** on a finished top-level run. A sub-agent has none.
+- **The model proposes it** with `vcs_land` once its work is committed.
+  The tool moves nothing: when the run stops, its landing card opens.
+- **The landing card** sits at the end of the run's own chat: what would
+  land, drawn as `vcs_log` draws changes, with any conflict flagged, and
+  Land or Merge, or Cancel. A fork's card also waits in its parent's
+  chat, as before.
+- **tau's own turn** shows in the chat as a message _started by tau_,
+  and a merge waiting on it says so in its card. A finished merge leaves
+  a _merged into main_ card in the run's chat, and the run closes.
 
 ## Alternatives considered
 

@@ -85,6 +85,9 @@ use crate::{
         Item,
         LandedCard,
         LandingRecord,
+        Merge,
+        MergeRecord,
+        MergedCard,
         Origin,
         Proposal,
         RunStatus,
@@ -238,6 +241,15 @@ pub enum WorkspaceEvent {
     },
     /// Drop this child run: abandon its own changes and close it.
     DropChild {
+        run: RunId,
+    },
+    /// Say what merging this top-level run into trunk would do.
+    PreviewMerge {
+        run: RunId,
+    },
+    /// Merge this top-level run into trunk (ADR 0014); answer with
+    /// [`Workspace::merged`].
+    Merge {
         run: RunId,
     },
     /// Keep a note a memory plugin suggested.
@@ -456,6 +468,9 @@ pub struct Workspace {
     pub(crate) kept_branch: Option<RunId>,
     /// Child runs on their way to landing, by run.
     landings: HashMap<RunId, LandingState>,
+    /// Runs that proposed their landing with `vcs_land` and have not
+    /// stopped yet.
+    proposed: HashSet<RunId>,
     pub(crate) setup: Setup,
     pub(crate) pairing: Pairing,
     /// The phones that may reach this computer, as the Phones screen
@@ -759,6 +774,7 @@ impl Workspace {
             dismissed: HashSet::new(),
             kept_branch: None,
             landings: HashMap::new(),
+            proposed: HashSet::new(),
             setup: Setup::default(),
             pairing: Pairing::default(),
             phones: Phones::default(),
@@ -946,6 +962,10 @@ impl Workspace {
             HostUpdate::Dropped { run, result } => {
                 self.dropped(&run, result, cx)
             }
+            HostUpdate::Merged { run, result } => self.merged(&run, result, cx),
+            HostUpdate::TauTurn { run, prompt } => {
+                self.tau_turn(&run, prompt, cx)
+            }
             HostUpdate::BranchCode { main, fork, code } => {
                 self.set_branch_code(&main, &fork, code, cx)
             }
@@ -1107,6 +1127,23 @@ impl Workspace {
             }
             RunEvent::RunStart { run, .. } => {
                 self.resuming.remove(run);
+            }
+            RunEvent::ToolEnd {
+                run,
+                call_id,
+                is_error: false,
+                ..
+            } if self.proposes_landing(run, call_id) => {
+                self.proposed.insert(run.clone());
+            }
+            // A run that proposed its landing stopped: its landing card
+            // opens for the person to confirm (ADR 0014).
+            RunEvent::RunEnd {
+                run,
+                stop: StopReason::Stop,
+                ..
+            } if self.proposed.remove(run) => {
+                self.preview_landing(run, cx);
             }
             _ => {}
         }
@@ -1485,11 +1522,85 @@ impl Workspace {
         self.navigate(Route::Constitution { repo, rule }, cx);
     }
 
-    /// Asks what landing `run`, a child run, on its parent would do.
+    /// Asks what landing `run` would do: on its parent for a fork, into
+    /// trunk for a top-level run (ADR 0014).
     pub fn preview_landing(&mut self, run: &RunId, cx: &mut Context<Self>) {
         self.landings.insert(run.clone(), LandingState::Previewing);
-        cx.emit(WorkspaceEvent::PreviewLanding { run: run.clone() });
+        let root = self
+            .run(run)
+            .is_some_and(|view| view.origin == Origin::Root);
+        cx.emit(if root {
+            WorkspaceEvent::PreviewMerge { run: run.clone() }
+        } else {
+            WorkspaceEvent::PreviewLanding { run: run.clone() }
+        });
         cx.notify();
+    }
+
+    /// What merging `run` into trunk came to. Merged, its chat shows
+    /// what went into trunk, and it closes; resolving, its card says so
+    /// while its own turn resolves the conflicts.
+    pub fn merged(
+        &mut self,
+        run: &RunId,
+        result: Result<Merge, String>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(Merge::Merged { into, landing }) => {
+                self.landings.remove(run);
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| &view.id == run)
+                {
+                    view.items.push(Item::Merged(MergedCard::from_record(
+                        MergeRecord { into, landing },
+                    )));
+                }
+                self.closed.insert(run.clone());
+            }
+            Ok(Merge::Resolving { conflicts }) => {
+                self.landings
+                    .insert(run.clone(), LandingState::Resolving(conflicts));
+            }
+            Err(error) => {
+                self.landings
+                    .insert(run.clone(), LandingState::Preview(Err(error)));
+            }
+        }
+        cx.notify();
+    }
+
+    /// tau starts `run`'s next turn itself with `prompt`: resolving what a
+    /// landing or a merge left in conflict (ADR 0014). It shows as tau's.
+    pub fn tau_turn(
+        &mut self,
+        run: &RunId,
+        prompt: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(at) = self.runs.iter().position(|view| &view.id == run) else {
+            return;
+        };
+        let mut view = self.runs.remove(at);
+        self.closed.remove(run);
+        self.resuming.insert(run.clone(), view.status.clone());
+        view.items.push(Item::Tau(prompt));
+        view.status = RunStatus::Planning;
+        self.runs.insert(0, view);
+        cx.notify();
+    }
+
+    /// The run proposed its landing with `vcs_land` (ADR 0014): once it
+    /// stops, its landing card opens for the person to confirm.
+    fn proposes_landing(&self, run: &RunId, call_id: &str) -> bool {
+        self.run(run).is_some_and(|view| {
+            view.items.iter().any(|item| {
+                matches!(item, Item::Tool(card)
+                    if card.call_id == call_id
+                        && card.tool == "vcs_land"
+                        && matches!(card.state, ToolState::Done { .. }))
+            })
+        })
     }
 
     pub fn set_landing_preview(
@@ -1509,10 +1620,18 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Lands `run` on its parent.
+    /// Lands `run` on its parent, or merges it into trunk when it is a
+    /// top-level run.
     pub fn land(&mut self, run: &RunId, cx: &mut Context<Self>) {
         self.landings.insert(run.clone(), LandingState::Landing);
-        cx.emit(WorkspaceEvent::Land { run: run.clone() });
+        let root = self
+            .run(run)
+            .is_some_and(|view| view.origin == Origin::Root);
+        cx.emit(if root {
+            WorkspaceEvent::Merge { run: run.clone() }
+        } else {
+            WorkspaceEvent::Land { run: run.clone() }
+        });
         cx.notify();
     }
 
@@ -3075,10 +3194,14 @@ impl Workspace {
     fn sync_transcript(&mut self) {
         let width = self.transcript.viewport_bounds().size.width;
         self.transcript_width = (width > px(0.)).then_some(width);
-        let now = self
-            .current()
-            .filter(|_| self.route != Route::NewRun)
-            .map(|run| (run.id.clone(), run.items.len()));
+        // One more row, past the items, for an open landing's card.
+        let now =
+            self.current()
+                .filter(|_| self.route != Route::NewRun)
+                .map(|run| {
+                    let card = usize::from(self.landings.contains_key(&run.id));
+                    (run.id.clone(), run.items.len() + card)
+                });
         match (&now, &self.listed) {
             (Some((run, count)), Some((listed, before))) if run == listed => {
                 if count > before {
@@ -3099,6 +3222,36 @@ impl Workspace {
                 offset_in_item: px(0.),
             });
         }
+    }
+
+    /// Land on the parent, or merge into main: in the run's bar, for a
+    /// finished fork or top-level run (ADR 0014). It opens the landing
+    /// card at the end of the chat.
+    fn land_button(
+        &self,
+        run: &RunView,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Stateful<gpui::Div>> {
+        let target = ui::landing::target(self, run)?;
+        if run.status.is_live() || self.closed.contains(&run.id) {
+            return None;
+        }
+        let label = if run.origin == Origin::Root {
+            format!("Merge into {target}")
+        } else {
+            format!("Land on {target}")
+        };
+        let id = run.id.clone();
+        Some(
+            div()
+                .id("land")
+                .child(ui::button(label, ButtonKind::Primary, t))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.follow = true;
+                    ws.preview_landing(&id, cx)
+                })),
+        )
     }
 
     fn run_header(
@@ -3207,6 +3360,7 @@ impl Workspace {
                         })),
                 )
             })
+            .children(self.land_button(run, t, cx))
             .child(
                 div()
                     .id("fork")
@@ -3994,6 +4148,9 @@ pub enum LandingState {
     Landing,
     /// Asking before dropping the child.
     ConfirmDrop,
+    /// Merging into trunk waits on the run's own turn resolving these
+    /// conflicts.
+    Resolving(Vec<String>),
     /// Dropping now.
     Dropping,
 }

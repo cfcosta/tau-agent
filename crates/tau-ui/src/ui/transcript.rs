@@ -66,13 +66,22 @@ pub fn item(
     window: &Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
+    let edge = sp(if compact { 4. } else { 5. });
+    let side = sp(if compact { 4. } else { 6. });
+    // Past the items, the landing card, while a landing is open.
+    if index == run.items.len() {
+        return div()
+            .px(side)
+            .pt(sp(3.))
+            .pb(edge)
+            .children(super::landing::card(ws, run, t, compact, cx))
+            .into_any_element();
+    }
     let Some(item) = run.items.get(index) else {
         return div().into_any_element();
     };
     let empty = HashSet::new();
     let kept = ws.kept.get(&run.id).unwrap_or(&empty);
-    let edge = sp(if compact { 4. } else { 5. });
-    let side = sp(if compact { 4. } else { 6. });
     // What an item can take: the transcript less its sides.
     let room = ws.transcript_width().map(|width| width - side * 2.);
     div()
@@ -133,6 +142,10 @@ fn item_view(
         Item::ForkReady { fork } => {
             fork_ready(ws, run, fork, t, compact, cx).into_any_element()
         }
+        Item::Merged(card) => {
+            log_card::merged(card, t, compact).into_any_element()
+        }
+        Item::Tau(text) => tau_message(text, t).into_any_element(),
         Item::Rewrite {
             plugin,
             tokens_before,
@@ -679,6 +692,31 @@ fn tool(
 
 /// A finished fork, waiting in its parent's chat: what it is, and Land
 /// or Drop. A closed fork (landed or dropped) shows nothing.
+/// A message tau sent to start a turn itself (ADR 0014): resolving what
+/// a landing or a merge left in conflict.
+fn tau_message(text: &str, t: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(1.5))
+        .pl(sp(3.))
+        .border_l_2()
+        .border_color(t.accent_border)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(1.5))
+                .child(icon(Icon::Land, IconSize::SMALL, t.accent))
+                .child(mono("started by tau", Type::CAPTION, t.accent)),
+        )
+        .child(
+            div()
+                .typeset(Type::SMALL)
+                .child(crate::ui::prose(text, t.muted, t)),
+        )
+}
+
 fn fork_ready(
     ws: &Workspace,
     run: &RunView,

@@ -19,7 +19,8 @@
 //!   ending in a sign-in after 2.5 s, to watch the handshake land;
 //!   model-signed-in, plan-declined and not-eligible, its other states;
 //!   a phone pairing: pair, pair-scan, pair-address, pair-paired or
-//!   pair-unreachable; phones, the computer's Phones screen;
+//!   pair-unreachable; phones, the computer's Phones screen; land,
+//!   merge or resolving, a run's landing card (ADR 0014);
 //!   models, picker, run-picker, fork-picker, log, status, show or diff
 //!   (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
@@ -303,6 +304,49 @@ fn open_demo_screen(
                 tau_ui::workspace::PickerTarget::Run(demo::run_id()),
                 cx,
             );
+            return;
+        }
+        // Landing (ADR 0014): a fork's landing card, open, with a
+        // conflict; a finished run's merge into main; and that merge
+        // waiting on tau's resolving turn.
+        Some(open @ ("land" | "merge" | "resolving")) => {
+            use tau_ui::{update::HostUpdate, view::Merge};
+            let run = if open == "land" {
+                demo::fork_id()
+            } else {
+                demo::run_id()
+            };
+            workspace.navigate(Route::Run(run.clone()), cx);
+            match open {
+                "resolving" => {
+                    let conflicts = vec!["Cargo.lock".to_owned()];
+                    workspace.apply(
+                        HostUpdate::Merged {
+                            run: run.clone(),
+                            result: Ok(Merge::Resolving { conflicts }),
+                        },
+                        cx,
+                    );
+                    workspace.apply(
+                        HostUpdate::TauTurn {
+                            run,
+                            prompt: "Moving onto main left conflicts in \
+                                     `Cargo.lock`. Resolve them, and commit the \
+                                     resolution; main moves to this run once \
+                                     nothing conflicts."
+                                .into(),
+                        },
+                        cx,
+                    );
+                }
+                _ => workspace.apply(
+                    HostUpdate::LandingPreview {
+                        run,
+                        preview: Ok(demo::landing_preview(open == "land")),
+                    },
+                    cx,
+                ),
+            }
             return;
         }
         // The vcs_log card, open, with a change picked.

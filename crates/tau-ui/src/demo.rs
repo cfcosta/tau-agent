@@ -383,6 +383,47 @@ fn rotation_jitter() -> RunView {
     view
 }
 
+/// What landing the `backoff` fork, or merging `retry-after`, would do:
+/// two changes, and with `conflict`, one of them in conflict.
+pub fn landing_preview(conflict: bool) -> tau_vcs::Landing {
+    let change =
+        |change_id: &str, commit_id: &str, description: &str, conflict| {
+            tau_vcs::ChangeInfo {
+                change_id: change_id.into(),
+                commit_id: commit_id.into(),
+                description: description.into(),
+                empty: false,
+                conflict,
+                immutable: false,
+                working_copy: false,
+                divergent: false,
+                bookmarks: Vec::new(),
+            }
+        };
+    tau_vcs::Landing {
+        changes: vec![
+            change(
+                "tnrlwzvoqkmxpulsyvrnzotqwmkpxsly",
+                "5c1e9a0b77d24f3e8a61f0c2b9d4e7a3f10c8b26",
+                "feat(tau-ai): cap backoff at 30 s, honor retry-after when present\n",
+                conflict,
+            ),
+            change(
+                "vmpxuqskrlonwyzptvqmsxkkoprunwlz",
+                "9f02b6d4c1e87a53b0d9f6e2a4c7b1d8e3f50a19",
+                "feat(tau-ai): jittered exponential backoff\n",
+                false,
+            ),
+        ],
+        conflicts: if conflict {
+            vec!["crates/tau-ai/src/retry.rs".into()]
+        } else {
+            Vec::new()
+        },
+        head: "5c1e9a0b77d24f3e8a61f0c2b9d4e7a3f10c8b26".into(),
+    }
+}
+
 pub fn fork_id() -> RunId {
     RunId(Arc::from("rotation-jitter/backoff"))
 }
@@ -595,6 +636,8 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
         "pair-address" => Route::Pair(PairStep::Address),
         "pair-paired" => Route::Pair(PairStep::Paired),
         "pair-unreachable" => Route::Pair(PairStep::Unreachable),
+        "land" => Route::Run(fork_id()),
+        "merge" | "resolving" => Route::Run(run_id()),
         "pr" | "pr-opened" => Route::PullRequest(run_id()),
         "models" => Route::Models,
         _ => return None,
@@ -2112,13 +2155,13 @@ fn change_log() -> ToolOutput {
         (
             "qzpxumwywmppokoyozvookknoxqqksqt",
             "7a8d41bed440e50454f31af3176813e02ea68ef7",
-            "tau: run retry-after turn 2\n",
+            "refactor(tau-ai): the policy takes the parsed hint\n",
             "",
         ),
         (
             "sqyoxnwyumrxmqtnovosoyrnwzprpxwu",
             "d6ba2b0aee0ca923732881584d8c4fa2815d2802",
-            "tau: run retry-after turn 1\n",
+            "feat(tau-ai): parse retry-after as seconds or a date\n",
             "",
         ),
         (
@@ -2298,7 +2341,7 @@ fn change_status() -> ToolOutput {
     let parent = vcs_change(
         "qzpxumwywmppokoyozvookknoxqqksqt",
         "7a8d41bed440e50454f31af3176813e02ea68ef7",
-        "tau: run retry-after turn 2\n",
+        "refactor(tau-ai): the policy takes the parsed hint\n",
     );
     let mut working_copy =
         vcs_change(LOG_PICKED, "5e0c93f1b27a4d86c2f0e9b1a37d58c46f21e0b9", "");
@@ -2306,7 +2349,7 @@ fn change_status() -> ToolOutput {
     let files = diff_files(HONOR_RETRY_AFTER);
     let text = format!(
         "Working copy (@): onvkmqwosvvz 5e0c93f1b27a @ (no description set)\n\
-         Parent (@-):      qzpxumwywmpp 7a8d41bed440 tau: run retry-after turn 2\n\
+         Parent (@-):      qzpxumwywmpp 7a8d41bed440 refactor(tau-ai): the policy takes the parsed hint\n\
          Working copy changes:\n{}",
         files
             .iter()
@@ -2346,7 +2389,7 @@ fn change_show() -> ToolOutput {
     let head = format!(
         "Change ID: {LOG_PICKED}\nCommit ID: 28b5b7a767c76fb008f86bebb2737f6a6f0fb23c\n\
          Author: tau <tau@localhost>\n\
-         Parent: qzpxumwywmpp 7a8d41bed440 tau: run retry-after turn 2\n\n{}\n",
+         Parent: qzpxumwywmpp 7a8d41bed440 refactor(tau-ai): the policy takes the parsed hint\n\n{}\n",
         description
             .lines()
             .map(|line| format!("    {line}"))
@@ -2365,7 +2408,7 @@ fn change_show() -> ToolOutput {
             "parents": [vcs_change(
                 "qzpxumwywmppokoyozvookknoxqqksqt",
                 "7a8d41bed440e50454f31af3176813e02ea68ef7",
-                "tau: run retry-after turn 2\n",
+                "refactor(tau-ai): the policy takes the parsed hint\n",
             )],
             "author": { "name": "tau", "email": "tau@localhost" },
         }),

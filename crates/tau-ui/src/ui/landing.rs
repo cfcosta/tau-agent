@@ -1,19 +1,88 @@
-//! Landing or dropping a finished fork (ADR 0009): the controls the
-//! compare screen and the fork's card in its parent's chat share.
+//! Landing a finished run (ADR 0009, 0014): a fork lands on the run it
+//! forked, a top-level run merges into trunk. The controls the compare
+//! screen, the fork's card in its parent's chat and the landing card at
+//! the end of the run's own chat share.
 
-use gpui::{Context, SharedString, div, prelude::*};
+use gpui::{Context, SharedString, div, prelude::*, px};
 
 use crate::{
+    assets::Icon,
     change_log::Change,
-    theme::{Design as _, Theme, Type, sp},
+    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
     ui::{self, components::ButtonKind, log_card},
     view::{Origin, RunView},
     workspace::{LandingState, Workspace},
 };
 
-/// Landing a finished fork on the run it forked (ADR 0009): a button,
-/// then the preview (what would land, and what would conflict), then
-/// Land or Cancel.
+/// Where `run` lands, as its buttons name it: its parent's title for a
+/// fork, `main` for a top-level run. None for a sub-agent, which lands
+/// as it returns.
+pub fn target(ws: &Workspace, run: &RunView) -> Option<String> {
+    match &run.origin {
+        Origin::Fork { from, .. } => Some(ws.run(from).map_or_else(
+            || "its parent".to_owned(),
+            |view| view.title.clone(),
+        )),
+        Origin::Root => Some("main".to_owned()),
+        Origin::SubAgent { .. } => None,
+    }
+}
+
+/// The landing card at the end of `run`'s own chat, while a landing is
+/// open: what would land, as `vcs_log` draws it, and Land or Cancel.
+pub fn card(
+    ws: &Workspace,
+    run: &RunView,
+    t: &Theme,
+    compact: bool,
+    cx: &mut Context<Workspace>,
+) -> Option<gpui::Div> {
+    let target = target(ws, run)?;
+    let body = controls(ws, run, t, compact, cx)?;
+    let merge = run.origin == Origin::Root;
+    Some(
+        div()
+            .flex()
+            .flex_col()
+            .border_1()
+            .border_color(t.accent_border)
+            .rounded(radius::BOX)
+            .bg(t.card)
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(2.))
+                    .min_h(px(40.))
+                    .px(sp(3.))
+                    .child(ui::icon(Icon::Land, IconSize::COMPACT, t.accent))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .truncate()
+                            .typeset(Type::SMALL)
+                            .font_weight(weight::STRONG)
+                            .child(if merge {
+                                format!("Merge {} into {target}", run.title)
+                            } else {
+                                format!("Land {} on {target}", run.title)
+                            }),
+                    ),
+            )
+            .child(
+                body.px(sp(3.))
+                    .py(sp(2.5))
+                    .border_t_1()
+                    .border_color(t.border),
+            ),
+    )
+}
+
+/// Landing a finished run: a button, then the preview (what would land,
+/// and what would conflict), then Land or Cancel. A fork can be dropped
+/// instead.
 pub fn controls(
     ws: &Workspace,
     run: &RunView,
@@ -21,15 +90,14 @@ pub fn controls(
     compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Option<gpui::Div> {
-    let Origin::Fork { from, .. } = &run.origin else {
-        return None;
-    };
-    if run.status.is_live() {
+    let parent = target(ws, run)?;
+    // A run resolving its merge is live, and says so.
+    let resolving =
+        matches!(ws.landing(&run.id), Some(LandingState::Resolving(_)));
+    if run.status.is_live() && !resolving {
         return None;
     }
-    let parent = ws
-        .run(from)
-        .map_or_else(|| "its parent".to_owned(), |view| view.title.clone());
+    let merge = run.origin == Origin::Root;
     let id = run.id.clone();
     let button = |label: String, kind: ButtonKind, key: &str| {
         div()
@@ -47,7 +115,11 @@ pub fn controls(
                 .gap(sp(2.))
                 .child(
                     button(
-                        format!("Land on {parent}"),
+                        if merge {
+                            format!("Merge into {parent}")
+                        } else {
+                            format!("Land on {parent}")
+                        },
                         ButtonKind::Primary,
                         "land",
                     )
@@ -55,16 +127,18 @@ pub fn controls(
                         move |ws, _, _, cx| ws.preview_landing(&id, cx),
                     )),
                 )
-                .child(
-                    button(
-                        "Drop this fork".into(),
-                        ButtonKind::Secondary,
-                        "drop",
+                .when(!merge, |row| {
+                    row.child(
+                        button(
+                            "Drop this fork".into(),
+                            ButtonKind::Secondary,
+                            "drop",
+                        )
+                        .on_click(cx.listener(
+                            move |ws, _, _, cx| ws.ask_drop(&drop_id, cx),
+                        )),
                     )
-                    .on_click(cx.listener(
-                        move |ws, _, _, cx| ws.ask_drop(&drop_id, cx),
-                    )),
-                )
+                })
         }
         Some(LandingState::ConfirmDrop) => {
             let (drop_id, cancel_id) = (id.clone(), id.clone());
@@ -112,9 +186,20 @@ pub fn controls(
         Some(LandingState::Previewing) => {
             caption("Checking what would land…".into(), t.dim)
         }
+        Some(LandingState::Landing) if merge => {
+            caption(format!("Merging into {parent}…"), t.dim)
+        }
         Some(LandingState::Landing) => {
             caption(format!("Landing on {parent}…"), t.dim)
         }
+        Some(LandingState::Resolving(conflicts)) => caption(
+            format!(
+                "Resolving conflicts in {} in this run's own turn; {parent} \
+                 moves to it once nothing conflicts.",
+                conflicts.join(", ")
+            ),
+            t.accent,
+        ),
         Some(LandingState::Preview(Err(error))) => div()
             .flex()
             .flex_col()
@@ -129,13 +214,19 @@ pub fn controls(
         Some(LandingState::Preview(Ok(preview))) => {
             let changes: Vec<Change> =
                 preview.changes.iter().cloned().map(Change::new).collect();
-            let summary = match changes.len() {
-                0 => format!("Nothing to land: {parent} has all of it."),
-                1 => format!(
-                    "1 change lands on {parent}, on top of its latest turn."
+            let summary = match (merge, changes.len()) {
+                (_, 0) => format!("Nothing to land: {parent} has all of it."),
+                (true, 1) => format!(
+                    "1 change goes onto {parent}, and {parent} moves to it."
                 ),
-                n => format!(
-                    "{n} changes land on {parent}, on top of its latest turn."
+                (true, n) => format!(
+                    "{n} changes go onto {parent}, and {parent} moves to them."
+                ),
+                (false, 1) => format!(
+                    "1 change lands on {parent}, on top of its latest change."
+                ),
+                (false, n) => format!(
+                    "{n} changes land on {parent}, on top of its latest change."
                 ),
             };
             let (land_id, cancel_id) = (id.clone(), id.clone());
@@ -152,11 +243,19 @@ pub fn controls(
                 )
                 .when(!preview.conflicts.is_empty(), |column| {
                     column.child(caption(
-                        format!(
-                            "Conflicts in {}. They land as conflict markers \
-                             for {parent}'s next turn to resolve.",
-                            preview.conflicts.join(", ")
-                        ),
+                        if merge {
+                            format!(
+                                "Conflicts in {}. This run resolves them in a \
+                                 turn tau starts, then {parent} moves to it.",
+                                preview.conflicts.join(", ")
+                            )
+                        } else {
+                            format!(
+                                "Conflicts in {}. Landing starts {parent}'s \
+                                 next turn to resolve them and commit the result.",
+                                preview.conflicts.join(", ")
+                            )
+                        },
                         t.red,
                     ))
                 })
@@ -167,10 +266,11 @@ pub fn controls(
                         .when(!changes.is_empty(), |row| {
                             row.child(
                                 button(
-                                    if preview.conflicts.is_empty() {
-                                        "Land".into()
-                                    } else {
-                                        "Land with conflicts".into()
+                                    match (merge, preview.conflicts.is_empty()) {
+                                        (true, true) => format!("Merge into {parent}"),
+                                        (true, false) => "Merge and resolve".into(),
+                                        (false, true) => "Land".into(),
+                                        (false, false) => "Land and resolve".into(),
                                     },
                                     ButtonKind::Primary,
                                     "confirm-land",

@@ -48,6 +48,8 @@ pub enum Icon {
     Phone,
     /// Opens a page outside tau.
     External,
+    /// Lands a run: on its parent, or into main.
+    Land,
 }
 
 impl Icon {
@@ -90,6 +92,7 @@ impl Icon {
             Self::Offline => "icons/offline.svg",
             Self::Phone => "icons/phone.svg",
             Self::External => "icons/external.svg",
+            Self::Land => "icons/land.svg",
         }
     }
 
@@ -174,6 +177,7 @@ impl Icon {
             Self::Offline => {
                 r#"<path d="M2 2l20 20M8.5 16.5a5 5 0 017 0M5 12.9a10 10 0 015.2-2.8M19 12.9a10 10 0 00-2.3-1.6M12 20h.01"/>"#
             }
+            Self::Land => r#"<path d="M12 20V8M7 12l5-5 5 5M5 4h14"/>"#,
             Self::External => {
                 r#"<path d="M14 4h6v6M20 4l-8.5 8.5M18 14.5V20H4V6h5.5"/>"#
             }
@@ -183,7 +187,7 @@ impl Icon {
         }
     }
 
-    const ALL: [Self; 37] = [
+    const ALL: [Self; 38] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -221,6 +225,7 @@ impl Icon {
         Self::Offline,
         Self::Phone,
         Self::External,
+        Self::Land,
     ];
 
     fn svg(self) -> String {

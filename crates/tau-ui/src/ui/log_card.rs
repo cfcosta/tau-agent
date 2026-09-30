@@ -9,7 +9,7 @@ use crate::{
     assets::Icon,
     change_log::{Change, ChangeLog, ScopeRun},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    view::{LandedCard, RunView, ToolCard},
+    view::{LandedCard, MergedCard, RunView, ToolCard},
     workspace::Workspace,
 };
 
@@ -497,6 +497,53 @@ pub fn landed(
 
 /// What a landing brought: its changes as they sit on the stack, and
 /// the files left with conflict markers.
+/// A run's merge into trunk (ADR 0014): its changes, now on trunk.
+pub fn merged(card: &MergedCard, t: &Theme, compact: bool) -> Div {
+    let count = match card.changes.len() {
+        1 => "1 change".to_owned(),
+        n => format!("{n} changes"),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .border_1()
+        .border_color(t.border)
+        .rounded(radius::BOX)
+        .bg(t.card)
+        .overflow_hidden()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .min_h(px(36.))
+                .px(sp(3.))
+                .child(icon(Icon::Land, IconSize::COMPACT, t.green))
+                .child(mono("merged", Type::CAPTION, t.green).flex_shrink_0())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .typeset(Type::SMALL)
+                        .text_color(t.text_soft)
+                        .child(format!("into {}", card.into)),
+                )
+                .child(mono(count, Type::CAPTION, t.dim).flex_shrink_0()),
+        )
+        .when(!card.changes.is_empty(), |column| {
+            column.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .py(sp(1.5))
+                    .border_t_1()
+                    .border_color(t.border)
+                    .children(stack_rows(&card.changes, t, compact)),
+            )
+        })
+}
+
 pub fn landed_body(card: &LandedCard, t: &Theme, compact: bool) -> Div {
     div()
         .flex()

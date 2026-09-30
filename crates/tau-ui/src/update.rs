@@ -15,7 +15,7 @@ use crate::{
     catalog::{Catalog, Repo},
     pull_request::{PrState, PullRequest},
     setup::SetupUpdate,
-    view::{CodeState, RunView},
+    view::{CodeState, Merge, RunView},
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -59,6 +59,17 @@ pub enum HostUpdate {
     Dropped {
         run: RunId,
         result: Result<(), String>,
+    },
+    /// What merging a top-level run into trunk came to (ADR 0014).
+    Merged {
+        run: RunId,
+        result: Result<Merge, String>,
+    },
+    /// tau started a run's next turn itself, with this message: resolving
+    /// what a landing or a merge left in conflict (ADR 0014).
+    TauTurn {
+        run: RunId,
+        prompt: String,
     },
     /// The code of a run and one of its forks, to compare.
     BranchCode {

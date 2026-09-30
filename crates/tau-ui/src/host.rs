@@ -15,7 +15,7 @@
 //! runs come back from the store under theirs.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -98,6 +98,9 @@ use crate::{
         LANDING_RECORD,
         LandingRecord,
         Limits as ViewLimits,
+        MERGE_RECORD,
+        Merge,
+        MergeRecord,
         Origin,
         PlanField,
         PluginStatus,
@@ -453,6 +456,12 @@ pub struct Host {
     workspaces: Arc<Mutex<HashMap<RunId, String>>>,
     /// The model each run of this session runs on.
     choices: Arc<Mutex<HashMap<RunId, ModelChoice>>>,
+    /// Runs merging into trunk that wait on their own turn to resolve
+    /// conflicts: once it ends, the merge goes on (ADR 0014).
+    merging: Arc<Mutex<HashSet<RunId>>>,
+    /// Runs whose `RunEnd` went by while their outcome is still being
+    /// stored: they stop in a moment.
+    ending: Arc<Mutex<HashSet<RunId>>>,
     /// The user's model choices, as loaded and last saved.
     settings: Arc<Mutex<ModelSettings>>,
     events: mpsc::UnboundedSender<RunEvent>,
@@ -622,6 +631,8 @@ impl Host {
             last_update: Arc::default(),
             drafts: Mutex::default(),
             prs: Arc::default(),
+            merging: Arc::default(),
+            ending: Arc::default(),
             runs: Arc::default(),
             workspaces: Arc::default(),
             events,
@@ -901,6 +912,19 @@ impl Host {
     }
 
     /// Whether `run` is still going.
+    /// Waits for a run whose `RunEnd` went by to finish storing its
+    /// outcome, a moment at most. A run still working is not waited on.
+    fn settle(&self, run: &RunId) {
+        for _ in 0..500 {
+            if !self.ending.lock().expect("not poisoned").contains(run)
+                || !self.is_running(run)
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     pub fn is_running(&self, run: &RunId) -> bool {
         self.runs.lock().expect("not poisoned").contains_key(run)
     }
@@ -1673,6 +1697,179 @@ impl Host {
         Ok(landing)
     }
 
+    /// Starts `run`'s next turn itself, with `prompt`: the turn that
+    /// resolves a landing's or a merge's conflicts (ADR 0014), on the
+    /// model the run was on.
+    pub fn start_resolving(
+        &self,
+        run: &RunId,
+        prompt: &str,
+    ) -> anyhow::Result<()> {
+        let choice = self
+            .choices
+            .lock()
+            .expect("not poisoned")
+            .get(run)
+            .cloned()
+            .unwrap_or_else(|| {
+                ModelChoice::new(self.config.default_model(), Effort::Auto)
+            });
+        self.resume(run, prompt, &choice)
+    }
+
+    /// A top-level run's workspace, for merging it into trunk: its
+    /// project, its `Vcs`, and the workspace's name.
+    fn merge_plan(
+        &self,
+        run: &RunId,
+    ) -> anyhow::Result<(Project, tau_vcs::Vcs, String)> {
+        self.settle(run);
+        if self.is_running(run) {
+            anyhow::bail!("{} is still running; merge it once it stops", run.0);
+        }
+        let project = self
+            .slot_of_run(run)
+            .project
+            .wait()
+            .ok_or_else(|| anyhow::anyhow!("The run has no project"))?;
+        let known = self
+            .workspaces
+            .lock()
+            .expect("not poisoned")
+            .get(run)
+            .cloned();
+        let name = match known {
+            Some(name) => name,
+            None => self
+                .link(run, None)?
+                .map(|(_, link)| link.workspace)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("{} has not finished a turn", run.0)
+                })?,
+        };
+        if !project.workspaces()?.contains(&name) {
+            anyhow::bail!("The run's workspace is gone");
+        }
+        self.no_open_children(run, &project)?;
+        let vcs = tau_vcs::Vcs::open(project.workspace_dir(&name), identity())?;
+        Ok((project, vcs, name))
+    }
+
+    /// What merging `run`, a top-level run, into trunk would do: its
+    /// changes as they would be on trunk, and what would conflict.
+    pub fn preview_merge(&self, run: &RunId) -> anyhow::Result<Landing> {
+        let (project, vcs, _) = self.merge_plan(run)?;
+        let trunk = project.trunk()?;
+        let preview = self.runtime.block_on(vcs.move_onto(
+            &trunk,
+            bookmark(run),
+            false,
+        ))?;
+        Ok(preview)
+    }
+
+    /// Merges `run`, a top-level run, into trunk (ADR 0014): its changes
+    /// move onto trunk's newest commit. Without conflicts, trunk moves
+    /// forward to it and the run closes. With them, the run resolves
+    /// them in a turn of its own ([`Self::start_resolving`]), and the
+    /// merge goes on when that turn ends ([`Self::finish_merge`]).
+    pub fn merge(&self, run: &RunId) -> anyhow::Result<Merge> {
+        let (project, vcs, name) = self.merge_plan(run)?;
+        let working_copy = self.runtime.block_on(vcs.working_copy())?;
+        if !working_copy.paths.is_empty() {
+            anyhow::bail!(
+                "The run has uncommitted work in {}; ask it to commit first",
+                working_copy.paths.join(", ")
+            );
+        }
+        let trunk = project.trunk()?;
+        let moved = self.runtime.block_on(vcs.move_onto(
+            &trunk,
+            bookmark(run),
+            true,
+        ))?;
+        if moved.changes.is_empty() {
+            anyhow::bail!("Nothing to merge: main has all of it");
+        }
+        if !moved.conflicts.is_empty() {
+            self.merging
+                .lock()
+                .expect("not poisoned")
+                .insert(run.clone());
+            return Ok(Merge::Resolving {
+                conflicts: moved.conflicts,
+            });
+        }
+        self.complete_merge(run, &project, &name, moved)
+    }
+
+    /// Goes on with a merge whose resolving turn ended: trunk moves
+    /// forward once nothing conflicts. `None` when `run` is not merging.
+    pub fn finish_merge(&self, run: &RunId) -> Option<anyhow::Result<Merge>> {
+        if !self.merging.lock().expect("not poisoned").contains(run) {
+            return None;
+        }
+        Some((|| {
+            let (project, vcs, name) = self.merge_plan(run)?;
+            // Trunk may have moved again meanwhile: move onto it again.
+            let trunk = project.trunk()?;
+            let moved = self.runtime.block_on(vcs.move_onto(
+                &trunk,
+                bookmark(run),
+                true,
+            ))?;
+            let working_copy = self.runtime.block_on(vcs.working_copy())?;
+            if !moved.conflicts.is_empty() || !working_copy.paths.is_empty() {
+                self.merging.lock().expect("not poisoned").remove(run);
+                anyhow::bail!(
+                    "The merge still has conflicts or uncommitted work ({}); \
+                     tell the run to resolve and commit them, then merge again",
+                    moved
+                        .conflicts
+                        .iter()
+                        .chain(&working_copy.paths)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            self.complete_merge(run, &project, &name, moved)
+        })())
+    }
+
+    /// Moves trunk forward to the merged run, records the merge in its
+    /// chat, and closes it.
+    fn complete_merge(
+        &self,
+        run: &RunId,
+        project: &Project,
+        name: &str,
+        moved: Landing,
+    ) -> anyhow::Result<Merge> {
+        let into = project.fast_forward_trunk(&moved.head)?;
+        self.merging.lock().expect("not poisoned").remove(run);
+        let record = MergeRecord {
+            into: into.clone(),
+            landing: moved.clone(),
+        };
+        self.runtime.block_on(self.store.append_turn(
+            &run.0,
+            &[Entry::Plugin {
+                plugin: MERGE_RECORD.to_owned(),
+                body: serde_json::to_string(&record)?,
+            }],
+            TurnUsage::default(),
+        ))?;
+        project.forget_workspace(name)?;
+        project.remove_bookmark(&bookmark(run))?;
+        self.workspaces.lock().expect("not poisoned").remove(run);
+        self.set_closed(run, true)?;
+        Ok(Merge::Merged {
+            into,
+            landing: moved,
+        })
+    }
+
     /// Drops `child`: abandons its own changes, the ones its parent does
     /// not have, and closes it like a landing does (ADR 0009). Both runs
     /// must be idle. The operation log keeps what was abandoned.
@@ -1773,7 +1970,7 @@ impl Host {
 
     /// `run`'s title: the one a model wrote, or until then the
     /// placeholder for the words it started with.
-    fn title_of(&self, run: &RunId) -> anyhow::Result<String> {
+    pub(crate) fn title_of(&self, run: &RunId) -> anyhow::Result<String> {
         let written = self
             .runtime
             .block_on(self.store.run(&run.0))?
@@ -1812,6 +2009,7 @@ impl Host {
     fn landing(&self, child: &RunId) -> anyhow::Result<LandingPlan> {
         let parent = self.parent_of(child)?;
         for run in [child, &parent] {
+            self.settle(run);
             if self.is_running(run) {
                 anyhow::bail!("{} is still running; land once it stops", run.0);
             }
@@ -1972,6 +2170,7 @@ impl Host {
         }
         let events = self.events.clone();
         let runs = self.runs.clone();
+        let ending = self.ending.clone();
         self.runtime.spawn(async move {
             {
                 let mut stream = run.events();
@@ -1985,6 +2184,7 @@ impl Host {
             // The outcome is stored by the run; the events said it all.
             let _ = run.outcome().await;
             runs.lock().expect("not poisoned").remove(&id);
+            ending.lock().expect("not poisoned").remove(&id);
         });
         id
     }
@@ -2476,9 +2676,54 @@ impl Host {
                     });
                 }
                 WorkspaceEvent::Land { run } => {
+                    let parent = handler.parent_of(run).ok();
                     let landed =
                         handler.land(run).map_err(|error| format!("{error:#}"));
+                    let conflicts = landed
+                        .as_ref()
+                        .map(|landing| landing.conflicts.clone())
+                        .unwrap_or_default();
                     workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Landed { run: run.clone(), landing: landed }, cx));
+                    // What conflicts, the parent resolves, in a turn tau
+                    // starts (ADR 0014).
+                    if let Some(parent) = parent.filter(|_| !conflicts.is_empty()) {
+                        let title = handler.title_of(run).unwrap_or_else(|_| run.0.to_string());
+                        let prompt = format!(
+                            "Landing `{title}` left conflicts in {}. Resolve them, \
+                             and commit the resolution.",
+                            code_list(&conflicts)
+                        );
+                        resolve(&handler, &parent, prompt, &workspace, cx);
+                    }
+                }
+                WorkspaceEvent::PreviewMerge { run } => {
+                    let preview = handler
+                        .preview_merge(run)
+                        .map_err(|error| format!("{error:#}"));
+                    workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::LandingPreview { run: run.clone(), preview }, cx)
+                    });
+                }
+                WorkspaceEvent::Merge { run } => {
+                    let merged = handler.merge(run).map_err(|error| format!("{error:#}"));
+                    let resolving = match &merged {
+                        Ok(Merge::Resolving { conflicts }) => Some(conflicts.clone()),
+                        _ => None,
+                    };
+                    workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::Merged { run: run.clone(), result: merged }, cx)
+                    });
+                    // Trunk has no model: the run resolves, and the merge
+                    // goes on when its turn ends.
+                    if let Some(conflicts) = resolving {
+                        let prompt = format!(
+                            "Moving onto main left conflicts in {}. Resolve them, \
+                             and commit the resolution; main moves to this run once \
+                             nothing conflicts.",
+                            code_list(&conflicts)
+                        );
+                        resolve(&handler, run, prompt, &workspace, cx);
+                    }
                 }
                 WorkspaceEvent::DropChild { run } => {
                     let dropped = handler
@@ -2565,8 +2810,28 @@ impl Host {
                     } => host.refusal(),
                     _ => None,
                 };
+                if let RunEvent::RunEnd { run, .. } = &event {
+                    host.ending
+                        .lock()
+                        .expect("not poisoned")
+                        .insert(run.clone());
+                }
+                // A merge waiting on the run's resolving turn goes on.
+                let merge = match &event {
+                    RunEvent::RunEnd {
+                        run, parent: None, ..
+                    } => host
+                        .finish_merge(run)
+                        .map(|merged| (run.clone(), merged)),
+                    _ => None,
+                };
                 let applied = workspace.update(cx, |ws, cx| {
                     ws.apply(HostUpdate::Event(event.clone()), cx);
+                    if let Some((run, merged)) = merge {
+                        let result =
+                            merged.map_err(|error| format!("{error:#}"));
+                        ws.apply(HostUpdate::Merged { run, result }, cx);
+                    }
                     if let Some(refusal) = &refusal {
                         ws.apply(HostUpdate::PlanRefusal(refusal.clone()), cx);
                     }
@@ -2640,6 +2905,49 @@ fn title_in_background(
         });
     })
     .detach();
+}
+
+/// `paths` as the model reads them: `a.rs`, `b.rs` and `c.rs`.
+fn code_list(paths: &[String]) -> String {
+    let quoted: Vec<String> =
+        paths.iter().map(|path| format!("`{path}`")).collect();
+    match quoted.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// Starts `run`'s resolving turn with `prompt` (ADR 0014): its chat
+/// shows the message as tau's, then the host resumes it.
+fn resolve(
+    host: &Arc<Host>,
+    run: &RunId,
+    prompt: String,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    workspace.update(cx, |ws, cx| {
+        ws.apply(
+            HostUpdate::TauTurn {
+                run: run.clone(),
+                prompt: prompt.clone(),
+            },
+            cx,
+        )
+    });
+    if let Err(error) = host.start_resolving(run, &prompt) {
+        workspace.update(cx, |ws, cx| {
+            ws.apply(HostUpdate::ResumeFailed(run.clone()), cx);
+            ws.apply(
+                HostUpdate::alert(
+                    "Could not start resolving the conflicts",
+                    format!("{error:#}"),
+                ),
+                cx,
+            );
+        });
+    }
 }
 
 fn update_in_background(
@@ -3337,7 +3645,8 @@ async fn stored_view(
             Entry::Plugin { plugin, body }
                 if plugin == tau_reasoning::NAME
                     || plugin == tau_constitution::NAME
-                    || plugin == LANDING_RECORD =>
+                    || plugin == LANDING_RECORD
+                    || plugin == MERGE_RECORD =>
             {
                 serde_json::from_str(&body)
                     .ok()
