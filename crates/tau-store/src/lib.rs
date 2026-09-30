@@ -176,7 +176,9 @@ pub struct AgentCost {
 }
 
 /// What a query returned, as text.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 pub struct Table {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,

@@ -16,7 +16,7 @@ use crate::{
     retry::{Class, Recovery},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Refusal {
     pub recovery: Recovery,
     /// The HTTP status, when the refusal came as an HTTP response or a

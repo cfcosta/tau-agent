@@ -261,7 +261,7 @@ impl Record {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Status {
     /// Checked each time the model stops.
     Active,
@@ -272,7 +272,7 @@ pub enum Status {
 }
 
 /// A conversation's goal, folded from its records.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Goal {
     pub condition: String,
     pub max_continuations: u32,

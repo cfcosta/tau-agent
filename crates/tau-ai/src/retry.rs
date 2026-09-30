@@ -102,7 +102,16 @@ pub enum Class {
 }
 
 /// What to do after a failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum Recovery {
     /// A temporary failure: keep the credentials and retry with bounded
     /// backoff.
