@@ -90,6 +90,78 @@ pub struct Theme {
     pub marks: [Hsla; 6],
     /// A command's terminal, drawn inside its card.
     pub term: TermLook,
+    /// Onboarding's look: the handshake screens.
+    pub setup: SetupLook,
+}
+
+/// How onboarding looks: a near-black ground with faint rings and a glow
+/// behind the handshake, light primary buttons, and dark tiles.
+#[derive(Debug, Clone)]
+pub struct SetupLook {
+    /// Behind everything.
+    pub ground: Hsla,
+    /// A service's tile in the handshake, and small icon tiles.
+    pub tile: Hsla,
+    /// Chips, secondary buttons, code cells.
+    pub surface: Hsla,
+    /// Around chips and cards.
+    pub surface_border: Hsla,
+    /// Cards over the rings: see-through enough to show them.
+    pub glass: Hsla,
+    /// Between rows of a card.
+    pub divider: Hsla,
+    /// Behind a field inside a card.
+    pub field: Hsla,
+    /// A progress segment not reached yet.
+    pub track: Hsla,
+    /// The main action's fill, and the headline.
+    pub light: Hsla,
+    /// Text on [`Self::light`].
+    pub on_light: Hsla,
+    /// Secondary text on chips and steps.
+    pub soft: Hsla,
+    /// Footnotes and the top bar's words.
+    pub faint: Hsla,
+    /// The labels of progress segments not reached yet.
+    pub idle: Hsla,
+    /// A service tile's edge when connected.
+    pub green_edge: Hsla,
+    /// The code of a refusal, under a blocked handshake.
+    pub refusal: Hsla,
+    /// How strong the rings are, from the inside out.
+    pub ring_alphas: [f32; 5],
+    /// The rings' radii on a desktop, from the inside out; a phone
+    /// scales them by [`Self::compact_scale`].
+    pub ring_radii: [f32; 5],
+    pub compact_scale: f32,
+    /// How strong the glow behind the handshake is.
+    pub glow_alpha: f32,
+}
+
+impl SetupLook {
+    fn graphite() -> Self {
+        Self {
+            ground: c(rgb(0x0b0c0e)),
+            tile: c(rgb(0x17181c)),
+            surface: c(rgb(0x131417)),
+            surface_border: c(rgb(0x23242a)),
+            glass: c(rgba(0x131417d9)),
+            divider: c(rgb(0x1d1e23)),
+            field: c(rgb(0x0f1012)),
+            track: c(rgb(0x2a2b30)),
+            light: c(rgb(0xf4f3ee)),
+            on_light: c(rgb(0x111111)),
+            soft: c(rgb(0xbdbbb5)),
+            faint: c(rgb(0x6f6d68)),
+            idle: c(rgb(0x55544f)),
+            green_edge: c(rgb(0x2d4a33)),
+            refusal: c(rgb(0x7a5a55)),
+            ring_alphas: [0.16, 0.10, 0.07, 0.05, 0.035],
+            ring_radii: [150., 250., 360., 480., 610.],
+            compact_scale: 0.45,
+            glow_alpha: 0.10,
+        }
+    }
 }
 
 /// How a `bash` card's terminal looks: a darker ground of its own, and
@@ -212,6 +284,7 @@ impl Theme {
                 c(rgb(0x7ec8c8)),
             ],
             term: TermLook::graphite(),
+            setup: SetupLook::graphite(),
         }
     }
 
@@ -319,6 +392,23 @@ impl Type {
     pub const CODE_LARGE: Self = Self::new(26.).monospace();
     /// A code to read out and type, on a desktop.
     pub const CODE_HERO: Self = Self::new(40.).monospace();
+    /// One character of a code, in its own cell, during onboarding.
+    pub const CODE_CELL: Self = Self::new(30.).monospace();
+    /// Onboarding's headline under the handshake.
+    pub const HERO: Self = Self::new(44.).weight(FontWeight::MEDIUM);
+    /// The welcome's headline.
+    pub const HERO_LARGE: Self = Self::new(48.).weight(FontWeight::MEDIUM);
+    /// Onboarding's headline over a form.
+    pub const HERO_MEDIUM: Self = Self::new(40.).weight(FontWeight::MEDIUM);
+    /// Onboarding's headline over a list.
+    pub const HERO_SMALL: Self = Self::new(36.).weight(FontWeight::MEDIUM);
+
+    /// This style at another size: for text that scales with what holds
+    /// it, as τ does with its tile.
+    pub const fn sized(mut self, size: f32) -> Self {
+        self.size = size;
+        self
+    }
 
     /// This style in the mono face.
     pub const fn mono(self) -> Self {
