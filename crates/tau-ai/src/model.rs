@@ -396,6 +396,72 @@ pub fn find(id: &str) -> Option<&'static Model> {
     MODELS.iter().find(|m| m.id == id)
 }
 
+/// The model families a ChatGPT plan offers, in the order the picker
+/// shows them. Their ids read `gpt-<version>-<family>`.
+pub const PLAN_FAMILIES: [&str; 4] = ["sol", "luna", "astra", "terra"];
+
+/// What a ChatGPT plan offers: for each of [`PLAN_FAMILIES`], in that
+/// order, the newest version the table knows. The table has already
+/// left out excluded ids and models without tool calling.
+///
+/// It comes from the table, not from the account's `GET /v1/models`:
+/// that catalog omits models the plan route runs.
+pub fn plan_models() -> Vec<&'static Model> {
+    newest_per_family(models())
+}
+
+/// For each of [`PLAN_FAMILIES`], in that order, the model in `table`
+/// with the highest version, compared number by number (`6.1` over `6`
+/// over `5.6`); a family with no model is left out. Among equal
+/// versions (`6` and `6.0`), the lowest id wins.
+pub fn newest_per_family<'a>(
+    table: impl IntoIterator<Item = &'a Model>,
+) -> Vec<&'a Model> {
+    let mut newest: [Option<(Vec<u32>, &'a Model)>; PLAN_FAMILIES.len()] =
+        Default::default();
+    for model in table {
+        let Some((family, version)) = family_version(&model.id) else {
+            continue;
+        };
+        let Some(slot) = PLAN_FAMILIES.iter().position(|f| *f == family) else {
+            continue;
+        };
+        let newer = newest[slot].as_ref().is_none_or(|(best, current)| {
+            version > *best || (version == *best && model.id < current.id)
+        });
+        if newer {
+            newest[slot] = Some((version, model));
+        }
+    }
+    newest
+        .into_iter()
+        .flatten()
+        .map(|(_, model)| model)
+        .collect()
+}
+
+/// `gpt-6.1-sol` → `("sol", [6, 1])`, with trailing zeros dropped so
+/// `6.0` and `6` compare equal; `None` for any other shape.
+pub fn family_version(id: &str) -> Option<(&str, Vec<u32>)> {
+    let (version, family) = id.strip_prefix("gpt-")?.split_once('-')?;
+    if family.is_empty() || family.contains('-') {
+        return None;
+    }
+    let mut version = version
+        .split('.')
+        .map(|part| {
+            if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            part.parse().ok()
+        })
+        .collect::<Option<Vec<u32>>>()?;
+    while version.last() == Some(&0) {
+        version.pop();
+    }
+    Some((family, version))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
