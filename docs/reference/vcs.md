@@ -403,8 +403,11 @@ the run itself does the moving and the resolving:
 ## A repository's main chat
 
 Each repository has a main chat, a top-level run that every other chat
-forks from. It commits on trunk: its `RunWorkspace` is built with
-`commits_to(project.trunk_name())`, so its commits, its turns'
+forks from. It works in the repository's own checkout, jj's `default`
+workspace under `main/` (`DEFAULT_WORKSPACE`), never in one of its own,
+and `forget_workspace` never removes it. It commits on trunk: its
+`RunWorkspace` is built with `commits_to(project.trunk_name())`, so its
+commits, its turns'
 snapshots, the chats that land on it and its sub-agents all move
 trunk's bookmark, not `tau/<run>`. It has nothing to land or merge: it
 does not get `vcs_land`, the host refuses to merge it, and its bar

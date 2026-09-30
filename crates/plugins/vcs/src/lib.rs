@@ -51,7 +51,14 @@ pub use ops::{
     WorkingCopy,
 };
 pub use plugin::VcsPlugin;
-pub use project::{FileDiff, Project, StackChange, UpdateFrom, Updated};
+pub use project::{
+    DEFAULT_WORKSPACE,
+    FileDiff,
+    Project,
+    StackChange,
+    UpdateFrom,
+    Updated,
+};
 pub use run_workspace::{Link, RunWorkspace};
 pub use session::{MAX_NEW_FILE_SIZE, TooLarge};
 pub use vcs::{Identity, Vcs};

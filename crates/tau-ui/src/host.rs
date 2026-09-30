@@ -46,6 +46,7 @@ use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
     ChangeKind,
+    DEFAULT_WORKSPACE,
     Delegate,
     FileDiff,
     Identity,
@@ -864,7 +865,9 @@ impl Host {
     /// without it on an update from GitHub: its work in `@` goes onto
     /// trunk's head, so its next commit moves trunk forward, not aside.
     fn catch_up(&self, project: &Project, name: &str) -> anyhow::Result<()> {
-        if !project.workspaces()?.iter().any(|known| known == name) {
+        let exists = name == DEFAULT_WORKSPACE
+            || project.workspaces()?.iter().any(|known| known == name);
+        if !exists {
             return Ok(());
         }
         let vcs = tau_vcs::Vcs::open(project.workspace_dir(name), identity())?;
@@ -1808,26 +1811,26 @@ impl Host {
             .expect("not poisoned")
             .get(run)
             .cloned();
+        // A main chat works in the repository's own checkout, the
+        // default workspace, not one of its own.
+        let main = self.is_main(run);
         let workspace = match known {
+            _ if main => Some(DEFAULT_WORKSPACE.to_owned()),
             Some(name) => Some(name),
             None => self.link(run, None)?.map(|(_, link)| link.workspace),
         };
         // A main chat catches up with trunk first: its commits move
         // trunk, which may have moved without it.
-        let main = self.is_main(run);
         if main && let Some(name) = &workspace {
             self.catch_up(&repo.project()?, name)?;
         }
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
         let delegates = self.is_top_level(run)?;
-        // A run without a workspace yet (a main chat's first turn) gets
-        // one: `main` for a main chat, else named after the message.
-        let workspace = match workspace {
-            Some(name) => name,
-            None if main => workspace_name(MAIN_TITLE),
-            None => workspace_name(&branch_slug(prompt)),
-        };
+        // A run without a workspace yet gets one, named after the
+        // message.
+        let workspace =
+            workspace.unwrap_or_else(|| workspace_name(&branch_slug(prompt)));
         let (agent, workspace) =
             self.agent_for_run(choice, &repo, workspace, main, delegates)?;
         let _guard = self.runtime.enter();
@@ -2248,23 +2251,20 @@ impl Host {
         self.no_open_children(child, &project)?;
         let child_workspace = workspace_of(child)?;
         let parent_workspace = match workspace_of(&parent) {
+            // A main chat works in the repository's own checkout.
+            _ if self.is_main(&parent) => {
+                self.workspaces
+                    .lock()
+                    .expect("not poisoned")
+                    .insert(parent.clone(), DEFAULT_WORKSPACE.to_owned());
+                DEFAULT_WORKSPACE.to_owned()
+            }
             Ok(name) => {
                 // Opening a workspace that is gone would make a new one
                 // on trunk; landing there would lose the parent's work.
                 if !project.workspaces()?.contains(&name) {
                     anyhow::bail!("The parent's workspace is gone");
                 }
-                name
-            }
-            // A main chat that has not taken a turn has no work yet: it
-            // gets its workspace, on trunk, from the first chat that
-            // lands on it.
-            Err(_) if self.is_main(&parent) => {
-                let name = workspace_name(MAIN_TITLE);
-                self.workspaces
-                    .lock()
-                    .expect("not poisoned")
-                    .insert(parent.clone(), name.clone());
                 name
             }
             Err(error) => return Err(error),
@@ -3831,9 +3831,8 @@ fn load_settings(path: &std::path::Path, model: &str) -> ModelSettings {
 }
 
 /// A new workspace's name: unique, and sorting by when it was made.
-/// A name for a new workspace: `slug` (a message's first words, or
-/// `main`), then the time in hex, so it says what it is for and stays
-/// unique.
+/// A name for a new workspace: `slug` (a message's first words), then
+/// the time in hex, so it says what it is for and stays unique.
 fn workspace_name(slug: &str) -> String {
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

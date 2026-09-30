@@ -708,3 +708,34 @@ fn links_follow_their_change() {
     let err = project.current([link]).unwrap_err().to_string();
     assert!(err.contains("divergent"), "{err}");
 }
+
+/// The default workspace is the repository's own checkout: a main chat
+/// works in it, it is not listed among the runs' workspaces, and it is
+/// never forgotten.
+#[test]
+fn the_default_workspace_is_the_repositorys_own() {
+    let src = tempfile::tempdir().unwrap();
+    let head = source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join("project");
+    let project = Project::open_or_import(
+        src.path().to_str().unwrap(),
+        &root,
+        Identity::default(),
+    )
+    .unwrap();
+    let dir = project.workspace_dir(tau_vcs::DEFAULT_WORKSPACE);
+    assert_eq!(dir, root.join("main"));
+    let vcs = project
+        .add_workspace(tau_vcs::DEFAULT_WORKSPACE, &head)
+        .unwrap();
+    assert_eq!(vcs.root(), dir);
+    assert!(project.workspaces().unwrap().is_empty());
+
+    project
+        .forget_workspace(tau_vcs::DEFAULT_WORKSPACE)
+        .unwrap();
+    assert!(dir.join(".jj").is_dir(), "it stays");
+    // The project still opens.
+    assert_eq!(project.trunk().unwrap(), head);
+}

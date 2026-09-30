@@ -452,9 +452,10 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
             .is_err()
     );
 
-    // Keeping the fork drops the main run's workspace, not its commits.
+    // Keeping the fork keeps the main chat's checkout: it is the
+    // repository's own, the default workspace, which never goes.
     host.keep_branch(&fork.id).unwrap();
-    assert!(!main_dir.exists());
+    assert!(main_dir.exists());
     assert!(fork_dir.exists());
 }
 
@@ -657,9 +658,12 @@ fn a_run_delegates_and_the_sub_agent_lands() {
 
     let dir = host.workspace(&main).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
-    // The sub-agent is closed: one workspace, and no run bookmark, as
+    // The main chat works in the repository's own checkout, the default
+    // workspace.
+    assert_eq!(dir, project.workspace_dir(tau_vcs::DEFAULT_WORKSPACE));
+    // The sub-agent is closed: no run workspace, and no run bookmark, as
     // the main chat commits on trunk.
-    assert_eq!(project.workspaces().unwrap().len(), 1);
+    assert!(project.workspaces().unwrap().is_empty());
     assert!(project.bookmarks("tau/").unwrap().is_empty());
 
     // From history, the run's delegate card says what landed, and the

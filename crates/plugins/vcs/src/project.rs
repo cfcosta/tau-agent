@@ -44,6 +44,10 @@ use crate::{
 
 const GIT: &str = "git";
 const MAIN: &str = "main";
+
+/// jj's own workspace: the repository's checkout, under `main/`. A
+/// repository's main chat works in it; runs get workspaces of their own.
+pub const DEFAULT_WORKSPACE: &str = "default";
 const RUNS: &str = "runs";
 
 /// A repository tau owns. Cheap to clone.
@@ -239,6 +243,9 @@ impl Project {
 
     /// Where run `name`'s workspace is.
     pub fn workspace_dir(&self, name: &str) -> PathBuf {
+        if name == DEFAULT_WORKSPACE {
+            return self.inner.root.join(MAIN);
+        }
         self.inner.root.join(RUNS).join(name)
     }
 
@@ -602,8 +609,12 @@ impl Project {
     }
 
     /// Removes run `name`'s workspace: jj forgets it, and its directory
-    /// is deleted. Its commits stay in the repository.
+    /// is deleted. Its commits stay in the repository. The default
+    /// workspace is the repository itself, and stays.
     pub fn forget_workspace(&self, name: &str) -> Result<(), VcsError> {
+        if name == DEFAULT_WORKSPACE {
+            return Ok(());
+        }
         let repo = self.load()?;
         let name_buf = WorkspaceNameBuf::from(name);
         if repo.view().get_wc_commit_id(&name_buf).is_some() {
