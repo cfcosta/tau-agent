@@ -156,6 +156,29 @@ pub trait Material: Styled + Sized {
         ])
     }
 
+    /// A key in any colors: falling from `top` to `bottom`, lit along
+    /// its top edge, on a small shadow. For looks with their own palette,
+    /// such as onboarding's.
+    fn bevel(self, top: Hsla, bottom: Hsla, t: &Theme) -> Self {
+        self.bg(fall(top, bottom)).shadow(key_shadows(t))
+    }
+
+    /// A well with its own `floor`.
+    fn sunk(self, floor: Hsla, t: &Theme) -> Self {
+        self.well(t).bg(floor)
+    }
+
+    /// Light and shadow only, keeping the fill: a see-through card
+    /// rises off what shows through it.
+    fn lifted(self, t: &Theme) -> Self {
+        let d = &t.depth;
+        self.shadow(vec![
+            shade(0., 1., 0., d.highlight).inset(),
+            shade(0., 2., 4., d.drop),
+            shade(0., 16., 40., d.drop.opacity(0.8)),
+        ])
+    }
+
     /// A light around a small shape in `color`: a live dot.
     fn glow(self, color: Hsla) -> Self {
         self.shadow(vec![shade(0., 0., 6., color)])

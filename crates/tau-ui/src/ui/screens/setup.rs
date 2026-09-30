@@ -62,7 +62,7 @@ use crate::{
     route::Route,
     setup::{CloneState, DeviceCode, GitHub, ModelAccess, SetupStep},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{bar, icon, icon_button, mono, text_link},
+    ui::{Material as _, bar, icon, icon_button, mono, text_link},
     workspace::{Workspace, WorkspaceEvent},
 };
 
@@ -626,11 +626,14 @@ fn tau_tile(size: f32, t: &Theme) -> Div {
         .items_center()
         .justify_center()
         .rounded(px(size * 30. / 112.))
-        .bg(t.accent)
+        .accent_key(t)
         .text_color(t.setup.on_light)
         .typeset(Type::HERO.sized(size * 58. / 112.).weighted(weight::STRONG))
         .when(lit, |tile| {
             tile.shadow(vec![
+                BoxShadow::new(px(0.), px(2.), gpui::white().opacity(0.4))
+                    .inset(),
+                BoxShadow::new(px(0.), px(-3.), t.depth.accent_edge).inset(),
                 BoxShadow::new(px(0.), px(0.), t.accent.opacity(0.08))
                     .spread_radius(px((size / 11.).max(6.))),
                 BoxShadow::new(px(0.), px(24.), t.accent.opacity(0.22))
@@ -746,7 +749,7 @@ fn service_tile(size: f32, beat: Beat, t: &Theme) -> AnyElement {
         .items_center()
         .justify_center()
         .rounded(px(radius))
-        .bg(look.tile)
+        .bevel(look.surface_top, look.tile, t)
         .border_1()
         .border_color(edge)
         .child(inner);
@@ -1267,12 +1270,17 @@ fn light_button(
         .px(sp(6.))
         .flex_shrink_0()
         .rounded(radius::CARD)
-        .bg(look.light)
+        .bevel(look.light, look.light_foot, t)
         .text_color(look.on_light)
         .typeset(Type::LEAD.weighted(weight::STRONG))
         .cursor_pointer()
         .hover(|style| style.opacity(0.92))
         .shadow(vec![
+            BoxShadow::new(px(0.), px(1.), gpui::white()).inset(),
+            BoxShadow::new(px(0.), px(-2.), gpui::black().opacity(0.12))
+                .inset(),
+            BoxShadow::new(px(0.), px(2.), gpui::black().opacity(0.5))
+                .blur_radius(px(3.)),
             BoxShadow::new(px(0.), px(12.), gpui::black().opacity(0.35))
                 .blur_radius(px(32.)),
         ])
@@ -1319,11 +1327,11 @@ fn ghost_button(
         .rounded(radius::LARGE)
         .border_1()
         .border_color(t.border)
-        .bg(t.setup.surface)
+        .bevel(t.setup.surface_top, t.setup.surface, t)
         .text_color(t.text_soft)
         .typeset(Type::BODY.weighted(weight::EMPHASIS))
         .cursor_pointer()
-        .hover(|style| style.bg(t.setup.tile))
+        .hover(|style| style.border_color(t.border_strong))
         .child(label.into())
         .children(
             trailing.map(|glyph| icon(glyph, IconSize::SMALL, t.text_soft)),
@@ -1372,6 +1380,7 @@ fn glass(t: &Theme) -> Div {
         .flex_col()
         .rounded(radius::TILE)
         .bg(t.setup.glass)
+        .lifted(t)
         .border_1()
         .border_color(t.setup.surface_border)
 }
@@ -1399,7 +1408,7 @@ fn account_chip(
         .pl(sp(2.5))
         .pr(sp(4.))
         .rounded(radius::FULL)
-        .bg(look.surface)
+        .bevel(look.surface_top, look.surface, t)
         .border_1()
         .border_color(look.surface_border)
         .child(
@@ -1409,7 +1418,7 @@ fn account_chip(
                 .items_center()
                 .justify_center()
                 .rounded(radius::FULL)
-                .bg(t.selected)
+                .sunk(look.field, t)
                 .typeset(Type::SMALL)
                 .child(initial),
         )
@@ -1607,7 +1616,7 @@ fn orbit(t: &Theme) -> Div {
                     .items_center()
                     .justify_center()
                     .rounded(px(SAT * 30. / 112.))
-                    .bg(t.setup.tile)
+                    .bevel(t.setup.surface_top, t.setup.tile, t)
                     .border_1()
                     .border_color(t.border)
                     .child(inner),
@@ -1705,7 +1714,8 @@ fn code_cells(
     } else {
         (50., 64., Type::CODE_CELL)
     };
-    let (surface, border, flash) = (t.setup.surface, t.border, t.accent);
+    let (top, surface, border, flash) =
+        (t.setup.surface_top, t.setup.surface, t.border, t.accent);
     let copies = motion.copies;
     let reduce = motion.reduce;
     div()
@@ -1727,7 +1737,7 @@ fn code_cells(
                     .items_center()
                     .justify_center()
                     .rounded(radius::CARD)
-                    .bg(surface)
+                    .bevel(top, surface, t)
                     .border_1()
                     .border_color(border)
                     .child(mono(ch.to_string(), style, t.setup.light));
@@ -1736,6 +1746,10 @@ fn code_cells(
                         SharedString::from(format!("flash-{copies}-{n}")),
                         after(stagger(0, 25, n), 600, curve::ease_in_out()),
                         move |cell, e| {
+                            // Back to its bevel once the flash is over.
+                            if e >= 1. {
+                                return cell;
+                            }
                             cell.bg(mix(flash.opacity(0.35), surface, e))
                                 .border_color(mix(flash, border, e))
                         },
@@ -2292,7 +2306,7 @@ fn model_waiting(
                         .rounded(radius::LARGE)
                         .border_1()
                         .border_color(t.border)
-                        .bg(look.field)
+                        .sunk(look.field, t)
                         .typeset(Type::CAPTION.mono())
                         .child(ws.chatgpt_callback.clone()),
                 )
@@ -2372,10 +2386,9 @@ fn model_signed_in(
                 .rounded(radius::FULL)
                 .border_1()
                 .border_color(if picked { t.accent } else { t.border })
-                .bg(if picked {
-                    t.accent.opacity(0.08)
-                } else {
-                    look.surface
+                .when(picked, |chip| chip.bg(t.accent.opacity(0.08)))
+                .when(!picked, |chip| {
+                    chip.bevel(look.surface_top, look.surface, t)
                 })
                 .cursor_pointer()
                 .hover(|style| style.border_color(t.accent_border).top(px(-1.)))
@@ -2566,7 +2579,7 @@ fn model_not_eligible(
                         .px(sp(3.))
                         .py(sp(1.75))
                         .rounded(radius::FULL)
-                        .bg(look.surface)
+                        .bevel(look.surface_top, look.surface, t)
                         .border_1()
                         .border_color(look.surface_border)
                         .typeset(Type::SMALL)
@@ -2613,7 +2626,7 @@ fn model_not_eligible(
 /// bounce.
 fn tick_box(name: &str, checked: bool, reduce: bool, t: &Theme) -> AnyElement {
     const SIDE: f32 = 18.;
-    let (accent, empty, ink) = (t.accent, t.border_strong, t.setup.on_light);
+    let (ink, floor, theme) = (t.setup.on_light, t.setup.field, t.clone());
     let build = move |scale: f32| {
         let tile = div()
             .size(px(SIDE * scale))
@@ -2623,10 +2636,13 @@ fn tick_box(name: &str, checked: bool, reduce: bool, t: &Theme) -> AnyElement {
             .justify_center()
             .rounded(radius::TAG);
         if checked {
-            tile.bg(accent)
-                .child(icon(Icon::Check, IconSize::SMALL, ink))
+            tile.accent_key(&theme).child(icon(
+                Icon::Check,
+                IconSize::SMALL,
+                ink,
+            ))
         } else {
-            tile.border(px(1.5)).border_color(empty)
+            tile.sunk(floor, &theme)
         }
     };
     let slot = div()
@@ -3004,7 +3020,7 @@ fn ready(
         .flex()
         .flex_col()
         .rounded(radius::SHEET)
-        .bg(look.surface)
+        .sunk(look.field, t)
         .border_1()
         .border_color(t.border_strong)
         .shadow(halo(ring_to))

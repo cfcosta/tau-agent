@@ -167,6 +167,8 @@ pub struct SetupLook {
     pub tile: Hsla,
     /// Chips, secondary buttons, code cells.
     pub surface: Hsla,
+    /// A chip's or cell's top: it falls to [`Self::surface`].
+    pub surface_top: Hsla,
     /// Around chips and cards.
     pub surface_border: Hsla,
     /// Cards over the rings: see-through enough to show them.
@@ -179,6 +181,9 @@ pub struct SetupLook {
     pub track: Hsla,
     /// The main action's fill, and the headline.
     pub light: Hsla,
+    /// The main action's fill at its foot: it falls from
+    /// [`Self::light`] to this.
+    pub light_foot: Hsla,
     /// Text on [`Self::light`].
     pub on_light: Hsla,
     /// Secondary text on chips and steps.
@@ -210,12 +215,14 @@ impl SetupLook {
             ground: c(rgb(0x0b0c0e)),
             tile: c(rgb(0x17181c)),
             surface: c(rgb(0x131417)),
+            surface_top: c(rgb(0x1d1e23)),
             surface_border: c(rgb(0x23242a)),
             glass: c(rgba(0x131417d9)),
             divider: c(rgb(0x1d1e23)),
             field: c(rgb(0x0f1012)),
             track: c(rgb(0x2a2b30)),
             light: c(rgb(0xf4f3ee)),
+            light_foot: c(rgb(0xd9d7cf)),
             on_light: c(rgb(0x111111)),
             soft: c(rgb(0xbdbbb5)),
             faint: c(rgb(0x6f6d68)),
