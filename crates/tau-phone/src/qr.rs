@@ -42,14 +42,40 @@ impl<'a> Frame<'a> {
 
 /// The text of the tau pairing code in `frame`. None while there is
 /// none, and while the only codes in view are some other QR codes.
+///
+/// rqrr's own thresholding misses some turned codes whose edges the
+/// lens blurred; the frame cut to black and white at its mean
+/// brightness reads them, so a frame that reads nothing is tried again
+/// that way.
 pub fn pairing_code(frame: Frame<'_>) -> Option<String> {
     let step = frame.width.max(frame.height).div_ceil(LONG_SIDE);
-    let mut prepared = rqrr::PreparedImage::prepare_from_greyscale(
-        frame.width / step,
-        frame.height / step,
-        |x, y| frame.luma[y * step * frame.stride + x * step],
-    );
-    prepared
+    let (width, height) = (frame.width / step, frame.height / step);
+    let pixel =
+        |x: usize, y: usize| frame.luma[y * step * frame.stride + x * step];
+    read(width, height, pixel).or_else(|| {
+        let total: u64 = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .map(|(x, y)| u64::from(pixel(x, y)))
+            .sum();
+        let mean = total / (width * height).max(1) as u64;
+        read(width, height, |x, y| {
+            if u64::from(pixel(x, y)) < mean {
+                0
+            } else {
+                255
+            }
+        })
+    })
+}
+
+/// The pairing code among the QR codes rqrr finds in a `width` by
+/// `height` image, `pixel` giving each one's luminance.
+fn read(
+    width: usize,
+    height: usize,
+    pixel: impl Fn(usize, usize) -> u8,
+) -> Option<String> {
+    rqrr::PreparedImage::prepare_from_greyscale(width, height, pixel)
         .detect_grids()
         .into_iter()
         .filter_map(|grid| grid.decode().ok().map(|(_, text)| text))
@@ -163,6 +189,18 @@ mod tests {
     #[test]
     fn reads_a_pairing_code() {
         let shot = shoot(CODE, &upright(640, 480, 6.));
+        assert_eq!(pairing_code(shot.frame()), Some(CODE.to_owned()));
+    }
+
+    /// A code rqrr alone missed: seven pixels a module, turned twelve
+    /// degrees, with blurred edges. Its fallback reads it.
+    #[test]
+    fn a_blurred_turned_code_reads() {
+        let pose = Pose {
+            degrees: 12.0625,
+            ..upright(641, 641, 7.)
+        };
+        let shot = shoot(CODE, &pose);
         assert_eq!(pairing_code(shot.frame()), Some(CODE.to_owned()));
     }
 
