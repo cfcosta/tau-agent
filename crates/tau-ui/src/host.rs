@@ -2492,6 +2492,9 @@ impl Host {
                         );
                     }
                 }
+                // `phone_server::serve` handles these in its own
+                // subscription.
+                WorkspaceEvent::Phones(_) => {}
                 WorkspaceEvent::Steer { run, text } => handler.steer(run, text),
                 WorkspaceEvent::Cancel { run } => handler.cancel(run),
                 other => eprintln!("tau-ui: not handled yet: {other:?}"),
