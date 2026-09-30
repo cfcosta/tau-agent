@@ -1,0 +1,23 @@
+[package]
+name = "tau-phone"
+description = "tau-ui on an Android phone, through gpui-pre-mobile."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The library Android's NativeActivity loads. On any other target it is
+# empty, so the workspace still builds on the desktop.
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+# The same spec as tau-ui's.
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+# Its crates.io release is on gpui-pre 0.3.4; `main` is on 0.3.7. The
+# device packages (camera, location…) are left out.
+gpui_mobile = { package = "gpui-pre-mobile", git = "https://github.com/longbridge/gpui-mobile", rev = "9075e3aa3eea812127f2c60ed66f0cd5798ff245", default-features = false }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+log = "0.4"
+tau-ui.workspace = true

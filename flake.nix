@@ -277,6 +277,7 @@
                 androidRust
                 androidSdk
                 cargo-ndk
+                gradle_9
                 jdk21
                 ghosttyVendor.zig
               ];
