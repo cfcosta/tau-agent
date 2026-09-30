@@ -3,6 +3,8 @@
 - Status: accepted. Amends [0009](0009-child-runs-land-on-their-parent.md):
   a sub-agent started by `delegate` starts with its caller's transcript,
   not with its task alone, and several of them run at once.
+  Amended by [0016](0016-runs-nest-one-level.md): only a top-level run
+  delegates.
 - Date: 2026-09-30
 - Background: a comparison with Codex's multi-agent tools
   (`spawn_agent`, `wait_agent`, `send_input`, `close_agent`), which

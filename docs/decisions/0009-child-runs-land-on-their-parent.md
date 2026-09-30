@@ -7,6 +7,7 @@
   merge into trunk. Amended by
   [0015](0015-delegates-fork-their-caller.md): a sub-agent forks its
   caller's transcript, and several run at once.
+  Amended by [0016](0016-runs-nest-one-level.md): runs nest one level.
 - Date: 2026-09-29
 - Options, with commit graphs:
   [Landing Child Runs](https://claude.ai/artifact/XhxBri4hxYF34fAprH98hC);

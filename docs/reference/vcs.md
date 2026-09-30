@@ -454,7 +454,9 @@ and refuses an effort the model does not take.
 
 The caller's links record what came to its stack during the turn: each
 landed change with `from` naming the sub-agent, then the turn's
-snapshot. Sub-agents do not get `delegate`: they do not nest.
+snapshot. Only a top-level run (a repository's main chat) gets
+`delegate`: runs nest one level
+([ADR 0016](../decisions/0016-runs-nest-one-level.md)).
 
 ## Left to the host and the UI
 
