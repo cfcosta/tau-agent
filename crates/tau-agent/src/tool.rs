@@ -61,6 +61,11 @@ pub enum ExecutionMode {
     Parallel,
     /// Makes the whole batch run one call at a time.
     Sequential,
+    /// Runs alongside the batch's other calls to the same tool, and
+    /// apart from every other call. The batch runs in groups, one after
+    /// another, in the order their first calls come: each grouped
+    /// tool's calls, and the calls to all other tools.
+    Grouped,
 }
 
 /// Identifies a run.

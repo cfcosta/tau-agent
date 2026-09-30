@@ -154,6 +154,38 @@ pub(crate) struct Runner {
     pub turns_before: u32,
 }
 
+/// A call ready to run: its index in the batch, its tool, and the call.
+type Ready = (usize, Arc<dyn AgentTool>, ToolCall);
+
+/// A batch's ready calls, in the order they start, and the sizes of the
+/// groups they start in: each group starts once the one before is done.
+/// A sequential tool makes every call a group of its own; otherwise each
+/// grouped tool's calls form a group, and the calls to all other tools
+/// another, ordered by their first calls.
+fn schedule(ready: Vec<Ready>) -> (VecDeque<Ready>, VecDeque<usize>) {
+    let modes: Vec<ExecutionMode> = ready
+        .iter()
+        .map(|(_, tool, _)| tool.execution_mode())
+        .collect();
+    if modes.contains(&ExecutionMode::Sequential) {
+        let sizes = vec![1; ready.len()].into();
+        return (ready.into(), sizes);
+    }
+    // Groups by key: a grouped tool's name, or `None` for the rest.
+    let mut groups: Vec<(Option<String>, Vec<Ready>)> = Vec::new();
+    for (call, mode) in ready.into_iter().zip(modes) {
+        let key =
+            (mode == ExecutionMode::Grouped).then(|| call.1.name().to_owned());
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, calls)) => calls.push(call),
+            None => groups.push((key, vec![call])),
+        }
+    }
+    let sizes = groups.iter().map(|(_, calls)| calls.len()).collect();
+    let queue = groups.into_iter().flat_map(|(_, calls)| calls).collect();
+    (queue, sizes)
+}
+
 /// How a run ended.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunResult {
@@ -710,7 +742,7 @@ impl Runner {
         self.pending_turn = Some(Arc::new(message.clone()));
         let mut outcomes: Vec<Option<(ToolOutput, bool)>> =
             vec![None; calls.len()];
-        let mut ready = Vec::new();
+        let mut ready: Vec<Ready> = Vec::new();
         for (index, call) in calls.iter().enumerate() {
             self.emit_start(call).await;
             match self.prepare(call).await {
@@ -724,16 +756,19 @@ impl Runner {
             }
         }
 
-        let sequential = ready.iter().any(|(_, tool, _)| {
-            tool.execution_mode() == ExecutionMode::Sequential
-        });
+        let (mut queue, mut groups) = schedule(ready);
         let (updates_tx, mut updates_rx) = mpsc::unbounded_channel();
-        let mut queue: VecDeque<(usize, Arc<dyn AgentTool>, ToolCall)> =
-            ready.into();
         let mut pending = FuturesUnordered::new();
         let mut skipped = Vec::new();
-        let batch = if sequential { 1 } else { usize::MAX };
-        self.launch(&mut queue, &mut pending, &mut skipped, &updates_tx, batch);
+        if let Some(size) = groups.pop_front() {
+            self.launch(
+                &mut queue,
+                &mut pending,
+                &mut skipped,
+                &updates_tx,
+                size,
+            );
+        }
         while !pending.is_empty() {
             tokio::select! {
                 Some((call_id, partial)) = updates_rx.recv() => {
@@ -771,8 +806,11 @@ impl Runner {
                     }
                     self.emit_end(&call.id, &output, is_error).await;
                     outcomes[index] = Some((output, is_error));
-                    if sequential {
-                        self.launch(&mut queue, &mut pending, &mut skipped, &updates_tx, 1);
+                    // A group done, the next one starts.
+                    if pending.is_empty()
+                        && let Some(size) = groups.pop_front()
+                    {
+                        self.launch(&mut queue, &mut pending, &mut skipped, &updates_tx, size);
                     }
                 }
             }

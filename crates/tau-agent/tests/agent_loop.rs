@@ -42,6 +42,7 @@ struct Probe {
 
 #[derive(Debug, Clone)]
 struct Interval {
+    tool: &'static str,
     start: Instant,
     end: Instant,
 }
@@ -95,6 +96,7 @@ impl AgentTool for Probe {
             _ = ctx.cancel.cancelled() => true,
         };
         self.log.lock().unwrap().push(Interval {
+            tool: self.name,
             start,
             end: Instant::now(),
         });
@@ -1185,5 +1187,74 @@ fn a_sequential_tool_serializes_its_batch() {
             assert!(pair[1].start >= pair[0].end, "{log:?}");
         }
         assert_eq!(log[3].start, log[4].start, "{log:?}");
+    });
+}
+
+/// A batch that mixes grouped tools with others runs in groups: each
+/// grouped tool's calls together, and the other calls together, one
+/// group after another in the order their first calls come. Nothing in
+/// one group overlaps another.
+#[hegel::test(test_cases = 60)]
+fn grouped_calls_run_together_and_apart(tc: TestCase) {
+    // Each call's duration is unique, so its interval names it.
+    let tools: Vec<&'static str> = tc.draw(
+        gs::vecs(gs::sampled_from(vec!["a", "b", "g", "h"]))
+            .min_size(1)
+            .max_size(6),
+    );
+    let key = |tool: &str| match tool {
+        "g" | "h" => tool.to_owned(),
+        _ => "rest".to_owned(),
+    };
+    let llm = ScriptedModel::new()
+        .turn(|mut t| {
+            for (i, tool) in tools.iter().enumerate() {
+                t = t.tool_call(*tool, json!({"ms": 10 * (i + 1)}));
+            }
+            t
+        })
+        .turn(|t| t.text("done"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm.clone())
+            .tool(Probe::new("a", ExecutionMode::Parallel, log.clone()))
+            .tool(Probe::new("b", ExecutionMode::Parallel, log.clone()))
+            .tool(Probe::new("g", ExecutionMode::Grouped, log.clone()))
+            .tool(Probe::new("h", ExecutionMode::Grouped, log.clone()));
+        let outcome = agent.run("go", &store).await.unwrap();
+        assert_eq!(outcome.text, "done");
+        let log = log.lock().unwrap().clone();
+        assert_eq!(log.len(), tools.len());
+
+        // The groups, in the order their first calls come.
+        let mut order: Vec<String> = Vec::new();
+        for tool in &tools {
+            if !order.contains(&key(tool)) {
+                order.push(key(tool));
+            }
+        }
+        let starts: Vec<Instant> = order
+            .iter()
+            .map(|group| {
+                let mut starts = log
+                    .iter()
+                    .filter(|i| key(i.tool) == *group)
+                    .map(|i| i.start);
+                let first = starts.next().unwrap();
+                // A group's calls all start at once.
+                assert!(starts.all(|s| s == first), "{group}: {log:?}");
+                first
+            })
+            .collect();
+        assert!(starts.windows(2).all(|w| w[0] < w[1]), "{log:?}");
+        for x in &log {
+            for y in &log {
+                if key(x.tool) != key(y.tool) {
+                    let overlap = x.start < y.end && y.start < x.end;
+                    assert!(!overlap, "{x:?} overlaps {y:?}");
+                }
+            }
+        }
     });
 }

@@ -374,6 +374,7 @@ also run in the nightly tier and under `cargo mutants`.
 | · steered messages appear after the tool batch that was running, in the order they were sent                                                                           |              |
 | · the persisted usage equals the sum of the turns' usage                                                                                                               |              |
 | · in a parallel batch, tools whose virtual-time intervals could overlap do overlap; with any `Sequential` tool, no two intervals overlap                               |              |
+| · grouped calls start together, and no two groups overlap; groups start in the order their first calls come                                                            |              |
 | · a tool call cut off by a `length` stop never runs                                                                                                                    |              |
 | · a `ToolUpdate` sent after the tool's future resolved produces no event and no panic                                                                                  |              |
 | Steering sent from inside `on_event` or `before_tool` is drained at the next drain point, exactly once                                                                 | Model        |

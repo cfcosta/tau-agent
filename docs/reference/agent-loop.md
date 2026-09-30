@@ -65,6 +65,11 @@ pi, a note says so.
        the tool's schema rejects.
 - **Execution is parallel** across the prepared calls. A tool whose
   `execution_mode()` is `Sequential` makes the whole batch sequential.
+  A `Grouped` tool's calls run together, apart from the batch's other
+  calls: the batch runs in groups (each grouped tool's calls, and all
+  the other calls), one after another, in the order their first calls
+  come. `delegate` is grouped, so sub-agents run side by side, but never
+  while another tool edits the caller's files.
 - **Events:** `ToolStart` in source order; `ToolUpdate` while a tool
   runs; `ToolEnd` in completion order.
 - **Result messages** are appended in source order.
