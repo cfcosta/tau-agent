@@ -172,6 +172,12 @@ impl HostConfig {
         Credentials::default_dir().dir.join("models.json")
     }
 
+    /// `interface.json` in tau's config directory: the interface's own
+    /// settings, such as `reduce_motion`.
+    pub fn default_interface_settings() -> PathBuf {
+        Credentials::default_dir().dir.join("interface.json")
+    }
+
     /// The project directory for `root`.
     pub fn project_dir(&self) -> PathBuf {
         self.project_dir_of(&self.root)

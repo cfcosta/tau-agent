@@ -15,16 +15,21 @@
 //!   usage-limit, the ChatGPT plan's limit; plan-notice, the note shown
 //!   once on the plan; plan-disabled, the Models
 //!   screen with plan use not enabled; plan-signing-in, onboarding
-//!   waiting for the ChatGPT sign-in; model-signed-in, plan-declined
-//!   and not-eligible, its other states; a phone pairing: pair,
-//!   pair-scan, pair-address, pair-paired or pair-unreachable; phones,
-//!   the computer's Phones screen;
+//!   waiting for the ChatGPT sign-in; plan-connecting, that wait
+//!   ending in a sign-in after 2.5 s, to watch the handshake land;
+//!   model-signed-in, plan-declined and not-eligible, its other states;
+//!   a phone pairing: pair, pair-scan, pair-address, pair-paired or
+//!   pair-unreachable; phones, the computer's Phones screen;
 //!   models, picker, run-picker, fork-picker, log, status, show or diff
 //!   (demo screens).
 //! - `--phone`: the phone layout in a 390×844 frame.
 //! - `--frame <w>x<h>`: lay out at exactly that size in the top-left
 //!   corner, to compare with the designs.
 //! - `--steps <n>`: stop the demo script after its first `n` updates.
+//! - `--reduce-motion`: no looping motion, and transitions as plain
+//!   fades. `TAU_REDUCE_MOTION=1` asks the same (`0` asks for all the
+//!   motion), then `"reduce_motion": true` in `interface.json`, then
+//!   the desktop's `enable-animations`.
 
 use std::path::PathBuf;
 
@@ -46,6 +51,7 @@ use tau_ui::{
     demo,
     host::{self, Host, HostConfig},
     models::AccountState,
+    motion::{self, MotionPreference},
     pairing::PairStep,
     route::Route,
     setup::SetupStep,
@@ -62,6 +68,7 @@ struct Args {
     /// `None` takes gpt-5.5.
     model: Option<String>,
     root: PathBuf,
+    reduce_motion: bool,
 }
 
 fn args() -> Args {
@@ -89,6 +96,7 @@ fn args() -> Args {
             .map(PathBuf::from)
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from(".")),
+        reduce_motion: flag("--reduce-motion"),
     }
 }
 
@@ -166,6 +174,7 @@ fn main() {
                 cx.quit();
                 return;
             };
+            follow_motion_preference(&workspace, args.reduce_motion, cx);
             match host {
                 Some((host, events)) => {
                     workspace
@@ -221,6 +230,33 @@ fn main() {
             cx.activate(true);
         },
     );
+}
+
+/// Reduces motion when asked: at once from the flag, the environment or
+/// the saved setting, and otherwise when the desktop answers whether it
+/// animates.
+fn follow_motion_preference(
+    workspace: &gpui::Entity<Workspace>,
+    flag: bool,
+    cx: &mut App,
+) {
+    let mut preference = MotionPreference::from_startup(
+        flag,
+        &HostConfig::default_interface_settings(),
+    );
+    workspace
+        .update(cx, |ws, cx| ws.set_reduce_motion(preference.reduce(), cx));
+    if preference.stated().is_some() {
+        return;
+    }
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let asking = cx.background_spawn(motion::desktop_animations());
+        preference.desktop_animations = asking.await;
+        let reduce = preference.reduce();
+        let _ = workspace.update(cx, |ws, cx| ws.set_reduce_motion(reduce, cx));
+    })
+    .detach();
 }
 
 fn demo_workspace(
@@ -474,6 +510,32 @@ fn open_demo_screen(
             catalog.models.settings.plan_notice_seen = false;
             workspace.set_catalog(catalog, cx);
             workspace.navigate(Route::NewRun, cx);
+            return;
+        }
+        // The wait ending in a sign-in, to watch the handshake land.
+        Some("plan-connecting") => {
+            let mut setup = demo::setup(SetupStep::Model);
+            setup.model = tau_ui::setup::ModelAccess::SigningIn {
+                url: Some(demo::DEMO_AUTHORIZE_URL.into()),
+            };
+            workspace.set_setup(setup, cx);
+            workspace.navigate(Route::Setup(SetupStep::Model), cx);
+            cx.spawn(async |workspace, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(2500))
+                    .await;
+                let _ = workspace.update(cx, |ws, cx| {
+                    ws.update_setup(
+                        tau_ui::setup::SetupUpdate::Model(
+                            tau_ui::setup::ModelAccess::Connected {
+                                label: "gpt-5.5 · ChatGPT plan".into(),
+                            },
+                        ),
+                        cx,
+                    )
+                });
+            })
+            .detach();
             return;
         }
         Some("plan-signing-in") => {
