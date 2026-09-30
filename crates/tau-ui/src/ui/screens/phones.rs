@@ -38,21 +38,19 @@ pub fn render(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let phones = &ws.phones;
-    let left = div()
-        .flex_1()
-        .min_w(px(0.))
-        .flex()
-        .flex_col()
-        .gap(sp(4.))
-        .child(allow(phones, t, cx))
-        .when(phones.allowed, |col| col.child(listen_on(phones, t, cx)))
-        .children(
-            phones
-                .error
-                .clone()
-                .map(|error| notice(Icon::Warning, error, t.red, Type::SMALL, t)),
-        )
-        .child(paired(phones, t, cx));
+    let left =
+        div()
+            .flex_1()
+            .min_w(px(0.))
+            .flex()
+            .flex_col()
+            .gap(sp(4.))
+            .child(allow(phones, t, cx))
+            .when(phones.allowed, |col| col.child(listen_on(phones, t, cx)))
+            .children(phones.error.clone().map(|error| {
+                notice(Icon::Warning, error, t.red, Type::SMALL, t)
+            }))
+            .child(paired(phones, t, cx));
     let content = div()
         .flex()
         .flex_col()
@@ -91,7 +89,11 @@ fn allow(phones: &Phones, t: &Theme, cx: &mut Context<Workspace>) -> Div {
                     .flex()
                     .flex_col()
                     .gap(sp(0.5))
-                    .child(div().font_weight(weight::EMPHASIS).child("Allow phones"))
+                    .child(
+                        div()
+                            .font_weight(weight::EMPHASIS)
+                            .child("Allow phones"),
+                    )
                     .child(text(
                         "Off by default. Phones reach tau only while this app \
                          is open.",
@@ -100,52 +102,47 @@ fn allow(phones: &Phones, t: &Theme, cx: &mut Context<Workspace>) -> Div {
                     )),
             )
             .child(
-                div()
-                    .id("allow-phones")
-                    .child(switch(allowed, t))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
+                div().id("allow-phones").child(switch(allowed, t)).on_click(
+                    cx.listener(move |ws, _, _, cx| {
                         ws.ask_phones(PhonesRequest::Allow(!allowed), cx)
-                    })),
+                    }),
+                ),
             ),
     )
 }
 
 fn listen_on(phones: &Phones, t: &Theme, cx: &mut Context<Workspace>) -> Div {
-    let chosen = phones.listening.as_ref().map(|address| address.host.clone());
+    let chosen = phones
+        .listening
+        .as_ref()
+        .map(|address| address.host.clone());
     div()
         .flex()
         .flex_col()
         .gap(sp(2.))
         .child(heading("Listen on", t))
-        .child(
-            div().flex().flex_wrap().gap(sp(2.)).children(
-                phones.addresses.iter().map(|address| {
-                    let ip = address.ip.clone();
-                    let on = chosen.as_ref() == Some(&ip);
-                    div()
-                        .id(SharedString::from(format!("listen-{ip}")))
-                        .child(chip(
-                            on.then_some(Icon::Check),
-                            format!("{} · {}", address.label, address.ip),
-                            Type::SMALL,
-                            if on { t.accent } else { t.muted },
-                            t,
-                        ))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.ask_phones(
-                                PhonesRequest::ListenOn(ip.clone()),
-                                cx,
-                            )
-                        }))
-                }),
-            ),
-        )
+        .child(div().flex().flex_wrap().gap(sp(2.)).children(
+            phones.addresses.iter().map(|address| {
+                let ip = address.ip.clone();
+                let on = chosen.as_ref() == Some(&ip);
+                div()
+                    .id(SharedString::from(format!("listen-{ip}")))
+                    .child(chip(
+                        on.then_some(Icon::Check),
+                        format!("{} · {}", address.label, address.ip),
+                        Type::SMALL,
+                        if on { t.accent } else { t.muted },
+                        t,
+                    ))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.ask_phones(PhonesRequest::ListenOn(ip.clone()), cx)
+                    }))
+            }),
+        ))
         .child(match &phones.listening {
-            Some(address) => text(
-                format!("Listening on {address}."),
-                Type::CAPTION,
-                t.muted,
-            ),
+            Some(address) => {
+                text(format!("Listening on {address}."), Type::CAPTION, t.muted)
+            }
             None => text("Not listening.", Type::CAPTION, t.muted),
         })
 }
@@ -294,29 +291,27 @@ fn pair_card(
                 .text_center()
                 .child("In tau on your phone, tap Scan pairing code."),
         )
-        .child(
-            div().w_full().typeset(Type::CAPTION).child(key_values(
-                [
-                    (
-                        "Address".into(),
-                        mono(code.address.to_string(), Type::CAPTION, t.text),
-                    ),
-                    (
-                        "Code".into(),
-                        mono(code.secret.to_string(), Type::CAPTION, t.text),
-                    ),
-                    (
-                        "Certificate".into(),
-                        mono(code.fingerprint.short(), Type::CAPTION, t.text),
-                    ),
-                    (
-                        "Expires".into(),
-                        mono(countdown(shown), Type::CAPTION, t.accent),
-                    ),
-                ],
-                t,
-            )),
-        )
+        .child(div().w_full().typeset(Type::CAPTION).child(key_values(
+            [
+                (
+                    "Address".into(),
+                    mono(code.address.to_string(), Type::CAPTION, t.text),
+                ),
+                (
+                    "Code".into(),
+                    mono(code.secret.to_string(), Type::CAPTION, t.text),
+                ),
+                (
+                    "Certificate".into(),
+                    mono(code.fingerprint.short(), Type::CAPTION, t.text),
+                ),
+                (
+                    "Expires".into(),
+                    mono(countdown(shown), Type::CAPTION, t.accent),
+                ),
+            ],
+            t,
+        )))
         .child(
             // Typing the address instead: the phone shows the whole
             // certificate, to compare with this.

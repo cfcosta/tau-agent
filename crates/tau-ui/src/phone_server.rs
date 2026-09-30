@@ -118,7 +118,9 @@ pub fn serve(
         if let Some(server) = &echo.borrow().server {
             match serde_json::to_value(update) {
                 Ok(body) => server.broadcast(body),
-                Err(error) => eprintln!("tau-ui: cannot send an update: {error}"),
+                Err(error) => {
+                    eprintln!("tau-ui: cannot send an update: {error}")
+                }
             }
         }
     })
@@ -185,11 +187,17 @@ fn save(bridge: &Rc<RefCell<Bridge>>) {
 /// else Tailscale's, else the first on the network.
 fn listen_ip(bridge: &Bridge) -> Option<String> {
     let addresses = &bridge.phones.addresses;
+    // Loopback is never offered, but kept if picked by hand: for a
+    // tunnel, or a test.
+    let loopback =
+        |ip: &String| ip.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
     bridge
         .settings
         .listen
         .clone()
-        .filter(|ip| addresses.iter().any(|address| &address.ip == ip))
+        .filter(|ip| {
+            loopback(ip) || addresses.iter().any(|address| &address.ip == ip)
+        })
         .or_else(|| {
             addresses
                 .iter()
@@ -298,7 +306,9 @@ fn on_event(
                     }
                 }
                 Err(error) => {
-                    eprintln!("tau-ui: a phone sent what tau cannot read: {error}")
+                    eprintln!(
+                        "tau-ui: a phone sent what tau cannot read: {error}"
+                    )
                 }
             }
         }
@@ -407,9 +417,8 @@ fn host_name() -> String {
     let mut buffer = [0u8; 256];
     // SAFETY: the buffer is valid for its whole length, and gethostname
     // writes at most that many bytes.
-    let written = unsafe {
-        libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len())
-    };
+    let written =
+        unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
     let end = buffer.iter().position(|byte| *byte == 0).unwrap_or(0);
     match std::str::from_utf8(&buffer[..end]) {
         Ok(name) if written == 0 && !name.is_empty() => name.to_owned(),

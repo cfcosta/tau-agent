@@ -2128,8 +2128,11 @@ impl Workspace {
             PairingUpdate::Unreachable { .. } => {
                 Some(Route::Pair(PairStep::Unreachable))
             }
+            // Reached again: the runs, unless the phone just paired and
+            // is being named.
             PairingUpdate::Connected(_) => {
-                matches!(self.route, Route::Pair(_)).then_some(Route::Home)
+                matches!(self.route, Route::Pair(PairStep::Unreachable))
+                    .then_some(Route::Home)
             }
             PairingUpdate::Progress(_) => None,
         };
@@ -2233,6 +2236,12 @@ impl Workspace {
         }
         cx.emit(WorkspaceEvent::Pair(PairRequest::Retry));
         cx.notify();
+    }
+
+    /// The phone's own name, offered once paired.
+    pub fn set_phone_name(&mut self, name: String, cx: &mut Context<Self>) {
+        self.phone_name
+            .update(cx, |input, cx| input.set_text(name, cx));
     }
 
     /// Fills the pairing fields, as typing would: for tests.
