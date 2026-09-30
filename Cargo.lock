@@ -8942,6 +8942,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-remote"
+version = "0.1.0"
+dependencies = [
+ "hegeltest",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "tau-store"
 version = "0.1.0"
 dependencies = [

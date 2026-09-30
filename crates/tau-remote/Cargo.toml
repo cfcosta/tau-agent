@@ -1,0 +1,13 @@
+[package]
+name = "tau-remote"
+description = "What crosses between tau on a phone and the tau it connects to (decision 0013)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+hegeltest.workspace = true
