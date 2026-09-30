@@ -32,6 +32,7 @@ use crate::event::RunEvent;
 
 /// What a tool returns.
 #[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ToolOutput {
     /// What the model sees.
     pub content: Vec<InputBlock>,
@@ -64,6 +65,8 @@ pub enum ExecutionMode {
 
 /// Identifies a run.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct RunId(pub Arc<str>);
 
 impl fmt::Display for RunId {

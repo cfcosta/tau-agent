@@ -6,6 +6,11 @@ edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# Serialize and deserialize run events, for interfaces that carry them
+# over a wire (decision 0013).
+serde = ["serde/rc"]
+
 [dependencies]
 async-trait.workspace = true
 futures-util.workspace = true

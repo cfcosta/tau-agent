@@ -15,6 +15,7 @@ use crate::tool::{RunId, ToolOutput};
 
 /// Why a run ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum StopReason {
     /// The model finished.
     Stop,
@@ -26,6 +27,7 @@ pub enum StopReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LimitKind {
     Turns,
     Tokens,
@@ -47,6 +49,7 @@ impl StopReason {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RunEvent {
     RunStart {
         run: RunId,
@@ -159,6 +162,58 @@ impl RunEvent {
             | Self::PluginReport { run, .. }
             | Self::PluginError { run, .. }
             | Self::RunEnd { run, .. } => run,
+        }
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn events_round_trip_through_json() {
+        let run = RunId(Arc::from("r1"));
+        let events = [
+            RunEvent::RunStart {
+                run: run.clone(),
+                parent: None,
+                agent: Arc::from("coder"),
+            },
+            RunEvent::ToolEnd {
+                run: run.clone(),
+                call_id: "c1".into(),
+                output: Arc::new(ToolOutput::text("ok")),
+                is_error: false,
+            },
+            RunEvent::TurnEnd {
+                run: run.clone(),
+                turn: 1,
+                usage: Usage::default(),
+            },
+            RunEvent::Retry {
+                run: run.clone(),
+                turn: 1,
+                attempt: 2,
+                delay: Duration::from_millis(1500),
+                error: "429".into(),
+            },
+            RunEvent::PluginReport {
+                run: run.clone(),
+                plugin: Arc::from("tau-constitution"),
+                body: json!({"verdict": "block"}),
+            },
+            RunEvent::RunEnd {
+                run,
+                parent: None,
+                stop: StopReason::Limit(LimitKind::Turns),
+                cost: 0.25,
+            },
+        ];
+        for event in events {
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<RunEvent>(&text).unwrap(), event);
         }
     }
 }
