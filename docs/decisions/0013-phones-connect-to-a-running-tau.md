@@ -167,8 +167,13 @@ All five steps are in. Where the code went its own way:
   Settings screen, which tau does not have. Its settings, the
   certificate and the paired phones' token hashes are in
   `~/.config/tau/phones`.
-- **The phone scans with the camera app**: one photo, read with `rqrr`,
-  so it asks for no camera permission. Typing the address instead shows
-  the whole certificate to compare.
+- **The phone scans in its own viewfinder**: a full-screen camera
+  preview (CameraX, no Google Play services) whose frames go, one at a
+  time, to a decoder in Rust (`rqrr`), until one holds a tau pairing
+  code; other QR codes are passed over. It asks for the camera
+  permission when it first opens. A photo from the camera app was tried
+  first and did not work: the camera app opened, and the code never came
+  back. Typing the address instead, as when the camera is not allowed,
+  shows the whole certificate to compare.
 - **The phone keeps its token in the app's private directory**, not yet
   in the Android Keystore.

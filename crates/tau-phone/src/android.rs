@@ -4,13 +4,20 @@ use std::{path::PathBuf, sync::Arc};
 
 use gpui::{App, AppContext, Application, WindowOptions};
 use gpui_mobile::android::jni as mobile;
-use jni::objects::JValue;
+use jni::{
+    EnvUnowned,
+    errors::{Error, ThrowRuntimeExAndDefault},
+    objects::{JByteBuffer, JClass, JObject, JString, JValue},
+    sys::jint,
+};
 use tau_ui::{
     Workspace,
     assets::Assets,
     catalog::Catalog,
     remote::{self, Platform},
 };
+
+use crate::qr::{self, Frame};
 
 /// tau's own Java, in the APK beside gpui-pre-mobile's.
 const SCANNER: &str = "dev.cfcosta.tau.TauScanner";
@@ -74,32 +81,56 @@ fn android_main(app: android_activity::AndroidApp) {
         });
 }
 
-/// Photographs the computer's pairing code with the camera app and reads
-/// it. Blocks until the camera closes.
+/// Opens tau's viewfinder and waits for the computer's pairing code in
+/// it. Blocks until the viewfinder closes.
 fn scan() -> Result<Option<String>, String> {
-    let path = mobile::with_env(|env| {
+    mobile::with_env(|env| {
         let activity = mobile::activity(env)?;
         let class = mobile::find_app_class(env, SCANNER)?;
-        let path = env
+        let code = env
             .call_static_method(
                 &class,
-                jni::jni_str!("capture"),
+                jni::jni_str!("scan"),
                 jni::jni_sig!("(Landroid/app/Activity;)Ljava/lang/String;"),
                 &[JValue::Object(&activity)],
             )
             .and_then(|value| value.l())
-            .map_err(|error| {
-                env.exception_clear();
-                format!("The camera did not open: {error}")
+            .map_err(|error| match env.exception_catch() {
+                // The viewfinder says what went wrong in words.
+                Err(Error::CaughtJavaException { msg, .. }) => msg,
+                _ => format!("The camera did not open: {error}"),
             })?;
-        Ok((!path.is_null()).then(|| mobile::get_string(env, &path)))
-    })?;
-    let Some(path) = path.map(PathBuf::from) else {
-        return Ok(None);
-    };
-    let read = crate::qr::read(&path);
-    let _ = std::fs::remove_file(&path);
-    read.map(Some)
+        Ok((!code.is_null()).then(|| mobile::get_string(env, &code)))
+    })
+}
+
+/// `TauViewfinder.decode`: the pairing code in a camera frame's
+/// luminance, or null. The viewfinder calls it on its analysis thread,
+/// one frame at a time, and drops the frames that come meanwhile.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_cfcosta_tau_TauViewfinder_decode<'caller>(
+    mut env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    luma: JByteBuffer<'caller>,
+    width: jint,
+    height: jint,
+    stride: jint,
+) -> JObject<'caller> {
+    env.with_env(|env| -> jni::errors::Result<JObject<'caller>> {
+        let address = env.get_direct_buffer_address(&luma)?;
+        let len = env.get_direct_buffer_capacity(&luma)?;
+        // SAFETY: a direct buffer's memory; the viewfinder closes the
+        // frame it belongs to only once this returns.
+        let luma = unsafe { std::slice::from_raw_parts(address, len) };
+        let size = |n: jint| usize::try_from(n).unwrap_or(0);
+        let code = Frame::new(luma, size(width), size(height), size(stride))
+            .and_then(qr::pairing_code);
+        Ok(match code {
+            Some(code) => JString::from_str(env, code)?.into(),
+            None => JObject::null(),
+        })
+    })
+    .resolve::<ThrowRuntimeExAndDefault>()
 }
 
 /// The phone's model, as the computer lists it.

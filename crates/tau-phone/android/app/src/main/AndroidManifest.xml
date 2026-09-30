@@ -3,13 +3,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- The camera app, to photograph a pairing code. No CAMERA
-         permission: the camera app takes the photo. -->
-    <queries>
-        <intent>
-            <action android:name="android.media.action.IMAGE_CAPTURE" />
-        </intent>
-    </queries>
+    <!-- tau's viewfinder reads the pairing code off the camera's
+         preview; asked for when it first opens. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Pairing can be typed instead, so a phone without a camera still
+         installs tau. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <!-- wgpu draws with Vulkan, or GL ES 3.0 where there is none. -->
     <uses-feature
@@ -41,18 +40,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- Opens the camera app for one photo of a pairing code. -->
+        <!-- The viewfinder that reads a pairing code. Turning the phone
+             recreates it; CameraX closes the camera with it. -->
         <activity
-            android:name="dev.cfcosta.tau.TauCaptureActivity"
+            android:name="dev.cfcosta.tau.TauViewfinder"
             android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
-        />
-        <!-- Where the camera app writes that photo. -->
-        <provider
-            android:name="dev.cfcosta.tau.TauPhotos"
-            android:authorities="dev.cfcosta.tau.photos"
-            android:exported="false"
-            android:grantUriPermissions="true"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen"
         />
     </application>
 
