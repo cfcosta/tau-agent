@@ -211,7 +211,8 @@ This note surveys the Rust options and says which to use for each job.
   bat's extra grammars. Easier to set up than tree-sitter (one crate, no
   per-language C grammars), slower, and no parse tree.
 - **gpui-component** 0.7.0 (Apache-2.0) has a tree-sitter code view for
-  GPUI. Unverified: whether it works with our `gpui` 0.2.2.
+  GPUI. It pins `gpui-pre =0.3.7`, the GPUI tau-ui uses since
+  2026-09-30.
 
 A structural diff is useful for review, not for the model. The model
 applies edits by exact text, so it must see text diffs. For the UI, a
@@ -406,7 +407,6 @@ Unverified:
 
 - The imara-diff README figures ("up to 30 times", "10% to 100%") are
   the author's, measured against `similar` 2.x.
-- `gpui-component` 0.7.0 compatibility with `gpui` 0.2.2.
 - diffsitter's algorithm details come from its README, not its code.
 - Users of imara-diff other than Helix, Zed and difftastic come from
   the crates.io reverse-dependency list, not from reading their code.

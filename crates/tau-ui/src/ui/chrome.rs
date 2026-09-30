@@ -2,9 +2,9 @@
 //! their phone versions.
 
 use gpui::{
+    Anchor,
     AnyElement,
     Context,
-    Corner,
     Div,
     IntoElement,
     SharedString,
@@ -810,7 +810,7 @@ fn repo_menu(
         .on_mouse_down_out(cx.listener(|ws, _, _, cx| ws.close_repo_menu(cx)));
     deferred(
         anchored()
-            .anchor(Corner::TopLeft)
+            .anchor(Anchor::TopLeft)
             .offset(point(px(120.), px(2.)))
             .snap_to_window_with_margin(px(8.))
             .child(menu),

@@ -316,7 +316,7 @@ fn row(t: &Theme) -> gpui::Div {
 
 fn cell(grow: f32, right: bool) -> gpui::Div {
     div()
-        .flex_grow()
+        .flex_grow(1.)
         .flex_basis(gpui::relative(grow / 8.))
         .min_w(px(0.))
         .truncate()
@@ -345,7 +345,7 @@ fn query_result(
         row(t).children(cells.iter().map(|cell| {
             mono(cell.clone(), Type::CAPTION, color)
                 .flex_basis(gpui::relative(1. / columns))
-                .flex_grow()
+                .flex_grow(1.)
                 .min_w(px(0.))
                 .truncate()
         }))

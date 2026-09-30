@@ -152,7 +152,7 @@ impl Workspace {
     pub fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.searching = true;
         self.search.update(cx, |input, cx| input.clear(cx));
-        self.search.read(cx).focus_handle(cx).focus(window);
+        self.search.read(cx).focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 

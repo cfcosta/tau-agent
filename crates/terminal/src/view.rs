@@ -521,7 +521,7 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         let Some(at) = self.cell_at(event.position) else {
             return;
         };
@@ -902,7 +902,14 @@ fn paint(
                 paint_glyph(&shape.glyph, at, color, window);
             }
             for (x, line) in &row.texts {
-                let _ = line.paint(point(*x, row.y), cell.height, window, cx);
+                let _ = line.paint(
+                    point(*x, row.y),
+                    cell.height,
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
             }
         }
 
@@ -977,7 +984,14 @@ fn paint_cursor(
                     &[run],
                     Some(cell.width),
                 );
-                let _ = line.paint(point(x, y), cell.height, window, cx);
+                let _ = line.paint(
+                    point(x, y),
+                    cell.height,
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
             }
         }
         CursorShape::BlockHollow => {

@@ -10,7 +10,12 @@ publish.workspace = true
 # (docs/decisions/0010-terminal-rendering.md).
 [dependencies]
 # The same spec as tau-ui's.
-gpui = "0.2.2"
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = [
+  "wayland",
+  "x11",
+  "font-kit",
+] }
 libc.workspace = true
 libghostty-vt.workspace = true
 libghostty-vt-sys.workspace = true
@@ -19,7 +24,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "process"] }
 
 [dev-dependencies]
-gpui = { version = "0.2.2", features = ["test-support"] }
+gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }

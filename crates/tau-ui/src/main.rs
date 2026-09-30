@@ -28,7 +28,6 @@ use std::path::PathBuf;
 use gpui::{
     App,
     AppContext,
-    Application,
     Bounds,
     TitlebarOptions,
     WindowBounds,
@@ -118,9 +117,8 @@ fn main() {
     });
     let onboarding = host.is_none() && !args.demo;
 
-    Application::new()
-        .with_assets(Assets)
-        .run(move |cx: &mut App| {
+    gpui_platform::application().with_assets(Assets).run(
+        move |cx: &mut App| {
             tau_ui::init(cx);
             let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
             let options = WindowOptions {
@@ -217,7 +215,8 @@ fn main() {
                 }
             }
             cx.activate(true);
-        });
+        },
+    );
 }
 
 fn demo_workspace(

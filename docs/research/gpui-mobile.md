@@ -1,6 +1,7 @@
 # Research: gpui-mobile, GPUI on iOS and Android
 
-- Status: research only; nothing decided
+- Status: research only; tau-ui moved to `gpui-pre =0.3.7` on
+  2026-09-30, the first step below
 - Date: 2026-09-30
 
 ## Question

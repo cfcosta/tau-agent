@@ -303,7 +303,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.ask_for_repo(cx);
-        self.repo_path.read(cx).focus_handle(cx).focus(window);
+        self.repo_path.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     /// Opens the dialog without focusing its field.

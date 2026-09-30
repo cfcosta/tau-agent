@@ -684,7 +684,7 @@ impl Workspace {
                 ws.start_first_run(task.clone(), cx);
             }),
         ];
-        composer.read(cx).focus_handle(cx).focus(window);
+        composer.read(cx).focus_handle(cx).focus(window, cx);
         let current = runs.first().map(|run| run.id.clone());
         let next_model = catalog.models.settings.default_for("coder");
         let mut workspace = Self {
@@ -779,7 +779,7 @@ impl Workspace {
             let (this, list) = (this.clone(), list.clone());
             cx.defer(move |cx| {
                 let offset = -list.scroll_px_offset_for_scrollbar().y;
-                let bottom = list.max_offset_for_scrollbar().height;
+                let bottom = list.max_offset_for_scrollbar().y;
                 let _ = this.update(cx, |ws, _| {
                     ws.follow = offset >= bottom - px(24.);
                 });
@@ -1210,7 +1210,7 @@ impl Workspace {
             input.clear(cx);
             input.set_placeholder("Describe the task for a new run");
         });
-        self.composer.read(cx).focus_handle(cx).focus(window);
+        self.composer.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     /// Opens or closes the detail of the note at `index` of `run`.
@@ -1555,7 +1555,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if self.start_fork_at(run, turn, cx) {
-            self.composer.read(cx).focus_handle(cx).focus(window);
+            self.composer.read(cx).focus_handle(cx).focus(window, cx);
         }
     }
 
@@ -2067,7 +2067,7 @@ impl Workspace {
     ) {
         self.adding_jev_key = true;
         self.jev_key.update(cx, |input, cx| input.clear(cx));
-        self.jev_key.read(cx).focus_handle(cx).focus(window);
+        self.jev_key.read(cx).focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -2706,7 +2706,7 @@ impl Workspace {
                     .focus_handle(cx)
                     .is_focused(window));
         if stranded {
-            self.focus.focus(window);
+            self.focus.focus(window, cx);
         }
     }
 

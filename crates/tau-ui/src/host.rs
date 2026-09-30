@@ -3587,7 +3587,7 @@ fn clone_into_tau(
         let Some(workspace) = workspace.upgrade() else {
             return;
         };
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             let state = match cloned {
                 Ok(repo) => {
                     if let Some(slot) = host.slot(&repo.name) {

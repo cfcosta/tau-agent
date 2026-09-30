@@ -407,7 +407,7 @@ impl SignIns {
                 let Some(workspace) = workspace.upgrade() else {
                     return;
                 };
-                let applied = cx.update(|cx| match update {
+                cx.update(|cx| match update {
                     Progress::Url(url) => {
                         cx.open_url(&url);
                         let pending = ModelAccess::SigningIn { url: Some(url) };
@@ -442,9 +442,6 @@ impl SignIns {
                         });
                     }
                 });
-                if applied.is_err() {
-                    return;
-                }
             }
         })
         .detach();
@@ -508,7 +505,7 @@ fn sign_out(
     let (credentials, connected) = (credentials.clone(), connected.clone());
     cx.spawn(async move |cx| {
         let Ok(revoked) = finished.await else { return };
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             let left = credentials.access();
             connected(left.clone(), cx);
             let Some(workspace) = workspace.upgrade() else {

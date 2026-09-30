@@ -11,7 +11,6 @@
 
 use gpui::{
     App,
-    Application,
     Bounds,
     Context,
     Entity,
@@ -68,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut run = command.spawn()?;
 
-    Application::new().run(move |cx: &mut App| {
+    gpui_platform::application().run(move |cx: &mut App| {
         view::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(960.), px(640.)), cx);
         let opened = cx.open_window(

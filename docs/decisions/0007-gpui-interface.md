@@ -108,9 +108,9 @@ reach into the loop.
   [gpui-mobile](https://github.com/itsbalamurali/gpui-mobile), which
   implements GPUI's `Platform` trait for iOS (Metal) and Android
   (Vulkan) through wgpu. Adopting it would mean:
-  - moving from `gpui` 0.2.2 on crates.io to GPUI from Zed's git
-    repository, with its `gpui_wgpu` renderer, which is what
-    gpui-mobile builds on (its crates.io release is a placeholder);
+  - its GPUI: longbridge's fork, `gpui-pre-mobile`, builds on
+    `gpui-pre`, which tau-ui has used since 2026-09-30, pinned to the
+    same exact version (see `docs/research/gpui-mobile.md`);
   - its license, a choice of GPL-3.0, AGPL-3.0 or Apache-2.0;
   - an Android build in the flake (SDK, NDK, and packaging an APK).
 - The phone layout is already written against the same `Workspace`, so

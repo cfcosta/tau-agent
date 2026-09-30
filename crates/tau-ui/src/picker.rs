@@ -91,7 +91,10 @@ impl Workspace {
     ) {
         self.picker = Some(target);
         self.model_search.update(cx, |input, cx| input.clear(cx));
-        self.model_search.read(cx).focus_handle(cx).focus(window);
+        self.model_search
+            .read(cx)
+            .focus_handle(cx)
+            .focus(window, cx);
         cx.notify();
     }
 
