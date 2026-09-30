@@ -5,9 +5,10 @@
 //! subset tau-agent speaks: OpenAI direct, WebSocket only, API keys only,
 //! `store: false`. No custom tools, no grammar-constrained sampling
 //! (`custom_tool_call*` items and events are ignored, like any other
-//! unsupported item type). Codex-specific frames are not modelled, but
-//! any frame this module does not recognize — including
-//! `codex.rate_limits` — is ignored rather than rejected.
+//! unsupported item type). Frames outside the protocol are not
+//! modelled: any frame this module does not recognize (such as
+//! `codex.response.metadata`, which the plan route sends) is ignored
+//! rather than rejected.
 //!
 //! [`StreamProcessor`] is pure: no I/O, no clock. The caller feeds it
 //! parsed frames from one lane's socket traffic with
@@ -16,8 +17,8 @@
 //! is upheld: the first event is always [`AssistantEvent::Start`], and
 //! there is exactly one terminal event ([`AssistantEvent::Done`] or
 //! [`AssistantEvent::Error`]), after which every frame is ignored.
-//! A frame it does not know (such as `codex.rate_limits`, which can come
-//! before `response.created`) is skipped and does not start the stream,
+//! A frame it does not know (such as `codex.response.metadata`, which
+//! can come before `response.created`) is skipped and does not start the stream,
 //! so `Start` carries the response id.
 //!
 //! ## Frame → event mapping
@@ -252,7 +253,7 @@ impl StreamProcessor {
         let Some(frame_type) = frame.get("type").and_then(Value::as_str) else {
             return events;
         };
-        // A frame tau-ai does not know (`codex.rate_limits`, which can
+        // A frame tau-ai does not know (`codex.response.metadata`, which can
         // come before `response.created`) is skipped, and does not start
         // the stream: `Start` waits for a frame that carries the
         // response, so it has the response id.

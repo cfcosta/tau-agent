@@ -1,7 +1,6 @@
 # 0011: Sign in with ChatGPT, for plan usage on the public API
 
-- Status: proposed. Supersedes [0008](0008-codex-subscription.md) once
-  a live check confirms the transport (see "Open before accepting").
+- Status: accepted. Supersedes [0008](0008-codex-subscription.md).
 - Date: 2026-09-29
 
 ## Context
@@ -54,30 +53,35 @@ Usage.
   the Codex sign-in already used, generalized: any method, headers,
   streamed bodies, and a `Dialer` so tests run it over turmoil.
 
-## Open before accepting
+## What the live check found
 
-A live probe (`cargo run -p tau-ai --example chatgpt_probe`) answers what
-the docs leave open:
+The probe (`cargo run -p tau-ai --example chatgpt_probe`) ran on
+2026-09-29 with a Plus/Pro account:
 
-- Does `wss://api.openai.com/v1/responses` accept the plan token? The
-  docs describe HTTP with `stream: true`, and mention WebSocket
-  continuation only in passing. [0002](0002-openai-websocket-only.md)
-  makes tau WebSocket only; if the route is HTTP only, 0002 needs an
-  exception.
-- Do plain top-level function tools work, or must tools be grouped in
-  a `namespace` or sent as `additional_tools` input items, as the
-  preview limitations suggest? tau's tool list is plain functions today.
-- Does `stream_id` (several lanes per connection) work there?
+- `wss://api.openai.com/v1/responses` takes the plan token as a bearer
+  token: 101, a completed response, and a second one continuing with
+  `previous_response_id` on the same connection. tau stays WebSocket
+  only; 0002 needs no exception.
+- Plain top-level function tools work, over HTTP and WebSocket; the
+  `namespace` and `additional_tools` forms work too. No reshaping.
+- Refresh works and rotates; `earliest_refresh_at` comes as Unix
+  seconds.
+- `stream_id` was not checked: the plan client uses one lane per
+  connection.
 
 ## Consequences
 
-- Once accepted: the Codex connector, `codex.json` and the pi client id
-  go; the transport sends the plan token to `api.openai.com`; tau-ui
-  signs in through `tau_ai::chatgpt`; 0008 is superseded.
-- The route rejects fields tau may send today (`max_output_tokens`,
-  `temperature`, `prompt_cache_retention`, …) and `system` message
-  items. The transport stage must strip them for plan requests.
-- `/v1/models` lists the account's models; the static Codex list goes.
+- The Codex connector and its headers, the Codex CLI's client id, the
+  device-code flow, `~/.codex/auth.json` import, `codex.json` and the
+  `codex.rate_limits` usage windows are gone. tau no longer reads
+  `~/.config/tau/codex.json`; users sign in again.
+- `OpenAi::chatgpt` sends the plan token to `api.openai.com`, stripping
+  the fields the route rejects (`max_output_tokens`, `temperature`,
+  `prompt_cache_retention`, …); tau sends no `system` items.
+- Plan errors carry a `Refusal`; only "retry later" retries. tau-ui
+  says what to do instead, and never switches to the API key.
+- `/v1/models` lists the account's models; the static Codex list is
+  gone.
 - Signing in needs a browser on the same machine (the callback is on
   `127.0.0.1`). A remote host signs in locally and copies its record,
   keeping its own host id. There is no device-code flow.

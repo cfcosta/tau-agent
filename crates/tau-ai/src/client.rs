@@ -9,16 +9,13 @@
 use std::sync::Arc;
 
 use crate::{
-    codex::{
-        CodexAuth,
-        CodexConnector,
-        DEFAULT_INSTRUCTIONS,
-        limits::RateLimits,
-    },
+    chatgpt::{AccountId, ChatGpt, ChatGptConnector, UNSUPPORTED_FIELDS},
     cost::apply,
     event::AssistantEvent,
+    http::Dialer,
     message::{Message, Timestamp},
     model::{Model, ServiceTier, find},
+    refusal::Refusal,
     responses::{
         input::InputCache,
         request::{ReasoningEffort, Settings, fields},
@@ -57,8 +54,9 @@ pub struct OpenAi {
 pub enum Endpoint {
     /// `api.openai.com`, with an API key.
     Api,
-    /// ChatGPT's Codex endpoint, with a ChatGPT sign-in.
-    Codex,
+    /// `api.openai.com`, with a ChatGPT sign-in that uses the plan: the
+    /// same protocol, less [`UNSUPPORTED_FIELDS`].
+    ChatGptPlan,
 }
 
 impl OpenAi {
@@ -76,11 +74,16 @@ impl OpenAi {
         Ok(Self::new(key))
     }
 
-    /// A client for OpenAI Codex, signed in with a ChatGPT account (see
-    /// [`crate::codex`]). The sign-in is refreshed as it nears expiry.
-    pub fn codex(auth: CodexAuth) -> Self {
-        Self::with_connector(CodexConnector::new(auth), codex_limits())
-            .endpoint(Endpoint::Codex)
+    /// A client that uses `account`'s ChatGPT plan (see
+    /// [`crate::chatgpt`]). Its token is refreshed before each connection
+    /// when it nears expiry; a sign-in without plan usage connects
+    /// nothing.
+    pub fn chatgpt<D: Dialer>(chatgpt: ChatGpt<D>, account: AccountId) -> Self {
+        Self::with_connector(
+            ChatGptConnector::new(chatgpt, account),
+            single_lane_limits(),
+        )
+        .endpoint(Endpoint::ChatGptPlan)
     }
 
     /// A client over any connector, such as a simulated network in tests.
@@ -91,8 +94,8 @@ impl OpenAi {
         }
     }
 
-    /// Adapts sessions to `endpoint`'s requirements. [`Self::codex`] sets
-    /// it; a test connector to a Codex double needs it too.
+    /// Adapts sessions to `endpoint`'s requirements. [`Self::chatgpt`]
+    /// sets it; a test connector to a plan double needs it too.
     pub fn endpoint(mut self, endpoint: Endpoint) -> Self {
         self.endpoint = endpoint;
         self
@@ -108,15 +111,16 @@ impl OpenAi {
         if let Some(model) = model {
             settings.reasoning_model = model.reasoning;
         }
-        if self.endpoint == Endpoint::Codex {
-            codex_settings(&mut settings);
+        if self.endpoint == Endpoint::ChatGptPlan {
+            settings.max_output_tokens = None;
         }
         Ok(Session {
             lane: self.transport.open_lane().await?,
-            fields: Arc::new(fields(&settings, None)),
+            fields: Arc::new(session_fields(&settings, self.endpoint)),
             settings,
             model,
             input: InputCache::new(),
+            endpoint: self.endpoint,
         })
     }
 
@@ -125,16 +129,17 @@ impl OpenAi {
         self.transport.stats().await
     }
 
-    /// The ChatGPT plan's usage limits, as of the latest response that
-    /// reported them. Only the Codex endpoint reports them.
-    pub fn rate_limits(&self) -> Option<RateLimits> {
-        self.transport.rate_limits()
+    /// Why the latest request or connection was refused, if no response
+    /// has completed since (see [`crate::refusal`]). A run that stopped on
+    /// a usage limit or a dead sign-in leaves it here for the interface.
+    pub fn refusal(&self) -> Option<Refusal> {
+        self.transport.refusal()
     }
 }
 
-/// Codex takes one response stream per connection: it rejects
-/// `stream_id`, so lanes cannot share one.
-pub fn codex_limits() -> Limits {
+/// One response stream per connection, for an endpoint that does not
+/// take `stream_id`: lanes cannot share a connection.
+pub fn single_lane_limits() -> Limits {
     Limits {
         max_lanes: 1,
         max_in_flight: 1,
@@ -142,13 +147,16 @@ pub fn codex_limits() -> Limits {
     }
 }
 
-/// What Codex expects of every request, as pi builds it: instructions
-/// always, and no `max_output_tokens`, which pi never sends there.
-fn codex_settings(settings: &mut Settings) {
-    if settings.instructions.as_deref().is_none_or(str::is_empty) {
-        settings.instructions = Some(DEFAULT_INSTRUCTIONS.to_owned());
+/// The request fields of a session on `endpoint`: on the plan route,
+/// without the fields it does not take, whatever the settings asked for.
+fn session_fields(settings: &Settings, endpoint: Endpoint) -> Fields {
+    let mut fields = fields(settings, None);
+    if endpoint == Endpoint::ChatGptPlan {
+        for name in UNSUPPORTED_FIELDS {
+            fields.remove(name);
+        }
     }
-    settings.max_output_tokens = None;
+    fields
 }
 
 /// One run's conversation with the model.
@@ -161,6 +169,7 @@ pub struct Session {
     fields: Arc<Fields>,
     model: Option<&'static Model>,
     input: InputCache,
+    endpoint: Endpoint,
 }
 
 impl Session {
@@ -215,7 +224,7 @@ impl Session {
             return;
         }
         self.settings.reasoning = effort;
-        self.fields = Arc::new(fields(&self.settings, None));
+        self.fields = Arc::new(session_fields(&self.settings, self.endpoint));
     }
 }
 

@@ -15,10 +15,14 @@ use tokio::{
 };
 use tokio_tungstenite::{
     client_async,
-    tungstenite::{Message, client::IntoClientRequest, http},
+    tungstenite::{self, Message, client::IntoClientRequest, http},
 };
 
-use crate::ws::proto::{continuation::Body, pool::ConnectionId};
+use crate::{
+    chatgpt::{ApiError, ChatGptError},
+    refusal::Refusal,
+    ws::proto::{continuation::Body, pool::ConnectionId},
+};
 
 /// Opens the byte stream a WebSocket runs over, and says how to upgrade
 /// it. The default connects with TLS to OpenAI; tests connect on a
@@ -32,9 +36,13 @@ pub trait Connector: Send + Sync + 'static {
     fn request(&self) -> http::Request<()>;
 
     /// Whether requests name their lane with `stream_id`, so several lanes
-    /// share a connection. An endpoint that rejects `stream_id` (Codex)
-    /// returns `false`; its client must then allow one lane per
-    /// connection, and frames go to the lane their connection carries.
+    /// share a connection. An endpoint that may not take `stream_id` (the
+    /// ChatGPT plan route, unverified) returns `false`; its client must
+    /// then allow one lane per connection, and frames go to the lane their
+    /// connection carries.
+    ///
+    /// `connect` may fail with an `io::Error` that wraps a
+    /// [`ChatGptError`]; the connection reports it as a [`Refusal`].
     fn tags_lanes(&self) -> bool {
         true
     }
@@ -51,8 +59,14 @@ pub enum ConnectionEvent {
         frame: Value,
     },
     /// The connection closed or could not open. Always the last event
-    /// of a connection, and always sent exactly once.
-    Closed { connection: ConnectionId },
+    /// of a connection, and always sent exactly once. `refusal` says why
+    /// it could not open when OpenAI or the sign-in said so: a refused
+    /// upgrade (its status, code, request id and body), or a sign-in
+    /// that could not give a token.
+    Closed {
+        connection: ConnectionId,
+        refusal: Option<Refusal>,
+    },
 }
 
 /// A frame to send.
@@ -113,42 +127,50 @@ pub fn spawn<C: Connector>(
 ) -> ConnectionHandle {
     let (outgoing, frames) = mpsc::unbounded_channel();
     tokio::spawn(async move {
-        run(connection, connector, frames, &events).await;
-        let _ = events.send(ConnectionEvent::Closed { connection });
+        let refusal = run(connection, connector, frames, &events).await;
+        let _ = events.send(ConnectionEvent::Closed {
+            connection,
+            refusal,
+        });
     });
     ConnectionHandle { outgoing }
 }
 
+/// Runs the connection until it closes. Returns why it could not open,
+/// when it was refused.
 async fn run<C: Connector>(
     connection: ConnectionId,
     connector: Arc<C>,
     mut frames: mpsc::UnboundedReceiver<Outgoing>,
     events: &mpsc::UnboundedSender<ConnectionEvent>,
-) {
-    let Ok(stream) = connector.connect().await else {
-        return;
+) -> Option<Refusal> {
+    let stream = match connector.connect().await {
+        Ok(stream) => stream,
+        Err(error) => return connect_refusal(&error),
     };
-    let Ok(request) = connector.request().into_client_request() else {
-        return;
-    };
-    let Ok((mut socket, _)) = client_async(request, stream).await else {
-        return;
+    let request = connector.request().into_client_request().ok()?;
+    let mut socket = match client_async(request, stream).await {
+        Ok((socket, _)) => socket,
+        Err(tungstenite::Error::Http(response)) => {
+            return Some(upgrade_refusal(&response));
+        }
+        Err(_) => return None,
     };
     if events.send(ConnectionEvent::Opened { connection }).is_err() {
-        return;
+        return None;
     }
     loop {
         tokio::select! {
             outgoing = frames.recv() => match outgoing {
                 Some(frame) => {
                     if socket.send(Message::text(frame.into_text())).await.is_err() {
-                        return;
+                        return None;
                     }
                 }
                 None => {
                     // The driver dropped the handle.
                     let _ = socket.close(None).await;
-                    return;
+                    return None;
                 }
             },
             incoming = socket.next() => match incoming {
@@ -156,14 +178,36 @@ async fn run<C: Connector>(
                     if let Ok(frame) = serde_json::from_str::<Value>(&text)
                         && events.send(ConnectionEvent::Frame { connection, frame }).is_err()
                     {
-                        return;
+                        return None;
                     }
                 }
-                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return None,
                 // Pings are answered by tungstenite; binary frames are not
                 // part of the protocol.
                 Some(Ok(_)) => {}
             },
         }
     }
+}
+
+/// A connect failure the sign-in explained; `None` for a plain network
+/// failure.
+fn connect_refusal(error: &io::Error) -> Option<Refusal> {
+    let chatgpt = error.get_ref()?.downcast_ref::<ChatGptError>()?;
+    Refusal::from_chatgpt(chatgpt)
+}
+
+/// The refusal of an upgrade answered with an HTTP status instead of 101.
+fn upgrade_refusal(response: &http::Response<Option<Vec<u8>>>) -> Refusal {
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let body = response.body().as_deref().unwrap_or_default();
+    Refusal::from_api(&ApiError::new(
+        response.status().as_u16(),
+        request_id,
+        body,
+    ))
 }

@@ -42,6 +42,7 @@
 //! | `billing_hard_limit_reached`  | Fatal            | Hard spend limit; not transient.                                |
 //! | `account_deactivated`         | Fatal            | Account state issue; not transient.                             |
 //! | `invalid_api_key`             | Fatal            | Credential issue; retrying with the same key never helps.       |
+//! | `subscription_sharing_*`, `chatpass_v2_*` | per [`Recovery::of_code`] | ChatGPT plan usage: only the "retry later" codes retry; a usage limit never does. |
 //!
 //! `kind` (the error's `type` field, checked when `code` is absent or
 //! unknown):
@@ -100,6 +101,73 @@ pub enum Class {
     Fatal,
 }
 
+/// What to do after a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Recovery {
+    /// A temporary failure: keep the credentials and retry with bounded
+    /// backoff.
+    RetryLater,
+    /// The ChatGPT plan's usage limit for this app: pause requests that use
+    /// the plan and link to ChatGPT Settings → Usage. Nothing says when it
+    /// resets.
+    UsageLimit,
+    /// The credentials are not accepted: refresh them, and if that fails,
+    /// sign in again with the saved client id.
+    SignInAgain,
+    /// Signed in, but the user did not allow plan usage: offer to enable
+    /// it (sign in again asking for consent) or another way to pay.
+    EnablePlanUsage,
+    /// Plan usage is not available to this user, workspace, region or
+    /// grant: explain it. Retrying or signing in again will not help.
+    Restricted,
+    /// The request is at fault (an unsupported field, tool, model or
+    /// route): change it before sending it again.
+    FixRequest,
+    /// The OAuth client or its configuration is at fault.
+    FixClient,
+}
+
+impl Recovery {
+    /// The recovery for an error `code` OpenAI documents for plan usage,
+    /// as a Responses error object or a `response.failed` event carries
+    /// it. `None` for codes the docs do not name.
+    pub fn of_code(code: &str) -> Option<Self> {
+        Some(match code {
+            "subscription_sharing_user_not_eligible" => Self::Restricted,
+            "subscription_sharing_usage_limit_exceeded" => Self::UsageLimit,
+            "subscription_sharing_usage_unavailable"
+            | "subscription_sharing_user_unavailable" => Self::RetryLater,
+            "subscription_sharing_unsupported_capability"
+            | "subscription_sharing_route_not_supported" => Self::FixRequest,
+            "subscription_sharing_invalid_user" => Self::SignInAgain,
+            "chatpass_v2_scope_not_authorized"
+            | "chatpass_v2_invalid_authorization_context" => Self::Restricted,
+            _ => return None,
+        })
+    }
+
+    /// How the retry policy treats it: only [`Self::RetryLater`] is
+    /// retried, with the policy's bounded backoff. Everything else stops
+    /// the run: a usage limit must never be retried in a loop.
+    pub fn class(self) -> Class {
+        match self {
+            Self::RetryLater => Class::Retryable,
+            _ => Class::Fatal,
+        }
+    }
+
+    /// The recovery for an HTTP status with no documented code.
+    pub fn of_status(status: u16) -> Self {
+        match status {
+            401 => Self::SignInAgain,
+            403 => Self::Restricted,
+            408 | 409 | 429 => Self::RetryLater,
+            500..=599 => Self::RetryLater,
+            _ => Self::FixRequest,
+        }
+    }
+}
+
 /// Classify a failure per the table in the module documentation.
 ///
 /// Never inspects message text, only `code`, `kind` and `status`.
@@ -127,6 +195,9 @@ pub fn classify(failure: &Failure<'_>) -> Class {
 }
 
 fn classify_code(code: &str) -> Option<Class> {
+    if let Some(recovery) = Recovery::of_code(code) {
+        return Some(recovery.class());
+    }
     match code {
         "rate_limit_exceeded" | "server_error" => Some(Class::Retryable),
         "context_length_exceeded" => Some(Class::ContextOverflow),

@@ -27,8 +27,9 @@ This works with `store: false`.
 ## Decision
 
 - **Provider:** OpenAI only.
-- **Authentication:** API keys only, from `OPENAI_API_KEY` or passed in
-  explicitly.
+- **Authentication:** API keys, from `OPENAI_API_KEY` or passed in
+  explicitly (and, since [0011](0011-sign-in-with-chatgpt.md), a
+  ChatGPT plan's token).
 - **API:** Responses only. Chat Completions has no WebSocket mode.
 - **Transport:** WebSocket only. There is no SSE fallback. A failed
   connection surfaces as an `error` event, and the retry policy handles
@@ -43,4 +44,8 @@ This works with `store: false`.
   Changing either breaks the continuation chain and forces a full resend.
 - Networks that block WebSocket upgrades stop every agent.
 - All model and API changes come from a single vendor.
+- Authentication grew one way since: a ChatGPT plan through Sign in with
+  ChatGPT ([0011](0011-sign-in-with-chatgpt.md)), on the same endpoint
+  and the same WebSocket protocol with the plan's token as the bearer.
+  The transport stays WebSocket only.
 - Protocol details: [`../reference/openai-websocket.md`](../reference/openai-websocket.md).

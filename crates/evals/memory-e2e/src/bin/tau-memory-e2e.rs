@@ -11,8 +11,8 @@ use std::{
 };
 
 use tau_ai::{
+    chatgpt::{AccountId, ChatGpt, ChatGptError, Store},
     client::OpenAi,
-    codex::{CodexAuth, CodexError},
     llm::Llm,
 };
 use tau_memory_e2e::{
@@ -38,11 +38,10 @@ Usage: tau-memory-e2e [options]
                     memory_consolidate (repeat, or comma-separated)
   --variant NAME    stable or changed (default: both)
   --trials N        repetitions of each scenario, variant and arm (default 1)
-  --model ID        the model (default: tau-ui's for the access: gpt-6-sol on
-                    a ChatGPT sign-in, gpt-5.5 on an API key)
+  --model ID        the model (default: gpt-5.5, tau-ui's)
   --budget-usd USD  stop once this much is spent
   --json PATH       also write every trial and summary to PATH
-  --codex PATH      reach the model with this ChatGPT sign-in file
+  --chatgpt ID      use this ChatGPT account's plan (from tau's sign-ins)
   --max-turns N     turns a run may take (default 40)
   --work DIR        where trial repositories are made (default: the temp dir)
   --keywords        search memory and transcripts with BM25 even when built
@@ -50,9 +49,9 @@ Usage: tau-memory-e2e [options]
   --list            list the scenarios and arms, and exit
   --help            print this, and exit
 
-Access, first found: --codex, OPENAI_API_KEY, tau's ChatGPT sign-in
-($XDG_CONFIG_HOME/tau/codex.json), tau's saved API key
-($XDG_CONFIG_HOME/tau/openai-key).
+Access, first found: --chatgpt, OPENAI_API_KEY, tau's active ChatGPT
+account when it may use the plan ($XDG_CONFIG_HOME/tau/chatgpt), tau's saved
+API key ($XDG_CONFIG_HOME/tau/openai-key).
 ";
 
 struct Options {
@@ -63,7 +62,7 @@ struct Options {
     model: Option<String>,
     budget: Option<f64>,
     json: Option<PathBuf>,
-    codex: Option<PathBuf>,
+    chatgpt: Option<AccountId>,
     max_turns: u32,
     work: Option<PathBuf>,
     keywords: bool,
@@ -93,12 +92,14 @@ enum CliError {
     #[error("{0:?} is not a variant: stable or changed")]
     NoVariant(String),
     #[error(
-        "no model access: set OPENAI_API_KEY, pass --codex PATH, or sign in \
+        "no model access: set OPENAI_API_KEY, pass --chatgpt ID, or sign in \
          with tau first. Nothing was run."
     )]
     NoAccess,
-    #[error("cannot read the sign-in at {}: {source}", path.display())]
-    SignIn { path: PathBuf, source: CodexError },
+    #[error("{0:?} is not a ChatGPT account id")]
+    NoAccount(String),
+    #[error("cannot open the ChatGPT sign-ins: {0}")]
+    SignIn(#[from] ChatGptError),
     #[error("cannot write {}: {source}", path.display())]
     Write {
         path: PathBuf,
@@ -121,7 +122,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, CliError> {
         model: None,
         budget: None,
         json: None,
-        codex: None,
+        chatgpt: None,
         max_turns: arm::MAX_TURNS,
         work: None,
         keywords: false,
@@ -150,7 +151,11 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, CliError> {
                 options.budget = Some(usd);
             }
             "--json" => options.json = Some(value()?.into()),
-            "--codex" => options.codex = Some(value()?.into()),
+            "--chatgpt" => {
+                let id = value()?;
+                options.chatgpt =
+                    Some(AccountId::parse(&id).ok_or(CliError::NoAccount(id))?);
+            }
             "--max-turns" => {
                 options.max_turns =
                     value()?.parse().map_err(CliError::MaxTurns)?
@@ -227,7 +232,7 @@ fn run() -> Result<(), CliError> {
     config.budget = Budget::new(options.budget);
 
     let Some(access) = access::resolve(
-        options.codex.clone(),
+        options.chatgpt.clone(),
         std::env::var("OPENAI_API_KEY").ok(),
         access::config_dir().as_deref(),
     ) else {
@@ -236,7 +241,7 @@ fn run() -> Result<(), CliError> {
     config.model = options
         .model
         .clone()
-        .unwrap_or_else(|| access.default_model().to_owned());
+        .unwrap_or_else(|| access::DEFAULT_MODEL.to_owned());
     #[cfg(feature = "docbert")]
     if !options.keywords {
         config.index = arm::semantic_index();
@@ -252,14 +257,10 @@ fn run() -> Result<(), CliError> {
         // Clients must be created inside the runtime.
         let _guard = runtime.enter();
         match &access {
-            Access::Codex(path) => {
-                Arc::new(OpenAi::codex(CodexAuth::from_file(path).map_err(
-                    |source| CliError::SignIn {
-                        path: path.clone(),
-                        source,
-                    },
-                )?))
-            }
+            Access::ChatGpt { store, account } => Arc::new(OpenAi::chatgpt(
+                ChatGpt::new(Store::open(store)?),
+                account.clone(),
+            )),
             Access::ApiKey(key) => Arc::new(OpenAi::new(key.clone())),
         }
     };

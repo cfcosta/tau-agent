@@ -1,8 +1,10 @@
 # Sign in with ChatGPT
 
-- Status: sign-in, tokens, sign-out and model list implemented in
-  `tau_ai::chatgpt`; inference still goes through
-  [Codex](codex.md) until the live probe settles the transport.
+- Status: implemented. `tau_ai::chatgpt` signs in, keeps tokens, signs
+  out and lists models; `OpenAi::chatgpt` runs inference on the plan
+  over `wss://api.openai.com/v1/responses`; tau-ui signs in, switches
+  accounts and shows the plan's state. It replaces the Codex backend
+  route (decision 0008, superseded), which is gone.
 - Source: OpenAI, "ChatGPT plan usage for open-source apps",
   <https://developers.openai.com/siwc/token-sharing-open-source>, read
   on 2026-09-29.
@@ -19,7 +21,7 @@ let sign_in = chatgpt.start_sign_in(None, loopback.redirect_uri(), false)?;
 open(sign_in.url()); // may carry id_token_hint: never log it
 let callback = loopback.wait(&sign_in).await?; // or sign_in.callback(pasted)
 let signed_in = chatgpt.finish_sign_in(&sign_in, &callback).await?;
-let token = chatgpt.inference_token(&signed_in.account).await?;
+let client = tau_ai::client::OpenAi::chatgpt(chatgpt, signed_in.account);
 ```
 
 ## Endpoints
@@ -32,7 +34,7 @@ let token = chatgpt.inference_token(&signed_in.account).await?;
 | JWKS        | the discovery document's `jwks_uri`                           |
 | Revocation  | the discovery document's `revocation_endpoint`                |
 | Models      | `GET https://api.openai.com/v1/models`                        |
-| Inference   | `POST https://api.openai.com/v1/responses` (bearer token)     |
+| Inference   | `wss://api.openai.com/v1/responses` (bearer token; tau's)     |
 | Issuer      | `https://auth.openai.com`                                     |
 | `resource`  | `https://api.openai.com/v1`, on authorize, exchange, refresh |
 
@@ -143,7 +145,9 @@ and `SignedOut` after sign-out or a dead refresh token.
 ## Tokens
 
 `ChatGpt::access_token` returns the saved access token, refreshing it
-first when it expires within five minutes. `inference_token` also
+first when it has expired, or when it expires within five minutes and
+the token response's `earliest_refresh_at` (Unix seconds) has passed:
+OpenAI asks not to refresh earlier unless the token has expired. `inference_token` also
 refuses a sign-in without plan usage (`PlanUsageDisabled`).
 
 A refresh takes the process's turn mutex and the account's lock file,
@@ -199,12 +203,84 @@ status, the body verbatim, its shape (`Structured`, `Detail`, `Other`)
 and `x-request-id`. `Recovery::of_code` classifies the code of a
 `response.failed` event the same way.
 
-## The WebSocket connector
+## Inference
 
-`ChatGptConnector` implements the transport's `Connector` for one
-account: before each connection it gets the inference token
-(refreshing it), then upgrades `wss://api.openai.com/v1/responses` with
-it as the bearer token. Nothing uses it yet but the probe.
+`OpenAi::chatgpt(chatgpt, account)` is the plan client. Its
+`ChatGptConnector` gets the inference token before each connection
+(refreshing it; clones of one `ChatGpt` share a refresh, and the lock
+file makes other processes wait) and upgrades
+`wss://api.openai.com/v1/responses` with only `Authorization: Bearer`
+and `User-Agent`. Checked live on 2026-09-29 with a Plus/Pro account:
+the upgrade answers 101, a request completes, a second one continuing
+with `previous_response_id` on the same connection completes, and plain
+top-level `{"type": "function"}` tools work (so do `namespace` and
+`additional_tools`). tau stays WebSocket only (0002).
+
+What the route asks, and how tau keeps it:
+
+- `store: false` on every request: tau never sends anything else.
+- No `background`, `conversation`, `max_output_tokens`, `max_tool_calls`,
+  `metadata`, `moderation`, `multi_agent`, `prompt`,
+  `prompt_cache_retention`, `safety_identifier`, `temperature`,
+  `top_logprobs`, `top_p`, `truncation` or `user`
+  (`chatgpt::UNSUPPORTED_FIELDS`): a plan session strips them from its
+  fields whatever its settings say.
+- No `system` input items: instructions go in `instructions`, and
+  tau's input never has system items.
+- Continuation only within the connection that produced the response:
+  that is how lanes work already; a lost connection means a full resend.
+- `stream_id`: unverified on this route, so the plan client takes one
+  lane per connection (`single_lane_limits`, `tags_lanes() == false`).
+
+### Refusals and retries
+
+A failure the server or the sign-in explains is a `tau_ai::refusal::Refusal`
+(recovery, HTTP status, code, `x-request-id`, body verbatim):
+
+- **At the upgrade.** An HTTP status instead of 101 (the body and
+  `x-request-id` come with it) goes through `ApiError::recovery`. A
+  sign-in that cannot give a token (`SignInRequired`,
+  `PlanUsageDisabled`, …) is a refusal too; a network failure is not.
+- **Mid-stream.** A `response.failed` or `error` frame with a documented
+  code (a usage limit can arrive after streaming began).
+
+The retry policy follows `Recovery::class`: only `RetryLater` retries,
+with the run's bounded backoff; `retry::classify` maps every
+`subscription_sharing_*` and `chatpass_v2_*` code that way whatever the
+status. A refusal that is not `RetryLater` fails the waiting requests
+at once, with no transparent reconnect, so a usage limit never loops. A
+temporary one gets the usual single reconnect, and the run's error is
+the refusal's message. The pool opens a connection for a lane moved off
+a lost one only when a request needs it, so nothing reconnects behind
+idle lanes. `OpenAi::refusal()` keeps the latest refusal until a
+response completes; tau-ui reads it when a run ends in an error.
+
+Nothing moves a run to another way of paying after a plan error.
+
+## tau-ui
+
+- Runs use the active account's plan when it is signed in with plan
+  usage, else the saved API key (`accounts::Credentials::access`).
+- The Models screen lists every saved account (label, state, the
+  active one marked): "Continue with ChatGPT" / "Add account", switch,
+  "Sign out" (revokes; says so when OpenAI did not confirm), "Manage
+  usage", and for a sign-in without plan usage "Enable ChatGPT plan use"
+  (signs in again with `prompt=consent`) beside the API-key option.
+- Onboarding's model step: "Continue with ChatGPT" opens the browser;
+  while it waits, the page can be opened again or the redirect pasted.
+- Once, after the first sign-in with plan usage: "You're using your
+  ChatGPT plan", with "Got it" (saved in `models.json`).
+- Under the composer while runs use the plan: "Using ChatGPT plan ·
+  Manage usage".
+- A run stopped by a usage limit: "Usage limit reached — Review your
+  plan or this app's limit in ChatGPT settings." with "Manage usage";
+  a dead sign-in asks to sign in again; a sign-in without plan usage
+  offers to enable it or add a key; a restriction shows its message.
+- The picker lists `models()` for the active account (display name,
+  server order), listed again on a switch, without prices.
+- "Manage usage" opens `USAGE_SETTINGS_URL`
+  (`https://chatgpt.com/#settings/Usage`): the docs name the page but
+  not its address, so this is a guess kept in one constant.
 
 ## The live probe
 
@@ -234,11 +310,49 @@ never a token.
   rotates refresh tokens (reuse fails with `refresh_token_reused`), and
   records the rules a client broke.
 - `crates/tau-ai/tests/chatgpt_properties.rs`: Hegel properties for the
-  authorization URL, the callback checks, error classification and the
-  record's round trip.
+  authorization URL, the callback checks, error classification, the
+  retry policy's agreement with it, and the record's round trip.
+- `crates/tau-ai/tests/chatgpt_transport.rs`: a sign-in on `FakeChatGpt`,
+  then the plan client on `FakeOpenAi` (which can refuse upgrades with
+  a status and body, and records each upgrade's `Authorization`): the
+  bearer is refreshed before the connection, clones share one refresh,
+  unsupported fields never go out (Hegel), a usage limit at the upgrade
+  or mid-stream stops without retry, a temporary refusal is retryable
+  with its details, a dead sign-in and a sign-in without plan usage
+  connect nothing.
+- tau-ui: `plan_usage` and `models` unit tests, and workspace tests for
+  the notice, the composer line, the alerts and the account picker.
+
+## Reasoning efforts
+
+Each model takes its own efforts, and the server rejects any other
+with `unsupported_value`. `data/openai-reasoning-efforts.json` holds
+them, probed through both an API key and ChatGPT's Codex backend on
+2026-09-28; the two agree on every model they share. `Model::efforts` carries them, lowest
+first:
+
+| Models                                         | Efforts                             |
+| ---------------------------------------------- | ----------------------------------- |
+| `gpt-5`, `gpt-5-mini`, `gpt-5-nano`            | minimal, low, medium, high          |
+| `gpt-5.1`                                      | none, low, medium, high             |
+| `gpt-5.2` to `gpt-5.5`, and their minis        | none, low, medium, high, xhigh      |
+| `gpt-5.6-{luna,sol,terra}`, `gpt-6-{luna,sol}` | none, low, medium, high, xhigh, max |
+| `gpt-6-astra`                                  | low, medium, high, xhigh, max       |
+| the `-pro` models from `gpt-5.2`               | medium, high, xhigh                 |
+| `gpt-5-pro`                                    | high                                |
+| `o1`, `o3`, `o4-mini` and their variants       | low, medium, high                   |
+
+The Codex backend's own model list (`GET /backend-api/codex/models`) leaves out
+`none`, which its server takes, and adds `ultra`, which it never sends:
+Codex turns `ultra` into the model's `max` (or its
+`multi_agent_reasoning_effort`) and has the model delegate to
+sub-agents on its own (`codex-rs/protocol/src/openai_models/reasoning_effort.rs`).
+tau offers no `ultra` until it has sub-agents to delegate to.
+
+An `error` frame from the server nests its `code` and `message` under
+`error`; pi's tests send them at the top. The stream reads either.
 
 ## Not done yet
 
-- Inference over this route: the transport stage, after the probe.
-- tau-ui's account picker and the Usage settings link.
+- `stream_id` on the plan route: one lane per connection until checked.
 - A device-code flow: OpenAI documents none for this route.

@@ -602,11 +602,15 @@ impl PoolMachine {
             stats.lanes.previous_response_not_found,
             self.model.not_found
         );
-        // Every lane lives on an open connection.
+        // Every lane lives on an open connection, or on one that opens
+        // with its first request: after a lost connection, idle lanes
+        // wait for a request before anything is opened for them.
         for &lane in &self.model.lanes {
             let c = self.pool.connection_of(lane).expect("known lane");
             assert!(
-                self.model.open.contains(&c),
+                self.model.open.contains(&c)
+                    || (self.pool.in_flight(c) == 0
+                        && !self.model.in_flight.values().any(|on| *on == c)),
                 "lane {lane} on closed connection {c}"
             );
             assert_eq!(
@@ -1045,4 +1049,28 @@ fn rotation_moves_waiting_requests() {
     // Connection 1's only in-flight slot is taken, so by the placement
     // rule the finished lane opens connection 2.
     assert_eq!(actions, vec![PoolAction::Open(2), PoolAction::Close(0)]);
+}
+
+/// A lost connection's idle lanes open nothing until a request needs a
+/// connection: a connection that keeps failing to open is never retried
+/// in a loop behind idle lanes.
+#[test]
+fn idle_lanes_reopen_only_for_a_request() {
+    let mut pool = Pool::new(Limits::default());
+    let (lane, opened) = pool.open_lane();
+    assert_eq!(opened, vec![PoolAction::Open(0)]);
+    assert!(pool.connection_lost(0).is_empty(), "nothing opens yet");
+    assert_eq!(pool.connection_of(lane), Some(1));
+    // Lost again before it opened: still nothing, and no `Close` for a
+    // connection the driver never saw.
+    assert!(pool.connection_lost(1).is_empty());
+    let sent = pool.submit(lane, body(1)).unwrap();
+    assert!(
+        matches!(
+            &sent[..],
+            [PoolAction::Open(2), PoolAction::Send { connection: 2, .. }]
+        ),
+        "{sent:?}"
+    );
+    assert_eq!(pool.stats().connections_opened, 2);
 }

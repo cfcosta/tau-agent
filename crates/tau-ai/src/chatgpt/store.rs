@@ -220,13 +220,32 @@ impl Credentials {
         }
     }
 
-    /// Whether the access token is missing or expires within
-    /// [`REFRESH_MARGIN`] of `now` (Unix seconds).
+    /// Whether to refresh at `now` (Unix seconds): the access token is
+    /// missing or expired, or it expires within [`REFRESH_MARGIN`] and
+    /// the token response's `earliest_refresh_at` has passed. OpenAI asks
+    /// not to refresh before that time unless the token has expired.
     pub fn needs_refresh(&self, now: u64) -> bool {
-        self.access_token.is_none()
-            || self
-                .expires_at
-                .is_none_or(|at| now + REFRESH_MARGIN.as_secs() >= at)
+        let Some(at) = self.expires_at.filter(|_| self.access_token.is_some())
+        else {
+            return true;
+        };
+        if now >= at {
+            return true;
+        }
+        now + REFRESH_MARGIN.as_secs() >= at
+            && self
+                .earliest_refresh()
+                .is_none_or(|earliest| now >= earliest)
+    }
+
+    /// `earliest_refresh_at` as Unix seconds, if it came as a number (or
+    /// a string of one).
+    pub fn earliest_refresh(&self) -> Option<u64> {
+        match self.earliest_refresh_at.as_ref()? {
+            serde_json::Value::Number(number) => number.as_u64(),
+            serde_json::Value::String(text) => text.trim().parse().ok(),
+            _ => None,
+        }
     }
 
     /// Forgets the access and refresh tokens, which no longer work. The
@@ -550,6 +569,49 @@ mod tests {
         assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
         assert_eq!(rfc3339(951_782_400), "2000-02-29T00:00:00Z");
         assert_eq!(rfc3339(1_790_032_532), "2026-09-21T23:15:32Z");
+    }
+
+    fn credentials(
+        expires_at: u64,
+        earliest: Option<serde_json::Value>,
+    ) -> Credentials {
+        Credentials {
+            label: "a".into(),
+            email: None,
+            issuer: "i".into(),
+            subject: "s".into(),
+            client_id: "c".into(),
+            ext_agent_host_id: HostId::new_uuid(),
+            id_token: None,
+            access_token: Some("at".into()),
+            refresh_token: Some("rt".into()),
+            token_type: None,
+            expires_in: None,
+            expires_at: Some(expires_at),
+            earliest_refresh_at: earliest,
+            scopes: Vec::new(),
+            saved_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn refreshes_wait_for_the_earliest_refresh_time() {
+        let margin = REFRESH_MARGIN.as_secs();
+        let plain = credentials(1000, None);
+        assert!(!plain.needs_refresh(1000 - margin - 1));
+        assert!(plain.needs_refresh(1000 - margin));
+        // Inside the margin, but OpenAI asked to wait until 990.
+        let held = credentials(1000, Some(serde_json::json!(990)));
+        assert!(!held.needs_refresh(1000 - margin));
+        assert!(held.needs_refresh(990));
+        // An expired token refreshes whatever the earliest time says.
+        let late = credentials(1000, Some(serde_json::json!("5000")));
+        assert_eq!(late.earliest_refresh(), Some(5000));
+        assert!(!late.needs_refresh(999));
+        assert!(late.needs_refresh(1000));
+        let mut none = credentials(1000, None);
+        none.access_token = None;
+        assert!(none.needs_refresh(0));
     }
 
     #[test]

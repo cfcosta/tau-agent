@@ -1,6 +1,7 @@
 # 0008: OpenAI Codex, signed in with ChatGPT
 
-- Status: proposed
+- Status: superseded by [0011](0011-sign-in-with-chatgpt.md): OpenAI's
+  documented plan usage on the public API replaced the Codex backend.
 - Date: 2026-09-28
 
 ## Context
@@ -54,4 +55,5 @@ few headers differ.
   the device-code flow or imports the Codex CLI's credentials.
 - Usage limits of the subscription surface as model errors (429 with
   `usage_limit_reached`), handled by the existing retry policy.
-- Details: [`../reference/codex.md`](../reference/codex.md).
+- Details (now of the replacement):
+  [`../reference/chatgpt-sign-in.md`](../reference/chatgpt-sign-in.md).

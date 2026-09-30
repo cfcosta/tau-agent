@@ -1,71 +1,16 @@
 //! What can go wrong, and what to do about it.
 //!
-//! Every failure carries a [`Recovery`]: the action OpenAI's "Errors and
-//! recovery" page asks for. Plan-usage errors stop inference; OpenAI never
-//! moves a request to another billing path, and neither does tau.
+//! Every failure carries a [`Recovery`] (in [`crate::retry`]): the action
+//! OpenAI's "Errors and recovery" page asks for. Plan-usage errors stop
+//! inference; OpenAI never moves a request to another billing path, and
+//! neither does tau.
 
 use std::{fmt, io, path::PathBuf};
 
 use serde_json::Value;
 
 use crate::http::Response;
-
-/// What to do after a failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Recovery {
-    /// A temporary failure: keep the credentials and retry with bounded
-    /// backoff.
-    RetryLater,
-    /// The ChatGPT plan's usage limit for this app: pause requests that use
-    /// the plan and link to ChatGPT Settings → Usage. Nothing says when it
-    /// resets.
-    UsageLimit,
-    /// The credentials are not accepted: refresh them, and if that fails,
-    /// sign in again with the saved client id.
-    SignInAgain,
-    /// Signed in, but the user did not allow plan usage: offer to enable
-    /// it (sign in again asking for consent) or another way to pay.
-    EnablePlanUsage,
-    /// Plan usage is not available to this user, workspace, region or
-    /// grant: explain it. Retrying or signing in again will not help.
-    Restricted,
-    /// The request is at fault (an unsupported field, tool, model or
-    /// route): change it before sending it again.
-    FixRequest,
-    /// The OAuth client or its configuration is at fault.
-    FixClient,
-}
-
-impl Recovery {
-    /// The recovery for an error `code` OpenAI documents for plan usage,
-    /// as a Responses error object or a `response.failed` event carries
-    /// it. `None` for codes the docs do not name.
-    pub fn of_code(code: &str) -> Option<Self> {
-        Some(match code {
-            "subscription_sharing_user_not_eligible" => Self::Restricted,
-            "subscription_sharing_usage_limit_exceeded" => Self::UsageLimit,
-            "subscription_sharing_usage_unavailable"
-            | "subscription_sharing_user_unavailable" => Self::RetryLater,
-            "subscription_sharing_unsupported_capability"
-            | "subscription_sharing_route_not_supported" => Self::FixRequest,
-            "subscription_sharing_invalid_user" => Self::SignInAgain,
-            "chatpass_v2_scope_not_authorized"
-            | "chatpass_v2_invalid_authorization_context" => Self::Restricted,
-            _ => return None,
-        })
-    }
-
-    /// The recovery for an HTTP status with no documented code.
-    pub fn of_status(status: u16) -> Self {
-        match status {
-            401 => Self::SignInAgain,
-            403 => Self::Restricted,
-            408 | 409 | 429 => Self::RetryLater,
-            500..=599 => Self::RetryLater,
-            _ => Self::FixRequest,
-        }
-    }
-}
+pub use crate::retry::Recovery;
 
 /// The body of a failed API response, by shape. OpenAI asks to keep the
 /// shape: direct-route admission answers `{"detail": …}` before a
@@ -368,11 +313,14 @@ impl ChatGptError {
     }
 }
 
+/// A network failure stays the `io::Error` it was; anything else is
+/// wrapped whole, so a connection can recover the [`ChatGptError`] with
+/// `get_ref` and `downcast_ref`, and with it the refusal.
 impl From<ChatGptError> for io::Error {
     fn from(error: ChatGptError) -> Self {
         match error {
             ChatGptError::Network(error) => error,
-            other => io::Error::other(other.to_string()),
+            other => io::Error::other(other),
         }
     }
 }

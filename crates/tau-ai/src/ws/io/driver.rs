@@ -5,9 +5,19 @@
 //! Each lane gets a `stream_id` (`tau-<lane>`), which the driver writes
 //! into every request it sends and reads back from every frame it
 //! receives. Frames for a lane with no request in flight are ignored. An
-//! endpoint that rejects `stream_id` (Codex) gets one lane per
-//! connection instead, and a frame goes to the lane of the connection it
-//! came on.
+//! endpoint that does not take `stream_id` gets one lane per connection
+//! instead, and a frame goes to the lane of the connection it came on.
+//!
+//! A connection that could not open because it was refused (a
+//! [`Refusal`]: an upgrade answered with an HTTP error, or a sign-in with
+//! no token to give) fails the requests waiting on it at once when the
+//! refusal is not temporary: a usage limit, a sign-in to redo, a
+//! restriction. Those are never resent, so a run cannot loop on them. A
+//! temporary refusal takes the usual path (one transparent reconnect,
+//! then the run's retry policy), and the error the run finally sees is
+//! the refusal's. The latest refusal, from a connection or from a failed
+//! response with a documented plan-usage code, stays on the transport
+//! until a response completes ([`Transport::refusal`]).
 //!
 //! A cancelled request that was already sent keeps streaming on the
 //! server. Its tail arrives on the same `stream_id`, before the frames of
@@ -48,10 +58,11 @@ use super::connection::{
     Outgoing,
 };
 use crate::{
-    codex::limits::RateLimits,
-    event::{Accumulator, AssistantEvent},
-    message::Timestamp,
+    event::{Accumulator, AssistantEvent, ErrorReason},
+    message::{Timestamp, Usage},
+    refusal::Refusal,
     responses::{input::response_items, stream::StreamProcessor},
+    retry::Class,
     ws::proto::{
         continuation::Body,
         lane::Event,
@@ -67,9 +78,8 @@ const TICK: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone)]
 pub struct Transport {
     commands: mpsc::UnboundedSender<Command>,
-    /// The latest `codex.rate_limits` frame's limits, shared with the
-    /// driver that reads it.
-    rate_limits: Arc<Mutex<Option<RateLimits>>>,
+    /// The latest refusal, shared with the driver that records it.
+    refusal: Arc<Mutex<Option<Refusal>>>,
 }
 
 /// A lane for one run. Dropping it closes the lane.
@@ -116,9 +126,10 @@ impl Transport {
         let (connection_events, connection_receiver) =
             mpsc::unbounded_channel();
         let tagged = connector.tags_lanes();
-        let rate_limits = Arc::new(Mutex::new(None));
+        let refusal = Arc::new(Mutex::new(None));
         let driver = Driver {
-            rate_limits: rate_limits.clone(),
+            refusal: refusal.clone(),
+            refused: HashMap::new(),
             tagged,
             connector: Arc::new(connector),
             pool: Pool::new(limits),
@@ -129,16 +140,14 @@ impl Transport {
             origin: Instant::now(),
         };
         tokio::spawn(driver.run(receiver, connection_receiver));
-        Self {
-            commands,
-            rate_limits,
-        }
+        Self { commands, refusal }
     }
 
-    /// The plan's limits as the latest `codex.rate_limits` frame gave
-    /// them, if one came.
-    pub fn rate_limits(&self) -> Option<RateLimits> {
-        self.rate_limits.lock().expect("not poisoned").clone()
+    /// The latest refusal, if no response has completed since: a refused
+    /// connection, or a response that failed with a documented plan-usage
+    /// code, such as a usage limit.
+    pub fn refusal(&self) -> Option<Refusal> {
+        self.refusal.lock().expect("not poisoned").clone()
     }
 
     /// Opens a lane for a new run.
@@ -235,7 +244,10 @@ struct Driver<C: Connector> {
     origin: Instant,
     /// Whether requests carry `stream_id` ([`Connector::tags_lanes`]).
     tagged: bool,
-    rate_limits: Arc<Mutex<Option<RateLimits>>>,
+    refusal: Arc<Mutex<Option<Refusal>>>,
+    /// Lanes whose connection was refused for a while: the error their
+    /// request fails with if the reconnect fails too.
+    refused: HashMap<LaneId, Refusal>,
 }
 
 /// A request in flight on a lane.
@@ -279,6 +291,23 @@ impl Active {
         }
         let _ = self.accumulator.push(event.clone());
         let _ = self.events.send(event);
+    }
+
+    /// Ends the request with `refusal`'s error.
+    fn refuse(&mut self, refusal: &Refusal) {
+        if !self.start_sent {
+            self.forward(AssistantEvent::Start {
+                model: self.model.clone(),
+                response_id: None,
+                timestamp: self.timestamp,
+            });
+        }
+        self.forward(AssistantEvent::Error {
+            reason: ErrorReason::Error,
+            message: refusal.message.clone(),
+            usage: Usage::default(),
+            class: refusal.class(),
+        });
     }
 }
 
@@ -327,6 +356,7 @@ impl<C: Connector> Driver<C> {
             }
             Command::CloseLane(lane) => {
                 self.lanes.remove(&lane);
+                self.refused.remove(&lane);
                 if let Ok(actions) = self.pool.close_lane(lane) {
                     self.apply(actions);
                 }
@@ -354,6 +384,7 @@ impl<C: Connector> Driver<C> {
                     // rule, so this request is refused.
                     return;
                 }
+                self.refused.remove(&lane);
                 self.lanes.insert(lane, active);
                 match self.pool.submit(lane, body) {
                     Ok(actions) => self.apply(actions),
@@ -386,9 +417,19 @@ impl<C: Connector> Driver<C> {
     fn connection_event(&mut self, event: ConnectionEvent) {
         match event {
             ConnectionEvent::Opened { .. } => {}
-            ConnectionEvent::Closed { connection } => {
+            ConnectionEvent::Closed {
+                connection,
+                refusal,
+            } => {
                 self.skipping.retain(|_, (on, _)| *on != connection);
+                if let Some(refusal) = &refusal {
+                    *self.refusal.lock().expect("not poisoned") =
+                        Some(refusal.clone());
+                }
                 if self.connections.remove(&connection).is_some() {
+                    if let Some(refusal) = refusal {
+                        self.refused_on(connection, refusal);
+                    }
                     let actions = self.pool.connection_lost(connection);
                     self.apply(actions);
                 }
@@ -404,10 +445,33 @@ impl<C: Connector> Driver<C> {
         }
     }
 
+    /// `connection` was refused. Requests waiting on it fail now unless
+    /// the refusal is temporary; those keep it for their failure.
+    fn refused_on(&mut self, connection: ConnectionId, refusal: Refusal) {
+        let lanes: Vec<LaneId> = self
+            .lanes
+            .keys()
+            .copied()
+            .filter(|lane| self.pool.connection_of(*lane) == Some(connection))
+            .collect();
+        for lane in lanes {
+            if refusal.class() == Class::Retryable {
+                self.refused.insert(lane, refusal.clone());
+                continue;
+            }
+            if let Some(mut active) = self.lanes.remove(&lane) {
+                active.refuse(&refusal);
+            }
+            if let Ok(actions) = self.pool.cancel(lane) {
+                self.apply(actions);
+            }
+        }
+    }
+
     fn frame(&mut self, connection: ConnectionId, frame: &Value) {
-        // The plan's limits belong to the account, not to a lane.
-        if let Some(limits) = RateLimits::from_frame(frame) {
-            *self.rate_limits.lock().expect("not poisoned") = Some(limits);
+        // A refusal belongs to the account, not to a lane.
+        if let Some(refusal) = Refusal::from_frame(frame) {
+            *self.refusal.lock().expect("not poisoned") = Some(refusal);
         }
         let lane = if self.tagged {
             lane_of(frame)
@@ -446,6 +510,7 @@ impl<C: Connector> Driver<C> {
                     });
                 }
                 AssistantEvent::Done { .. } => {
+                    *self.refusal.lock().expect("not poisoned") = None;
                     active.forward(event);
                     let message =
                         std::mem::take(&mut active.accumulator).finish();
@@ -476,6 +541,7 @@ impl<C: Connector> Driver<C> {
             }
             if completed {
                 self.lanes.remove(&lane);
+                self.refused.remove(&lane);
             }
         }
     }
@@ -517,6 +583,12 @@ impl<C: Connector> Driver<C> {
                     let Some(mut active) = self.lanes.remove(&lane) else {
                         continue;
                     };
+                    if let Some(refusal) = self.refused.remove(&lane)
+                        && active.held_error.is_none()
+                    {
+                        active.refuse(&refusal);
+                        continue;
+                    }
                     let events = match active.held_error.take() {
                         Some(error) => vec![error],
                         None => active.processor.close(),

@@ -33,6 +33,13 @@
 //! - When a connection is lost, every lane on it moves. A request that
 //!   had produced no output is resent in full on the new connection; one
 //!   that had fails.
+//! - A new lane's connection opens at once, so it is ready by the first
+//!   request; so does one a lane moves to for rotation. One a lane moves
+//!   to after a lost connection opens only when a request is sent on it:
+//!   a connection that keeps failing to open (the network is down, or the
+//!   server refuses the upgrade) is tried again when a run asks for
+//!   something, never in a loop behind idle lanes. A connection that was
+//!   never opened is dropped without a `Close`.
 //!
 //! Like [`lane`](super::lane), the pool does no I/O: it returns
 //! [`PoolAction`]s for the driver to carry out, in order. The driver may
@@ -123,6 +130,8 @@ pub struct PoolStats {
 #[derive(Debug, Default)]
 struct Connection {
     opened_at: Duration,
+    /// Whether the driver was told to open it.
+    open: bool,
     /// Takes no new lanes: it reached `rotate_after`, or the server
     /// reported its age limit.
     draining: bool,
@@ -173,7 +182,7 @@ impl Pool {
     pub fn open_lane(&mut self) -> (LaneId, Vec<PoolAction>) {
         let lane = self.next_lane;
         self.next_lane += 1;
-        let (connection, actions) = self.place(lane);
+        let (connection, actions) = self.place(lane, true);
         self.lanes.insert(
             lane,
             Slot {
@@ -286,7 +295,7 @@ impl Pool {
             let slot = self.lanes.get_mut(&lane).expect("a connection's lane");
             let queued = slot.queued.take();
             let action = slot.lane.handle(Event::ConnectionLost);
-            let (moved_to, open) = self.place(lane);
+            let (moved_to, open) = self.place(lane, false);
             actions.extend(open);
             self.lanes.get_mut(&lane).expect("known lane").connection =
                 moved_to;
@@ -332,8 +341,9 @@ impl Pool {
             .collect();
         let mut closed = Vec::new();
         for connection in idle {
-            self.connections.remove(&connection);
-            closed.push(PoolAction::Close(connection));
+            if self.connections.remove(&connection).is_some_and(|c| c.open) {
+                closed.push(PoolAction::Close(connection));
+            }
         }
         let stalled: Vec<ConnectionId> = self
             .connections
@@ -353,7 +363,9 @@ impl Pool {
             .connections
             .iter()
             .filter(|(_, c)| {
-                self.now.saturating_sub(c.opened_at) >= self.limits.rotate_after
+                c.open
+                    && self.now.saturating_sub(c.opened_at)
+                        >= self.limits.rotate_after
             })
             .map(|(id, _)| *id)
             .collect();
@@ -481,11 +493,13 @@ impl Pool {
                 if body.previous_response_id.is_some() {
                     self.last_delta_items = body.input.len() as u64;
                 }
-                vec![PoolAction::Send {
+                let mut actions = self.open(connection);
+                actions.push(PoolAction::Send {
                     connection,
                     lane,
                     body,
-                }]
+                });
+                actions
             }
             Some(lane::Action::Fail(failure)) => {
                 vec![PoolAction::Fail { lane, failure }]
@@ -500,7 +514,7 @@ impl Pool {
                     old.in_flight -= 1;
                     actions.extend(self.evacuate(connection));
                 }
-                let (moved_to, open) = self.place(lane);
+                let (moved_to, open) = self.place(lane, false);
                 actions.extend(open);
                 self.lanes.get_mut(&lane).expect("known lane").connection =
                     moved_to;
@@ -517,9 +531,28 @@ impl Pool {
         }
     }
 
-    /// Picks a connection for `lane`, opening one if none has room, and
-    /// records the lane on it.
-    fn place(&mut self, lane: LaneId) -> (ConnectionId, Vec<PoolAction>) {
+    /// Tells the driver to open `connection`, unless it already was.
+    fn open(&mut self, connection: ConnectionId) -> Vec<PoolAction> {
+        match self.connections.get_mut(&connection) {
+            Some(c) if !c.open => {
+                c.open = true;
+                // Its age, for rotation, starts now.
+                c.opened_at = self.now;
+                self.connections_opened += 1;
+                vec![PoolAction::Open(connection)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Picks a connection for `lane`, making one if none has room, and
+    /// records the lane on it. `eager` opens the connection now; else it
+    /// opens with the first request sent on it.
+    fn place(
+        &mut self,
+        lane: LaneId,
+        eager: bool,
+    ) -> (ConnectionId, Vec<PoolAction>) {
         let limits = self.limits;
         let found = self
             .connections
@@ -546,11 +579,12 @@ impl Pool {
                         ..Connection::default()
                     },
                 );
-                self.connections_opened += 1;
-                actions.push(PoolAction::Open(id));
                 id
             }
         };
+        if eager {
+            actions.extend(self.open(connection));
+        }
         let placed =
             self.connections.get_mut(&connection).expect("just placed");
         placed.lanes.insert(lane);
@@ -579,7 +613,7 @@ impl Pool {
                 c.lanes.remove(&lane);
                 c.waiting.retain(|&l| l != lane);
             }
-            let (moved_to, open) = self.place(lane);
+            let (moved_to, open) = self.place(lane, true);
             actions.extend(open);
             let slot = self.lanes.get_mut(&lane).expect("a connection's lane");
             slot.connection = moved_to;
@@ -599,8 +633,13 @@ impl Pool {
     fn retire_if_empty(&mut self, connection: ConnectionId) -> Vec<PoolAction> {
         match self.connections.get(&connection) {
             Some(c) if c.draining && c.lanes.is_empty() => {
+                let open = c.open;
                 self.connections.remove(&connection);
-                vec![PoolAction::Close(connection)]
+                if open {
+                    vec![PoolAction::Close(connection)]
+                } else {
+                    Vec::new()
+                }
             }
             _ => Vec::new(),
         }

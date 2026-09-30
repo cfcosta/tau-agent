@@ -7,13 +7,19 @@ examples double as the acceptance tests for M4.
 
 ```rust
 let llm = tau_ai::OpenAi::from_env()?;          // OPENAI_API_KEY; one WebSocket pool per process
+let plan = tau_ai::client::OpenAi::chatgpt(     // a ChatGPT plan, via Sign in with ChatGPT
+    tau_ai::chatgpt::ChatGpt::new(tau_ai::chatgpt::Store::open_default()?),
+    account,                                    // an AccountId from a finished sign-in
+);
 let store = tau_store::Store::open("runs.db").await?;
 let test_store = tau_store::Store::memory().await?;
 ```
 
 `Agent::new` accepts anything implementing `tau_ai::llm::Llm`, by value.
 Two types do: `OpenAi` and `tau_testing::ScriptedModel`; both are cheap to
-clone and share their state between clones.
+clone and share their state between clones. A plan client stops a run on
+a usage limit or a dead sign-in without retrying; `OpenAi::refusal()`
+says why ([`chatgpt-sign-in.md`](chatgpt-sign-in.md)).
 
 ## Agent
 

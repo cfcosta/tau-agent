@@ -65,7 +65,7 @@ impl Connector for SimConnector {
     }
 }
 
-/// `SimConnector` for an endpoint that rejects `stream_id`, as Codex does.
+/// `SimConnector` for an endpoint that rejects `stream_id`, as the ChatGPT plan route may.
 struct UntaggedConnector;
 
 impl Connector for UntaggedConnector {
@@ -581,7 +581,7 @@ fn two_lanes_share_a_connection(tc: TestCase) {
     }
 }
 
-/// Without `stream_id` (Codex), two runs get a connection each, no
+/// Without `stream_id` (the plan client), two runs get a connection each, no
 /// request names a lane, and each run gets the response its own
 /// connection carried.
 #[hegel::test(test_cases = 20)]
@@ -595,8 +595,10 @@ fn untagged_lanes_get_a_connection_each(tc: TestCase) {
         (second.model.clone(), second.timestamp),
     ];
     let fake = simulate(vec![first_reply, second_reply], async move {
-        let transport =
-            Transport::start(UntaggedConnector, tau_ai::client::codex_limits());
+        let transport = Transport::start(
+            UntaggedConnector,
+            tau_ai::client::single_lane_limits(),
+        );
         let settings = Settings {
             model: "gpt-5.5".into(),
             ..Settings::default()

@@ -150,13 +150,17 @@ fn retryable_failures_are_retried_within_the_policy(tc: TestCase) {
 }
 
 /// Failures that retrying cannot fix are not retried: a quota error, an
-/// invalid request, and a connection dropped after output began.
+/// invalid request, a connection dropped after output began, and the
+/// ChatGPT plan's usage limit, dead subscriber context and restrictions.
 #[test]
 fn fatal_failures_are_not_retried() {
-    let cases: [fn(TurnBuilder) -> TurnBuilder; 3] = [
+    let cases: [fn(TurnBuilder) -> TurnBuilder; 6] = [
         |t| t.error("insufficient_quota", "pay up"),
         |t| t.error("invalid_api_key", "who are you"),
         |t| t.dropped(),
+        |t| t.error("subscription_sharing_usage_limit_exceeded", "limit"),
+        |t| t.error("subscription_sharing_invalid_user", "who"),
+        |t| t.error("subscription_sharing_user_not_eligible", "no"),
     ];
     for case in cases {
         let llm = ScriptedModel::new().turn(case).turn(|t| t.text("never"));

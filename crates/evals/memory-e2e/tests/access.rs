@@ -1,7 +1,8 @@
-//! Which access the evaluation runs on: a sign-in named on the command
+//! Which access the evaluation runs on: an account named on the command
 //! line, then the environment's key, then what tau saved, and none
 //! without any, so nothing runs.
 
+use tau_ai::chatgpt::AccountId;
 use tau_memory_e2e::access::{Access, resolve};
 
 #[test]
@@ -16,22 +17,22 @@ fn access_is_the_first_found_in_order() {
         resolve(None, None, dir),
         Some(Access::ApiKey("saved".into()))
     );
-    std::fs::write(config.path().join("codex.json"), "{}").unwrap();
-    let signed_in = Access::Codex(config.path().join("codex.json"));
-    assert_eq!(resolve(None, None, dir), Some(signed_in.clone()));
+    // A store with no active account adds nothing.
+    std::fs::create_dir_all(config.path().join("chatgpt/accounts")).unwrap();
+    assert_eq!(
+        resolve(None, None, dir),
+        Some(Access::ApiKey("saved".into()))
+    );
     assert_eq!(
         resolve(None, Some("env".into()), dir),
         Some(Access::ApiKey("env".into()))
     );
-    let named = Access::Codex("named.json".into());
+    let account = AccountId::parse("oaiapp_x-0123").unwrap();
     assert_eq!(
-        resolve(Some("named.json".into()), Some("env".into()), dir),
-        Some(named)
+        resolve(Some(account.clone()), Some("env".into()), dir),
+        Some(Access::ChatGpt {
+            store: config.path().join("chatgpt"),
+            account,
+        })
     );
-}
-
-#[test]
-fn each_access_defaults_to_tau_uis_model() {
-    assert_eq!(Access::Codex("c".into()).default_model(), "gpt-6-sol");
-    assert_eq!(Access::ApiKey("k".into()).default_model(), "gpt-5.5");
 }

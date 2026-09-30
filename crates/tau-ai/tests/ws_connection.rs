@@ -132,7 +132,10 @@ fn frames_flow_in_order(tc: TestCase) {
             frame: frame.clone(),
         }
     }));
-    expected.push(ConnectionEvent::Closed { connection: 7 });
+    expected.push(ConnectionEvent::Closed {
+        connection: 7,
+        refusal: None,
+    });
     assert_eq!(*events.borrow(), expected);
 }
 
@@ -160,7 +163,10 @@ fn failed_connect_reports_closed_only() {
     sim.run().unwrap();
     assert_eq!(
         *events.borrow(),
-        vec![ConnectionEvent::Closed { connection: 3 }]
+        vec![ConnectionEvent::Closed {
+            connection: 3,
+            refusal: None
+        }]
     );
 }
 
@@ -198,7 +204,10 @@ fn dropping_the_handle_closes_the_socket() {
             drop(handle);
             assert_eq!(
                 rx.recv().await,
-                Some(ConnectionEvent::Closed { connection: 1 })
+                Some(ConnectionEvent::Closed {
+                    connection: 1,
+                    refusal: None
+                })
             );
             // The simulation ends with the client; give the server a moment
             // of simulated time to read the close frame.

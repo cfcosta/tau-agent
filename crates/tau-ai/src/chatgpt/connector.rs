@@ -1,6 +1,8 @@
 //! Opens Responses WebSockets on `api.openai.com` with a ChatGPT sign-in:
 //! the same upgrade as with an API key, with the account's access token
-//! as the bearer token, refreshed before each connection.
+//! as the bearer token, refreshed before each connection. Clones of the
+//! [`ChatGpt`] share one refresh at a time, and its lock file makes other
+//! processes wait their turn too.
 
 use std::{
     fmt,
@@ -79,6 +81,14 @@ impl<D: Dialer> Connector for ChatGptConnector<D> {
     fn request(&self) -> http::Request<()> {
         let access = self.access.read().expect("not poisoned").clone();
         websocket_request(&self.chatgpt.config().websocket_url, &access)
+    }
+
+    /// Unverified on the plan route: OpenAI's docs say nothing about
+    /// `stream_id` there, so each run gets a connection of its own, and
+    /// its continuation lives on that connection alone, as the route
+    /// requires.
+    fn tags_lanes(&self) -> bool {
+        false
     }
 }
 

@@ -335,3 +335,30 @@ fn a_record_round_trips_and_never_prints_tokens(tc: TestCase) {
         AccountId::new(&record.client_id, &record.subject)
     );
 }
+
+/// The retry policy follows the documented recovery of every plan-usage
+/// code, whatever `type` and HTTP status come with it: only "retry
+/// later" retries, so a usage limit never loops.
+#[hegel::test(test_cases = 200)]
+fn the_retry_policy_follows_the_documented_recovery(tc: TestCase) {
+    use tau_ai::retry::{Class, Failure, classify};
+    let (code, recovery) =
+        CODES[tc.draw(gs::integers::<usize>().max_value(CODES.len() - 1))];
+    let kind = tc.draw(gs::optional(gs::sampled_from(vec![
+        "invalid_request_error",
+        "server_error",
+        "api_error",
+    ])));
+    let status = tc.draw(gs::optional(gs::integers::<u16>()));
+    let class = classify(&Failure::Api {
+        code: Some(code),
+        kind,
+        status,
+    });
+    assert_eq!(class, recovery.class(), "{code}");
+    assert_eq!(
+        class == Class::Retryable,
+        recovery == Recovery::RetryLater,
+        "{code}"
+    );
+}

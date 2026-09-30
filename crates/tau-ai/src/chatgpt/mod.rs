@@ -20,8 +20,9 @@
 //!   clears the tokens but keeps the registration.
 //! - **Models:** [`ChatGpt::models`] lists the account's models.
 //!
-//! Inference goes to `https://api.openai.com/v1/responses` with the access
-//! token as a bearer token. Failures carry a [`Recovery`].
+//! Inference goes to `wss://api.openai.com/v1/responses` with the access
+//! token as a bearer token ([`crate::client::OpenAi::chatgpt`]), without
+//! the [`UNSUPPORTED_FIELDS`]. Failures carry a [`Recovery`].
 
 mod authorize;
 mod connector;
@@ -94,6 +95,25 @@ pub const PLAN_USAGE_SCOPE: &str = "chatgpt.tokens.use.direct";
 pub const DYNAMIC_CLIENT_ID: &str = "dynamic_agent_client";
 /// `agent_name_hint`: tau's name, the same on every installation.
 pub const AGENT_NAME: &str = "tau";
+/// Request fields the plan route does not take ("Preview limitations").
+/// A plan client strips them from every request.
+pub const UNSUPPORTED_FIELDS: [&str; 15] = [
+    "background",
+    "conversation",
+    "max_output_tokens",
+    "max_tool_calls",
+    "metadata",
+    "moderation",
+    "multi_agent",
+    "prompt",
+    "prompt_cache_retention",
+    "safety_identifier",
+    "temperature",
+    "top_logprobs",
+    "top_p",
+    "truncation",
+    "user",
+];
 /// Where users review and limit app usage of their plan (ChatGPT
 /// Settings → Usage). The docs name the page but not its URL; this is
 /// ChatGPT's settings route for it.

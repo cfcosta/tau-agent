@@ -24,7 +24,11 @@ use std::{
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::time::{Instant, sleep_until};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{
+    Message,
+    handshake::server::{ErrorResponse, Request, Response},
+    http::{HeaderValue, StatusCode},
+};
 
 /// What the server does with one request.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,9 +74,22 @@ pub struct Received {
     pub rebuilt_input: Option<Vec<Value>>,
 }
 
+/// An HTTP answer to a WebSocket upgrade, instead of `101`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Refusal {
+    pub status: u16,
+    pub body: Value,
+    /// Sent as `x-request-id`.
+    pub request_id: Option<String>,
+}
+
 #[derive(Debug, Default)]
 struct State {
     replies: VecDeque<Reply>,
+    /// Answers for the next upgrades, in order; then they are accepted.
+    refusals: VecDeque<Refusal>,
+    /// The `Authorization` header of every upgrade, in order.
+    authorizations: Vec<Option<String>>,
     received: Vec<Received>,
     connections: u32,
     /// Limits the client broke, which OpenAI would have refused.
@@ -114,8 +131,15 @@ impl FakeOpenAi {
                     };
                     let fake = fake.clone();
                     tokio::task::spawn_local(async move {
+                        let upgrade = fake.clone();
+                        // tungstenite's callback type, not ours.
+                        #[allow(clippy::result_large_err)]
+                        let answer = move |request: &Request, response| {
+                            upgrade.upgrade(request, response)
+                        };
                         if let Ok(socket) =
-                            tokio_tungstenite::accept_async(stream).await
+                            tokio_tungstenite::accept_hdr_async(stream, answer)
+                                .await
                         {
                             fake.serve(connection, socket).await;
                         }
@@ -123,6 +147,52 @@ impl FakeOpenAi {
                 }
             }
         });
+    }
+
+    /// Answers the next upgrade with `refusal` instead of accepting it.
+    /// Refusals queue up.
+    pub fn refuse_upgrade(&self, refusal: Refusal) {
+        self.state.borrow_mut().refusals.push_back(refusal);
+    }
+
+    /// The `Authorization` header of every upgrade, refused or not, in
+    /// order.
+    pub fn authorizations(&self) -> Vec<Option<String>> {
+        self.state.borrow().authorizations.clone()
+    }
+
+    // tungstenite's callback type, not ours.
+    #[allow(clippy::result_large_err)]
+    fn upgrade(
+        &self,
+        request: &Request,
+        response: Response,
+    ) -> Result<Response, ErrorResponse> {
+        let mut state = self.state.borrow_mut();
+        state.authorizations.push(
+            request
+                .headers()
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+        );
+        let Some(refusal) = state.refusals.pop_front() else {
+            return Ok(response);
+        };
+        let mut error = ErrorResponse::new(Some(refusal.body.to_string()));
+        *error.status_mut() =
+            StatusCode::from_u16(refusal.status).expect("a valid HTTP status");
+        let headers = error.headers_mut();
+        headers.insert(
+            "content-type",
+            HeaderValue::from_static("application/json"),
+        );
+        if let Some(id) = refusal.request_id
+            && let Ok(value) = HeaderValue::from_str(&id)
+        {
+            headers.insert("x-request-id", value);
+        }
+        Err(error)
     }
 
     /// Every request received so far, in order.

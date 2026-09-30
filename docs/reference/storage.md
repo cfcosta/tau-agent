@@ -6,6 +6,14 @@ is bundled into the build. Every query uses `sqlx::query!`, `query_as!`
 or `query_scalar!`, and migrations run through `sqlx::migrate!`. See
 [decision 0003](../decisions/0003-sqlite-via-sqlx-macros.md).
 
+Credentials are not in the database. tau-ui keeps them in
+`$XDG_CONFIG_HOME/tau/`, each file readable only by the user: ChatGPT
+sign-ins in `chatgpt/` (see
+[`chatgpt-sign-in.md`](chatgpt-sign-in.md#storage)), the API key in
+`openai-key`, GitHub's token in `github.json`, TypeSafe's key in
+`typesafe-key`, and model choices (with whether the plan note was read)
+in `models.json`. The old `codex.json` is no longer read.
+
 ## Model
 
 Runs are two tables, `runs` and `messages`. Two more hold each
