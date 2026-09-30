@@ -11,8 +11,10 @@ base64.workspace = true
 futures-util.workspace = true
 getrandom = "0.4.3"
 httparse = "1.10.1"
+# ID-token signatures; already built for rustls.
+ring = "0.17.14"
 sha2 = "0.11.0"
-url = "2.5.8"
+url = { version = "2.5.8", features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -23,6 +25,7 @@ webpki-roots.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true
+tempfile.workspace = true
 tau-testing.workspace = true
 turmoil.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
