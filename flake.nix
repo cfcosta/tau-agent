@@ -250,12 +250,14 @@
         }:
         {
           # `nix develop .#android`: the phone build. Kept apart from the
-          # default shell, which it would grow by several gigabytes.
+          # default shell, which it would grow by several gigabytes. No C
+          # compiler of its own: cargo-ndk points cc-rs at the NDK's clang,
+          # and a host `CC` or `NIX_CFLAGS_COMPILE` would win over it.
           android =
             let
               sdk = "${androidSdk}/libexec/android-sdk";
             in
-            pkgs.mkShell {
+            pkgs.mkShellNoCC {
               name = "tau-agent-android";
 
               buildInputs = with pkgs; [
@@ -278,6 +280,14 @@
               # against a filesystem NixOS does not have; the SDK's is
               # patched for Nix.
               GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${sdk}/build-tools/36.0.0/aapt2";
+
+              # Whatever the host toolchain leaves behind, from Nix's setup
+              # hooks or an outer shell, would go to the NDK's clang too.
+              shellHook = ''
+                unset CC CXX AR LD AS NM RANLIB STRIP OBJCOPY OBJDUMP READELF SIZE STRINGS
+                unset CC_FOR_TARGET CXX_FOR_TARGET AR_FOR_TARGET LD_FOR_TARGET AS_FOR_TARGET
+                unset NIX_CFLAGS_COMPILE NIX_LDFLAGS NIX_CC_FOR_TARGET NIX_BINTOOLS_FOR_TARGET
+              '';
             };
 
           default = pkgs.mkShell {
