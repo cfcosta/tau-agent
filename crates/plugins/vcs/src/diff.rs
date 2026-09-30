@@ -204,3 +204,58 @@ pub(crate) fn cut(text: String) -> (String, bool) {
     let end = text[..end].rfind('\n').map_or(end, |newline| newline + 1);
     (text[..end].to_owned(), true)
 }
+
+#[cfg(test)]
+mod tests {
+    use hegel::generators as gs;
+
+    use super::*;
+
+    /// Text around [`MAX_DIFF_BYTES`] long: runs of one character, some
+    /// of them several bytes wide, each maybe ending a line. Long runs
+    /// make lines far longer than the limit as well as short ones.
+    #[hegel::composite]
+    fn text(tc: &hegel::TestCase) -> String {
+        let runs: Vec<(char, usize, bool)> = tc.draw(
+            gs::vecs(hegel::tuples!(
+                gs::sampled_from(vec!['a', 'é', '€', '😀']),
+                gs::integers::<usize>().max_value(MAX_DIFF_BYTES / 2),
+                gs::booleans(),
+            ))
+            .max_size(8),
+        );
+        let mut text = String::new();
+        for (c, count, newline) in runs {
+            text.extend(std::iter::repeat_n(c, count / c.len_utf8()));
+            if newline {
+                text.push('\n');
+            }
+        }
+        text
+    }
+
+    /// A diff at most [`MAX_DIFF_BYTES`] long comes back whole. A longer
+    /// one is cut to its longest prefix that fits and ends a line, or,
+    /// when no line ends in reach, to the longest that fits and splits
+    /// no character.
+    #[hegel::test(test_cases = 300)]
+    fn a_cut_keeps_the_most_whole_lines_that_fit(tc: hegel::TestCase) {
+        let text = tc.draw(text());
+        let (kept, was_cut) = cut(text.clone());
+        assert_eq!(was_cut, text.len() > MAX_DIFF_BYTES);
+        if !was_cut {
+            assert_eq!(kept, text);
+            return;
+        }
+        let fits = (0..=MAX_DIFF_BYTES)
+            .rev()
+            .filter(|&end| text.is_char_boundary(end));
+        let expected = fits
+            .clone()
+            .find(|&end| text[..end].ends_with('\n'))
+            .or_else(|| fits.max())
+            .unwrap();
+        assert_eq!(kept.len(), expected);
+        assert!(text.starts_with(&kept));
+    }
+}
