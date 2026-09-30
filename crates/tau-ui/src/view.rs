@@ -798,6 +798,9 @@ pub struct ChildRun {
     pub title: String,
     pub kind: ChildKind,
     pub status: RunStatus,
+    /// The parent's tool call that started a live sub-agent.
+    #[serde(default)]
+    pub call: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1615,12 +1618,14 @@ impl RunView {
                 run,
                 parent: Some(parent),
                 agent,
+                call,
             } if parent == &self.id => {
                 self.children.push(ChildRun {
                     id: run.clone(),
                     title: agent.to_string(),
                     kind: ChildKind::SubAgent,
                     status: RunStatus::Running,
+                    call: call.as_deref().map(str::to_owned),
                 });
             }
             // A fork's events name no parent; its entry is found by id.
@@ -3113,6 +3118,7 @@ mod tests {
             run: child.clone(),
             parent: Some(run()),
             agent: Arc::from("reviewer"),
+            call: None,
         });
         view.apply(&RunEvent::TextDelta {
             run: child.clone(),

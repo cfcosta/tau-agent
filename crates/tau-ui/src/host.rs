@@ -3854,6 +3854,7 @@ pub async fn history(
                     title: view.title.clone(),
                     kind: ChildKind::SubAgent,
                     status: view.status.clone(),
+                    call: None,
                 });
             }
             views.push(view);
@@ -3870,6 +3871,7 @@ pub async fn history(
                     title: view.title.clone(),
                     kind: ChildKind::Fork,
                     status: view.status.clone(),
+                    call: None,
                 },
             )),
             _ => None,

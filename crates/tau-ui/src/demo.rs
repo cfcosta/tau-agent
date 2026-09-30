@@ -299,6 +299,7 @@ fn rotation_jitter() -> RunView {
             run: id.clone(),
             parent: None,
             agent: Arc::from("coder"),
+            call: None,
         },
     );
     for turn in 1..=5 {
@@ -379,6 +380,7 @@ fn rotation_jitter() -> RunView {
         title: "fork · backoff".into(),
         kind: crate::view::ChildKind::Fork,
         status: RunStatus::Finished(StopReason::Stop),
+        call: None,
     });
     view
 }
@@ -442,6 +444,7 @@ fn backoff_fork() -> RunView {
             run: id.clone(),
             parent: None,
             agent: Arc::from("coder"),
+            call: None,
         },
     );
     s.turn();
@@ -523,6 +526,7 @@ pub fn fork_run(
             run: id.clone(),
             parent: None,
             agent: Arc::from("coder"),
+            call: None,
         },
     );
     s.turn();
@@ -583,6 +587,7 @@ pub fn resume_script(run: &RunView, prompt: &str) -> Vec<Step> {
             run: run.id.clone(),
             parent: None,
             agent: Arc::from(run.agent.as_str()),
+            call: None,
         },
     );
     s.turn();
@@ -2487,6 +2492,7 @@ pub fn script() -> Vec<Step> {
             run: run.clone(),
             parent: None,
             agent: Arc::from("coder"),
+            call: None,
         },
     );
 
@@ -2691,6 +2697,7 @@ pub fn script() -> Vec<Step> {
             run: reviewer.clone(),
             parent: Some(run.clone()),
             agent: Arc::from("reviewer"),
+            call: None,
         },
     );
 

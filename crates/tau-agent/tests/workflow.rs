@@ -565,11 +565,26 @@ fn supervisor_with_sub_agents(tc: TestCase) {
             if id == &lead_id {
                 continue;
             }
-            let RunEvent::RunStart { parent, agent, .. } = &plain[0] else {
+            let RunEvent::RunStart {
+                parent,
+                agent,
+                call,
+                ..
+            } = &plain[0]
+            else {
                 unreachable!()
             };
             assert_eq!(parent.as_ref(), Some(&lead_id));
             assert_eq!(agent.as_ref(), "researcher");
+            // It names the call that started it, whose result is its.
+            let call = call.as_deref().expect("a sub-agent names its call");
+            let result = transcript.iter().find_map(|m| match m {
+                Message::ToolResult(r) if r.tool_call_id == call => {
+                    r.details.as_ref()?["run"].as_str()
+                }
+                _ => None,
+            });
+            assert_eq!(result, Some(id.0.as_ref()));
             let record = store.run(&id.0).await.unwrap().unwrap();
             assert_eq!(
                 record.kind,

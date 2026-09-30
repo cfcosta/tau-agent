@@ -639,6 +639,7 @@ impl SubAgent {
             resume: None,
             turns_before: 0,
             prelude,
+            call: Some(scope.call.clone()),
         };
         let outcome = self
             .agent
@@ -686,6 +687,8 @@ struct Launch {
     turns_before: u32,
     /// Messages a new run stores as its own before its input.
     prelude: Vec<Message>,
+    /// The parent's tool call that starts the run: a sub-agent's.
+    call: Option<Arc<str>>,
 }
 
 /// Where a run's events go.
@@ -710,6 +713,7 @@ impl Launch {
             resume: None,
             turns_before: 0,
             prelude: Vec::new(),
+            call: None,
         }
     }
 }
@@ -873,6 +877,7 @@ async fn run_task(
         (Vec::new(), None)
     };
     let mut prelude = launch.prelude;
+    let call = launch.call;
     keep_own_reasoning(&mut history, &agent.0.model);
     keep_own_reasoning(&mut prelude, &agent.0.model);
     let mut plan = RunPlan::new(
@@ -921,6 +926,7 @@ async fn run_task(
         run: id.clone(),
         parent: launch.parent,
         agent: agent.0.name.clone(),
+        call,
         tools,
         plugins,
         limits: agent.0.limits,

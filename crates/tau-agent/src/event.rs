@@ -55,6 +55,8 @@ pub enum RunEvent {
         run: RunId,
         parent: Option<RunId>,
         agent: Arc<str>,
+        /// The parent's tool call that started the run: a sub-agent's.
+        call: Option<Arc<str>>,
     },
     TurnStart {
         run: RunId,
@@ -180,6 +182,13 @@ mod tests {
                 run: run.clone(),
                 parent: None,
                 agent: Arc::from("coder"),
+                call: None,
+            },
+            RunEvent::RunStart {
+                run: RunId(Arc::from("r2")),
+                parent: Some(run.clone()),
+                agent: Arc::from("coder"),
+                call: Some(Arc::from("c1")),
             },
             RunEvent::ToolEnd {
                 run: run.clone(),

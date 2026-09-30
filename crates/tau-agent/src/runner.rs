@@ -119,6 +119,8 @@ pub(crate) struct Runner {
     pub run: RunId,
     pub parent: Option<RunId>,
     pub agent: Arc<str>,
+    /// The parent's tool call that started the run, for a sub-agent.
+    pub call: Option<Arc<str>>,
     pub tools: HashMap<String, LoopTool>,
     /// In registration order.
     pub plugins: Vec<ActivePlugin>,
@@ -218,6 +220,7 @@ impl Runner {
             run: self.run.clone(),
             parent: self.parent.clone(),
             agent: self.agent.clone(),
+            call: self.call.clone(),
         })
         .await;
         let mut own = Usage::default();

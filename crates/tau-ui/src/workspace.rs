@@ -904,6 +904,7 @@ impl Workspace {
                 title: run.title.clone(),
                 kind: ChildKind::Fork,
                 status: run.status.clone(),
+                call: None,
             });
         }
         self.runs.insert(0, run);
@@ -1015,28 +1016,22 @@ impl Workspace {
     /// the parent that lists it as a child.
     pub fn apply_event(&mut self, event: &RunEvent, cx: &mut Context<Self>) {
         // A sub-agent is a chat of its own (ADR 0009), started on the
-        // task its parent handed it.
+        // task its parent's call handed it.
         if let RunEvent::RunStart {
             run,
             parent: Some(parent),
             agent,
+            call,
         } = event
             && self.run(run).is_none()
             && let Some(view) = self.run(parent)
         {
-            let task = view
-                .items
-                .iter()
-                .rev()
-                .find_map(|item| match item {
-                    Item::Tool(card)
-                        if card.tool == tau_vcs::delegate::NAME
-                            && card.state == ToolState::Running =>
-                    {
-                        card.args.get("task")?.as_str().map(str::to_owned)
-                    }
-                    _ => None,
-                })
+            let task = call
+                .as_deref()
+                .and_then(|call| view.tool(call))
+                .filter(|card| card.tool == tau_vcs::delegate::NAME)
+                .and_then(|card| card.args.get("task")?.as_str())
+                .map(str::to_owned)
                 .unwrap_or_default();
             let mut child = RunView::new(
                 run.clone(),
@@ -1078,7 +1073,7 @@ impl Workspace {
             parent.items.push(Item::ForkReady { fork: run.clone() });
         }
         // A sub-agent closes once its parent's call returns: landed, or
-        // dropped.
+        // dropped. Its siblings wait for their own calls.
         if let RunEvent::ToolEnd { run, call_id, .. } = event
             && let Some(view) = self.run(run)
             && view
@@ -1089,7 +1084,9 @@ impl Workspace {
                 .children
                 .iter()
                 .filter(|child| {
-                    child.kind == ChildKind::SubAgent && !child.status.is_live()
+                    child.kind == ChildKind::SubAgent
+                        && !child.status.is_live()
+                        && child.call.as_deref() == Some(call_id.as_str())
                 })
                 .map(|child| child.id.clone())
                 .filter(|child| !self.closed.contains(child))

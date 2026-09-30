@@ -1763,7 +1763,9 @@ fn a_fork_is_dropped_after_asking(cx: &mut TestAppContext) {
 }
 
 /// A sub-agent gets a chat of its own when it starts, on the task its
-/// parent handed it, and closes when the parent's call returns.
+/// parent's call handed it, and closes when that call returns. A
+/// sibling from the same batch keeps its own task and stays open until
+/// its own call returns.
 #[gpui::test]
 fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
     use std::sync::Arc;
@@ -1776,24 +1778,33 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     let parent = demo::run_id();
     let child = RunId("sub-1".into());
+    let sibling = RunId("sub-2".into());
     workspace.update(&mut cx, |ws, cx| {
-        ws.apply_event(
-            &RunEvent::ToolStart {
-                run: parent.clone(),
-                call_id: "d1".into(),
-                tool: Arc::from("delegate"),
-                args: serde_json::json!({ "task": "write the tests" }),
-            },
-            cx,
-        );
-        ws.apply_event(
-            &RunEvent::RunStart {
-                run: child.clone(),
-                parent: Some(parent.clone()),
-                agent: Arc::from("coder"),
-            },
-            cx,
-        );
+        for (call, task) in [("d1", "write the tests"), ("d2", "write the docs")] {
+            ws.apply_event(
+                &RunEvent::ToolStart {
+                    run: parent.clone(),
+                    call_id: call.into(),
+                    tool: Arc::from("delegate"),
+                    args: serde_json::json!({ "task": task }),
+                },
+                cx,
+            );
+        }
+        // The sibling starts first: each is paired by its call.
+        for (run, call) in [(&sibling, "d2"), (&child, "d1")] {
+            ws.apply_event(
+                &RunEvent::RunStart {
+                    run: run.clone(),
+                    parent: Some(parent.clone()),
+                    agent: Arc::from("coder"),
+                    call: Some(call.into()),
+                },
+                cx,
+            );
+        }
+        let view = ws.run(&sibling).expect("a chat for the sibling");
+        assert!(matches!(view.items.first(), Some(Item::User(task)) if task == "write the docs"));
         let view = ws.run(&child).expect("a chat for the sub-agent");
         assert_eq!(view.origin, tau_ui::view::Origin::SubAgent { parent: parent.clone() });
         assert!(matches!(view.items.first(), Some(Item::User(task)) if task == "write the tests"));
@@ -1810,6 +1821,15 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
         );
         assert!(!ws.is_closed(&child), "open until the call returns");
         ws.apply_event(
+            &RunEvent::RunEnd {
+                run: sibling.clone(),
+                parent: Some(parent.clone()),
+                stop: StopReason::Stop,
+                cost: 0.0,
+            },
+            cx,
+        );
+        ws.apply_event(
             &RunEvent::ToolEnd {
                 run: parent.clone(),
                 call_id: "d1".into(),
@@ -1825,6 +1845,7 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
             cx,
         );
         assert!(ws.is_closed(&child));
+        assert!(!ws.is_closed(&sibling), "its own call has not returned");
         assert_eq!(ws.route(), &Route::Run(parent.clone()), "back to the parent");
         let card = ws.run(&parent).unwrap().tool("d1").unwrap();
         assert!(matches!(&card.body, tau_ui::view::ToolBody::Delegated(landed) if landed.from == child));
