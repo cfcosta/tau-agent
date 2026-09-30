@@ -8,6 +8,7 @@
 use gpui::{Context, Div, SharedString, div, prelude::*, px, relative};
 
 use super::{
+    Material as _,
     bar,
     heading,
     icon,
@@ -42,7 +43,11 @@ pub fn header(run: &RunView, t: &Theme) -> Div {
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .child(super::dot(color, 8.))
+        .child(if run.status.is_live() {
+            super::live_dot(color, 8.)
+        } else {
+            super::dot(color, 8.)
+        })
         .child(div().typeset(Type::SMALL).text_color(t.text).child(label))
         .child(mono(format!("turn {}", run.turn), Type::CAPTION, t.dim))
         .child(div().flex_1())
@@ -122,7 +127,7 @@ fn context(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> Div {
                 .h(px(12.))
                 .rounded(radius::SMALL)
                 .overflow_hidden()
-                .bg(t.raised)
+                .well(t)
                 .children(
                     segments.iter().filter(|(_, used, _)| *used > 0).map(
                         |(_, used, color)| {
@@ -262,7 +267,7 @@ fn run_section(
                 .rounded(radius::BOX)
                 .border_1()
                 .border_color(t.border)
-                .bg(t.card)
+                .raised(t)
                 .child(
                     div()
                         .typeset(Type::MICRO)
@@ -644,9 +649,7 @@ fn event_log(run: &RunView, t: &Theme) -> Div {
             .gap(sp(0.5))
             .p(sp(3.))
             .rounded(radius::CONTROL)
-            .border_1()
-            .border_color(t.border)
-            .bg(t.bg)
+            .well(t)
             .when(run.log.is_empty(), |log| {
                 log.child(mono("No events yet.", Type::MICRO, t.dim))
             })

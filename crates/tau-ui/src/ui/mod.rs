@@ -359,7 +359,7 @@ pub fn status_icon(
 ) -> gpui::AnyElement {
     match &run.status {
         RunStatus::Planning | RunStatus::Running => {
-            dot(t.accent, 8.).into_any_element()
+            live_dot(t.accent, 8.).into_any_element()
         }
         // Waiting for the user, whether it stopped or was stopped.
         RunStatus::Finished(StopReason::Stop | StopReason::Cancelled) => div()

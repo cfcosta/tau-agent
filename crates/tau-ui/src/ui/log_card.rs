@@ -4,7 +4,7 @@
 
 use gpui::{Context, Div, Hsla, SharedString, Stateful, div, prelude::*, px};
 
-use super::{dot, heading, icon, mono};
+use super::{Material as _, dot, heading, icon, mono};
 use crate::{
     assets::Icon,
     change_log::{Change, ChangeLog, ScopeRun},
@@ -465,7 +465,7 @@ pub fn landed(
         .border_1()
         .border_color(t.border)
         .rounded(radius::BOX)
-        .bg(t.card)
+        .raised(t)
         .overflow_hidden()
         .child(
             div()
@@ -509,7 +509,7 @@ pub fn merged(card: &MergedCard, t: &Theme, compact: bool) -> Div {
         .border_1()
         .border_color(t.border)
         .rounded(radius::BOX)
-        .bg(t.card)
+        .raised(t)
         .overflow_hidden()
         .child(
             div()

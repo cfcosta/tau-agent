@@ -24,7 +24,7 @@ use gpui::{
 use tau_agent::tool::RunId;
 use tau_terminal::{Size, TerminalEvent, TerminalView, ViewOptions};
 
-use super::mono;
+use super::{Material as _, mono};
 use crate::{
     theme::{Theme, radius, sp},
     view::{SeenLine, TermOutput, ToolCard, grouped},
@@ -421,7 +421,11 @@ pub fn body(
             );
             if running {
                 strip.child(mono("live", micro, t.term.label)).child(
-                    div().size(sp(1.5)).rounded(radius::FULL).bg(t.accent),
+                    div()
+                        .size(sp(1.5))
+                        .rounded(radius::FULL)
+                        .bg(t.accent)
+                        .glow(t.accent),
                 )
             } else if total > 0 {
                 copy_expand(strip, cx)
@@ -454,6 +458,7 @@ pub fn body(
         .border_1()
         .border_color(t.term.border)
         .rounded(radius::CONTROL)
+        .well(t)
         .bg(ground)
         .overflow_hidden()
         .child(strip)

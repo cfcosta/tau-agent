@@ -17,7 +17,18 @@ use gpui::{
 };
 use tau_agent::tool::RunId;
 
-use super::{dot, icon, icon_button, logo, mono, status_icon, status_look};
+use super::{
+    Edge,
+    Material,
+    dot,
+    icon,
+    icon_button,
+    live_dot,
+    logo,
+    mono,
+    status_icon,
+    status_look,
+};
 use crate::{
     assets::Icon,
     catalog::ProjectStatus,
@@ -88,9 +99,7 @@ pub fn title_bar(
         .gap(sp(2.5))
         .pl(sp(3.))
         .pr(sp(3.))
-        .bg(t.panel)
-        .border_b_1()
-        .border_color(t.border)
+        .chrome(Edge::Top, t)
         .child(logo(t, 26.))
         .when(ws.can_go_back(), |bar| {
             bar.child(
@@ -118,12 +127,10 @@ pub fn title_bar(
                 .w(px(340.))
                 .px(sp(2.5))
                 .py(sp(1.25))
-                .border_1()
-                .border_color(t.border)
+                .well(t)
                 .rounded(radius::CONTROL)
                 .text_color(t.dim)
                 .cursor_pointer()
-                .hover(|style| style.border_color(t.border_strong))
                 .child(icon(Icon::Search, IconSize::BASE, t.dim))
                 .child(
                     div().flex_1().child("Search runs, repositories, actions"),
@@ -142,10 +149,10 @@ pub fn title_bar(
                 .gap(sp(1.5))
                 .px(sp(2.5))
                 .py(sp(1.25))
-                .bg(t.raised)
+                .key(t)
                 .rounded(radius::CONTROL)
                 .cursor_pointer()
-                .hover(|style| style.bg(t.selected))
+                .hover(|style| style.border_color(t.border_strong))
                 .child(mono(model, Type::CAPTION, t.text))
                 .child(mono("·", Type::CAPTION, t.dim))
                 .child(mono(reasoning, Type::CAPTION, t.blue))
@@ -183,12 +190,10 @@ pub fn sidebar(
         .gap(sp(2.))
         .h(control::MEDIUM)
         .px(sp(2.5))
-        .border_1()
-        .border_color(t.border)
-        .bg(t.raised)
+        .key(t)
         .rounded(radius::CONTROL)
         .cursor_pointer()
-        .hover(|style| style.bg(t.selected))
+        .hover(|style| style.border_color(t.border_strong))
         .child(icon(Icon::Plus, IconSize::BASE, t.text))
         .child(
             div()
@@ -216,8 +221,7 @@ pub fn sidebar(
         .h(px(34.))
         .mt(sp(2.))
         .px(sp(2.5))
-        .border_1()
-        .border_color(t.border_strong)
+        .well(t)
         .rounded(radius::CONTROL)
         .child(icon(Icon::Search, IconSize::COMPACT, t.dim))
         .child(
@@ -252,9 +256,7 @@ pub fn sidebar(
         .flex_col()
         .gap(sp(0.5))
         .p(sp(2.))
-        .bg(t.panel)
-        .border_r_1()
-        .border_color(t.border)
+        .chrome(Edge::Left, t)
         .overflow_y_scroll()
         .child(new_run)
         .when(many, |bar| bar.child(filter_field))
@@ -318,7 +320,7 @@ fn nav_row(
         .px(sp(2.5))
         .rounded(radius::CONTROL)
         .cursor_pointer()
-        .when(active, |row| row.bg(t.selected))
+        .when(active, |row| row.pressed(t))
         .when(!active, |row| {
             row.hover(|style| style.bg(gpui::white().opacity(0.03)))
         })
@@ -357,10 +359,10 @@ fn repo_group(
             .items_center()
             .justify_center()
             .rounded(radius::TAG)
-            .bg(t.raised)
+            .key(t)
             .text_color(t.text_soft)
             .cursor_pointer()
-            .hover(|style| style.bg(t.border_strong))
+            .hover(|style| style.border_color(t.border_strong))
             .map(|button| match glyph {
                 Some(glyph) => {
                     button.child(icon(glyph, IconSize::COMPACT, t.text_soft))
@@ -418,7 +420,7 @@ fn repo_group(
                             .gap(sp(1.25))
                             .typeset(Type::MICRO)
                             .text_color(t.accent)
-                            .child(dot(t.accent, 6.))
+                            .child(live_dot(t.accent, 6.))
                             .child(rows.live.to_string()),
                     )
                 })
@@ -617,7 +619,7 @@ fn child_row(
         .pr(sp(2.5))
         .rounded(radius::CONTROL)
         .text_color(t.text_soft)
-        .when(active, |row| row.bg(t.selected))
+        .when(active, |row| row.pressed(t))
         .child(icon(
             match child.kind {
                 ChildKind::SubAgent => Icon::SubAgent,
@@ -689,7 +691,7 @@ fn run_row(
         .pr(sp(2.))
         .rounded(radius::CONTROL)
         .cursor_pointer()
-        .when(active, |row| row.bg(t.selected))
+        .when(active, |row| row.pressed(t))
         .when(!active, |row| {
             row.hover(|style| style.bg(gpui::white().opacity(0.03)))
         })
@@ -751,7 +753,7 @@ fn run_row(
                         .child(mono(badge, Type::MICRO, tone)),
                 )
             } else if nested && run.status.is_live() {
-                row.child(dot(t.accent, 6.))
+                row.child(live_dot(t.accent, 6.))
             } else {
                 row
             }
@@ -804,11 +806,10 @@ fn repo_menu(
         .flex()
         .flex_col()
         .p(sp(1.5))
-        .bg(t.panel)
+        .raised(t)
         .border_1()
         .border_color(t.border_strong)
         .rounded(radius::LARGE)
-        .shadow_lg()
         .child(
             entry("menu-new", Icon::Plus, format!("New run in {name}"), t.text)
                 .on_click(cx.listener(move |ws, _, window, cx| {
@@ -884,9 +885,7 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
         .items_center()
         .gap(sp(4.5))
         .px(sp(3.5))
-        .bg(t.panel)
-        .border_t_1()
-        .border_color(t.border)
+        .chrome(Edge::Bottom, t)
         .font_family(MONO)
         .typeset(Type::MICRO)
         .text_color(t.muted)
@@ -895,7 +894,7 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
                 .flex()
                 .items_center()
                 .gap(sp(1.5))
-                .child(dot(t.green, 6.))
+                .child(live_dot(t.green, 6.))
                 .child("tau-ui"),
         )
         .children(context)
@@ -945,9 +944,7 @@ pub fn phone_run_bar(
         .items_center()
         .gap(sp(1.))
         .px(sp(1.5))
-        .bg(t.panel)
-        .border_b_1()
-        .border_color(t.border)
+        .chrome(Edge::Top, t)
         .child(
             icon_button("phone-back", Icon::Back, 44., t)
                 .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
@@ -1023,9 +1020,7 @@ pub fn phone_header(
         .items_center()
         .gap(sp(1.))
         .px(sp(1.5))
-        .bg(t.panel)
-        .border_b_1()
-        .border_color(t.border)
+        .chrome(Edge::Top, t)
         .when(!ws.route.is_top_level(), |bar| {
             bar.child(
                 icon_button("phone-back", Icon::Back, 44., t)
@@ -1095,9 +1090,7 @@ fn phone_group(
         .gap(sp(3.))
         .min_h(px(52.))
         .px(sp(4.))
-        .bg(t.panel)
-        .border_b_1()
-        .border_color(t.border)
+        .chrome(Edge::Top, t)
         .cursor_pointer()
         .child(icon(
             if rows.open { Icon::Down } else { Icon::Chevron },
@@ -1154,7 +1147,7 @@ fn phone_group(
             .px(sp(3.))
             .py(sp(2.))
             .rounded(radius::BOX)
-            .bg(t.raised)
+            .key(t)
             .typeset(Type::SMALL)
             .cursor_pointer()
             .child(icon(glyph, IconSize::BASE, t.text_soft))
@@ -1377,9 +1370,7 @@ pub fn phone_tab_bar(
         .flex_shrink_0()
         .grid()
         .grid_cols(4)
-        .bg(t.panel)
-        .border_t_1()
-        .border_color(t.border)
+        .chrome(Edge::Bottom, t)
         .children(Tab::ALL.into_iter().map(|tab| {
             let active = tab == current;
             let color = if active { t.text } else { t.muted };

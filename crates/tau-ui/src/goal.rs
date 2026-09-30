@@ -9,7 +9,7 @@ use tau_goal::{Exhausted, Goal, Record, Status};
 use crate::{
     assets::Icon,
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
-    ui::{self, ButtonKind},
+    ui::{self, ButtonKind, Material as _},
     view::{RunView, usd},
     workspace::Workspace,
 };
@@ -372,7 +372,7 @@ pub(crate) fn tab(run: &RunView, body: Div, t: &Theme) -> Div {
             .rounded(radius::BOX)
             .border_1()
             .border_color(t.border)
-            .bg(t.card)
+            .raised(t)
             .child(ui::rich(&goal.condition, t.text, t)),
     )
     .child(ui::text(checks_note(goal), Type::CAPTION, t.dim))

@@ -17,6 +17,7 @@ use gpui::{
 };
 
 use super::{
+    Material as _,
     bar,
     button,
     diff_card,
@@ -680,7 +681,7 @@ fn tool(
         .border_1()
         .border_color(border)
         .rounded(radius::BOX)
-        .bg(t.card)
+        .raised(t)
         .overflow_hidden()
         .when(dropped, |card| card.opacity(0.7))
         .child(header.when(body.is_some() && !terminal, |h| {
@@ -736,7 +737,7 @@ fn fork_ready(
         .border_1()
         .border_color(t.border)
         .rounded(radius::BOX)
-        .bg(t.card)
+        .raised(t)
         .overflow_hidden()
         .child(
             div()
@@ -1187,7 +1188,7 @@ fn plugin_note(
                         .border_1()
                         .border_color(t.border)
                         .rounded(radius::BOX)
-                        .bg(t.card)
+                        .raised(t)
                         .child(
                             div()
                                 .flex()

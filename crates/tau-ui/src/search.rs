@@ -19,6 +19,7 @@ use crate::{
     route::Route,
     theme::{IconSize, Theme, Type, radius, sp},
     ui,
+    ui::Material as _,
     view::Origin,
     workspace::Workspace,
 };
@@ -231,7 +232,7 @@ impl Workspace {
                     .px(sp(3.))
                     .rounded(radius::CONTROL)
                     .cursor_pointer()
-                    .when(n == 0, |row| row.bg(t.selected))
+                    .when(n == 0, |row| row.pressed(t))
                     .hover(|style| style.bg(t.selected))
                     .child(ui::icon(hit.glyph, IconSize::BASE, t.muted))
                     .child(
@@ -268,11 +269,10 @@ impl Workspace {
                     .flex_col()
                     .gap(sp(1.))
                     .p(sp(2.))
-                    .bg(t.panel)
+                    .raised(t)
                     .border_1()
                     .border_color(t.border_strong)
                     .rounded(radius::CARD)
-                    .shadow_lg()
                     .child(
                         div()
                             .flex()

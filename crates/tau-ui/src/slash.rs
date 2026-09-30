@@ -20,6 +20,7 @@ use crate::{
     route::Route,
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
     ui,
+    ui::Material as _,
     workspace::{PickerTarget, Workspace, WorkspaceEvent},
 };
 
@@ -382,7 +383,7 @@ impl Workspace {
             .flex_col()
             .gap(sp(0.5))
             .p(sp(1.5))
-            .bg(t.panel)
+            .raised(t)
             .border_1()
             .border_color(t.border_strong)
             .rounded(if compact {
@@ -425,7 +426,7 @@ impl Workspace {
                 .px(sp(2.5))
                 .rounded(radius::CONTROL)
                 .cursor_pointer()
-                .when(selected, |row| row.bg(t.selected))
+                .when(selected, |row| row.pressed(t))
                 .hover(|style| style.bg(t.selected))
                 .child(
                     div()
@@ -434,7 +435,7 @@ impl Workspace {
                         .items_center()
                         .justify_center()
                         .rounded(radius::CONTROL)
-                        .bg(t.raised)
+                        .key(t)
                         .child(ui::icon(
                             command.glyph,
                             IconSize::COMPACT,
@@ -516,9 +517,7 @@ impl Workspace {
                         .items_center()
                         .px(sp(2.))
                         .rounded(radius::CONTROL)
-                        .border_1()
-                        .border_color(t.border_strong)
-                        .bg(t.bg)
+                        .well(t)
                         .typeset(Type::CAPTION.mono())
                         .text_color(t.text)
                         .child(input.clone()),

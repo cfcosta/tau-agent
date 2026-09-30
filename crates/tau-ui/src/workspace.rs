@@ -71,6 +71,7 @@ use crate::{
     },
     ui::{
         self,
+        Material as _,
         chrome,
         components::ButtonKind,
         inspector,
@@ -3447,7 +3448,7 @@ impl Workspace {
                                 .px(sp(2.))
                                 .py(sp(1.))
                                 .rounded(radius::CONTROL)
-                                .bg(t.raised)
+                                .key(t)
                                 .typeset(Type::CAPTION)
                                 .child(ui::icon(Icon::Paperclip, IconSize::SMALL, t.muted))
                                 .child(file.name.clone())
@@ -3517,10 +3518,10 @@ impl Workspace {
                             .min_h(control::LARGE)
                             .px(sp(3.5))
                             .py(sp(2.))
+                            .well(t)
                             .border_1()
                             .border_color(t.border_strong)
                             .rounded(if compact { radius::FULL } else { radius::LARGE })
-                            .bg(t.panel)
                             .when(!compact, |field| {
                                 field.child(
                                     // As tall as the chip, so it lines up
@@ -3650,9 +3651,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .min_h(px(0.))
-            .bg(t.panel)
-            .border_l_1()
-            .border_color(t.border)
+            .chrome(ui::Edge::Right, t)
             .child(
                 div()
                     .h(px(48.))
@@ -3886,7 +3885,7 @@ impl Workspace {
                     .px(sp(4.))
                     .pt(sp(2.))
                     .pb(sp(6.))
-                    .bg(t.panel)
+                    .raised(t)
                     .border_t_1()
                     .border_color(t.border_strong)
                     .rounded_t(radius::SHEET)

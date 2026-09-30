@@ -20,7 +20,7 @@ use crate::{
     models::{Effort, ModelChoice, ModelOption},
     route::Route,
     theme::{Design as _, IconSize, Theme, Type, control, radius, sp},
-    ui::{self, ButtonKind},
+    ui::{self, ButtonKind, Material as _},
     view::RunView,
     workspace::{Dialog, PickerTarget, Workspace, WorkspaceEvent},
 };
@@ -225,11 +225,10 @@ impl Workspace {
             .h(control::SMALL)
             .px(sp(2.5))
             .rounded(radius::CONTROL)
-            .border_1()
-            .border_color(if open { t.accent } else { t.border_strong })
-            .when(open, |chip| chip.bg(t.raised))
+            .key(t)
+            .when(open, |chip| chip.border_color(t.accent))
             .cursor_pointer()
-            .hover(|style| style.bg(gpui::white().opacity(0.04)))
+            .hover(|style| style.border_color(t.border_strong))
             .child(ui::mono(choice.model.clone(), Type::CAPTION, t.text_soft))
             .child(ui::mono("·", Type::CAPTION, t.dim))
             .child(ui::mono(choice.effort.label(), Type::CAPTION, t.blue))
@@ -291,7 +290,7 @@ impl Workspace {
                 .typeset(if phone { Type::SMALL } else { Type::CAPTION })
                 .cursor_pointer()
                 .text_color(if on { t.text } else { t.muted })
-                .when(on, |segment| segment.bg(t.selected))
+                .when(on, |segment| segment.key(t))
                 .child(if effort == Effort::Auto {
                     "Auto"
                 } else {
@@ -340,10 +339,9 @@ impl Workspace {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .bg(t.panel)
+            .raised(t)
             .border_1()
             .border_color(t.border_strong)
-            .shadow_lg()
             // Clicks inside the panel stay in it.
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                 cx.stop_propagation()
@@ -424,7 +422,7 @@ impl Workspace {
                             .gap(sp(1.))
                             .p(sp(1.))
                             .rounded(radius::BOX)
-                            .bg(t.bg)
+                            .well(t)
                             .children(efforts),
                     )
                     .when(choice.effort == Effort::Auto, |section| {

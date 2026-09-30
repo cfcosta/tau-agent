@@ -9,7 +9,7 @@ use crate::{
     assets::Icon,
     change_log::Change,
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, components::ButtonKind, log_card},
+    ui::{self, Material as _, components::ButtonKind, log_card},
     view::{Origin, RunView},
     workspace::{LandingState, Workspace},
 };
@@ -50,7 +50,7 @@ pub fn card(
             .border_1()
             .border_color(t.accent_border)
             .rounded(radius::BOX)
-            .bg(t.card)
+            .raised(t)
             .overflow_hidden()
             .child(
                 div()
@@ -240,7 +240,6 @@ pub fn controls(
                 .child(caption(summary, t.text_soft))
                 .child(
                     ui::card(t)
-                        .bg(t.card)
                         .py(sp(1.5))
                         .children(log_card::stack_rows(&changes, t, compact)),
                 )
