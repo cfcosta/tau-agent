@@ -39,22 +39,22 @@ term.update(cx, |t, cx| t.freeze(cx))?;        // the program ended
 let old = cx.new(|cx| TerminalView::replay(bytes, options, cx))?;
 ```
 
-| Method                                         | What it does                                                                                                   |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `new(options, cx)`                             | A live view of an empty `options.size` terminal.                                                               |
-| `frozen(lines, cols, options, cx)`             | A frozen view of given rows.                                                                                   |
-| `replay(bytes, options, cx)`                   | `new`, then `write`, then `freeze`.                                                                            |
-| `write(bytes, cx)` / `freeze(cx)`              | Feed output / drop the terminal.                                                                               |
-| `is_frozen()`, `cols()`                        |                                                                                                                |
-| `total_rows()`                                 | Rows to show. Frozen: every row. Live: the scrollback, then the screen down to its last used row or the cursor. |
-| `visible_range()`                              | The rows shown, out of `total_rows()`.                                                                         |
-| `set_visible_rows(Some(n) \| None, cx)`        | Show at most `n` rows and scroll through the rest. `None` shows every row.                                     |
-| `scroll_to(ScrollTo::{Top, Bottom, Row(n)})`   | Scrolls the window. `Bottom` also turns following back on.                                                     |
-| `scroll_by(rows, cx)`, `follows_end()`, `scrolls()` |                                                                                                           |
-| `selection()`, `set_selection(..)`             | A `Selection` from an anchor `Point { row, col }` to a head.                                                   |
-| `selected_text()`, `text()`                    | The selection's text, or all the text.                                                                         |
-| `rows(range)`                                  | Styled rows (`Rc<Vec<Line>>`).                                                                                 |
-| `set_palette(..)`, `set_font(family, size, ..)`, `options()` |                                                                                                  |
+| Method                                                       | What it does                                                                                                    |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `new(options, cx)`                                           | A live view of an empty `options.size` terminal.                                                                |
+| `frozen(lines, cols, options, cx)`                           | A frozen view of given rows.                                                                                    |
+| `replay(bytes, options, cx)`                                 | `new`, then `write`, then `freeze`.                                                                             |
+| `write(bytes, cx)` / `freeze(cx)`                            | Feed output / drop the terminal.                                                                                |
+| `is_frozen()`, `cols()`                                      |                                                                                                                 |
+| `total_rows()`                                               | Rows to show. Frozen: every row. Live: the scrollback, then the screen down to its last used row or the cursor. |
+| `visible_range()`                                            | The rows shown, out of `total_rows()`.                                                                          |
+| `set_visible_rows(Some(n) \| None, cx)`                      | Show at most `n` rows and scroll through the rest. `None` shows every row.                                      |
+| `scroll_to(ScrollTo::{Top, Bottom, Row(n)})`                 | Scrolls the window. `Bottom` also turns following back on.                                                      |
+| `scroll_by(rows, cx)`, `follows_end()`, `scrolls()`          |                                                                                                                 |
+| `selection()`, `set_selection(..)`                           | A `Selection` from an anchor `Point { row, col }` to a head.                                                    |
+| `selected_text()`, `text()`                                  | The selection's text, or all the text.                                                                          |
+| `rows(range)`                                                | Styled rows (`Rc<Vec<Line>>`).                                                                                  |
+| `set_palette(..)`, `set_font(family, size, ..)`, `options()` |                                                                                                                 |
 
 `TerminalEvent::Scrolled` fires when the rows shown change: after a
 scroll, after new rows while the window follows the end, after a
@@ -64,16 +64,16 @@ fires when the selection changes. A host that shows the visible range
 
 ### `ViewOptions`
 
-| Field          | Default                          | Meaning                                                   |
-| -------------- | -------------------------------- | --------------------------------------------------------- |
-| `size`         | 120×40 (`Size::TOOL`)            | The live terminal's grid; frozen views keep their `cols`. |
-| `scrollback`   | 64 MiB                           | The live terminal's scrollback, in bytes.                 |
-| `font_family`  | Menlo / Consolas / DejaVu Sans Mono | A monospace family.                                    |
-| `font_size`    | 12 px                            |                                                           |
-| `line_height`  | 1.5                              | A multiple of the font size, rounded to whole pixels.     |
-| `palette`      | `Palette::default()`             | See below.                                                |
-| `visible_rows` | `Some(24)`                       | `None` shows every row.                                   |
-| `min_rows`     | 1                                | The view's height in rows, at least.                      |
+| Field          | Default                             | Meaning                                                   |
+| -------------- | ----------------------------------- | --------------------------------------------------------- |
+| `size`         | 120×40 (`Size::TOOL`)               | The live terminal's grid; frozen views keep their `cols`. |
+| `scrollback`   | 64 MiB                              | The live terminal's scrollback, in bytes.                 |
+| `font_family`  | Menlo / Consolas / DejaVu Sans Mono | A monospace family.                                       |
+| `font_size`    | 12 px                               |                                                           |
+| `line_height`  | 1.5                                 | A multiple of the font size, rounded to whole pixels.     |
+| `palette`      | `Palette::default()`                | See below.                                                |
+| `visible_rows` | `Some(24)`                          | `None` shows every row.                                   |
+| `min_rows`     | 1                                   | The view's height in rows, at least.                      |
 
 ### How it draws
 

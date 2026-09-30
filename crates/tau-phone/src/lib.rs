@@ -67,7 +67,9 @@ fn android_main(app: android_activity::AndroidApp) {
             });
             match opened.and_then(|window| window.entity(cx)) {
                 Ok(workspace) => demo::respond(&workspace, cx),
-                Err(error) => log::error!("tau: could not open a window: {error:#}"),
+                Err(error) => {
+                    log::error!("tau: could not open a window: {error:#}")
+                }
             }
             cx.activate(true);
         });
