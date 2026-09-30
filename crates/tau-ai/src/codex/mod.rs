@@ -20,6 +20,7 @@
 
 mod connector;
 pub mod https;
+pub mod limits;
 pub mod oauth;
 
 use std::{

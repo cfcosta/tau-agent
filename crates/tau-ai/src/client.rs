@@ -9,7 +9,12 @@
 use std::sync::Arc;
 
 use crate::{
-    codex::{CodexAuth, CodexConnector, DEFAULT_INSTRUCTIONS},
+    codex::{
+        CodexAuth,
+        CodexConnector,
+        DEFAULT_INSTRUCTIONS,
+        limits::RateLimits,
+    },
     cost::apply,
     event::AssistantEvent,
     message::{Message, Timestamp},
@@ -118,6 +123,12 @@ impl OpenAi {
     /// The pool's counters, including every session's requests.
     pub async fn stats(&self) -> Result<PoolStats, Stopped> {
         self.transport.stats().await
+    }
+
+    /// The ChatGPT plan's usage limits, as of the latest response that
+    /// reported them. Only the Codex endpoint reports them.
+    pub fn rate_limits(&self) -> Option<RateLimits> {
+        self.transport.rate_limits()
     }
 }
 

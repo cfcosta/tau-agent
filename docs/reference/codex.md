@@ -111,6 +111,37 @@ and a two-turn run with a tool call continued on the same connection.
 - `max_output_tokens` is dropped; pi never sends it to Codex.
 - `store` is `false`, as for every request.
 
+## Usage limits
+
+Before each response, Codex sends a `codex.rate_limits` frame with the
+ChatGPT plan's limits. As a Pro account received it on 2026-09-29:
+
+```json
+{
+  "type": "codex.rate_limits",
+  "plan_type": "pro",
+  "rate_limits": {
+    "allowed": true,
+    "limit_reached": false,
+    "primary": {
+      "used_percent": 0,
+      "window_minutes": 10080,
+      "reset_after_seconds": 482590,
+      "reset_at": 1791208742
+    },
+    "secondary": null
+  },
+  "credits": { "has_credits": false, "unlimited": false, "balance": "0" }
+}
+```
+
+A plan has one or two usage windows (the primary here is the week; a
+five-hour window comes as the other one when the plan has it), each a
+share used and the time it resets. The stream skips the frame; the
+client's driver reads it into `codex::limits::RateLimits`, windows
+shortest first, and `OpenAi::rate_limits` returns the latest. The API
+endpoint sends none.
+
 ## Models
 
 `codex::MODELS` lists the models pi offers on Codex, less

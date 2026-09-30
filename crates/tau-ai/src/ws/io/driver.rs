@@ -28,7 +28,11 @@
 //! never holds up another lane; backpressure within a run is the agent
 //! loop's job.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use serde_json::Value;
 use tokio::{
@@ -44,6 +48,7 @@ use super::connection::{
     Outgoing,
 };
 use crate::{
+    codex::limits::RateLimits,
     event::{Accumulator, AssistantEvent},
     message::Timestamp,
     responses::{input::response_items, stream::StreamProcessor},
@@ -62,6 +67,9 @@ const TICK: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone)]
 pub struct Transport {
     commands: mpsc::UnboundedSender<Command>,
+    /// The latest `codex.rate_limits` frame's limits, shared with the
+    /// driver that reads it.
+    rate_limits: Arc<Mutex<Option<RateLimits>>>,
 }
 
 /// A lane for one run. Dropping it closes the lane.
@@ -108,7 +116,9 @@ impl Transport {
         let (connection_events, connection_receiver) =
             mpsc::unbounded_channel();
         let tagged = connector.tags_lanes();
+        let rate_limits = Arc::new(Mutex::new(None));
         let driver = Driver {
+            rate_limits: rate_limits.clone(),
             tagged,
             connector: Arc::new(connector),
             pool: Pool::new(limits),
@@ -119,7 +129,16 @@ impl Transport {
             origin: Instant::now(),
         };
         tokio::spawn(driver.run(receiver, connection_receiver));
-        Self { commands }
+        Self {
+            commands,
+            rate_limits,
+        }
+    }
+
+    /// The plan's limits as the latest `codex.rate_limits` frame gave
+    /// them, if one came.
+    pub fn rate_limits(&self) -> Option<RateLimits> {
+        self.rate_limits.lock().expect("not poisoned").clone()
     }
 
     /// Opens a lane for a new run.
@@ -216,6 +235,7 @@ struct Driver<C: Connector> {
     origin: Instant,
     /// Whether requests carry `stream_id` ([`Connector::tags_lanes`]).
     tagged: bool,
+    rate_limits: Arc<Mutex<Option<RateLimits>>>,
 }
 
 /// A request in flight on a lane.
@@ -385,6 +405,10 @@ impl<C: Connector> Driver<C> {
     }
 
     fn frame(&mut self, connection: ConnectionId, frame: &Value) {
+        // The plan's limits belong to the account, not to a lane.
+        if let Some(limits) = RateLimits::from_frame(frame) {
+            *self.rate_limits.lock().expect("not poisoned") = Some(limits);
+        }
         let lane = if self.tagged {
             lane_of(frame)
         } else {
