@@ -140,6 +140,75 @@ fn until_end(events: &mut UnboundedReceiver<RunEvent>) -> Vec<RunEvent> {
     panic!("no RunEnd within {WAIT:?}: {seen:?}");
 }
 
+/// Each repository has a main chat from the start: finished, empty and
+/// open for good. A new chat forks it, at its start while it has no
+/// turn, then at its latest.
+#[test]
+fn new_chats_fork_the_repository_main_chat() {
+    let write = serde_json::json!({ "path": "a.txt", "content": "a\n" });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("first"))
+        .turn(|t| t.text("hello back"))
+        .turn(|t| t.text("second"))
+        .turn(|t| t.tool_call("write", write.clone()))
+        .turn(|t| t.text("wrote a"));
+    let (host, mut events) = host(llm.clone());
+    let main = host.main_of(REPO).unwrap();
+    assert_eq!(host.main_of(REPO).unwrap(), main, "made once");
+    let listed = host.history().unwrap();
+    let view = listed.iter().find(|view| view.id == main).unwrap();
+    assert_eq!((view.title.as_str(), &view.origin), ("main", &Origin::Root));
+    assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
+    assert_eq!(view.repo, REPO);
+    assert!(host.set_closed(&main, true).is_err(), "main stays open");
+    assert_eq!(
+        host.catalog().repos[0].main.as_ref(),
+        Some(&main),
+        "the sidebar knows it"
+    );
+
+    // Before main has a turn, a chat starts from nothing, on trunk.
+    let first = host.start("one", &ModelChoice::default(), REPO).unwrap();
+    assert_eq!(
+        first.origin,
+        Origin::Fork {
+            from: main.clone(),
+            turn: 0
+        }
+    );
+    until_end(&mut events);
+    wait_until_done(&host, &first.id);
+
+    // A message to main goes on with it; the next chat has it.
+    host.resume(&main, "hello main", &ModelChoice::default())
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let second = host.start("two", &ModelChoice::default(), REPO).unwrap();
+    assert_eq!(
+        second.origin,
+        Origin::Fork {
+            from: main.clone(),
+            turn: 1
+        }
+    );
+    until_end(&mut events);
+    wait_until_done(&host, &second.id);
+    let asked = llm.requests().pop().unwrap();
+    assert!(
+        format!("{:?}", asked.transcript).contains("hello main"),
+        "the chat saw main's conversation"
+    );
+
+    // A chat's work lands on main, which takes its workspace then.
+    let third = host.start("three", &ModelChoice::default(), REPO).unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &third.id);
+    host.land(&third.id).unwrap();
+    let dir = host.workspace(&main).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "a\n");
+}
+
 /// A run shows its prompt's first line until a model writes its title;
 /// a written title comes back with history.
 #[test]
@@ -303,7 +372,8 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
 
     let history = host.history().unwrap();
     let ids: Vec<_> = history.iter().map(|view| view.id.clone()).collect();
-    assert_eq!(ids, [fork.id.clone(), main.id.clone()]);
+    let repo_main = host.main_of(REPO).unwrap();
+    assert_eq!(ids, [fork.id.clone(), main.id.clone(), repo_main]);
     assert_eq!(history[0].title, "try it another way");
     assert_eq!(history[0].origin, fork.origin);
     assert_eq!(history[0].status, RunStatus::Finished(StopReason::Stop));
@@ -416,8 +486,8 @@ fn a_fork_lands_on_its_parent_and_closes() {
     assert!(fork_dir.join("c.txt").exists());
     assert!(!fork_dir.join("b.txt").exists(), "forked before turn 2");
 
-    // A root run has nothing to land on.
-    assert!(host.land(&main.id).is_err());
+    // A repository's main chat has nothing to land on.
+    assert!(host.land(&host.main_of(REPO).unwrap()).is_err());
     // From history, the finished fork waits in the main run's chat.
     let waiting = |host: &Host| {
         host.history()
@@ -1037,7 +1107,7 @@ fn a_finished_run_goes_on_in_its_workspace() {
     assert_eq!(last.settings.model, "gpt-6-sol");
 
     let history = host.history().unwrap();
-    assert_eq!(history.len(), 1, "one chat, not two");
+    assert_eq!(history.len(), 2, "one chat, not two, and main");
     let view = &history[0];
     assert_eq!(view.id, chat.id);
     assert_eq!(view.title, "write a.txt");

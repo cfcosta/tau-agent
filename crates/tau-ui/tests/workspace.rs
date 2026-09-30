@@ -2377,3 +2377,84 @@ fn a_snapshot_replaces_the_runs(cx: &mut TestAppContext) {
     let phone_runs = phone.update(&mut phone_cx, |ws, _| ws.runs().to_vec());
     assert_eq!(phone_runs, desktop_runs);
 }
+
+/// A repository's main chat heads its tree and stays open; the chats
+/// forked from it go under it, newest first, the older ones behind
+/// "Show older runs".
+#[gpui::test]
+fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
+    use tau_agent::tool::RunId;
+    use tau_ui::view::{Origin, RunView};
+
+    let (workspace, mut cx, events) = open(cx);
+    let main = RunId("main".into());
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = Catalog::default();
+        let mut repo = tau_ui::catalog::Repo::new("hello", "");
+        repo.main = Some(main.clone());
+        catalog.repos.push(repo);
+        ws.set_catalog(catalog, cx);
+        // History comes newest first: the chats, then main.
+        let mut runs: Vec<RunView> = (0..7)
+            .rev()
+            .map(|n| {
+                RunView::new(
+                    RunId(format!("chat-{n}").into()),
+                    format!("chat {n}"),
+                    "coder",
+                    "gpt-5.5",
+                )
+                .in_repo("hello")
+                .with_origin(Origin::Fork {
+                    from: main.clone(),
+                    turn: 0,
+                })
+            })
+            .collect();
+        runs.push(
+            RunView::new(main.clone(), "main", "coder", "gpt-5.5")
+                .in_repo("hello"),
+        );
+        ws.add_history(runs, cx);
+    });
+    workspace.update(&mut cx, |ws, cx| {
+        assert!(ws.is_main(&main));
+        let rows = ws.repo_rows("");
+        let rows = &rows[0];
+        assert_eq!(rows.runs.len(), 1);
+        assert_eq!(rows.runs[0].id, main);
+        assert_eq!(
+            (rows.main_children, rows.older, rows.total),
+            (Some(5), 2, 8)
+        );
+        let chats: Vec<&str> = ws
+            .open_children(rows.runs[0])
+            .map(|run| run.title.as_str())
+            .collect();
+        assert_eq!(chats[0], "chat 6", "newest first");
+        ws.show_older_runs("hello", cx);
+        let rows = ws.repo_rows("");
+        assert_eq!((rows[0].main_children, rows[0].older), (None, 0));
+        // A filter finds chats under main, listed alone.
+        let rows = ws.repo_rows("chat 3");
+        assert!(rows[0].flat);
+        let titles: Vec<&str> =
+            rows[0].runs.iter().map(|run| run.title.as_str()).collect();
+        assert_eq!(titles, ["chat 3"]);
+
+        // Main cannot be closed; its chats can.
+        ws.close_run(&main, cx);
+        assert!(!ws.is_closed(&main));
+        ws.close_run(&RunId("chat-6".into()), cx);
+        assert_eq!(ws.open_children(ws.run(&main).unwrap()).count(), 6);
+    });
+    let closed: Vec<RunId> = events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::CloseRun { run } => Some(run.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(closed, [RunId("chat-6".into())]);
+}

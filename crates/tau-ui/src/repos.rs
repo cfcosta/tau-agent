@@ -5,6 +5,7 @@
 use std::sync::LazyLock;
 
 use gpui::{Context, Window};
+use tau_agent::tool::RunId;
 
 use crate::{
     catalog::Repo,
@@ -20,9 +21,15 @@ pub const RUNS_SHOWN: usize = 5;
 pub struct RepoRows<'a> {
     pub repo: &'a Repo,
     pub open: bool,
-    /// The runs listed, newest first; forks and sub-agents go under
-    /// them.
+    /// The runs listed: the main chat first, then others newest first;
+    /// forks and sub-agents go under them.
     pub runs: Vec<&'a RunView>,
+    /// How many of the main chat's chats are listed under it, newest
+    /// first; `None` when there is no main chat or all are.
+    pub main_children: Option<usize>,
+    /// The runs are a filter's matches, listed without what is under
+    /// them.
+    pub flat: bool,
     /// Older runs not listed.
     pub older: usize,
     /// All its runs.
@@ -58,21 +65,47 @@ impl Workspace {
         self.catalog.repo(name).unwrap_or(&NO_REPO)
     }
 
+    /// Whether `run` is a repository's main chat, which every other chat
+    /// in the repository forks from and which cannot be closed.
+    pub fn is_main(&self, run: &RunId) -> bool {
+        self.catalog
+            .repos
+            .iter()
+            .any(|repo| repo.main.as_ref() == Some(run))
+    }
+
+    /// `run`'s open forks and sub-agents that have a view of their own,
+    /// newest first.
+    pub fn open_children<'a>(
+        &'a self,
+        run: &'a RunView,
+    ) -> impl Iterator<Item = &'a RunView> {
+        self.runs.iter().filter(move |view| {
+            view.origin.parent() == Some(&run.id)
+                && !self.closed.contains(&view.id)
+        })
+    }
+
     pub fn is_repo_open(&self, name: &str) -> bool {
         self.open_repos.contains(name)
     }
 
-    /// Runs in `repo` that are not a fork or sub-agent of another,
-    /// newest first.
+    /// Runs in `repo` that are not a fork or sub-agent of another: its
+    /// main chat first, then the others newest first.
     pub fn root_runs<'a>(
         &'a self,
         repo: &'a str,
     ) -> impl Iterator<Item = &'a RunView> {
-        self.runs.iter().filter(move |run| {
-            run.origin == Origin::Root
-                && self.repo_of(run) == repo
-                && !self.closed.contains(&run.id)
-        })
+        let main = self.repo_named(repo).main.clone();
+        let main_run = main.as_ref().and_then(|id| self.run(id));
+        main_run
+            .into_iter()
+            .chain(self.runs.iter().filter(move |run| {
+                run.origin == Origin::Root
+                    && Some(&run.id) != main.as_ref()
+                    && self.repo_of(run) == repo
+                    && !self.closed.contains(&run.id)
+            }))
     }
 
     /// The sidebar's tree. A filter keeps repositories whose name
@@ -91,11 +124,33 @@ impl Workspace {
                         run.status.is_live() && self.repo_of(run) == repo.name
                     })
                     .count();
-                let total = all.len();
+                let everything = self.all_runs.contains(&repo.name);
+                // With a main chat, the chats under it are what gets long.
+                let main = repo.main.as_ref().and_then(|id| self.run(id));
+                let chats =
+                    main.map_or(0, |main| self.open_children(main).count());
+                let total = all.len() + chats;
                 let named = repo.name.to_lowercase().contains(&filter);
                 if filter.is_empty() || named {
                     let open = self.is_repo_open(&repo.name);
-                    let shown = if self.all_runs.contains(&repo.name) {
+                    if main.is_some() {
+                        let shown = if everything {
+                            chats
+                        } else {
+                            chats.min(RUNS_SHOWN)
+                        };
+                        return Some(RepoRows {
+                            repo,
+                            open,
+                            runs: all,
+                            main_children: (shown < chats).then_some(shown),
+                            flat: false,
+                            older: chats - shown,
+                            total,
+                            live,
+                        });
+                    }
+                    let shown = if everything {
                         total
                     } else {
                         total.min(RUNS_SHOWN)
@@ -104,19 +159,30 @@ impl Workspace {
                         repo,
                         open,
                         runs: all[..shown].to_vec(),
+                        main_children: None,
+                        flat: false,
                         older: total - shown,
                         total,
                         live,
                     });
                 }
-                let runs: Vec<&RunView> = all
-                    .into_iter()
-                    .filter(|run| run.title.to_lowercase().contains(&filter))
+                // Any conversation in the repository whose title matches,
+                // listed on its own.
+                let runs: Vec<&RunView> = self
+                    .runs
+                    .iter()
+                    .filter(|run| {
+                        self.repo_of(run) == repo.name
+                            && !self.closed.contains(&run.id)
+                            && run.title.to_lowercase().contains(&filter)
+                    })
                     .collect();
                 (!runs.is_empty()).then_some(RepoRows {
                     repo,
                     open: true,
                     runs,
+                    main_children: None,
+                    flat: true,
                     older: 0,
                     total,
                     live,

@@ -57,6 +57,10 @@ pub struct Repo {
     pub name: String,
     /// Where its clone is.
     pub path: String,
+    /// Its main chat, which every other chat in it forks from and which
+    /// cannot be closed.
+    #[serde(default)]
+    pub main: Option<tau_agent::tool::RunId>,
     pub memory: Memory,
     pub constitution: Constitution,
 }

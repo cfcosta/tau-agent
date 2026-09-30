@@ -42,6 +42,7 @@ reqwest.workspace = true
 tokio-rustls.workspace = true
 webpki-roots.workspace = true
 anyhow.workspace = true
+uuid.workspace = true
 unicode-segmentation = "1.12.0"
 if-addrs.workspace = true
 libc.workspace = true

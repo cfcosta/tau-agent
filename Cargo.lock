@@ -9241,6 +9241,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "unicode-segmentation",
+ "uuid",
  "webpki-roots",
 ]
 

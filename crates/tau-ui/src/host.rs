@@ -225,6 +225,9 @@ struct Listed {
     /// Cloned from GitHub, as `owner/name`: updates fetch from there.
     #[serde(default)]
     github: Option<String>,
+    /// The id of its main chat, once made; see [`Host::main_of`].
+    #[serde(default)]
+    main: Option<String>,
 }
 
 impl RepoList {
@@ -270,6 +273,7 @@ impl RepoList {
             path,
             hidden: false,
             github: None,
+            main: None,
         });
         name
     }
@@ -277,6 +281,9 @@ impl RepoList {
 
 /// The plugin name under which a run records its repository.
 pub const REPO_PLUGIN: &str = "repo";
+
+/// A repository's main chat's title.
+pub const MAIN_TITLE: &str = "main";
 
 /// Records the repository a run works on, so history can list the run
 /// under it.
@@ -554,16 +561,19 @@ impl Host {
             .cloned()
             .collect();
         let mut slots = Vec::new();
-        for listed in listed {
+        for listed in &listed {
             let slot = RepoSlot {
-                name: listed.name,
-                path: listed.path,
+                name: listed.name.clone(),
+                path: listed.path.clone(),
                 project: ProjectSlot::new(ProjectState::Importing),
             };
             host.spawn_import(&slot)?;
             slots.push(slot);
         }
         *host.repos.lock().expect("not poisoned") = slots;
+        for listed in &listed {
+            host.main_of(&listed.name)?;
+        }
         Ok((host, events))
     }
 
@@ -640,12 +650,18 @@ impl Host {
         let path = project.root().to_owned();
         {
             let mut list = self.list.lock().expect("not poisoned");
+            let main = list
+                .repos
+                .iter()
+                .find(|listed| listed.name == name)
+                .and_then(|listed| listed.main.clone());
             list.repos.retain(|listed| listed.name != name);
             list.repos.push(Listed {
                 name: name.to_owned(),
                 path: path.clone(),
                 hidden: false,
                 github: None,
+                main,
             });
         }
         let mut repos = self.repos.lock().expect("not poisoned");
@@ -656,7 +672,84 @@ impl Host {
             project: ProjectSlot::new(ProjectState::Ready(project)),
         });
         drop(repos);
+        if let Err(error) = self.main_of(name) {
+            eprintln!("tau-ui: cannot make {name}'s main chat: {error:#}");
+        }
         self
+    }
+
+    /// The main chat of the listed repository `repo`, made the first
+    /// time it is asked for: a run that starts empty and finished, which
+    /// a message resumes. Every other chat in the repository is a fork
+    /// of it, and it cannot be closed.
+    pub fn main_of(&self, repo: &str) -> anyhow::Result<RunId> {
+        let listed = {
+            let list = self.list.lock().expect("not poisoned");
+            let listed =
+                list.repos
+                    .iter()
+                    .find(|listed| listed.name == repo)
+                    .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
+            listed.main.clone()
+        };
+        if let Some(id) = listed
+            && self.runtime.block_on(self.store.run(&id))?.is_some()
+        {
+            return Ok(RunId(id.into()));
+        }
+        let id = uuid::Uuid::now_v7().to_string();
+        self.runtime.block_on(async {
+            self.store
+                .create_run(&tau_store::NewRun {
+                    id: &id,
+                    workflow_id: None,
+                    agent: "coder",
+                    kind: RunKind::Root,
+                    model: &self.config.default_model(),
+                    turns: 0,
+                })
+                .await?;
+            // Tagged with its repository, as a run's first turn would.
+            let tag = Entry::Plugin {
+                plugin: REPO_PLUGIN.to_owned(),
+                body: serde_json::json!({ "repo": repo }).to_string(),
+            };
+            self.store
+                .append_turn(&id, &[tag], TurnUsage::default())
+                .await?;
+            self.store.set_title(&id, MAIN_TITLE).await?;
+            self.store.finish_run(&id, Status::Done, None, None).await
+        })?;
+        let mut list = self.list.lock().expect("not poisoned");
+        if let Some(listed) =
+            list.repos.iter_mut().find(|listed| listed.name == repo)
+        {
+            listed.main = Some(id.clone());
+        }
+        list.save(&self.config.repo_list)?;
+        Ok(RunId(id.into()))
+    }
+
+    /// The main chats of the listed repositories.
+    fn mains(&self) -> Vec<String> {
+        self.list
+            .lock()
+            .expect("not poisoned")
+            .repos
+            .iter()
+            .filter(|listed| !listed.hidden)
+            .filter_map(|listed| listed.main.clone())
+            .collect()
+    }
+
+    /// Whether `run` is a repository's main chat.
+    fn is_main(&self, run: &RunId) -> bool {
+        self.list
+            .lock()
+            .expect("not poisoned")
+            .repos
+            .iter()
+            .any(|listed| listed.main.as_deref() == Some(&*run.0))
     }
 
     fn slot(&self, name: &str) -> Option<RepoSlot> {
@@ -727,7 +820,9 @@ impl Host {
             self.spawn_import(&slot)?;
             self.repos.lock().expect("not poisoned").push(slot);
         }
-        Ok(Repo::new(name, canonical(dir).display().to_string()))
+        let mut repo = Repo::new(&name, canonical(dir).display().to_string());
+        repo.main = Some(self.main_of(&name)?);
+        Ok(repo)
     }
 
     /// Checks constitutions with `jev` instead of TypeSafe's, for tests.
@@ -813,6 +908,9 @@ impl Host {
 
     /// Closes a conversation, or opens it again, for the sidebar.
     pub fn set_closed(&self, run: &RunId, closed: bool) -> anyhow::Result<()> {
+        if closed && self.is_main(run) {
+            anyhow::bail!("A repository's main chat stays open");
+        }
         let mut list = self.list.lock().expect("not poisoned");
         list.closed.retain(|id| **id != *run.0);
         if closed {
@@ -1007,6 +1105,8 @@ impl Host {
                     slots.iter().find(|slot| slot.name == listed.name)?;
                 let mut repo =
                     Repo::new(&listed.name, listed.path.display().to_string());
+                repo.main =
+                    listed.main.as_deref().map(|main| RunId(main.into()));
                 repo.constitution = self.repo_constitution(slot);
                 repo.memory = self.memories.catalog(&self.memory_dir(slot));
                 Some(repo)
@@ -1449,9 +1549,10 @@ impl Host {
         Ok(())
     }
 
-    /// Starts a run and returns its view, ready to be pushed into the
-    /// workspace before its first event arrives.
-    /// It works in `repo`, which must be listed.
+    /// Starts a chat in `repo`, which must be listed: a fork of the
+    /// repository's main chat at its latest turn, on that turn's code,
+    /// or at its start when it has none. Returns the chat's view, ready
+    /// to be pushed into the workspace before its first event arrives.
     pub fn start(
         &self,
         prompt: &str,
@@ -1461,13 +1562,12 @@ impl Host {
         let repo = self
             .slot(repo)
             .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
-        // An effort the model does not take falls back to auto.
-        let choice = &choice.clone().fitted();
-        let (agent, workspace) = self.agent_for_run(choice, &repo, None)?;
-        let _guard = self.runtime.enter();
-        let run = agent.start(prompt, &self.store);
-        let id = self.track(run, workspace, choice, &repo.name);
-        Ok(self.view(id, prompt, &repo))
+        let main = self.main_of(&repo.name)?;
+        let (source, seq, turn) = match self.fork_point(&main, None)? {
+            Some((source, seq, link)) => (source, seq, link.turn),
+            None => (main, -1, 0),
+        };
+        self.fork_at(&repo, source, seq, turn, prompt, choice)
     }
 
     /// Forks `run` after `turn` (its latest turn when `None`): a new run
@@ -1481,7 +1581,6 @@ impl Host {
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
         let repo = self.slot_of_run(run)?;
-        repo.project()?;
         let (source, seq, link) =
             self.fork_point(run, turn)?.ok_or_else(|| match turn {
                 Some(turn) => {
@@ -1491,19 +1590,32 @@ impl Host {
                     "The run has no finished turn to fork from yet"
                 ),
             })?;
+        self.fork_at(&repo, source, seq, link.turn, prompt, choice)
+    }
+
+    /// Starts a run on `prompt` that continues `source` from its entry
+    /// `seq`, after its turn `turn`, in a workspace of its own in `repo`.
+    fn fork_at(
+        &self,
+        repo: &RepoSlot,
+        source: RunId,
+        seq: i64,
+        turn: u32,
+        prompt: &str,
+        choice: &ModelChoice,
+    ) -> anyhow::Result<RunView> {
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
-        let (agent, workspace) = self.agent_for_run(choice, &repo, None)?;
+        let (agent, workspace) = self.agent_for_run(choice, repo, None)?;
         let _guard = self.runtime.enter();
         let forked = agent
             .fork(&Checkpoint::at(source.clone(), seq))
-            .after_turn(link.turn)
+            .after_turn(turn)
             .start(prompt, &self.store);
         let id = self.track(forked, workspace, choice, &repo.name);
-        Ok(self.view(id, prompt, &repo).with_origin(Origin::Fork {
-            from: source,
-            turn: link.turn,
-        }))
+        Ok(self
+            .view(id, prompt, repo)
+            .with_origin(Origin::Fork { from: source, turn }))
     }
 
     /// Where forking `run` after `turn` starts: the run that took the
@@ -1934,28 +2046,9 @@ impl Host {
         }
     }
 
-    /// The words `run` was started with, from its stored transcript.
+    /// The words `run` was started with, from the store.
     fn stored_prompt(&self, run: &RunId) -> anyhow::Result<String> {
-        self.runtime.block_on(async {
-            let kind = self
-                .store
-                .run(&run.0)
-                .await?
-                .map_or(RunKind::Root, |record| record.kind);
-            let messages: Vec<Message> = self
-                .store
-                .transcript(&run.0)
-                .await?
-                .into_iter()
-                .filter_map(|entry| match entry {
-                    Entry::Message { body, .. } => {
-                        serde_json::from_str(&body).ok()
-                    }
-                    _ => None,
-                })
-                .collect();
-            anyhow::Ok(prompt_of(&kind, messages.iter()))
-        })
+        self.runtime.block_on(first_prompt(&self.store, &run.0))
     }
 
     /// Everything landing `child` needs, once both runs are idle.
@@ -1986,13 +2079,29 @@ impl Host {
             }
         };
         self.no_open_children(child, &project)?;
-        let parent_workspace = workspace_of(&parent)?;
         let child_workspace = workspace_of(child)?;
-        // Opening a workspace that is gone would make a new one on
-        // trunk; landing there would lose the parent's work.
-        if !project.workspaces()?.contains(&parent_workspace) {
-            anyhow::bail!("The parent's workspace is gone");
-        }
+        let parent_workspace = match workspace_of(&parent) {
+            Ok(name) => {
+                // Opening a workspace that is gone would make a new one
+                // on trunk; landing there would lose the parent's work.
+                if !project.workspaces()?.contains(&name) {
+                    anyhow::bail!("The parent's workspace is gone");
+                }
+                name
+            }
+            // A main chat that has not taken a turn has no work yet: it
+            // gets its workspace, on trunk, from the first chat that
+            // lands on it.
+            Err(_) if self.is_main(&parent) => {
+                let name = workspace_name();
+                self.workspaces
+                    .lock()
+                    .expect("not poisoned")
+                    .insert(parent.clone(), name.clone());
+                name
+            }
+            Err(error) => return Err(error),
+        };
         let child_head =
             project.bookmark(&bookmark(child))?.ok_or_else(|| {
                 anyhow::anyhow!("{} has no changes to land", child.0)
@@ -2084,7 +2193,7 @@ impl Host {
 
     /// Runs from earlier sessions, newest first, rebuilt from the store.
     pub fn history(&self) -> anyhow::Result<Vec<RunView>> {
-        self.runtime.block_on(history(&self.store))
+        self.runtime.block_on(history(&self.store, &self.mains()))
     }
 
     /// Follows a started run: its control, its workspace, and a task
@@ -3583,14 +3692,7 @@ async fn stored_view(
             _ => None,
         })
         .collect();
-    let messages: Vec<&Message> = timeline
-        .iter()
-        .filter_map(|entry| match entry {
-            Stored::Message(message) => Some(message),
-            Stored::Record { .. } => None,
-        })
-        .collect();
-    let prompt = prompt_of(&record.kind, messages.iter().copied());
+    let prompt = first_prompt(store, &record.id).await?;
     let mut view = RunView::from_timeline(
         RunId(record.id.clone().into()),
         record
@@ -3640,27 +3742,34 @@ async fn stored_view(
     Ok(view)
 }
 
-/// The words a run was started with: a fork's own prompt is its last
-/// user message, any other run's its first.
-fn prompt_of<'a>(
-    kind: &RunKind,
-    messages: impl DoubleEndedIterator<Item = &'a Message>,
-) -> String {
-    let mut users = messages.filter_map(|message| match message {
-        Message::User(user) => Some(crate::view::user_words(&user.content)),
-        _ => None,
-    });
-    match kind {
-        RunKind::Fork { .. } => users.next_back(),
-        _ => users.next(),
-    }
-    .unwrap_or_default()
+/// The words a run was started with: its own first message, not one a
+/// fork inherited.
+async fn first_prompt(store: &Store, run: &str) -> anyhow::Result<String> {
+    let body = store.first_prompt(run).await?;
+    let words = body
+        .and_then(|body| serde_json::from_str::<Message>(&body).ok())
+        .and_then(|message| match message {
+            Message::User(user) => Some(crate::view::user_words(&user.content)),
+            _ => None,
+        });
+    Ok(words.unwrap_or_default())
 }
 
 /// Past runs, rebuilt from their stored transcripts, each under the
-/// repository it recorded.
-pub async fn history(store: &Store) -> anyhow::Result<Vec<RunView>> {
-    let records = store.recent_runs(HISTORY).await?;
+/// repository it recorded: the latest, and the runs `pinned` however old
+/// they are.
+pub async fn history(
+    store: &Store,
+    pinned: &[String],
+) -> anyhow::Result<Vec<RunView>> {
+    let mut records = store.recent_runs(HISTORY).await?;
+    for id in pinned {
+        if !records.iter().any(|record| &record.id == id)
+            && let Some(record) = store.run(id).await?
+        {
+            records.push(record);
+        }
+    }
     let mut views = Vec::with_capacity(records.len());
     for record in &records {
         views.push(stored_view(store, record).await?);

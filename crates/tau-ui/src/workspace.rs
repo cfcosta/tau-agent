@@ -2077,6 +2077,10 @@ impl Workspace {
     }
 
     pub fn close_run(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        // A repository's main chat stays open.
+        if self.is_main(run) {
+            return;
+        }
         if self.run(run).is_some_and(|view| view.status.is_live()) {
             cx.emit(WorkspaceEvent::Cancel { run: run.clone() });
         }
@@ -3824,7 +3828,7 @@ impl Workspace {
         let screen = div().size_full().relative().flex().flex_col();
         match (&self.route, self.current()) {
             (Route::Run(_), Some(run)) => screen
-                .child(chrome::phone_run_bar(run, t, cx))
+                .child(chrome::phone_run_bar(run, self.is_main(&run.id), t, cx))
                 .children(self.phone_goal_bar(run, t, cx))
                 .child(self.run_screen(true, t, cx))
                 .when(self.sheet_open, |screen| {

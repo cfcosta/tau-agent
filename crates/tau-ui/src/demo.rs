@@ -1356,12 +1356,14 @@ pub fn catalog() -> Catalog {
             Repo {
                 name: "tau-agent".into(),
                 path: "~/Code/cfcosta/tau-agent".into(),
+                main: None,
                 memory: tau_agent_memory(&note, &link),
                 constitution: tau_agent_rules(&rule),
             },
             Repo {
                 name: "docbert".into(),
                 path: "~/Code/cfcosta/docbert".into(),
+                main: None,
                 memory: Memory {
                     path: "~/.tau/memory/docbert".into(),
                     collection: "docbert-memory".into(),
@@ -1390,6 +1392,7 @@ pub fn catalog() -> Catalog {
             Repo {
                 name: "homelab.nix".into(),
                 path: "~/Code/cfcosta/homelab.nix".into(),
+                main: None,
                 memory: Memory {
                     path: "~/.tau/memory/homelab.nix".into(),
                     collection: "homelab-memory".into(),

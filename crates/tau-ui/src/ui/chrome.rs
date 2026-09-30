@@ -15,6 +15,7 @@ use gpui::{
     prelude::*,
     px,
 };
+use tau_agent::tool::RunId;
 
 use super::{dot, icon, icon_button, logo, mono, status_icon, status_look};
 use crate::{
@@ -515,58 +516,15 @@ fn repo_group(
                 cx.listener(move |ws, _, _, cx| ws.open_constitution(&name, cx))
             }),
         );
-    for run in rows.runs {
-        let active = on_run && current.as_ref() == Some(&run.id);
-        body = body.child(run_row(ws, run, active, false, t, cx));
-        for child in &run.children {
-            if ws.is_closed(&child.id) {
-                continue;
-            }
-            // A fork is a conversation of its own: it opens like one.
-            if let Some(view) = ws.run(&child.id) {
-                let active = on_run && current.as_ref() == Some(&child.id);
-                body = body.child(run_row(ws, view, active, true, t, cx));
-                continue;
-            }
-            let route =
-                (child.kind == ChildKind::Fork).then(|| Route::Compare {
-                    main: run.id.clone(),
-                    fork: child.id.clone(),
-                });
-            let active = route.as_ref() == Some(&ws.route);
-            body = body.child(
-                div()
-                    .id(SharedString::from(format!("child-{}", child.id)))
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap(sp(2.))
-                    .h(px(34.))
-                    .pl(sp(7.))
-                    .pr(sp(2.5))
-                    .rounded(radius::CONTROL)
-                    .text_color(t.text_soft)
-                    .when(active, |row| row.bg(t.selected))
-                    .child(icon(
-                        match child.kind {
-                            ChildKind::SubAgent => Icon::SubAgent,
-                            ChildKind::Fork => Icon::Fork,
-                        },
-                        IconSize::SMALL,
-                        t.blue,
-                    ))
-                    .child(div().flex_1().truncate().child(child.title.clone()))
-                    .when_some(route, |row, route| {
-                        row.cursor_pointer()
-                            .hover(|style| {
-                                style.bg(gpui::white().opacity(0.03))
-                            })
-                            .on_click(cx.listener(move |ws, _, _, cx| {
-                                ws.navigate(route.clone(), cx)
-                            }))
-                    }),
-            );
-        }
+    for (n, run) in rows.runs.iter().enumerate() {
+        // The first run is the main chat, when there is one.
+        let limit = if n == 0 { rows.main_children } else { None };
+        let tree = Tree {
+            current: current.as_ref(),
+            on_run,
+            flat: rows.flat,
+        };
+        body = tree.rows(body, ws, run, 0, limit, t, cx);
     }
     if rows.older > 0 {
         let name = name.clone();
@@ -590,18 +548,112 @@ fn repo_group(
     group.child(body)
 }
 
-/// A run in the tree: its state, title, and turn or cost.
+/// How a repository's tree is drawn: which conversation is open, and
+/// whether a filter's matches are listed alone.
+struct Tree<'a> {
+    current: Option<&'a RunId>,
+    on_run: bool,
+    flat: bool,
+}
+
+impl Tree<'_> {
+    /// `run`'s row, `depth` levels in, then what is under it: its forks
+    /// and sub-agents newest first, `limit` of them when given.
+    #[allow(clippy::too_many_arguments)]
+    fn rows(
+        &self,
+        mut body: Div,
+        ws: &Workspace,
+        run: &RunView,
+        depth: usize,
+        limit: Option<usize>,
+        t: &Theme,
+        cx: &mut Context<Workspace>,
+    ) -> Div {
+        let active = self.on_run && self.current == Some(&run.id);
+        body = body.child(run_row(ws, run, active, depth, t, cx));
+        if self.flat {
+            return body;
+        }
+        // A fork is a conversation of its own: it opens like one.
+        let children: Vec<&RunView> = ws.open_children(run).collect();
+        let shown = limit.unwrap_or(children.len());
+        for child in children.into_iter().take(shown) {
+            body = self.rows(body, ws, child, depth + 1, None, t, cx);
+        }
+        for child in &run.children {
+            if ws.is_closed(&child.id) || ws.run(&child.id).is_some() {
+                continue;
+            }
+            body = body.child(child_row(ws, run, child, depth + 1, t, cx));
+        }
+        body
+    }
+}
+
+/// A child the workspace has no conversation for: a fork opens the
+/// comparison with its run.
+fn child_row(
+    ws: &Workspace,
+    run: &RunView,
+    child: &crate::view::ChildRun,
+    depth: usize,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let route = (child.kind == ChildKind::Fork).then(|| Route::Compare {
+        main: run.id.clone(),
+        fork: child.id.clone(),
+    });
+    let active = route.as_ref() == Some(&ws.route);
+    div()
+        .id(SharedString::from(format!("child-{}", child.id)))
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(sp(2.))
+        .h(px(34.))
+        .pl(sp(indent(depth)))
+        .pr(sp(2.5))
+        .rounded(radius::CONTROL)
+        .text_color(t.text_soft)
+        .when(active, |row| row.bg(t.selected))
+        .child(icon(
+            match child.kind {
+                ChildKind::SubAgent => Icon::SubAgent,
+                ChildKind::Fork => Icon::Fork,
+            },
+            IconSize::SMALL,
+            t.blue,
+        ))
+        .child(div().flex_1().truncate().child(child.title.clone()))
+        .when_some(route, |row, route| {
+            row.cursor_pointer()
+                .hover(|style| style.bg(gpui::white().opacity(0.03)))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.navigate(route.clone(), cx)
+                }))
+        })
+}
+
+/// A tree row's left padding, `depth` levels in.
+fn indent(depth: usize) -> f32 {
+    2.5 + 4.5 * depth.min(4) as f32
+}
+
 /// A conversation in the tree: whether it is working, its title, and
-/// its unread replies; hovering it offers to close it. A fork sits
-/// under its run, with the fork mark.
+/// its unread replies; hovering it offers to close it, unless it is its
+/// repository's main chat. A fork sits under its run, with the fork
+/// mark.
 fn run_row(
     ws: &Workspace,
     run: &RunView,
     active: bool,
-    nested: bool,
+    depth: usize,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
+    let nested = depth > 0;
     let route = Route::Run(run.id.clone());
     let hovered = ws.hovered_run.as_ref() == Some(&run.id);
     let unread = ws.unread(run);
@@ -633,7 +685,7 @@ fn run_row(
         .gap(sp(2.5))
         .min_h(px(34.))
         .py(sp(goal.as_ref().map_or(0., |_| 1.5)))
-        .pl(sp(if nested { 7. } else { 2.5 }))
+        .pl(sp(indent(depth)))
         .pr(sp(2.))
         .rounded(radius::CONTROL)
         .cursor_pointer()
@@ -671,7 +723,7 @@ fn run_row(
                 }),
         )
         .map(|row| {
-            if hovered {
+            if hovered && !ws.is_main(&run.id) {
                 row.child(
                     div()
                         .id("close-run")
@@ -880,6 +932,7 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
 /// details.
 pub fn phone_run_bar(
     run: &RunView,
+    main: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
@@ -933,9 +986,12 @@ pub fn phone_run_bar(
                         )),
                 ),
         )
-        .child(icon_button("phone-close", Icon::Close, 44., t).on_click(
-            cx.listener(move |ws, _, _, cx| ws.close_run_to_list(&id, cx)),
-        ))
+        // A repository's main chat stays open.
+        .when(!main, |bar| {
+            bar.child(icon_button("phone-close", Icon::Close, 44., t).on_click(
+                cx.listener(move |ws, _, _, cx| ws.close_run_to_list(&id, cx)),
+            ))
+        })
         .child(
             icon_button("phone-details", Icon::Panel, 44., t)
                 .on_click(cx.listener(|ws, _, _, cx| ws.toggle_sheet(cx))),
@@ -1138,15 +1194,24 @@ fn phone_group(
             ),
         );
     let mut group = group.child(chips);
-    for run in rows.runs {
+    for (n, run) in rows.runs.iter().enumerate() {
         group = group.child(phone_run_row(ws, run, t, cx));
-        for (route, child) in run
-            .children
-            .iter()
-            .filter(|child| !ws.is_closed(&child.id))
-            .filter_map(|child| child_route(ws, child))
-        {
-            group = group.child(phone_child_row(route, child, t, cx));
+        if rows.flat {
+            continue;
+        }
+        // The main chat's chats are listed like it, newest first, each
+        // with what is under it.
+        let chats: Vec<&RunView> = if n == 0 && ws.is_main(&run.id) {
+            ws.open_children(run)
+                .take(rows.main_children.unwrap_or(usize::MAX))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        group = phone_children(group, ws, run, &chats, t, cx);
+        for chat in chats {
+            group = group.child(phone_run_row(ws, chat, t, cx));
+            group = phone_children(group, ws, chat, &[], t, cx);
         }
     }
     if rows.older > 0 {
@@ -1168,6 +1233,28 @@ fn phone_group(
                 cx.listener(move |ws, _, _, cx| ws.show_older_runs(&name, cx)),
             ),
         );
+    }
+    group
+}
+
+/// `run`'s open children that open as chats of their own, but for
+/// those listed as rows already (`listed`).
+fn phone_children(
+    mut group: Div,
+    ws: &Workspace,
+    run: &RunView,
+    listed: &[&RunView],
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    for (route, child) in run
+        .children
+        .iter()
+        .filter(|child| !ws.is_closed(&child.id))
+        .filter(|child| !listed.iter().any(|view| view.id == child.id))
+        .filter_map(|child| child_route(ws, child))
+    {
+        group = group.child(phone_child_row(route, child, t, cx));
     }
     group
 }
