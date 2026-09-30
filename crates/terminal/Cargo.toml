@@ -11,11 +11,6 @@ publish.workspace = true
 [dependencies]
 # The same spec as tau-ui's.
 gpui = { package = "gpui-pre", version = "=0.3.7" }
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = [
-  "wayland",
-  "x11",
-  "font-kit",
-] }
 libc.workspace = true
 libghostty-vt.workspace = true
 libghostty-vt-sys.workspace = true
@@ -25,6 +20,13 @@ tokio = { workspace = true, features = ["net", "process"] }
 
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+# Only the example opens a window; an app picks its own platform, and a
+# phone's is not this one.
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = [
+  "wayland",
+  "x11",
+  "font-kit",
+] }
 hegeltest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }

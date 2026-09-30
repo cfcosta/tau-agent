@@ -14,11 +14,6 @@ tau-testing.workspace = true
 
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7" }
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = [
-  "wayland",
-  "x11",
-  "font-kit",
-] }
 async-trait.workspace = true
 base64.workspace = true
 pulldown-cmark.workspace = true
@@ -47,3 +42,12 @@ tokio-rustls.workspace = true
 webpki-roots.workspace = true
 anyhow.workspace = true
 unicode-segmentation = "1.12.0"
+
+# The desktop's windows. A phone build brings its own platform
+# (gpui-pre-mobile), and this crate has none for Android.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = [
+  "wayland",
+  "x11",
+  "font-kit",
+] }
