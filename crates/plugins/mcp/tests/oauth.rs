@@ -15,6 +15,9 @@
 //! - a configured client skips registration, sends its secret, and uses
 //!   `authServerMetadataUrl`;
 //! - the callback ignores answers for another state;
+//! - a signed-in connection gets a new session when the server forgets
+//!   its own, whatever its token is doing, and runs each call once;
+//! - the connection's watch sees it wait for a sign-in and connect;
 //! - the host's page shows the sign-in, and its actions sign in and out.
 
 mod common;
@@ -24,13 +27,14 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::Path,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
+use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_mcp::{
     auth::{self, Grant, TokenStore, pkce_challenge, valid_verifier},
@@ -193,6 +197,13 @@ struct Books {
     /// A scope every MCP request needs.
     needs_scope: Option<String>,
     mcp_requests: usize,
+    /// The sessions the MCP server knows, when it keeps sessions as the
+    /// reference servers do; none when it keeps none.
+    sessions: Option<Vec<String>>,
+    /// The sessions it began.
+    initializes: usize,
+    /// The `tools/call` requests that reached the server.
+    tool_calls: usize,
     next: usize,
     /// Every code, token and verifier that went by: none may be logged.
     secrets: Vec<String>,
@@ -445,6 +456,15 @@ impl Fake {
         }
         let message: Value = serde_json::from_slice(&request.body).unwrap();
         let method = message["method"].as_str().unwrap_or_default().to_owned();
+        let mut session = None;
+        if let Some(refused) = self.books(|books| {
+            Self::session(books, &request, &message, &mut session)
+        }) {
+            return refused;
+        }
+        if method == "tools/call" {
+            self.books(|books| books.tool_calls += 1);
+        }
         let mut bridge = self.bridge.lock().await;
         if bridge.is_none()
             || method == "server/discover"
@@ -469,13 +489,75 @@ impl Fake {
         line.push('\n');
         bridge_ref.write.write_all(line.as_bytes()).await.unwrap();
         drop(bridge);
-        match waiting {
+        let response = match waiting {
             None => Response::empty(202),
             Some(answer) => match answer.await {
                 Ok(value) => Response::json(200, value),
                 Err(_) => Response::empty(500),
             },
+        };
+        match session {
+            Some(session) => response.header("mcp-session-id", session),
+            None => response,
         }
+    }
+
+    /// The session check of a server that keeps sessions, after the
+    /// bearer check, as the TypeScript SDK's servers do: `initialize`
+    /// begins one (into `begun`), and a request in a session it does not
+    /// know is answered 400 with an error that names no request. `None`
+    /// lets the request through.
+    fn session(
+        books: &mut Books,
+        request: &Request,
+        message: &Value,
+        begun: &mut Option<String>,
+    ) -> Option<Response> {
+        let sessions = books.sessions.as_mut()?;
+        let given = request.headers.get("mcp-session-id");
+        match message["method"].as_str() {
+            // No 2026-07-28 discovery: the legacy handshake, with sessions.
+            Some("server/discover") => Some(Response::json(
+                200,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": message["id"],
+                    "error": {"code": -32601, "message": "Method not found"},
+                }),
+            )),
+            Some("initialize") if given.is_none() => {
+                books.initializes += 1;
+                let session = format!("session-{}", books.initializes);
+                sessions.push(session.clone());
+                *begun = Some(session);
+                None
+            }
+            _ if given.is_some_and(|given| sessions.contains(given)) => None,
+            _ => Some(Response::json(
+                400,
+                json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32000,
+                        "message": "Bad Request: No valid session ID provided",
+                    },
+                }),
+            )),
+        }
+    }
+
+    /// Keeps sessions from now on.
+    fn keep_sessions(&self) {
+        self.books(|books| books.sessions = Some(Vec::new()));
+    }
+
+    /// Forgets every session, as a restart does.
+    fn forget_sessions(&self) {
+        self.books(|books| {
+            if let Some(sessions) = &mut books.sessions {
+                sessions.clear();
+            }
+        });
     }
 
     async fn open_bridge(&self) -> Bridge {
@@ -1050,4 +1132,133 @@ async fn no_subscriber_sees_a_code_or_a_token() {
             "{target} at {level} passed the filter"
         );
     }
+}
+
+/// A signed-in connection to `fake`, which keeps sessions, connected.
+async fn signed_in_with_sessions(fake: &Fake, dir: &Path) -> Arc<Connection> {
+    fake.keep_sessions();
+    let mut config = server(fake, None);
+    config.timeout = 5.0;
+    let connection = Connection::new(config, Origin::User, environment(dir));
+    sign_in(&connection).await;
+    connection.connect();
+    settle(&connection).await;
+    assert_eq!(connection.status().state, State::Connected);
+    connection
+}
+
+/// A call that answers at once: a forgotten session used to make it
+/// wait out the server's timeout.
+async fn quick_echo(connection: &Arc<Connection>) {
+    let started = Instant::now();
+    let result = echo(connection).await.unwrap();
+    assert_eq!(result["structuredContent"]["echo"], "hi");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+/// A server behind a sign-in that restarted, forgetting the session,
+/// and answers it with 400 and an error naming no request: the signed-in
+/// connection begins a new session, with its token, and the call runs
+/// once. Through a turned-down token too: the refresh comes first, then
+/// the new session.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_signed_in_connection_gets_a_new_session_after_a_restart() {
+    let fake = Fake::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let connection = signed_in_with_sessions(&fake, dir.path()).await;
+    quick_echo(&connection).await;
+    assert_eq!(fake.books(|b| b.initializes), 1);
+
+    fake.forget_sessions();
+    quick_echo(&connection).await;
+    assert_eq!(fake.books(|b| (b.initializes, b.tool_calls)), (2, 2));
+
+    fake.forget_sessions();
+    fake.revoke_access();
+    quick_echo(&connection).await;
+    assert_eq!(fake.books(|b| (b.initializes, b.tool_calls)), (3, 3));
+    assert_eq!(fake.books(|b| b.refreshes), 1);
+    assert_eq!(connection.status().state, State::Connected);
+    connection.shutdown().await;
+}
+
+/// What happens to a signed-in connection between two calls.
+#[derive(
+    Debug, Clone, Copy, hegel::PrettyPrintable, hegel::DefaultGenerator,
+)]
+enum Between {
+    /// Another call.
+    Call,
+    /// The server restarts and forgets its sessions.
+    Restart,
+    /// The server turns down every token it gave.
+    Revoke,
+}
+
+/// Whatever mix of calls, restarts that forget the session and
+/// turned-down tokens a signed-in connection meets, every call answers
+/// at once and runs on the server exactly once: a session or a token
+/// that went bad never makes a call fail, wait, or run twice.
+#[hegel::test(test_cases = 30)]
+fn a_signed_in_connection_outlives_restarts_and_revocations(tc: TestCase) {
+    let steps: Vec<Between> =
+        tc.draw(gs::vecs(gs::default::<Between>()).max_size(8));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async move {
+        let fake = Fake::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let connection = signed_in_with_sessions(&fake, dir.path()).await;
+        let mut calls = 0;
+        for step in steps.into_iter().chain([Between::Call]) {
+            match step {
+                Between::Call => {
+                    quick_echo(&connection).await;
+                    calls += 1;
+                }
+                Between::Restart => fake.forget_sessions(),
+                Between::Revoke => fake.revoke_access(),
+            }
+        }
+        assert_eq!(fake.books(|b| b.tool_calls), calls);
+        assert_eq!(connection.status().state, State::Connected);
+        connection.shutdown().await;
+    });
+}
+
+/// The connection's watch, which the host redraws its page on, sees a
+/// server wait for a sign-in, and then connect once signed in.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_watch_sees_a_sign_in_wait_and_connect() {
+    let fake = Fake::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let connection = Connection::new(
+        server(&fake, None),
+        Origin::User,
+        environment(dir.path()),
+    );
+    let mut changes = connection.watch();
+    connection.connect();
+    settle(&connection).await;
+    assert_eq!(connection.status().state, State::NeedsAuth);
+    assert!(changes.has_changed().unwrap());
+    changes.borrow_and_update();
+    assert!(connection.auth_need().is_some());
+
+    sign_in(&connection).await;
+    connection.restart();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while connection.status().state != State::Connected {
+            changes.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("the watch sees the connection connect");
+    assert_eq!(connection.auth_need(), None);
 }
