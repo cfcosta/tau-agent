@@ -1,6 +1,8 @@
 # 0018: MCP servers and Codemode, as two plugins
 
-- Status: accepted. Nothing is built yet. Amends
+- Status: accepted. tau-agent's part (nested calls, exposure,
+  structured output, tool sources, per-run tools) is built; the two
+  plugin crates are not. Amends
   [0005](0005-plugins.md): tools a plugin adds can be called by other
   tools, and a plugin can add tools for one run.
 - Date: 2026-10-01

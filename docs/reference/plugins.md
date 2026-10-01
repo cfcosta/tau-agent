@@ -57,6 +57,12 @@ pub trait Plugin: Send + Sync + 'static {
         Vec::new()
     }
 
+    /// Tools resolved by name when a tool calls one (see "Nested
+    /// calls"). Read once, by `Agent::plugin`.
+    fn tool_source(&self) -> Option<Arc<dyn ToolSource>> {
+        None
+    }
+
     /// Prepares one run and returns the plugin's state for it. Runs
     /// before the run opens its session, in registration order, so a
     /// later plugin sees what an earlier one set. An error fails the run
@@ -69,7 +75,8 @@ pub trait Plugin: Send + Sync + 'static {
 }
 ```
 
-`Agent::plugin(p)` adds `p.tools()` to the agent and keeps `p`.
+`Agent::plugin(p)` adds `p.tools()` to the agent, keeps
+`p.tool_source()`, and keeps `p`.
 `Agent::hook(h)` stays: a `RunHook` becomes a plugin whose runs share
 the one hook.
 
@@ -90,7 +97,13 @@ pub struct RunPlan {
     // records(): this plugin's records along the fork chain, oldest
     //   first (see `PluginCtx::record`);
     // last_rewrite(): the details of the latest context rewrite the run
-    //   inherits, when this plugin made it.
+    //   inherits, when this plugin made it;
+    // tools(): the run's tools so far (see "Nested calls").
+}
+
+impl RunPlan {
+    /// Adds a tool for this run only (see "Nested calls").
+    pub fn add_tool(&mut self, tool: Arc<dyn AgentTool>);
 }
 ```
 
@@ -675,12 +688,16 @@ Built: `crates/plugins/goal`. Its reference is [goal.md](goal.md).
    comes after `RunEnd`, so it is only stored. Interfaces show what
    plugins cost from these, not from the costs plugins put in their
    reports.
+8. Tools call tools: `ToolCtx::call` and `catalog`, `Exposure`,
+   `ToolOutput::structured`, `ToolSource`, `RunPlan::add_tool` and
+   `ToolCtx::plugin` (see "Nested calls"). Tool events and the hooks'
+   `ToolCall` gain `parent`.
 
 ## Nested calls
 
-Not built yet. Decided in
-[0018](../decisions/0018-codemode-and-mcp.md), for `tau-codemode` and
-`tau-mcp`.
+Built in `tau_agent::tool`, `tau_agent::plugin` and the loop. Decided
+in [0018](../decisions/0018-codemode-and-mcp.md), for `tau-codemode`
+and `tau-mcp`.
 
 ```rust
 pub enum Exposure {
@@ -704,23 +721,32 @@ pub struct ToolOutput {
     pub content: Vec<InputBlock>,
     pub details: Option<Value>,
     /// What a calling tool gets instead of the text; the model never
-    /// sees it.
+    /// sees it, and the transcript does not keep it.
     pub structured: Option<Value>,
 }
 
 /// Tools that come and go while runs go on, resolved by name at call
-/// time: an MCP server's tools.
+/// time: an MCP server's.
 #[async_trait]
 pub trait ToolSource: Send + Sync + 'static {
     fn tools(&self) -> Vec<Arc<dyn AgentTool>>;
-    fn namespaces(&self) -> Vec<Namespace>;
-    /// Waits until the namespaces are ready, or all of them for `None`.
-    async fn ready(&self, namespaces: Option<&[String]>, cancel: &CancellationToken);
+    /// Empty by default.
+    fn namespaces(&self) -> Vec<Namespace> { Vec::new() }
+    /// Waits until the namespaces are ready, or all of them for `None`,
+    /// or until `cancel`. Returns at once by default.
+    async fn ready(&self, namespaces: Option<&[String]>, cancel: &CancellationToken) {}
+}
+
+/// A group of tools, such as one MCP server's.
+pub struct Namespace {
+    pub name: String,                 // `mcp__linear`
+    pub description: String,
+    pub instructions: Option<String>, // a server's instructions
+    pub tools: Vec<String>,           // its tools' names
 }
 
 impl ToolCtx {
-    /// Every tool this call could call: the run's `Direct` and `Nested`
-    /// tools and the sources' tools.
+    /// Every tool this call could call, as the run has them now.
     pub fn catalog(&self) -> Catalog;
     /// Calls a tool through the loop, as `<this call's id>/<n>`.
     pub async fn call(&self, name: &str, args: Value)
@@ -729,30 +755,82 @@ impl ToolCtx {
     pub fn plugin(&self) -> Option<&PluginCtx>;
 }
 
+impl Catalog {
+    /// The run's `Direct` and `Nested` tools, in the order they were
+    /// added, then each source's callable tools that no run tool's name
+    /// hides (the first source to offer a name wins).
+    pub fn tools(&self) -> &[Arc<dyn AgentTool>];
+    pub fn get(&self, name: &str) -> Option<&Arc<dyn AgentTool>>;
+    /// The sources' namespaces.
+    pub fn namespaces(&self) -> &[Namespace];
+    pub fn namespace(&self, name: &str) -> Option<&Namespace>;
+    /// Waits on every source's `ready`. A catalog taken afterwards shows
+    /// the tools they brought.
+    pub async fn ready(&self, namespaces: Option<&[String]>, cancel: &CancellationToken);
+}
+
 impl RunPlan {
     /// Adds a tool for this run only: tau-mcp's direct tools.
     pub fn add_tool(&mut self, tool: Arc<dyn AgentTool>);
     /// The run's tools, the agent's and the ones added so far.
     pub fn tools(&self) -> &[Arc<dyn AgentTool>];
 }
+
+pub struct ToolCall {        // what hooks see, in `tau_agent::hook`
+    pub id: String,
+    pub name: String,
+    pub args: Value,
+    /// For a nested call, the id of the call that made it.
+    pub parent: Option<String>,
+}
 ```
 
-- `Plugin::tool_source()` returns the plugin's `ToolSource`, if any.
-  Its tools must be `Nested`; a `Direct` one goes through `add_tool`.
+- **Who sees what.** The model is declared the run's `Direct` and
+  `ModelOnly` tools, and can call only those: a call to a `Nested` tool
+  from the model is unknown, as any undeclared name is. A tool can call
+  the run's `Direct` and `Nested` tools and the sources' tools.
+- **Sources.** `Plugin::tool_source()` returns the plugin's
+  `ToolSource`, if any. Its tools are never declared, whatever their
+  exposure, and are looked up by name on each call, so a script reaches
+  a server that connected after the run started. They should be
+  `Nested`; a `ModelOnly` one is not callable, and a tool the model
+  should see goes through `add_tool`. A run tool hides a source tool of
+  the same name.
+- **Per-run tools.** `RunPlan::add_tool` in `Plugin::start` adds a tool
+  for that run; a tool of the same name already in the plan is replaced
+  in its place. The run's tools are fixed once its session opens, so
+  this costs nothing against the delta rule. A tool added with an
+  invalid schema fails the run with `AgentError::Schema`.
+- **A plugin's tools reach its run.** `ToolCtx::plugin()` is the run's
+  `PluginCtx` of the plugin that added the tool, by `Plugin::tools`,
+  `add_tool` or its source; `None` for the agent's own tools.
 - **Through the loop.** `ToolCtx::call` sends the call to the run's
   loop, which treats it as it treats a model's call: lookup, argument
   repair, validation, `before_tool` and `after_tool_result` for every
   plugin, `ToolStart`, `ToolUpdate` and `ToolEnd` with
   `parent: Some(<the calling call's id>)`. The loop polls nested calls
   in the same `select!` as the batch, so a plugin is still called one
-  call at a time. A `Sequential` tool's nested calls run one at a time.
-- **Not in the transcript.** The result goes back to the caller only.
-  `ToolResultView::message` is the turn that made the outer call.
-- **Cancel.** A nested call gets the run's token. Ending the outer call
-  cancels the nested calls it left running.
-- **Not callable:** `ModelOnly` tools, unknown names, and any call once
-  the outer call has ended. Each fails with a message, as an unknown
-  tool does today.
+  call at a time, and the nested calls' futures run alongside the
+  batch's.
+- **Ids.** A nested call's id is `<parent>/<n>`, `n` counting from 1 in
+  the order the loop receives the calls. A nested call can make nested
+  calls of its own: `call_1/2/1`.
+- **Results.** The result goes back to the caller only, never into the
+  transcript. A failed call is `Err(ToolError::Output(output))`, with
+  the output the model would have seen and the tool's `structured`
+  value, if any. `ToolResultView::message` is the turn that made the
+  outer call.
+- **Scheduling.** Among one caller's nested calls, a `Sequential`
+  tool's call waits for the others to finish and runs alone; the
+  others run at once. A `Grouped` tool's nested calls run as
+  `Parallel` ones do.
+- **Cancel.** A nested call's token is a child of its caller's, so the
+  run's cancel reaches it. Ending the outer call cancels the nested
+  calls it left running, and fails the ones still waiting to start;
+  their `ToolEnd`s may come after the outer call's.
+- **Not callable:** unknown names (`Tool x not found`), `ModelOnly`
+  tools (`Tool x cannot be called from a tool`), and any call once the
+  outer call has ended, or outside a run. Each fails with a message.
 
 ## Open questions
 

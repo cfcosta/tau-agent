@@ -31,6 +31,7 @@ tau differs from pi, it says so.
   empty code fails the call before anything runs, with only the
   message, for example
   ``@options only supports `max_output_tokens` and `timeout_ms`; got `yield` ``.
+
 - **Execution mode:** `Parallel`. Two codemode calls in one batch run
   side by side in separate VMs.
 
@@ -106,7 +107,8 @@ array({})          -- an empty table that encodes as [] instead of {}
   `after_tool_result`, as for a call the model makes. A tool a plugin
   blocks fails in the script.
 - Callable tools are the run's tools whose exposure is `Direct` or
-  `Nested`. `codemode` and other `ModelOnly` tools are not callable.
+  `Nested`, and the tool sources' tools (`ToolCtx::catalog`).
+  `codemode` and other `ModelOnly` tools are not callable.
 - **Names:** a tool's name is its key in `tools`. Names are already
   identifiers (MCP tools are sanitized by tau-mcp), so there is no
   second, normalized name as in pi.
@@ -125,7 +127,8 @@ array({})          -- an empty table that encodes as [] instead of {}
   tool calls run at once. `parallel` raises the first error after every
   function has finished; `parallel_settled` never raises. A script that
   ends with calls still running has them cancelled. pi's sequential
-  rule holds: a `Sequential` tool's nested calls run one at a time.
+  rule holds: among one script's calls, a `Sequential` tool's call
+  waits for the others and runs alone.
   Jev requests are limited to 4 in flight, as pi limits classifier
   calls.
 - If prototyping shows mlua cannot await coroutines inside an async
@@ -222,18 +225,18 @@ they change as servers connect.
 A hand-written renderer over `serde_json::Value`, after pi's
 `schemaToType` (`codemode/src/declarations.ts`):
 
-| Schema                          | Luau                                    |
-| ------------------------------- | --------------------------------------- |
-| `string`, `number`, `integer`   | `string`, `number`, `number`            |
-| `boolean`, `null`               | `boolean`, `nil`                        |
-| `array` with `items`            | `{ T }`; tuples `{ any }`               |
-| `object` with `properties`      | `{ a: T, b: T? }`, sorted; not required gets `?` |
-| `additionalProperties: T`       | `{ [string]: T }`                       |
-| `enum`, `const`                 | singleton unions: `"a" \| "b"`, or the base type for non-strings |
-| `anyOf`, `oneOf`                | `A \| B`                                |
-| `allOf`                         | `A & B`                                 |
-| local `$ref`                    | expanded, at most 32 expansions; recursive or remote: `any` |
-| anything else                   | `any`                                   |
+| Schema                        | Luau                                                             |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `string`, `number`, `integer` | `string`, `number`, `number`                                     |
+| `boolean`, `null`             | `boolean`, `nil`                                                 |
+| `array` with `items`          | `{ T }`; tuples `{ any }`                                        |
+| `object` with `properties`    | `{ a: T, b: T? }`, sorted; not required gets `?`                 |
+| `additionalProperties: T`     | `{ [string]: T }`                                                |
+| `enum`, `const`               | singleton unions: `"a" \| "b"`, or the base type for non-strings |
+| `anyOf`, `oneOf`              | `A \| B`                                                         |
+| `allOf`                       | `A & B`                                                          |
+| local `$ref`                  | expanded, at most 32 expansions; recursive or remote: `any`      |
+| anything else                 | `any`                                                            |
 
 - A property with a description goes on its own line with a `--`
   comment; otherwise the object stays on one line.
@@ -255,7 +258,7 @@ A hand-written renderer over `serde_json::Value`, after pi's
   order they were made.
 - **On failure** a last text item: `Script error:` and the error with
   its line, then `Tool calls made before the failure (they are not
-  undone): read (ok), bash (error)` or `No tool calls were made.` Heads
+undone): read (ok), bash (error)` or `No tool calls were made.` Heads
   for other failures: `Script timed out: …`, `Script cancelled: …`,
   `Script sandbox failed: …`.
 - **Budget:** the text items are measured at chars / 4. Past
@@ -275,10 +278,11 @@ cost }`, `args` cut at 200 characters and `error` at 500, with
 
 ## Events
 
-Each nested call has `ToolStart` and `ToolEnd` with a new field,
-`parent: Option<String>`, set to the codemode call's id. Nested ids are
-`<parent>/<n>`, numbered from 1 in the order calls start. Its updates are `ToolUpdate`s under its own
-id. The interface puts them inside the codemode card, live.
+Each nested call has `ToolStart` and `ToolEnd` with
+`parent: Some(<the codemode call's id>)`. Nested ids are
+`<parent>/<n>`, numbered from 1 in the order the loop receives the
+calls. Its updates are `ToolUpdate`s under its own id, with the same
+`parent`. The interface puts them inside the codemode card, live.
 
 ## Tests
 

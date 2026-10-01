@@ -108,8 +108,16 @@ pub trait AgentTool: Send + Sync + 'static {
     fn description(&self) -> &str;
     fn parameters(&self) -> &serde_json::Value;           // rewritten to OpenAI strict form
     fn execution_mode(&self) -> ExecutionMode { ExecutionMode::Parallel }
+    fn exposure(&self) -> Exposure { Exposure::Direct }      // Direct, Nested or ModelOnly
+    fn output_schema(&self) -> Option<&Value> { None }       // the shape of `structured`
     fn prepare_arguments(&self, raw: Value) -> Value { raw }
     async fn call(&self, args: Value, ctx: ToolCtx) -> Result<ToolOutput, ToolError>;
+}
+
+pub struct ToolOutput {
+    pub content: Vec<InputBlock>,     // what the model sees
+    pub details: Option<Value>,       // for interfaces and hooks
+    pub structured: Option<Value>,    // for a calling tool
 }
 
 #[async_trait]
@@ -121,6 +129,8 @@ pub trait TypedTool: Send + Sync + 'static {
 }
 
 pub struct ToolCtx { pub cancel: CancellationToken, pub updates: ToolUpdates, pub run: RunId }
+// ToolCtx::call(name, args), catalog() and plugin(): tools that call
+// tools, in plugins.md, "Nested calls".
 ```
 
 A tool's error is a `ToolError` (`tau_agent::error`, re-exported from

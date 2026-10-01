@@ -51,7 +51,9 @@ pi, a note says so.
 ## Tool execution
 
 - **Preparation is sequential and follows source order.** For each call:
-  1. Look the tool up. An unknown tool yields an immediate error result.
+  1. Look the tool up among the tools declared to the model (`Direct`
+     and `ModelOnly`). An unknown tool, or a `Nested` one, yields an
+     immediate error result.
   2. Run `prepare_arguments`, if the tool defines it.
   3. Run the coercion pass, then JSON-schema validation. A failure
      yields an error result carrying the validation message.
@@ -82,6 +84,15 @@ pi, a note says so.
   field.
 - **Updates after completion:** a tool that sends updates after its
   future has resolved has those updates ignored.
+- **Nested calls:** a running tool can call another with
+  `ToolCtx::call`. The loop takes the call while it waits on the batch,
+  in the same `select!`, and prepares it as above (lookup among the
+  tools callable from tools, repair, validation, `before_tool`), then
+  runs it next to the batch's calls. Its events carry the caller's id
+  as `parent`, and its id is `<parent>/<n>`. `after_tool` runs on it,
+  and its result goes back to the caller, never into the transcript.
+  The batch ends once every call and every nested call has ended. See
+  [plugins.md](plugins.md), "Nested calls".
 
 ## Coercion before validation
 
@@ -154,9 +165,9 @@ pub enum RunEvent {
     TextDelta  { run: RunId, parent: Option<RunId>, delta: String },
     ThinkingDelta { run: RunId, delta: String },
     ToolCallDelta { run: RunId, call_id: String, json_fragment: String },
-    ToolStart  { run: RunId, call_id: String, tool: Arc<str>, args: Value },
-    ToolUpdate { run: RunId, call_id: String, partial: Arc<ToolOutput> },
-    ToolEnd    { run: RunId, call_id: String, output: Arc<ToolOutput>, is_error: bool },
+    ToolStart  { run: RunId, call_id: String, tool: Arc<str>, args: Value, parent: Option<String> },
+    ToolUpdate { run: RunId, call_id: String, partial: Arc<ToolOutput>, parent: Option<String> },
+    ToolEnd    { run: RunId, call_id: String, output: Arc<ToolOutput>, is_error: bool, parent: Option<String> },
     TurnEnd    { run: RunId, turn: u32, usage: Usage },
     ContextRewritten { run: RunId, plugin: Arc<str>, tokens_before: u64, tokens_after: u64 },  // between turns, or in an overflowing turn
     Retry      { run: RunId, turn: u32, attempt: u32, delay: Duration, error: String },
@@ -169,4 +180,5 @@ pub enum RunEvent {
 ```
 
 Events from a child run carry `parent`, so one subscriber can follow a
-whole workflow tree.
+whole workflow tree. A nested tool call's events carry the id of the
+call that made it as their `parent`; the model's calls have none.
