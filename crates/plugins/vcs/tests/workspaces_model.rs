@@ -417,10 +417,6 @@ struct Since {
     commit_id: String,
     /// `@`'s files then.
     tree: Tree,
-    /// The change `@` stood on then (`None` for the main chat's commit
-    /// the chat started on), and its files then.
-    parent: Option<String>,
-    parent_tree: Tree,
 }
 
 /// A commit the chat's tools showed: what its id names forever.
@@ -463,6 +459,9 @@ struct Machine {
     passed: bool,
     /// The last turn's snapshot.
     since: Option<Since>,
+    /// How the main chat's catch-ups moved the chat's newest commit since
+    /// that snapshot, oldest first: its tree before and after each.
+    moved_since: Vec<(Tree, Tree)>,
     /// Change ids an undo abandoned.
     dead: BTreeSet<String>,
     /// Every commit of the chat's stack a tool showed, by commit id.
@@ -525,6 +524,7 @@ impl Machine {
             ops: Vec::new(),
             passed: false,
             since: None,
+            moved_since: Vec::new(),
             dead: BTreeSet::new(),
             shown: BTreeMap::new(),
             chats: 0,
@@ -912,25 +912,26 @@ impl Machine {
                 since.as_ref().map(|s| s.commit_id.clone()),
             ))
             .unwrap();
-        // From the turn before's snapshot, rebased onto its parent as that
-        // is now: what a catch-up brought is not the turn's
-        // (`a_turns_paths_leave_out_what_a_catch_up_brought`).
+        // From the turn before's snapshot, with each tagged catch-up's
+        // move of the chat's newest commit since replayed on it: what a
+        // catch-up brought is not the turn's
+        // (`a_turns_paths_leave_out_what_a_catch_up_brought`), and nothing
+        // else is followed: the chat's own commits, undos and recommits
+        // are the turn's work.
+        let moves = std::mem::take(&mut self.moved_since);
         let base = match since {
             None => self.parent_tree(),
             Some(since) => {
-                let now = match &since.parent {
-                    None => Some(self.base_tree()),
-                    Some(id) => self
-                        .stack
-                        .iter()
-                        .find(|change| &change.change_id == id)
-                        .map(|change| change.tree.clone()),
-                };
-                let now = now.unwrap_or_else(|| since.parent_tree.clone());
-                if now != since.parent_tree {
-                    tc.event("a turn counts from a snapshot a catch-up moved");
+                let mut base = since.tree;
+                for (before, after) in moves {
+                    if before != after {
+                        tc.event(
+                            "a turn counts from a snapshot a catch-up moved",
+                        );
+                    }
+                    base = rebase_tree(&after, &before, &base);
                 }
-                rebase_tree(&now, &since.parent_tree, &since.tree)
+                base
             }
         };
         let got: Vec<(String, String)> = turn
@@ -950,8 +951,6 @@ impl Machine {
         self.since = Some(Since {
             commit_id: turn.commit_id,
             tree: self.wc.tree.clone(),
-            parent: self.stack.last().map(|change| change.change_id.clone()),
-            parent_tree: self.parent_tree(),
         });
         self.passed = true;
     }
@@ -1049,7 +1048,11 @@ impl Machine {
         let name = self.project.trunk_name().unwrap();
         let moved =
             block_on(self.main.vcs.move_onto(trunk, name, true)).unwrap();
+        let head_before = self.parent_tree();
         self.rebase_all(&old);
+        // The catch-up is tagged: the chat's next turn leaves out what it
+        // brought to the chat's newest commit.
+        self.moved_since.push((head_before, self.parent_tree()));
         self.other();
         tc.event("a catch-up rewrites the chat");
         if self.stack.iter().any(|c| !conflicts(&c.tree).is_empty())
