@@ -1,0 +1,51 @@
+[package]
+name = "tau-mcp"
+description = "Connects tau agents to MCP servers and adds their tools, as a plugin."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+libc.workspace = true
+# The MCP client (docs/research/codemode-libraries.md). Its API moves
+# between majors, so only `src/client.rs` touches it. No default
+# features; reqwest's TLS is the workspace's `rustls-no-provider`.
+rmcp = { version = "3.5.0", default-features = false, features = [
+  "client",
+  "reqwest-tls-no-provider",
+  "transport-child-process",
+  "transport-streamable-http-client-reqwest",
+] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+tokio-util.workspace = true
+tracing = "0.1"
+
+[dev-dependencies]
+hegeltest.workspace = true
+regex.workspace = true
+tempfile.workspace = true
+rmcp = { version = "3.5.0", default-features = false, features = [
+  "client",
+  "macros",
+  "server",
+] }
+tau-store.workspace = true
+tau-testing.workspace = true
+tokio = { workspace = true, features = [
+  "rt",
+  "rt-multi-thread",
+  "time",
+  "test-util",
+  "net",
+] }
