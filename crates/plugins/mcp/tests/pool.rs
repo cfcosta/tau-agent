@@ -69,6 +69,7 @@ fn environment() -> Environment {
         env: Arc::new(|_| None),
         home: None,
         repo: None,
+        auth: None,
     }
 }
 

@@ -13,12 +13,16 @@ base64.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7" }
+http = "1"
 libc.workspace = true
 reqwest.workspace = true
 # The MCP client (docs/research/codemode-libraries.md). Its API moves
 # between majors, so only `src/client.rs` touches it. No default
 # features; reqwest's TLS is the workspace's `rustls-no-provider`.
 rmcp = { version = "3.5.0", default-features = false, features = [
+  # OAuth sign-in (docs/reference/mcp.md, "Signing in"). Not
+  # `auth-client-credentials-jwt`: it pulls aws-lc-rs.
+  "auth",
   "client",
   "reqwest-tls-no-provider",
   "transport-child-process",
@@ -36,6 +40,7 @@ tokio = { workspace = true, features = ["process", "io-util"] }
 tokio-rustls.workspace = true
 tokio-util.workspace = true
 tracing = "0.1"
+url = "2.5.8"
 webpki-roots.workspace = true
 
 [dev-dependencies]

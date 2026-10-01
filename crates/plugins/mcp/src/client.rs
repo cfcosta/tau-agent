@@ -62,7 +62,10 @@ use rmcp::{
     transport::{
         StreamableHttpClientTransport,
         TokioChildProcess,
+        auth::{AuthClient, AuthError},
         streamable_http_client::{
+            AuthRequiredError,
+            InsufficientScopeError,
             StreamableHttpClientTransportConfig,
             StreamableHttpError,
         },
@@ -73,17 +76,14 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     sync::{mpsc, watch},
 };
-use tokio_rustls::rustls::{
-    ClientConfig as TlsConfig,
-    RootCertStore,
-    crypto::ring,
-};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    auth::{GrantKey, TokenStore, http::mcp_client},
     config::Dial,
     connection::{
         Annotations,
+        AuthNeed,
         Progress,
         PromptArgument,
         PromptInfo,
@@ -110,13 +110,30 @@ pub(crate) enum Endpoint {
     Http {
         url: String,
         headers: Vec<(String, String)>,
+        /// Where its sign-in is kept, when OAuth applies: the entry sends
+        /// no `Authorization` header of its own.
+        auth: Option<HttpAuth>,
     },
     Stream(Dial),
+}
+
+/// An HTTP server's sign-in: its grant, and the configured client's
+/// secret, expanded.
+#[derive(Clone)]
+pub(crate) struct HttpAuth {
+    pub store: TokenStore,
+    pub key: GrantKey,
+    pub client_secret: Option<String>,
 }
 
 impl Endpoint {
     pub fn is_http(&self) -> bool {
         matches!(self, Self::Http { .. })
+    }
+
+    /// Whether OAuth applies: a 401 asks for a sign-in.
+    pub fn signs_in(&self) -> bool {
+        matches!(self, Self::Http { auth: Some(_), .. })
     }
 }
 
@@ -140,6 +157,8 @@ pub(crate) struct ConnectError {
     /// A network error, a timeout, or an HTTP 408, 429 or 5xx but 501:
     /// worth another try.
     pub transient: bool,
+    /// The server asked for a sign-in, or for more scopes.
+    pub auth: Option<AuthNeed>,
 }
 
 impl ConnectError {
@@ -147,6 +166,7 @@ impl ConnectError {
         Self {
             message: message.into(),
             transient: false,
+            auth: None,
         }
     }
 }
@@ -345,9 +365,12 @@ impl Session {
                 return Err(ConnectError::fatal(message));
             }
             Err(OpenError::Lifecycle(error)) => {
+                let auth =
+                    endpoint.signs_in().then(|| auth_need(&error)).flatten();
                 return Err(ConnectError {
-                    transient: transient(&error),
+                    transient: auth.is_none() && transient(&error),
                     message: describe(&error),
+                    auth,
                 });
             }
         };
@@ -743,7 +766,7 @@ async fn open(
             }
             handler.serve_with_lifecycle(child, lifecycle).await
         }
-        Endpoint::Http { url, headers } => {
+        Endpoint::Http { url, headers, auth } => {
             let mut config =
                 StreamableHttpClientTransportConfig::with_uri(url.as_str());
             for (name, value) in headers {
@@ -760,11 +783,35 @@ async fn open(
                     })?;
                 config.custom_headers.insert(name, value);
             }
-            let transport = StreamableHttpClientTransport::with_client(
-                http_client(),
-                config,
-            );
-            handler.serve_with_lifecycle(transport, lifecycle).await
+            let manager = match auth {
+                Some(auth) => crate::auth::authorization(
+                    url,
+                    &auth.store,
+                    &auth.key,
+                    auth.client_secret.as_deref(),
+                )
+                .await
+                .map_err(ours)?,
+                None => None,
+            };
+            match manager {
+                // Signed in: the access token goes with every request,
+                // refreshed when it is about to expire or turned down.
+                Some(manager) => {
+                    let transport = StreamableHttpClientTransport::with_client(
+                        AuthClient::new(mcp_client(), manager),
+                        config,
+                    );
+                    handler.serve_with_lifecycle(transport, lifecycle).await
+                }
+                None => {
+                    let transport = StreamableHttpClientTransport::with_client(
+                        mcp_client(),
+                        config,
+                    );
+                    handler.serve_with_lifecycle(transport, lifecycle).await
+                }
+            }
         }
         Endpoint::Stream(dial) => {
             let stream = dial.open().await.map_err(|error| {
@@ -783,28 +830,6 @@ async fn open(
             Err(OpenError::Lifecycle(Box::new(error)))
         }
     }
-}
-
-/// The HTTP client, as rmcp's default one (no idle pool, no redirects,
-/// so headers never reach another host) but with tau's TLS: rustls with
-/// ring and the webpki roots, since reqwest has no provider of its own
-/// here.
-fn http_client() -> reqwest::Client {
-    let roots = RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
-    let tls =
-        TlsConfig::builder_with_provider(Arc::new(ring::default_provider()))
-            .with_safe_default_protocol_versions()
-            .expect("ring supports the default protocol versions")
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-    reqwest::Client::builder()
-        .tls_backend_preconfigured(tls)
-        .pool_max_idle_per_host(0)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("a static client configuration builds")
 }
 
 /// Removes a call's progress route when the call ends, however it ends.
@@ -1013,4 +1038,99 @@ fn transient_reqwest(error: &reqwest::Error) -> bool {
 pub(crate) fn transient_status(status: u16) -> bool {
     matches!(status, 408 | 429)
         || ((500..600).contains(&status) && status != 501)
+}
+
+/// What a failed connect says about signing in: the server answered
+/// 401 (a sign-in), or 403 with `insufficient_scope` (more scopes), and
+/// its challenge, when the answer carried one.
+fn auth_need(error: &ClientInitializeError) -> Option<AuthNeed> {
+    match error {
+        ClientInitializeError::TransportError { error, .. } => {
+            auth_source(&*error.error)
+        }
+        ClientInitializeError::LegacyFallbackFailed { discover, fallback } => {
+            auth_need(fallback).or_else(|| auth_need(discover))
+        }
+        _ => None,
+    }
+}
+
+fn auth_source(error: &(dyn std::error::Error + 'static)) -> Option<AuthNeed> {
+    if let Some(error) =
+        error.downcast_ref::<StreamableHttpError<reqwest::Error>>()
+    {
+        match error {
+            StreamableHttpError::AuthRequired(error) => {
+                return Some(AuthNeed::challenged(
+                    &error.www_authenticate_header,
+                ));
+            }
+            StreamableHttpError::InsufficientScope(error) => {
+                return Some(AuthNeed {
+                    scope: error
+                        .required_scope
+                        .clone()
+                        .or_else(|| scope_of(&error.www_authenticate_header)),
+                    ..AuthNeed::challenged(&error.www_authenticate_header)
+                });
+            }
+            StreamableHttpError::Auth(AuthError::AuthorizationRequired) => {
+                return Some(AuthNeed::default());
+            }
+            StreamableHttpError::UnexpectedServerResponse(text)
+                if response_status(text) == Some(401) =>
+            {
+                return Some(AuthNeed::default());
+            }
+            StreamableHttpError::Client(error)
+                if error.status().map(|s| s.as_u16()) == Some(401) =>
+            {
+                return Some(AuthNeed::default());
+            }
+            _ => {}
+        }
+    }
+    if let Some(error) = error.downcast_ref::<AuthRequiredError>() {
+        return Some(AuthNeed::challenged(&error.www_authenticate_header));
+    }
+    if let Some(error) = error.downcast_ref::<InsufficientScopeError>() {
+        return Some(AuthNeed {
+            scope: error.required_scope.clone(),
+            ..AuthNeed::challenged(&error.www_authenticate_header)
+        });
+    }
+    if let Some(source) = error.source() {
+        return auth_source(source);
+    }
+    // The HTTP worker may hand the error on as text only.
+    let text = error.to_string();
+    if let Some((_, challenge)) = text.split_once("authorization required: ") {
+        return Some(AuthNeed::challenged(challenge));
+    }
+    if let Some((_, challenge)) = text.split_once("insufficient scope: ") {
+        return Some(AuthNeed {
+            scope: scope_of(challenge),
+            ..AuthNeed::challenged(challenge)
+        });
+    }
+    text.split_once("unexpected server response: ")
+        .and_then(|(_, rest)| response_status(rest))
+        .filter(|status| *status == 401)
+        .map(|_| AuthNeed::default())
+}
+
+/// The `scope` parameter of a `WWW-Authenticate` challenge.
+pub(crate) fn scope_of(challenge: &str) -> Option<String> {
+    let at = challenge.find("scope=")?;
+    // `scope=` but not `insufficient_scope` or a longer name.
+    let before = challenge[..at].chars().next_back();
+    if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return scope_of(&challenge[at + 6..]);
+    }
+    let rest = &challenge[at + 6..];
+    let value = match rest.strip_prefix('"') {
+        Some(quoted) => quoted.split('"').next()?,
+        None => rest.split([',', ' ']).next()?,
+    };
+    (!value.is_empty()).then(|| value.to_owned())
 }

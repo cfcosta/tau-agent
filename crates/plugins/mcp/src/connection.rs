@@ -25,16 +25,19 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    auth::{GrantKey, SignInRequest, TokenStore},
     client::{
         CallError,
         ConnectError,
         Endpoint,
         Features,
+        HttpAuth,
         Session,
         SessionEvent,
     },
     config::{
         EnvLookup,
+        HttpConfig,
         Origin,
         ServerConfig,
         Transport,
@@ -61,6 +64,11 @@ pub enum State {
     Disconnected,
     /// Could not connect; the next call tries again.
     Failed,
+    /// The server asked for a sign-in (or for more scopes). Calls fail
+    /// at once until someone signs in, here or in another process;
+    /// nothing opens a browser on its own.
+    #[serde(rename = "needs-auth")]
+    NeedsAuth,
     /// Closed with the plugin, or disabled.
     Closed,
 }
@@ -72,8 +80,41 @@ impl fmt::Display for State {
             Self::Connected => "connected",
             Self::Disconnected => "disconnected",
             Self::Failed => "failed",
+            Self::NeedsAuth => "needs-auth",
             Self::Closed => "closed",
         })
+    }
+}
+
+/// Why a server wants a sign-in.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct AuthNeed {
+    /// The server's `WWW-Authenticate` challenge, when it gave one.
+    pub challenge: Option<String>,
+    /// Scopes it said it needs beyond those granted
+    /// (`insufficient_scope`).
+    pub scope: Option<String>,
+}
+
+impl AuthNeed {
+    pub(crate) fn challenged(challenge: &str) -> Self {
+        Self {
+            challenge: Some(challenge.trim().to_owned()),
+            scope: None,
+        }
+    }
+
+    /// What the connection's error says.
+    pub fn message(&self) -> String {
+        match &self.scope {
+            Some(scope) => format!(
+                "the server needs more access ({scope}): sign in again on \
+                 the MCP servers page"
+            ),
+            None => "the server asks you to sign in: sign in on the MCP \
+                     servers page"
+                .to_owned(),
+        }
     }
 }
 
@@ -250,16 +291,26 @@ pub struct Environment {
     pub env: EnvLookup,
     pub home: Option<PathBuf>,
     pub repo: Option<PathBuf>,
+    /// Where sign-ins are kept; without it, OAuth does not apply and a
+    /// 401 fails the server.
+    pub auth: Option<TokenStore>,
 }
 
 impl Environment {
-    /// The process's environment and `$HOME`.
+    /// The process's environment and `$HOME`, without a grants file.
     pub fn process(repo: Option<PathBuf>) -> Self {
         Self {
             env: crate::config::process_env(),
             home: std::env::var_os("HOME").map(PathBuf::from),
             repo,
+            auth: None,
         }
+    }
+
+    /// The same, keeping sign-ins in `store`.
+    pub fn with_auth(mut self, store: Option<TokenStore>) -> Self {
+        self.auth = store;
+        self
     }
 }
 
@@ -304,9 +355,52 @@ impl Environment {
             Transport::Http(http) => Endpoint::Http {
                 url: http.url.clone(),
                 headers: expand(&http.headers)?,
+                auth: match self.oauth(config) {
+                    Some((store, key)) => Some(HttpAuth {
+                        store,
+                        key,
+                        client_secret: self.client_secret(http)?,
+                    }),
+                    None => None,
+                },
             },
             Transport::Stream(dial) => Endpoint::Stream(dial.clone()),
         })
+    }
+}
+
+impl Environment {
+    /// Where `config`'s sign-in is kept, when OAuth applies: an HTTP
+    /// server without an `Authorization` header, and a grants file.
+    pub fn oauth(
+        &self,
+        config: &ServerConfig,
+    ) -> Option<(TokenStore, GrantKey)> {
+        let Transport::Http(http) = &config.transport else {
+            return None;
+        };
+        let store = self.auth.clone().filter(|_| http.uses_oauth())?;
+        let key = GrantKey {
+            url: http.url.clone(),
+            client: http.oauth.as_ref().and_then(|o| o.client_id.clone()),
+        };
+        Some((store, key))
+    }
+
+    /// The configured client's secret, `${VAR}` expanded.
+    fn client_secret(
+        &self,
+        http: &HttpConfig,
+    ) -> Result<Option<String>, String> {
+        http.oauth
+            .as_ref()
+            .and_then(|oauth| oauth.client_secret.as_deref())
+            .map(|secret| {
+                expand_vars(secret, &*self.env).map_err(|name| {
+                    format!("the environment variable `{name}` is not set")
+                })
+            })
+            .transpose()
     }
 }
 
@@ -361,6 +455,9 @@ pub struct Connection {
     generation: AtomicU64,
     /// Whether it ever started connecting.
     started: AtomicBool,
+    /// Why it waits for a sign-in, and the sign-in it last connected
+    /// under ([`TokenStore::fingerprint`]).
+    auth: Mutex<(Option<AuthNeed>, Option<String>)>,
 }
 
 impl Drop for Connection {
@@ -401,7 +498,75 @@ impl Connection {
             inner: Mutex::default(),
             generation: AtomicU64::new(0),
             started: AtomicBool::new(false),
+            auth: Mutex::default(),
         })
+    }
+
+    /// Where its sign-in is kept, when OAuth applies to it.
+    pub fn oauth(&self) -> Option<(TokenStore, GrantKey)> {
+        self.environment.oauth(&self.config)
+    }
+
+    /// Why it waits for a sign-in, while it does.
+    pub fn auth_need(&self) -> Option<AuthNeed> {
+        (self.status().state == State::NeedsAuth)
+            .then(|| self.auth.lock().expect("auth lock").0.clone())
+            .flatten()
+    }
+
+    /// What signing in to it needs: the grants file, the server, its
+    /// `oauth` block (`clientSecret` expanded) and what it asked for.
+    pub fn sign_in_request(
+        &self,
+    ) -> Result<(TokenStore, SignInRequest), String> {
+        let name = &self.config.name;
+        let Transport::Http(http) = &self.config.transport else {
+            return Err(format!(
+                "`{name}` is not an HTTP server: it has no sign-in"
+            ));
+        };
+        let (store, _) = self.oauth().ok_or_else(|| {
+            format!(
+                "`{name}` sends an Authorization header of its own, or tau has \
+                 no configuration directory to keep a sign-in in"
+            )
+        })?;
+        let mut oauth = http.oauth.clone().unwrap_or_default();
+        oauth.client_secret = self.environment.client_secret(http)?;
+        let need = self.auth_need().unwrap_or_default();
+        Ok((
+            store,
+            SignInRequest {
+                url: http.url.clone(),
+                oauth,
+                challenge: need.challenge,
+                scope: need.scope,
+            },
+        ))
+    }
+
+    /// Whether its grant changed (a sign-in or sign-out, here or in
+    /// another process) since it last connected.
+    fn grant_changed(&self) -> bool {
+        let Some((store, key)) = self.oauth() else {
+            return false;
+        };
+        let now = store.fingerprint(&key);
+        self.auth.lock().expect("auth lock").1 != now
+    }
+
+    /// Drops the session, if any, and connects again: after a sign-in
+    /// or a sign-out.
+    pub fn restart(self: &Arc<Self>) {
+        let session =
+            self.inner.lock().expect("connection lock").session.take();
+        if let Some(session) = session {
+            tokio::spawn(async move { session.close().await });
+        }
+        if self.status().state == State::Connected {
+            self.set_status(State::Disconnected, None);
+        }
+        self.connect();
     }
 
     pub fn name(&self) -> &str {
@@ -520,6 +685,10 @@ impl Connection {
             inner.connecting = true;
             self.started.store(true, Ordering::SeqCst);
             self.set_status(State::Connecting, None);
+            let seen = self
+                .oauth()
+                .and_then(|(store, key)| store.fingerprint(&key));
+            *self.auth.lock().expect("auth lock") = (None, seen);
         }
         let this = self.clone();
         tokio::spawn(async move { this.run_connect().await });
@@ -529,7 +698,10 @@ impl Connection {
         let outcome = tokio::time::timeout(CONNECT_TIMEOUT, self.open())
             .await
             .unwrap_or_else(|_| {
-                Err(format!("no answer in {} s", CONNECT_TIMEOUT.as_secs()))
+                Err((
+                    format!("no answer in {} s", CONNECT_TIMEOUT.as_secs()),
+                    None,
+                ))
             });
         let mut inner = self.inner.lock().expect("connection lock");
         inner.connecting = false;
@@ -557,22 +729,32 @@ impl Connection {
                     events,
                 ));
             }
-            Err(error) => {
+            Err((error, None)) => {
                 drop(inner);
                 self.set_status(State::Failed, Some(error));
+            }
+            Err((_, Some(need))) => {
+                drop(inner);
+                let message = need.message();
+                self.auth.lock().expect("auth lock").0 = Some(need);
+                self.set_status(State::NeedsAuth, Some(message));
             }
         }
     }
 
     /// Connects, retrying an HTTP server's transient errors, and lists
     /// the tools, and the resources, templates and prompts it offers.
+    /// A server that asks for a sign-in fails with why.
     async fn open(
         &self,
     ) -> Result<
         (Arc<Session>, Lists, mpsc::UnboundedReceiver<SessionEvent>),
-        String,
+        (String, Option<AuthNeed>),
     > {
-        let endpoint = self.environment.endpoint(&self.config)?;
+        let endpoint = self
+            .environment
+            .endpoint(&self.config)
+            .map_err(|error| (error, None))?;
         let mut attempt = 0;
         let (session, events) = loop {
             let (sender, events) = mpsc::unbounded_channel();
@@ -593,14 +775,14 @@ impl Connection {
                     tokio::time::sleep(HTTP_RETRY_DELAYS[attempt]).await;
                     attempt += 1;
                 }
-                Err(error) => return Err(error.message),
+                Err(error) => return Err((error.message, error.auth)),
             }
         };
         let tools = match session.list_tools().await {
             Ok(tools) => tools,
             Err(error) => {
                 session.close().await;
-                return Err(error);
+                return Err((error, None));
             }
         };
         // A list that fails leaves it empty: the tools still work.
@@ -627,6 +809,20 @@ impl Connection {
         cancel: &CancellationToken,
     ) -> Result<Arc<Session>, String> {
         loop {
+            if self.grant_changed() {
+                // Signed in or out since: the session's authorization is
+                // not the grant's any more.
+                let session =
+                    self.inner.lock().expect("connection lock").session.take();
+                if let Some(session) = session {
+                    tokio::spawn(async move { session.close().await });
+                }
+            } else if self.status().state == State::NeedsAuth {
+                return Err(self
+                    .status()
+                    .error
+                    .unwrap_or_else(|| AuthNeed::default().message()));
+            }
             {
                 let inner = self.inner.lock().expect("connection lock");
                 if let Some(session) = &inner.session

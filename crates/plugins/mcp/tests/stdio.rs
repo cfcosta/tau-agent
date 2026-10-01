@@ -81,6 +81,7 @@ async fn closing_ends_the_server_and_its_children() {
         env: Arc::new(|_| None),
         home: None,
         repo: Some(dir.path().to_owned()),
+        auth: None,
     };
     let connection = Connection::new(config, Origin::User, environment);
     connection.connect();

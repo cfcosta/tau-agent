@@ -16,6 +16,7 @@ use tau_mcp::config::{
     Exposure,
     HttpConfig,
     McpConfig,
+    OAuthConfig,
     Origin,
     SSE_REFUSED,
     ServerConfig,
@@ -53,10 +54,47 @@ fn transport(tc: &TestCase) -> Transport {
             cwd: tc.draw(gs::optional(gs::text().max_size(10))),
         })
     } else {
-        Transport::Http(HttpConfig {
+        let mut http = HttpConfig {
             url: tc.draw(gs::from_regex("https?://[a-z0-9.:/${}_]{1,20}")),
             headers: tc.draw(pairs()),
-        })
+            oauth: None,
+        };
+        // An `oauth` block only without an Authorization header.
+        if http.uses_oauth() {
+            http.oauth = tc.draw(gs::optional(oauth()).print_as_debug());
+        }
+        Transport::Http(http)
+    }
+}
+
+/// A valid `oauth` block: a secret only with a client, a callback URL
+/// on a loopback host whose port agrees with `callbackPort`.
+#[hegel::composite]
+fn oauth(tc: &TestCase) -> OAuthConfig {
+    let text = |pattern: &'static str| gs::optional(gs::from_regex(pattern));
+    let client_id: Option<String> = tc.draw(text("[a-z0-9-]{1,10}"));
+    let client_secret = match client_id {
+        Some(_) => tc.draw(text("[a-z0-9${}_]{1,10}")),
+        None => None,
+    };
+    let port: u16 = tc.draw(gs::integers().min_value(1_u16));
+    let callback_url: Option<String> = tc.draw(gs::optional(
+        gs::sampled_from(vec!["127.0.0.1", "localhost", "[::1]"])
+            .map(move |host| format!("http://{host}:{port}/cb")),
+    ));
+    let callback_port = match &callback_url {
+        Some(_) => tc.draw(gs::optional(gs::just(port))),
+        None => tc.draw(gs::optional(gs::integers().min_value(1_u16))),
+    };
+    OAuthConfig {
+        client_id,
+        client_secret,
+        callback_port,
+        callback_url,
+        scope: tc.draw(text("[a-z:]{1,6}( [a-z:]{1,6}){0,2}")),
+        client_name: tc.draw(text("[A-Za-z ]{1,10}")),
+        auth_server_metadata_url: tc
+            .draw(text("https://[a-z]{1,8}\\.dev/meta")),
     }
 }
 
@@ -383,4 +421,67 @@ fn files_are_read_from_their_places() {
     let empty = tempfile::tempdir().unwrap();
     let sources = Sources::load(Some(empty.path()), &Settings::default(), None);
     assert!(sources.servers.is_empty() && sources.errors.is_empty());
+}
+
+/// An `oauth` block is checked: never with an Authorization header, a
+/// secret only with a client, a loopback callback, a port that fits;
+/// empty strings and nulls are left out.
+#[test]
+fn oauth_blocks_are_checked() {
+    let error = |entry: serde_json::Value| {
+        let (_, errors) =
+            McpConfig::from_value(&json!({ "mcpServers": { "s": entry } }));
+        errors.first().map(|error| error.message.clone())
+    };
+    let url = "https://mcp.dev/mcp";
+    assert!(
+        error(json!({ "url": url, "headers": { "authorization": "Bearer x" }, "oauth": {} }))
+            .unwrap()
+            .contains("Authorization")
+    );
+    assert!(
+        error(json!({ "url": url, "oauth": { "clientSecret": "x" } }))
+            .unwrap()
+            .contains("clientId")
+    );
+    assert!(
+        error(json!({ "url": url, "oauth": { "callbackUrl": "http://10.0.0.1:9/cb" } }))
+            .unwrap()
+            .contains("loopback")
+    );
+    assert!(
+        error(json!({ "url": url, "oauth": { "callbackUrl": "http://127.0.0.1/cb" } }))
+            .unwrap()
+            .contains("port")
+    );
+    assert!(
+        error(json!({ "url": url, "oauth": { "callbackPort": 70000 } }))
+            .unwrap()
+            .contains("port")
+    );
+    assert!(error(json!({ "url": url, "oauth": "yes" })).is_some());
+    let (config, errors) = McpConfig::from_value(
+        &json!({ "mcpServers": { "s": {
+        "url": url,
+        "oauth": { "clientId": "", "scope": null, "callbackUrl": "http://localhost:8/cb" }
+    } } }),
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    let Transport::Http(http) = &config.servers[0].transport else {
+        panic!("an HTTP server");
+    };
+    assert_eq!(
+        http.oauth,
+        Some(OAuthConfig {
+            callback_url: Some("http://localhost:8/cb".into()),
+            ..OAuthConfig::default()
+        })
+    );
+    // A secret never shows in Debug.
+    let secret = OAuthConfig {
+        client_id: Some("c".into()),
+        client_secret: Some("hush".into()),
+        ..OAuthConfig::default()
+    };
+    assert!(!format!("{secret:?}").contains("hush"));
 }

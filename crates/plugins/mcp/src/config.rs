@@ -97,6 +97,165 @@ pub struct HttpConfig {
     pub url: String,
     /// Values expand `${VAR}`.
     pub headers: Vec<(String, String)>,
+    /// How to sign in, when the server asks: only for a server without
+    /// an `Authorization` header. Without it, sign-in registers a client
+    /// of its own and asks for the scopes the server names.
+    pub oauth: Option<OAuthConfig>,
+}
+
+impl HttpConfig {
+    /// Whether OAuth applies: the entry sends no `Authorization` header
+    /// of its own.
+    pub fn uses_oauth(&self) -> bool {
+        !self
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+    }
+}
+
+/// An HTTP server's `oauth` block (`docs/reference/mcp.md`, "Signing
+/// in"). Every field is optional; an empty string or `null` is the same
+/// as leaving it out.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct OAuthConfig {
+    /// A client registered with the authorization server beforehand;
+    /// without one, sign-in registers a client (RFC 7591).
+    pub client_id: Option<String>,
+    /// The registered client's secret. Expands `${VAR}`; never printed
+    /// by `Debug`.
+    pub client_secret: Option<String>,
+    /// The loopback port the browser comes back to; any free port when
+    /// neither this nor `callback_url` gives one.
+    pub callback_port: Option<u16>,
+    /// The whole redirect URI, on a loopback host
+    /// ([`callback_address`]).
+    pub callback_url: Option<String>,
+    /// The scopes to ask for, separated by spaces; without them, the
+    /// ones the server names.
+    pub scope: Option<String>,
+    /// The name a registered client goes by; `tau` by default.
+    pub client_name: Option<String>,
+    /// The authorization server's metadata, when discovery from the
+    /// server cannot find it.
+    pub auth_server_metadata_url: Option<String>,
+}
+
+impl fmt::Debug for OAuthConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthConfig")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "[redacted]"),
+            )
+            .field("callback_port", &self.callback_port)
+            .field("callback_url", &self.callback_url)
+            .field("scope", &self.scope)
+            .field("client_name", &self.client_name)
+            .field("auth_server_metadata_url", &self.auth_server_metadata_url)
+            .finish()
+    }
+}
+
+/// The path the browser comes back to when `callbackUrl` does not name
+/// one.
+pub const CALLBACK_PATH: &str = "/callback";
+
+/// Where the browser comes back to after signing in: a loopback address
+/// tau listens on, and the redirect URI it registers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallbackAddress {
+    /// What to listen on: `127.0.0.1`, or `::1`.
+    pub ip: std::net::IpAddr,
+    /// 0 for any free port.
+    pub port: u16,
+    /// As the redirect URI writes it: `127.0.0.1`, `localhost` or
+    /// `[::1]`.
+    pub host: String,
+    /// Starts with `/`.
+    pub path: String,
+}
+
+impl CallbackAddress {
+    /// The redirect URI once listening on `port`.
+    pub fn redirect_uri(&self, port: u16) -> String {
+        format!("http://{}:{port}{}", self.host, self.path)
+    }
+}
+
+/// The callback address an `oauth` block asks for: its `callbackUrl`,
+/// which must be plain `http` on a loopback host (`127.0.0.0/8`,
+/// `localhost` or `[::1]`) with no user, query or fragment, else
+/// `http://127.0.0.1:<callbackPort>/callback`. A port in the URL and a
+/// `callbackPort` must agree; without either, any free port.
+pub fn callback_address(
+    callback_url: Option<&str>,
+    callback_port: Option<u16>,
+) -> Result<CallbackAddress, String> {
+    let Some(text) = callback_url else {
+        return Ok(CallbackAddress {
+            ip: std::net::Ipv4Addr::LOCALHOST.into(),
+            port: callback_port.unwrap_or(0),
+            host: "127.0.0.1".into(),
+            path: CALLBACK_PATH.into(),
+        });
+    };
+    let url = url::Url::parse(text)
+        .map_err(|error| format!("`callbackUrl` is not a URL: {error}"))?;
+    if url.scheme() != "http" {
+        return Err("`callbackUrl` must be an http:// URL: tau listens on \
+             it without TLS"
+            .into());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("`callbackUrl` must not carry a user or password".into());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("`callbackUrl` must not carry a query or fragment".into());
+    }
+    let (ip, host): (std::net::IpAddr, String) = match url.host() {
+        Some(url::Host::Ipv4(ip)) if ip.is_loopback() => {
+            (ip.into(), ip.to_string())
+        }
+        Some(url::Host::Ipv6(ip)) if ip.is_loopback() => {
+            (ip.into(), format!("[{ip}]"))
+        }
+        Some(url::Host::Domain(domain))
+            if domain.eq_ignore_ascii_case("localhost") =>
+        {
+            (std::net::Ipv4Addr::LOCALHOST.into(), "localhost".into())
+        }
+        _ => {
+            return Err("`callbackUrl` must be on a loopback host: \
+                 127.0.0.1, localhost or [::1]"
+                .into());
+        }
+    };
+    // `Url` drops the port when it is http's default, 80.
+    let port = url.port().or_else(|| {
+        let authority = text.split_once("://")?.1.split('/').next()?;
+        authority.ends_with(":80").then_some(80)
+    });
+    let port = match (port, callback_port) {
+        (Some(a), Some(b)) if a != b => {
+            return Err(format!(
+                "`callbackUrl` says port {a} and `callbackPort` says {b}"
+            ));
+        }
+        (Some(port), _) | (None, Some(port)) => port,
+        (None, None) => {
+            return Err("`callbackUrl` must name its port, or give \
+                 `callbackPort`"
+                .into());
+        }
+    };
+    Ok(CallbackAddress {
+        ip,
+        port,
+        host,
+        path: url.path().to_owned(),
+    })
 }
 
 /// A byte stream to a server, for [`Transport::Stream`].
@@ -261,6 +420,9 @@ impl ServerConfig {
                         pairs_to_object(&http.headers),
                     );
                 }
+                if let Some(oauth) = &http.oauth {
+                    entry.insert("oauth".into(), oauth_to_value(oauth));
+                }
             }
             Transport::Stream(_) => return None,
         }
@@ -301,6 +463,29 @@ impl ServerConfig {
         hasher.update(entry.to_string().as_bytes());
         hex(&hasher.finalize())
     }
+}
+
+fn oauth_to_value(oauth: &OAuthConfig) -> Value {
+    let mut object = Map::new();
+    let mut put = |key: &str, value: Option<Value>| {
+        if let Some(value) = value {
+            object.insert(key.into(), value);
+        }
+    };
+    put("clientId", oauth.client_id.as_ref().map(|v| json!(v)));
+    put(
+        "clientSecret",
+        oauth.client_secret.as_ref().map(|v| json!(v)),
+    );
+    put("callbackPort", oauth.callback_port.map(|v| json!(v)));
+    put("callbackUrl", oauth.callback_url.as_ref().map(|v| json!(v)));
+    put("scope", oauth.scope.as_ref().map(|v| json!(v)));
+    put("clientName", oauth.client_name.as_ref().map(|v| json!(v)));
+    put(
+        "authServerMetadataUrl",
+        oauth.auth_server_metadata_url.as_ref().map(|v| json!(v)),
+    );
+    Value::Object(object)
 }
 
 fn pairs_to_object(pairs: &[(String, String)]) -> Value {
@@ -650,10 +835,71 @@ fn http(entry: &Map<String, Value>) -> Result<Transport, String> {
     if rest.is_none_or(str::is_empty) {
         return Err("`url` must be an http or https URL".into());
     }
-    Ok(Transport::Http(HttpConfig {
+    let headers = string_map(entry, "headers")?;
+    let oauth = match entry.get("oauth") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(block)) => Some(oauth(block)?),
+        Some(_) => return Err("`oauth` must be an object".into()),
+    };
+    let config = HttpConfig {
         url,
-        headers: string_map(entry, "headers")?,
-    }))
+        headers,
+        oauth,
+    };
+    if config.oauth.is_some() && !config.uses_oauth() {
+        return Err("`oauth` is for a server without an `Authorization` \
+             header: give one or the other"
+            .into());
+    }
+    Ok(Transport::Http(config))
+}
+
+/// An `oauth` block, checked. Empty strings and nulls are absent.
+fn oauth(block: &Map<String, Value>) -> Result<OAuthConfig, String> {
+    let text = |key: &str| -> Result<Option<String>, String> {
+        match block.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(text)) if text.is_empty() => Ok(None),
+            Some(Value::String(text)) => Ok(Some(text.clone())),
+            Some(_) => Err(format!("`oauth.{key}` must be a string")),
+        }
+    };
+    let callback_port = match block.get("callbackPort") {
+        None | Some(Value::Null) => None,
+        Some(value) => match value.as_u64() {
+            Some(port @ 1..=65535) => Some(port as u16),
+            _ => {
+                return Err(
+                    "`oauth.callbackPort` must be a port, 1 to 65535".into()
+                );
+            }
+        },
+    };
+    let config = OAuthConfig {
+        client_id: text("clientId")?,
+        client_secret: text("clientSecret")?,
+        callback_port,
+        callback_url: text("callbackUrl")?,
+        scope: text("scope")?,
+        client_name: text("clientName")?,
+        auth_server_metadata_url: text("authServerMetadataUrl")?,
+    };
+    if config.client_secret.is_some() && config.client_id.is_none() {
+        return Err("`oauth.clientSecret` needs `oauth.clientId`".into());
+    }
+    callback_address(config.callback_url.as_deref(), config.callback_port)
+        .map_err(|error| format!("`oauth`: {error}"))?;
+    if let Some(url) = &config.auth_server_metadata_url {
+        match url::Url::parse(url) {
+            Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {}
+            _ => {
+                return Err("`oauth.authServerMetadataUrl` must be an http \
+                     or https URL"
+                    .into());
+            }
+        }
+    }
+    Ok(config)
 }
 
 /// Servers merged from every place they come from, in order, a later

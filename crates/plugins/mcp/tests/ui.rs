@@ -240,6 +240,7 @@ fn repo_server(tc: &TestCase) -> ServerConfig {
         Transport::Http(HttpConfig {
             url: tc.draw(gs::from_regex("https://[a-z]{1,10}\\.dev/mcp")),
             headers: Vec::new(),
+            oauth: None,
         })
     };
     let mut server = ServerConfig::new(name, transport);

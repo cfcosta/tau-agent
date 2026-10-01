@@ -6,7 +6,8 @@
 //! - [`results`]: what a call's result becomes for the model and for
 //!   scripts.
 //! - [`connection`]: one connection per server, shared by every run;
-//!   only its `client` module touches `rmcp`.
+//!   only its `client` module and [`auth`] touch `rmcp`.
+//! - [`auth`]: signing in to servers with OAuth, and the grants file.
 //! - [`prompts`]: servers' prompts as composer commands.
 //! - [`resources`]: servers' resources as `list_mcp_resources`,
 //!   `list_mcp_resource_templates` and `read_mcp_resource`.
@@ -15,6 +16,7 @@
 //! - [`ui`]: the plugin with its UI, [`McpUi`] (ADR 0017): the Servers
 //!   page, MCP tools' cards, and one plugin per repository on the host.
 
+pub mod auth;
 pub mod config;
 pub mod names;
 pub mod results;

@@ -41,6 +41,7 @@ fn environment() -> Environment {
         env: Arc::new(|_| None),
         home: None,
         repo: None,
+        auth: None,
     }
 }
 
@@ -329,6 +330,7 @@ fn http_connection(url: String) -> Arc<Connection> {
         Transport::Http(HttpConfig {
             url,
             headers: vec![("Authorization".into(), "Bearer ${TOKEN}".into())],
+            oauth: None,
         }),
     );
     let environment = Environment {
@@ -379,6 +381,7 @@ async fn a_missing_variable_fails_the_server() {
         Transport::Http(HttpConfig {
             url: "http://127.0.0.1:9/mcp".into(),
             headers: vec![("Authorization".into(), "Bearer ${MISSING}".into())],
+            oauth: None,
         }),
     );
     let connection = Connection::new(config, Origin::User, environment());

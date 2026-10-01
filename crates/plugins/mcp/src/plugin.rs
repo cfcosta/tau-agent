@@ -17,6 +17,7 @@ use tau_agent::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    auth::TokenStore,
     config::{
         ConfigError,
         EnvLookup,
@@ -64,7 +65,8 @@ pub struct McpPluginBuilder {
 
 impl McpPluginBuilder {
     /// The user's configuration directory, `~/.config/tau`, whose
-    /// `mcp.json` is read. None by default.
+    /// `mcp.json` is read and where `mcp-auth.json` keeps sign-ins. None
+    /// by default: then OAuth does not apply.
     pub fn user_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.user_dir = Some(dir.into());
         self
@@ -140,6 +142,8 @@ impl McpPluginBuilder {
             env: self.env.unwrap_or(process.env),
             home: self.home.unwrap_or(process.home),
             repo: self.repo,
+            // Sign-ins are kept next to the user's file.
+            auth: self.user_dir.as_deref().map(TokenStore::in_dir),
         };
         let connections: Vec<Arc<Connection>> = sources
             .servers
