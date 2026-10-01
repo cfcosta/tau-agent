@@ -428,16 +428,20 @@ fn build_text_item(
     text_block_index: usize,
     text: &TextContent,
 ) -> Value {
-    let (mut id, phase) = match &text.text_signature {
-        Some(signature) => parse_text_signature(signature),
-        None => (
+    let signed = text
+        .text_signature
+        .as_deref()
+        .and_then(parse_text_signature);
+    let from_signature = signed.is_some();
+    let (mut id, phase) = signed.unwrap_or_else(|| {
+        (
             fallback_text_id(response_id, text_block_index, &text.text),
             None,
-        ),
-    };
+        )
+    });
     // OpenAI requires the id to be at most 64 characters
     // (`openai-responses-shared.ts:275-281`).
-    if text.text_signature.is_some() && id.len() > 64 {
+    if from_signature && id.len() > 64 {
         id = format!("msg_{}", short_hash(&id));
     }
     let mut value = json!({
@@ -469,23 +473,21 @@ fn fallback_text_id(
     format!("msg_pi_{}", short_hash(&key))
 }
 
-/// Parses a `textSignature`: pi's `TextSignatureV1` JSON (`{v: 1, id,
-/// phase?}`) when it decodes to one, otherwise the whole string is the
-/// (legacy, plain) id, unparsed (`openai-responses-shared.ts:59-77`).
-fn parse_text_signature(signature: &str) -> (String, Option<String>) {
-    if signature.starts_with('{')
-        && let Ok(value) = serde_json::from_str::<Value>(signature)
-        && value.get("v").and_then(Value::as_i64) == Some(1)
-        && let Some(id) = value.get("id").and_then(Value::as_str)
-    {
-        let phase = value
-            .get("phase")
-            .and_then(Value::as_str)
-            .filter(|phase| *phase == "commentary" || *phase == "final_answer")
-            .map(str::to_owned);
-        return (id.to_owned(), phase);
+/// Parses a `textSignature`, the `TextSignatureV1` JSON (`{v: 1, id,
+/// phase?}`) tau's stream writes (`openai-responses-shared.ts:59-77`):
+/// its id and phase. Anything else is no signature.
+fn parse_text_signature(signature: &str) -> Option<(String, Option<String>)> {
+    let value = serde_json::from_str::<Value>(signature).ok()?;
+    if value.get("v").and_then(Value::as_i64) != Some(1) {
+        return None;
     }
-    (signature.to_owned(), None)
+    let id = value.get("id").and_then(Value::as_str)?;
+    let phase = value
+        .get("phase")
+        .and_then(Value::as_str)
+        .filter(|phase| *phase == "commentary" || *phase == "final_answer")
+        .map(str::to_owned);
+    Some((id.to_owned(), phase))
 }
 
 /// Replays the stored reasoning item verbatim

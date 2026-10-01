@@ -7,12 +7,6 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
-/// The `api` value of every assistant message tau-agent produces.
-pub const API: &str = "openai-responses";
-
-/// The `provider` value of every assistant message tau-agent produces.
-pub const PROVIDER: &str = "openai";
-
 /// Milliseconds since the Unix epoch.
 pub type Timestamp = u64;
 
@@ -135,8 +129,6 @@ pub struct ToolCall {
 #[serde(rename_all = "camelCase")]
 pub struct AssistantMessage {
     pub content: Vec<AssistantBlock>,
-    pub api: String,
-    pub provider: String,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_id: Option<String>,

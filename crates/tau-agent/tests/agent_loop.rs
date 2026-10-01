@@ -1091,8 +1091,6 @@ fn failed_response_runs_no_tools() {
                     arguments: json!({"ms": 1}).as_object().unwrap().clone(),
                 },
             )],
-            api: tau_ai::message::API.into(),
-            provider: tau_ai::message::PROVIDER.into(),
             model: "gpt-5.5".into(),
             response_id: None,
             usage: Default::default(),

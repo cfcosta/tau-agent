@@ -15,13 +15,11 @@ use hegel::{TestCase, generators as gs};
 use serde_json::{Map, Value, json};
 use tau_ai::{
     message::{
-        API,
         AssistantBlock,
         AssistantMessage,
         ImageContent,
         InputBlock,
         Message,
-        PROVIDER,
         StopReason,
         TextContent,
         ThinkingContent,
@@ -31,11 +29,9 @@ use tau_ai::{
         UserContent,
         UserMessage,
     },
-    responses::input::{
-        InputCache,
-        response_items,
-        split_tool_call_id,
-        to_input,
+    responses::{
+        input::{InputCache, response_items, split_tool_call_id, to_input},
+        stream::encode_text_signature_v1,
     },
 };
 use tau_testing::generators;
@@ -102,27 +98,6 @@ fn user_message_with_no_content_is_skipped() {
     assert!(to_input(&messages).is_empty());
 }
 
-/// A plain (legacy) `textSignature` is used verbatim as the message id.
-/// (`openai-responses-shared.ts:59-77`, `:282-289`)
-#[test]
-fn assistant_text_item_uses_legacy_signature_as_id() {
-    let messages =
-        one_assistant_message(vec![AssistantBlock::Text(TextContent {
-            text: "hi".into(),
-            text_signature: Some("msg_abc".into()),
-        })]);
-    assert_eq!(
-        to_input(&messages),
-        vec![json!({
-            "type": "message",
-            "role": "assistant",
-            "status": "completed",
-            "id": "msg_abc",
-            "content": [{"type": "output_text", "text": "hi", "annotations": []}],
-        })]
-    );
-}
-
 /// A `TextSignatureV1` JSON signature carries a structured id and,
 /// optionally, a phase. (`openai-responses-shared.ts:53-77`)
 #[test]
@@ -175,18 +150,20 @@ fn assistant_text_item_drops_unknown_phase() {
     assert!(to_input(&messages)[0].get("phase").is_none());
 }
 
-/// A garbled `{`-prefixed signature that is not valid `TextSignatureV1`
-/// JSON falls back to being used, whole, as the legacy id — it is not an
-/// error. (`openai-responses-shared.ts:63-76`, the `catch` / fall-through)
+/// A signature that is not a `TextSignatureV1` (a plain id, garbled
+/// JSON) is no signature: the id falls back as if there were none.
 #[test]
-fn assistant_text_item_falls_back_to_raw_signature_on_bad_json() {
-    let messages =
+fn a_signature_that_is_not_v1_is_no_signature() {
+    let text = |signature: Option<&str>| {
         one_assistant_message(vec![AssistantBlock::Text(TextContent {
             text: "hi".into(),
-            text_signature: Some("{not json".into()),
-        })]);
-    let items = to_input(&messages);
-    assert_eq!(items[0]["id"], "{not json");
+            text_signature: signature.map(str::to_owned),
+        })])
+    };
+    let unsigned = to_input(&text(None));
+    assert_eq!(to_input(&text(Some("msg_abc"))), unsigned);
+    assert_eq!(to_input(&text(Some("{not json"))), unsigned);
+    assert_eq!(to_input(&text(Some(r#"{"v":2,"id":"msg_x"}"#))), unsigned);
 }
 
 /// With no signature at all, the id falls back to `msg_pi_{hash}`, a
@@ -259,20 +236,6 @@ fn assistant_text_item_id_past_64_chars_is_shortened() {
             text_signature: Some(signature),
         })]);
     assert_eq!(to_input(&messages)[0]["id"], "msg_1htpiug1roojrq");
-}
-
-/// A `v` other than `1` is not `TextSignatureV1`: the id falls back to
-/// the whole raw signature, not the JSON's `id` field.
-/// (`openai-responses-shared.ts:66-76`)
-#[test]
-fn assistant_text_item_rejects_non_v1_signature() {
-    let signature = json!({"v": 2, "id": "should_not_be_used"}).to_string();
-    let messages =
-        one_assistant_message(vec![AssistantBlock::Text(TextContent {
-            text: "hi".into(),
-            text_signature: Some(signature.clone()),
-        })]);
-    assert_eq!(to_input(&messages)[0]["id"], signature);
 }
 
 /// The reasoning item pi stored in `thinkingSignature` is replayed
@@ -445,8 +408,6 @@ fn aborted_turn_holding_only_reasoning_is_dropped() {
                 ),
                 redacted: None,
             })],
-            api: API.to_owned(),
-            provider: PROVIDER.to_owned(),
             model: "gpt-5-mini".into(),
             response_id: None,
             usage: Usage::default(),
@@ -829,8 +790,6 @@ fn assistant_with(
 ) -> AssistantMessage {
     AssistantMessage {
         content,
-        api: API.to_owned(),
-        provider: PROVIDER.to_owned(),
         model: "gpt-5.5".into(),
         response_id: None,
         usage: Usage::default(),
@@ -1047,7 +1006,10 @@ fn tag_assistant_items(messages: &mut [Message]) {
                     }
                 }
                 AssistantBlock::Text(text) => {
-                    text.text_signature = Some(format!("msg_{m}_{b}"));
+                    text.text_signature = Some(encode_text_signature_v1(
+                        &format!("msg_{m}_{b}"),
+                        None,
+                    ));
                 }
                 AssistantBlock::ToolCall(call) => {
                     let call_id = split_tool_call_id(&call.id).0.to_owned();

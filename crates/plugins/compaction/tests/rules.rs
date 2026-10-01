@@ -15,13 +15,11 @@ use tau_agent::context::{
     is_context_overflow,
 };
 use tau_ai::message::{
-    API,
     AssistantBlock,
     AssistantMessage,
     ImageContent,
     InputBlock,
     Message,
-    PROVIDER,
     StopReason,
     TextContent,
     ThinkingContent,
@@ -69,8 +67,6 @@ fn assistant_response(
 ) -> AssistantMessage {
     AssistantMessage {
         content,
-        api: API.to_owned(),
-        provider: PROVIDER.to_owned(),
         model: "gpt-5.5".to_owned(),
         response_id: None,
         usage: Usage::default(),
@@ -98,8 +94,6 @@ fn assistant_text(text: &str) -> Message {
 fn assistant_with_usage(usage: Usage) -> Message {
     Message::Assistant(AssistantMessage {
         content: vec![text_block("ok")],
-        api: API.to_owned(),
-        provider: PROVIDER.to_owned(),
         model: "gpt-5.5".to_owned(),
         response_id: None,
         usage,

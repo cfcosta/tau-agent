@@ -10,23 +10,24 @@ use hegel::{
     generators::{self as gs, Generator, PrintableGenerator},
 };
 use serde_json::{Map, Number, Value};
-use tau_ai::message::{
-    API,
-    AssistantBlock,
-    AssistantMessage,
-    ImageContent,
-    InputBlock,
-    Message,
-    PROVIDER,
-    StopReason,
-    TextContent,
-    ThinkingContent,
-    ToolCall,
-    ToolResultMessage,
-    Usage,
-    UsageCost,
-    UserContent,
-    UserMessage,
+use tau_ai::{
+    message::{
+        AssistantBlock,
+        AssistantMessage,
+        ImageContent,
+        InputBlock,
+        Message,
+        StopReason,
+        TextContent,
+        ThinkingContent,
+        ToolCall,
+        ToolResultMessage,
+        Usage,
+        UsageCost,
+        UserContent,
+        UserMessage,
+    },
+    responses::stream::encode_text_signature_v1,
 };
 
 /// Characters the code handles specially: line endings, a BOM, the
@@ -71,7 +72,7 @@ pub fn json_number(tc: &TestCase) -> Number {
 /// Any JSON value, nested at most `depth` levels: arrays and objects of
 /// at most four entries, whose strings and keys lean on
 /// [`SPECIAL_CHARS`].
-pub fn json_value(depth: u32) -> impl PrintableGenerator<Value> {
+pub(crate) fn json_value(depth: u32) -> impl PrintableGenerator<Value> {
     gs::recursive(
         hegel::one_of!(
             gs::just(Value::Null),
@@ -156,13 +157,14 @@ pub fn text_content() -> impl PrintableGenerator<TextContent> {
 
 #[hegel::composite]
 fn text_content_unprinted(tc: &TestCase) -> TextContent {
+    let id = tc.draw(gs::optional(id("msg_")));
     TextContent {
         text: tc.draw(text(40)),
-        text_signature: tc.draw(gs::optional(id("msg_"))),
+        text_signature: id.map(|id| encode_text_signature_v1(&id, None)),
     }
 }
 
-pub fn thinking_content() -> impl PrintableGenerator<ThinkingContent> {
+pub(crate) fn thinking_content() -> impl PrintableGenerator<ThinkingContent> {
     // ThinkingContent is tau's own type, so its drawn values print through Debug.
     thinking_content_unprinted().print_as_debug()
 }
@@ -213,7 +215,7 @@ fn tool_call_unprinted(tc: &TestCase) -> ToolCall {
     }
 }
 
-pub fn input_block() -> impl PrintableGenerator<InputBlock> {
+pub(crate) fn input_block() -> impl PrintableGenerator<InputBlock> {
     // InputBlock is tau's own type, so its drawn values print through Debug.
     input_block_unprinted().print_as_debug()
 }
@@ -225,7 +227,7 @@ fn input_block_unprinted() -> impl Generator<InputBlock> {
     )
 }
 
-pub fn assistant_block() -> impl PrintableGenerator<AssistantBlock> {
+pub(crate) fn assistant_block() -> impl PrintableGenerator<AssistantBlock> {
     // AssistantBlock is tau's own type, so its drawn values print through Debug.
     assistant_block_unprinted().print_as_debug()
 }
@@ -270,8 +272,6 @@ fn assistant_message_unprinted(tc: &TestCase) -> AssistantMessage {
     CallIds::default().make_unique(&mut content);
     AssistantMessage {
         content,
-        api: API.to_owned(),
-        provider: PROVIDER.to_owned(),
         model: tc.draw(gs::sampled_from(vec![
             "gpt-5.5".to_owned(),
             "gpt-5.5-mini".to_owned(),
@@ -288,7 +288,8 @@ fn assistant_message_unprinted(tc: &TestCase) -> AssistantMessage {
     }
 }
 
-pub fn tool_result_message() -> impl PrintableGenerator<ToolResultMessage> {
+pub(crate) fn tool_result_message() -> impl PrintableGenerator<ToolResultMessage>
+{
     // ToolResultMessage is tau's own type, so its drawn values print through Debug.
     tool_result_message_unprinted().print_as_debug()
 }
@@ -456,7 +457,7 @@ pub mod lane;
 /// serialized reasoning item there), so a thinking block built from
 /// [`thinking_content_for_transcript`] always replays.
 #[hegel::composite]
-pub fn reasoning_item_json(tc: &TestCase) -> String {
+pub(crate) fn reasoning_item_json(tc: &TestCase) -> String {
     let value = serde_json::json!({
         "id": tc.draw(id("rs_")),
         "type": "reasoning",
@@ -470,7 +471,7 @@ pub fn reasoning_item_json(tc: &TestCase) -> String {
 /// reasoning item ([`reasoning_item_json`]), but sometimes absent or
 /// unparsable text, so transcripts drawn from it exercise all three
 /// paths in `responses::input::build_reasoning_item`.
-pub fn thinking_content_for_transcript()
+pub(crate) fn thinking_content_for_transcript()
 -> impl PrintableGenerator<ThinkingContent> {
     // ThinkingContent is tau's own type, so its drawn values print through Debug.
     thinking_content_for_transcript_unprinted().print_as_debug()
@@ -493,7 +494,7 @@ fn thinking_content_for_transcript_unprinted(tc: &TestCase) -> ThinkingContent {
 /// Like [`assistant_block`], but its thinking blocks come from
 /// [`thinking_content_for_transcript`], so most of them hold a real
 /// reasoning item instead of the bare id [`thinking_content`] draws.
-pub fn assistant_block_for_transcript()
+pub(crate) fn assistant_block_for_transcript()
 -> impl PrintableGenerator<AssistantBlock> {
     // AssistantBlock is tau's own type, so its drawn values print through Debug.
     assistant_block_for_transcript_unprinted().print_as_debug()
@@ -512,7 +513,7 @@ fn assistant_block_for_transcript_unprinted() -> impl Generator<AssistantBlock>
 /// `ToolUse` when the turn holds a tool call, and `Stop` or `Length`
 /// otherwise, so a `transcript()` is realistic and never needs an
 /// `Error`/`Aborted` turn to be well-formed.
-pub fn assistant_step() -> impl PrintableGenerator<AssistantMessage> {
+pub(crate) fn assistant_step() -> impl PrintableGenerator<AssistantMessage> {
     // AssistantMessage is tau's own type, so its drawn values print through Debug.
     assistant_step_unprinted().print_as_debug()
 }
@@ -538,8 +539,6 @@ fn assistant_step_unprinted(tc: &TestCase) -> AssistantMessage {
     };
     AssistantMessage {
         content,
-        api: API.to_owned(),
-        provider: PROVIDER.to_owned(),
         model: tc.draw(gs::sampled_from(vec![
             "gpt-5.5".to_owned(),
             "gpt-5.5-mini".to_owned(),
@@ -732,8 +731,6 @@ fn damaged_transcript_unprinted(tc: &TestCase) -> Vec<Message> {
         };
         let aborted = AssistantMessage {
             content: vec![AssistantBlock::Thinking(thinking)],
-            api: API.to_owned(),
-            provider: PROVIDER.to_owned(),
             model: "gpt-5.5".to_owned(),
             response_id: tc.draw(gs::optional(id("resp_"))),
             usage: tc.draw(usage()),
@@ -1012,7 +1009,7 @@ fn draw_object_schema_case(tc: &TestCase, depth: u32) -> (Value, Value) {
 ///
 /// pi's strict rewrite never supports `$ref`/`$defs`/`definitions` (they
 /// are in `UNSUPPORTED_STRICT_SCHEMA_KEYS`), so this generator never
-/// produces them; see [`unsupported_schema`] for schemas built from
+/// produces them; see [`unsupported_schema_with_reason`] for schemas built from
 /// exactly those keywords.
 #[hegel::composite]
 pub fn strict_schema(tc: &TestCase, depth: u32) -> Value {
@@ -1031,15 +1028,10 @@ pub fn strict_schema_with_value(tc: &TestCase, depth: u32) -> (Value, Value) {
     draw_object_schema_case(tc, depth)
 }
 
-/// A JSON schema that `tau_agent::schema::to_strict` must reject; the
-/// schema half of [`unsupported_schema_with_reason`].
-#[hegel::composite]
-pub fn unsupported_schema(tc: &TestCase) -> Value {
-    tc.draw(unsupported_schema_with_reason()).0
-}
-
 /// Schema keywords pi's strict rewrite does not support
-/// (`constrained-sampling.ts` `UNSUPPORTED_STRICT_SCHEMA_KEYS`).
+/// (`constrained-sampling.ts` `UNSUPPORTED_STRICT_SCHEMA_KEYS`), copied
+/// from pi apart from tau-agent's own list, so a key tau-agent forgets
+/// fails its schema tests.
 const UNSUPPORTED_KEYS: &[&str] = &[
     "$ref",
     "$defs",

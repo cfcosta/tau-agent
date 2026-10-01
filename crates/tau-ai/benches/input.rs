@@ -16,12 +16,10 @@ use std::{hint::black_box, time::Instant};
 use serde_json::{Map, json};
 use tau_ai::{
     message::{
-        API,
         AssistantBlock,
         AssistantMessage,
         InputBlock,
         Message,
-        PROVIDER,
         StopReason,
         TextContent,
         ThinkingContent,
@@ -64,8 +62,6 @@ fn turn(n: usize, payload: usize) -> [Message; 2] {
                 arguments,
             }),
         ],
-        api: API.into(),
-        provider: PROVIDER.into(),
         model: "gpt-6-sol".into(),
         response_id: Some(format!("resp_{n}")),
         usage: Usage::default(),

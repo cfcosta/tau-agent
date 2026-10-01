@@ -612,8 +612,6 @@ fn sample() -> Vec<Message> {
             text: "not a prompt".into(),
             text_signature: None,
         })],
-        api: String::new(),
-        provider: String::new(),
         model: String::new(),
         response_id: None,
         usage: Default::default(),

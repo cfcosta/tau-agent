@@ -467,8 +467,6 @@ fn an_overflow_is_recognized_by_its_wording() {
         .turn(|t| t.tool_call("read", json!({"path": "a.rs"})))
         .turn_with(|_| tau_ai::message::AssistantMessage {
             content: Vec::new(),
-            api: tau_ai::message::API.into(),
-            provider: tau_ai::message::PROVIDER.into(),
             model: "gpt-5.5".into(),
             response_id: None,
             usage: Default::default(),

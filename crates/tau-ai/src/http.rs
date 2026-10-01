@@ -458,42 +458,6 @@ fn parse_head(raw: &[u8]) -> io::Result<Option<Head>> {
     }
 }
 
-/// Parses a whole HTTP/1.1 response.
-pub fn parse(raw: &[u8]) -> io::Result<Response> {
-    let (status, headers, start) =
-        parse_head(raw)?.ok_or_else(|| invalid("incomplete response head"))?;
-    let rest = &raw[start..];
-    let body = match framing(&headers) {
-        Framing::Chunked { .. } => {
-            dechunk(rest).ok_or_else(|| invalid("malformed chunked body"))?
-        }
-        Framing::Length(length) => rest[..length.min(rest.len())].to_vec(),
-        Framing::UntilClose { .. } => rest.to_vec(),
-    };
-    Ok(Response {
-        status,
-        headers,
-        body,
-    })
-}
-
-fn dechunk(mut raw: &[u8]) -> Option<Vec<u8>> {
-    let mut body = Vec::new();
-    loop {
-        let line_end = raw.windows(2).position(|w| w == b"\r\n")?;
-        let size_text = std::str::from_utf8(&raw[..line_end]).ok()?;
-        // Chunk extensions follow a `;`.
-        let size_text = size_text.split(';').next()?.trim();
-        let size = usize::from_str_radix(size_text, 16).ok()?;
-        raw = &raw[line_end + 2..];
-        if size == 0 {
-            return Some(body);
-        }
-        body.extend_from_slice(raw.get(..size)?);
-        raw = raw.get(size + 2..)?;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -504,6 +468,41 @@ mod tests {
     use tokio::io::ReadBuf;
 
     use super::*;
+
+    /// Parses a whole HTTP/1.1 response: the oracle for [`Streaming`].
+    fn parse(raw: &[u8]) -> io::Result<Response> {
+        let (status, headers, start) = parse_head(raw)?
+            .ok_or_else(|| invalid("incomplete response head"))?;
+        let rest = &raw[start..];
+        let body = match framing(&headers) {
+            Framing::Chunked { .. } => dechunk(rest)
+                .ok_or_else(|| invalid("malformed chunked body"))?,
+            Framing::Length(length) => rest[..length.min(rest.len())].to_vec(),
+            Framing::UntilClose { .. } => rest.to_vec(),
+        };
+        Ok(Response {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    fn dechunk(mut raw: &[u8]) -> Option<Vec<u8>> {
+        let mut body = Vec::new();
+        loop {
+            let line_end = raw.windows(2).position(|w| w == b"\r\n")?;
+            let size_text = std::str::from_utf8(&raw[..line_end]).ok()?;
+            // Chunk extensions follow a `;`.
+            let size_text = size_text.split(';').next()?.trim();
+            let size = usize::from_str_radix(size_text, 16).ok()?;
+            raw = &raw[line_end + 2..];
+            if size == 0 {
+                return Some(body);
+            }
+            body.extend_from_slice(raw.get(..size)?);
+            raw = raw.get(size + 2..)?;
+        }
+    }
 
     #[test]
     fn a_plain_body_is_read_as_is() {

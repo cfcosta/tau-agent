@@ -73,8 +73,6 @@ fn pi_assistant_message_shape() {
             {"type": "text", "text": "Calling.", "textSignature": "msg_1"},
             {"type": "toolCall", "id": "call_1|fc_1", "name": "search", "arguments": {"q": "tokio"}}
         ],
-        "api": "openai-responses",
-        "provider": "openai",
         "model": "gpt-5.5",
         "responseId": "resp_1",
         "usage": {

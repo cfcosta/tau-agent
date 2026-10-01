@@ -652,8 +652,6 @@ mod tests {
                     })
                 })
                 .collect(),
-            api: String::new(),
-            provider: String::new(),
             model: String::new(),
             response_id: None,
             usage: Usage::default(),

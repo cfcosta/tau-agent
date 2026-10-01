@@ -13,10 +13,8 @@
 
 use crate::{
     message::{
-        API,
         AssistantBlock,
         AssistantMessage,
-        PROVIDER,
         StopReason,
         TextContent,
         ThinkingContent,
@@ -205,8 +203,6 @@ impl Accumulator {
                 } => {
                     self.message = Some(AssistantMessage {
                         content: Vec::new(),
-                        api: API.to_owned(),
-                        provider: PROVIDER.to_owned(),
                         model,
                         response_id,
                         usage: Usage::default(),

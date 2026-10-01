@@ -16,10 +16,7 @@
 //!
 //! - a text block's `text_signature` is always
 //!   [`encode_text_signature_v1`] of a message item id (and, sometimes, a
-//!   `phase`) — the form `StreamProcessor` itself produces, not the bare
-//!   legacy id form `tau_testing::generators::text_content` draws (that
-//!   form is for testing `responses::input`'s replay of *foreign or
-//!   legacy* signatures, not fresh stream output);
+//!   `phase`) — the form `StreamProcessor` itself produces;
 //! - a thinking block's `thinking_signature` is always
 //!   [`generators::reasoning_item_json`], a serialized reasoning item
 //!   shaped `{"id", "type": "reasoning", "summary": [], "encrypted_content"?}`.
@@ -47,10 +44,8 @@ use hegel::{
 use serde_json::{Value, json};
 use tau_ai::{
     message::{
-        API,
         AssistantBlock,
         AssistantMessage,
-        PROVIDER,
         StopReason,
         TextContent,
         ThinkingContent,
@@ -157,8 +152,6 @@ fn wire_assistant_message_unprinted(tc: &TestCase) -> AssistantMessage {
     });
     AssistantMessage {
         content,
-        api: API.to_owned(),
-        provider: PROVIDER.to_owned(),
         model: tc.draw(gs::sampled_from(vec![
             "gpt-5.5".to_owned(),
             "gpt-5.5-mini".to_owned(),
