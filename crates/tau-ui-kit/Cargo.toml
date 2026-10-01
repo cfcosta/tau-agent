@@ -19,3 +19,4 @@ tau-terminal.workspace = true
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
+similar.workspace = true

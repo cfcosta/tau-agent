@@ -25,12 +25,17 @@ fn a_diff_reads_back(tc: hegel::TestCase) {
             format!("{sign}{line}\n")
         })
         .collect();
+    // The hunk's header counts the old (context and removed) and new
+    // (context and added) lines it holds.
+    let old = lines.iter().filter(|(kind, _)| *kind != 1).count();
+    let new = lines.iter().filter(|(kind, _)| *kind != 2).count();
+    let header = format!("@@ -1,{old} +1,{new} @@");
     let error = tc.draw(gs::booleans());
     let data = CallData {
         result: Some(CallResult {
             text: String::new(),
             details: Some(
-                json!({ "diff": format!("--- a\n+++ b\n@@ -1 +1 @@\n{text}") }),
+                json!({ "diff": format!("--- a\n+++ b\n{header}\n{text}") }),
             ),
             error,
         }),

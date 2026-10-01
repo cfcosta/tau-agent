@@ -2396,7 +2396,7 @@ mod tests {
             call_id: "c1".into(),
             output: Arc::new(ToolOutput {
                 details: Some(json!({
-                    "diff": "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n+more\n",
+                    "diff": "--- a\n+++ b\n@@ -1 +1,2 @@\n-old\n+new\n+more\n",
                 })),
                 ..ToolOutput::text("Successfully replaced 1 block(s).")
             }),

@@ -19,33 +19,60 @@ pub enum DiffKind {
 }
 
 /// Reads a unified diff into lines, dropping the file and hunk headers.
+///
+/// Each `@@ -a,b +c,d @@` header says how many old and new lines its
+/// hunk holds, and only those lines are read as the diff's own. So a
+/// removed `-- comment` (written `--- comment`) or an added `++x`
+/// (written `+++x`) stays a line, not a header.
 pub fn parse(diff: &str) -> Vec<DiffLine> {
-    const HEADERS: [&str; 9] = [
-        "---",
-        "+++",
-        "@@",
-        "diff --git ",
-        "new file mode",
-        "deleted file mode",
-        "old mode",
-        "new mode",
-        "\\ No newline",
-    ];
-    diff.lines()
-        .filter(|line| !HEADERS.iter().any(|header| line.starts_with(header)))
-        .map(|line| {
-            let (kind, rest) = match line.chars().next() {
-                Some('+') => (DiffKind::Added, &line[1..]),
-                Some('-') => (DiffKind::Removed, &line[1..]),
-                Some(' ') => (DiffKind::Context, &line[1..]),
-                _ => (DiffKind::Context, line),
-            };
-            DiffLine {
-                kind,
-                text: rest.to_owned(),
+    let mut lines = Vec::new();
+    // Old and new lines the current hunk has left to give.
+    let (mut old, mut new) = (0usize, 0usize);
+    for line in diff.lines() {
+        if old == 0 && new == 0 {
+            if line.starts_with("@@") {
+                (old, new) = hunk_lengths(line);
             }
-        })
-        .collect()
+            continue;
+        }
+        let (kind, text) = match line.split_at_checked(1) {
+            Some(("+", text)) => (DiffKind::Added, text),
+            Some(("-", text)) => (DiffKind::Removed, text),
+            Some((" ", text)) => (DiffKind::Context, text),
+            // `\ No newline at end of file` belongs to the line before.
+            Some(("\\", _)) => continue,
+            // An empty context line an editor trimmed.
+            _ => (DiffKind::Context, ""),
+        };
+        match kind {
+            DiffKind::Added => new = new.saturating_sub(1),
+            DiffKind::Removed => old = old.saturating_sub(1),
+            DiffKind::Context => {
+                old = old.saturating_sub(1);
+                new = new.saturating_sub(1);
+            }
+        }
+        lines.push(DiffLine {
+            kind,
+            text: text.to_owned(),
+        });
+    }
+    lines
+}
+
+/// The old and new line counts of `@@ -38,7 +38,12 @@`. A side with no
+/// count (`-38`) holds one line.
+fn hunk_lengths(header: &str) -> (usize, usize) {
+    let length = |sign: char| {
+        header
+            .split_whitespace()
+            .find_map(|part| part.strip_prefix(sign))
+            .map_or(0, |range| match range.split_once(',') {
+                Some((_, count)) => count.parse().unwrap_or(0),
+                None => 1,
+            })
+    };
+    (length('-'), length('+'))
 }
 
 /// `+12 −3`.
