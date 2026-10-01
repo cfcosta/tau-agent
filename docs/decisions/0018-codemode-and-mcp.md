@@ -135,7 +135,8 @@ signatures.
   in decision 0017.
 - MCP servers are processes and connections owned by the agent, not by
   a run: they outlive runs and close with the agent. In tau-ui the host
-  keeps them, one plugin per repository, and closes them when it goes.
+  keeps them: the user's servers once for every repository, a
+  repository's own per repository, and closes them when it goes.
 - Codemode's input is JSON `{ "code": string }`. pi constrains it with
   a Lark grammar so the model writes raw source; tau-ai has no custom
   tools yet, and that waits for them.

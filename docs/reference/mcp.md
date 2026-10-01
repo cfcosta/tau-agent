@@ -33,11 +33,40 @@ plugin's page. The approval is saved in the plugin's settings with a
 hash of the entry, so a commit that changes the entry asks again: the
 SHA-256, in hex, of the name, a NUL and the entry as tau prints it
 (defaults left out), so reformatting the file does not ask again. The
-settings are `{ "mcpServers": { ... }, "approvedRepoServers": [hash] }`.
+settings are
+`{ "mcpServers": { ... }, "approvedRepoServers": [hash], "disabledServers": { ... } }`.
 Until approved, a repository server is reported as pending and not
 connected.
 pi reads a project's file only when the project is trusted; tau asks
 per server.
+
+### Turning servers off
+
+The page turns any server off or on again without editing a file. The
+settings keep the names it turned off:
+
+```json
+{
+  "disabledServers": {
+    "user": ["linear"],
+    "repos": { "/home/me/src/tau": ["git", "db"] }
+  }
+}
+```
+
+- `user`: the user's servers (the user's file's and the settings')
+  turned off in every repository. It does not reach a repository's own
+  server of the same name.
+- `repos`: per repository, keyed by its directory as tau lists it, the
+  servers turned off there: its own, or the user's in it alone. A name
+  stays listed after its server goes, and holds again if a server of
+  that name comes back. A repository left with none is dropped.
+- A server is on when its entry is (`enabled`, default true) and
+  neither list turns it off: entry ∧ ¬user ∧ ¬repository. An entry's
+  `enabled: false` is turned on only by editing the entry, so the page
+  locks that switch; a repository's page likewise locks the switch of
+  a user server turned off in every repository. Turning a server off
+  never changes its approval.
 
 ### The format
 
@@ -93,8 +122,8 @@ The common `mcpServers` shape:
 
 - **Owned by the agent.** The plugin holds one connection per enabled
   server, shared by every run, and closes them when it is dropped. In
-  tau-ui the host keeps the plugin, one per repository ("The
-  interface").
+  tau-ui the host keeps them: the user's servers once for every
+  repository, a repository's own per repository ("The interface").
 - **Started in the background** when the plugin is built. The plugin
   does not wait for them, except as below.
 - **States:** `connecting`, `connected`, `disconnected`, `failed`,
@@ -118,7 +147,9 @@ The common `mcpServers` shape:
 - **Stdio close:** rmcp's `cancel()`, then the child's process group
   gets SIGTERM and, after 2 s, SIGKILL.
 - **Roots:** the repository's directory, as a `file://` URI, when the
-  plugin has one.
+  plugin has one. In tau-ui a user server shared by every repository
+  has none; give it a relative `cwd` (`"."`) to run it per repository,
+  with the repository as its root.
 - **Server logs** (`notifications/message`) and a stdio server's
   stderr go to `tracing`, target `tau_mcp::server`: tau has no log of
   its own yet, so the host subscribes to see them.
@@ -239,28 +270,42 @@ added the direct ones.
 
 ### On the host
 
+- **The user's servers are shared.** A server from the user's file or
+  the settings (or one the host adds, `Host::set_servers`) runs once,
+  in a pool every repository shares. One whose `cwd` is relative (not
+  absolute, not `~/`) starts in the repository, so it runs once per
+  repository instead, with the repository as its root and its `cwd`
+  under it; shared servers get no roots. A repository's own server
+  runs in its pool, and one that names a user server wins in that
+  repository while the others keep the shared one. So does a user
+  server the repository turned off for itself.
 - **One plugin per scope.** A scope is a repository (the user's file,
-  the settings and its `.tau/mcp.json`, with its directory as the
-  servers' root and `cwd`), or the user's servers alone. The host keeps
-  an `McpPlugin` per scope, built the first time a run in the
-  repository starts, or Connect on the page asks for it. Until then the
-  page lists the servers as configured, "not started". A repository
-  with no enabled, approved server adds nothing to its runs.
+  the settings and its `.tau/mcp.json`), or the user's servers alone.
+  The host keeps an `McpPlugin` per scope over the connections it uses,
+  built the first time a run in the repository starts, or Connect on
+  the page asks for it; building it starts the connections it uses
+  that never started. Until then the page lists the servers as
+  configured, "not started", but a shared server as another scope
+  started it. A repository with no enabled, approved server adds
+  nothing to its runs.
 - **Shared by runs.** Each run gets a wrapper (`RunServers`) that hands
   the scope's plugin's `start` and tool source to the run, so every run
   in a repository uses the same connections.
-- **Rebuilt when the servers change.** Each time a scope is used (a run
-  starts, the catalog is drawn, an action runs) its servers are read
-  again: the user's file from tau's config directory, the settings,
-  the repository's file. When the merged servers, errors or pending
+- **Rebuilt incrementally.** Each time a scope is used (a run starts,
+  the catalog is drawn, an action runs) its servers are read again: the
+  user's file from tau's config directory, the settings, the
+  repository's file. When the merged servers, errors or pending
   approvals differ from what its plugin was built from, the plugin is
-  built again and its servers connect again; runs going on keep the
-  old connections, which close when the last of them ends. Files are
-  not watched: an edit by hand shows the next time the scope is used.
-  A change to the settings rebuilds every built scope it changes, so a
-  new server restarts the others of each repository.
-- **Closed with the host.** Dropping the host shuts down every built
-  scope's connections, runs going on included.
+  built again over the pools, which compare each server's entry, as
+  parsed, where it came from and whether it is on, with the last one
+  (`pool::diff`): an unchanged server keeps its connection, an added
+  or changed one gets a new connection, and a removed, changed or
+  turned-off one is let go. A connection let go closes once the runs
+  going on that hold it end; they keep what they started with. Files
+  are not watched: an edit by hand shows the next time the scope is
+  used.
+- **Closed with the host.** Dropping the host shuts down every
+  connection, runs going on included.
 - **Settings.** The host half reads and saves the plugin's settings
   through `HostCx::settings` and `HostCx::save_settings`, and the user's
   file from `HostCx::config_dir`.
@@ -271,11 +316,15 @@ added the direct ones.
 or, without a repository, the user's and the settings' alone.
 
 - **Each server:** its name; where it comes from (user file, settings,
-  repository file); how it is reached, the command and arguments or the
+  repository file); `shared` when it is one connection for every
+  repository, `per repository` for a user server that is not; how it is
+  reached, the command and arguments or the
   URL, with variables and headers by name only, since their values may
   hold tokens; its exposure; its state and last error (`not started`
-  before the scope's plugin is built, `disabled` when turned off); its
-  description; and its tools, each with its exposure, its name as tools
+  before it starts, `disabled` when off); its description; a switch that
+  turns it off or on again, saying where (every repository on the
+  user's page, this repository on a repository's), or why it is locked;
+  and its tools, each with its exposure, its name as tools
   call it, and badges for its hints (read-only, destructive,
   idempotent, open world).
 - **Waiting for approval:** each repository server not yet approved,
@@ -289,8 +338,13 @@ or, without a repository, the user's and the settings' alone.
     name the user's file has (valid entry or not), one already added, a
     name whose namespace another takes, or an entry that does not parse.
     The entry is saved as tau prints it, defaults left out;
-  - `edit { name, entry }`, `remove { name }` and
-    `enable { name, enabled }`, for the servers the page added only;
+  - `edit { name, entry }` and `remove { name }`, for the servers the
+    page added only;
+  - `enable { repo, name, enabled }` for any server of that repository,
+    or, without one, of the user's: saved in `disabledServers`, never in
+    an entry. Refused for a name that is not there, for turning on a
+    server whose entry is off, and, in a repository, for turning on a
+    user server off in every repository;
   - `reconnect { repo, server }` builds the scope's plugin if it was
     not, and connects `server`, or every server, again.
     The editor checks a new server as the host does before it sends it,
@@ -320,11 +374,14 @@ or, without a repository, the user's and the settings' alone.
 
 - `config`: `McpConfig::parse`/`to_json`, `merge`, `Sources::load`
   (`<user dir>/mcp.json`, the settings, `<repo>/.tau/mcp.json`),
-  `Settings`, `PendingApproval`, `expand_vars`, `expand_home`,
-  `exposure_of`.
+  `Sources::disable`, `Read`, `Settings`, `Disabled`, `Off`,
+  `repo_key`, `PendingApproval`, `expand_vars`, `expand_home`,
+  `exposure_of`, `ServerConfig::per_repo`.
+- `pool`: `Pool` (`new`, `update`, `get`, `connections`, `shutdown`)
+  and `diff`, for the host.
 - `names`: `tool_names`, `namespace`.
 - `results`: `map_result`, `cut_middle`, `truncate`, `Spill`.
-- `connection`: `Connection` (`new`, `connect`, `status`, `tools`,
+- `connection`: `Connection` (`new`, `start`, `connect`, `status`, `tools`,
   `instructions`, `call`, `settled`, `shutdown`), `State`, `Status`,
   `ToolInfo`, `Annotations`, `CallFailure`, `Environment`. Only its
   private `client` module touches rmcp.
@@ -357,9 +414,11 @@ server after the files and settings: an in-process one through
 
 From the design above, as first written:
 
-- **One plugin per repository.** The design had the agent own the
-  connections; tau-ui's host keeps one plugin per repository instead,
-  so a user server runs once for each repository that started it.
+- **Pools on the host.** The design had the agent own the connections;
+  tau-ui's host keeps a pool shared by every repository for the user's
+  servers and one per repository for the rest, and a plugin per
+  repository over them. A user server with a relative `cwd` runs per
+  repository; a shared one gets no roots.
 - **No file watching.** The files are read again whenever a scope is
   used, not watched.
 - **Details carry the structured result**, at most 20 KB of it as
@@ -404,22 +463,41 @@ From the design above, as first written:
 - **The server list, as a property:** at most 4,096 characters,
   descriptions at most 250, kept servers in order, the overflow count
   right.
+- **The pools** (`tests/pool.rs`): as a property, for any old and new
+  servers, `diff` keeps the unchanged servers on in both, connects the
+  added and changed ones on now, and lets go of the removed, changed
+  and turned-off ones that were on, and the pool keeps exactly the
+  connections it says it keeps. Against in-process servers: changing
+  one entry dials that server again and no other, while the old
+  connection stays with whoever holds it; two repositories and the
+  user's servers alone share one connection to a user server, dialed
+  once and shown connected and shared; an approved repository server
+  of the same name wins in its repository.
 - **The interface** (`tests/ui.rs`): as properties, whatever the page
   asks in whatever order, the settings' servers are a model's (a new
   name the user's file and other namespaces leave free; edits only to
-  the page's own; every entry parses; the settings survive saving);
-  and an approval holds for the hash of the entry shown, which reading
-  the file again, laid out otherwise, does not change, while any other
-  hash is refused and a changed entry waits again. Against a host over
-  temporary directories: approving through `act` saves the hash shown;
-  the page refuses a name the user's file has and edits, turns off and
-  removes its own; a repository keeps its plugin until its servers
-  change, in the settings or in the file; Connect starts a repository's
-  servers. In gpui's test app: the editor sends only what it may; the
-  page draws on a computer and a phone, with the editor open; the
-  sidebar and the run's line count servers and approvals; the card
-  names the server and shows the structured result or the text. And
-  the design test.
+  the page's own; turning on and off never touches an entry; every
+  entry parses; the settings survive saving); whatever is turned on
+  and off, the settings say what was last asked of each name at each
+  level, survive saving and say nothing once all is on; a server is on
+  exactly when its entry is and no override turns it off, with the
+  reason first of entry, everywhere, repository; and an approval holds
+  for the hash of the entry shown, which reading the file again, laid
+  out otherwise, does not change, while any other hash is refused and
+  a changed entry waits again. Against a host over temporary
+  directories: approving through `act` saves the hash shown; the page
+  refuses a name the user's file has and edits, turns off and removes
+  its own; it turns a user server off in one repository, leaving the
+  shared connection to the rest, and refuses to turn on one its entry
+  turns off or, from a repository, one off everywhere; a repository
+  keeps its plugin until its servers change, and then keeps the
+  connections whose entries did not; a user server with a relative
+  `cwd` runs per repository; Connect starts a repository's servers. In
+  gpui's test app: the editor sends only what it may; the page draws
+  on a computer and a phone, with the editor open and with locked
+  switches; the sidebar and the run's line count servers and
+  approvals; the card names the server and shows the structured result
+  or the text. And the design test.
 - **In the loop**, with `ScriptedModel`: direct tools are declared and
   called by the model; codemode tools are not declared and a tool calls
   them through the loop (Codemode's scripts are its own crate's
