@@ -28,7 +28,7 @@ so a reopened run can draw the same screen.
   every row once as it scrolls away. The model's text and tau-ui's
   screen come from the same engine, so they cannot disagree about what
   the output was.
-- **A crate of its own, `tau-terminal`** (`crates/terminal`), depending
+- **A crate of its own, `tau-terminal`** (`crates/tau-terminal`), depending
   on no other tau crate, so any GPUI app can use it:
   - `Terminal`: write bytes, read plain text, a VT replay, and a styled
     `Screen` snapshot (runs of cells with colors, attributes, wide

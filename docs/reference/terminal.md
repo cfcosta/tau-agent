@@ -1,6 +1,6 @@
 # tau-terminal: the terminal view
 
-`tau-terminal` (`crates/terminal`) draws a terminal in any GPUI app. It
+`tau-terminal` (`crates/tau-terminal`) draws a terminal in any GPUI app. It
 depends on no other tau crate
 ([0010](../decisions/0010-terminal-rendering.md)). This page covers the
 view and its pure parts. The emulator (`Terminal`) and the runner

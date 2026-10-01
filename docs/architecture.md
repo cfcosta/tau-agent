@@ -18,7 +18,7 @@ tau-agent/
 │   ├── tau-ui/       # the desktop app: the host that runs agents, the phone
 │   │                 # server, onboarding's sign-ins, the demo
 │   ├── tau-phone/    # tau-ui-remote on Android
-│   ├── terminal/     # tau-terminal: libghostty-vt terminal, PTY command runner,
+│   ├── tau-terminal/ # libghostty-vt terminal, PTY command runner,
 │   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
 │   └── plugins/
 │       ├── ask/              # tau-ask: the agent asks the person; the panel in the
