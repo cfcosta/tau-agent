@@ -86,9 +86,6 @@ use crate::{
         Item,
         LandedCard,
         LandingRecord,
-        Merge,
-        MergeRecord,
-        MergedCard,
         Origin,
         Proposal,
         RunStatus,
@@ -237,15 +234,6 @@ pub enum WorkspaceEvent {
     },
     /// Drop this child run: abandon its own changes and close it.
     DropChild {
-        run: RunId,
-    },
-    /// Say what merging this top-level run into trunk would do.
-    PreviewMerge {
-        run: RunId,
-    },
-    /// Merge this top-level run into trunk (ADR 0014); answer with
-    /// [`Workspace::merged`].
-    Merge {
         run: RunId,
     },
     /// Keep a note a memory plugin suggested.
@@ -947,7 +935,6 @@ impl Workspace {
             HostUpdate::Dropped { run, result } => {
                 self.dropped(&run, result, cx)
             }
-            HostUpdate::Merged { run, result } => self.merged(&run, result, cx),
             HostUpdate::TauTurn { run, prompt } => {
                 self.tau_turn(&run, prompt, cx)
             }
@@ -1508,56 +1495,15 @@ impl Workspace {
         self.navigate(Route::Constitution { repo, rule }, cx);
     }
 
-    /// Asks what landing `run` would do: on its parent for a fork, into
-    /// trunk for a top-level run (ADR 0014).
+    /// Asks what landing `run` on its parent would do (ADR 0014).
     pub fn preview_landing(&mut self, run: &RunId, cx: &mut Context<Self>) {
         self.landings.insert(run.clone(), LandingState::Previewing);
-        let root = self
-            .run(run)
-            .is_some_and(|view| view.origin == Origin::Root);
-        cx.emit(if root {
-            WorkspaceEvent::PreviewMerge { run: run.clone() }
-        } else {
-            WorkspaceEvent::PreviewLanding { run: run.clone() }
-        });
-        cx.notify();
-    }
-
-    /// What merging `run` into trunk came to. Merged, its chat shows
-    /// what went into trunk, and it closes; resolving, its card says so
-    /// while its own turn resolves the conflicts.
-    pub fn merged(
-        &mut self,
-        run: &RunId,
-        result: Result<Merge, String>,
-        cx: &mut Context<Self>,
-    ) {
-        match result {
-            Ok(Merge::Merged { into, landing }) => {
-                self.landings.remove(run);
-                if let Some(view) =
-                    self.runs.iter_mut().find(|view| &view.id == run)
-                {
-                    view.items.push(Item::Merged(MergedCard::from_record(
-                        MergeRecord { into, landing },
-                    )));
-                }
-                self.closed.insert(run.clone());
-            }
-            Ok(Merge::Resolving { conflicts }) => {
-                self.landings
-                    .insert(run.clone(), LandingState::Resolving(conflicts));
-            }
-            Err(error) => {
-                self.landings
-                    .insert(run.clone(), LandingState::Preview(Err(error)));
-            }
-        }
+        cx.emit(WorkspaceEvent::PreviewLanding { run: run.clone() });
         cx.notify();
     }
 
     /// tau starts `run`'s next turn itself with `prompt`: resolving what a
-    /// landing or a merge left in conflict (ADR 0014). It shows as tau's.
+    /// landing left in conflict (ADR 0014). It shows as tau's.
     pub fn tau_turn(
         &mut self,
         run: &RunId,
@@ -1606,18 +1552,10 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Lands `run` on its parent, or merges it into trunk when it is a
-    /// top-level run.
+    /// Lands `run` on its parent.
     pub fn land(&mut self, run: &RunId, cx: &mut Context<Self>) {
         self.landings.insert(run.clone(), LandingState::Landing);
-        let root = self
-            .run(run)
-            .is_some_and(|view| view.origin == Origin::Root);
-        cx.emit(if root {
-            WorkspaceEvent::Merge { run: run.clone() }
-        } else {
-            WorkspaceEvent::Land { run: run.clone() }
-        });
+        cx.emit(WorkspaceEvent::Land { run: run.clone() });
         cx.notify();
     }
 
@@ -1768,17 +1706,17 @@ impl Workspace {
         self.inspector_shown
     }
 
-    /// Whether `run` can be forked at all. Runs nest one level: a
-    /// top-level run (a repository's main chat) has chats under it,
-    /// and those, like sub-agents, have nothing under them.
-    pub fn can_fork(run: &RunView) -> bool {
-        run.origin == Origin::Root
+    /// Whether `run` can be forked at all. Runs nest one level (ADR
+    /// 0016): a repository's main chat has chats under it, and those,
+    /// like sub-agents, have nothing under them.
+    pub fn can_fork(&self, run: &RunView) -> bool {
+        self.is_main(&run.id)
     }
 
     /// Whether a fork can start after `turn` of `run`: the run can be
     /// forked, and the turn has ended.
-    pub fn can_fork_at(run: &RunView, turn: u32) -> bool {
-        Self::can_fork(run) && turn >= 1 && turn <= Self::last_fork_turn(run)
+    pub fn can_fork_at(&self, run: &RunView, turn: u32) -> bool {
+        self.can_fork(run) && turn >= 1 && turn <= Self::last_fork_turn(run)
     }
 
     /// Puts the composer in fork mode: the next message starts a fork of
@@ -1811,7 +1749,7 @@ impl Workspace {
         turn: u32,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(run) = self.run(run).filter(|run| Self::can_fork(run)) else {
+        let Some(run) = self.run(run).filter(|run| self.can_fork(run)) else {
             return false;
         };
         let (id, turn) = (
@@ -3189,9 +3127,8 @@ impl Workspace {
         }
     }
 
-    /// Land on the parent, or merge into main: in the run's bar, for a
-    /// finished fork or top-level run (ADR 0014). It opens the landing
-    /// card at the end of the chat.
+    /// Land on the parent: in the run's bar, for a finished chat (ADR
+    /// 0014). It opens the landing card at the end of the chat.
     fn land_button(
         &self,
         run: &RunView,
@@ -3202,11 +3139,7 @@ impl Workspace {
         if run.status.is_live() || self.closed.contains(&run.id) {
             return None;
         }
-        let label = if run.origin == Origin::Root {
-            format!("Merge into {target}")
-        } else {
-            format!("Land on {target}")
-        };
+        let label = format!("Land on {target}");
         let id = run.id.clone();
         Some(
             div()
@@ -3326,7 +3259,7 @@ impl Workspace {
                 )
             })
             .children(self.land_button(run, t, cx))
-            .when(Self::can_fork(run), |header| {
+            .when(self.can_fork(run), |header| {
                 header.child(
                     div()
                         .id("fork")
@@ -3894,12 +3827,12 @@ impl Workspace {
                         div()
                             .grid()
                             .grid_cols(
-                                (usize::from(Self::can_fork(run))
+                                (usize::from(self.can_fork(run))
                                     + usize::from(live || done))
                                 .max(1) as u16,
                             )
                             .gap(sp(2.))
-                            .when(Self::can_fork(run), |row| {
+                            .when(self.can_fork(run), |row| {
                                 row.child(
                                     div()
                                         .id("sheet-fork")
@@ -4113,9 +4046,6 @@ pub enum LandingState {
     Landing,
     /// Asking before dropping the child.
     ConfirmDrop,
-    /// Merging into trunk waits on the run's own turn resolving these
-    /// conflicts.
-    Resolving(Vec<String>),
     /// Dropping now.
     Dropping,
 }

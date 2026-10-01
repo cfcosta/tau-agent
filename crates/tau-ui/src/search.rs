@@ -65,7 +65,9 @@ impl Workspace {
                     continue;
                 }
                 let kind = match run.origin {
-                    Origin::Fork { .. } => "fork",
+                    // Runs nest one level: a fork is a chat of the main
+                    // chat (ADR 0016).
+                    Origin::Fork { .. } => "chat",
                     Origin::SubAgent { .. } => "sub-agent",
                     Origin::Root => "run",
                 };

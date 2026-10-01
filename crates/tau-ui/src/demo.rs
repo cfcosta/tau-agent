@@ -156,7 +156,26 @@ pub fn history() -> Vec<RunView> {
     let stop = || StopReason::Stop;
     let limit = || StopReason::Limit(tau_agent::event::LimitKind::Usd);
     // (repo, title, started, stop, turns, tokens, cost); no stop is live.
+    // Each repository's main chat, then its chats.
     let stubs = [
+        (
+            "docbert",
+            "docbert-main",
+            "Sep 20 10:00",
+            Some(stop()),
+            3,
+            41_000,
+            0.031,
+        ),
+        (
+            "homelab.nix",
+            "homelab-main",
+            "Sep 20 10:05",
+            Some(stop()),
+            2,
+            22_000,
+            0.018,
+        ),
         (
             "tau-agent",
             "plugin-docs",
@@ -232,14 +251,28 @@ pub fn history() -> Vec<RunView> {
     ];
     runs.extend(stubs.into_iter().map(
         |(repo, title, started, stop, turns, tokens, cost)| {
-            let mut view = RunView::new(
-                RunId(Arc::from(title)),
-                title,
-                "coder",
-                "gpt-5.5",
-            )
-            .in_repo(repo)
-            .started(started);
+            let main = match repo {
+                "docbert" => "docbert-main",
+                "homelab.nix" => "homelab-main",
+                _ => "retry-after",
+            };
+            let (title, origin) = if title == main {
+                ("main", Origin::Root)
+            } else {
+                (
+                    title,
+                    Origin::Fork {
+                        from: RunId(Arc::from(main)),
+                        turn: 1,
+                    },
+                )
+            };
+            let id = if title == "main" { main } else { title };
+            let mut view =
+                RunView::new(RunId(Arc::from(id)), title, "coder", "gpt-5.5")
+                    .in_repo(repo)
+                    .started(started)
+                    .with_origin(origin);
             view.turn = turns;
             view.usage.tokens = tokens;
             view.usage.cost = cost;
@@ -370,22 +403,19 @@ fn rotation_jitter() -> RunView {
     let mut view = play(
         RunView::new(id, "rotation-jitter", "coder", "gpt-5.5")
             .in_repo("tau-agent")
-            .started("today 02:10"),
+            .started("today 02:10")
+            .with_origin(Origin::Fork {
+                from: run_id(),
+                turn: 1,
+            }),
         s,
     );
     view.limits = retry_after().limits;
     view.context = retry_after().context;
-    view.children.push(crate::view::ChildRun {
-        id: fork_id(),
-        title: "fork · backoff".into(),
-        kind: crate::view::ChildKind::Fork,
-        status: RunStatus::Finished(StopReason::Stop),
-        call: None,
-    });
     view
 }
 
-/// What landing the `backoff` fork, or merging `retry-after`, would do:
+/// What landing the `backoff` fork would do:
 /// two changes, and with `conflict`, one of them in conflict.
 pub fn landing_preview(conflict: bool) -> tau_vcs::Landing {
     let change =
@@ -427,7 +457,7 @@ pub fn landing_preview(conflict: bool) -> tau_vcs::Landing {
 }
 
 pub fn fork_id() -> RunId {
-    RunId(Arc::from("rotation-jitter/backoff"))
+    RunId(Arc::from("backoff"))
 }
 
 fn backoff_fork() -> RunView {
@@ -502,8 +532,8 @@ fn backoff_fork() -> RunView {
             .in_repo("tau-agent")
             .started("today 02:36")
             .with_origin(Origin::Fork {
-                from: RunId(Arc::from("rotation-jitter")),
-                turn: 6,
+                from: run_id(),
+                turn: 2,
             }),
         s,
     )
@@ -624,7 +654,7 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
             rule: None,
         },
         "compare" => Route::Compare {
-            main: RunId(Arc::from("rotation-jitter")),
+            main: run_id(),
             fork: fork_id(),
         },
         "plan" => Route::Plan(run_id()),
@@ -642,7 +672,6 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
         "pair-paired" => Route::Pair(PairStep::Paired),
         "pair-unreachable" => Route::Pair(PairStep::Unreachable),
         "land" => Route::Run(fork_id()),
-        "merge" | "resolving" => Route::Run(run_id()),
         "pr" | "pr-opened" => Route::PullRequest(run_id()),
         "models" => Route::Models,
         _ => return None,
@@ -1221,7 +1250,8 @@ enum Answer {
     Trial(Vec<tau_constitution::Trial>, f64),
 }
 
-/// The code of `rotation-jitter` and its `backoff` fork.
+/// The code of `retry-after`, tau-agent's main chat, and its `backoff`
+/// chat.
 pub fn branch_code() -> BranchCode {
     let stat = |path: &str, kind, added, removed| FileStat {
         path: path.into(),
@@ -1361,14 +1391,14 @@ pub fn catalog() -> Catalog {
             Repo {
                 name: "tau-agent".into(),
                 path: "~/Code/cfcosta/tau-agent".into(),
-                main: None,
+                main: Some(run_id()),
                 memory: tau_agent_memory(&note, &link),
                 constitution: tau_agent_rules(&rule),
             },
             Repo {
                 name: "docbert".into(),
                 path: "~/Code/cfcosta/docbert".into(),
-                main: None,
+                main: Some(RunId(Arc::from("docbert-main"))),
                 memory: Memory {
                     path: "~/.tau/memory/docbert".into(),
                     collection: "docbert-memory".into(),
@@ -1397,7 +1427,7 @@ pub fn catalog() -> Catalog {
             Repo {
                 name: "homelab.nix".into(),
                 path: "~/Code/cfcosta/homelab.nix".into(),
-                main: None,
+                main: Some(RunId(Arc::from("homelab-main"))),
                 memory: Memory {
                     path: "~/.tau/memory/homelab.nix".into(),
                     collection: "homelab-memory".into(),
@@ -3130,8 +3160,8 @@ mod tests {
         let crate::view::Origin::Fork { from, turn } = &fork.origin else {
             panic!("not a fork: {:?}", fork.origin);
         };
-        assert!(runs.iter().any(|run| &run.id == from));
-        assert_eq!(*turn, 6);
+        assert_eq!(*from, run_id(), "a chat forks the main chat");
+        assert_eq!(*turn, 2);
         assert!(fork.last_diff().is_some());
     }
 

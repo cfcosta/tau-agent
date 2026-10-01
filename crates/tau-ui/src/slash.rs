@@ -104,8 +104,8 @@ impl Workspace {
     fn commands(&self) -> impl Iterator<Item = Command> + '_ {
         let run = self.current().filter(|_| self.route != Route::NewRun);
         let in_run = run.is_some();
-        // Only a top-level run can be forked.
-        let forks = run.is_some_and(Self::can_fork);
+        // Only a main chat can be forked.
+        let forks = run.is_some_and(|run| self.can_fork(run));
         COMMANDS
             .into_iter()
             .filter(move |command| in_run || !command.needs_run)

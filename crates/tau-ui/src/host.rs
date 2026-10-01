@@ -100,9 +100,6 @@ use crate::{
         LANDING_RECORD,
         LandingRecord,
         Limits as ViewLimits,
-        MERGE_RECORD,
-        Merge,
-        MergeRecord,
         Origin,
         PlanField,
         PluginStatus,
@@ -552,9 +549,6 @@ pub struct Host {
     workspaces: Arc<Mutex<HashMap<RunId, String>>>,
     /// The model each run of this session runs on.
     choices: Arc<Mutex<HashMap<RunId, ModelChoice>>>,
-    /// Runs merging into trunk that wait on their own turn to resolve
-    /// conflicts: once it ends, the merge goes on (ADR 0014).
-    merging: Arc<Mutex<HashSet<RunId>>>,
     /// Runs whose `RunEnd` went by while their outcome is still being
     /// stored: they stop in a moment.
     ending: Arc<Mutex<HashSet<RunId>>>,
@@ -719,7 +713,6 @@ impl Host {
             last_update: Arc::default(),
             drafts: Mutex::default(),
             prs: Arc::default(),
-            merging: Arc::default(),
             ending: Arc::default(),
             runs: Arc::default(),
             workspaces: Arc::default(),
@@ -835,17 +828,6 @@ impl Host {
             .repos
             .iter()
             .any(|listed| listed.main.as_deref() == Some(&*run.0))
-    }
-
-    /// Whether `run` has no parent: a repository's main chat, or a run
-    /// from before main chats. Runs nest one level, so only these fork
-    /// and delegate.
-    fn is_top_level(&self, run: &RunId) -> anyhow::Result<bool> {
-        let record = self
-            .runtime
-            .block_on(self.store.run(&run.0))?
-            .ok_or_else(|| anyhow::anyhow!("No run {}", run.0))?;
-        Ok(record.kind == RunKind::Root)
     }
 
     /// The bookmark `run`'s commits move: trunk's for a main chat, which
@@ -1324,15 +1306,14 @@ impl Host {
     /// the workspace's name.
     ///
     /// `main`: the run is its repository's main chat, which commits on
-    /// trunk. `delegates`: the run gets `delegate`, which only a
-    /// top-level run does, as runs nest one level.
+    /// trunk and alone gets `delegate`, as runs nest one level (ADR
+    /// 0016).
     fn agent_for_run(
         &self,
         choice: &ModelChoice,
         repo: &RepoSlot,
         name: String,
         main: bool,
-        delegates: bool,
     ) -> anyhow::Result<(Agent, String)> {
         if self.account().is_none() {
             anyhow::bail!(
@@ -1421,11 +1402,7 @@ impl Host {
                 },
             )
         };
-        let agent = if delegates {
-            agent.tool(delegate)
-        } else {
-            agent
-        };
+        let agent = if main { agent.tool(delegate) } else { agent };
         let agent = on_workspace(agent, workspace, !main);
         Ok((with_plugin(agent, goal), name))
     }
@@ -1716,10 +1693,12 @@ impl Host {
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
         let repo = self.slot_of_run(run)?;
-        if !self.is_top_level(run)? {
+        // Runs nest one level (ADR 0016): only a main chat has runs
+        // under it.
+        if !self.is_main(run) {
             anyhow::bail!(
-                "Only a top-level chat can be forked: a chat under it, like \
-                 a sub-agent, has nothing under it"
+                "Only a repository's main chat can be forked: a chat under \
+                 it, like a sub-agent, has nothing under it"
             );
         }
         let (source, seq, link) =
@@ -1750,9 +1729,9 @@ impl Host {
         // Named after what it was asked, so the workspace says what it is
         // for.
         let name = workspace_name(&branch_slug(prompt));
-        // A fork is a chat under a top-level run: it delegates to none.
+        // A fork is a chat under the main chat: it delegates to none.
         let (agent, workspace) =
-            self.agent_for_run(choice, repo, name, false, false)?;
+            self.agent_for_run(choice, repo, name, false)?;
         let _guard = self.runtime.enter();
         let forked = agent
             .fork(&Checkpoint::at(source.clone(), seq))
@@ -1826,13 +1805,12 @@ impl Host {
         }
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
-        let delegates = self.is_top_level(run)?;
         // A run without a workspace yet gets one, named after the
         // message.
         let workspace =
             workspace.unwrap_or_else(|| workspace_name(&branch_slug(prompt)));
         let (agent, workspace) =
-            self.agent_for_run(choice, &repo, workspace, main, delegates)?;
+            self.agent_for_run(choice, &repo, workspace, main)?;
         let _guard = self.runtime.enter();
         let resumed = agent.resume(run).start(prompt, &self.store);
         self.track(resumed, workspace, choice, &repo.name);
@@ -1933,8 +1911,8 @@ impl Host {
     }
 
     /// Starts `run`'s next turn itself, with `prompt`: the turn that
-    /// resolves a landing's or a merge's conflicts (ADR 0014), on the
-    /// model the run was on.
+    /// resolves a landing's conflicts (ADR 0014), on the model the run
+    /// was on.
     pub fn start_resolving(
         &self,
         run: &RunId,
@@ -1952,160 +1930,6 @@ impl Host {
         self.resume(run, prompt, &choice)
     }
 
-    /// A top-level run's workspace, for merging it into trunk: its
-    /// project, its `Vcs`, and the workspace's name.
-    fn merge_plan(
-        &self,
-        run: &RunId,
-    ) -> anyhow::Result<(Project, tau_vcs::Vcs, String)> {
-        if self.is_main(run) {
-            anyhow::bail!(
-                "The main chat commits on main: it has nothing to merge"
-            );
-        }
-        self.settle(run);
-        if self.is_running(run) {
-            anyhow::bail!("{} is still running; merge it once it stops", run.0);
-        }
-        let project = self.slot_of_run(run)?.project()?;
-        let known = self
-            .workspaces
-            .lock()
-            .expect("not poisoned")
-            .get(run)
-            .cloned();
-        let name = match known {
-            Some(name) => name,
-            None => self
-                .link(run, None)?
-                .map(|(_, link)| link.workspace)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("{} has not finished a turn", run.0)
-                })?,
-        };
-        if !project.workspaces()?.contains(&name) {
-            anyhow::bail!("The run's workspace is gone");
-        }
-        self.no_open_children(run, &project)?;
-        let vcs = tau_vcs::Vcs::open(project.workspace_dir(&name), identity())?;
-        Ok((project, vcs, name))
-    }
-
-    /// What merging `run`, a top-level run, into trunk would do: its
-    /// changes as they would be on trunk, and what would conflict.
-    pub fn preview_merge(&self, run: &RunId) -> anyhow::Result<Landing> {
-        let (project, vcs, _) = self.merge_plan(run)?;
-        let trunk = project.trunk()?;
-        let preview = self.runtime.block_on(vcs.move_onto(
-            &trunk,
-            bookmark(run),
-            false,
-        ))?;
-        Ok(preview)
-    }
-
-    /// Merges `run`, a top-level run, into trunk (ADR 0014): its changes
-    /// move onto trunk's newest commit. Without conflicts, trunk moves
-    /// forward to it and the run closes. With them, the run resolves
-    /// them in a turn of its own ([`Self::start_resolving`]), and the
-    /// merge goes on when that turn ends ([`Self::finish_merge`]).
-    pub fn merge(&self, run: &RunId) -> anyhow::Result<Merge> {
-        let (project, vcs, name) = self.merge_plan(run)?;
-        let working_copy = self.runtime.block_on(vcs.working_copy())?;
-        if !working_copy.paths.is_empty() {
-            anyhow::bail!(
-                "The run has uncommitted work in {}; ask it to commit first",
-                working_copy.paths.join(", ")
-            );
-        }
-        let trunk = project.trunk()?;
-        let moved = self.runtime.block_on(vcs.move_onto(
-            &trunk,
-            bookmark(run),
-            true,
-        ))?;
-        if moved.changes.is_empty() {
-            anyhow::bail!("Nothing to merge: main has all of it");
-        }
-        if !moved.conflicts.is_empty() {
-            self.merging
-                .lock()
-                .expect("not poisoned")
-                .insert(run.clone());
-            return Ok(Merge::Resolving {
-                conflicts: moved.conflicts,
-            });
-        }
-        self.complete_merge(run, &project, &name, moved)
-    }
-
-    /// Goes on with a merge whose resolving turn ended: trunk moves
-    /// forward once nothing conflicts. `None` when `run` is not merging.
-    pub fn finish_merge(&self, run: &RunId) -> Option<anyhow::Result<Merge>> {
-        if !self.merging.lock().expect("not poisoned").contains(run) {
-            return None;
-        }
-        Some((|| {
-            let (project, vcs, name) = self.merge_plan(run)?;
-            // Trunk may have moved again meanwhile: move onto it again.
-            let trunk = project.trunk()?;
-            let moved = self.runtime.block_on(vcs.move_onto(
-                &trunk,
-                bookmark(run),
-                true,
-            ))?;
-            let working_copy = self.runtime.block_on(vcs.working_copy())?;
-            if !moved.conflicts.is_empty() || !working_copy.paths.is_empty() {
-                self.merging.lock().expect("not poisoned").remove(run);
-                anyhow::bail!(
-                    "The merge still has conflicts or uncommitted work ({}); \
-                     tell the run to resolve and commit them, then merge again",
-                    moved
-                        .conflicts
-                        .iter()
-                        .chain(&working_copy.paths)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            }
-            self.complete_merge(run, &project, &name, moved)
-        })())
-    }
-
-    /// Moves trunk forward to the merged run, records the merge in its
-    /// chat, and closes it.
-    fn complete_merge(
-        &self,
-        run: &RunId,
-        project: &Project,
-        name: &str,
-        moved: Landing,
-    ) -> anyhow::Result<Merge> {
-        let into = project.fast_forward_trunk(&moved.head)?;
-        self.merging.lock().expect("not poisoned").remove(run);
-        let record = MergeRecord {
-            into: into.clone(),
-            landing: moved.clone(),
-        };
-        self.runtime.block_on(self.store.append_turn(
-            &run.0,
-            &[Entry::Plugin {
-                plugin: MERGE_RECORD.to_owned(),
-                body: serde_json::to_string(&record)?,
-            }],
-            TurnUsage::default(),
-        ))?;
-        project.forget_workspace(name)?;
-        project.remove_bookmark(&bookmark(run))?;
-        self.workspaces.lock().expect("not poisoned").remove(run);
-        self.set_closed(run, true)?;
-        Ok(Merge::Merged {
-            into,
-            landing: moved,
-        })
-    }
-
     /// Drops `child`: abandons its own changes, the ones its parent does
     /// not have, and closes it like a landing does (ADR 0009). Both runs
     /// must be idle. The operation log keeps what was abandoned.
@@ -2120,7 +1944,6 @@ impl Host {
             }
         }
         let project = self.slot_of_run(child)?.project()?;
-        self.no_open_children(child, &project)?;
         if let Some(head) = project.bookmark(&bookmark(child))? {
             let keep = match project
                 .bookmark(&self.bookmark_of(&parent, &project)?)?
@@ -2155,52 +1978,6 @@ impl Host {
             }
             RunKind::Root => anyhow::bail!("{} has no parent", child.0),
         }
-    }
-
-    /// Refuses when `run` has children still open: running, or holding
-    /// changes `run` does not have. They land or are dropped first.
-    fn no_open_children(
-        &self,
-        run: &RunId,
-        project: &Project,
-    ) -> anyhow::Result<()> {
-        let children: Vec<String> = self
-            .runtime
-            .block_on(self.store.recent_runs(1000))?
-            .into_iter()
-            .filter(|other| match &other.kind {
-                RunKind::Fork { parent, .. }
-                | RunKind::Subagent { parent, .. } => {
-                    parent.as_str() == &*run.0
-                }
-                RunKind::Root => false,
-            })
-            .map(|other| other.id)
-            .collect();
-        let head = project.bookmark(&self.bookmark_of(run, project)?)?;
-        let mut open = Vec::new();
-        for id in children {
-            let child = RunId(id.clone().into());
-            let unlanded = match (project.bookmark(&bookmark(&child))?, &head) {
-                (None, _) => false,
-                (Some(_), None) => true,
-                (Some(theirs), Some(ours)) => {
-                    !project.is_ancestor(&theirs, ours)?
-                }
-            };
-            if self.is_running(&child) || unlanded {
-                open.push(id);
-            }
-        }
-        if !open.is_empty() {
-            anyhow::bail!(
-                "{} has children that have not landed ({}); land or drop \
-                 them first",
-                run.0,
-                open.join(", ")
-            );
-        }
-        Ok(())
     }
 
     /// `run`'s title: the one a model wrote, or until then the
@@ -2248,7 +2025,6 @@ impl Host {
                     }),
             }
         };
-        self.no_open_children(child, &project)?;
         let child_workspace = workspace_of(child)?;
         let parent_workspace = match workspace_of(&parent) {
             // A main chat works in the repository's own checkout.
@@ -2935,35 +2711,6 @@ impl Host {
                         resolve(&handler, &parent, prompt, &workspace, cx);
                     }
                 }
-                WorkspaceEvent::PreviewMerge { run } => {
-                    let preview = handler
-                        .preview_merge(run)
-                        .map_err(|error| format!("{error:#}"));
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::LandingPreview { run: run.clone(), preview }, cx)
-                    });
-                }
-                WorkspaceEvent::Merge { run } => {
-                    let merged = handler.merge(run).map_err(|error| format!("{error:#}"));
-                    let resolving = match &merged {
-                        Ok(Merge::Resolving { conflicts }) => Some(conflicts.clone()),
-                        _ => None,
-                    };
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::Merged { run: run.clone(), result: merged }, cx)
-                    });
-                    // Trunk has no model: the run resolves, and the merge
-                    // goes on when its turn ends.
-                    if let Some(conflicts) = resolving {
-                        let prompt = format!(
-                            "Moving onto main left conflicts in {}. Resolve them, \
-                             and commit the resolution; main moves to this run once \
-                             nothing conflicts.",
-                            code_list(&conflicts)
-                        );
-                        resolve(&handler, run, prompt, &workspace, cx);
-                    }
-                }
                 WorkspaceEvent::DropChild { run } => {
                     let dropped = handler
                         .drop_child(run)
@@ -3040,22 +2787,8 @@ impl Host {
                         .expect("not poisoned")
                         .insert(run.clone());
                 }
-                // A merge waiting on the run's resolving turn goes on.
-                let merge = match &event {
-                    RunEvent::RunEnd {
-                        run, parent: None, ..
-                    } => host
-                        .finish_merge(run)
-                        .map(|merged| (run.clone(), merged)),
-                    _ => None,
-                };
                 let applied = workspace.update(cx, |ws, cx| {
                     ws.apply(HostUpdate::Event(event.clone()), cx);
-                    if let Some((run, merged)) = merge {
-                        let result =
-                            merged.map_err(|error| format!("{error:#}"));
-                        ws.apply(HostUpdate::Merged { run, result }, cx);
-                    }
                     if let Some(refusal) = &refusal {
                         ws.apply(HostUpdate::PlanRefusal(refusal.clone()), cx);
                     }
@@ -3859,8 +3592,7 @@ async fn stored_view(
             Entry::Plugin { plugin, body }
                 if plugin == tau_reasoning::NAME
                     || plugin == tau_constitution::NAME
-                    || plugin == LANDING_RECORD
-                    || plugin == MERGE_RECORD =>
+                    || plugin == LANDING_RECORD =>
             {
                 serde_json::from_str(&body)
                     .ok()

@@ -25,13 +25,16 @@ fn open(
 ) {
     cx.update(tau_ui::init);
     let window = cx.add_window(|window, cx| {
-        Workspace::new(
-            "tau",
-            vec![demo::retry_after()],
-            Catalog::default(),
-            window,
-            cx,
-        )
+        // `retry-after` is tau-agent's main chat, which chats fork.
+        let catalog = Catalog {
+            repos: vec![tau_ui::catalog::Repo {
+                name: "tau-agent".into(),
+                main: Some(demo::run_id()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        Workspace::new("tau", vec![demo::retry_after()], catalog, window, cx)
     });
     let workspace = window.root(cx).unwrap();
     let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -239,9 +242,9 @@ fn forking_from_a_turn_sends_that_turn(cx: &mut TestAppContext) {
     );
     workspace.read_with(&cx, |ws, _| {
         let view = ws.run(&run).unwrap();
-        assert!(tau_ui::Workspace::can_fork_at(view, 2));
-        assert!(!tau_ui::Workspace::can_fork_at(view, 0));
-        assert!(!tau_ui::Workspace::can_fork_at(view, view.turn + 1));
+        assert!(ws.can_fork_at(view, 2));
+        assert!(!ws.can_fork_at(view, 0));
+        assert!(!ws.can_fork_at(view, view.turn + 1));
     });
 }
 
@@ -454,7 +457,7 @@ fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
         Some(&WorkspaceEvent::NewRun {
             prompt: "fix it".into(),
             model: ModelChoice::new("gpt-6-luna", Effort::Low),
-            repo: String::new(),
+            repo: "tau-agent".into(),
         })
     );
 }
@@ -538,15 +541,18 @@ fn the_tree_groups_runs_by_repository(cx: &mut TestAppContext) {
         let names: Vec<&str> =
             rows.iter().map(|rows| rows.repo.name.as_str()).collect();
         assert_eq!(names, ["tau-agent", "docbert", "homelab.nix"]);
-        // tau-agent: 6 root runs, the fork under rotation-jitter.
+        // tau-agent: its main chat, and the six chats under it, five
+        // shown.
         assert!(rows[0].open);
         assert_eq!(
             (rows[0].total, rows[0].runs.len(), rows[0].older),
-            (6, 5, 1)
+            (7, 1, 1)
         );
+        assert_eq!(rows[0].main_children, Some(5));
         assert_eq!(rows[0].live, 1);
         assert!(!rows[1].open);
-        assert_eq!((rows[1].total, rows[1].live), (3, 1));
+        // docbert: its main chat and three chats, one live.
+        assert_eq!((rows[1].total, rows[1].live), (4, 1));
 
         ws.toggle_repo_open("docbert", cx);
         assert!(ws.is_repo_open("docbert"));
@@ -1355,7 +1361,7 @@ fn search_finds_runs_repositories_and_actions(cx: &mut TestAppContext) {
         use tau_ui::search::Pick;
         let hits = ws.search_hits("rerank");
         assert_eq!(hits[0].label, "rerank-latency");
-        assert_eq!(hits[0].detail, "run in docbert");
+        assert_eq!(hits[0].detail, "chat in docbert");
         // Every word must match.
         assert!(ws.search_hits("rerank homelab").is_empty());
         let hits = ws.search_hits("homelab");
@@ -1450,10 +1456,15 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
         names(composer_slash(&workspace, &mut cx, "/")),
         ["/goal", "/model", "/attach"]
     );
+    // Only the main chat forks (ADR 0016).
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(demo::run_id()), cx)
+    });
+    assert_eq!(names(composer_slash(&workspace, &mut cx, "/fo")), ["/fork"]);
     workspace
         .update(&mut cx, |ws, cx| ws.navigate(Route::Run(done.clone()), cx));
-    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 6);
-    assert_eq!(names(composer_slash(&workspace, &mut cx, "/fo")), ["/fork"]);
+    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 5);
+    assert!(names(composer_slash(&workspace, &mut cx, "/fo")).is_empty());
     // Not a command: a message.
     assert_eq!(
         composer_slash(&workspace, &mut cx, "/usr/bin is slow"),
@@ -1677,7 +1688,7 @@ fn a_diff_card_opens_one_file_at_a_time(cx: &mut TestAppContext) {
 fn a_fork_lands_on_its_parent(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     let fork = demo::fork_id();
-    let parent = tau_agent::tool::RunId("rotation-jitter".into());
+    let parent = demo::run_id();
     let change = serde_json::from_value::<tau_vcs::ChangeInfo>(serde_json::json!({
         "change_id": "qlmxnpvoqlmxnpvoqlmxnpvoqlmxnpvo",
         "commit_id": "0123456789abcdef0123456789abcdef01234567",
@@ -1746,7 +1757,7 @@ fn a_fork_lands_on_its_parent(cx: &mut TestAppContext) {
 fn a_fork_is_dropped_after_asking(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     let fork = demo::fork_id();
-    let parent = tau_agent::tool::RunId("rotation-jitter".into());
+    let parent = demo::run_id();
     workspace.update(&mut cx, |ws, cx| {
         ws.ask_drop(&fork, cx);
         assert_eq!(ws.landing(&fork), Some(&LandingState::ConfirmDrop));
@@ -2564,8 +2575,8 @@ fn a_chat_under_main_offers_no_fork(cx: &mut TestAppContext) {
         ws.add_history(vec![view], cx);
         ws.navigate(Route::Run(chat.clone()), cx);
         let run = ws.run(&chat).unwrap();
-        assert!(!Workspace::can_fork(run));
-        assert!(!Workspace::can_fork_at(run, 1));
+        assert!(!ws.can_fork(run));
+        assert!(!ws.can_fork_at(run, 1));
         assert!(!ws.start_fork_at(&chat, 1, cx), "no fork mode");
         assert!(matches!(ws.slash("/fo"), tau_ui::slash::Slash::None));
     });

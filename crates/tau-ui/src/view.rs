@@ -234,10 +234,8 @@ pub enum Item {
     ForkReady {
         fork: RunId,
     },
-    /// This run merged into trunk (ADR 0014): what it brought there.
-    Merged(MergedCard),
     /// A message tau sent to start a turn itself: resolving what a
-    /// landing or a merge left in conflict (ADR 0014).
+    /// landing left in conflict (ADR 0014).
     Tau(String),
     /// A plugin rewrote the context.
     Rewrite {
@@ -277,53 +275,6 @@ pub struct LandingRecord {
 
 /// The plugin name a landing's record is stored under.
 pub const LANDING_RECORD: &str = "landing";
-
-/// The record a merge into trunk leaves in the merged run, under
-/// [`MERGE_RECORD`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MergeRecord {
-    /// Trunk's bookmark: `main`.
-    pub into: String,
-    pub landing: tau_vcs::Landing,
-}
-
-/// The plugin name a merge's record is stored under.
-pub const MERGE_RECORD: &str = "merge";
-
-/// What merging a run into trunk came to (ADR 0014).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum Merge {
-    /// Trunk moved forward to the run, which closed.
-    Merged {
-        into: String,
-        landing: tau_vcs::Landing,
-    },
-    /// Moving onto trunk left conflicts; the run resolves them in a turn
-    /// of its own, and the merge goes on when it ends.
-    Resolving { conflicts: Vec<String> },
-}
-
-/// A run's merge into trunk, as its chat shows it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MergedCard {
-    pub into: String,
-    /// Its changes on trunk, newest first.
-    pub changes: Vec<crate::change_log::Change>,
-}
-
-impl MergedCard {
-    pub fn from_record(record: MergeRecord) -> Self {
-        Self {
-            into: record.into,
-            changes: record
-                .landing
-                .changes
-                .into_iter()
-                .map(crate::change_log::Change::new)
-                .collect(),
-        }
-    }
-}
 
 impl LandedCard {
     pub fn from_record(record: LandingRecord) -> Self {
@@ -1007,17 +958,6 @@ impl RunView {
                 }
                 // A child landed between turns: its card follows the
                 // turn it came after.
-                Stored::Record { plugin, body } if plugin == MERGE_RECORD => {
-                    flush(&mut view, &mut during);
-                    if let Ok(record) =
-                        serde_json::from_value::<MergeRecord>(body.clone())
-                    {
-                        view.end_turn();
-                        view.items.push(Item::Merged(MergedCard::from_record(
-                            record,
-                        )));
-                    }
-                }
                 Stored::Record { plugin, body } if plugin == LANDING_RECORD => {
                     flush(&mut view, &mut during);
                     if let Ok(record) =

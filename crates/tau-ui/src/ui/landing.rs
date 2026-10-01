@@ -1,7 +1,7 @@
-//! Landing a finished run (ADR 0009, 0014): a fork lands on the run it
-//! forked, a top-level run merges into trunk. The controls the compare
-//! screen, the fork's card in its parent's chat and the landing card at
-//! the end of the run's own chat share.
+//! Landing a finished run (ADR 0009, 0014): a chat lands on the main
+//! chat it forked. The controls the compare screen, the fork's card in
+//! its parent's chat and the landing card at the end of the run's own
+//! chat share.
 
 use gpui::{Context, SharedString, div, prelude::*, px};
 
@@ -15,19 +15,15 @@ use crate::{
 };
 
 /// Where `run` lands, as its buttons name it: its parent's title for a
-/// fork, `main` for a top-level run. None for a sub-agent, which lands
-/// as it returns, and for a main chat, which commits on trunk.
+/// fork. None for a sub-agent, which lands as it returns, and for a
+/// main chat, which commits on trunk.
 pub fn target(ws: &Workspace, run: &RunView) -> Option<String> {
-    if ws.is_main(&run.id) {
-        return None;
-    }
     match &run.origin {
         Origin::Fork { from, .. } => Some(ws.run(from).map_or_else(
             || "its parent".to_owned(),
             |view| view.title.clone(),
         )),
-        Origin::Root => Some("main".to_owned()),
-        Origin::SubAgent { .. } => None,
+        Origin::Root | Origin::SubAgent { .. } => None,
     }
 }
 
@@ -42,7 +38,6 @@ pub fn card(
 ) -> Option<gpui::Div> {
     let target = target(ws, run)?;
     let body = controls(ws, run, t, compact, cx)?;
-    let merge = run.origin == Origin::Root;
     Some(
         div()
             .flex()
@@ -67,11 +62,7 @@ pub fn card(
                             .truncate()
                             .typeset(Type::SMALL)
                             .font_weight(weight::STRONG)
-                            .child(if merge {
-                                format!("Merge {} into {target}", run.title)
-                            } else {
-                                format!("Land {} on {target}", run.title)
-                            }),
+                            .child(format!("Land {} on {target}", run.title)),
                     ),
             )
             .child(
@@ -94,13 +85,9 @@ pub fn controls(
     cx: &mut Context<Workspace>,
 ) -> Option<gpui::Div> {
     let parent = target(ws, run)?;
-    // A run resolving its merge is live, and says so.
-    let resolving =
-        matches!(ws.landing(&run.id), Some(LandingState::Resolving(_)));
-    if run.status.is_live() && !resolving {
+    if run.status.is_live() {
         return None;
     }
-    let merge = run.origin == Origin::Root;
     let id = run.id.clone();
     let button = |label: String, kind: ButtonKind, key: &str| {
         div()
@@ -118,11 +105,7 @@ pub fn controls(
                 .gap(sp(2.))
                 .child(
                     button(
-                        if merge {
-                            format!("Merge into {parent}")
-                        } else {
-                            format!("Land on {parent}")
-                        },
+                        format!("Land on {parent}"),
                         ButtonKind::Primary,
                         "land",
                     )
@@ -130,18 +113,16 @@ pub fn controls(
                         move |ws, _, _, cx| ws.preview_landing(&id, cx),
                     )),
                 )
-                .when(!merge, |row| {
-                    row.child(
-                        button(
-                            "Drop this fork".into(),
-                            ButtonKind::Secondary,
-                            "drop",
-                        )
-                        .on_click(cx.listener(
-                            move |ws, _, _, cx| ws.ask_drop(&drop_id, cx),
-                        )),
+                .child(
+                    button(
+                        "Drop this fork".into(),
+                        ButtonKind::Secondary,
+                        "drop",
                     )
-                })
+                    .on_click(cx.listener(
+                        move |ws, _, _, cx| ws.ask_drop(&drop_id, cx),
+                    )),
+                )
         }
         Some(LandingState::ConfirmDrop) => {
             let (drop_id, cancel_id) = (id.clone(), id.clone());
@@ -189,20 +170,9 @@ pub fn controls(
         Some(LandingState::Previewing) => {
             caption("Checking what would land…".into(), t.dim)
         }
-        Some(LandingState::Landing) if merge => {
-            caption(format!("Merging into {parent}…"), t.dim)
-        }
         Some(LandingState::Landing) => {
             caption(format!("Landing on {parent}…"), t.dim)
         }
-        Some(LandingState::Resolving(conflicts)) => caption(
-            format!(
-                "Resolving conflicts in {} in this run's own turn; {parent} \
-                 moves to it once nothing conflicts.",
-                conflicts.join(", ")
-            ),
-            t.accent,
-        ),
         Some(LandingState::Preview(Err(error))) => div()
             .flex()
             .flex_col()
@@ -217,18 +187,12 @@ pub fn controls(
         Some(LandingState::Preview(Ok(preview))) => {
             let changes: Vec<Change> =
                 preview.changes.iter().cloned().map(Change::new).collect();
-            let summary = match (merge, changes.len()) {
-                (_, 0) => format!("Nothing to land: {parent} has all of it."),
-                (true, 1) => format!(
-                    "1 change goes onto {parent}, and {parent} moves to it."
-                ),
-                (true, n) => format!(
-                    "{n} changes go onto {parent}, and {parent} moves to them."
-                ),
-                (false, 1) => format!(
+            let summary = match changes.len() {
+                0 => format!("Nothing to land: {parent} has all of it."),
+                1 => format!(
                     "1 change lands on {parent}, on top of its latest change."
                 ),
-                (false, n) => format!(
+                n => format!(
                     "{n} changes land on {parent}, on top of its latest change."
                 ),
             };
@@ -245,19 +209,11 @@ pub fn controls(
                 )
                 .when(!preview.conflicts.is_empty(), |column| {
                     column.child(caption(
-                        if merge {
-                            format!(
-                                "Conflicts in {}. This run resolves them in a \
-                                 turn tau starts, then {parent} moves to it.",
-                                preview.conflicts.join(", ")
-                            )
-                        } else {
-                            format!(
-                                "Conflicts in {}. Landing starts {parent}'s \
-                                 next turn to resolve them and commit the result.",
-                                preview.conflicts.join(", ")
-                            )
-                        },
+                        format!(
+                            "Conflicts in {}. Landing starts {parent}'s next \
+                             turn to resolve them and commit the result.",
+                            preview.conflicts.join(", ")
+                        ),
                         t.red,
                     ))
                 })
@@ -268,11 +224,10 @@ pub fn controls(
                         .when(!changes.is_empty(), |row| {
                             row.child(
                                 button(
-                                    match (merge, preview.conflicts.is_empty()) {
-                                        (true, true) => format!("Merge into {parent}"),
-                                        (true, false) => "Merge and resolve".into(),
-                                        (false, true) => "Land".into(),
-                                        (false, false) => "Land and resolve".into(),
+                                    if preview.conflicts.is_empty() {
+                                        "Land".into()
+                                    } else {
+                                        "Land and resolve".into()
                                     },
                                     ButtonKind::Primary,
                                     "confirm-land",

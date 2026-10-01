@@ -226,13 +226,12 @@ fn new_chats_fork_the_repository_main_chat() {
     };
     assert_eq!(on_trunk("a.txt").as_deref(), Some(&b"a.txt\n"[..]));
 
-    // The main chat's own commit moves trunk too; it never merges.
+    // The main chat's own commit moves trunk too.
     host.resume(&main, "write b", &ModelChoice::default())
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main);
     assert_eq!(on_trunk("b.txt").as_deref(), Some(&b"b.txt\n"[..]));
-    assert!(host.merge(&main).is_err(), "main has nothing to merge");
     llm.assert_exhausted();
 }
 
@@ -603,7 +602,7 @@ fn a_chat_under_main_is_not_forked() {
         .fork(&child.id, Some(2), "write c", &choice)
         .unwrap_err()
         .to_string();
-    assert!(err.contains("Only a top-level chat"), "{err}");
+    assert!(err.contains("Only a repository's main chat"), "{err}");
 
     let landed = host.land(&child.id).unwrap();
     assert_eq!(landed.changes.len(), 1, "b.txt");

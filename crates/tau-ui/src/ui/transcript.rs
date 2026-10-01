@@ -128,7 +128,7 @@ fn item_view(
             .into_any_element(),
         Item::Thinking(text) => thinking(text, t).into_any_element(),
         Item::TurnEnd { turn } => {
-            turn_end(run, *turn, t, compact, cx).into_any_element()
+            turn_end(ws, run, *turn, t, compact, cx).into_any_element()
         }
         Item::Tool(card) => {
             tool(ws, run, card, t, compact, cx).into_any_element()
@@ -142,9 +142,6 @@ fn item_view(
         }
         Item::ForkReady { fork } => {
             fork_ready(ws, run, fork, t, compact, cx).into_any_element()
-        }
-        Item::Merged(card) => {
-            log_card::merged(card, t, compact).into_any_element()
         }
         Item::Tau(text) => tau_message(text, t).into_any_element(),
         Item::Rewrite {
@@ -339,6 +336,7 @@ fn split_attachments(text: &str) -> (&str, Vec<&str>) {
 /// Where one turn ends. Nothing shows there; on a desktop, hovering the
 /// gap offers a fork from that turn. A phone forks from the run's sheet.
 fn turn_end(
+    ws: &Workspace,
     run: &RunView,
     turn: u32,
     t: &Theme,
@@ -346,7 +344,7 @@ fn turn_end(
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let group = SharedString::from(format!("turn-{turn}"));
-    let forkable = !compact && Workspace::can_fork_at(run, turn);
+    let forkable = !compact && ws.can_fork_at(run, turn);
     let id = run.id.clone();
     div().relative().when(forkable, |gap| {
         gap.child(
