@@ -157,6 +157,14 @@ The common `mcpServers` shape:
   `prompts/list_changed` (through `subscriptions/listen` on
   2026-07-28). A server without the capability is not asked; a list
   that fails is left empty and does not fail the connect.
+- **Lost HTTP sessions.** A server that answers a request in a session
+  with 404 gets a new session (rmcp's), and the request is posted
+  again. So does one that answers it with an error naming no request
+  (`"id"` absent), as the TypeScript SDK's examples answer, with 400, a
+  session they do not know, after a restart: the server rejected the
+  request without running it, so posting it again runs no tool twice.
+  Without this, every call to such a server after its restart waited
+  out its timeout.
 - **Stdio close:** rmcp's `cancel()`, then the child's process group
   gets SIGTERM and, after 2 s, SIGKILL.
 - **Roots:** the repository's directory, as a `file://` URI, when the
@@ -671,7 +679,8 @@ or, without a repository, the user's and the settings' alone.
 - `names`: `tool_names`, `namespace`.
 - `results`: `map_result`, `resource_contents`, `resource_link`,
   `cut_middle`, `truncate`, `Spill`.
-- `connection`: `Connection` (`new`, `start`, `connect`, `status`, `tools`,
+- `connection`: `Connection` (`new`, `start`, `connect`, `status`,
+  `protocol`, `tools`,
   `resources`, `templates`, `prompts`, `offers_resources`,
   `offers_prompts`, `instructions`, `call`, `read_resource`,
   `get_prompt`, `settled`, `shutdown`, `oauth`, `auth_need`,

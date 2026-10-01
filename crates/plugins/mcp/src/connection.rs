@@ -417,6 +417,8 @@ struct Inner {
     templates: Vec<TemplateInfo>,
     prompts: Vec<PromptInfo>,
     instructions: Option<String>,
+    /// The protocol version of the last session.
+    protocol: Option<String>,
     connecting: bool,
 }
 
@@ -611,6 +613,12 @@ impl Connection {
             .clone()
     }
 
+    /// The protocol version the last session agreed on with the server,
+    /// such as `2025-11-25`; none before the first connect.
+    pub fn protocol(&self) -> Option<String> {
+        self.inner.lock().expect("connection lock").protocol.clone()
+    }
+
     /// Whether the server lists `tool` now.
     pub fn offers(&self, tool: &str) -> bool {
         self.inner
@@ -714,6 +722,7 @@ impl Connection {
         match outcome {
             Ok((session, lists, events)) => {
                 inner.instructions = session.instructions().map(str::to_owned);
+                inner.protocol = session.protocol().map(str::to_owned);
                 inner.features = session.features();
                 inner.tools = lists.tools;
                 inner.resources = lists.resources;

@@ -31,6 +31,9 @@ rmcp = { version = "3.5.0", default-features = false, features = [
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# The SSE event type in rmcp's `StreamableHttpClient`, which rmcp does
+# not re-export; the version rmcp uses.
+sse-stream = "0.2.6"
 tau-agent.workspace = true
 tau-ai.workspace = true
 tau-ui-kit.workspace = true

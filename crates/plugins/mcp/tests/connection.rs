@@ -394,3 +394,198 @@ async fn a_missing_variable_fails_the_server() {
         Some("the environment variable `MISSING` is not set")
     );
 }
+
+/// A legacy HTTP MCP server, as the TypeScript SDK's examples are: it
+/// answers JSON, keeps sessions by `mcp-session-id`, and answers a
+/// request in a session it does not know with 400 and a JSON-RPC error
+/// that has no `id`. `forget` drops its sessions, as a restart does.
+struct SessionServer {
+    url: String,
+    sessions: Mutex<Vec<String>>,
+    initializes: AtomicUsize,
+    calls: AtomicUsize,
+}
+
+impl SessionServer {
+    async fn start() -> Arc<Self> {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = Arc::new(Self {
+            url: format!("http://{}/mcp", listener.local_addr().unwrap()),
+            sessions: Mutex::default(),
+            initializes: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+        });
+        let this = server.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((socket, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(this.clone().serve(socket));
+            }
+        });
+        server
+    }
+
+    fn forget(&self) {
+        self.sessions.lock().unwrap().clear();
+    }
+
+    async fn serve(self: Arc<Self>, mut socket: tokio::net::TcpStream) {
+        let mut seen = Vec::new();
+        let mut buffer = vec![0; 65536];
+        let (head, body) = loop {
+            let Ok(n) = socket.read(&mut buffer).await else {
+                return;
+            };
+            if n == 0 {
+                return;
+            }
+            seen.extend_from_slice(&buffer[..n]);
+            let text = String::from_utf8_lossy(&seen).into_owned();
+            if let Some(end) = text.find("\r\n\r\n") {
+                let head = text[..end].to_owned();
+                let length = header(&head, "content-length")
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(0);
+                if seen.len() >= end + 4 + length {
+                    break (head, text[end + 4..end + 4 + length].to_owned());
+                }
+            }
+        };
+        let session = header(&head, "mcp-session-id");
+        let (status, headers, body) = if !head.starts_with("POST") {
+            // No standalone SSE stream; DELETE ends nothing it knows.
+            ("405 Method Not Allowed", String::new(), String::new())
+        } else {
+            self.answer(session, &body)
+        };
+        let response = format!(
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\n{headers}content-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = socket.write_all(response.as_bytes()).await;
+        let _ = socket.shutdown().await;
+    }
+
+    fn answer(
+        &self,
+        session: Option<String>,
+        body: &str,
+    ) -> (&'static str, String, String) {
+        let message: Value = serde_json::from_str(body).unwrap();
+        let id = message.get("id").cloned();
+        let method = message["method"].as_str().unwrap_or_default();
+        let result = |result: Value| {
+            json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
+        };
+        if method == "server/discover" {
+            let error = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32601, "message": "Method not found"},
+            });
+            return ("200 OK", String::new(), error.to_string());
+        }
+        if method == "initialize" && session.is_none() {
+            let n = self.initializes.fetch_add(1, Ordering::SeqCst);
+            let session = format!("session-{n}");
+            self.sessions.lock().unwrap().push(session.clone());
+            let body = result(json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "sessions", "version": "1"},
+            }));
+            return ("200 OK", format!("mcp-session-id: {session}\r\n"), body);
+        }
+        let known = session.is_some_and(|session| {
+            self.sessions.lock().unwrap().contains(&session)
+        });
+        if !known {
+            let error = json!({
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32000,
+                    "message": "Bad Request: No valid session ID provided",
+                },
+            });
+            return ("400 Bad Request", String::new(), error.to_string());
+        }
+        if id.is_none() {
+            return ("202 Accepted", String::new(), String::new());
+        }
+        let body = match method {
+            "tools/list" => result(json!({
+                "tools": [{"name": "echo", "inputSchema": {"type": "object"}}],
+            })),
+            "tools/call" => {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                result(json!({
+                    "content": [{"type": "text", "text": "echoed"}],
+                    "isError": false,
+                }))
+            }
+            _ => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32601, "message": "Method not found"},
+            })
+            .to_string(),
+        };
+        ("200 OK", String::new(), body)
+    }
+}
+
+fn header(head: &str, name: &str) -> Option<String> {
+    head.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim()
+            .eq_ignore_ascii_case(name)
+            .then(|| value.trim().to_owned())
+    })
+}
+
+/// An HTTP server that restarted, and answers the old session's requests
+/// with 400 and an error naming no request, as the reference servers do,
+/// gets a new session: the next call reaches it at once, and runs once.
+/// It used to wait out its timeout, as every call after it did.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_http_server_that_forgot_the_session_gets_a_new_one() {
+    let server = SessionServer::start().await;
+    let mut config = ServerConfig::new(
+        "remote",
+        Transport::Http(HttpConfig {
+            url: server.url.clone(),
+            headers: Vec::new(),
+            oauth: None,
+        }),
+    );
+    config.timeout = 5.0;
+    let connection = Connection::new(config, Origin::User, environment());
+    connection.connect();
+    settle(&connection).await;
+    assert_eq!(connection.status().state, State::Connected);
+    assert_eq!(connection.protocol().as_deref(), Some("2025-11-25"));
+    let cancel = CancellationToken::new();
+    let first = connection
+        .call("echo", json!({}), &no_progress(), &cancel)
+        .await
+        .unwrap();
+    assert_eq!(first["content"][0]["text"], "echoed");
+
+    server.forget();
+    let started = Instant::now();
+    let second = connection
+        .call("echo", json!({}), &no_progress(), &cancel)
+        .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(second.unwrap()["content"][0]["text"], "echoed");
+    assert_eq!(server.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(server.initializes.load(Ordering::SeqCst), 2);
+    assert_eq!(connection.status().state, State::Connected);
+    connection.shutdown().await;
+}

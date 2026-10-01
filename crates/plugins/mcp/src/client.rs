@@ -303,6 +303,7 @@ pub(crate) struct Session {
     routes: Routes,
     instructions: Option<String>,
     features: Features,
+    protocol: Option<String>,
 }
 
 /// What a server offers besides tools, from its capabilities.
@@ -380,6 +381,8 @@ impl Session {
             .as_ref()
             .and_then(|info| info.instructions.clone())
             .filter(|text| !text.trim().is_empty());
+        let protocol =
+            info.as_ref().map(|info| info.protocol_version.to_string());
         let capabilities = info.as_ref().map(|info| &info.capabilities);
         let features = Features {
             resources: capabilities.is_some_and(|c| c.resources.is_some()),
@@ -427,7 +430,13 @@ impl Session {
             routes,
             instructions,
             features,
+            protocol,
         })
+    }
+
+    /// The protocol version the session runs on, as the server gave it.
+    pub fn protocol(&self) -> Option<&str> {
+        self.protocol.as_deref()
     }
 
     /// The server's instructions, if it gave any.
@@ -799,14 +808,14 @@ async fn open(
                 // refreshed when it is about to expire or turned down.
                 Some(manager) => {
                     let transport = StreamableHttpClientTransport::with_client(
-                        AuthClient::new(mcp_client(), manager),
+                        AuthClient::new(HttpClient(mcp_client()), manager),
                         config,
                     );
                     handler.serve_with_lifecycle(transport, lifecycle).await
                 }
                 None => {
                     let transport = StreamableHttpClientTransport::with_client(
-                        mcp_client(),
+                        HttpClient(mcp_client()),
                         config,
                     );
                     handler.serve_with_lifecycle(transport, lifecycle).await
@@ -829,6 +838,196 @@ async fn open(
             }
             Err(OpenError::Lifecycle(Box::new(error)))
         }
+    }
+}
+
+/// tau's HTTP client for rmcp: reqwest's, but an error that names no
+/// request, answering a request posted in a session, counts as the
+/// session having expired.
+///
+/// A server that restarted no longer knows its sessions. The spec has it
+/// answer 404, on which rmcp starts a new session and posts the request
+/// again. The reference servers (the TypeScript SDK's examples, such as
+/// `@modelcontextprotocol/server-everything`) answer 400 with a JSON-RPC
+/// error without an `id` instead, which rmcp hands on uncorrelated: the
+/// request then waits out its timeout, and so does every request after
+/// it, since nothing marks the session gone. The server rejected the
+/// request before running it, so starting a new session and posting it
+/// again cannot run a tool twice.
+#[derive(Clone)]
+struct HttpClient(reqwest::Client);
+
+impl rmcp::transport::streamable_http_client::StreamableHttpClient
+    for HttpClient
+{
+    type Error = reqwest::Error;
+
+    async fn post_message(
+        &self,
+        uri: Arc<str>,
+        message: rmcp::model::ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<
+            reqwest::header::HeaderName,
+            reqwest::header::HeaderValue,
+        >,
+    ) -> Result<
+        rmcp::transport::streamable_http_client::StreamableHttpPostResponse,
+        StreamableHttpError<reqwest::Error>,
+    > {
+        let in_session = session_id.is_some();
+        let is_request =
+            matches!(message, rmcp::model::ClientJsonRpcMessage::Request(_));
+        let response = self
+            .0
+            .post_message(uri, message, session_id, auth_header, custom_headers)
+            .await;
+        expired_session(response, in_session && is_request)
+    }
+
+    async fn post_message_with_max_sse_event_size(
+        &self,
+        uri: Arc<str>,
+        message: rmcp::model::ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<
+            reqwest::header::HeaderName,
+            reqwest::header::HeaderValue,
+        >,
+        max_sse_event_size: usize,
+    ) -> Result<
+        rmcp::transport::streamable_http_client::StreamableHttpPostResponse,
+        StreamableHttpError<reqwest::Error>,
+    > {
+        let in_session = session_id.is_some();
+        let is_request =
+            matches!(message, rmcp::model::ClientJsonRpcMessage::Request(_));
+        let response = self
+            .0
+            .post_message_with_max_sse_event_size(
+                uri,
+                message,
+                session_id,
+                auth_header,
+                custom_headers,
+                max_sse_event_size,
+            )
+            .await;
+        expired_session(response, in_session && is_request)
+    }
+
+    async fn delete_session(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<
+            reqwest::header::HeaderName,
+            reqwest::header::HeaderValue,
+        >,
+    ) -> Result<(), StreamableHttpError<reqwest::Error>> {
+        self.0
+            .delete_session(uri, session_id, auth_header, custom_headers)
+            .await
+    }
+
+    async fn get_stream(
+        &self,
+        uri: Arc<str>,
+        session_id: Option<Arc<str>>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<
+            reqwest::header::HeaderName,
+            reqwest::header::HeaderValue,
+        >,
+    ) -> Result<
+        futures_util::stream::BoxStream<
+            'static,
+            Result<
+                sse_stream::Sse,
+                rmcp::transport::streamable_http_client::SseError,
+            >,
+        >,
+        StreamableHttpError<reqwest::Error>,
+    > {
+        self.0
+            .get_stream(
+                uri,
+                session_id,
+                last_event_id,
+                auth_header,
+                custom_headers,
+            )
+            .await
+    }
+
+    async fn get_stream_with_max_sse_event_size(
+        &self,
+        uri: Arc<str>,
+        session_id: Option<Arc<str>>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<
+            reqwest::header::HeaderName,
+            reqwest::header::HeaderValue,
+        >,
+        max_sse_event_size: usize,
+    ) -> Result<
+        futures_util::stream::BoxStream<
+            'static,
+            Result<
+                sse_stream::Sse,
+                rmcp::transport::streamable_http_client::SseError,
+            >,
+        >,
+        StreamableHttpError<reqwest::Error>,
+    > {
+        self.0
+            .get_stream_with_max_sse_event_size(
+                uri,
+                session_id,
+                last_event_id,
+                auth_header,
+                custom_headers,
+                max_sse_event_size,
+            )
+            .await
+    }
+}
+
+/// A request posted in a session answered by an error that names no
+/// request becomes [`StreamableHttpError::SessionExpired`].
+fn expired_session(
+    response: Result<
+        rmcp::transport::streamable_http_client::StreamableHttpPostResponse,
+        StreamableHttpError<reqwest::Error>,
+    >,
+    request_in_session: bool,
+) -> Result<
+    rmcp::transport::streamable_http_client::StreamableHttpPostResponse,
+    StreamableHttpError<reqwest::Error>,
+> {
+    use rmcp::{
+        model::ServerJsonRpcMessage,
+        transport::streamable_http_client::StreamableHttpPostResponse,
+    };
+    match response {
+        Ok(StreamableHttpPostResponse::Json(
+            ServerJsonRpcMessage::Error(error),
+            _,
+        )) if request_in_session && error.id.is_none() => {
+            tracing::debug!(
+                target: "tau_mcp::server",
+                "an uncorrelated error answered a request in a session, \
+                 taken as an expired session: {}",
+                error.error.message
+            );
+            Err(StreamableHttpError::SessionExpired)
+        }
+        other => other,
     }
 }
 
