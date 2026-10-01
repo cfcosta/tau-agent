@@ -24,6 +24,7 @@
 //!   host updates when they are edited: an edit applies from the next
 //!   tool call, in runs already going too.
 
+pub mod db;
 pub mod rules;
 pub mod ui;
 

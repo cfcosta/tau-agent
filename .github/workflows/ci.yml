@@ -40,5 +40,15 @@ jobs:
           nix develop -c sqlx database setup
           nix develop -c cargo sqlx prepare --check -- -p tau-store
 
+      # A plugin's own database: its queries are checked against tau's
+      # schema and its own, since its build compiles tau-store's too.
+      - name: sqlx offline metadata is current (tau-constitution)
+        working-directory: crates/plugins/constitution
+        run: |
+          export DATABASE_URL="sqlite://$RUNNER_TEMP/tau-constitution-ci.db"
+          nix develop -c sqlx database setup --source ../../tau-store/migrations
+          nix develop -c sqlx migrate run --ignore-missing --source migrations
+          nix develop -c cargo sqlx prepare --check
+
       - name: Dependencies (advisories, bans, licenses, sources)
         run: nix develop -c cargo deny check

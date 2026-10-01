@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT run AS \"run!: String\", key AS \"key!: String\"\n               FROM reviewed ORDER BY rowid",
+  "describe": {
+    "columns": [
+      {
+        "name": "run!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reviewed",
+            "name": "run"
+          }
+        }
+      },
+      {
+        "name": "key!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reviewed",
+            "name": "key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "6cba7d6651b2c72135b91a5dffc3cdb14b4be4ac76d0c8adcfd2fc9ee4cfb8ae"
+}

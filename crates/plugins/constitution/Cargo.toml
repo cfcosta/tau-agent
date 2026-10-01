@@ -15,7 +15,7 @@ serde_json.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
 tau-jev.workspace = true
-tau-store.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 # Its UI (ADR 0017).
@@ -23,6 +23,7 @@ tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 
 [dev-dependencies]
+tau-store.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 futures-util.workspace = true

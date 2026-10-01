@@ -42,7 +42,7 @@ use tau_ai::{
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools::{path::Root, plugin::CodingTools};
-use tau_ui_plugin::{Services, TurnCommit, TurnHooks};
+use tau_ui_plugin::{REPO_RECORD, RepoRecord, Services, TurnCommit, TurnHooks};
 use tau_vcs::{
     ChangeKind,
     DEFAULT_WORKSPACE,
@@ -290,9 +290,6 @@ impl RepoList {
     }
 }
 
-/// The plugin name under which a run records its repository.
-pub const REPO_PLUGIN: &str = "repo";
-
 /// A repository's main chat's title.
 pub const MAIN_TITLE: &str = "main";
 
@@ -338,7 +335,7 @@ struct RepoTag(String);
 #[async_trait]
 impl Plugin for RepoTag {
     fn name(&self) -> &str {
-        REPO_PLUGIN
+        REPO_RECORD
     }
 
     async fn start(
@@ -368,20 +365,20 @@ impl PluginRun for TagOnce {
         if self.done || run != &ctx.run {
             return;
         }
-        let body = serde_json::json!({ "repo": self.repo });
-        self.done = ctx.record(&body).await.is_ok();
+        let record = RepoRecord {
+            repo: self.repo.clone(),
+        };
+        self.done = ctx.record(&record).await.is_ok();
     }
 }
 
 /// The repository a stored run recorded, if it did.
 async fn stored_repo(store: &Store, run: &str) -> Option<String> {
-    let entries = store.plugin_entries(run, REPO_PLUGIN).await.ok()?;
+    let entries = store.plugin_entries(run, REPO_RECORD).await.ok()?;
     entries.iter().find_map(|(_, body)| {
-        serde_json::from_str::<serde_json::Value>(body)
-            .ok()?
-            .get("repo")?
-            .as_str()
-            .map(str::to_owned)
+        serde_json::from_str::<RepoRecord>(body)
+            .ok()
+            .map(|record| record.repo)
     })
 }
 
@@ -765,8 +762,10 @@ impl Host {
                 .await?;
             // Tagged with its repository, as a run's first turn would.
             let tag = Entry::Plugin {
-                plugin: REPO_PLUGIN.to_owned(),
-                body: serde_json::json!({ "repo": repo }).to_string(),
+                plugin: REPO_RECORD.to_owned(),
+                body: serde_json::to_string(&RepoRecord {
+                    repo: repo.to_owned(),
+                })?,
             };
             self.store
                 .append_turn(&id, &[tag], TurnUsage::default())

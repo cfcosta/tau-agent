@@ -44,24 +44,3 @@ CREATE TABLE plugin_costs (
   cost_usd      REAL    NOT NULL DEFAULT 0,
   PRIMARY KEY (run_id, plugin)
 ) STRICT;
-
--- A repository's constitution, edited in tau's UI: how its checks behave,
--- and its rules in order. `repo` names the repository's checkout.
-CREATE TABLE constitutions (
-  repo       TEXT    PRIMARY KEY,
-  on_error   TEXT    NOT NULL CHECK (on_error IN ('allow', 'block')),
-  max_holds  INTEGER NOT NULL CHECK (max_holds >= 0),
-  updated_at TEXT    NOT NULL
-) STRICT;
-
-CREATE TABLE constitution_rules (
-  repo     TEXT    NOT NULL REFERENCES constitutions (repo) ON DELETE CASCADE,
-  id       TEXT    NOT NULL,
-  position INTEGER NOT NULL,
-  text     TEXT    NOT NULL,
-  targets  TEXT    NOT NULL CHECK (json_valid(targets)),  -- JSON array: "tool.field" or "final answer"
-  review   REAL    NOT NULL,
-  block    REAL    NOT NULL,
-  PRIMARY KEY (repo, id),
-  UNIQUE (repo, position)
-) STRICT;

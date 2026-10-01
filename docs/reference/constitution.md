@@ -7,9 +7,12 @@ Checks a run's tool calls and final answer against rules, asking Jev
 ## Rules
 
 A constitution is a list of rules and two settings. Each repository's is
-kept in tau's SQLite store (`constitutions` and `constitution_rules`,
-[storage.md](storage.md)) and edited only through tau's UI; there is no
-file.
+kept in the plugin's own SQLite file,
+`<tau's directory>/plugins/tau-constitution/constitution.db`
+(`constitutions` and `constitution_rules`, with the plugin's own
+migrations and sqlx metadata in `crates/plugins/constitution`), and
+edited only through tau's UI. The same file keeps the flagged calls and
+answers a person reviewed (`reviewed`).
 
 - **A rule** has an id (`R1`, `R2`… given when it is added), its text,
   where it applies (`on`), and two violation probabilities: `review`

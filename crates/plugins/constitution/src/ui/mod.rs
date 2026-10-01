@@ -9,9 +9,9 @@ mod run;
 pub mod stats;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use gpui::{AppContext as _, Context, Entity};
@@ -56,6 +56,7 @@ use crate::{
     Record,
     Trial,
     VerdictKind,
+    db::Db,
     rules::Target,
 };
 
@@ -66,12 +67,13 @@ pub struct ConstitutionUi;
 /// The plugin on the host: each repository's rules as runs check them,
 /// and where it keeps what a person looked at.
 pub struct Host {
-    store: tau_store::Store,
+    /// The plugin's own database, opened when first needed.
+    db: OnceLock<Db>,
+    path: PathBuf,
     runtime: tokio::runtime::Handle,
     /// By [`rules_key`]: an edit replaces them here, and every run's
     /// next check reads the new ones.
     constitutions: Mutex<HashMap<String, Live>>,
-    reviewed: PathBuf,
 }
 
 /// What tau-constitution knows across repositories.
@@ -416,8 +418,17 @@ fn rules_key(repo: &RepoCtx) -> String {
 }
 
 impl Host {
-    /// Repository `repo`'s rules as runs check them, read from the store
-    /// the first time.
+    /// The plugin's database, opened the first time.
+    fn db(&self) -> anyhow::Result<&Db> {
+        if let Some(db) = self.db.get() {
+            return Ok(db);
+        }
+        let db = self.runtime.block_on(Db::open(&self.path))?;
+        Ok(self.db.get_or_init(|| db))
+    }
+
+    /// Repository `repo`'s rules as runs check them, read from the
+    /// database the first time.
     fn constitution(&self, repo: &RepoCtx) -> anyhow::Result<Live> {
         let key = rules_key(repo);
         let mut open = self.constitutions.lock().expect("not poisoned");
@@ -426,7 +437,7 @@ impl Host {
         }
         let loaded = self
             .runtime
-            .block_on(Constitution::load(&self.store, &key))?;
+            .block_on(Constitution::load(self.db()?, &key))?;
         let live = Live::new(loaded);
         open.insert(key, live.clone());
         Ok(live)
@@ -454,7 +465,7 @@ impl Host {
         let mut constitution = (*live.get()).clone();
         edit(&mut constitution)?;
         self.runtime
-            .block_on(constitution.save(&self.store, &rules_key(repo)))?;
+            .block_on(constitution.save(self.db()?, &rules_key(repo)))?;
         live.set(constitution);
         Ok(())
     }
@@ -465,7 +476,7 @@ impl Host {
         let repo = Self::repo(cx, repo)?;
         let key = rules_key(repo);
         let fresh = Constitution::default();
-        self.runtime.block_on(fresh.save(&self.store, &key))?;
+        self.runtime.block_on(fresh.save(self.db()?, &key))?;
         let mut open = self.constitutions.lock().expect("not poisoned");
         match open.get(&key) {
             Some(live) => live.set(fresh),
@@ -476,43 +487,37 @@ impl Host {
         Ok(())
     }
 
+    /// What a person reviewed; none when the database cannot be read.
     fn reviewed(&self) -> Vec<(String, String)> {
-        std::fs::read_to_string(&self.reviewed)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+        let reviewed = self
+            .db()
+            .and_then(|db| Ok(self.runtime.block_on(db.reviewed())?));
+        reviewed.unwrap_or_else(|error| {
+            eprintln!("{NAME}: could not read what was reviewed: {error:#}");
+            Vec::new()
+        })
     }
 
     fn set_reviewed(&self, run: String, key: String) -> anyhow::Result<()> {
-        let mut reviewed = self.reviewed();
-        let entry = (run, key);
-        if !reviewed.contains(&entry) {
-            reviewed.push(entry);
-        }
-        std::fs::write(&self.reviewed, serde_json::to_string(&reviewed)?)?;
-        Ok(())
+        Ok(self
+            .runtime
+            .block_on(self.db()?.mark_reviewed(&run, &key))?)
     }
 
     /// What the checks did in each stored run of `repo`, from the
     /// plugin's records, counted as a run's view counts them.
     fn history(&self, repo: &RepoCtx, cx: &HostCx) -> Vec<(String, Stats)> {
-        let (Ok(records), Ok(repos)) = (
-            cx.records_everywhere(NAME),
-            cx.records_everywhere(REPO_RECORD),
-        ) else {
+        let (Ok(records), Ok(ours)) =
+            (cx.records_everywhere(NAME), cx.runs_in(repo))
+        else {
             return Vec::new();
         };
-        let ours: BTreeSet<String> = repos
-            .into_iter()
-            .filter(|(_, body)| body["repo"] == repo.name.as_str())
-            .map(|(run, _)| run.0.to_string())
-            .collect();
         let mut history: Vec<(String, Stats)> = Vec::new();
         for (run, body) in records {
-            let run = run.0.to_string();
             if !ours.contains(&run) {
                 continue;
             }
+            let run = run.0.to_string();
             // Records come by run, so a run's are together.
             if history.last().is_none_or(|(last, _)| *last != run) {
                 history.push((run, Stats::default()));
@@ -526,10 +531,6 @@ impl Host {
         history
     }
 }
-
-/// The plugin name under which the host records the repository a run
-/// works in.
-const REPO_RECORD: &str = "repo";
 
 impl UiPlugin for ConstitutionUi {
     type State = State;
@@ -750,10 +751,10 @@ impl UiPlugin for ConstitutionUi {
 impl PluginHost for Host {
     fn new(cx: &HostCx) -> anyhow::Result<Self> {
         Ok(Host {
-            store: cx.store.clone(),
+            db: OnceLock::new(),
+            path: cx.plugin_dir(NAME).join("constitution.db"),
             runtime: cx.runtime.clone(),
             constitutions: Mutex::default(),
-            reviewed: cx.dir.join("constitution-reviewed.json"),
         })
     }
 }

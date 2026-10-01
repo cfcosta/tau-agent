@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO reviewed (run, key) VALUES (?1, ?2)\n             ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "12a4feabdb1f822e5bf39b8acd624de2bc35a13b750d8378fce21daea10b3cb8"
+}

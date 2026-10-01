@@ -14,7 +14,8 @@
 //!   on the final answer.
 
 use serde_json::{Map, Value};
-use tau_store::{Store, StoreError, StoredConstitution, StoredRule};
+
+use crate::db::{Db, DbError, StoredConstitution, StoredRule};
 
 /// A rule, or part of one, that does not check out. The UI shows the
 /// message as it is.
@@ -53,7 +54,7 @@ pub enum RuleError {
 #[derive(Debug, thiserror::Error)]
 pub enum ConstitutionError {
     #[error(transparent)]
-    Store(#[from] StoreError),
+    Db(#[from] DbError),
     #[error("The constitution stored for {repo} is not valid: {rule}")]
     Invalid {
         repo: String,
@@ -160,7 +161,7 @@ pub const DEFAULT_REVIEW: f64 = 0.5;
 pub const DEFAULT_BLOCK: f64 = 0.8;
 
 impl Constitution {
-    /// A constitution read back from the store, every rule checked.
+    /// A constitution read back from the database, every rule checked.
     pub fn from_stored(stored: StoredConstitution) -> Result<Self, RuleError> {
         let mut rules: Vec<Rule> = Vec::with_capacity(stored.rules.len());
         for rule in stored.rules {
@@ -183,7 +184,7 @@ impl Constitution {
         })
     }
 
-    /// The constitution as the store keeps it.
+    /// The constitution as the database keeps it.
     pub fn to_stored(&self) -> StoredConstitution {
         StoredConstitution {
             on_error: self.on_error.as_str().to_owned(),
@@ -203,11 +204,8 @@ impl Constitution {
     }
 
     /// Repository `repo`'s constitution; none saved is no rules.
-    pub async fn load(
-        store: &Store,
-        repo: &str,
-    ) -> Result<Self, ConstitutionError> {
-        match store.constitution(repo).await? {
+    pub async fn load(db: &Db, repo: &str) -> Result<Self, ConstitutionError> {
+        match db.constitution(repo).await? {
             Some(stored) => Self::from_stored(stored).map_err(|rule| {
                 ConstitutionError::Invalid {
                     repo: repo.to_owned(),
@@ -222,10 +220,10 @@ impl Constitution {
     /// before it.
     pub async fn save(
         &self,
-        store: &Store,
+        db: &Db,
         repo: &str,
     ) -> Result<(), ConstitutionError> {
-        Ok(store.save_constitution(repo, &self.to_stored()).await?)
+        Ok(db.save_constitution(repo, &self.to_stored()).await?)
     }
 
     /// Adds a rule, checked, under the next free id (`R1`, `R2`…).

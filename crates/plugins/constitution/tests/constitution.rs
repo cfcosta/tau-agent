@@ -36,9 +36,10 @@ use tau_constitution::{
     Target,
     Verdict,
     VerdictKind,
+    db::{Db, StoredConstitution, StoredRule},
 };
 use tau_jev::{JevError, fake::FakeJev};
-use tau_store::{Store, StoredConstitution, StoredRule};
+use tau_store::Store;
 use tau_testing::{block_on, scripted::ScriptedModel};
 
 fn rule(id: &str, text: &str, on: &str, review: f64, block: f64) -> StoredRule {
@@ -552,23 +553,44 @@ fn constitution_unprinted(tc: &TestCase) -> Constitution {
 /// What is saved for a repository comes back as saved, and none saved is
 /// no rules.
 #[hegel::test(test_cases = 100)]
-fn a_constitution_comes_back_from_the_store_as_saved(tc: TestCase) {
+fn a_constitution_comes_back_from_the_database_as_saved(tc: TestCase) {
     let constitution = tc.draw(constitution());
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let db = Db::memory().await.unwrap();
         assert_eq!(
-            Constitution::load(&store, "/repo").await.unwrap(),
+            Constitution::load(&db, "/repo").await.unwrap(),
             Constitution::default()
         );
-        constitution.save(&store, "/repo").await.unwrap();
+        constitution.save(&db, "/repo").await.unwrap();
         assert_eq!(
-            Constitution::load(&store, "/repo").await.unwrap(),
+            Constitution::load(&db, "/repo").await.unwrap(),
             constitution
         );
         assert_eq!(
-            Constitution::load(&store, "/other").await.unwrap(),
+            Constitution::load(&db, "/other").await.unwrap(),
             Constitution::default()
         );
+    });
+}
+
+/// What a person reviewed is kept once each, in the order it was marked.
+#[hegel::test(test_cases = 50)]
+fn reviews_are_kept_once_in_order(tc: TestCase) {
+    let marks: Vec<(u8, u8)> = tc.draw(gs::vecs(hegel::tuples!(
+        gs::integers::<u8>().max_value(2),
+        gs::integers::<u8>().max_value(2),
+    )));
+    block_on(async {
+        let db = Db::memory().await.unwrap();
+        let mut expected: Vec<(String, String)> = Vec::new();
+        for (run, key) in &marks {
+            let (run, key) = (format!("run-{run}"), format!("c{key}"));
+            db.mark_reviewed(&run, &key).await.unwrap();
+            if !expected.contains(&(run.clone(), key.clone())) {
+                expected.push((run, key));
+            }
+        }
+        assert_eq!(db.reviewed().await.unwrap(), expected);
     });
 }
 

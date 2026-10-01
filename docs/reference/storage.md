@@ -17,9 +17,10 @@ and `openai-key` are no longer read, and tau does not delete them
 
 ## Model
 
-Runs are two tables, `runs` and `messages`. Two more hold each
-repository's constitution, edited in tau's UI:
-`constitutions` and `constitution_rules`.
+Runs are two tables, `runs` and `messages`. A plugin that keeps more
+than its records keeps it in a SQLite file of its own, under
+`HostCx::plugin_dir`, never here: tau-constitution's rules are in its
+own `constitution.db` ([constitution.md](constitution.md)).
 
 - **A run** is a flat list of messages.
 - **A fork** is a run whose `parent_run_id` points at another run. It
@@ -94,33 +95,6 @@ CREATE TABLE plugin_costs (
 - `Store::plugin_costs` reads one run's breakdown;
   `Store::plugin_spend` sums each plugin's cost over the runs started
   since a time, for the Plugins screen.
-
-```sql
-CREATE TABLE constitutions (
-  repo       TEXT    PRIMARY KEY,
-  on_error   TEXT    NOT NULL CHECK (on_error IN ('allow', 'block')),
-  max_holds  INTEGER NOT NULL CHECK (max_holds >= 0),
-  updated_at TEXT    NOT NULL
-) STRICT;
-
-CREATE TABLE constitution_rules (
-  repo     TEXT    NOT NULL REFERENCES constitutions (repo) ON DELETE CASCADE,
-  id       TEXT    NOT NULL,
-  position INTEGER NOT NULL,
-  text     TEXT    NOT NULL,
-  targets  TEXT    NOT NULL CHECK (json_valid(targets)),
-  review   REAL    NOT NULL,
-  block    REAL    NOT NULL,
-  PRIMARY KEY (repo, id),
-  UNIQUE (repo, position)
-) STRICT;
-```
-
-- `repo` names the repository's checkout.
-- `Store::save_constitution` replaces a repository's constitution whole,
-  in one transaction. `Store::constitution` reads it back, with the rules
-  in order.
-- `tau-constitution` checks the rules when it reads them.
 
 ## Connections
 
@@ -223,6 +197,18 @@ export DATABASE_URL=sqlite://target/tau-store-dev.db
 cargo sqlx database setup                    # create the database and run migrations/
 cargo sqlx prepare -- -p tau-store           # after changing SQL or migrations; commit .sqlx/
 cargo sqlx prepare --check -- -p tau-store   # CI
+```
+
+A plugin with its own database, such as tau-constitution, keeps its
+migrations and `.sqlx/` in its crate, with a dated migration version so
+it never clashes with tau-store's. Its metadata is prepared against a
+database with both schemas, since its build compiles tau-store's
+queries too:
+
+```sh
+sqlx database setup --source crates/tau-store/migrations
+sqlx migrate run --ignore-missing --source crates/plugins/constitution/migrations
+(cd crates/plugins/constitution && cargo sqlx prepare)
 ```
 
 - **Commit `.sqlx/`.** Crates that depend on `tau-store` don't set

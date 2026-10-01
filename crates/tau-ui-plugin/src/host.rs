@@ -173,6 +173,16 @@ pub enum Push {
     },
 }
 
+/// The plugin name under which the host records the repository each
+/// run works in, as the run starts ([`RepoRecord`]).
+pub const REPO_RECORD: &str = "repo";
+
+/// What the host records under [`REPO_RECORD`]: the repository's name.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RepoRecord {
+    pub repo: String,
+}
+
 /// The host's services, the only part of the host a plugin reaches.
 #[derive(Clone)]
 pub struct HostCx {
@@ -188,6 +198,12 @@ pub struct HostCx {
 }
 
 impl HostCx {
+    /// Where the plugin `plugin` keeps its own files, such as its
+    /// database: a directory of its own under tau's.
+    pub fn plugin_dir(&self, plugin: &str) -> PathBuf {
+        self.dir.join("plugins").join(plugin)
+    }
+
     pub fn new(
         store: Store,
         runtime: tokio::runtime::Handle,
@@ -222,6 +238,22 @@ impl HostCx {
         Ok(bodies
             .iter()
             .filter_map(|body| serde_json::from_str(body).ok())
+            .collect())
+    }
+
+    /// Every stored run that works in `repo`.
+    pub fn runs_in(
+        &self,
+        repo: &RepoCtx,
+    ) -> anyhow::Result<std::collections::BTreeSet<RunId>> {
+        Ok(self
+            .records_everywhere(REPO_RECORD)?
+            .into_iter()
+            .filter(|(_, body)| {
+                serde_json::from_value::<RepoRecord>(body.clone())
+                    .is_ok_and(|record| record.repo == repo.name)
+            })
+            .map(|(run, _)| run)
             .collect())
     }
 

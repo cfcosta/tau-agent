@@ -63,6 +63,16 @@ fn host_on(
 
 /// [`host_on`] over a store in the file `db`, which a test can open
 /// again to look into.
+/// tau-constitution's own database, under the test hosts' directory.
+fn rules_db() -> std::path::PathBuf {
+    fresh_repo_list()
+        .parent()
+        .unwrap()
+        .join("plugins")
+        .join(tau_constitution::NAME)
+        .join("constitution.db")
+}
+
 fn host_with_store(
     llm: ScriptedModel,
     root: &Path,
@@ -1369,23 +1379,26 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
         .unwrap()
         .display()
         .to_string();
-    let store = || {
+    let rules_db = rules_db();
+    let open = || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        let store = runtime.block_on(Store::open(&db)).unwrap();
-        (runtime, store)
+        let db = runtime
+            .block_on(tau_constitution::db::Db::open(&rules_db))
+            .unwrap();
+        (runtime, db)
     };
     // Flagged past where it blocks: it does not check.
-    let (runtime, written) = store();
+    let (runtime, written) = open();
     runtime
         .block_on(written.save_constitution(
             &key,
-            &tau_store::StoredConstitution {
+            &tau_constitution::db::StoredConstitution {
                 on_error: "allow".into(),
                 max_holds: 3,
-                rules: vec![tau_store::StoredRule {
+                rules: vec![tau_constitution::db::StoredRule {
                     id: "R1".into(),
                     text: "Name the tests.".into(),
                     targets: vec!["final answer".into()],
@@ -1432,7 +1445,7 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
     let saved = constitution();
     assert!(saved.blocks_unchecked);
     assert_eq!(saved.max_holds, 5);
-    let (runtime, read) = store();
+    let (runtime, read) = open();
     let stored = runtime
         .block_on(tau_constitution::Constitution::load(&read, &key))
         .unwrap();
@@ -1465,8 +1478,9 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             .build()
             .unwrap()
             .block_on(async {
-                let store = Store::open(&db).await.unwrap();
-                tau_constitution::Constitution::load(&store, &key).await
+                let db =
+                    tau_constitution::db::Db::open(rules_db()).await.unwrap();
+                tau_constitution::Constitution::load(&db, &key).await
             })
             .unwrap()
     };
