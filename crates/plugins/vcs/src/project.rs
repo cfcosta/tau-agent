@@ -1031,15 +1031,27 @@ fn is_dir(entry: &std::fs::DirEntry) -> std::io::Result<bool> {
     }
 }
 
-/// Hard-links `entry` to `target`, or copies it when linking fails.
+/// Hard-links `entry`, an object file, to `target`, or copies it when
+/// linking fails. A `target` that exists already is kept: jj may have
+/// written the same object meanwhile, and an object's name is its
+/// content's hash.
 fn link_or_copy(
     entry: &std::fs::DirEntry,
     target: &Path,
 ) -> std::io::Result<()> {
-    if skipped(entry) || std::fs::hard_link(entry.path(), target).is_ok() {
+    if skipped(entry) {
         return Ok(());
     }
-    copy(entry, target)
+    match std::fs::hard_link(entry.path(), target) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Ok(())
+        }
+        Err(_) => match copy(entry, target) {
+            Err(_) if target.exists() => Ok(()),
+            copied => copied,
+        },
+    }
 }
 
 /// Copies `entry` to `target`. Git may be working in the store as it is
@@ -1082,6 +1094,30 @@ mod tests {
         let again = dir.path().join("again");
         add_missing(&from, &again).unwrap();
         assert!(!again.join("maintenance.lock").exists());
+    }
+
+    /// An update links in the objects its copy lacks while jj may write
+    /// objects into the same store: a chat's commit can write a file
+    /// upstream has too. An object that appears between the check and
+    /// the link is the same object, since its name is its content's
+    /// hash, and is kept.
+    #[test]
+    fn an_object_written_meanwhile_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::write(from.join("cdef"), "object").unwrap();
+        let into = dir.path().join("into");
+        std::fs::create_dir_all(&into).unwrap();
+        let target = into.join("cdef");
+        std::fs::write(&target, "object").unwrap();
+        // Object files are read-only, as git and jj write them.
+        let mut mode = std::fs::metadata(&target).unwrap().permissions();
+        mode.set_readonly(true);
+        std::fs::set_permissions(&target, mode).unwrap();
+        let entry = std::fs::read_dir(&from).unwrap().next().unwrap().unwrap();
+        link_or_copy(&entry, &target).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "object");
     }
 
     #[test]
