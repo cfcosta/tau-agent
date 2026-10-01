@@ -471,7 +471,13 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         // The next run follows coder's new default until one is picked.
         assert_eq!(ws.next_model().model, "gpt-6-luna");
         ws.toggle_model_hidden("gpt-6-astra", cx);
+        // tau-reasoning's settings, from the Models screen.
+        ws.navigate(Route::Models, cx);
+        ws.toggle_redecide(cx);
+        ws.set_reasoning_threshold(0.9, cx);
     });
+    // Drawn with them.
+    cx.run_until_parked();
     let saved: Vec<ModelSettings> = events
         .borrow()
         .iter()
@@ -482,10 +488,12 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
             _ => None,
         })
         .collect();
-    assert_eq!(saved.len(), 2);
+    assert_eq!(saved.len(), 4);
     let last = saved.last().unwrap();
     assert_eq!(last.default_for("coder").model, "gpt-6-luna");
     assert!(last.is_hidden("gpt-6-astra"));
+    assert!(last.reasoning.redecide);
+    assert_eq!(last.reasoning.threshold, 0.9);
 }
 
 #[gpui::test]

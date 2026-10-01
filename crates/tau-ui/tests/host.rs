@@ -92,7 +92,8 @@ fn host_over(
         // Tau's directory for repositories, where memory lives too: the
         // test's own.
         repos: fresh_repo_list().with_extension("repos"),
-        settings: std::env::temp_dir().join("unused-models.json"),
+        // The test's own: a test that saves settings leaves others be.
+        settings: fresh_repo_list().with_extension("models"),
         repo_list: fresh_repo_list(),
     };
     let (host, events) = Host::with_agent(runtime, agent, store, config);
@@ -1650,6 +1651,63 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
     let run = host.start("rename a variable", &low, REPO).unwrap();
     until_end(&mut events);
     wait_until_done(&host, &run.id);
+}
+
+/// The Models screen's reasoning settings reach tau-reasoning: asked to
+/// decide again between steps, it asks Jev how long the effort holds;
+/// asked for more confidence than Jev has, it keeps the default.
+#[test]
+fn reasoning_settings_reach_the_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new().turn(|t| t.text("done"));
+    let (host, mut events) = host_on(llm.clone(), dir.path());
+    // 0.84 sure of high, and sure the effort holds for one call.
+    let jev = tau_jev::fake::FakeJev::new(|request| {
+        let answers = request
+            .questions
+            .keys()
+            .map(|id| {
+                let answer = if id == "lease" {
+                    tau_jev::Answer::Choice {
+                        choice: "one_call".into(),
+                        probabilities: [("one_call".to_owned(), 0.9)].into(),
+                        confidence: 0.9,
+                    }
+                } else {
+                    tau_jev::Answer::Score {
+                        score: 3.0,
+                        probabilities: [0.01, 0.02, 0.09, 0.84, 0.04]
+                            .iter()
+                            .enumerate()
+                            .map(|(n, p)| (n.to_string(), *p))
+                            .collect(),
+                        confidence: 0.84,
+                    }
+                };
+                (id.clone(), answer)
+            })
+            .collect();
+        Ok(tau_jev::fake::response(answers, request))
+    });
+    let host = host.with_jev(std::sync::Arc::new(jev.clone()));
+    let mut settings = tau_ui::models::ModelSettings::default();
+    settings.reasoning.redecide = true;
+    settings.reasoning.threshold = 0.9;
+    host.save_settings(settings).unwrap();
+    let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
+    let view = host.start("track down the race", &auto, REPO).unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &view.id);
+    let asked = jev.requests();
+    assert!(
+        asked[0].questions.contains_key("lease"),
+        "deciding again asks how long the effort holds"
+    );
+    assert_eq!(
+        llm.requests()[0].settings.reasoning,
+        None,
+        "0.84 is short of 0.9: the model's default"
+    );
 }
 
 #[test]

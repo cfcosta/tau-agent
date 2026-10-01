@@ -82,6 +82,7 @@ use crate::{
         ModelChoice,
         ModelSettings,
         Models,
+        ReasoningSettings,
         plan_models,
     },
     pull_request::{PrCommit, PrState, PullRequest},
@@ -307,6 +308,7 @@ fn for_model(
     base: Agent,
     choice: &ModelChoice,
     jev: Option<Arc<dyn tau_jev::Jev>>,
+    reasoning: ReasoningSettings,
     archive_dir: &Path,
     repo: &str,
 ) -> Agent {
@@ -315,7 +317,11 @@ fn for_model(
     if choice.effort == Effort::Auto
         && let Some(jev) = &jev
     {
-        agent = agent.plugin(tau_reasoning::Reasoning::new(jev.clone()));
+        agent = agent.plugin(
+            tau_reasoning::Reasoning::new(jev.clone())
+                .redecide(reasoning.redecide)
+                .threshold(reasoning.threshold),
+        );
     }
     if let Some(effort) = choice.effort.reasoning() {
         agent = agent.reasoning(effort);
@@ -1341,6 +1347,8 @@ impl Host {
         let for_model = {
             let base = self.base.lock().expect("not poisoned").clone();
             let jev = jev.clone();
+            let reasoning =
+                self.settings.lock().expect("not poisoned").reasoning;
             let archive_dir = self.archive_dir(repo);
             let repo = repo.name.clone();
             move |choice: &ModelChoice| {
@@ -1348,6 +1356,7 @@ impl Host {
                     base.clone(),
                     choice,
                     jev.clone(),
+                    reasoning,
                     &archive_dir,
                     &repo,
                 )

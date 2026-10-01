@@ -186,6 +186,25 @@ impl Workspace {
         self.save_model_settings(cx);
     }
 
+    /// Turns tau-reasoning's deciding again between steps on or off, and
+    /// saves it; runs started from now on take it.
+    pub fn toggle_redecide(&mut self, cx: &mut Context<Self>) {
+        let reasoning = &mut self.catalog.models.settings.reasoning;
+        reasoning.redecide = !reasoning.redecide;
+        self.save_model_settings(cx);
+    }
+
+    /// Sets how sure Jev must be for tau-reasoning to change the effort,
+    /// and saves it.
+    pub fn set_reasoning_threshold(
+        &mut self,
+        threshold: f64,
+        cx: &mut Context<Self>,
+    ) {
+        self.catalog.models.settings.reasoning.threshold = threshold;
+        self.save_model_settings(cx);
+    }
+
     fn save_model_settings(&mut self, cx: &mut Context<Self>) {
         cx.emit(WorkspaceEvent::SaveModelSettings(
             self.catalog.models.settings.clone(),

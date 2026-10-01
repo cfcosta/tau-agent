@@ -352,7 +352,10 @@ Token estimates and overflow detection, which the loop uses for
 Built: `crates/plugins/reasoning`. Runs whose effort is "auto" get
 it in tau-ui when a TypeSafe key is saved; its choice (every level's
 probability, the confidence and the threshold) is reported and
-recorded, and shows as the run's reasoning note and plan.
+recorded, and shows as the run's reasoning note and plan. The Models
+screen's "Reasoning on auto" sets `redecide` ("Decide again between
+steps") and the threshold (0.5 to 0.9, 0.7 by default) for runs started
+after; they are saved with the model settings.
 
 - **Seams:** `start`, and `before_request` when `Reasoning::redecide`
   is on. `finish` leaves the next message its context.
