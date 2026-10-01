@@ -18,6 +18,8 @@
 //!    later one that does lands its conflicts for the caller to
 //!    resolve. The caller links them at the end of its turn, and the
 //!    sub-agent closes: its workspace and bookmark go.
+//!    One stopped by a limit lands too: its work was committed at its
+//!    end, and the caller is told a limit cut it short.
 //! 5. When it fails, or the caller is cancelled, its changes are
 //!    dropped and it closes the same way.
 
@@ -26,8 +28,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tau_agent::{
-    agent::Agent,
+    agent::{Agent, SubAgentError},
     error::ToolError,
+    event::{LimitKind, StopReason},
     tool::{AgentTool, ExecutionMode, ToolCtx, ToolOutput},
 };
 use tau_ai::responses::request::ReasoningEffort;
@@ -144,21 +147,59 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(move || work(&project)).await?
 }
 
+/// The text of a tool output.
+fn text_of(output: &ToolOutput) -> String {
+    output
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            tau_ai::message::InputBlock::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A limit, as the result's details name it.
+fn limit_name(limit: LimitKind) -> &'static str {
+    match limit {
+        LimitKind::Turns => "turns",
+        LimitKind::Tokens => "tokens",
+        LimitKind::Usd => "cost",
+        LimitKind::Time => "time",
+    }
+}
+
 /// What the caller reads about a landing, after the sub-agent's answer:
-/// how many changes landed, and the paths this landing left in conflict
-/// (`brought`), not those the caller's head held already.
-fn landing_note(landing: &Landing, brought: &[String]) -> String {
+/// whether a limit cut the sub-agent short, how many changes landed, and
+/// the paths this landing left in conflict (`brought`), not those the
+/// caller's head held already.
+fn landing_note(
+    landing: &Landing,
+    brought: &[String],
+    limit: Option<LimitKind>,
+) -> String {
+    let short = match limit {
+        Some(LimitKind::Turns) => "It stopped at its turn limit. ",
+        Some(LimitKind::Tokens) => "It stopped at its token limit. ",
+        Some(LimitKind::Usd) => "It stopped at its cost limit. ",
+        Some(LimitKind::Time) => "It stopped at its time limit. ",
+        None => "",
+    };
+    format!("[{short}{}]", landed_note(landing, brought))
+}
+
+fn landed_note(landing: &Landing, brought: &[String]) -> String {
     let landed = match landing.changes.len() {
-        0 => return "[It changed no files.]".to_owned(),
+        0 => return "It changed no files.".to_owned(),
         1 => "Its 1 change landed on top of yours".to_owned(),
         n => format!("Its {n} changes landed on top of yours"),
     };
     if brought.is_empty() {
-        return format!("[{landed}.]");
+        return format!("{landed}.");
     }
     format!(
-        "[{landed}, with conflicts in {}: resolve their conflict markers, \
-         then commit.]",
+        "{landed}, with conflicts in {}: resolve their conflict markers, \
+         then commit.",
         brought.join(", ")
     )
 }
@@ -243,6 +284,18 @@ impl AgentTool for Delegate {
             Err(error) => Err(error),
         };
         drop(slot);
+        // Its answer, and the limit that cut it short, if one did. A
+        // sub-agent at a limit committed its work at its end, as any run
+        // does (ADR 0014), so it lands like one that finished.
+        let outcome = match outcome {
+            Ok(output) => Ok((text_of(&output), None)),
+            Err(ToolError::SubAgent(SubAgentError::Stopped {
+                stop: StopReason::Limit(limit),
+                text,
+                ..
+            })) => Ok((text, Some(limit))),
+            Err(error) => Err(error),
+        };
         let child_bookmark = workspace.run().map(|run| bookmark(&run));
 
         // 3. Landings go one at a time, in the order sub-agents finish.
@@ -256,7 +309,7 @@ impl AgentTool for Delegate {
         };
         let output = match outcome {
             // 4. Its changes land on the caller.
-            Ok(output) => {
+            Ok((text, limit)) => {
                 // What the caller's head held in conflict before: the
                 // note names only what this landing brought.
                 let before = self.parent.vcs().working_copy().await?.head;
@@ -298,25 +351,16 @@ impl AgentTool for Delegate {
                             from: from.clone(),
                         }
                     }));
-                let text: String = output
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        tau_ai::message::InputBlock::Text(text) => {
-                            Some(text.text.as_str())
-                        }
-                        _ => None,
-                    })
-                    .collect();
                 Ok(ToolOutput {
                     details: Some(json!({
                         "run": from,
                         "landing": landing,
                         "conflicts": brought,
+                        "limit": limit.map(limit_name),
                     })),
                     ..ToolOutput::text(format!(
                         "{text}\n\n{}",
-                        landing_note(&landing, &brought)
+                        landing_note(&landing, &brought, limit)
                     ))
                 })
             }
@@ -356,9 +400,10 @@ mod tests {
     use super::*;
     use crate::ChangeInfo;
 
-    /// The note says how many changes landed and, when the landing
-    /// brought conflicts, names those paths and no others; a landing with
-    /// nothing in it says so, whatever else it holds.
+    /// The note says which limit cut the sub-agent short, if one did, how
+    /// many changes landed and, when the landing brought conflicts, names
+    /// those paths and no others; a landing with nothing in it says so,
+    /// whatever else it holds.
     #[hegel::test(test_cases = 200)]
     fn the_note_says_what_landed(tc: hegel::TestCase) {
         let changes: usize = tc.draw(gs::integers().max_value(5));
@@ -368,6 +413,15 @@ mod tests {
                 .unique(true),
         );
         let brought: Vec<String> = tc.draw(gs::subsequences(conflicts.clone()));
+        let limits = [
+            None,
+            Some((LimitKind::Turns, "turn")),
+            Some((LimitKind::Tokens, "token")),
+            Some((LimitKind::Usd, "cost")),
+            Some((LimitKind::Time, "time")),
+        ];
+        let limit: usize = tc.draw(gs::integers().max_value(limits.len() - 1));
+        let limit = limits[limit];
         let change = |n: usize| ChangeInfo {
             change_id: format!("k{n}"),
             commit_id: format!("c{n}"),
@@ -384,7 +438,16 @@ mod tests {
             conflicts: conflicts.clone(),
             head: "h".into(),
         };
-        let note = landing_note(&landing, &brought);
+        let note = landing_note(&landing, &brought, limit.map(|(l, _)| l));
+        // A limit that cut it short comes first.
+        let note = match limit {
+            Some((_, name)) => {
+                let short = format!("[It stopped at its {name} limit. ");
+                assert!(note.starts_with(&short), "{note}");
+                format!("[{}", &note[short.len()..])
+            }
+            None => note,
+        };
         if changes == 0 {
             assert_eq!(note, "[It changed no files.]");
             return;

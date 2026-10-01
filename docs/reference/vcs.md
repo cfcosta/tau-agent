@@ -463,11 +463,15 @@ digits>`, so that no process reuses one an earlier one left, starts
    lands its conflicts, and its result names the files this landing
    left in conflict, not those the caller's head held already, for the
    caller to resolve. The tool's text is the sub-agent's answer and a
-   line on what landed; its details hold `run`, the `landing`, and the
-   `conflicts` it brought.
-5. When it fails, or the caller is cancelled before it lands, its
+   line on what landed; its details hold `run`, the `landing`, the
+   `conflicts` it brought, and the `limit` that cut it short, if any.
+5. A sub-agent stopped by a limit committed what it left at its end, as
+   any run at a limit does, and lands like one that finished: its text
+   is its last message, and the line on what landed starts by saying
+   which limit stopped it (`It stopped at its turn limit.`).
+6. When it fails, or the caller is cancelled before it lands, its
    changes are abandoned and the caller gets the error.
-6. Either way the sub-agent closes: its workspace is forgotten and its
+7. Either way the sub-agent closes: its workspace is forgotten and its
    bookmark removed.
 
 The caller's links record what came to its stack during the turn: each

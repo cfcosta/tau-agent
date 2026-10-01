@@ -3,7 +3,7 @@
 //! `Delegate` commits drawn work, or leaves it uncommitted, and calls a
 //! batch of drawn sub-agents, more than [`MAX_RUNNING`] at times. Each
 //! sub-agent writes files over one or two turns, commits some of it or
-//! none, and then answers or fails. A gate holds each one before its
+//! none, and then answers, fails, or is stopped by its turn limit. A gate holds each one before its
 //! answer and lets them finish one at a time, in a drawn order among the
 //! ones running, each once the one before has closed.
 //!
@@ -38,6 +38,7 @@ use serde_json::{Value, json};
 use tau_agent::{
     agent::{Agent, RunControl},
     event::StopReason,
+    limits::Limits,
     tool::{AgentTool, ToolCtx, ToolError, ToolOutput},
 };
 use tau_ai::message::{InputBlock, Message, UserContent};
@@ -260,11 +261,13 @@ fn walk(home: &Path, head: &str, stop: &str) -> Vec<Walked> {
 }
 
 /// A sub-agent's script: its turns of writes, each committed or not,
-/// and whether it fails instead of answering.
+/// and whether it fails, or is stopped by its turn limit at its gate,
+/// instead of answering.
 #[derive(Debug, Clone)]
 struct Sub {
     steps: Vec<(Vec<(&'static str, &'static str)>, bool)>,
     fails: bool,
+    limit: bool,
 }
 hegel::pretty_print_as_debug!(Sub);
 
@@ -285,12 +288,16 @@ fn sub(tc: &TestCase) -> Sub {
             .min_size(1)
             .max_size(2),
     );
-    let fails = tc.draw(gs::weighted_booleans(0.2));
-    Sub { steps, fails }
+    let end: u8 = tc.draw(gs::integers().max_value(9));
+    Sub {
+        steps,
+        fails: end < 2,
+        limit: (2..4).contains(&end),
+    }
 }
 
 /// What a sub-agent's run leaves: its commits' trees, oldest first, and
-/// whether it was held once to commit.
+/// whether it left work to commit at its end.
 fn sub_commits(sub: &Sub, base: &Tree) -> (Vec<(String, Tree)>, bool) {
     let mut commits = Vec::new();
     let mut wc = base.clone();
@@ -334,9 +341,20 @@ fn sub_script(index: usize, sub: &Sub, dirty: bool) -> ScriptedModel {
             t
         });
     }
-    let llm = llm.turn(move |t| t.tool_call("gate", json!({ "id": index })));
+    let llm = llm.turn(move |t| {
+        t.text(format!("at the gate {index}"))
+            .tool_call("gate", json!({ "id": index }))
+    });
     if sub.fails {
         return llm.turn(|t| t.dropped());
+    }
+    // A run at its limit is not held: what it left is committed at once.
+    if sub.limit {
+        return if dirty {
+            llm.turn(|t| t.text("feat: leftover"))
+        } else {
+            llm
+        };
     }
     let llm = llm.turn(move |t| t.text(format!("answer {index}")));
     if dirty {
@@ -465,18 +483,27 @@ fn text_of(content: &[InputBlock]) -> String {
         .collect()
 }
 
-fn note(changes: usize, conflicts: &[String]) -> String {
+fn note(limit: bool, changes: usize, conflicts: &[String]) -> String {
+    let short = if limit {
+        "It stopped at its turn limit. "
+    } else {
+        ""
+    };
+    format!("[{short}{}]", landed(changes, conflicts))
+}
+
+fn landed(changes: usize, conflicts: &[String]) -> String {
     let landed = match changes {
-        0 => return "[It changed no files.]".to_owned(),
+        0 => return "It changed no files.".to_owned(),
         1 => "Its 1 change landed on top of yours".to_owned(),
         n => format!("Its {n} changes landed on top of yours"),
     };
     if conflicts.is_empty() {
-        return format!("[{landed}.]");
+        return format!("{landed}.");
     }
     format!(
-        "[{landed}, with conflicts in {}: resolve their conflict markers, \
-         then commit.]",
+        "{landed}, with conflicts in {}: resolve their conflict markers, \
+         then commit.",
         conflicts.join(", ")
     )
 }
@@ -603,6 +630,7 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
             Arc::default();
         let models: Vec<String> = (0..calls).map(|i| format!("m{i}")).collect();
         let delegate = {
+            let subs = subs.clone();
             let scripts = scripts.clone();
             let gates = gates.clone();
             let names = names.clone();
@@ -617,7 +645,15 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                         .unwrap();
                     names.lock().unwrap().insert(i, workspace.name().to_owned());
                     workspaces.lock().unwrap().insert(i, workspace.clone());
-                    Ok(coder(scripts[i].clone(), &workspace).tool(gates.clone()))
+                    let agent = coder(scripts[i].clone(), &workspace).tool(gates.clone());
+                    if !subs[i].limit {
+                        return Ok(agent);
+                    }
+                    // Stopped at the gate's turn.
+                    Ok(agent.limits(Limits {
+                        max_turns: Some(subs[i].steps.len() as u32 + 1),
+                        ..Limits::default()
+                    }))
                 },
             )
         };
@@ -751,18 +787,23 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                 if landed.len() < all.len() {
                     tc.event("a landing on a head already in conflict");
                 }
-                let answer = if *held {
+                let limit = subs[i].limit;
+                let answer = if limit {
+                    tc.event("a sub-agent stops at its limit");
+                    format!("at the gate {i}")
+                } else if *held {
                     format!("still answer {i}")
                 } else {
                     format!("answer {i}")
                 };
                 assert_eq!(
                     *text,
-                    format!("{answer}\n\n{}", note(commits.len(), &landed)),
+                    format!("{answer}\n\n{}", note(limit, commits.len(), &landed)),
                     "sub-agent {i}'s result"
                 );
                 assert_eq!(details["run"], json!(run));
                 assert_eq!(details["conflicts"], json!(landed));
+                assert_eq!(details["limit"], json!(limit.then_some("turns")));
                 let landing = &details["landing"];
                 assert_eq!(landing["changes"].as_array().unwrap().len(), commits.len());
                 // Its landed changes, oldest first, as the caller links them.

@@ -635,26 +635,9 @@ fn a_call_can_pick_its_model_and_effort() {
 }
 
 /// A sub-agent stopped by a limit has its work committed at its end, as
-/// any run at a limit does, and then dropped by `delegate`, which counts
-/// the limit as a failure.
-///
-/// `RunWorkspace::finish` commits what a run at a limit left in `@`, so
-/// that no work is lost (ADR 0014). `SubAgent::ask` turns any stop but
-/// `Stop` into an error, and `Delegate::call` abandons the sub-agent's
-/// changes on any error, the commit `finish` just made among them. The
-/// caller gets `delegate ended with Limit(Turns) before finishing` and
-/// none of the work; the operation log alone keeps it.
-///
-/// Fix options:
-/// - land a sub-agent stopped by a limit like one that finished, with a
-///   note that it was cut short, since its work is committed;
-/// - keep dropping it, and say in `docs/reference/vcs.md` ("Delegating to
-///   a sub-agent", step 5) that a limit counts as a failure.
-///
-/// The first matches what `RunWorkspace` does with a run at a limit, and
-/// is the recommendation; it is a decision for the user.
+/// any run at a limit does (ADR 0014), and lands like one that finished;
+/// its result says a limit cut it short.
 #[test]
-#[ignore = "bug: a sub-agent stopped by a limit has its committed work dropped"]
 fn a_sub_agent_at_a_limit_lands_its_work() {
     let home = tempfile::tempdir().unwrap();
     let project = project(home.path());
@@ -684,5 +667,18 @@ fn a_sub_agent_at_a_limit_lands_its_work() {
         assert_eq!(outcome.text, "done");
         let result = format!("{:?}", llm.requests()[1].transcript);
         assert!(parent.dir().join("child.txt").exists(), "{result}");
+        assert!(
+            result.contains(
+                "[It stopped at its turn limit. Its 1 change landed on top \
+                 of yours.]"
+            ),
+            "{result}"
+        );
+        assert!(!result.contains("is_error: true"), "{result}");
+        assert_eq!(project.workspaces().unwrap(), ["parent"]);
+        assert_eq!(
+            project.bookmarks("tau/").unwrap(),
+            [bookmark(&outcome.run)]
+        );
     });
 }
