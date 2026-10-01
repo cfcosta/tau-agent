@@ -27,7 +27,10 @@ use std::{
     time::Duration,
 };
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use serde_json::{Value, json};
 use tau_mcp::{
     auth::{self, Grant, TokenStore, pkce_challenge, valid_verifier},
@@ -191,6 +194,8 @@ struct Books {
     needs_scope: Option<String>,
     mcp_requests: usize,
     next: usize,
+    /// Every code, token and verifier that went by: none may be logged.
+    secrets: Vec<String>,
 }
 
 /// The authorization server and the MCP server, on one port.
@@ -309,6 +314,7 @@ impl Fake {
         assert_eq!(query["code_challenge_method"], "S256");
         self.books(|books| {
             let code = Self::next(books, "code");
+            books.secrets.push(code.clone());
             books.codes.insert(
                 code.clone(),
                 Code {
@@ -389,15 +395,24 @@ impl Fake {
             };
             let access = Self::next(books, "access");
             books.access.insert(access.clone(), scopes.clone());
+            let claims =
+                URL_SAFE_NO_PAD.encode(r#"{"email":"ada@example.com"}"#);
+            let id_token =
+                format!("e30.{claims}.{}", Self::next(books, "idsig"));
+            books.secrets.push(id_token.clone());
+            books.secrets.push(access.clone());
+            books.secrets.extend(form.get("code_verifier").cloned());
             let mut answer = json!({
                 "access_token": access,
                 "token_type": "Bearer",
                 "expires_in": books.expires_in,
                 "scope": scopes.join(" "),
+                "id_token": id_token,
             });
             // A refresh keeps the refresh token it was given.
             if form["grant_type"] == "authorization_code" {
                 let refresh = Self::next(books, "refresh");
+                books.secrets.push(refresh.clone());
                 books.refresh.insert(refresh.clone(), scopes);
                 answer["refresh_token"] = json!(refresh);
             }
@@ -635,6 +650,8 @@ async fn a_401_waits_for_a_sign_in_that_then_connects() {
     assert_eq!(grant.scopes, vec!["read".to_owned()]);
     assert_eq!(grant.issuer.as_deref(), Some(fake.base.as_str()));
     assert!(grant.can_refresh());
+    // Who signed in, from the ID token, for the page.
+    assert_eq!(grant.account.as_deref(), Some("ada@example.com"));
     // Registered once, as a public client with tau's name, for the
     // loopback it listens on.
     let registration = fake.books(|b| b.registrations[0].clone());
@@ -919,4 +936,118 @@ async fn the_host_signs_in_and_out() {
             .unwrap()
             .signed_in
     );
+}
+
+/// What a subscriber was given: each event's and span's target, level
+/// and fields, as text.
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<(String, tracing::Level, String)>>>);
+
+struct Fields(String);
+
+impl tracing::field::Visit for Fields {
+    fn record_debug(
+        &mut self,
+        field: &tracing::field::Field,
+        value: &dyn std::fmt::Debug,
+    ) {
+        self.0.push_str(&format!(" {}={value:?}", field.name()));
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Captured {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut fields = Fields(String::new());
+        event.record(&mut fields);
+        let meta = event.metadata();
+        self.0.lock().unwrap().push((
+            meta.target().to_owned(),
+            *meta.level(),
+            fields.0,
+        ));
+    }
+
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        _: &tracing::span::Id,
+        _: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut fields = Fields(String::new());
+        attrs.record(&mut fields);
+        let meta = attrs.metadata();
+        self.0.lock().unwrap().push((
+            meta.target().to_owned(),
+            *meta.level(),
+            fields.0,
+        ));
+    }
+}
+
+/// A sign-in, a refresh and calls, under a subscriber that takes every
+/// level of every target: rmcp's sign-in debug lines reach it (so it
+/// is listening), yet no code, token, ID token, verifier or secret is
+/// in anything it was given. A layer behind `secrets_filter` gets none
+/// of rmcp's sign-in lines below info.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_subscriber_sees_a_code_or_a_token() {
+    use tracing_subscriber::{Layer as _, layer::SubscriberExt as _};
+    let (all, filtered) = (Captured::default(), Captured::default());
+    let subscriber = tracing_subscriber::registry()
+        .with(all.clone())
+        .with(filtered.clone().with_filter(auth::secrets_filter()));
+    // Global, so the tasks rmcp spawns are seen too. The other tests in
+    // this binary may log into it as well; their lines are checked the
+    // same way.
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
+    let fake = Fake::start().await;
+    fake.books(|b| b.expires_in = 5);
+    let dir = tempfile::tempdir().unwrap();
+    let oauth = OAuthConfig {
+        client_id: Some("pre".into()),
+        client_secret: Some("${SECRET}".into()),
+        ..OAuthConfig::default()
+    };
+    let connection = Connection::new(
+        server(&fake, Some(oauth)),
+        Origin::User,
+        environment(dir.path()),
+    );
+    sign_in(&connection).await;
+    echo(&connection).await.unwrap();
+    fake.revoke_access();
+    echo(&connection).await.unwrap();
+    assert!(fake.books(|b| b.refreshes) >= 1);
+
+    let mut secrets = fake.books(|b| b.secrets.clone());
+    secrets.push("s3cret".into());
+    let all = all.0.lock().unwrap().clone();
+    assert!(
+        all.iter().any(|(target, level, _)| target
+            .starts_with("rmcp::transport::auth")
+            && *level == tracing::Level::DEBUG),
+        "the subscriber hears rmcp's sign-in debug lines"
+    );
+    for (target, level, fields) in &all {
+        for secret in &secrets {
+            assert!(
+                !fields.contains(secret.as_str()),
+                "{target} at {level} logged a secret: {fields}"
+            );
+        }
+    }
+    for (target, level, _) in filtered.0.lock().unwrap().iter() {
+        let secret_target = auth::SECRET_TARGETS
+            .iter()
+            .any(|t| target == t || target.starts_with(&format!("{t}::")));
+        assert!(
+            !(secret_target && *level > tracing::Level::INFO),
+            "{target} at {level} passed the filter"
+        );
+    }
 }

@@ -18,6 +18,7 @@ use rmcp::transport::auth::{
     AuthorizationSession,
     OAuthClientConfig,
 };
+use tracing::{instrument::WithSubscriber as _, subscriber::NoSubscriber};
 use url::Url;
 
 use super::{
@@ -263,12 +264,15 @@ impl SignIn {
             .wait(&self.state)
             .await
             .map_err(|error| error.to_string())?;
+        // rmcp logs the code and the token response at debug level: the
+        // exchange runs with no subscriber, so no host's can see them.
         self.session
             .handle_callback_with_issuer(
                 &callback.code,
                 &self.state,
                 callback.issuer.as_deref(),
             )
+            .with_subscriber(NoSubscriber::default())
             .await
             .map_err(auth)?;
         self.store

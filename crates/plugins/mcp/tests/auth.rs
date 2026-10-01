@@ -349,3 +349,32 @@ fn the_default_callback_is_127_0_0_1(tc: TestCase) {
     assert_eq!(address.port, port.unwrap_or(0));
     assert_eq!(address.redirect_uri(7), "http://127.0.0.1:7/callback");
 }
+
+/// The hosts' filter keeps rmcp's sign-in targets, and their modules,
+/// at info and above, and lets everything else through at any level.
+#[test]
+fn the_secrets_filter_clamps_rmcps_sign_in() {
+    use tracing::Level;
+    use tracing_subscriber::filter::LevelFilter;
+    let filter = tau_mcp::auth::secrets_filter();
+    for target in tau_mcp::auth::SECRET_TARGETS {
+        for level in [Level::TRACE, Level::DEBUG] {
+            assert!(!filter.would_enable(target, &level), "{target} {level}");
+            assert!(!filter.would_enable(&format!("{target}::inner"), &level));
+        }
+        assert!(filter.would_enable(target, &Level::INFO));
+        assert!(filter.would_enable(target, &Level::WARN));
+    }
+    for target in [
+        "tau_mcp::server",
+        "rmcp::service",
+        "rmcp::transport::worker",
+    ] {
+        assert!(filter.would_enable(target, &Level::TRACE), "{target}");
+    }
+    assert_eq!(
+        tau_mcp::auth::LOG_DIRECTIVES.split(',').count(),
+        tau_mcp::auth::SECRET_TARGETS.len()
+    );
+    let _ = LevelFilter::INFO;
+}

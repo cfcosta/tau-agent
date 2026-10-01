@@ -9292,6 +9292,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
  "webpki-roots",
 ]

@@ -165,7 +165,8 @@ The common `mcpServers` shape:
   with the repository as its root.
 - **Server logs** (`notifications/message`) and a stdio server's
   stderr go to `tracing`, target `tau_mcp::server`: tau has no log of
-  its own yet, so the host subscribes to see them.
+  its own yet, so the host subscribes to see them, with
+  `auth::secrets_filter()` ("Signing in", "Logs").
 - **HTTP** uses tau's TLS: reqwest with rustls, `ring` and the webpki
   roots, as Jev does, with no redirects (so headers never reach another
   host).
@@ -329,6 +330,37 @@ client id (`GrantKey`):
 - No token, secret or code is logged or printed: `Grant`, `OAuthConfig`,
   `Callback` and `SignIn` leave them out of `Debug`, and the page shows
   the account, issuer, scopes, expiry and whether it refreshes.
+
+### Logs
+
+rmcp 3.5's sign-in code logs, at debug level, the authorization code
+(`start exchange code for token`) and the whole token response
+(`exchange token result`), whose extra fields may hold an ID token, in
+the targets `rmcp::transport::auth` and `rmcp::transport::common::auth`
+(`auth::SECRET_TARGETS`). Two things keep them out:
+
+- tau runs the code exchange with no subscriber
+  (`WithSubscriber::with_subscriber(NoSubscriber)`), so those lines reach
+  none, global or scoped, whatever its filter.
+- Every host that sets up a subscriber adds `auth::secrets_filter()`, a
+  `tracing_subscriber::filter::Targets` used as a global filter: it lets
+  everything through but those targets below info, which no other
+  filter, nor a user's `RUST_LOG`, can widen. For an `EnvFilter`, the
+  same as directives is `auth::LOG_DIRECTIVES`
+  (`rmcp::transport::auth=info,rmcp::transport::common::auth=info`),
+  added last. tau sets up no subscriber today (not tau-ui, not the
+  examples, not the tests but the one below); one that is added must
+  carry the filter.
+
+```rust
+use tracing_subscriber::layer::SubscriberExt as _;
+let subscriber = tracing_subscriber::registry()
+    .with(tau_mcp::auth::secrets_filter())
+    .with(tracing_subscriber::fmt::layer());
+```
+
+Checked when rmcp moves: its new debug lines in those targets, and any
+other target that prints a code or a token.
 
 ## Tools
 
@@ -627,7 +659,7 @@ or, without a repository, the user's and the settings' alone.
   `SignInRequest`, `TokenStore` (`get`, `put`, `update`, `sign_out`,
   `fingerprint`), `Grant`, `GrantKey`, `Loopback`, `read_callback`,
   `Callback`, `CallbackError`, `pkce_challenge`, `valid_verifier`,
-  `account`. With `client`, the only modules that touch rmcp.
+  `account`, `SECRET_TARGETS`, `LOG_DIRECTIVES`, `secrets_filter`. With `client`, the only modules that touch rmcp.
 - `config`: `McpConfig::parse`/`to_json`, `merge`, `Sources::load`
   (`<user dir>/mcp.json`, the settings, `<repo>/.tau/mcp.json`),
   `Sources::disable`, `Read`, `Settings`, `Disabled`, `Off`,
@@ -781,7 +813,12 @@ From the design above, as first written:
   and the new one; a configured client skips registration, sends its
   expanded secret and uses `authServerMetadataUrl`; the callback ignores
   other states and paths; the host's page shows the sign-in and its
-  actions sign in and out. In gpui's test app, the page draws a server
+  actions sign in and out; under a global subscriber that takes every
+  level of every target, a sign-in, a refresh and calls leave no code,
+  token, ID token, verifier or secret in anything it is given, though
+  rmcp's sign-in debug lines reach it, and a layer behind
+  `secrets_filter` gets none of them below info; and the filter clamps
+  exactly those targets. In gpui's test app, the page draws a server
   waiting and one signed in, its buttons ask the host, and the host's
   answer opens the browser.
 - **The server list, as a property:** at most 4,096 characters,
