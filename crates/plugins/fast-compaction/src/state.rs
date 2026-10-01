@@ -84,15 +84,11 @@ pub fn entries(transcript: &[Message]) -> Vec<Entry> {
                     .collect::<Vec<_>>()
                     .join("\n"),
                 uses: assistant
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        AssistantBlock::ToolCall(call) => Some(ToolUse {
-                            call_id: call.id.clone(),
-                            tool: call.name.clone(),
-                            input: call.arguments.clone(),
-                        }),
-                        _ => None,
+                    .tool_calls()
+                    .map(|call| ToolUse {
+                        call_id: call.id.clone(),
+                        tool: call.name.clone(),
+                        input: call.arguments.clone(),
                     })
                     .collect(),
                 outcomes: Vec::new(),

@@ -28,7 +28,7 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput, TypedTool, typed},
 };
 use tau_ai::{
-    message::{AssistantBlock, InputBlock, Message, UserContent, UserMessage},
+    message::{AssistantBlock, Message, UserContent, UserMessage},
     responses::request::{Settings, ToolDefinition},
 };
 
@@ -463,10 +463,7 @@ async fn distill(
     })];
     let answer = ctx.ask(settings, &input).await?;
     let mut saved = Vec::new();
-    for block in &answer.content {
-        let AssistantBlock::ToolCall(call) = block else {
-            continue;
-        };
+    for call in answer.tool_calls() {
         let Some(tool) = tools.iter().find(|tool| tool.name() == call.name)
         else {
             continue;
@@ -516,7 +513,9 @@ pub fn serialize(transcript: &[Message]) -> String {
             Message::User(user) => {
                 let text = match &user.content {
                     UserContent::Text(text) => text.clone(),
-                    UserContent::Blocks(blocks) => blocks_text(blocks),
+                    UserContent::Blocks(blocks) => {
+                        tau_ai::message::text_of(blocks)
+                    }
                 };
                 out.push_str(&format!("[user]\n{text}\n\n"));
             }
@@ -541,7 +540,7 @@ pub fn serialize(transcript: &[Message]) -> String {
                 }
             }
             Message::ToolResult(result) => {
-                let text = blocks_text(&result.content);
+                let text = tau_ai::message::text_of(&result.content);
                 let cut = match text.char_indices().nth(RESULT_CHARS) {
                     Some((at, _)) => format!("{}… (cut)", &text[..at]),
                     None => text,
@@ -554,17 +553,6 @@ pub fn serialize(transcript: &[Message]) -> String {
         }
     }
     out
-}
-
-fn blocks_text(blocks: &[InputBlock]) -> String {
-    blocks
-        .iter()
-        .filter_map(|block| match block {
-            InputBlock::Text(text) => Some(text.text.as_str()),
-            InputBlock::Image(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// Hits as the model reads them: one line each, with the matching line

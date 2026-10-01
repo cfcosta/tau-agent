@@ -324,27 +324,14 @@ pub fn script_value(
     match result {
         Ok(output) => Ok(match output.structured {
             Some(value) if has_output_schema => value,
-            _ => Value::String(text_of(&output)),
+            _ => Value::String(output.text_content()),
         }),
         Err(ToolError::Output(output)) => match output.structured {
             Some(value) if has_output_schema => Ok(value),
-            _ => Err(text_of(&output)),
+            _ => Err(output.text_content()),
         },
         Err(error) => Err(error.to_string()),
     }
-}
-
-/// The text blocks of `output`, one after another, as a failed call's
-/// error text joins them.
-fn text_of(output: &ToolOutput) -> String {
-    output
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            InputBlock::Text(text) => Some(text.text.as_str()),
-            InputBlock::Image(_) => None,
-        })
-        .collect()
 }
 
 fn text_block(text: String) -> InputBlock {

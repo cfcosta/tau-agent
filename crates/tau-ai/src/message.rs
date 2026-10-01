@@ -49,12 +49,41 @@ pub enum UserContent {
     Blocks(Vec<InputBlock>),
 }
 
+impl UserContent {
+    /// The content's text, one block a line; images leave nothing.
+    pub fn text(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Blocks(blocks) => text_of(blocks),
+        }
+    }
+}
+
 /// A block a user message or a tool result can hold.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum InputBlock {
     Text(TextContent),
     Image(ImageContent),
+}
+
+impl InputBlock {
+    /// The block's text, if it is text.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(&text.text),
+            Self::Image(_) => None,
+        }
+    }
+}
+
+/// The text of `blocks`, one block a line; images leave nothing.
+pub fn text_of(blocks: &[InputBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(InputBlock::as_text)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A block an assistant message can hold.
@@ -116,6 +145,28 @@ pub struct AssistantMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
     pub timestamp: Timestamp,
+}
+
+impl AssistantMessage {
+    /// What the model said, one text block a line.
+    pub fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|block| match block {
+                AssistantBlock::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The tool calls the model made, in order.
+    pub fn tool_calls(&self) -> impl Iterator<Item = &ToolCall> {
+        self.content.iter().filter_map(|block| match block {
+            AssistantBlock::ToolCall(call) => Some(call),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

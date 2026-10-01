@@ -35,13 +35,7 @@ use tau_agent::{
     tool::RunId,
 };
 use tau_ai::{
-    message::{
-        AssistantBlock,
-        AssistantMessage,
-        Message,
-        UserContent,
-        UserMessage,
-    },
+    message::{AssistantMessage, Message, UserContent, UserMessage},
     responses::request::Settings,
 };
 
@@ -415,14 +409,7 @@ impl PluginRun for Turns {
         let Ok(answer) = ctx.ask(settings, &input).await else {
             return;
         };
-        let message: String = answer
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                AssistantBlock::Text(text) => Some(text.text.as_str()),
-                _ => None,
-            })
-            .collect();
+        let message: String = answer.text();
         if message.trim().is_empty() {
             return;
         }

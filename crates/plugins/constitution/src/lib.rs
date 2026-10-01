@@ -44,7 +44,7 @@ use tau_agent::{
         ToolCall,
     },
 };
-use tau_ai::message::{AssistantBlock, AssistantMessage};
+use tau_ai::message::AssistantMessage;
 use tau_jev::{Jev, NoulCriteria, Question, Request};
 
 pub use crate::rules::{
@@ -474,15 +474,7 @@ impl PluginRun for Checks {
         if rules.is_empty() {
             return Ok(StopDecision::Stop);
         }
-        let answer: String = message
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                AssistantBlock::Text(text) => Some(text.text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let answer: String = message.text();
         let scores = match self
             .ask(json!({ "final_answer": answer }), &rules, (None, None), ctx)
             .await

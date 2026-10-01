@@ -7,7 +7,6 @@
 
 use std::{error::Error, io};
 
-use tau_ai::message::InputBlock;
 use tau_store::StoreError;
 
 use crate::{agent::SubAgentError, plugin::AskError, tool::ToolOutput};
@@ -35,7 +34,7 @@ pub enum ToolError {
     /// A failure with output of its own, such as a command that exited
     /// non-zero: the model sees the output's text as the error, and its
     /// `details` reach events and the stored result as a success's do.
-    #[error("{}", text_of(.0))]
+    #[error("{}", .0.text_content())]
     Output(Box<ToolOutput>),
 }
 
@@ -49,18 +48,6 @@ impl ToolError {
     pub fn output(output: ToolOutput) -> Self {
         Self::Output(Box::new(output))
     }
-}
-
-/// The text blocks of `output`, one after another.
-fn text_of(output: &ToolOutput) -> String {
-    output
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            InputBlock::Text(text) => Some(text.text.as_str()),
-            InputBlock::Image(_) => None,
-        })
-        .collect()
 }
 
 impl From<String> for ToolError {

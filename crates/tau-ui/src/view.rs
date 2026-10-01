@@ -1251,7 +1251,7 @@ impl RunView {
                     if let Some(details) = &partial.details {
                         data.updates.push(details.clone());
                     }
-                    data.partial = Some(text_of(partial));
+                    data.partial = Some(partial.text_content());
                 }
             }
             RunEvent::ToolEnd {
@@ -1599,7 +1599,7 @@ fn lists_landing(details: &Value) -> bool {
 }
 
 fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
-    let text = text_of(output);
+    let text = output.text_content();
     card.size = card.args().to_string().len() + text.len();
     let reported = output
         .details
@@ -1642,18 +1642,6 @@ pub fn user_words(content: &UserContent) -> String {
             })
             .unwrap_or_default(),
     }
-}
-
-fn text_of(output: &ToolOutput) -> String {
-    output
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            InputBlock::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn first_line(text: &str) -> String {

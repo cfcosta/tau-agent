@@ -46,7 +46,7 @@ use tau_agent::{
     },
 };
 use tau_ai::{
-    message::{AssistantBlock, InputBlock, Message, Usage},
+    message::{InputBlock, Message, Usage},
     responses::request::ReasoningEffort,
 };
 use tau_jev::{Answer, Jev, Question, Request};
@@ -293,16 +293,7 @@ fn said(message: &Message) -> Option<String> {
     let Message::Assistant(assistant) = message else {
         return None;
     };
-    Some(
-        assistant
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                AssistantBlock::Text(text) => Some(text.text.as_str()),
-                _ => None,
-            })
-            .collect(),
-    )
+    Some(assistant.text())
 }
 
 /// What the agent last said, clipped to its end.

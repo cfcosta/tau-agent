@@ -60,7 +60,6 @@ use tau_agent::{
 use tau_ai::message::{
     AssistantBlock,
     AssistantMessage,
-    InputBlock,
     Message,
     StopReason,
     Timestamp,
@@ -254,25 +253,6 @@ fn truncate_for_summary(text: &str, max_chars: usize) -> String {
     format!("{prefix}\n\n[... {truncated_chars} more characters truncated]")
 }
 
-/// Text-only content of `blocks`, concatenated with no separator (pi's
-/// `contentText(content, "")`; images contribute nothing here).
-fn input_blocks_text(blocks: &[InputBlock]) -> String {
-    blocks
-        .iter()
-        .filter_map(|block| match block {
-            InputBlock::Text(content) => Some(content.text.as_str()),
-            InputBlock::Image(_) => None,
-        })
-        .collect()
-}
-
-fn user_content_text(content: &UserContent) -> String {
-    match content {
-        UserContent::Text(text) => text.clone(),
-        UserContent::Blocks(blocks) => input_blocks_text(blocks),
-    }
-}
-
 /// Serializes `messages` into the flat, non-conversational text that
 /// goes inside `<conversation>` tags (`docs/reference/compaction.md`,
 /// "Input"; pi's `serializeConversation`). Tool results are truncated to
@@ -283,7 +263,7 @@ pub fn serialize_conversation(messages: &[Message]) -> String {
     for message in messages {
         match message {
             Message::User(message) => {
-                let text = user_content_text(&message.content);
+                let text = message.content.text();
                 if !text.is_empty() {
                     parts.push(format!("[User]: {text}"));
                 }
@@ -325,23 +305,19 @@ pub fn serialize_conversation(messages: &[Message]) -> String {
                 }
 
                 let tool_calls: Vec<String> = message
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        AssistantBlock::ToolCall(call) => {
-                            let arguments = call
-                                .arguments
-                                .iter()
-                                .map(|(key, value)| {
-                                    let value = serde_json::to_string(value)
-                                        .unwrap_or_else(|_| "null".to_owned());
-                                    format!("{key}={value}")
-                                })
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            Some(format!("{}({arguments})", call.name))
-                        }
-                        _ => None,
+                    .tool_calls()
+                    .map(|call| {
+                        let arguments = call
+                            .arguments
+                            .iter()
+                            .map(|(key, value)| {
+                                let value = serde_json::to_string(value)
+                                    .unwrap_or_else(|_| "null".to_owned());
+                                format!("{key}={value}")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("{}({arguments})", call.name)
                     })
                     .collect();
                 if !tool_calls.is_empty() {
@@ -352,7 +328,7 @@ pub fn serialize_conversation(messages: &[Message]) -> String {
                 }
             }
             Message::ToolResult(message) => {
-                let text = input_blocks_text(&message.content);
+                let text = tau_ai::message::text_of(&message.content);
                 if !text.is_empty() {
                     parts.push(format!(
                         "[Tool result]: {}",
@@ -391,10 +367,7 @@ impl FileOperations {
         let Message::Assistant(assistant) = message else {
             return;
         };
-        for block in &assistant.content {
-            let AssistantBlock::ToolCall(call) = block else {
-                continue;
-            };
+        for call in assistant.tool_calls() {
             let Some(path) = call.arguments.get("path").and_then(Value::as_str)
             else {
                 continue;
@@ -672,23 +645,10 @@ pub fn check_summary(
         StopReason::Stop | StopReason::ToolUse | StopReason::Aborted => {}
     }
 
-    if response
-        .content
-        .iter()
-        .any(|block| matches!(block, AssistantBlock::ToolCall(_)))
-    {
+    if response.tool_calls().next().is_some() {
         return Err(CompactionError::ToolCall);
     }
-
-    let text: Vec<&str> = response
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            AssistantBlock::Text(content) => Some(content.text.as_str()),
-            _ => None,
-        })
-        .collect();
-    Ok(text.join("\n"))
+    Ok(response.text())
 }
 
 // ============================================================================

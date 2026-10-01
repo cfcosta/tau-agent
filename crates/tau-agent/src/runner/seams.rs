@@ -30,14 +30,8 @@ pub(super) fn check_rewrite(
                     return Err(format!("tool call {call} has no result"));
                 }
                 open = assistant
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        AssistantBlock::ToolCall(call) => {
-                            Some(call.id.as_str())
-                        }
-                        _ => None,
-                    })
+                    .tool_calls()
+                    .map(|call| call.id.as_str())
                     .collect();
             }
             Message::ToolResult(result) => {

@@ -61,6 +61,11 @@ impl ToolOutput {
             structured: None,
         }
     }
+
+    /// What the model sees as text, one block a line.
+    pub fn text_content(&self) -> String {
+        tau_ai::message::text_of(&self.content)
+    }
 }
 
 /// Who sees a tool: the model, other tools, or both.

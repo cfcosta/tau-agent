@@ -147,18 +147,6 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(move || work(&project)).await?
 }
 
-/// The text of a tool output.
-fn text_of(output: &ToolOutput) -> String {
-    output
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            tau_ai::message::InputBlock::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
 /// A limit, as the result's details name it.
 fn limit_name(limit: LimitKind) -> &'static str {
     match limit {
@@ -288,7 +276,7 @@ impl AgentTool for Delegate {
         // sub-agent at a limit committed its work at its end, as any run
         // does (ADR 0014), so it lands like one that finished.
         let outcome = match outcome {
-            Ok(output) => Ok((text_of(&output), None)),
+            Ok(output) => Ok((output.text_content(), None)),
             Err(ToolError::SubAgent(SubAgentError::Stopped {
                 stop: StopReason::Limit(limit),
                 text,

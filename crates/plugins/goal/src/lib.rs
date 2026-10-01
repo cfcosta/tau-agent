@@ -36,7 +36,7 @@ use tau_agent::{
     },
     tool::ToolOutput,
 };
-use tau_ai::message::{AssistantBlock, AssistantMessage, InputBlock};
+use tau_ai::message::{AssistantMessage, InputBlock};
 use tau_jev::{Jev, NoulCriteria, Question, Request};
 
 /// The name the plugin goes by in events, reports and records.
@@ -530,15 +530,7 @@ impl PluginRun for Pursuit {
         if goal.status != Status::Active {
             return Ok(StopDecision::Stop);
         }
-        let answer: String = message
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                AssistantBlock::Text(text) => Some(text.text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let answer: String = message.text();
         let (p, cost) = match self.ask(&goal.condition, &answer, ctx).await {
             Ok(answer) => answer,
             Err(error) => {

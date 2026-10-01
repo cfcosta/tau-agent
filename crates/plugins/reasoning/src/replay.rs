@@ -11,7 +11,7 @@
 
 use serde_json::Value;
 use tau_ai::{
-    message::{AssistantBlock, InputBlock, Message, UserContent},
+    message::{InputBlock, Message, UserContent},
     responses::request::ReasoningEffort,
 };
 
@@ -135,10 +135,7 @@ pub async fn replay(
 fn answered(transcript: &[Message]) -> bool {
     match transcript.last() {
         None => true,
-        Some(Message::Assistant(reply)) => !reply
-            .content
-            .iter()
-            .any(|block| matches!(block, AssistantBlock::ToolCall(_))),
+        Some(Message::Assistant(reply)) => reply.tool_calls().next().is_none(),
         Some(_) => false,
     }
 }

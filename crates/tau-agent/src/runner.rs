@@ -38,7 +38,6 @@ use tau_ai::{
     event::{Accumulator, AssistantEvent, ErrorReason},
     llm::LlmSession,
     message::{
-        AssistantBlock,
         AssistantMessage,
         Message,
         StopReason as MessageStop,
@@ -285,14 +284,8 @@ impl Runner {
                 message.stop_reason,
                 MessageStop::Error | MessageStop::Aborted
             );
-            let calls: Vec<MessageToolCall> = message
-                .content
-                .iter()
-                .filter_map(|block| match block {
-                    AssistantBlock::ToolCall(call) => Some(call.clone()),
-                    _ => None,
-                })
-                .collect();
+            let calls: Vec<MessageToolCall> =
+                message.tool_calls().cloned().collect();
             let results = if failed || calls.is_empty() {
                 Vec::new()
             } else if message.stop_reason == MessageStop::Length {
@@ -624,16 +617,7 @@ fn last_text(transcript: &[Message]) -> String {
         .iter()
         .rev()
         .find_map(|message| match message {
-            Message::Assistant(assistant) => Some(
-                assistant
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        AssistantBlock::Text(text) => Some(text.text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<String>(),
-            ),
+            Message::Assistant(assistant) => Some(assistant.text()),
             _ => None,
         })
         .unwrap_or_default()
@@ -641,6 +625,8 @@ fn last_text(transcript: &[Message]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use tau_ai::message::AssistantBlock;
+
     use super::{
         seams::check_rewrite,
         toolbox::{model_only, not_found},
