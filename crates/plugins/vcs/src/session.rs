@@ -86,13 +86,24 @@ pub(crate) fn mutate<T>(
     let loader = workspace.repo_loader().clone();
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
     let before = snapshot_locked(&mut locked, &loader, &name)?;
+    // A refusal still keeps the snapshot: the working copy records it,
+    // or the next call takes the files for edits made since and merges
+    // them again.
+    let refuse = |locked: LockedWorkspace<'_>, error: VcsError| {
+        block_on(locked.finish(before.repo.op_id().clone()))?;
+        Err(error)
+    };
     if is_immutable(before.repo.as_ref(), before.wc.id())? {
-        return Err(VcsError::Immutable(short_commit(before.wc.id())));
+        let error = VcsError::Immutable(short_commit(before.wc.id()));
+        return refuse(locked, error);
     }
     let mut tx = before.repo.start_transaction();
     tx.set_workspace_name(&name);
     tx.set_attribute(TOOL_ATTRIBUTE.to_owned(), tool.to_owned());
-    let value = edit(&mut tx, &before.wc)?;
+    let value = match edit(&mut tx, &before.wc) {
+        Ok(value) => value,
+        Err(error) => return refuse(locked, error),
+    };
     if tx.repo().has_rewrites() {
         block_on(tx.repo_mut().rebase_descendants())?;
     }

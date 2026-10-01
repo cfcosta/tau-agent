@@ -586,3 +586,27 @@ fn cancelled_before_starting() {
     let err = block_on(tool.call(json!({}), ctx)).unwrap_err();
     assert_eq!(err.to_string(), tau_vcs::ABORTED);
 }
+
+/// A tool call refused after its snapshot still keeps that snapshot: an
+/// edit made after it reaches `@` as it is on disk.
+#[test]
+fn an_edit_after_a_refused_undo_reaches_the_working_copy() {
+    let repo = Repo::new();
+    repo.write("c.txt", "");
+    let refused = repo.call("vcs_undo", json!({})).unwrap_err();
+    assert!(
+        refused.starts_with("The last operation was not made"),
+        "{refused}"
+    );
+    repo.write("c.txt", "one\n");
+    let (text, details) = repo.ok("vcs_status", json!({}));
+    assert!(
+        details["conflicts"].as_array().unwrap().is_empty(),
+        "{text}"
+    );
+    assert!(
+        details["diff"].as_str().unwrap().contains("+one"),
+        "{details}"
+    );
+    assert_eq!(repo.read("c.txt").as_deref(), Some("one\n"));
+}
