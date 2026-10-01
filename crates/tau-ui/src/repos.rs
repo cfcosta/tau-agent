@@ -10,7 +10,7 @@ use tau_agent::tool::RunId;
 use crate::{
     catalog::Repo,
     route::Route,
-    view::{Origin, RunView},
+    view::{ChildKind, ChildRun, Origin, RunView},
     workspace::{Workspace, WorkspaceEvent},
 };
 
@@ -36,6 +36,36 @@ pub struct RepoRows<'a> {
     pub total: usize,
     /// Its runs still going.
     pub live: usize,
+}
+
+/// One row of a repository's run tree, as the sidebar and the phone's
+/// list both draw it.
+#[derive(Debug, Clone, Copy)]
+pub enum TreeRow<'a> {
+    /// A conversation, `depth` levels in.
+    Run { run: &'a RunView, depth: usize },
+    /// A child of `parent` with no conversation here: a fork opens the
+    /// comparison with its run.
+    Child {
+        parent: &'a RunView,
+        child: &'a ChildRun,
+        depth: usize,
+    },
+}
+
+impl TreeRow<'_> {
+    /// Where the row goes when chosen, if anywhere.
+    pub fn route(&self) -> Option<Route> {
+        match self {
+            Self::Run { run, .. } => Some(Route::Run(run.id.clone())),
+            Self::Child { parent, child, .. } => {
+                (child.kind == ChildKind::Fork).then(|| Route::Compare {
+                    main: parent.id.clone(),
+                    fork: child.id.clone(),
+                })
+            }
+        }
+    }
 }
 
 static NO_REPO: LazyLock<Repo> = LazyLock::new(Repo::default);
@@ -84,6 +114,50 @@ impl Workspace {
             view.origin.parent() == Some(&run.id)
                 && !self.closed.contains(&view.id)
         })
+    }
+
+    /// A repository's listed runs as its tree has them: each run, then
+    /// its open conversations newest first (the main chat's, at most
+    /// `rows.main_children`), each with what is under it, then its
+    /// children with no conversation here. A filter's matches are listed
+    /// alone.
+    pub fn repo_tree<'a>(&'a self, rows: &RepoRows<'a>) -> Vec<TreeRow<'a>> {
+        let mut tree = Vec::new();
+        for (n, run) in rows.runs.iter().enumerate() {
+            let limit = if n == 0 { rows.main_children } else { None };
+            self.tree_rows(&mut tree, run, 0, limit, rows.flat);
+        }
+        tree
+    }
+
+    fn tree_rows<'a>(
+        &'a self,
+        tree: &mut Vec<TreeRow<'a>>,
+        run: &'a RunView,
+        depth: usize,
+        limit: Option<usize>,
+        flat: bool,
+    ) {
+        tree.push(TreeRow::Run { run, depth });
+        if flat {
+            return;
+        }
+        // A fork is a conversation of its own: it opens like one.
+        let children: Vec<&RunView> = self.open_children(run).collect();
+        let shown = limit.unwrap_or(children.len());
+        for child in children.into_iter().take(shown) {
+            self.tree_rows(tree, child, depth + 1, None, false);
+        }
+        for child in &run.children {
+            if self.is_closed(&child.id) || self.run(&child.id).is_some() {
+                continue;
+            }
+            tree.push(TreeRow::Child {
+                parent: run,
+                child,
+                depth: depth + 1,
+            });
+        }
     }
 
     pub fn is_repo_open(&self, name: &str) -> bool {
