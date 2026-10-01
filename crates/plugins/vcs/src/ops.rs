@@ -591,7 +591,7 @@ pub(crate) fn end_turn(
     let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, wc| {
         let head = wc.parent_ids().first().ok_or(VcsError::NoParent)?.clone();
         let before = match since.and_then(CommitId::try_from_hex) {
-            Some(id) => tx.repo().store().get_commit(&id)?.tree(),
+            Some(id) => since_tree(tx.repo(), &id)?,
             None => block_on(wc.parent_tree(tx.repo()))?,
         };
         let paths =
@@ -608,6 +608,43 @@ pub(crate) fn end_turn(
         })
     })?;
     Ok(turn)
+}
+
+/// The tree a turn's paths count from: the turn before's snapshot
+/// `since`, rebased onto its parent as that is now
+/// (`parent now + snapshot - parent then`), as
+/// `Project::add_workspace_from_snapshot` merges a snapshot. What a
+/// catch-up brought by restacking the parent is not the turn's.
+fn since_tree(
+    repo: &dyn Repo,
+    since: &CommitId,
+) -> Result<jj_lib::merged_tree::MergedTree, VcsError> {
+    let snapshot = repo.store().get_commit(since)?;
+    let Some(then) = snapshot.parent_ids().first() else {
+        return Ok(snapshot.tree());
+    };
+    let then = repo.store().get_commit(then)?;
+    let now = match block_on(repo.resolve_change_id(then.change_id()))? {
+        Some(targets) => {
+            let visible: Vec<&CommitId> =
+                targets.visible_with_offsets().map(|(_, id)| id).collect();
+            match visible.as_slice() {
+                [id] => repo.store().get_commit(id)?,
+                _ => then.clone(),
+            }
+        }
+        None => then.clone(),
+    };
+    if now.id() == then.id() {
+        return Ok(snapshot.tree());
+    }
+    Ok(block_on(jj_lib::merged_tree::MergedTree::merge(
+        jj_lib::merge::Merge::from_vec(vec![
+            (now.tree(), "the parent now".to_owned()),
+            (then.tree(), "the parent then".to_owned()),
+            (snapshot.tree(), "the turn before".to_owned()),
+        ]),
+    ))?)
 }
 
 /// What `@` holds, after a snapshot.

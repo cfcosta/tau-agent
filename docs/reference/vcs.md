@@ -353,7 +353,10 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   `Project::current` moves them to where their change is now. A failed
   snapshot stores `{ "turn": n, "error": "…" }` and the run goes on.
   Observers given with `on_turn` hear each `TurnSnapshot`, with the
-  paths the turn changed.
+  paths the turn changed. They count from the turn before's snapshot
+  rebased onto its parent as that is now, as a fork merges a snapshot:
+  when a catch-up restacked the commit the run stands on between two
+  turns, what it brought is not the turn's.
 
 - **Before it stops** with changes in `@`, the run is held once, with
   `COMMIT_FIRST` and the paths as the next user message.

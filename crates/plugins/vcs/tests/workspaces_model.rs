@@ -28,7 +28,8 @@
 //!   after a rewrite hid it, it is what it was; a change id an undo
 //!   abandoned is refused as hidden;
 //! - a turn's end lists the paths changed since the turn before's
-//!   snapshot, as it was.
+//!   snapshot, rebased onto its parent as that is now: what a catch-up
+//!   brought is not the turn's.
 //!
 //! File contents are one line, never empty, so jj's line merge of a file
 //! resolves exactly when its trivial merge of whole files does, and
@@ -410,6 +411,18 @@ enum Op {
     Other,
 }
 
+/// A turn's snapshot, as the next turn counts its paths from it.
+#[derive(Debug, Clone)]
+struct Since {
+    commit_id: String,
+    /// `@`'s files then.
+    tree: Tree,
+    /// The change `@` stood on then (`None` for the main chat's commit
+    /// the chat started on), and its files then.
+    parent: Option<String>,
+    parent_tree: Tree,
+}
+
 /// A commit the chat's tools showed: what its id names forever.
 #[derive(Debug, Clone)]
 struct Seen {
@@ -448,8 +461,8 @@ struct Machine {
     /// Snapshots or turn ends of other workspaces since the chat's
     /// newest operation: undo passes over them.
     passed: bool,
-    /// The last turn's snapshot, and the model's `@` then.
-    since: Option<(String, Tree)>,
+    /// The last turn's snapshot.
+    since: Option<Since>,
     /// Change ids an undo abandoned.
     dead: BTreeSet<String>,
     /// Every commit of the chat's stack a tool showed, by commit id.
@@ -886,18 +899,33 @@ impl Machine {
     fn do_end_turn(&mut self, tc: &TestCase) {
         self.freshen(tc);
         let since = self.since.clone();
-        let turn = block_on(
-            self.chat
-                .vcs
-                .end_turn("tau/chat", since.as_ref().map(|(id, _)| id.clone())),
-        )
-        .unwrap();
-        // From the turn before's snapshot as it was, even when a catch-up
-        // restacked `@` since: what it brought counts as the turn's
+        let turn =
+            block_on(self.chat.vcs.end_turn(
+                "tau/chat",
+                since.as_ref().map(|s| s.commit_id.clone()),
+            ))
+            .unwrap();
+        // From the turn before's snapshot, rebased onto its parent as that
+        // is now: what a catch-up brought is not the turn's
         // (`a_turns_paths_leave_out_what_a_catch_up_brought`).
-        let base = since
-            .map(|(_, tree)| tree)
-            .unwrap_or_else(|| self.parent_tree());
+        let base = match since {
+            None => self.parent_tree(),
+            Some(since) => {
+                let now = match &since.parent {
+                    None => Some(self.base_tree()),
+                    Some(id) => self
+                        .stack
+                        .iter()
+                        .find(|change| &change.change_id == id)
+                        .map(|change| change.tree.clone()),
+                };
+                let now = now.unwrap_or_else(|| since.parent_tree.clone());
+                if now != since.parent_tree {
+                    tc.event("a turn counts from a snapshot a catch-up moved");
+                }
+                rebase_tree(&now, &since.parent_tree, &since.tree)
+            }
+        };
         let got: Vec<(String, String)> = turn
             .paths
             .iter()
@@ -912,7 +940,12 @@ impl Machine {
             .collect();
         check_changes(&got, &base, &self.wc.tree, "the turn's paths");
         assert_eq!(turn.change_id, self.wc.change_id);
-        self.since = Some((turn.commit_id, self.wc.tree.clone()));
+        self.since = Some(Since {
+            commit_id: turn.commit_id,
+            tree: self.wc.tree.clone(),
+            parent: self.stack.last().map(|change| change.change_id.clone()),
+            parent_tree: self.parent_tree(),
+        });
         self.passed = true;
     }
 
@@ -1433,24 +1466,12 @@ fn a_refused_tool_keeps_its_snapshot() {
     );
 }
 
-// Bugs the model found, pinned until they are decided.
-
-/// A turn's paths are the paths the turn changed (`TurnSnapshot`), but
-/// `end_turn` diffs `@` against the turn before's snapshot as it was.
-/// When a catch-up restacked the chat between the two turns, what it
-/// brought (upstream's `a.txt`) counts as the turn's: the link says the
-/// turn changed files, and memory marks notes about `a.txt` stale as
-/// written by this run. The same happens to the main chat's turn after a
-/// chat lands on it, with the landed files.
-///
-/// Fix options: diff `@` against the turn before's snapshot rebased onto
-/// `@`'s parent now (`parent now + snapshot - parent then`), as
-/// `add_workspace_from_snapshot` already merges a snapshot; or keep the
-/// diff and document that a turn's paths include what came from below.
-/// The first matches the reference. `workspaces_model.rs`'s model checks
-/// the diff as it is.
+/// A turn lists only what it changed: what a catch-up brought between
+/// two turns, by restacking the commit the chat stands on, is not the
+/// turn's. It used to be: `end_turn` diffed `@` against the turn
+/// before's snapshot as it was, so upstream's `a.txt` showed up as the
+/// turn's, and memory marked notes about it stale as this run's.
 #[test]
-#[ignore = "bug: a turn's paths include what a catch-up brought"]
 fn a_turns_paths_leave_out_what_a_catch_up_brought() {
     let (home, project, main, chat, dir) = a_chat_on_main();
     let first = block_on(chat.vcs.end_turn("tau/chat", None)).unwrap();
@@ -1460,6 +1481,8 @@ fn a_turns_paths_leave_out_what_a_catch_up_brought() {
         block_on(chat.vcs.end_turn("tau/chat", Some(first.commit_id))).unwrap();
     assert_eq!(second.paths, ["c.txt"], "the turn only wrote c.txt");
 }
+
+// Bugs the model found, pinned until they are decided.
 
 /// When the main chat's catch-up runs while a chat's tool snapshots
 /// (each `Vcs` has a thread of its own, and the host runs them side by

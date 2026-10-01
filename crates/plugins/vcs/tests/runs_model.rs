@@ -11,7 +11,8 @@
 //!   that changed nothing names the commit before it; the run's bookmark
 //!   `tau/<run>` names its newest commit;
 //! - a turn that ends as `RunWorkspace` ends one snapshots `@` and leaves
-//!   it uncommitted, listing the paths changed since the last snapshot;
+//!   it uncommitted, listing the paths changed since the last snapshot
+//!   rebased onto its parent as that is now;
 //! - a fork at a change's link starts on exactly that link's files; one
 //!   at a snapshot starts on the snapshot's files, on its parent as it
 //!   is now, with what the parent gained since merged in;
@@ -197,8 +198,9 @@ struct Run {
     /// Its links.
     links: Vec<Linked>,
     /// The last turn's snapshot and its tree, which the next turn's
-    /// paths are counted from, as `RunWorkspace` keeps it.
-    since: Option<(String, Tree)>,
+    /// paths are counted from, as `RunWorkspace` keeps it, with the
+    /// commit `@` stood on then and that commit's tree then.
+    since: Option<(String, Tree, usize, Tree)>,
     turns: u32,
     state: State,
     /// A turn has set `tau/<name>`.
@@ -788,14 +790,22 @@ impl Machine {
         let since = r.since.clone();
         let snapshot = block_on(r.vcs.end_turn(
             r.bookmark.clone(),
-            since.as_ref().map(|(id, _)| id.clone()),
+            since.as_ref().map(|(id, ..)| id.clone()),
         ))
         .unwrap();
-        // The paths count from the turn before's snapshot, else from the
-        // run's head.
-        let base = since
-            .map(|(_, tree)| tree)
-            .unwrap_or_else(|| self.commits[head].tree.clone());
+        // The paths count from the turn before's snapshot, rebased onto
+        // its parent as that is now, else from the run's head.
+        let base = match since {
+            Some((_, tree, at, then)) => {
+                let now = if self.commits[at].abandoned {
+                    then.clone()
+                } else {
+                    self.commits[at].tree.clone()
+                };
+                rebase_tree(&now, &then, &tree)
+            }
+            None => self.commits[head].tree.clone(),
+        };
         let conflicted = self.jj_conflicts(&snapshot.commit_id);
         settle(tc, &was, &mut tree, &conflicted);
         check_paths(&snapshot.paths, &base, &tree, "the snapshot");
@@ -810,7 +820,12 @@ impl Machine {
         r.seen = tree.clone();
         r.turns += 1;
         r.bookmarked = true;
-        r.since = Some((snapshot.commit_id.clone(), tree.clone()));
+        r.since = Some((
+            snapshot.commit_id.clone(),
+            tree.clone(),
+            head,
+            head_tree.clone(),
+        ));
         r.links.push(Linked {
             link: Link {
                 turn: r.turns,
@@ -881,7 +896,8 @@ impl Machine {
             stale: None,
             links,
             since: link.snapshot.then(|| {
-                (link.commit_id.clone(), linked.snapshot.clone().unwrap().1)
+                let (then, tree) = linked.snapshot.clone().unwrap();
+                (link.commit_id.clone(), tree, linked.at, then)
             }),
             turns: link.turn,
             state: State::Open,
