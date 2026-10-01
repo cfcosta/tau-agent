@@ -1,7 +1,9 @@
 # Codemode (`tau-codemode`)
 
-- Status: the engine is built (`crates/plugins/codemode`, behind a
-  `Host` trait); the plugin that wires it to `ToolCtx::call` is not.
+- Status: built (`crates/plugins/codemode`): the engine, behind a
+  `Host` trait, and the `Codemode` plugin that wires it to
+  `ToolCtx::call`. Its interface (a `UiPlugin`, after
+  [0017](../decisions/0017-plugins-bring-their-ui.md)) is not.
   Decided in [0018](../decisions/0018-codemode-and-mcp.md).
 - Date: 2026-10-01
 
@@ -44,6 +46,17 @@ tau differs from pi, it says so.
 
 - **Execution mode:** `Parallel`. Two codemode calls in one batch run
   side by side in separate VMs.
+- **The plugin:** `Codemode::new(jev: Option<Arc<dyn Jev>>)`, named
+  `codemode`, adds the tool with `Plugin::tools`. The tool needs the
+  plugin's `PluginCtx` (`ToolCtx::plugin`), so it runs only as the
+  plugin's tool; anywhere else it fails with a message saying so.
+- **Before the script starts,** the call waits for the tool sources
+  (`Catalog::ready`) to have the namespaces it needs: every one when
+  the source mentions `search_tools`, `describe_namespace` or
+  `ALL_TOOLS`, else `mcp__<server>` for each `mcp__<server>__<tool>`
+  it names (for a name with more `__`, each possible server), else
+  none. `timeout_ms` bounds the wait too. It then takes the catalog
+  again, so the script sees the tools the servers brought.
 
 ## The sandbox
 
@@ -159,7 +172,8 @@ b` appends each value that is not `nil`. A return value JSON cannot
     the output carries one, even for an error result that carries one
     (an MCP `isError` result is returned, not raised; the script checks
     `isError`);
-  - otherwise the output's text, joined;
+  - otherwise the output's text blocks, joined with nothing between
+    them (as `ToolError`'s text joins a failure's);
   - a failed call with no structured output raises a Lua error whose
     message is the tool's error text. `pcall` catches it. When nothing
     catches it, the result shows it with the script's line, as
@@ -178,6 +192,15 @@ b` appends each value that is not `nil`. A return value JSON cannot
 - The first error `parallel` raises is the first in argument order.
   `exit()` in one of its functions ends the script at once, and the
   others' calls are cancelled.
+- **Sequential tools, as built:** the loop schedules each caller's
+  nested calls in the order it receives them, and a `Sequential` tool's
+  call starts once the caller's other calls have ended and runs alone
+  (`plugins.md`, "Scheduling"); a call made after it waits for it. A
+  script is one caller, so the rule holds among its calls. The engine
+  also queues one script's sequential calls behind each other. Across
+  scripts nothing is serialized: two codemode calls in one batch are
+  two callers, and a `Sequential` tool called from both may overlap
+  the other script's calls.
 - Prototyped: mlua 0.12 awaits several `into_async` threads inside an
   async callback of the same VM, and their calls overlap. `parallel`
   is built that way; the call-handle fallback is not needed.
@@ -193,9 +216,10 @@ b` appends each value that is not `nil`. A return value JSON cannot
   `{ "store": { "set": { key: value }, "delete": [key] } }`, through
   `PluginCtx::publish` on `ToolCtx::plugin()`, which reports the record
   and stores it with the run
-  ([0017](../decisions/0017-plugins-bring-their-ui.md)). When the
-  record cannot be stored, the call fails and says so; the report has
-  gone out already. A failed script writes nothing.
+  ([0017](../decisions/0017-plugins-bring-their-ui.md)). A failed script
+  writes nothing, and a script that wrote nothing stores no record. If
+  the record cannot be stored, the result is an error that says so; the
+  report has gone out already.
 - **Loading:** each call folds the plugin's records along the run's
   fork chain (`PluginCtx::records`), oldest first, into the snapshot.
   Records that do not parse are skipped. A fork sees the values its
@@ -285,7 +309,12 @@ At `start`, the plugin puts the Luau signatures of the run's `Direct`
 tools (`RunPlan::tools`) in `plan.context`, within 3,000 tokens
 (chars / 4), shared round-robin across namespaces, cheapest first, as
 pi's `selectCatalog` does. Tools that do not fit are left to
-`search_tools`. `Nested` tools are never listed: there are many, and
+`search_tools`. The text is a heading (``Tools a `codemode` script can
+call, as Luau signatures. Others may be callable too: find them with
+`search_tools(query)`.``) and the signatures in a `luau` fence; a run
+with no direct tool gets none. Only the tools in the plan when
+Codemode starts are listed, so a plugin that adds tools (tau-mcp)
+goes before it. `Nested` tools are never listed: there are many, and
 they change as servers connect.
 
 ### Luau signatures from JSON Schema
