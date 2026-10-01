@@ -297,11 +297,14 @@ fn stat_tiles(stats: &RulesStats, compact: bool, t: &Theme) -> Div {
                 tile.child(ui::text(note, Type::CAPTION, t.dim))
             })
     };
-    let runs = format!(
+    let mut runs = format!(
         "in {} {}",
         stats.runs,
         if stats.runs == 1 { "run" } else { "runs" }
     );
+    if stats.failed > 0 {
+        runs.push_str(&format!(" · {} not checked", stats.failed));
+    }
     div()
         .flex()
         .gap(sp(2.5))

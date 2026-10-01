@@ -358,6 +358,91 @@ fn when_jev_cannot_answer_the_constitution_decides() {
     assert!(results(&llm)[0].contains("cannot check"));
 }
 
+/// Whenever Jev fails, `on_error` decides, for calls and final answers
+/// alike, and the failure is reported and recorded as it happened:
+/// `allow` lets the call run and the answer stand; `block` refuses the
+/// call, and sends the answer back while holds are left.
+#[hegel::test(test_cases = 60)]
+fn on_error_decides_wherever_jev_fails(tc: TestCase) {
+    let block = tc.draw(gs::booleans());
+    let max_holds = tc.draw(gs::integers::<u32>().max_value(3));
+    // Whether each of Jev's requests fails; past the list, they pass.
+    let fails: Vec<bool> = tc.draw(gs::vecs(gs::booleans()).max_size(8));
+    let writes = tc.draw(gs::integers::<usize>().max_value(2));
+    let mut rules = rules();
+    rules.on_error = if block {
+        OnError::Block
+    } else {
+        OnError::Allow
+    };
+    rules.max_holds = max_holds;
+    // One reply per write, then answers enough for every hold.
+    let mut llm = ScriptedModel::new();
+    for _ in 0..writes {
+        llm = llm.turn(|t| t.tool_call("write", write("x")));
+    }
+    for _ in 0..=max_holds {
+        llm = llm.turn(|t| t.text("Done."));
+    }
+    let fails = Arc::new(std::sync::Mutex::new(fails.into_iter()));
+    let jev = FakeJev::new(move |request| {
+        if fails.lock().unwrap().next().unwrap_or(false) {
+            return Err(JevError::Transport("offline".into()));
+        }
+        // Passing: every rule kept.
+        let answers = request
+            .questions
+            .keys()
+            .map(|id| (id.clone(), tau_jev::Answer::Noul { noul: 0.0 }))
+            .collect();
+        Ok(tau_jev::fake::response(answers, request))
+    });
+    let (events, ran, records) = block_on(run_with(&llm, Arc::new(jev), rules));
+    let reports: Vec<Value> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::PluginReport { plugin, body, .. }
+                if &**plugin == NAME =>
+            {
+                Some(body.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(records, reports, "what is reported is recorded");
+    let failed_calls = reports
+        .iter()
+        .filter(|body| body["kind"] == "error" && body["call_id"].is_string())
+        .count();
+    assert_eq!(ran, writes - if block { failed_calls } else { 0 });
+    let continued = events
+        .iter()
+        .filter(|event| matches!(event, RunEvent::Continued { .. }))
+        .count();
+    let held: Vec<bool> = reports
+        .iter()
+        .filter(|body| body["kind"] == "error" && body["call_id"].is_null())
+        .map(|body| body["held"].as_bool().unwrap())
+        .collect();
+    assert_eq!(continued, held.iter().filter(|held| **held).count());
+    assert!(continued as u32 <= max_holds);
+    if !block {
+        assert_eq!(continued, 0, "allow lets every answer stand");
+    } else {
+        // Each failure holds until the holds run out.
+        for (n, held) in held.iter().enumerate() {
+            assert_eq!(*held, (n as u32) < max_holds, "{held:?}");
+        }
+    }
+    assert!(matches!(
+        events.last(),
+        Some(RunEvent::RunEnd {
+            stop: StopReason::Stop,
+            ..
+        })
+    ));
+}
+
 /// Writes nothing, like [`Write`], and on its first call replaces the
 /// rules with `then`: an edit made in the UI while the run goes on.
 #[derive(Clone)]

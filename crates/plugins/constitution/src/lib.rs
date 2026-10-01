@@ -17,7 +17,9 @@
 //!   recorded with the run, as a [`Verdict`], so interfaces can show and
 //!   review them, now and in history.
 //! - When Jev gives no answer, `on_error` decides: `allow` (the default)
-//!   lets the call run and reports it; `block` refuses it.
+//!   lets the call run, or the answer stand; `block` refuses the call,
+//!   or sends the answer back while holds are left. Either way the
+//!   failure is reported and recorded (`"kind": "error"`).
 //! - The rules are read again at every check, from a [`Live`] handle the
 //!   host updates when they are edited: an edit applies from the next
 //!   tool call, in runs already going too.
@@ -231,6 +233,13 @@ impl Checks {
         Ok(scores)
     }
 
+    /// Reports and records a check Jev could not answer: history shows it,
+    /// and the Constitution screen counts it.
+    async fn failed(&self, body: Value, ctx: &PluginCtx) {
+        ctx.report(body.clone());
+        let _ = ctx.record(&body).await;
+    }
+
     async fn tell(&self, verdict: &Verdict, ctx: &PluginCtx) {
         let body = serde_json::to_value(verdict).unwrap_or_default();
         ctx.report(body.clone());
@@ -376,12 +385,17 @@ impl PluginRun for Checks {
             Ok(scores) => scores,
             Err(error) => {
                 let message = format!("Jev could not check the call: {error}");
-                ctx.report(json!({
-                    "kind": "error",
-                    "call_id": call.id,
-                    "tool": call.name,
-                    "message": message,
-                }));
+                self.failed(
+                    json!({
+                        "kind": "error",
+                        "call_id": call.id,
+                        "tool": call.name,
+                        "message": message,
+                        "on_error": constitution.on_error.as_str(),
+                    }),
+                    ctx,
+                )
+                .await;
                 return Ok(match constitution.on_error {
                     OnError::Allow => Decision::Allow,
                     OnError::Block => Decision::Block(format!(
@@ -465,12 +479,40 @@ impl PluginRun for Checks {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let scores = self
+        let scores = match self
             .ask(json!({ "final_answer": answer }), &rules, (None, None), ctx)
             .await
-            .map_err(|error| {
-                format!("Jev could not check the final answer: {error}")
-            })?;
+        {
+            Ok(scores) => scores,
+            Err(error) => {
+                // `on_error` decides, as for a call: `block` sends the
+                // answer back while holds are left; past them, or with
+                // `allow`, it stands.
+                let message =
+                    format!("Jev could not check the final answer: {error}");
+                let held = constitution.on_error == OnError::Block
+                    && self.holds < constitution.max_holds;
+                self.failed(
+                    json!({
+                        "kind": "error",
+                        "message": message,
+                        "on_error": constitution.on_error.as_str(),
+                        "held": held,
+                    }),
+                    ctx,
+                )
+                .await;
+                if !held {
+                    return Ok(StopDecision::Stop);
+                }
+                self.holds += 1;
+                return Ok(StopDecision::Continue(format!(
+                    "{NAME} could not check your answer against this \
+                     repository's rules ({message}), and it does not let \
+                     an unchecked answer stand. Answer again."
+                )));
+            }
+        };
         let mut held: Vec<String> = Vec::new();
         for ((rule, _), score) in rules.iter().zip(&scores) {
             let broken = *score >= rule.block;

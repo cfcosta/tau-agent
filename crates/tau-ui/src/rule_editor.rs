@@ -118,6 +118,8 @@ pub struct RulesStats {
     pub runs: usize,
     /// Calls and final answers checked.
     pub checked: u32,
+    /// Checks Jev could not answer.
+    pub failed: u32,
     pub blocked: usize,
     pub flagged: usize,
     /// Flagged calls and answers nobody has looked at.
@@ -435,6 +437,7 @@ impl Workspace {
             let checks = &run.constitution;
             stats.runs += 1;
             stats.checked += checks.calls + checks.answers;
+            stats.failed += checks.failed;
             stats.blocked += checks.blocked.len();
             stats.flagged += checks.flagged.len();
             stats.cost += checks.cost;

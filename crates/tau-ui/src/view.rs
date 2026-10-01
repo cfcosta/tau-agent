@@ -82,6 +82,8 @@ pub struct ConstitutionStats {
     pub answers: u32,
     /// Questions asked of Jev: one per rule per check.
     pub questions: u32,
+    /// Checks Jev could not answer.
+    pub failed: u32,
     /// What Jev cost, in US dollars.
     pub cost: f64,
     /// The rules behind each block, flag and hold, in order.
@@ -1735,10 +1737,21 @@ impl RunView {
             return;
         }
         if body["kind"] == "error" {
+            self.constitution.failed += 1;
+            // What `on_error` did with what it could not check.
+            let call = body["call_id"].is_string();
+            let detail = match (body["on_error"].as_str(), call) {
+                (Some("block"), true) => "not checked · blocked",
+                (Some("block"), false) if body["held"] == true => {
+                    "not checked · sent back"
+                }
+                (_, true) => "not checked · ran",
+                (_, false) => "not checked · the answer stands",
+            };
             self.push_note(PluginNote {
                 plugin: plugin.to_owned(),
                 text: body["message"].as_str().unwrap_or("failed").to_owned(),
-                detail: Some("not checked".into()),
+                detail: Some(detail.into()),
                 tone: Tone::Danger,
                 body: NoteBody::None,
             });
@@ -3402,6 +3415,56 @@ mod tests {
                 "Jev could not score the step: offline",
             ]
         );
+    }
+
+    /// Checks Jev could not answer come back from history, saying what
+    /// `on_error` did, and count as not checked.
+    #[test]
+    fn failed_checks_show_from_history() {
+        let record = |body: Value| Stored::Record {
+            plugin: tau_constitution::NAME.into(),
+            body,
+        };
+        let view = RunView::from_timeline(
+            run(),
+            "t",
+            "a",
+            "gpt-6-sol",
+            &[
+                record(json!({
+                    "kind": "error", "call_id": "c1", "tool": "write",
+                    "message": "Jev could not check the call: offline",
+                    "on_error": "block",
+                })),
+                record(json!({
+                    "kind": "error",
+                    "message": "Jev could not check the final answer: offline",
+                    "on_error": "block", "held": true,
+                })),
+                record(json!({
+                    "kind": "error",
+                    "message": "Jev could not check the final answer: offline",
+                    "on_error": "allow", "held": false,
+                })),
+            ],
+        );
+        let details: Vec<&str> = view
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Plugin(note) => note.detail.as_deref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            details,
+            [
+                "not checked · blocked",
+                "not checked · sent back",
+                "not checked · the answer stands"
+            ]
+        );
+        assert_eq!(view.constitution.failed, 3);
     }
 
     #[test]

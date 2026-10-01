@@ -33,13 +33,13 @@ file.
 
 ## What happens
 
-| Where        | Violation probability       | Result                                                        |
-| ------------ | --------------------------- | ------------------------------------------------------------- |
-| Tool call    | ≥ `block`                   | Refused. The model gets the rule, quoted, and fixes the call. |
-| Tool call    | ≥ `review`                  | Runs, flagged for review.                                     |
-| Final answer | ≥ `block`                   | Sent back with the rule, up to `max_holds` times.             |
-| Final answer | ≥ `review`, or past the cap | Stands, flagged.                                              |
-| Jev fails    | —                           | `on_error`: runs (reported), or refused.                      |
+| Where        | Violation probability       | Result                                                                                                                              |
+| ------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Tool call    | ≥ `block`                   | Refused. The model gets the rule, quoted, and fixes the call.                                                                       |
+| Tool call    | ≥ `review`                  | Runs, flagged for review.                                                                                                           |
+| Final answer | ≥ `block`                   | Sent back with the rule, up to `max_holds` times.                                                                                   |
+| Final answer | ≥ `review`, or past the cap | Stands, flagged.                                                                                                                    |
+| Jev fails    | —                           | `on_error`: `allow` lets the call run or the answer stand; `block` refuses the call, or sends the answer back while holds are left. |
 
 Jev sees only the fields a rule names, as the model wrote them: never
 tool output or file content, which could try to steer it. All rules on
@@ -55,8 +55,10 @@ the call and tool, the reason given, and for a hold which one it is
 out of `max_holds`).
 The plugin reports it (`RunEvent::PluginReport`, before the event it
 explains, such as the refused call's `ToolEnd`) and records it with
-the run, so history can show it again. A failed check is reported as
-`{"kind": "error", ...}`.
+the run, so history can show it again. A failed check is reported and
+recorded too, as `{"kind": "error", ...}` with the call and tool (none
+for the final answer), the message, `on_error`, and for a final answer
+whether it was sent back (`held`).
 
 ## In tau-ui
 
@@ -89,5 +91,3 @@ the run, so history can show it again. A failed check is reported as
   (calls and answers checked, questions asked, blocks, flags and holds
   with their rules, Jev's cost), and a finished run's outcome lists its
   continuations and offers to review a flagged call.
-- The Constitution screen's Edit link opens the file in the user's
-  editor, making it first if there is none.
