@@ -1543,30 +1543,14 @@ fn a_turns_paths_leave_out_what_landed() {
     assert_eq!(second.paths, ["c.txt"], "the turn only wrote c.txt");
 }
 
-// Bugs the model found, pinned until they are decided.
-
-/// When the main chat's catch-up runs while a chat's tool snapshots
-/// (each `Vcs` has a thread of its own, and the host runs them side by
-/// side), both operations start from the same one. The next load merges
-/// them, and both rewrites of the chat's `@` stay visible: the
-/// snapshot's, which the chat stays on, and the catch-up's restack of
-/// `@` as it was before the snapshot. `@` is divergent from then on, so
-/// its change id names nothing, and the stray copy stays in the log.
-/// The reference says the tools fail as stale when a concurrent
-/// operation forked the log, but jj-lib's `load_at_head` merges the
-/// fork first, so `SiblingOperation` never comes.
-///
-/// Fix options: after loading, abandon a visible commit that shares
-/// `@`'s change id and rewrites one of `@`'s predecessors, as the losing
-/// side of the race; serialize operations on a project (one lock across
-/// its workspaces' threads); or refuse with the stale error when `@` is
-/// divergent, as the reference says, and leave it to the user. The
-/// first keeps runs going without help; the second also covers races
-/// between other operations, at the cost of a lock shared by every
-/// chat of the repository.
+/// A catch-up made by another process while a chat's tool snapshots
+/// forks the operation log: both start from the same operation, and the
+/// next load merges them, leaving the chat's `@` divergent. Inside one
+/// process the repository's lock keeps them apart. Across processes the
+/// tools refuse with the stale error, as the reference says, rather than
+/// pick one copy of `@`: either may hold the chat's work.
 #[test]
-#[ignore = "bug: a catch-up racing a chat's snapshot leaves @ divergent"]
-fn a_catch_up_racing_a_snapshot_leaves_one_working_copy() {
+fn a_catch_up_from_another_process_leaves_the_chat_stale() {
     use jj_lib::{backend::CommitId, repo::Repo as _, rewrite::rebase_commit};
     let (home, project, _main, chat, dir) = a_chat_on_main();
     let src = home.path().join("src");
@@ -1590,8 +1574,8 @@ fn a_catch_up_racing_a_snapshot_leaves_one_working_copy() {
     pollster::block_on(tx.repo_mut().rebase_descendants()).unwrap();
     pollster::block_on(tx.commit("tau vcs: move_onto")).unwrap();
 
-    let (_, status) = chat.ok("vcs_status", json!({}));
-    assert_eq!(status["working_copy"]["divergent"], json!(false));
+    let error = chat.call("vcs_status", json!({})).unwrap_err();
+    assert!(error.contains("The working copy is stale"), "{error}");
 }
 
 /// The repository at its newest operation, loaded through jj-lib.
