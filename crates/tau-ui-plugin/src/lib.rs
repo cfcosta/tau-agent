@@ -32,11 +32,11 @@ pub mod view;
 use gpui::Context;
 pub use host::{
     ConfigDir,
+    HOST_RECORD,
     HostCx,
+    HostRecord,
     Push,
-    REPO_RECORD,
     RepoCtx,
-    RepoRecord,
     RunCtx,
     RunKind,
     SavedSettings,

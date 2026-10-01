@@ -382,6 +382,32 @@ fn written_titles_come_back_in_history() {
     assert_eq!(history[0].title, "Greet everyone");
 }
 
+/// A run read back from history shows the plan it showed live: its
+/// model, effort, access and workspace, and the workspace's line.
+#[test]
+fn a_stored_run_shows_the_plan_it_ran_with() {
+    let llm = ScriptedModel::new().turn(|t| t.text("done"));
+    let (host, mut events) = host(llm);
+    let live = host
+        .start("Look around", &ModelChoice::default(), REPO)
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &live.id);
+    let history = host.history().unwrap();
+    let stored = history.iter().find(|view| view.id == live.id).unwrap();
+    assert_eq!(stored.plan, live.plan);
+    assert!(
+        stored
+            .plan
+            .iter()
+            .any(|field| field.name == "workspace" && !field.value.is_empty())
+    );
+    let workspace = |view: &tau_ui::view::RunView| {
+        view.plugins.iter().any(|status| status.name == "workspace")
+    };
+    assert_eq!(workspace(stored), workspace(&live));
+}
+
 #[test]
 fn a_run_streams_into_its_view() {
     let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));

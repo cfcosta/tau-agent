@@ -11,7 +11,7 @@
 //! each run gets a jj workspace there ([`RunWorkspace`]) with a commit
 //! per turn, so a fork starts from a turn's conversation and code. The
 //! repositories tau lists, and which the sidebar shows open, are kept in
-//! `repos.json`; each run records its repository ([`RepoTag`]), so past
+//! `repos.json`; each run records its repository ([`RunTag`]), so past
 //! runs come back from the store under theirs.
 
 use std::{
@@ -42,7 +42,7 @@ use tau_ai::{
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools::{path::Root, plugin::CodingTools};
-use tau_ui_plugin::{REPO_RECORD, RepoRecord, Services, TurnCommit, TurnHooks};
+use tau_ui_plugin::{HOST_RECORD, HostRecord, Services, TurnCommit, TurnHooks};
 use tau_vcs::{
     ChangeKind,
     DEFAULT_WORKSPACE,
@@ -79,7 +79,6 @@ use crate::{
     view::{
         BranchCode,
         ChildKind,
-        ChildRun,
         CodeState,
         ContextWindow,
         FileChange,
@@ -89,11 +88,8 @@ use crate::{
         LandingRecord,
         Limits as ViewLimits,
         Origin,
-        PlanField,
-        PluginStatus,
         RunView,
         Stored,
-        Tone,
     },
     workspace::{Workspace, WorkspaceEvent},
 };
@@ -114,13 +110,17 @@ pub(crate) fn write_settings(
 pub const MAIN_TITLE: &str = "main";
 
 /// `base` on `choice`: its model and effort (auto leaves it to a
-/// plugin, such as tau-reasoning).
-fn for_model(base: Agent, choice: &ModelChoice, repo: &str) -> Agent {
+/// plugin, such as tau-reasoning), recording how it started (`start`,
+/// whose effort is `choice`'s).
+fn for_model(base: Agent, choice: &ModelChoice, start: HostRecord) -> Agent {
     let mut agent = base.model(&choice.model);
     if let Some(effort) = choice.effort.reasoning() {
         agent = agent.reasoning(effort);
     }
-    agent.plugin(RepoTag(repo.to_owned()))
+    agent.plugin(RunTag(HostRecord {
+        effort: Some(choice.effort.label().to_owned()),
+        ..start
+    }))
 }
 
 /// The model and effort a sub-agent runs on: what its call asked for,
@@ -583,14 +583,23 @@ impl Host {
         // another model than its caller.
         let for_model = {
             let base = self.base.lock().expect("not poisoned").clone();
-            let repo = repo.name.clone();
-            move |choice: &ModelChoice| for_model(base.clone(), choice, &repo)
+            let start = HostRecord {
+                repo: repo.name.clone(),
+                access: Some(self.access_label().to_owned()),
+                ..HostRecord::default()
+            };
+            move |choice: &ModelChoice, workspace: &RunWorkspace| {
+                let start = HostRecord {
+                    workspace: Some(workspace.dir().display().to_string()),
+                    ..start.clone()
+                };
+                for_model(base.clone(), choice, start)
+            }
         };
         // The plugins with their UI, after the rest: the repository's
         // rules check what the tools do, tau-goal's hold of a stop comes
         // after theirs, and context compaction goes by the run's model.
         let registered = self.registered(repo);
-        let agent = for_model(choice);
         let project = repo.project()?;
         // A run and its sub-agents work the same way, each in its own
         // workspace: tools, then what plugins add, which hear each turn's
@@ -625,6 +634,7 @@ impl Host {
         } else {
             workspace
         };
+        let agent = for_model(choice, &workspace);
         let delegate = {
             let registered = registered.clone();
             let caller = choice.clone();
@@ -636,8 +646,8 @@ impl Host {
                 &models,
                 move |child, asked| {
                     let choice = child_choice(&caller, asked)?;
-                    let (agent, services) =
-                        on_workspace(for_model(&choice), child, false);
+                    let agent = for_model(&choice, &child);
+                    let (agent, services) = on_workspace(agent, child, false);
                     registered(
                         agent,
                         tau_ui_plugin::RunKind::SubAgent,
@@ -1001,41 +1011,19 @@ impl Host {
             ..ContextWindow::default()
         };
         let workspace = self.session_of(&view.id).workspace;
-        view.plan = vec![
-            PlanField {
-                name: "model".into(),
-                value: choice.model.clone(),
-                set_by: None,
-            },
-            PlanField {
-                name: "reasoning".into(),
-                value: choice.effort.label().into(),
-                set_by: None,
-            },
-            PlanField {
-                name: "access".into(),
-                value: self.access_label().into(),
-                set_by: None,
-            },
-            PlanField {
-                name: "workspace".into(),
-                value: match (repo.project.wait(), &workspace) {
-                    (Some(project), Some(name)) => {
-                        project.workspace_dir(name).display().to_string()
-                    }
-                    _ => String::new(),
-                },
-                set_by: workspace.as_ref().map(|_| "workspace".to_owned()),
-            },
-        ];
+        let dir = match (repo.project.wait(), &workspace) {
+            (Some(project), Some(name)) => {
+                Some(project.workspace_dir(name).display().to_string())
+            }
+            _ => None,
+        };
         view.plugins = Vec::new();
-        if workspace.is_some() {
-            view.plugins.push(PluginStatus {
-                name: "workspace".into(),
-                state: "a commit per turn".into(),
-                tone: Tone::Quiet,
-            });
-        }
+        view.set_base_plan(
+            &choice.model,
+            choice.effort.label(),
+            self.access_label(),
+            dir.as_deref().or(workspace.as_ref().map(|_| "")),
+        );
         view
     }
 

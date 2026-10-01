@@ -792,13 +792,9 @@ impl Workspace {
             && let Some(parent) =
                 self.runs.iter_mut().find(|view| &view.id == from)
         {
-            parent.children.push(ChildRun {
-                id: id.clone(),
-                title: run.title.clone(),
-                kind: ChildKind::Fork,
-                status: run.status.clone(),
-                call: None,
-            });
+            parent
+                .children
+                .push(ChildRun::of(&run, ChildKind::Fork, None));
         }
         self.runs.insert(0, run);
         self.navigate(Route::Run(id), cx);
@@ -978,11 +974,8 @@ impl Workspace {
                 self.run(run).map(|view| view.origin.clone())
             && let Some(parent) =
                 self.runs.iter_mut().find(|view| view.id == from)
-            && !parent.items.iter().any(
-                |item| matches!(item, Item::ForkReady { fork } if fork == run),
-            )
         {
-            parent.items.push(Item::ForkReady { fork: run.clone() });
+            parent.fork_finished(run);
         }
         // A sub-agent closes once its parent's call returns: landed, or
         // dropped. Its siblings wait for their own calls. The call may be

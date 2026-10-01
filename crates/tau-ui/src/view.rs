@@ -500,6 +500,21 @@ pub struct ChildRun {
     pub call: Option<String>,
 }
 
+impl ChildRun {
+    /// `child` as its parent lists it: a sub-agent it started (by its
+    /// call `call`), or a fork of it. Live and stored runs list them
+    /// alike.
+    pub fn of(child: &RunView, kind: ChildKind, call: Option<String>) -> Self {
+        Self {
+            id: child.id.clone(),
+            title: child.title.clone(),
+            kind,
+            status: child.status.clone(),
+            call,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChildKind {
     SubAgent,
@@ -822,6 +837,55 @@ impl RunView {
                     finish_tool(card, &output, result.is_error);
                 }
             }
+        }
+    }
+
+    /// A finished fork of this run waits in its chat, to land or be
+    /// dropped: once, and not when it landed already.
+    pub fn fork_finished(&mut self, fork: &RunId) {
+        let shown = self.items.iter().any(|item| match item {
+            Item::ForkReady { fork: ready } => ready == fork,
+            Item::Landed(card) => &card.from == fork,
+            _ => false,
+        });
+        if !shown {
+            self.items.push(Item::ForkReady { fork: fork.clone() });
+        }
+    }
+
+    /// The plan a run starts with: its model and effort, what it reaches
+    /// models through, and the workspace it works in, which also gets a
+    /// line in the plugin list. A live run and its stored view both show
+    /// it.
+    pub fn set_base_plan(
+        &mut self,
+        model: &str,
+        effort: &str,
+        access: &str,
+        workspace: Option<&str>,
+    ) {
+        let field = |name: &str, value: &str, set_by: Option<&str>| PlanField {
+            name: name.into(),
+            value: value.into(),
+            set_by: set_by.map(str::to_owned),
+        };
+        self.plan = vec![
+            field("model", model, None),
+            field("reasoning", effort, None),
+            field("access", access, None),
+            field(
+                "workspace",
+                workspace.unwrap_or_default(),
+                workspace.map(|_| "workspace"),
+            ),
+        ];
+        self.plugins.retain(|status| status.name != "workspace");
+        if workspace.is_some() {
+            self.plugins.push(PluginStatus {
+                name: "workspace".into(),
+                state: "a commit per turn".into(),
+                tone: tau_ui_kit::theme::Tone::Quiet,
+            });
         }
     }
 

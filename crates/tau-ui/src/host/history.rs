@@ -1,6 +1,7 @@
 //! Stored runs, read back as views.
 
 use super::*;
+use crate::view::ChildRun;
 
 /// One stored run, rebuilt as the interface shows it.
 pub(super) async fn stored_view(
@@ -63,6 +64,15 @@ pub(super) async fn stored_view(
         .map(|cost| cost.cost_usd)
         .sum();
     view.finish_stored(stop, record.cost_usd, plugin_cost);
+    // The plan it started with, as it showed live.
+    if let Some(start) = stored_start(store, &record.id).await {
+        view.set_base_plan(
+            &record.model,
+            start.effort.as_deref().unwrap_or("auto"),
+            start.access.as_deref().unwrap_or_default(),
+            start.workspace.as_deref(),
+        );
+    }
     if let RunKind::Fork { parent, fork_seq } = &record.kind {
         let turn = store
             .plugin_entries(parent, WORKSPACE_PLUGIN)
@@ -130,47 +140,30 @@ pub async fn history(
             if let Some(parent) =
                 views.iter_mut().find(|view| view.id == parent)
             {
-                parent.children.push(ChildRun {
-                    id: view.id.clone(),
-                    title: view.title.clone(),
-                    kind: ChildKind::SubAgent,
-                    status: view.status.clone(),
-                    call: None,
-                });
+                let child = ChildRun::of(&view, ChildKind::SubAgent, None);
+                parent.children.push(child);
             }
             views.push(view);
         }
     }
-    // Each fork is listed under the run it came from, too.
+    // Each fork is listed under the run it came from, too. A finished
+    // fork that has not landed waits in its parent's chat; a dropped one
+    // is closed, and the chat leaves it out.
     let forks: Vec<(RunId, ChildRun)> = views
         .iter()
         .filter_map(|view| match &view.origin {
-            Origin::Fork { from, .. } => Some((
-                from.clone(),
-                ChildRun {
-                    id: view.id.clone(),
-                    title: view.title.clone(),
-                    kind: ChildKind::Fork,
-                    status: view.status.clone(),
-                    call: None,
-                },
-            )),
+            Origin::Fork { from, .. } => {
+                Some((from.clone(), ChildRun::of(view, ChildKind::Fork, None)))
+            }
             _ => None,
         })
         .collect();
-    for (parent, child) in forks {
+    for (parent, fork) in forks {
         if let Some(view) = views.iter_mut().find(|view| view.id == parent) {
-            // A finished fork that has not landed waits in its parent's
-            // chat; a dropped one is closed, and the chat leaves it out.
-            let landed = view.items.iter().any(|item| {
-                matches!(item, crate::view::Item::Landed(card) if card.from == child.id)
-            });
-            if !landed && !child.status.is_live() {
-                view.items.push(crate::view::Item::ForkReady {
-                    fork: child.id.clone(),
-                });
+            if !fork.status.is_live() {
+                view.fork_finished(&fork.id);
             }
-            view.children.push(child);
+            view.children.push(fork);
         }
     }
     Ok(views)

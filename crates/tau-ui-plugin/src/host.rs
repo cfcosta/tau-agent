@@ -173,14 +173,27 @@ pub enum Push {
     },
 }
 
-/// The plugin name under which the host records the repository each
-/// run works in, as the run starts ([`RepoRecord`]).
-pub const REPO_RECORD: &str = "repo";
+/// The plugin name under which the host records how each run started
+/// ([`HostRecord`]).
+pub const HOST_RECORD: &str = "tau-host";
 
-/// What the host records under [`REPO_RECORD`]: the repository's name.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct RepoRecord {
+/// What the host records under [`HOST_RECORD`] as a run starts: the
+/// repository it works in, and the plan a stored run shows as the live
+/// one did.
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
+pub struct HostRecord {
     pub repo: String,
+    /// The reasoning effort picked, as the plan says it: `auto`, `high`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// What the run reached models through: `ChatGPT plan`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<String>,
+    /// The directory of the workspace it worked in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
 }
 
 /// The host's services, the only part of the host a plugin reaches.
@@ -247,10 +260,10 @@ impl HostCx {
         repo: &RepoCtx,
     ) -> anyhow::Result<std::collections::BTreeSet<RunId>> {
         Ok(self
-            .records_everywhere(REPO_RECORD)?
+            .records_everywhere(HOST_RECORD)?
             .into_iter()
             .filter(|(_, body)| {
-                serde_json::from_value::<RepoRecord>(body.clone())
+                serde_json::from_value::<HostRecord>(body.clone())
                     .is_ok_and(|record| record.repo == repo.name)
             })
             .map(|(run, _)| run)

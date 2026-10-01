@@ -1,16 +1,16 @@
 //! The host's repositories: importing and opening their projects, their
-//! main chats, and tagging each run with its repository.
+//! main chats, and tagging each run with how it started.
 
 use super::*;
 
-/// Records the repository a run works on, so history can list the run
-/// under it.
-pub(super) struct RepoTag(pub(super) String);
+/// Records how a run started: the repository it works on, so history
+/// lists the run under it, and its plan, so history shows it.
+pub(super) struct RunTag(pub(super) HostRecord);
 
 #[async_trait]
-impl Plugin for RepoTag {
+impl Plugin for RunTag {
     fn name(&self) -> &str {
-        REPO_RECORD
+        HOST_RECORD
     }
 
     async fn start(
@@ -19,14 +19,14 @@ impl Plugin for RepoTag {
         _ctx: &PluginCtx,
     ) -> Result<Box<dyn PluginRun>, PluginError> {
         Ok(Box::new(TagOnce {
-            repo: self.0.clone(),
+            record: self.0.clone(),
             done: false,
         }))
     }
 }
 
 pub(super) struct TagOnce {
-    pub(super) repo: String,
+    pub(super) record: HostRecord,
     pub(super) done: bool,
 }
 
@@ -40,21 +40,24 @@ impl PluginRun for TagOnce {
         if self.done || run != &ctx.run {
             return;
         }
-        let record = RepoRecord {
-            repo: self.repo.clone(),
-        };
-        self.done = ctx.record(&record).await.is_ok();
+        self.done = ctx.record(&self.record).await.is_ok();
     }
+}
+
+/// How a stored run started, if it recorded it.
+pub(super) async fn stored_start(
+    store: &Store,
+    run: &str,
+) -> Option<HostRecord> {
+    let entries = store.plugin_entries(run, HOST_RECORD).await.ok()?;
+    entries
+        .iter()
+        .find_map(|(_, body)| serde_json::from_str::<HostRecord>(body).ok())
 }
 
 /// The repository a stored run recorded, if it did.
 pub(super) async fn stored_repo(store: &Store, run: &str) -> Option<String> {
-    let entries = store.plugin_entries(run, REPO_RECORD).await.ok()?;
-    entries.iter().find_map(|(_, body)| {
-        serde_json::from_str::<RepoRecord>(body)
-            .ok()
-            .map(|record| record.repo)
-    })
+    stored_start(store, run).await.map(|record| record.repo)
 }
 
 /// A stable 32-bit FNV-1a hash, for directory names.
@@ -325,9 +328,10 @@ impl Host {
                 .await?;
             // Tagged with its repository, as a run's first turn would.
             let tag = Entry::Plugin {
-                plugin: REPO_RECORD.to_owned(),
-                body: serde_json::to_string(&RepoRecord {
+                plugin: HOST_RECORD.to_owned(),
+                body: serde_json::to_string(&HostRecord {
                     repo: repo.to_owned(),
+                    ..HostRecord::default()
                 })?,
             };
             self.store
