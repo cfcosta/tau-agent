@@ -14,3 +14,16 @@ pub mod results;
 
 mod client;
 pub mod connection;
+mod plugin;
+pub mod tool;
+
+pub use plugin::{
+    DESCRIPTION_LIMIT,
+    McpPlugin,
+    McpPluginBuilder,
+    NAME,
+    SERVERS_INTRO,
+    SERVERS_LIMIT,
+    STARTUP_WAIT,
+    servers_block,
+};
