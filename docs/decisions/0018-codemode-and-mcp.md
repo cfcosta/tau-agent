@@ -126,6 +126,13 @@ signatures.
   per-call ledger (fast compaction) must ignore those, since they never
   reach the transcript.
 - Every plugin crate that uses `tau-codemode` compiles Luau's C++ once.
+- The phone builds Luau too, since tau-ui depends on `tau-codemode`.
+  The NDK's clang++ compiles it, and `luau0-src` links it against the
+  NDK's `c++_shared`. The `android` dev shell has cargo-ndk copy
+  `libc++_shared.so` into jniLibs (`CARGO_NDK_LINK_LIBCXX_SHARED`), so
+  the APK carries it. The engine is in the phone's library though the
+  phone never runs a script; leaving it out with a feature is open, as
+  in decision 0017.
 - MCP servers are processes and connections owned by the agent, not by
   a run: they outlive runs and close with the agent. In tau-ui the host
   keeps them, one plugin per repository, and closes them when it goes.

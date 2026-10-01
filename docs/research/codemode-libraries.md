@@ -222,7 +222,7 @@ Derive the return type from `output_schema` when the server sends one, and use `
   - mlua+luau compiles C++ from `luau0-src` through the `cc` crate.
   - The default dev shell is `pkgs.mkShell`, a stdenv with gcc and g++. So plain `cargo build` in `nix develop` works with no flake change and no pkg-config entry. This follows the dev-shell rule (plain cargo must work).
   - Do **not** pick the system-Lua (`pkg-config`) route.
-  - Android shell (`mkShellNoCC` + cargo-ndk): cc-rs uses the NDK's clang++, which builds Luau. Check this once if the plugin ends up in the phone build.
+  - Android shell (`mkShellNoCC` + cargo-ndk): cc-rs uses the NDK's clang++, which builds Luau. Checked once the plugin ended up in the phone build (through tau-ui): it builds, and `luau0-src` links `c++_shared` on Android, so the shell sets `CARGO_NDK_LINK_LIBCXX_SHARED` and cargo-ndk copies `libc++_shared.so` into jniLibs for the APK.
   - The `buildRustPackage` for tau-ui uses stdenv, which has a C++ compiler, so the Nix package build is fine too.
 - **tokio**: the workspace enables `macros, rt, sync, time`. rmcp's child-process transport adds `process` and `io-util`, which is fine for a plugin crate.
 - **Send**: tau's tools need Send futures, so use mlua's `send` feature (see above).
