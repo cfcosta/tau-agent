@@ -15,7 +15,6 @@ pub mod client;
 pub mod devices;
 pub mod pairing;
 pub mod server;
-pub mod time;
 pub mod tls;
 pub mod wire;
 

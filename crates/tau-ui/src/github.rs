@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Notify, oneshot};
 
 use crate::{
-    accounts::{Credentials, write_private},
+    accounts::Credentials,
     setup::{DeviceCode, GitHub, RepoChoice, SetupUpdate},
     update::HostUpdate,
     workspace::{Workspace, WorkspaceEvent},
@@ -62,7 +62,7 @@ impl Token {
 
     pub fn save(&self, credentials: &Credentials) -> std::io::Result<()> {
         let text = serde_json::to_vec_pretty(self)?;
-        write_private(&credentials.github(), &text)
+        tau_ai::files::write_private(&credentials.github(), &text)
     }
 
     pub fn forget(credentials: &Credentials) -> std::io::Result<()> {

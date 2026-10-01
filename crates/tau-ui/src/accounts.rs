@@ -93,7 +93,9 @@ impl Credentials {
     /// Saves the TypeSafe key, or forgets it with `None`.
     pub fn set_jev_key(&self, key: Option<&str>) -> io::Result<()> {
         match key.map(str::trim).filter(|key| !key.is_empty()) {
-            Some(key) => write_private(&self.jev(), key.as_bytes()),
+            Some(key) => {
+                tau_ai::files::write_private(&self.jev(), key.as_bytes())
+            }
             None => remove(&self.jev()),
         }
     }
@@ -160,19 +162,6 @@ fn remove(path: &Path) -> io::Result<()> {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
-}
-
-/// Writes `bytes` to `path`, readable only by the user.
-pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    use std::io::Write;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(path)?.write_all(bytes)
 }
 
 /// Called with the account runs use now, after a sign-in, a switch or a

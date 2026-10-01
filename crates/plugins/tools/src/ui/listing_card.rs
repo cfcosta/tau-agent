@@ -5,8 +5,6 @@
 //! and how `@` changes it. Ignored entries stay in place, dimmed, with
 //! only their name.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use gpui::{Div, Hsla, div, prelude::*, px};
 use tau_ui_kit::{
     assets::Icon,
@@ -64,9 +62,7 @@ pub fn summary(
 
 /// An open listing: the folders, then the files.
 pub fn body(listing: &DirListing, t: &Theme, compact: bool) -> Div {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs() as i64);
+    let now = tau_ai::time::now_seconds() as i64;
     let dirs: Vec<&Listed> = listing.dirs().collect();
     let files: Vec<&Listed> = listing.files().collect();
     let section = |title: String, first: bool| {

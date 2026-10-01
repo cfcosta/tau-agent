@@ -78,7 +78,7 @@ impl Identity {
             cert: made.der().clone(),
             key: PrivatePkcs8KeyDer::from(pair.serialize_der()),
         };
-        write_private(&key, identity.key.secret_pkcs8_der())?;
+        tau_ai::files::write_private(&key, identity.key.secret_pkcs8_der())?;
         fs::write(cert, identity.cert.as_ref())?;
         Ok(identity)
     }
@@ -97,16 +97,6 @@ impl Identity {
             )?;
         Ok(Arc::new(config))
     }
-}
-
-/// Only the owner may read the key.
-fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    use io::Write as _;
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(path)?.write_all(bytes)
 }
 
 pub fn fingerprint_of(cert: &[u8]) -> Fingerprint {

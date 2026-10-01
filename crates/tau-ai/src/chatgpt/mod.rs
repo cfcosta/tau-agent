@@ -68,7 +68,6 @@ pub use store::{
     PlanUsage,
     REFRESH_MARGIN,
     Store,
-    rfc3339,
 };
 use tokio::sync::Mutex;
 use url::Url;
@@ -132,13 +131,6 @@ pub(crate) fn random_token() -> String {
     URL_SAFE_NO_PAD.encode(random_bytes::<32>())
 }
 
-/// Unix seconds, from the system clock.
-pub fn system_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
-
 /// Endpoints, clock and retry settings. [`Config::default`] is OpenAI's.
 #[derive(Clone)]
 pub struct Config {
@@ -175,7 +167,7 @@ impl Default for Config {
             discovery_url: url(DISCOVERY_URL),
             api_base: url(API_BASE),
             websocket_url: WEBSOCKET_URL.to_owned(),
-            clock: Arc::new(system_now),
+            clock: Arc::new(crate::time::now_seconds),
             revoke_attempts: 4,
             revoke_backoff: Duration::from_secs(1),
         }
@@ -539,7 +531,7 @@ impl<D: Dialer> ChatGpt<D> {
             expires_at: Some(now + expires_in),
             earliest_refresh_at: tokens.earliest_refresh_at,
             scopes: sorted_scopes(scope.as_deref().unwrap_or("")),
-            saved_at: rfc3339(now),
+            saved_at: crate::time::rfc3339(now),
         };
         let account = credentials.id();
         {
@@ -672,7 +664,7 @@ impl<D: Dialer> ChatGpt<D> {
         credentials.expires_in = Some(expires_in);
         credentials.expires_at = Some(now + expires_in);
         credentials.earliest_refresh_at = tokens.earliest_refresh_at;
-        credentials.saved_at = rfc3339(now);
+        credentials.saved_at = crate::time::rfc3339(now);
         store.save(&credentials)?;
         Ok(credentials)
     }

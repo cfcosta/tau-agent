@@ -17,7 +17,7 @@
 use std::{
     fmt,
     fs,
-    io::{self, Write},
+    io,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -26,6 +26,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{ChatGptError, PLAN_USAGE_SCOPE, random_bytes};
+use crate::files::{
+    create_private_dir,
+    private_options,
+    write_private,
+    write_private_temp,
+};
 
 /// This host's `ext_agent_host_id`: opaque, made once, never
 /// user-identifying, and not a credential.
@@ -321,7 +327,7 @@ impl Store {
             ext_agent_host_id: HostId::new_uuid(),
         })
         .expect("a host file serializes");
-        let temp = write_temp(&path, text.as_bytes())
+        let temp = write_private_temp(&path, text.as_bytes())
             .map_err(|error| storage(&path, error))?;
         // `hard_link` fails if the file exists: never replace a host id.
         let linked = fs::hard_link(&temp, &path);
@@ -365,7 +371,7 @@ impl Store {
         let path = self.account_path(&credentials.id());
         let text = serde_json::to_string_pretty(credentials)
             .expect("credentials serialize");
-        write_atomic(&path, text.as_bytes())
+        write_private(&path, text.as_bytes())
             .map_err(|error| storage(&path, error))
     }
 
@@ -402,7 +408,7 @@ impl Store {
     pub fn set_active(&self, id: &AccountId) -> Result<(), ChatGptError> {
         self.load(id)?;
         let path = self.dir.join("active");
-        write_atomic(&path, id.as_str().as_bytes())
+        write_private(&path, id.as_str().as_bytes())
             .map_err(|error| storage(&path, error))
     }
 
@@ -482,69 +488,6 @@ fn corrupt(path: &Path, message: String) -> ChatGptError {
     }
 }
 
-fn create_private_dir(dir: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
-}
-
-fn private_options() -> fs::OpenOptions {
-    let mut options = fs::OpenOptions::new();
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options
-}
-
-/// Writes `bytes` to a new owner-only file beside `path`.
-fn write_temp(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("file");
-    let suffix: String = random_bytes::<6>()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    let temp = path.with_file_name(format!(".{name}.{suffix}.tmp"));
-    let mut file =
-        private_options().write(true).create_new(true).open(&temp)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    Ok(temp)
-}
-
-/// Replaces `path` with `bytes` in one rename, owner-only.
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let temp = write_temp(path, bytes)?;
-    fs::rename(&temp, path).inspect_err(|_| {
-        let _ = fs::remove_file(&temp);
-    })
-}
-
-/// `seconds` since the epoch as RFC 3339 UTC, e.g. `2026-09-29T12:00:00Z`.
-pub fn rfc3339(seconds: u64) -> String {
-    let days = (seconds / 86_400) as i64;
-    let rest = seconds % 86_400;
-    // Howard Hinnant's civil_from_days.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        rest / 3600,
-        rest % 3600 / 60,
-        rest % 60
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,13 +505,6 @@ mod tests {
         assert_ne!(HostId::new_uuid(), id);
         assert_eq!(HostId::parse("me@example.com"), None);
         assert_eq!(HostId::parse("urn:uuid:"), None);
-    }
-
-    #[test]
-    fn timestamps_are_rfc_3339() {
-        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
-        assert_eq!(rfc3339(951_782_400), "2000-02-29T00:00:00Z");
-        assert_eq!(rfc3339(1_790_032_532), "2026-09-21T23:15:32Z");
     }
 
     fn credentials(

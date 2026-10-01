@@ -34,9 +34,9 @@ use tau_ai::{
         Loopback,
         Revocation,
         Store,
-        rfc3339,
     },
     http::{self, Request, Tls},
+    time::rfc3339,
     ws::io::connection::Connector,
 };
 use tokio_tungstenite::tungstenite::{self, Message};

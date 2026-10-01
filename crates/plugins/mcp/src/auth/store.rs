@@ -28,7 +28,7 @@
 use std::{
     fmt,
     fs,
-    io::{self, Write},
+    io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -44,6 +44,7 @@ use rmcp::transport::auth::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tau_ai::files::{create_private_dir, private_options, write_private};
 
 /// The file, in tau's configuration directory.
 pub const AUTH_FILE: &str = "mcp-auth.json";
@@ -416,42 +417,4 @@ pub(crate) fn random_id() -> String {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("the system has randomness");
     crate::config::hex(&bytes)
-}
-
-fn create_private_dir(dir: &Path) -> io::Result<()> {
-    if dir.as_os_str().is_empty() || dir.is_dir() {
-        return Ok(());
-    }
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
-}
-
-fn private_options() -> fs::OpenOptions {
-    let mut options = fs::OpenOptions::new();
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options
-}
-
-/// Replaces `path` with `bytes` in one rename, owner-only (0600).
-fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    create_private_dir(dir)?;
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let temp = dir.join(format!(".{name}.{}.tmp", random_id()));
-    let written = (|| {
-        let mut file =
-            private_options().write(true).create_new(true).open(&temp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        fs::rename(&temp, path)
-    })();
-    if written.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    written
 }

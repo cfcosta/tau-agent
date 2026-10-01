@@ -13,7 +13,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{pairing::PairingSecret, time, wire::Refusal};
+use crate::{pairing::PairingSecret, wire::Refusal};
 
 const FILE: &str = "phones.json";
 
@@ -69,13 +69,10 @@ impl Devices {
         })
     }
 
+    /// The list holds token digests: only its owner may read it.
     fn save(&self) -> Result<(), DevicesError> {
-        if let Some(dir) = self.path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let partial = self.path.with_extension("json.partial");
-        fs::write(&partial, serde_json::to_vec_pretty(&self.list)?)?;
-        fs::rename(partial, &self.path)?;
+        let list = serde_json::to_vec_pretty(&self.list)?;
+        tau_ai::files::write_private(&self.path, &list)?;
         Ok(())
     }
 
@@ -113,7 +110,7 @@ impl Devices {
         }
         self.secret = None;
         let token = random_text(32);
-        let now = time::now();
+        let now = tau_ai::time::rfc3339(tau_ai::time::now_seconds());
         let name = name.trim();
         let device = Device {
             id: random_text(9),
@@ -142,7 +139,8 @@ impl Devices {
         else {
             return Ok(None);
         };
-        stored.device.last_seen = Some(time::now());
+        stored.device.last_seen =
+            Some(tau_ai::time::rfc3339(tau_ai::time::now_seconds()));
         let device = stored.device.clone();
         self.save()?;
         Ok(Some(device))
