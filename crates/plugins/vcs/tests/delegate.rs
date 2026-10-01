@@ -152,7 +152,8 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
         assert_eq!(project.workspaces().unwrap(), ["parent"]);
 
         // The caller's links: a snapshot a turn, and in turn 3 the change
-        // that landed from the sub-agent before that turn's snapshot.
+        // that landed from the sub-agent before that turn's snapshot. The
+        // landed change is its own link's: turn 3 itself changed nothing.
         let links: Vec<Link> = store
             .plugin_entries(&outcome.run.0, PLUGIN)
             .await
@@ -172,7 +173,7 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
                 (1, true, false, true),
                 (2, false, false, true),
                 (3, true, true, false),
-                (3, true, false, true),
+                (3, false, false, true),
                 (4, false, false, true),
             ]
         );

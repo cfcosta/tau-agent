@@ -354,9 +354,13 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   snapshot stores `{ "turn": n, "error": "…" }` and the run goes on.
   Observers given with `on_turn` hear each `TurnSnapshot`, with the
   paths the turn changed. They count from the turn before's snapshot
-  rebased onto its parent as that is now, as a fork merges a snapshot:
-  when a catch-up restacked the commit the run stands on between two
-  turns, what it brought is not the turn's.
+  rebased onto its parent as that is now, as a fork merges a snapshot,
+  with the changes landed on the run since applied on top: what a
+  catch-up brought by restacking the commit the run stands on, or a
+  landing by stacking on it, is not the turn's. The landing's own links
+  record what landed. A confirmed landing tags its operation with the
+  change ids it landed (`tau.vcs.landed`), and the turn finds them in
+  the operation log back to its snapshot.
 
 - **Before it stops** with changes in `@`, the run is held once, with
   `COMMIT_FIRST` and the paths as the next user message.

@@ -36,6 +36,9 @@ pub(crate) const UNDO_ATTRIBUTE: &str = "tau.vcs.undo";
 /// bookmark: the turn changed nothing. Undo passes over it, as it does
 /// over snapshots.
 pub(crate) const BOOKMARK_ATTRIBUTE: &str = "tau.vcs.bookmark";
+/// The operation attribute of a landing: the change ids it landed,
+/// separated by spaces. A turn's paths leave them out.
+pub(crate) const LANDED_ATTRIBUTE: &str = "tau.vcs.landed";
 
 /// New files larger than this stay out of the snapshot, as jj's
 /// default. Every other new file is tracked: nothing is staged.

@@ -469,6 +469,11 @@ struct Machine {
     shown: BTreeMap<String, Seen>,
     /// Chats that came and went.
     chats: usize,
+    /// The main chat's last turn's snapshot, its tree, the main chat's
+    /// commit it stood on, and that commit's tree then.
+    main_since: Option<(String, Tree, usize, Tree)>,
+    /// The main chat's commits landed since that snapshot.
+    main_landed: Vec<usize>,
 }
 
 impl Machine {
@@ -492,7 +497,7 @@ impl Machine {
             .unwrap()
             .to_owned();
         let trunk_name = project.trunk_name().unwrap();
-        block_on(main.vcs.end_turn(trunk_name, None)).unwrap();
+        let turn = block_on(main.vcs.end_turn(trunk_name, None)).unwrap();
         let chat = Workspace::new(project.add_workspace("chat", head).unwrap());
         let (_, status) = chat.ok("vcs_status", json!({}));
         let wc_id = status["working_copy"]["change_id"]
@@ -515,7 +520,7 @@ impl Machine {
                 tree: first.clone(),
                 change_id: wc_id,
             },
-            seen: first,
+            seen: first.clone(),
             stale: None,
             ops: Vec::new(),
             passed: false,
@@ -523,6 +528,8 @@ impl Machine {
             dead: BTreeSet::new(),
             shown: BTreeMap::new(),
             chats: 0,
+            main_since: Some((turn.commit_id, first.clone(), 0, first.clone())),
+            main_landed: Vec::new(),
         }
     }
 
@@ -1076,7 +1083,41 @@ impl Machine {
         self.other();
         // The turn's end moves trunk to the main chat's newest commit.
         let name = self.project.trunk_name().unwrap();
-        block_on(self.main.vcs.end_turn(name, None)).unwrap();
+        let since = self.main_since.take();
+        let turn = block_on(
+            self.main
+                .vcs
+                .end_turn(name, since.as_ref().map(|(id, ..)| id.clone())),
+        )
+        .unwrap();
+        // The turn's paths count from the snapshot before, rebased onto
+        // its parent as that is now, with what landed since on top: the
+        // main chat's own commit alone.
+        let (_, then, at, parent_then) = since.unwrap();
+        let mut base = rebase_tree(&self.main_chain[at].0, &parent_then, &then);
+        if !self.main_landed.is_empty() {
+            tc.event("a main chat turn leaves out what landed");
+        }
+        for at in std::mem::take(&mut self.main_landed) {
+            let (tree, _) = &self.main_chain[at];
+            base = rebase_tree(tree, &self.main_chain[at - 1].0, &base);
+        }
+        let head = self.main_chain.last().unwrap().0.clone();
+        let got: Vec<(String, String)> = turn
+            .paths
+            .iter()
+            .map(|path| {
+                let kind = changes(&base, &head)
+                    .into_iter()
+                    .find(|(p, _)| p == path)
+                    .map(|(_, kind)| kind)
+                    .unwrap_or_default();
+                (path.clone(), kind)
+            })
+            .collect();
+        check_changes(&got, &base, &head, "the main chat's turn");
+        let at = self.main_chain.len() - 1;
+        self.main_since = Some((turn.commit_id, head.clone(), at, head));
     }
 
     /// Another chat starts on trunk, commits, and lands on the main chat
@@ -1104,6 +1145,7 @@ impl Machine {
             assert_eq!(landing.head, commit, "a landing on trunk's head moved");
             let id = committed["change_id"].as_str().unwrap().to_owned();
             self.main_chain.push((tree, id));
+            self.main_landed.push(self.main_chain.len() - 1);
         } else {
             tc.event("another chat is dropped");
             assert_eq!(
@@ -1479,6 +1521,25 @@ fn a_turns_paths_leave_out_what_a_catch_up_brought() {
     std::fs::write(dir.join("c.txt"), "c\n").unwrap();
     let second =
         block_on(chat.vcs.end_turn("tau/chat", Some(first.commit_id))).unwrap();
+    assert_eq!(second.paths, ["c.txt"], "the turn only wrote c.txt");
+}
+
+/// The same for a landing: the main chat's turn after a chat landed on
+/// it lists only its own edits. The landed changes are recorded by
+/// their own links. It used to list the landed files as the turn's.
+#[test]
+fn a_turns_paths_leave_out_what_landed() {
+    let (_home, project, main, chat, dir) = a_chat_on_main();
+    let name = project.trunk_name().unwrap();
+    let first = block_on(main.vcs.end_turn(name.clone(), None)).unwrap();
+    std::fs::write(dir.join("d.txt"), "d\n").unwrap();
+    let (_, committed) = chat.ok("vcs_commit", json!({ "message": "Add d" }));
+    let head = committed["committed"]["commit_id"].as_str().unwrap();
+    block_on(main.vcs.land(head, name.clone(), true)).unwrap();
+    let main_dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    std::fs::write(main_dir.join("c.txt"), "c\n").unwrap();
+    let second =
+        block_on(main.vcs.end_turn(name, Some(first.commit_id))).unwrap();
     assert_eq!(second.paths, ["c.txt"], "the turn only wrote c.txt");
 }
 

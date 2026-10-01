@@ -12,7 +12,8 @@
 //!   `tau/<run>` names its newest commit;
 //! - a turn that ends as `RunWorkspace` ends one snapshots `@` and leaves
 //!   it uncommitted, listing the paths changed since the last snapshot
-//!   rebased onto its parent as that is now;
+//!   rebased onto its parent as that is now, with what landed since on
+//!   top;
 //! - a fork at a change's link starts on exactly that link's files; one
 //!   at a snapshot starts on the snapshot's files, on its parent as it
 //!   is now, with what the parent gained since merged in;
@@ -201,6 +202,8 @@ struct Run {
     /// paths are counted from, as `RunWorkspace` keeps it, with the
     /// commit `@` stood on then and that commit's tree then.
     since: Option<(String, Tree, usize, Tree)>,
+    /// The commits landed on it since that snapshot, oldest first.
+    landed: Vec<usize>,
     turns: u32,
     state: State,
     /// A turn has set `tau/<name>`.
@@ -291,6 +294,7 @@ impl Machine {
             seen: tree,
             stale: None,
             links: Vec::new(),
+            landed: Vec::new(),
             since: None,
             turns: 0,
             state: State::Open,
@@ -802,7 +806,20 @@ impl Machine {
                 } else {
                     self.commits[at].tree.clone()
                 };
-                rebase_tree(&now, &then, &tree)
+                let mut base = rebase_tree(&now, &then, &tree);
+                // What landed since is not the turn's.
+                if !self.runs[run].landed.is_empty() {
+                    tc.event("a turn leaves out what landed");
+                }
+                for &at in &self.runs[run].landed {
+                    let parent = self.commits[at].parent.unwrap();
+                    base = rebase_tree(
+                        &self.commits[at].tree,
+                        &self.commits[parent].tree,
+                        &base,
+                    );
+                }
+                base
             }
             None => self.commits[head].tree.clone(),
         };
@@ -820,6 +837,7 @@ impl Machine {
         r.seen = tree.clone();
         r.turns += 1;
         r.bookmarked = true;
+        r.landed.clear();
         r.since = Some((
             snapshot.commit_id.clone(),
             tree.clone(),
@@ -895,6 +913,7 @@ impl Machine {
             seen: self.fork_tree(&linked),
             stale: None,
             links,
+            landed: Vec::new(),
             since: link.snapshot.then(|| {
                 let (then, tree) = linked.snapshot.clone().unwrap();
                 (link.commit_id.clone(), tree, linked.at, then)
@@ -930,6 +949,7 @@ impl Machine {
             seen: self.commits[self.trunk].tree.clone(),
             stale: None,
             links: Vec::new(),
+            landed: Vec::new(),
             since: None,
             turns: 0,
             state: State::Open,
@@ -1063,6 +1083,7 @@ impl Machine {
             self.runs[parent].bookmarked = true;
         }
 
+        self.runs[parent].landed.extend(moving.iter().copied());
         // The host links the landed changes in the parent.
         let from = self.runs[child].name.clone();
         let turn = self.runs[parent].turns;

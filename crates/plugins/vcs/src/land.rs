@@ -57,7 +57,17 @@ pub(crate) fn land(
     let name = worker.workspace()?.workspace_name().to_owned();
     if confirm {
         let (_, landing) = session::mutate(worker, "land", |tx, wc| {
-            restack(tx, wc, &name, &child_head, bookmark)
+            let landing = restack(tx, wc, &name, &child_head, bookmark)?;
+            let landed: Vec<&str> = landing
+                .changes
+                .iter()
+                .map(|change| change.change_id.as_str())
+                .collect();
+            tx.set_attribute(
+                session::LANDED_ATTRIBUTE.to_owned(),
+                landed.join(" "),
+            );
+            Ok(landing)
         })?;
         return Ok(landing);
     }

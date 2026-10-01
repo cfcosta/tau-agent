@@ -29,6 +29,7 @@ use crate::{
     session::{
         self,
         BOOKMARK_ATTRIBUTE,
+        LANDED_ATTRIBUTE,
         Snapshot,
         TOOL_ATTRIBUTE,
         UNDO_ATTRIBUTE,
@@ -588,10 +589,20 @@ pub(crate) fn end_turn(
     bookmark: &str,
     since: Option<&str>,
 ) -> Result<TurnSnapshot, VcsError> {
+    let name = workspace_name(worker)?;
     let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, wc| {
         let head = wc.parent_ids().first().ok_or(VcsError::NoParent)?.clone();
         let before = match since.and_then(CommitId::try_from_hex) {
-            Some(id) => since_tree(tx.repo(), &id)?,
+            Some(id) => {
+                let landed =
+                    landed_since(tx.base_repo().operation(), &name, &id)?;
+                with_landed(
+                    tx.repo(),
+                    since_tree(tx.repo(), &id)?,
+                    &head,
+                    &landed,
+                )?
+            }
             None => block_on(wc.parent_tree(tx.repo()))?,
         };
         let paths =
@@ -645,6 +656,83 @@ fn since_tree(
             (snapshot.tree(), "the turn before".to_owned()),
         ]),
     ))?)
+}
+
+/// The change ids landed on this workspace's run since the turn whose
+/// snapshot is `since`: what its `land` operations record, newest
+/// operation first. The walk back stops where `since` was this
+/// workspace's working copy, or where the workspace did not exist yet
+/// (a fork, whose `since` is its parent's snapshot).
+fn landed_since(
+    head: &Operation,
+    name: &WorkspaceName,
+    since: &CommitId,
+) -> Result<HashSet<String>, VcsError> {
+    let mut landed = HashSet::new();
+    let mut op = head.clone();
+    loop {
+        let view = block_on(op.view())?;
+        match view.get_wc_commit_id(name) {
+            None => return Ok(landed),
+            Some(wc) if wc == since => return Ok(landed),
+            Some(_) => {}
+        }
+        let metadata = op.metadata();
+        if metadata.workspace_name.as_deref() == Some(name)
+            && let Some(ids) = metadata.attributes.get(LANDED_ATTRIBUTE)
+        {
+            landed.extend(ids.split_whitespace().map(str::to_owned));
+        }
+        // Concurrent operations merge into one: follow the first.
+        match block_on(op.parents())?.into_iter().next() {
+            Some(parent) => op = parent,
+            None => return Ok(landed),
+        }
+    }
+}
+
+/// `base` with the changes of the `landed` commits under `head` (this
+/// run's newest commit) applied on top, oldest first: what came to the
+/// run's stack by landing is not the turn's.
+fn with_landed(
+    repo: &dyn Repo,
+    mut base: jj_lib::merged_tree::MergedTree,
+    head: &CommitId,
+    landed: &HashSet<String>,
+) -> Result<jj_lib::merged_tree::MergedTree, VcsError> {
+    if landed.is_empty() {
+        return Ok(base);
+    }
+    let ids: Vec<CommitId> = {
+        let revset = ResolvedRevsetExpression::commit(head.clone())
+            .ancestors()
+            .evaluate(repo)?;
+        block_on(revset.stream().collect::<Vec<_>>())
+            .into_iter()
+            .collect::<Result<_, _>>()?
+    };
+    let mut left = landed.clone();
+    let mut commits = Vec::new();
+    for id in ids {
+        if left.is_empty() {
+            break;
+        }
+        let commit = repo.store().get_commit(&id)?;
+        if left.remove(&commit.change_id().reverse_hex()) {
+            commits.push(commit);
+        }
+    }
+    for commit in commits.into_iter().rev() {
+        let parent = block_on(commit.parent_tree(repo))?;
+        base = block_on(jj_lib::merged_tree::MergedTree::merge(
+            jj_lib::merge::Merge::from_vec(vec![
+                (base, "the turn before".to_owned()),
+                (parent, "before the landing".to_owned()),
+                (commit.tree(), "the landing".to_owned()),
+            ]),
+        ))?;
+    }
+    Ok(base)
 }
 
 /// What `@` holds, after a snapshot.
