@@ -22,6 +22,9 @@
 //!   merge or resolving, a run's landing card (ADR 0014);
 //!   models, picker, run-picker, fork-picker, log, status, show or diff
 //!   (demo screens).
+//!   With a sign-in, only `page:<plugin>/<page>[?key=value&...]`, a
+//!   plugin's page, such as `page:tau-mcp/servers?repo=` for the MCP
+//!   servers outside a repository.
 //! - `--phone`: the phone layout in a 390×844 frame.
 //! - `--frame <w>x<h>`: lay out at exactly that size in the top-left
 //!   corner, to compare with the designs.
@@ -174,6 +177,11 @@ fn main() {
                         workspace
                             .update(cx, |ws, cx| ws.submit_prompt(prompt, cx));
                     }
+                    if let Some(route) =
+                        args.open.as_deref().and_then(plugin_page)
+                    {
+                        workspace.update(cx, |ws, cx| ws.navigate(route, cx));
+                    }
                 }
                 // No model yet: set one up, then start the host.
                 None if onboarding => {
@@ -220,6 +228,27 @@ fn main() {
             cx.activate(true);
         },
     );
+}
+
+/// The plugin page `--open page:<plugin>/<page>[?key=value&...]` names,
+/// such as `page:tau-mcp/servers?repo=`.
+fn plugin_page(open: &str) -> Option<Route> {
+    let rest = open.strip_prefix("page:")?;
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let (plugin, page) = path.split_once('/')?;
+    let params = query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (key.to_owned(), value.to_owned())
+        })
+        .collect();
+    Some(Route::Plugin {
+        plugin: plugin.to_owned(),
+        page: page.to_owned(),
+        params,
+    })
 }
 
 /// Reduces motion when asked: at once from the flag, the environment or
