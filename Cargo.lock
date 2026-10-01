@@ -9131,6 +9131,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-ask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "gpui-pre",
+ "hegeltest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-store",
+ "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "tau-codemode"
 version = "0.1.0"
 dependencies = [
@@ -9531,6 +9553,7 @@ dependencies = [
  "serde_json",
  "tau-agent",
  "tau-ai",
+ "tau-ask",
  "tau-codemode",
  "tau-compaction",
  "tau-constitution",
