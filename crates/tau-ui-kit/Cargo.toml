@@ -1,0 +1,21 @@
+[package]
+name = "tau-ui-kit"
+description = "tau's design language: theme tokens, icons, fonts and the shared GPUI components."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+anyhow.workspace = true
+pulldown-cmark.workspace = true
+serde.workspace = true
+unicode-segmentation = "1.12.0"
+qrcode.workspace = true
+# The theme carries the terminal palette.
+tau-terminal.workspace = true
+
+[dev-dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+hegeltest.workspace = true

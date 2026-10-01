@@ -24,8 +24,20 @@ use gpui::{
     rgb,
     rgba,
 };
+use serde::{Deserialize, Serialize};
 
-use crate::view::Tone;
+/// How something reads: the color a note, a status or a badge takes.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+pub enum Tone {
+    #[default]
+    Info,
+    Warn,
+    Danger,
+    Good,
+    Quiet,
+}
 
 pub const SANS: &str = "Geist";
 pub const MONO: &str = "Geist Mono";

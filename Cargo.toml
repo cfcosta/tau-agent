@@ -131,3 +131,4 @@ tau-tools = { path = "crates/plugins/tools", version = "0.1.0" }
 tau-vcs = { path = "crates/plugins/vcs", version = "0.1.0" }
 tau-remote = { path = "crates/tau-remote", version = "0.1.0" }
 tau-ui = { path = "crates/tau-ui", version = "0.1.0" }
+tau-ui-kit = { path = "crates/tau-ui-kit", version = "0.1.0" }

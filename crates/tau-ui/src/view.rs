@@ -660,17 +660,7 @@ pub struct Proposal {
     pub detail: String,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
-)]
-pub enum Tone {
-    #[default]
-    Info,
-    Warn,
-    Danger,
-    Good,
-    Quiet,
-}
+pub use tau_ui_kit::theme::Tone;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanField {

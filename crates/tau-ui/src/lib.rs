@@ -43,7 +43,6 @@
 //! with [`Workspace::update_pairing`].
 
 pub mod accounts;
-pub mod assets;
 pub mod attach;
 pub mod catalog;
 pub mod change_diff;
@@ -53,9 +52,7 @@ pub mod demo;
 pub mod github;
 pub mod goal;
 pub mod host;
-pub mod input;
 pub mod listing;
-pub mod markdown;
 pub mod memory;
 pub mod metered;
 pub mod models;
@@ -73,7 +70,6 @@ pub mod rule_editor;
 pub mod search;
 pub mod setup;
 pub mod slash;
-pub mod theme;
 pub mod titles;
 pub mod ui;
 pub mod update;
@@ -81,16 +77,13 @@ pub mod view;
 pub mod workspace;
 
 use gpui::App;
+pub use tau_ui_kit::{assets, input, markdown, theme};
 pub use workspace::{Workspace, WorkspaceEvent};
 
 /// Sets up what the interface needs once per app: fonts, the theme and
 /// the text field's keys.
 pub fn init(cx: &mut App) {
-    if let Err(error) = assets::load_fonts(cx) {
-        eprintln!("tau-ui: could not load the bundled fonts: {error}");
-    }
-    cx.set_global(theme::Theme::graphite());
-    input::bind_keys(cx);
+    tau_ui_kit::init(cx);
     workspace::bind_keys(cx);
     tau_terminal::view::bind_keys(cx);
 }

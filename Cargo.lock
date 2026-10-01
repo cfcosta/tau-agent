@@ -9237,6 +9237,7 @@ dependencies = [
  "tau-terminal",
  "tau-testing",
  "tau-tools",
+ "tau-ui-kit",
  "tau-vcs",
  "tempfile",
  "tokio",
@@ -9244,6 +9245,20 @@ dependencies = [
  "unicode-segmentation",
  "uuid",
  "webpki-roots",
+]
+
+[[package]]
+name = "tau-ui-kit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui-pre",
+ "hegeltest",
+ "pulldown-cmark",
+ "qrcode",
+ "serde",
+ "tau-terminal",
+ "unicode-segmentation",
 ]
 
 [[package]]

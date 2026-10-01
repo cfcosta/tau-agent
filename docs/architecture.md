@@ -10,6 +10,8 @@ tau-agent/
 │   │                 # limits, sub-agents, forks, context estimate
 │   ├── tau-store/    # SQLite via sqlx: runs, messages, fork transcripts, migrations
 │   ├── tau-testing/  # ScriptedModel, recorded-stream replay
+│   ├── tau-ui-kit/   # the design language: theme tokens, icons, fonts, components,
+│   │                 # text field, marked-up text (ADR 0017)
 │   ├── terminal/     # tau-terminal: libghostty-vt terminal, PTY command runner,
 │   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
 │   └── plugins/
@@ -24,6 +26,8 @@ Dependency direction:
 
 - `tau-agent` depends on `tau-ai` and `tau-store`.
 - `tau-testing` depends on `tau-ai`.
+- `tau-ui-kit` depends on GPUI and `tau-terminal` (the theme's terminal
+  palette), and on no other tau crate.
 - `tau-terminal` depends on no tau crate. `tau-tools` uses it for
   `bash` only with its `terminal` feature, which `tau-ui` turns on
   ([0010](decisions/0010-terminal-rendering.md)).
