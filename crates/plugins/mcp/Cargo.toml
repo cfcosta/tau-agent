@@ -12,6 +12,7 @@ base64.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 libc.workspace = true
+reqwest.workspace = true
 # The MCP client (docs/research/codemode-libraries.md). Its API moves
 # between majors, so only `src/client.rs` touches it. No default
 # features; reqwest's TLS is the workspace's `rustls-no-provider`.
@@ -28,8 +29,10 @@ tau-agent.workspace = true
 tau-ai.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util"] }
+tokio-rustls.workspace = true
 tokio-util.workspace = true
 tracing = "0.1"
+webpki-roots.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true
@@ -39,6 +42,7 @@ rmcp = { version = "3.5.0", default-features = false, features = [
   "client",
   "macros",
   "server",
+  "transport-io",
 ] }
 tau-store.workspace = true
 tau-testing.workspace = true
@@ -49,3 +53,9 @@ tokio = { workspace = true, features = [
   "test-util",
   "net",
 ] }
+
+# Runs itself as a stdio MCP server in a child process; libtest's output
+# would corrupt the server's stdout, so it has its own `main`.
+[[test]]
+name = "stdio"
+harness = false

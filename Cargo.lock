@@ -9234,6 +9234,7 @@ dependencies = [
  "hegeltest",
  "libc",
  "regex",
+ "reqwest 0.13.5",
  "rmcp",
  "serde",
  "serde_json",
@@ -9245,8 +9246,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tracing",
+ "webpki-roots",
 ]
 
 [[package]]
