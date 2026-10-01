@@ -335,7 +335,9 @@ impl PluginRun for FastCompactionRun {
         ctx: &PluginCtx,
     ) -> Result<(), PluginError> {
         let settings = &self.settings.output;
-        if !settings.enabled {
+        // A nested call's output goes back to the tool that made it, never
+        // to the model.
+        if !settings.enabled || view.call.parent.is_some() {
             return Ok(());
         }
         let Some(gated) = output::gate(

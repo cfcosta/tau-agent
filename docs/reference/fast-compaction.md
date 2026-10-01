@@ -47,6 +47,9 @@ had seen when it made the call ([plugins.md](plugins.md)).
 
 - Only a **successful `bash` result** of text. A failed command comes
   back as an error, and errors are left as they are.
+- Only a call the model made. A nested call (one a tool made with
+  `ToolCtx::call`, such as a Codemode script's) goes back to that tool,
+  never to the model, and is left as it is.
 - `bash` keeps the last 2,000 lines or 50 KB of an output. When it
   truncates, it spills the full output to `tau-bash-<hex>.log` in the
   temporary directory and ends the result with `Full output: <path>`.
