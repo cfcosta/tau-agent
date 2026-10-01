@@ -1846,6 +1846,7 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
                     call_id: call.into(),
                     tool: Arc::from("delegate"),
                     args: serde_json::json!({ "task": task }),
+                    parent: None,
                 },
                 cx,
             );
@@ -1900,6 +1901,7 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
                     ..ToolOutput::text("done")
                 }),
                 is_error: false,
+                parent: None,
             },
             cx,
         );

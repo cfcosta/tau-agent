@@ -150,6 +150,7 @@ fn read_image(
     Ok(ToolOutput {
         content,
         details: None,
+        structured: None,
     })
 }
 
@@ -290,5 +291,6 @@ fn read_text(
             text_signature: None,
         })],
         details,
+        structured: None,
     })
 }

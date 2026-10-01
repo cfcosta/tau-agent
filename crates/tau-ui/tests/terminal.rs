@@ -40,6 +40,7 @@ fn chunk(seq: u64, bytes: &[u8]) -> RunEvent {
             details: Some(json!({"term": {"seq": seq, "bytes": b64(bytes)}})),
             ..ToolOutput::text("so far")
         }),
+        parent: None,
     }
 }
 
@@ -58,6 +59,7 @@ fn started() -> RunView {
         call_id: "c1".into(),
         tool: "bash".into(),
         args: json!({"command": "cargo test"}),
+        parent: None,
     });
     view
 }
@@ -97,6 +99,7 @@ fn chunks_join_in_order(tc: TestCase) {
             run: run(),
             call_id: "c1".into(),
             partial: Arc::new(ToolOutput::text("text only")),
+            parent: None,
         });
     }
     let term = term(&view).expect("a terminal");
@@ -121,6 +124,7 @@ fn the_result_ends_the_terminal() {
             ..ToolOutput::text("FAIL\nerror\n\nCommand exited with code 100")
         }),
         is_error: true,
+        parent: None,
     });
     assert!(matches!(card(&view).state, ToolState::Failed(_)));
     let term = term(&view).expect("a terminal");
@@ -152,6 +156,7 @@ fn how_a_command_ended_shows_on_its_card() {
                 ..ToolOutput::text("ok")
             }),
             is_error: code != Some(0),
+            parent: None,
         });
         assert_eq!(term(&view).unwrap().failure().as_deref(), failure);
         if failure.is_none() {
@@ -234,6 +239,7 @@ fn the_model_text_marks_what_was_left_out() {
             ..ToolOutput::text(seen)
         }),
         is_error: false,
+        parent: None,
     });
     view.update(tau_ui::view::RunUpdate::Event(RunEvent::PluginReport {
         run: run(),
@@ -263,6 +269,7 @@ fn the_model_text_marks_what_was_left_out() {
             ..ToolOutput::text("[3 lines omitted]")
         }),
         is_error: false,
+        parent: None,
     });
     assert_eq!(
         term(&plain).expect("a terminal").seen_lines(),
@@ -299,6 +306,7 @@ fn the_workspace_draws_and_copies_a_terminal(cx: &mut TestAppContext) {
                     ..ToolOutput::text("   Compiling tau\n    Finished\n")
                 }),
                 is_error: false,
+                parent: None,
             },
             cx,
         );

@@ -149,6 +149,7 @@ impl AgentTool for Edit {
                 "diff": diff,
                 "firstChangedLine": first_changed_line,
             })),
+            structured: None,
         })
     }
 }

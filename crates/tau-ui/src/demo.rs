@@ -1942,6 +1942,7 @@ impl Script {
                 call_id: id.into(),
                 tool: Arc::from(tool),
                 args,
+                parent: None,
             },
         );
     }
@@ -1954,6 +1955,7 @@ impl Script {
                 call_id: id.into(),
                 output: Arc::new(output),
                 is_error: false,
+                parent: None,
             },
         );
     }
@@ -1968,6 +1970,7 @@ impl Script {
                 call_id: id.into(),
                 output: Arc::new(output),
                 is_error: true,
+                parent: None,
             },
         );
     }
@@ -1994,6 +1997,7 @@ impl Script {
                     }})),
                     ..ToolOutput::text(plain(so_far))
                 }),
+                parent: None,
             },
         );
     }

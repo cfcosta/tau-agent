@@ -6,7 +6,6 @@
 //! and cancellation.
 
 use std::{
-    collections::HashMap,
     fmt,
     sync::{Arc, atomic::AtomicI64},
 };
@@ -40,9 +39,9 @@ use crate::{
     hook::RunHook,
     limits::Limits,
     plugin::{Hooked, Plugin, RunPlan, RunShared},
-    runner::{ActivePlugin, Clock, LoopTool, Runner, system_clock},
+    runner::{ActivePlugin, Clock, LoopTool, Runner, Toolbox, system_clock},
     schema::to_strict,
-    tool::{AgentTool, RunId, ToolCtx, ToolError, ToolOutput},
+    tool::{AgentTool, RunId, ToolCtx, ToolError, ToolOutput, ToolSource},
     validation::ArgumentSchema,
 };
 
@@ -211,9 +210,12 @@ struct AgentInner {
     model: String,
     instructions: Option<String>,
     reasoning: Option<ReasoningEffort>,
-    tools: Vec<Arc<dyn AgentTool>>,
+    /// Each tool, with the index of the plugin that added it.
+    tools: Vec<(Arc<dyn AgentTool>, Option<usize>)>,
     /// Plugins and hooks, in registration order.
     plugins: Vec<Arc<dyn Plugin>>,
+    /// The plugins' tool sources, with each plugin's index.
+    sources: Vec<(Arc<dyn ToolSource>, usize)>,
     limits: Limits,
     retry: RetryPolicy,
     warmup: bool,
@@ -231,7 +233,12 @@ impl fmt::Debug for Agent {
             .field("model", &self.0.model)
             .field(
                 "tools",
-                &self.0.tools.iter().map(|t| t.name()).collect::<Vec<_>>(),
+                &self
+                    .0
+                    .tools
+                    .iter()
+                    .map(|(t, _)| t.name())
+                    .collect::<Vec<_>>(),
             )
             .finish_non_exhaustive()
     }
@@ -247,6 +254,7 @@ impl Agent {
             reasoning: None,
             tools: Vec::new(),
             plugins: Vec::new(),
+            sources: Vec::new(),
             limits: Limits::default(),
             retry: RetryPolicy::default(),
             warmup: false,
@@ -278,7 +286,7 @@ impl Agent {
     }
 
     pub fn tool(self, tool: impl AgentTool) -> Self {
-        self.with(|a| a.tools.push(Arc::new(tool)))
+        self.with(|a| a.tools.push((Arc::new(tool), None)))
     }
 
     /// Adds several tools at once, such as a toolkit's.
@@ -286,7 +294,7 @@ impl Agent {
         self,
         tools: impl IntoIterator<Item = Arc<dyn AgentTool>>,
     ) -> Self {
-        self.with(|a| a.tools.extend(tools))
+        self.with(|a| a.tools.extend(tools.into_iter().map(|t| (t, None))))
     }
 
     /// Adds a hook. It runs in registration order among the plugins,
@@ -296,18 +304,21 @@ impl Agent {
     }
 
     /// Adds a plugin (`docs/reference/plugins.md`): its tools join the
-    /// agent's, and each run starts it after the plugins added before it.
+    /// agent's, its tool source is asked for tools by name, and each run
+    /// starts it after the plugins added before it.
     pub fn plugin(self, plugin: impl Plugin) -> Self {
-        self.with(|a| {
-            a.tools.extend(plugin.tools());
-            a.plugins.push(Arc::new(plugin));
-        })
+        self.boxed_plugin(Box::new(plugin))
     }
 
     /// [`Self::plugin`], for a plugin chosen at run time.
     pub fn boxed_plugin(self, plugin: Box<dyn Plugin>) -> Self {
         self.with(|a| {
-            a.tools.extend(plugin.tools());
+            let index = a.plugins.len();
+            a.tools
+                .extend(plugin.tools().into_iter().map(|t| (t, Some(index))));
+            if let Some(source) = plugin.tool_source() {
+                a.sources.push((source, index));
+            }
             a.plugins.push(Arc::from(plugin));
         })
     }
@@ -335,14 +346,18 @@ impl Agent {
         self.with(|a| a.clock = clock)
     }
 
-    /// The settings a run of this agent sends, as its plan left them.
-    /// Tool schemas go in strict form when they convert; otherwise as
-    /// they are, with `strict: false`.
-    fn settings(&self, plan: &RunPlan, text_format: Option<Value>) -> Settings {
-        let tools = self
-            .0
-            .tools
-            .iter()
+    /// The settings a run of this agent sends, as its plan left them,
+    /// declaring the run's tools the model sees. Tool schemas go in
+    /// strict form when they convert; otherwise as they are, with
+    /// `strict: false`.
+    fn settings(
+        &self,
+        plan: &RunPlan,
+        tools: &Toolbox,
+        text_format: Option<Value>,
+    ) -> Settings {
+        let tools = tools
+            .declared()
             .map(|tool| {
                 let (parameters, strict) = match to_strict(tool.parameters()) {
                     Ok(strict) => (strict, true),
@@ -783,22 +798,9 @@ async fn run_task(
     events: Option<mpsc::Sender<RunEvent>>,
     steering: mpsc::UnboundedReceiver<String>,
 ) -> Result<Outcome, AgentError> {
-    let mut tools = HashMap::new();
-    for tool in &agent.0.tools {
-        let schema =
-            ArgumentSchema::new(tool.parameters()).map_err(|error| {
-                AgentError::Schema {
-                    tool: tool.name().to_owned(),
-                    message: error.to_string(),
-                }
-            })?;
-        tools.insert(
-            tool.name().to_owned(),
-            LoopTool {
-                tool: tool.clone(),
-                schema: Arc::new(schema),
-            },
-        );
+    let mut tools = Vec::with_capacity(agent.0.tools.len());
+    for (tool, owner) in &agent.0.tools {
+        tools.push((tool.clone(), *owner, Arc::new(compile(tool.as_ref())?)));
     }
     // A resumed run is reopened as it was stored: its kind, workflow and
     // turns. It goes on on this agent's model, which may be another.
@@ -896,8 +898,12 @@ async fn run_task(
         kind,
         workflow.clone(),
     );
+    for (tool, owner, schema) in tools {
+        plan.push_tool(tool, owner, Some(schema));
+    }
     let mut plugins = Vec::with_capacity(agent.0.plugins.len());
-    for plugin in &agent.0.plugins {
+    for (index, plugin) in agent.0.plugins.iter().enumerate() {
+        plan.set_starting(Some(index));
         let ctx = shared.ctx(plugin.name());
         let records = match plugin_records(&store, &id, plugin.name()).await {
             Ok(records) => records,
@@ -922,7 +928,25 @@ async fn run_task(
         }
     }
 
-    let settings = agent.settings(&plan, launch.text_format);
+    plan.set_starting(None);
+    // Tools plugins added are compiled now; the run's tools are fixed.
+    let mut tools = Vec::new();
+    for (tool, entry) in plan.take_tools() {
+        let schema = match entry.schema {
+            Some(schema) => schema,
+            None => match compile(tool.as_ref()) {
+                Ok(schema) => Arc::new(schema),
+                Err(error) => return Err(fail(&store, &id, error).await),
+            },
+        };
+        tools.push(LoopTool {
+            tool,
+            schema,
+            owner: entry.owner,
+        });
+    }
+    let tools = Arc::new(Toolbox::new(tools, agent.0.sources.clone()));
+    let settings = agent.settings(&plan, &tools, launch.text_format);
     let session = match agent.0.llm.open(settings).await {
         Ok(session) => session,
         Err(error) => {
@@ -964,6 +988,14 @@ async fn run_task(
         stop: result.stop,
         usage: result.usage,
         last_seq: result.last_seq,
+    })
+}
+
+/// A tool's compiled argument schema.
+fn compile(tool: &dyn AgentTool) -> Result<ArgumentSchema, AgentError> {
+    ArgumentSchema::new(tool.parameters()).map_err(|error| AgentError::Schema {
+        tool: tool.name().to_owned(),
+        message: error.to_string(),
     })
 }
 

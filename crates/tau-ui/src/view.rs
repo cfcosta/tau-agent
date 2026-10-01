@@ -834,6 +834,7 @@ impl RunView {
                 let output = ToolOutput {
                     content: result.content.clone(),
                     details: result.details.clone(),
+                    structured: None,
                 };
                 if let Some(card) = view.tool_mut(&result.tool_call_id) {
                     finish_tool(card, &output, result.is_error);
@@ -1615,6 +1616,7 @@ mod tests {
             call_id: "c1".into(),
             tool: "bash".into(),
             args: json!({"command": "cargo build"}),
+            parent: None,
         });
         view.apply(&RunEvent::PluginReport {
             run: run(),
@@ -1626,6 +1628,7 @@ mod tests {
             call_id: "c1".into(),
             output: Arc::new(ToolOutput::text("pruned")),
             is_error: false,
+            parent: None,
         });
         let Some(Item::Tool(card)) = view.items.last() else {
             panic!("a card")
@@ -1644,6 +1647,7 @@ mod tests {
             call_id: "c1".into(),
             tool: "bash".into(),
             args: json!({"command": "cargo build"}),
+            parent: None,
         });
         view.apply(&RunEvent::PluginReport {
             run: run(),
@@ -1724,12 +1728,14 @@ mod tests {
                 call_id: call.into(),
                 tool: "read".into(),
                 args: json!({"path": format!("{call}.rs")}),
+                parent: None,
             });
             view.apply(&RunEvent::ToolEnd {
                 run: run(),
                 call_id: call.into(),
                 output: Arc::new(ToolOutput::text("x".repeat(4000))),
                 is_error: false,
+                parent: None,
             });
             view.apply(&RunEvent::TurnEnd {
                 run: run(),
@@ -1805,6 +1811,7 @@ mod tests {
             call_id: "c1".into(),
             tool: "write".into(),
             args: serde_json::json!({"path": "a", "content": "maybe"}),
+            parent: None,
         });
         view.apply(&report(serde_json::json!({
             "kind": "flagged", "rule": "R2", "text": "No unwrap.",
@@ -1815,6 +1822,7 @@ mod tests {
             call_id: "c1".into(),
             output: Arc::new(ToolOutput::text("written")),
             is_error: false,
+            parent: None,
         });
         let Some(Item::Tool(card)) = view.items.last() else {
             panic!("a card")
@@ -1919,6 +1927,7 @@ mod tests {
             call_id: format!("c{n}"),
             tool: Arc::from("read"),
             args: json!({ "path": "src/lib.rs" }),
+            parent: None,
         };
         let text = |delta: &str| RunEvent::TextDelta {
             run: run(),
@@ -1964,6 +1973,7 @@ mod tests {
             call_id: "c1".into(),
             tool: Arc::from("read"),
             args: json!({ "path": "src/lib.rs" }),
+            parent: None,
         });
         view.apply(&RunEvent::TextDelta {
             run: run(),
@@ -1983,6 +1993,7 @@ mod tests {
             call_id: "c1".into(),
             tool: Arc::from("edit"),
             args: json!({ "path": "retry.rs", "edits": [] }),
+            parent: None,
         });
         view.apply(&RunEvent::ToolEnd {
             run: run(),
@@ -1994,6 +2005,7 @@ mod tests {
                 ..ToolOutput::text("Successfully replaced 1 block(s).")
             }),
             is_error: false,
+            parent: None,
         });
         let card = view.tool("c1").expect("card");
         assert_eq!(card.summary, "retry.rs");
@@ -2013,6 +2025,7 @@ mod tests {
             call_id: "c1".into(),
             tool: Arc::from("vcs_log"),
             args: json!({}),
+            parent: None,
         });
         let change = |id: &str, description: &str, immutable: bool| {
             json!({
@@ -2037,6 +2050,7 @@ mod tests {
                 )
             }),
             is_error: false,
+            parent: None,
         });
         let card = view.tool("c1").expect("card");
         // tau-vcs reads the log the result carries.
@@ -2065,6 +2079,7 @@ mod tests {
                 call_id: id.into(),
                 tool: Arc::from(tool),
                 args: json!({ "change": "onvkmqwo" }),
+                parent: None,
             });
             view.apply(&RunEvent::ToolEnd {
                 run: run(),
@@ -2081,6 +2096,7 @@ mod tests {
                     ..ToolOutput::text(diff)
                 }),
                 is_error: false,
+                parent: None,
             });
         }
         // tau-vcs reads a show as a commit, a diff as its files.

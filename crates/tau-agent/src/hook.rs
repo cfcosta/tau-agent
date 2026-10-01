@@ -18,6 +18,10 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub args: Value,
+    /// For a nested call (`ToolCtx::call`), the id of the call that made
+    /// it. Nested calls never reach the transcript, so a plugin that
+    /// keeps a ledger of the transcript's calls skips them.
+    pub parent: Option<String>,
 }
 
 /// Context for a hook call.

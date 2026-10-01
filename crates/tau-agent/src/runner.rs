@@ -15,13 +15,19 @@
 //! running tool's future is never dropped: on cancel, tools observe the
 //! token, and calls that never started get a "cancelled" result, so the
 //! transcript never holds a call without a result.
+//!
+//! A running tool can call other tools (`ToolCtx::call`). Those nested
+//! calls come back to the loop on a channel it polls alongside the
+//! batch, so they go through the same preparation and plugins, one
+//! plugin call at a time, and their futures join the batch's. Their
+//! results go back to the calling tool, never into the transcript.
 
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
         Arc,
         Mutex,
-        atomic::{AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
     },
     time::SystemTime,
 };
@@ -47,7 +53,10 @@ use tau_ai::{
     retry::{Class, RetryPolicy},
 };
 use tau_store::{Entry, Status, Store, StoreError, TurnUsage};
-use tokio::{sync::mpsc, time::Instant};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Instant,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -70,12 +79,17 @@ use crate::{
     },
     tool::{
         AgentTool,
+        Catalog,
+        ENDED,
         ExecutionMode,
+        NestedRequest,
+        Nesting,
         RunId,
         RunScope,
         ToolCtx,
         ToolError,
         ToolOutput,
+        ToolSource,
         ToolUpdates,
     },
     validation::ArgumentSchema,
@@ -101,11 +115,145 @@ pub fn system_clock() -> Clock {
     })
 }
 
-/// A tool as the loop holds it: the tool and its compiled schema.
+/// A tool as the loop holds it: the tool, its compiled schema, and the
+/// index of the plugin that added it.
 #[derive(Clone)]
 pub(crate) struct LoopTool {
     pub tool: Arc<dyn AgentTool>,
     pub schema: Arc<ArgumentSchema>,
+    pub owner: Option<usize>,
+}
+
+/// The text of a call to a tool the caller cannot reach.
+pub(crate) fn not_found(name: &str) -> String {
+    format!("Tool {name} not found")
+}
+
+/// The text of a nested call to a `ModelOnly` tool.
+pub(crate) fn model_only(name: &str) -> String {
+    format!("Tool {name} cannot be called from a tool")
+}
+
+/// A run's tools, fixed once it starts, and the plugins' tool sources,
+/// asked by name when a tool calls one.
+pub(crate) struct Toolbox {
+    /// One per name, in the order they were added.
+    tools: Vec<LoopTool>,
+    by_name: HashMap<String, usize>,
+    /// Each source, with the index of its plugin.
+    sources: Vec<(Arc<dyn ToolSource>, usize)>,
+}
+
+impl Toolbox {
+    /// A toolbox of `tools`; of two tools of one name, the later wins,
+    /// in the earlier's place.
+    pub(crate) fn new(
+        tools: Vec<LoopTool>,
+        sources: Vec<(Arc<dyn ToolSource>, usize)>,
+    ) -> Self {
+        let mut unique: Vec<LoopTool> = Vec::with_capacity(tools.len());
+        let mut by_name = HashMap::new();
+        for tool in tools {
+            match by_name.get(tool.tool.name()) {
+                Some(&at) => unique[at] = tool,
+                None => {
+                    by_name.insert(tool.tool.name().to_owned(), unique.len());
+                    unique.push(tool);
+                }
+            }
+        }
+        Self {
+            tools: unique,
+            by_name,
+            sources,
+        }
+    }
+
+    /// The tools declared to the model, in order.
+    pub(crate) fn declared(&self) -> impl Iterator<Item = &Arc<dyn AgentTool>> {
+        self.tools
+            .iter()
+            .map(|tool| &tool.tool)
+            .filter(|tool| tool.exposure().declared())
+    }
+
+    /// The tool the model calls by `name`: only a declared one.
+    pub(crate) fn for_model(&self, name: &str) -> Result<LoopTool, String> {
+        self.by_name
+            .get(name)
+            .map(|&at| &self.tools[at])
+            .filter(|tool| tool.tool.exposure().declared())
+            .cloned()
+            .ok_or_else(|| not_found(name))
+    }
+
+    /// The tool a tool calls by `name`: the run's tool of that name if
+    /// it is callable, else the first callable one the sources offer, as
+    /// [`Self::catalog`] lists it.
+    pub(crate) fn for_tool(&self, name: &str) -> Result<LoopTool, String> {
+        if let Some(&at) = self.by_name.get(name) {
+            let tool = &self.tools[at];
+            return if tool.tool.exposure().callable() {
+                Ok(tool.clone())
+            } else {
+                Err(model_only(name))
+            };
+        }
+        let mut model_only_seen = false;
+        for (source, owner) in &self.sources {
+            for tool in source.tools() {
+                if tool.name() != name {
+                    continue;
+                }
+                if !tool.exposure().callable() {
+                    model_only_seen = true;
+                    continue;
+                }
+                let schema = ArgumentSchema::new(tool.parameters()).map_err(
+                    |error| {
+                        format!("Tool {name} has an invalid schema: {error}")
+                    },
+                )?;
+                return Ok(LoopTool {
+                    tool,
+                    schema: Arc::new(schema),
+                    owner: Some(*owner),
+                });
+            }
+        }
+        Err(if model_only_seen {
+            model_only(name)
+        } else {
+            not_found(name)
+        })
+    }
+
+    /// What a tool can call now.
+    pub(crate) fn catalog(&self) -> Catalog {
+        let mut tools: Vec<Arc<dyn AgentTool>> = self
+            .tools
+            .iter()
+            .map(|tool| tool.tool.clone())
+            .filter(|tool| tool.exposure().callable())
+            .collect();
+        let mut namespaces = Vec::new();
+        for (source, _) in &self.sources {
+            for tool in source.tools() {
+                let hidden = self.by_name.contains_key(tool.name())
+                    || tools.iter().any(|t| t.name() == tool.name());
+                if tool.exposure().callable() && !hidden {
+                    tools.push(tool);
+                }
+            }
+            namespaces.extend(source.namespaces());
+        }
+        let sources = self
+            .sources
+            .iter()
+            .map(|(source, _)| source.clone())
+            .collect();
+        Catalog::new(tools, namespaces, sources)
+    }
 }
 
 /// A plugin's part in a run, with its context.
@@ -121,7 +269,7 @@ pub(crate) struct Runner {
     pub agent: Arc<str>,
     /// The parent's tool call that started the run, for a sub-agent.
     pub call: Option<Arc<str>>,
-    pub tools: HashMap<String, LoopTool>,
+    pub tools: Arc<Toolbox>,
     /// In registration order.
     pub plugins: Vec<ActivePlugin>,
     pub limits: Limits,
@@ -157,7 +305,7 @@ pub(crate) struct Runner {
 }
 
 /// A call ready to run: its index in the batch, its tool, and the call.
-type Ready = (usize, Arc<dyn AgentTool>, ToolCall);
+type Ready = (usize, LoopTool, ToolCall);
 
 /// A batch's ready calls, in the order they start, and the sizes of the
 /// groups they start in: each group starts once the one before is done.
@@ -167,7 +315,7 @@ type Ready = (usize, Arc<dyn AgentTool>, ToolCall);
 fn schedule(ready: Vec<Ready>) -> (VecDeque<Ready>, VecDeque<usize>) {
     let modes: Vec<ExecutionMode> = ready
         .iter()
-        .map(|(_, tool, _)| tool.execution_mode())
+        .map(|(_, tool, _)| tool.tool.execution_mode())
         .collect();
     if modes.contains(&ExecutionMode::Sequential) {
         let sizes = vec![1; ready.len()].into();
@@ -176,8 +324,8 @@ fn schedule(ready: Vec<Ready>) -> (VecDeque<Ready>, VecDeque<usize>) {
     // Groups by key: a grouped tool's name, or `None` for the rest.
     let mut groups: Vec<(Option<String>, Vec<Ready>)> = Vec::new();
     for (call, mode) in ready.into_iter().zip(modes) {
-        let key =
-            (mode == ExecutionMode::Grouped).then(|| call.1.name().to_owned());
+        let key = (mode == ExecutionMode::Grouped)
+            .then(|| call.1.tool.name().to_owned());
         match groups.iter_mut().find(|(k, _)| *k == key) {
             Some((_, calls)) => calls.push(call),
             None => groups.push((key, vec![call])),
@@ -205,9 +353,93 @@ enum Prepared {
     /// Answered without running the tool.
     Immediate(ToolOutput),
     Ready {
-        tool: Arc<dyn AgentTool>,
+        tool: LoopTool,
         call: ToolCall,
     },
+}
+
+/// Where a call's result goes once its tool returns.
+enum Origin {
+    /// Into the batch's results, at this index.
+    Batch(usize),
+    /// Back to the tool that made the call.
+    Nested {
+        /// The scope of the call that made it.
+        scope: u64,
+        parent: Arc<str>,
+        reply: oneshot::Sender<Result<ToolOutput, ToolError>>,
+    },
+}
+
+impl Origin {
+    fn parent(&self) -> Option<String> {
+        match self {
+            Self::Batch(_) => None,
+            Self::Nested { parent, .. } => Some(parent.to_string()),
+        }
+    }
+}
+
+/// A call whose tool has returned.
+struct Finished {
+    origin: Origin,
+    call: ToolCall,
+    /// The scope of the nested calls this call made.
+    scope: u64,
+    result: Result<ToolOutput, ToolError>,
+}
+
+/// A running call's nested calls.
+struct Scope {
+    /// The running call's id.
+    id: Arc<str>,
+    /// Closed when the call's tool returns.
+    open: Arc<AtomicBool>,
+    /// The token of the nested calls, cancelled when the call ends.
+    children: CancellationToken,
+    /// How many nested calls it made: the last one's number.
+    made: u32,
+    running: usize,
+    /// A sequential tool's call is running, alone.
+    exclusive: bool,
+    /// Prepared calls waiting for a sequential one, or to be one.
+    waiting: VecDeque<Queued>,
+    /// The call has ended; the scope goes once its calls are done.
+    ended: bool,
+}
+
+/// A prepared nested call that has not started.
+struct Queued {
+    tool: LoopTool,
+    call: ToolCall,
+    reply: oneshot::Sender<Result<ToolOutput, ToolError>>,
+}
+
+/// One batch's running calls, the model's and the nested ones.
+struct Batch {
+    pending: FuturesUnordered<ToolFuture>,
+    scopes: HashMap<u64, Scope>,
+    next_scope: u64,
+    updates: mpsc::UnboundedSender<(Arc<str>, ToolOutput)>,
+    requests: mpsc::UnboundedSender<NestedRequest>,
+    /// Each nested call's parent, for its updates' events.
+    parents: HashMap<Arc<str>, Arc<str>>,
+}
+
+impl Batch {
+    /// Drops a scope that has ended and has no calls left.
+    fn forget(&mut self, key: u64) {
+        if self.scopes.get(&key).is_some_and(|scope| {
+            scope.ended && scope.running == 0 && scope.waiting.is_empty()
+        }) {
+            self.scopes.remove(&key);
+        }
+    }
+}
+
+/// The id of the `n`th nested call made by the call `parent`.
+pub(crate) fn nested_id(parent: &str, n: u32) -> String {
+    format!("{parent}/{n}")
 }
 
 impl Runner {
@@ -740,19 +972,21 @@ impl Runner {
     ) -> Vec<ToolResultMessage> {
         let mut results = Vec::new();
         for call in calls {
-            self.emit_start(call).await;
+            let args = Value::Object(call.arguments.clone());
+            self.emit_start(&call.id, &call.name, args, None).await;
             let output = ToolOutput::text(format!(
                 "Tool call \"{}\" {TRUNCATED}",
                 call.name
             ));
-            self.emit_end(&call.id, &output, true).await;
+            self.emit_end(&call.id, &output, true, None).await;
             results.push(self.result_message(call, output, true));
         }
         results
     }
 
     /// Prepares the calls in order, runs them, and returns their result
-    /// messages in source order.
+    /// messages in source order. Nested calls the running tools make are
+    /// prepared and run as they come.
     async fn execute(
         &mut self,
         calls: &[MessageToolCall],
@@ -764,10 +998,13 @@ impl Runner {
             vec![None; calls.len()];
         let mut ready: Vec<Ready> = Vec::new();
         for (index, call) in calls.iter().enumerate() {
-            self.emit_start(call).await;
-            match self.prepare(call).await {
+            let args = Value::Object(call.arguments.clone());
+            self.emit_start(&call.id, &call.name, args.clone(), None)
+                .await;
+            let tool = self.tools.for_model(&call.name);
+            match self.prepare(tool, &call.id, &call.name, args, None).await {
                 Prepared::Immediate(output) => {
-                    self.emit_end(&call.id, &output, true).await;
+                    self.emit_end(&call.id, &output, true, None).await;
                     outcomes[index] = Some((output, true));
                 }
                 Prepared::Ready { tool, call } => {
@@ -778,66 +1015,52 @@ impl Runner {
 
         let (mut queue, mut groups) = schedule(ready);
         let (updates_tx, mut updates_rx) = mpsc::unbounded_channel();
-        let mut pending = FuturesUnordered::new();
+        let (requests_tx, mut requests_rx) = mpsc::unbounded_channel();
+        let mut batch = Batch {
+            pending: FuturesUnordered::new(),
+            scopes: HashMap::new(),
+            next_scope: 0,
+            updates: updates_tx,
+            requests: requests_tx,
+            parents: HashMap::new(),
+        };
         let mut skipped = Vec::new();
         if let Some(size) = groups.pop_front() {
-            self.launch(
-                &mut queue,
-                &mut pending,
-                &mut skipped,
-                &updates_tx,
-                size,
-            );
+            self.launch(&mut queue, &mut batch, &mut skipped, size);
         }
-        while !pending.is_empty() {
+        while !batch.pending.is_empty() {
             tokio::select! {
                 Some((call_id, partial)) = updates_rx.recv() => {
-                    self.emit_update(call_id, partial).await;
+                    let parent = batch.parents.get(&call_id).cloned();
+                    self.emit_update(call_id, partial, parent).await;
                 }
-                Some((index, call, result)) = pending.next() => {
+                Some(request) = requests_rx.recv() => {
+                    self.nested(&mut batch, request).await;
+                }
+                Some(finished) = batch.pending.next() => {
                     // Updates sent before the tool resolved come first.
                     while let Ok((call_id, partial)) = updates_rx.try_recv() {
-                        self.emit_update(call_id, partial).await;
+                        let parent = batch.parents.get(&call_id).cloned();
+                        self.emit_update(call_id, partial, parent).await;
                     }
-                    let (mut output, is_error) = match result {
-                        Ok(output) => (output, false),
-                        Err(ToolError::Output(output)) => (*output, true),
-                        Err(error) => (ToolOutput::text(error.to_string()), true),
-                    };
-                    let view = ToolResultView {
-                        call: &call,
-                        is_error,
-                        transcript,
-                        message,
-                    };
-                    let mut failures: Failures = Vec::new();
-                    for plugin in &mut self.plugins {
-                        if let Err(error) = plugin.run.after_tool_result(&view, &mut output, &plugin.ctx).await {
-                            failures.push((plugin.ctx.plugin().into(), describe(&error)));
-                        }
+                    if let Some((index, output, is_error)) = self
+                        .finished(&mut batch, finished, transcript, message)
+                        .await
+                    {
+                        outcomes[index] = Some((output, is_error));
                     }
-                    for (plugin, message) in failures {
-                        self.emit(RunEvent::PluginError {
-                            run: self.run.clone(),
-                            plugin,
-                            message,
-                        })
-                        .await;
-                    }
-                    self.emit_end(&call.id, &output, is_error).await;
-                    outcomes[index] = Some((output, is_error));
                     // A group done, the next one starts.
-                    if pending.is_empty()
+                    if batch.pending.is_empty()
                         && let Some(size) = groups.pop_front()
                     {
-                        self.launch(&mut queue, &mut pending, &mut skipped, &updates_tx, size);
+                        self.launch(&mut queue, &mut batch, &mut skipped, size);
                     }
                 }
             }
         }
         for (index, call) in skipped {
             let output = ToolOutput::text(CANCELLED);
-            self.emit_end(&call.id, &output, true).await;
+            self.emit_end(&call.id, &output, true, None).await;
             outcomes[index] = Some((output, true));
         }
 
@@ -852,21 +1075,188 @@ impl Runner {
             .collect()
     }
 
-    /// Looks the tool up, repairs and validates the arguments, and runs
-    /// the `before_tool` hooks.
-    async fn prepare(&mut self, call: &MessageToolCall) -> Prepared {
+    /// Takes a nested call from a running tool: numbers it, prepares it
+    /// as a model's call is prepared, and starts it when its scope lets
+    /// it. A call whose caller has ended fails at once, without events.
+    async fn nested(&mut self, batch: &mut Batch, request: NestedRequest) {
+        let NestedRequest {
+            scope: key,
+            name,
+            args,
+            reply,
+        } = request;
+        let Some(scope) = batch
+            .scopes
+            .get_mut(&key)
+            .filter(|scope| scope.open.load(Ordering::SeqCst))
+        else {
+            let _ = reply.send(Err(ENDED.into()));
+            return;
+        };
+        scope.made += 1;
+        let parent = scope.id.clone();
+        let id = nested_id(&parent, scope.made);
+        batch.parents.insert(id.as_str().into(), parent.clone());
+        self.emit_start(&id, &name, args.clone(), Some(parent.to_string()))
+            .await;
+        let tool = self.tools.for_tool(&name);
+        match self.prepare(tool, &id, &name, args, Some(&parent)).await {
+            Prepared::Immediate(output) => {
+                self.emit_end(&id, &output, true, Some(parent.to_string()))
+                    .await;
+                let _ = reply.send(Err(ToolError::output(output)));
+            }
+            Prepared::Ready { tool, call } => {
+                // Nothing ran while it was prepared: the scope is there.
+                if let Some(scope) = batch.scopes.get_mut(&key) {
+                    scope.waiting.push_back(Queued { tool, call, reply });
+                }
+                self.start_waiting(batch, key);
+            }
+        }
+    }
+
+    /// Starts the scope's waiting calls in order, while its calls are
+    /// running: a sequential tool's call starts alone and runs alone.
+    fn start_waiting(&self, batch: &mut Batch, key: u64) {
+        loop {
+            let Some(scope) = batch.scopes.get_mut(&key) else {
+                return;
+            };
+            if !scope.open.load(Ordering::SeqCst) {
+                // The caller has returned; its end cancels these.
+                return;
+            }
+            let Some(front) = scope.waiting.front() else {
+                return;
+            };
+            let sequential =
+                front.tool.tool.execution_mode() == ExecutionMode::Sequential;
+            if scope.exclusive || (sequential && scope.running > 0) {
+                return;
+            }
+            let Queued { tool, call, reply } =
+                scope.waiting.pop_front().expect("a front");
+            scope.running += 1;
+            scope.exclusive = sequential;
+            let cancel = scope.children.clone();
+            let origin = Origin::Nested {
+                scope: key,
+                parent: scope.id.clone(),
+                reply,
+            };
+            self.start_call(batch, tool, call, cancel, origin);
+        }
+    }
+
+    /// Ends a call's scope: cancels the nested calls it left running,
+    /// and fails the ones still waiting.
+    async fn end_scope(&mut self, batch: &mut Batch, key: u64) {
+        let Some(scope) = batch.scopes.get_mut(&key) else {
+            return;
+        };
+        scope.ended = true;
+        scope.open.store(false, Ordering::SeqCst);
+        scope.children.cancel();
+        let parent = scope.id.to_string();
+        let waiting = std::mem::take(&mut scope.waiting);
+        for queued in waiting {
+            let output = ToolOutput::text(CANCELLED);
+            self.emit_end(&queued.call.id, &output, true, Some(parent.clone()))
+                .await;
+            let _ = queued.reply.send(Err(ToolError::output(output)));
+        }
+        batch.forget(key);
+    }
+
+    /// Handles a call whose tool returned: ends its scope, runs the
+    /// plugins' `after_tool_result`, emits `ToolEnd`, and hands the
+    /// result on. Returns a batch call's index and result.
+    async fn finished(
+        &mut self,
+        batch: &mut Batch,
+        finished: Finished,
+        transcript: &[Message],
+        message: &AssistantMessage,
+    ) -> Option<(usize, ToolOutput, bool)> {
+        let Finished {
+            origin,
+            call,
+            scope,
+            result,
+        } = finished;
+        self.end_scope(batch, scope).await;
+        let (mut output, is_error) = match result {
+            Ok(output) => (output, false),
+            Err(ToolError::Output(output)) => (*output, true),
+            Err(error) => (ToolOutput::text(error.to_string()), true),
+        };
+        let view = ToolResultView {
+            call: &call,
+            is_error,
+            transcript,
+            message,
+        };
+        let mut failures: Failures = Vec::new();
+        for plugin in &mut self.plugins {
+            if let Err(error) = plugin
+                .run
+                .after_tool_result(&view, &mut output, &plugin.ctx)
+                .await
+            {
+                failures.push((plugin.ctx.plugin().into(), describe(&error)));
+            }
+        }
+        for (plugin, message) in failures {
+            self.emit(RunEvent::PluginError {
+                run: self.run.clone(),
+                plugin,
+                message,
+            })
+            .await;
+        }
+        self.emit_end(&call.id, &output, is_error, origin.parent())
+            .await;
+        match origin {
+            Origin::Batch(index) => Some((index, output, is_error)),
+            Origin::Nested { scope, reply, .. } => {
+                let _ = reply.send(if is_error {
+                    Err(ToolError::output(output))
+                } else {
+                    Ok(output)
+                });
+                if let Some(parent) = batch.scopes.get_mut(&scope) {
+                    parent.running -= 1;
+                    parent.exclusive = false;
+                }
+                self.start_waiting(batch, scope);
+                batch.forget(scope);
+                None
+            }
+        }
+    }
+
+    /// Repairs and validates the arguments of a call to `tool` (or
+    /// answers with why there is no tool), and runs the `before_tool`
+    /// hooks.
+    async fn prepare(
+        &mut self,
+        tool: Result<LoopTool, String>,
+        id: &str,
+        name: &str,
+        args: Value,
+        parent: Option<&str>,
+    ) -> Prepared {
         if self.cancel.is_cancelled() {
             return Prepared::Immediate(ToolOutput::text(CANCELLED));
         }
-        let Some(tool) = self.tools.get(&call.name).cloned() else {
-            return Prepared::Immediate(ToolOutput::text(format!(
-                "Tool {} not found",
-                call.name
-            )));
+        let tool = match tool {
+            Ok(tool) => tool,
+            Err(message) => {
+                return Prepared::Immediate(ToolOutput::text(message));
+            }
         };
-        let raw = tool
-            .tool
-            .prepare_arguments(Value::Object(call.arguments.clone()));
+        let raw = tool.tool.prepare_arguments(args);
         let args = match tool.schema.validate(&raw) {
             Ok(args) => args,
             Err(error) => {
@@ -876,9 +1266,10 @@ impl Runner {
             }
         };
         let mut hook_call = ToolCall {
-            id: call.id.clone(),
-            name: call.name.clone(),
+            id: id.to_owned(),
+            name: name.to_owned(),
             args,
+            parent: parent.map(str::to_owned),
         };
         for plugin in &mut self.plugins {
             let before = hook_call.args.clone();
@@ -906,7 +1297,7 @@ impl Runner {
             }
         }
         Prepared::Ready {
-            tool: tool.tool,
+            tool,
             call: hook_call,
         }
     }
@@ -915,10 +1306,9 @@ impl Runner {
     /// queued calls are skipped instead of started.
     fn launch(
         &self,
-        queue: &mut VecDeque<(usize, Arc<dyn AgentTool>, ToolCall)>,
-        pending: &mut FuturesUnordered<ToolFuture>,
+        queue: &mut VecDeque<Ready>,
+        batch: &mut Batch,
         skipped: &mut Vec<(usize, ToolCall)>,
-        updates: &mpsc::UnboundedSender<(Arc<str>, ToolOutput)>,
         count: usize,
     ) {
         let mut started = 0;
@@ -930,32 +1320,82 @@ impl Runner {
                 skipped.push((index, call));
                 continue;
             }
-            let ctx = ToolCtx {
-                cancel: self.cancel.clone(),
-                updates: ToolUpdates::new(
-                    call.id.as_str().into(),
-                    updates.clone(),
-                ),
-                run: self.run.clone(),
-                scope: self.pending_turn.clone().map(|turn| RunScope {
-                    store: self.store.clone(),
-                    workflow: self.workflow.clone(),
-                    events: self.events.clone(),
-                    children: self.children.clone(),
-                    call: call.id.as_str().into(),
-                    turn,
-                    stored: self.last_seq.load(Ordering::SeqCst),
-                }),
-            };
-            let args = call.args.clone();
-            pending.push(Box::pin(async move {
-                let updates = ctx.updates.clone();
-                let result = tool.call(args, ctx).await;
-                updates.close();
-                (index, call, result)
-            }));
+            self.start_call(
+                batch,
+                tool,
+                call,
+                self.cancel.clone(),
+                Origin::Batch(index),
+            );
             started += 1;
         }
+    }
+
+    /// Starts a call with `cancel` as its token, and opens the scope of
+    /// the nested calls it makes.
+    fn start_call(
+        &self,
+        batch: &mut Batch,
+        tool: LoopTool,
+        call: ToolCall,
+        cancel: CancellationToken,
+        origin: Origin,
+    ) {
+        let key = batch.next_scope;
+        batch.next_scope += 1;
+        let open = Arc::new(AtomicBool::new(true));
+        let id: Arc<str> = call.id.as_str().into();
+        batch.scopes.insert(
+            key,
+            Scope {
+                id: id.clone(),
+                open: open.clone(),
+                children: cancel.child_token(),
+                made: 0,
+                running: 0,
+                exclusive: false,
+                waiting: VecDeque::new(),
+                ended: false,
+            },
+        );
+        let ctx = ToolCtx {
+            cancel,
+            updates: ToolUpdates::new(id.clone(), batch.updates.clone()),
+            run: self.run.clone(),
+            scope: self.pending_turn.clone().map(|turn| RunScope {
+                store: self.store.clone(),
+                workflow: self.workflow.clone(),
+                events: self.events.clone(),
+                children: self.children.clone(),
+                call: id,
+                turn,
+                stored: self.last_seq.load(Ordering::SeqCst),
+            }),
+            plugin: tool
+                .owner
+                .and_then(|owner| self.plugins.get(owner))
+                .map(|plugin| plugin.ctx.clone()),
+            nesting: Some(Nesting {
+                scope: key,
+                open: open.clone(),
+                requests: batch.requests.clone(),
+                tools: self.tools.clone(),
+            }),
+        };
+        let args = call.args.clone();
+        let tool = tool.tool;
+        batch.pending.push(Box::pin(async move {
+            let updates = ctx.updates.clone();
+            let result = tool.call(args, ctx).await;
+            updates.close();
+            open.store(false, Ordering::SeqCst);
+            Finished {
+                origin,
+                call,
+                scope: key,
+                result,
+            }
+        }));
     }
 
     /// The run's own usage plus its children's and what its plugins
@@ -967,21 +1407,34 @@ impl Runner {
         total
     }
 
-    async fn emit_update(&mut self, call_id: Arc<str>, partial: ToolOutput) {
+    async fn emit_update(
+        &mut self,
+        call_id: Arc<str>,
+        partial: ToolOutput,
+        parent: Option<Arc<str>>,
+    ) {
         self.emit(RunEvent::ToolUpdate {
             run: self.run.clone(),
             call_id: call_id.to_string(),
             partial: Arc::new(partial),
+            parent: parent.map(|parent| parent.to_string()),
         })
         .await;
     }
 
-    async fn emit_start(&mut self, call: &MessageToolCall) {
+    async fn emit_start(
+        &mut self,
+        call_id: &str,
+        tool: &str,
+        args: Value,
+        parent: Option<String>,
+    ) {
         self.emit(RunEvent::ToolStart {
             run: self.run.clone(),
-            call_id: call.id.clone(),
-            tool: call.name.as_str().into(),
-            args: Value::Object(call.arguments.clone()),
+            call_id: call_id.to_owned(),
+            tool: tool.into(),
+            args,
+            parent,
         })
         .await;
     }
@@ -991,12 +1444,14 @@ impl Runner {
         call_id: &str,
         output: &ToolOutput,
         is_error: bool,
+        parent: Option<String>,
     ) {
         self.emit(RunEvent::ToolEnd {
             run: self.run.clone(),
             call_id: call_id.to_owned(),
             output: Arc::new(output.clone()),
             is_error,
+            parent,
         })
         .await;
     }
@@ -1222,14 +1677,9 @@ fn turn_usage(usage: &Usage, turns: u32) -> TurnUsage {
 /// Plugins that failed at a seam, and why.
 type Failures = Vec<(Arc<str>, String)>;
 
-/// A running tool call: its index in the batch, the call, and its result.
-type ToolFuture = std::pin::Pin<
-    Box<
-        dyn std::future::Future<
-                Output = (usize, ToolCall, Result<ToolOutput, ToolError>),
-            > + Send,
-    >,
->;
+/// A running tool call.
+type ToolFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Finished> + Send>>;
 
 /// Ends a partial message with an error of `reason`.
 fn finish(
@@ -1451,6 +1901,173 @@ mod tests {
             details: Value::Null,
         };
         assert_eq!(check_rewrite(&transcript, &rewrite), Ok(()));
+    }
+
+    /// A tool that only has a name and an exposure.
+    struct Named {
+        name: String,
+        exposure: crate::tool::Exposure,
+        schema: Value,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentTool for Named {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn description(&self) -> &str {
+            "named"
+        }
+        fn parameters(&self) -> &Value {
+            &self.schema
+        }
+        fn exposure(&self) -> crate::tool::Exposure {
+            self.exposure
+        }
+        async fn call(
+            &self,
+            _args: Value,
+            _ctx: ToolCtx,
+        ) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::text(""))
+        }
+    }
+
+    /// A source with a fixed list of tools.
+    struct Fixed(Vec<Arc<dyn AgentTool>>);
+
+    impl ToolSource for Fixed {
+        fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
+            self.0.clone()
+        }
+    }
+
+    #[hegel::composite]
+    fn named(tc: &hegel::TestCase, names: Vec<&'static str>) -> (String, u8) {
+        use hegel::generators as gs;
+        let name: &str = tc.draw(gs::sampled_from(names));
+        // 0 Direct, 1 Nested, 2 ModelOnly.
+        let exposure: u8 = tc.draw(gs::integers().min_value(0).max_value(2));
+        (name.to_owned(), exposure)
+    }
+
+    fn tool(name: &str, exposure: u8) -> Arc<dyn AgentTool> {
+        use crate::tool::Exposure;
+        Arc::new(Named {
+            name: name.to_owned(),
+            exposure: [Exposure::Direct, Exposure::Nested, Exposure::ModelOnly]
+                [usize::from(exposure)],
+            schema: serde_json::json!({"type": "object"}),
+        })
+    }
+
+    /// For any run tools (names may repeat) and sources (whose names may
+    /// clash with the run's and each other's), the toolbox agrees with a
+    /// reference: the later run tool of a name wins in the earlier's
+    /// place; the model sees and can call exactly the run's `Direct` and
+    /// `ModelOnly` tools; tools can call exactly what the catalog lists,
+    /// the run's `Direct` and `Nested` tools and then each name's first
+    /// callable source tool that no run tool hides; and a call resolves
+    /// to the very tool the catalog lists.
+    #[hegel::test(test_cases = 300)]
+    fn exposure_decides_who_sees_and_calls_a_tool(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let run: Vec<(String, u8)> =
+            tc.draw(gs::vecs(named(vec!["a", "b", "c", "d"])).max_size(6));
+        let sources: Vec<Vec<(String, u8)>> = tc.draw(
+            gs::vecs(gs::vecs(named(vec!["c", "d", "e", "f"])).max_size(4))
+                .max_size(3),
+        );
+        let loop_tools = run
+            .iter()
+            .map(|(name, exposure)| {
+                let tool = tool(name, *exposure);
+                LoopTool {
+                    schema: Arc::new(
+                        ArgumentSchema::new(tool.parameters()).unwrap(),
+                    ),
+                    tool,
+                    owner: None,
+                }
+            })
+            .collect();
+        let source_tools: Vec<Vec<Arc<dyn AgentTool>>> = sources
+            .iter()
+            .map(|tools| tools.iter().map(|(n, e)| tool(n, *e)).collect())
+            .collect();
+        let toolbox = Toolbox::new(
+            loop_tools,
+            source_tools
+                .iter()
+                .enumerate()
+                .map(|(i, tools)| {
+                    (Arc::new(Fixed(tools.clone())) as Arc<dyn ToolSource>, i)
+                })
+                .collect(),
+        );
+
+        // The reference.
+        let mut order: Vec<String> = Vec::new();
+        let mut exposure: HashMap<String, u8> = HashMap::new();
+        for (name, e) in &run {
+            if !order.contains(name) {
+                order.push(name.clone());
+            }
+            exposure.insert(name.clone(), *e);
+        }
+        let declared: Vec<String> = order
+            .iter()
+            .filter(|n| exposure[*n] != 1)
+            .cloned()
+            .collect();
+        let mut callable: Vec<String> = order
+            .iter()
+            .filter(|n| exposure[*n] != 2)
+            .cloned()
+            .collect();
+        for tools in &sources {
+            for (name, e) in tools {
+                if *e != 2 && !order.contains(name) && !callable.contains(name)
+                {
+                    callable.push(name.clone());
+                }
+            }
+        }
+
+        let seen: Vec<String> =
+            toolbox.declared().map(|t| t.name().to_owned()).collect();
+        assert_eq!(seen, declared);
+        let catalog = toolbox.catalog();
+        let listed: Vec<String> = catalog
+            .tools()
+            .iter()
+            .map(|t| t.name().to_owned())
+            .collect();
+        assert_eq!(listed, callable);
+        for name in ["a", "b", "c", "d", "e", "f", "g"] {
+            assert_eq!(
+                toolbox.for_model(name).is_ok(),
+                declared.iter().any(|n| n == name),
+                "{name}"
+            );
+            match toolbox.for_tool(name) {
+                Ok(found) => {
+                    let listed = catalog.get(name).expect("listed");
+                    assert!(Arc::ptr_eq(&found.tool, listed), "{name}");
+                }
+                Err(message) => {
+                    assert!(catalog.get(name).is_none(), "{name}");
+                    let known = order.iter().any(|n| n == name)
+                        || sources.iter().flatten().any(|(n, _)| n == name);
+                    let expected = if known {
+                        model_only(name)
+                    } else {
+                        not_found(name)
+                    };
+                    assert_eq!(message, expected);
+                }
+            }
+        }
     }
 
     /// A rewrite that drops any one result is rejected, naming the call

@@ -35,7 +35,8 @@ use crate::{
     event::{RunEvent, StopReason},
     hook::{Decision, HookCtx, RunHook, ToolCall},
     runner::Clock,
-    tool::{AgentTool, RunId, ToolOutput},
+    tool::{AgentTool, RunId, ToolOutput, ToolSource},
+    validation::ArgumentSchema,
 };
 
 /// An extension of an agent. Added with `Agent::plugin`.
@@ -47,6 +48,13 @@ pub trait Plugin: Send + Sync + 'static {
     /// Tools the plugin adds to the agent. Read once, by `Agent::plugin`.
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
         Vec::new()
+    }
+
+    /// Tools resolved by name when a tool calls them, which may come and
+    /// go while runs go on: an MCP server's. They are never declared to
+    /// the model. Read once, by `Agent::plugin`.
+    fn tool_source(&self) -> Option<Arc<dyn ToolSource>> {
+        None
     }
 
     /// Prepares one run and returns the plugin's state for it.
@@ -266,7 +274,7 @@ pub struct FinishedRun<'a> {
 
 /// What a run starts with. Plugins may change it in [`Plugin::start`];
 /// nothing changes it once the run's session is open.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RunPlan {
     /// The user's input.
     pub input: String,
@@ -281,6 +289,41 @@ pub struct RunPlan {
     workflow: Option<Arc<str>>,
     records: Vec<Value>,
     last_rewrite: Option<Value>,
+    tools: Vec<Arc<dyn AgentTool>>,
+    /// Per tool: the plugin that added it, and its schema once compiled.
+    owners: Vec<PlanTool>,
+    /// The plugin being started, which owns the tools it adds.
+    starting: Option<usize>,
+}
+
+/// What the loop keeps of a [`RunPlan`] tool besides the tool.
+#[derive(Clone)]
+pub(crate) struct PlanTool {
+    /// The index of the plugin that added it, among the agent's plugins.
+    pub owner: Option<usize>,
+    pub schema: Option<Arc<ArgumentSchema>>,
+}
+
+impl std::fmt::Debug for RunPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunPlan")
+            .field("input", &self.input)
+            .field("context", &self.context)
+            .field("instructions", &self.instructions)
+            .field("reasoning", &self.reasoning)
+            .field("model", &self.model)
+            .field("kind", &self.kind)
+            .field("workflow", &self.workflow)
+            .field(
+                "tools",
+                &self
+                    .tools
+                    .iter()
+                    .map(|tool| tool.name())
+                    .collect::<Vec<_>>(),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl RunPlan {
@@ -302,7 +345,57 @@ impl RunPlan {
             workflow,
             records: Vec::new(),
             last_rewrite: None,
+            tools: Vec::new(),
+            owners: Vec::new(),
+            starting: None,
         }
+    }
+
+    /// Adds a tool for this run only, as tau-mcp adds the servers' direct
+    /// tools. The tool counts as the plugin's being started: its calls
+    /// get that plugin's context. A tool of the same name already in the
+    /// plan is replaced, in its place. A `Nested` tool is callable from
+    /// tools and not declared; any other is declared. The run's tools
+    /// are fixed once its session opens.
+    pub fn add_tool(&mut self, tool: Arc<dyn AgentTool>) {
+        let owner = self.starting;
+        self.push_tool(tool, owner, None);
+    }
+
+    /// The run's tools: the agent's, then the ones plugins added so far.
+    pub fn tools(&self) -> &[Arc<dyn AgentTool>] {
+        &self.tools
+    }
+
+    pub(crate) fn push_tool(
+        &mut self,
+        tool: Arc<dyn AgentTool>,
+        owner: Option<usize>,
+        schema: Option<Arc<ArgumentSchema>>,
+    ) {
+        let entry = PlanTool { owner, schema };
+        match self.tools.iter().position(|t| t.name() == tool.name()) {
+            Some(at) => {
+                self.tools[at] = tool;
+                self.owners[at] = entry;
+            }
+            None => {
+                self.tools.push(tool);
+                self.owners.push(entry);
+            }
+        }
+    }
+
+    /// The plan's tools with what the loop keeps of each.
+    pub(crate) fn take_tools(&mut self) -> Vec<(Arc<dyn AgentTool>, PlanTool)> {
+        std::mem::take(&mut self.tools)
+            .into_iter()
+            .zip(std::mem::take(&mut self.owners))
+            .collect()
+    }
+
+    pub(crate) fn set_starting(&mut self, plugin: Option<usize>) {
+        self.starting = plugin;
     }
 
     /// The model the run asks.

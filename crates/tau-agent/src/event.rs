@@ -76,22 +76,28 @@ pub enum RunEvent {
         call_id: String,
         json_fragment: String,
     },
+    /// A tool call starts. A nested call (`ToolCtx::call`) has the id
+    /// of the call that made it as `parent`, and an id of its own of
+    /// the form `<parent>/<n>`.
     ToolStart {
         run: RunId,
         call_id: String,
         tool: Arc<str>,
         args: Value,
+        parent: Option<String>,
     },
     ToolUpdate {
         run: RunId,
         call_id: String,
         partial: Arc<ToolOutput>,
+        parent: Option<String>,
     },
     ToolEnd {
         run: RunId,
         call_id: String,
         output: Arc<ToolOutput>,
         is_error: bool,
+        parent: Option<String>,
     },
     TurnEnd {
         run: RunId,
@@ -205,6 +211,17 @@ mod tests {
                 call_id: "c1".into(),
                 output: Arc::new(ToolOutput::text("ok")),
                 is_error: false,
+                parent: None,
+            },
+            RunEvent::ToolEnd {
+                run: run.clone(),
+                call_id: "c1/1".into(),
+                output: Arc::new(ToolOutput {
+                    structured: Some(json!({"n": 1})),
+                    ..ToolOutput::text("ok")
+                }),
+                is_error: true,
+                parent: Some("c1".into()),
             },
             RunEvent::TurnEnd {
                 run: run.clone(),
