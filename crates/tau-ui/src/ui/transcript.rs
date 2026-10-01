@@ -1129,7 +1129,7 @@ fn plugin_note(
 ) -> Div {
     // A chart's note starts closed; its header opens it. The phone
     // links to the chart instead.
-    let folds = !compact && matches!(note.body, NoteBody::Distribution { .. });
+    let folds = false;
     let open = !folds || ws.note_open(&run.id, index);
     let header = div()
         .id(SharedString::from(format!("note-{index}")))
@@ -1189,41 +1189,11 @@ fn plugin_note(
             },
         );
 
-    let note_plugin = note.plugin.clone();
     let body: Option<AnyElement> = match &note.body {
         NoteBody::None => None,
         NoteBody::Chips(chips) => {
             Some(chips_view(ws, chips, index, t, cx).into_any_element())
         }
-        NoteBody::Distribution {
-            levels,
-            chosen,
-            note,
-            ..
-        } if compact => {
-            // The phone shows the answer and links to the chart.
-            let level = levels
-                .get(*chosen)
-                .map_or(String::new(), |(name, _)| name.clone());
-            ws.plugin_route_named(&note_plugin, &run.id).map(|route| {
-                div()
-                    .id(SharedString::from(format!("why-{index}")))
-                    .child(link(format!("Why {level}"), t).typeset(Type::SMALL))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.navigate(route.clone(), cx)
-                    }))
-                    .into_any_element()
-            })
-        }
-        NoteBody::Distribution {
-            levels,
-            chosen,
-            note,
-            ..
-        } => Some(
-            distribution(levels, *chosen, note, t, compact, 44.)
-                .into_any_element(),
-        ),
         NoteBody::Proposals(proposals) => Some(
             div()
                 .flex()
@@ -1360,67 +1330,6 @@ pub fn chips_view(
                 })
         }),
     )
-}
-
-/// A probability per level, the chosen one highlighted. `height` is
-/// the tallest bar.
-pub fn distribution(
-    levels: &[(String, f32)],
-    chosen: usize,
-    note: &str,
-    t: &Theme,
-    compact: bool,
-    height: f32,
-) -> Div {
-    let columns = levels.iter().enumerate().map(|(index, (name, p))| {
-        let pick = index == chosen;
-        let ink = if pick { t.text } else { t.muted };
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_end()
-            .gap(sp(0.75))
-            .w(px(if compact { 52. } else { 58. }))
-            .child(mono(format!("{p:.2}"), Type::MICRO, ink))
-            .child(
-                div()
-                    .w(px(22.))
-                    .h(px((p * height).max(3.)))
-                    .rounded_t(radius::BAR)
-                    .bg(if pick { t.blue } else { t.bar_idle }),
-            )
-            .child(
-                mono(name.clone(), Type::MICRO, ink)
-                    .w_full()
-                    .pt(sp(0.75))
-                    .border_t_1()
-                    .border_color(t.border_strong)
-                    .flex()
-                    .justify_center(),
-            )
-    });
-    div()
-        .flex()
-        .flex_wrap()
-        .items_end()
-        .gap(sp(5.))
-        .child(
-            div()
-                .flex()
-                .items_end()
-                .gap(sp(1.))
-                .h(px(height + 36.))
-                .children(columns),
-        )
-        .child(
-            div()
-                .max_w(px(280.))
-                .typeset(Type::CAPTION)
-                .text_color(t.muted)
-                .line_height(relative(1.5))
-                .child(note.to_owned()),
-        )
 }
 
 #[allow(clippy::too_many_arguments)]

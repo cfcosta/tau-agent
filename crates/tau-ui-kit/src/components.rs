@@ -1133,3 +1133,109 @@ pub fn qr_code(text: &str, size: f32) -> Option<Div> {
             .child(modules),
     )
 }
+
+/// What a plugin's note in a transcript says in its header.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteHead {
+    /// The plugin's name, beside its icon.
+    pub plugin: String,
+    pub icon: Icon,
+    pub tone: crate::theme::Tone,
+    /// What it says, in marked-up prose.
+    pub text: String,
+    /// Cost, latency or confidence, in small print.
+    pub detail: Option<String>,
+}
+
+/// What a click on a note's header does.
+pub type OnClick =
+    Box<dyn Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static>;
+
+/// A plugin's note in a transcript: its header, and a body under it.
+///
+/// - `folds`: when the body folds, whether it is open; a click on the
+///   header (`on_toggle`) opens or closes it. On a phone nothing folds.
+/// - `link`: what sits at the header's end, such as "Details".
+#[allow(clippy::too_many_arguments)]
+pub fn note(
+    id: impl Into<gpui::ElementId>,
+    head: NoteHead,
+    folds: Option<bool>,
+    on_toggle: Option<OnClick>,
+    link: Option<AnyElement>,
+    body: Option<AnyElement>,
+    compact: bool,
+    t: &Theme,
+) -> Div {
+    let folds = folds.filter(|_| !compact);
+    let open = folds.unwrap_or(true);
+    let header = div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(sp(2.))
+        .when(folds.is_some(), |row| {
+            row.cursor_pointer()
+                .child(icon(
+                    if open { Icon::Down } else { Icon::Chevron },
+                    IconSize::SMALL,
+                    t.dim,
+                ))
+                .when_some(on_toggle, |row, toggle| row.on_click(toggle))
+        })
+        .child(
+            div()
+                .size(px(20.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(radius::TAG)
+                .bg(t.info_surface)
+                .child(icon(head.icon, IconSize::COMPACT, t.tone(head.tone))),
+        )
+        .child(
+            mono(head.plugin.clone(), Type::CAPTION, t.tone(head.tone))
+                .flex_shrink_0(),
+        )
+        .when(!compact, |row| {
+            row.child(div().child(crate::prose::rich(
+                &head.text,
+                t.text_soft,
+                t,
+            )))
+        })
+        .child(div().flex_1())
+        .when_some(head.detail.clone().filter(|_| !compact), |row, detail| {
+            row.child(mono(detail, Type::MICRO, t.dim).flex_shrink_0())
+        })
+        .children(link);
+    let indent = match (compact, folds.is_some()) {
+        (true, _) => 0.,
+        (false, true) => 12.,
+        (false, false) => 7.,
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(2.))
+        .px(sp(3.))
+        .py(sp(2.))
+        .rounded(radius::BOX)
+        .bg(t.blue_soft)
+        .border_1()
+        .border_dashed()
+        .border_color(t.blue_border)
+        .child(header)
+        .when(compact, |card| {
+            card.child(
+                div()
+                    .text_color(t.text_soft)
+                    .line_height(relative(1.45))
+                    .child(crate::prose::rich(&head.text, t.text_soft, t)),
+            )
+        })
+        .when_some(body.filter(|_| open), |card, body| {
+            card.child(div().pl(sp(indent)).child(body))
+        })
+}

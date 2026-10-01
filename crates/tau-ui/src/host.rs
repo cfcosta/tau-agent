@@ -82,7 +82,6 @@ use crate::{
         ModelChoice,
         ModelSettings,
         Models,
-        ReasoningSettings,
         plan_models,
     },
     pull_request::{PrCommit, PrState, PullRequest},
@@ -301,28 +300,17 @@ pub const REPO_PLUGIN: &str = "repo";
 /// A repository's main chat's title.
 pub const MAIN_TITLE: &str = "main";
 
-/// `base` on `choice`: its model and effort (left to tau-reasoning on
-/// auto, when there is Jev to ask), and compaction by the model's
-/// window, pruning with Jev first when there is a key.
+/// `base` on `choice`: its model and effort (auto leaves it to a
+/// plugin, such as tau-reasoning), and compaction by the model's window,
+/// pruning with Jev first when there is a key.
 fn for_model(
     base: Agent,
     choice: &ModelChoice,
     jev: Option<Arc<dyn tau_jev::Jev>>,
-    reasoning: ReasoningSettings,
     archive_dir: &Path,
     repo: &str,
 ) -> Agent {
     let mut agent = base.model(&choice.model);
-    // "auto" leaves the effort to tau-reasoning, when it can ask Jev.
-    if choice.effort == Effort::Auto
-        && let Some(jev) = &jev
-    {
-        agent = agent.plugin(
-            tau_reasoning::Reasoning::new(jev.clone())
-                .redecide(reasoning.redecide)
-                .threshold(reasoning.threshold),
-        );
-    }
     if let Some(effort) = choice.effort.reasoning() {
         agent = agent.reasoning(effort);
     }
@@ -1206,17 +1194,6 @@ impl Host {
         ];
         let jev = self.jev().is_some();
         plugins.push(PluginInfo {
-            name: tau_reasoning::NAME.into(),
-            description: needs_jev(
-                jev,
-                "Picks each message's reasoning effort on auto",
-            ),
-            seams: vec![Seam::Start],
-            spend: 0.0,
-            screen: Some(PluginScreen::Plan),
-            page: None,
-        });
-        plugins.push(PluginInfo {
             name: tau_fast_compaction::NAME.into(),
             description: needs_jev(
                 jev,
@@ -1397,8 +1374,6 @@ impl Host {
         let for_model = {
             let base = self.base.lock().expect("not poisoned").clone();
             let jev = jev.clone();
-            let reasoning =
-                self.settings.lock().expect("not poisoned").reasoning;
             let archive_dir = self.archive_dir(repo);
             let registered = self.registered(repo);
             let repo = repo.name.clone();
@@ -1408,7 +1383,6 @@ impl Host {
                         base.clone(),
                         choice,
                         jev.clone(),
-                        reasoning,
                         &archive_dir,
                         &repo,
                     ),
@@ -2463,16 +2437,12 @@ impl Host {
         let rules = self
             .constitution(repo)
             .map_or(0, |live| live.get().rules.len());
-        let [reasoning, pruning, constitution] =
-            jev_statuses(jev, choice.effort, rules);
-        view.plugins = vec![
-            reasoning,
-            PluginStatus {
-                name: "tau-tools".into(),
-                state: "7 tools".into(),
-                tone: Tone::Quiet,
-            },
-        ];
+        let [pruning, constitution] = jev_statuses(jev, rules);
+        view.plugins = vec![PluginStatus {
+            name: "tau-tools".into(),
+            state: "7 tools".into(),
+            tone: Tone::Quiet,
+        }];
         if workspace.is_some() {
             view.plugins.push(PluginStatus {
                 name: "workspace".into(),
@@ -3889,8 +3859,7 @@ async fn stored_view(
                 serde_json::from_str(&body).ok().map(Stored::Message)
             }
             Entry::Plugin { plugin, body }
-                if plugin == tau_reasoning::NAME
-                    || plugin == tau_constitution::NAME
+                if plugin == tau_constitution::NAME
                     || plugin == tau_goal::NAME
                     || plugin == LANDING_RECORD
                     || crate::plugins::registry().get(&plugin).is_some() =>
@@ -4078,11 +4047,12 @@ fn needs_jev(jev: bool, what: &str) -> String {
     }
 }
 
-/// What a run's plugins that ask Jev say as it starts: tau-reasoning,
-/// fast-compaction and tau-constitution. Each is there with or without
-/// a key, so a run without one says they are off. (tau-goal says so
-/// only when there is a goal; see `RunView::goal`.)
-fn jev_statuses(jev: bool, effort: Effort, rules: usize) -> [PluginStatus; 3] {
+/// What a run's plugins that ask Jev say as it starts, for those that
+/// do not say it themselves yet: fast-compaction and tau-constitution.
+/// Each is there with or without a key, so a run without one says they
+/// are off. (tau-goal says so only when there is a goal; see
+/// `RunView::goal`.)
+fn jev_statuses(jev: bool, rules: usize) -> [PluginStatus; 2] {
     const OFF: &str = "off · no TypeSafe key";
     let status = |name: &str, state: String| PluginStatus {
         name: name.into(),
@@ -4090,16 +4060,6 @@ fn jev_statuses(jev: bool, effort: Effort, rules: usize) -> [PluginStatus; 3] {
         tone: Tone::Quiet,
     };
     [
-        status(
-            tau_reasoning::NAME,
-            match (jev, effort) {
-                (_, effort) if effort != Effort::Auto => {
-                    format!("off · effort set to {}", effort.label())
-                }
-                (false, _) => OFF.into(),
-                (true, _) => "picks the effort as the run starts".into(),
-            },
-        ),
         status(
             tau_fast_compaction::NAME,
             if jev {
@@ -4350,38 +4310,24 @@ mod tests {
     use super::*;
 
     /// Each plugin that asks Jev says how it stands as a run starts:
-    /// off without a key, and tau-reasoning off as well when the effort
-    /// is picked by hand; on, the constitution counts its rules.
+    /// off without a key; on, the constitution counts its rules.
     #[hegel::test(test_cases = 200)]
     fn jev_plugins_say_whether_they_are_on(tc: hegel::TestCase) {
-        use hegel::generators::{self as gs, Generator as _};
+        use hegel::generators as gs;
         let jev = tc.draw(gs::booleans());
-        let efforts = Effort::offered(DEFAULT_MODEL);
-        let effort = tc.draw(gs::sampled_from(efforts).print_as_debug());
         let rules = tc.draw(gs::integers::<usize>().max_value(20));
-        let statuses = jev_statuses(jev, effort, rules);
+        let statuses = jev_statuses(jev, rules);
         let names: Vec<&str> =
             statuses.iter().map(|status| status.name.as_str()).collect();
-        assert_eq!(
-            names,
-            [
-                tau_reasoning::NAME,
-                tau_fast_compaction::NAME,
-                tau_constitution::NAME
-            ]
-        );
+        assert_eq!(names, [tau_fast_compaction::NAME, tau_constitution::NAME]);
         let off = |status: &PluginStatus| status.state.starts_with("off");
-        let [reasoning, pruning, constitution] = &statuses;
-        assert_eq!(off(reasoning), !jev || effort != Effort::Auto);
+        let [pruning, constitution] = &statuses;
         assert_eq!(off(pruning), !jev);
         assert_eq!(off(constitution), !jev);
         if !jev {
             for status in [pruning, constitution] {
                 assert_eq!(status.state, "off · no TypeSafe key");
             }
-        }
-        if effort != Effort::Auto {
-            assert!(reasoning.state.ends_with(effort.label()), "{reasoning:?}");
         }
         if jev && rules > 0 {
             assert!(

@@ -9095,8 +9095,10 @@ dependencies = [
 name = "tau-reasoning"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
+ "gpui-pre",
  "hegeltest",
  "serde",
  "serde_json",
@@ -9105,6 +9107,8 @@ dependencies = [
  "tau-jev",
  "tau-store",
  "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "tokio",
 ]
 

@@ -272,6 +272,14 @@ fn a_new_chat_shows_the_goal_it_inherits() {
     wait_until_done(&host, &view.id);
 }
 
+/// tau-reasoning's state in `view`, as its fold leaves it.
+fn reasoning_of(view: &tau_ui::view::RunView) -> tau_reasoning::ui::State {
+    view.plugin_states
+        .get(tau_reasoning::NAME)
+        .map(|state| serde_json::from_value(state.clone()).unwrap())
+        .unwrap_or_default()
+}
+
 /// The Plugins screen lists every plugin that asks Jev, with a key or
 /// without one, which it says it needs; tau-reasoning opens the run's
 /// plan. Spend comes from what each plugin charged.
@@ -307,8 +315,8 @@ fn every_jev_plugin_is_listed() {
             .unwrap()
     };
     assert_eq!(
-        reasoning(&catalog).screen,
-        Some(tau_ui::catalog::PluginScreen::Plan)
+        reasoning(&catalog).page,
+        Some(tau_ui_plugin::Link::page("choices").param("run", ""))
     );
     let host = host
         .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.5)));
@@ -1750,20 +1758,13 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
         llm.requests()[0].settings.reasoning,
         Some(tau_ai::responses::request::ReasoningEffort::High)
     );
+    // The plan's reasoning, as tau-reasoning's state says it.
     let chosen = |view: &tau_ui::view::RunView| {
-        view.plan.iter().any(|field| {
-            field.name == "reasoning"
-                && field.value == "high"
-                && field.set_by.as_deref() == Some("tau-reasoning")
-        })
+        reasoning_of(view).plan.as_deref() == Some("high")
     };
-    assert!(chosen(&view), "{:?}", view.plan);
-    assert!(
-        view.items
-            .iter()
-            .any(|item| matches!(item, Item::Plugin(note)
-        if note.plugin == "tau-reasoning"))
-    );
+    assert!(chosen(&view), "{:?}", view.plugin_states);
+    assert!(view.items.iter().any(|item| matches!(item,
+        Item::Anchor { plugin, .. } if plugin == tau_reasoning::NAME)));
     // History shows it again, from the plugin's record.
     assert!(chosen(&host.history().unwrap()[0]));
 
@@ -1818,8 +1819,10 @@ fn reasoning_settings_reach_the_plugin() {
     });
     let host = host.with_jev(std::sync::Arc::new(jev.clone()));
     let mut settings = tau_ui::models::ModelSettings::default();
-    settings.reasoning.redecide = true;
-    settings.reasoning.threshold = 0.9;
+    settings.plugins.insert(
+        tau_reasoning::NAME.into(),
+        serde_json::json!({ "redecide": true, "threshold": 0.9 }),
+    );
     host.save_settings(settings).unwrap();
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
     let view = host.start("track down the race", &auto, REPO).unwrap();
@@ -2042,13 +2045,21 @@ fn each_message_is_scored_again() {
 
     // History: each choice right after its message.
     let history = host.history().unwrap();
+    let state = reasoning_of(&history[0]);
     let order: Vec<String> = history[0]
         .items
         .iter()
         .filter_map(|item| match item {
             Item::User(text) => Some(format!("user: {text}")),
-            Item::Plugin(note) if note.plugin == "tau-reasoning" => {
-                Some(note.text.clone())
+            Item::Anchor { plugin, key } if plugin == tau_reasoning::NAME => {
+                match state.notes.get(key)? {
+                    tau_reasoning::ui::Note::Choice { text, .. } => {
+                        Some(text.clone())
+                    }
+                    tau_reasoning::ui::Note::Failed { message, .. } => {
+                        Some(message.clone())
+                    }
+                }
             }
             Item::Text(text) => Some(format!("reply: {text}")),
             _ => None,

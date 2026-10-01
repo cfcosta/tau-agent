@@ -93,9 +93,13 @@ pub const SIDEBAR_REPO: Point<AtRepo, NavEntry> =
 pub const MODELS: Point<AtApp> = Point::new("tau.models.section");
 /// Hits search offers besides the navigation's entries.
 pub const SEARCH: Point<AtApp, NavEntry> = Point::new("tau.search");
+/// A step on a run's Plan screen: what the plugin's `start` decided.
+pub const PLAN_STEPS: Point<AtRun> = Point::new("tau.run.plan.steps");
+/// What the model picker says auto does, under its efforts.
+pub const PICKER_AUTO: Point<AtApp, String> = Point::new("tau.picker.auto");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 13] = [
+pub const ALL: [&str; 15] = [
     TRANSCRIPT.name,
     CARD_BADGE.name,
     CARD_BODY.name,
@@ -109,4 +113,6 @@ pub const ALL: [&str; 13] = [
     SIDEBAR_REPO.name,
     MODELS.name,
     SEARCH.name,
+    PLAN_STEPS.name,
+    PICKER_AUTO.name,
 ];

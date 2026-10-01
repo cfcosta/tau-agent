@@ -96,7 +96,6 @@ pub fn render(
         })
         .collect::<Vec<_>>();
 
-    let reasoning = reasoning_section(ws, t, cx);
     let access = &models.access;
     let chatgpt = chatgpt_section(access, t, cx);
     let github_user = ws.setup.user().map(str::to_owned);
@@ -222,8 +221,6 @@ pub fn render(
         ))
         .child(heading("Defaults", t))
         .child(ui::card(t).children(defaults))
-        .child(heading("Reasoning on auto", t))
-        .child(reasoning)
         // What plugins add to the screen: their settings.
         .children(ws.contributions(
             tau_ui_plugin::points::MODELS,
@@ -251,99 +248,6 @@ pub fn render(
             .child(side),
     )
     .into_any_element()
-}
-
-/// How tau-reasoning picks the effort on auto: whether it decides again
-/// between steps, and how sure Jev must be to change it.
-fn reasoning_section(
-    ws: &Workspace,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> gpui::Div {
-    let models = &ws.catalog.models;
-    let settings = models.settings.reasoning;
-    let row = || {
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(4.))
-            .px(sp(4.))
-            .py(sp(3.5))
-            .border_b_1()
-            .border_color(t.border)
-    };
-    let what = |name: &str, caption: &str| {
-        div()
-            .flex_1()
-            .min_w(px(0.))
-            .flex()
-            .flex_col()
-            .gap(sp(0.75))
-            .child(name.to_owned())
-            .child(ui::text(caption.to_owned(), Type::CAPTION, t.muted))
-    };
-    let thresholds = crate::models::THRESHOLDS.into_iter().map(|threshold| {
-        let on = (settings.threshold - threshold).abs() < 1e-9;
-        div()
-            .id(SharedString::from(format!("threshold-{threshold}")))
-            .h(px(28.))
-            .px(sp(2.5))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(radius::CONTROL)
-            .typeset(Type::CAPTION)
-            .cursor_pointer()
-            .text_color(if on { t.text } else { t.muted })
-            .when(on, |segment| segment.key(t))
-            .child(format!("{threshold:.1}"))
-            .on_click(cx.listener(move |ws, _, _, cx| {
-                ws.set_reasoning_threshold(threshold, cx)
-            }))
-    });
-    ui::card(t)
-        .when(!models.access.jev, |card| {
-            card.child(row().child(ui::text(
-                "tau-reasoning needs a TypeSafe key (Accounts): until \
-                     then, auto is the model's own default.",
-                Type::CAPTION,
-                t.accent,
-            )))
-        })
-        .child(
-            row()
-                .child(what(
-                    "Decide again between steps",
-                    "Jev looks again when a step's effort runs out, not only \
-                     as each message comes in. Each change resends the whole \
-                     context uncached, so it pays only on long tool chains.",
-                ))
-                .child(
-                    div()
-                        .id("reasoning-redecide")
-                        .child(ui::switch(settings.redecide, t))
-                        .on_click(
-                            cx.listener(|ws, _, _, cx| ws.toggle_redecide(cx)),
-                        ),
-                ),
-        )
-        .child(
-            row()
-                .child(what(
-                    "Confidence to change the effort",
-                    "Below it, a message runs at the effort the last one ran \
-                     at.",
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .gap(sp(0.5))
-                        .p(sp(0.5))
-                        .rounded(radius::BOX)
-                        .well(t)
-                        .children(thresholds),
-                ),
-        )
 }
 
 /// The ChatGPT sign-ins: each saved account, the active one marked, and

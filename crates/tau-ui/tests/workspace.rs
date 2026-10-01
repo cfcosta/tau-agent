@@ -471,13 +471,36 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         // The next run follows coder's new default until one is picked.
         assert_eq!(ws.next_model().model, "gpt-6-luna");
         ws.toggle_model_hidden("gpt-6-astra", cx);
-        // tau-reasoning's settings, from the Models screen.
+        // tau-reasoning's settings, from its section of the Models
+        // screen, through its handle.
         ws.navigate(Route::Models, cx);
-        ws.toggle_redecide(cx);
-        ws.set_reasoning_threshold(0.9, cx);
+        ws.plugin_handle(tau_reasoning::NAME).save_settings(
+            &tau_reasoning::ui::Settings {
+                redecide: true,
+                threshold: 0.9,
+            },
+            cx,
+        );
     });
     // Drawn with them.
     cx.run_until_parked();
+    let plugin_saved: Vec<(String, serde_json::Value)> = events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::PluginSettings { plugin, settings } => {
+                Some((plugin.clone(), settings.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        plugin_saved,
+        [(
+            tau_reasoning::NAME.to_owned(),
+            serde_json::json!({ "redecide": true, "threshold": 0.9 })
+        )]
+    );
     let saved: Vec<ModelSettings> = events
         .borrow()
         .iter()
@@ -488,12 +511,61 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
             _ => None,
         })
         .collect();
-    assert_eq!(saved.len(), 4);
+    assert_eq!(saved.len(), 2);
     let last = saved.last().unwrap();
     assert_eq!(last.default_for("coder").model, "gpt-6-luna");
     assert!(last.is_hidden("gpt-6-astra"));
-    assert!(last.reasoning.redecide);
-    assert_eq!(last.reasoning.threshold, 0.9);
+}
+
+/// tau-reasoning draws itself: its note in the demo's transcript, its
+/// line and plan field, its step on the Plan screen, and its page,
+/// reached from its catalog entry.
+#[gpui::test]
+fn reasoning_draws_its_own_ui(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    let run = demo::run_id();
+    workspace.update(&mut cx, |ws, cx| {
+        for (_, update) in demo::script() {
+            ws.update_run(&run, update, cx);
+        }
+        ws.navigate(Route::Run(run.clone()), cx);
+    });
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        let view = ws.run(&run).unwrap().clone();
+        let plan = ws.run_plan(&view, cx);
+        assert!(plan.iter().any(|field| field.name == "reasoning"
+            && field.value == "high"
+            && field.set_by.as_deref() == Some(tau_reasoning::NAME)));
+        let statuses = ws.run_statuses(&view, cx);
+        assert!(
+            statuses
+                .iter()
+                .any(|status| status.name == tau_reasoning::NAME
+                    && status.state == "chose high")
+        );
+        // Its catalog entry leads to its page, about the run in view.
+        let route = ws.plugin_route_named(tau_reasoning::NAME, &run).unwrap();
+        let Route::Plugin {
+            plugin,
+            page,
+            params,
+        } = &route
+        else {
+            panic!("{route:?}");
+        };
+        assert_eq!(
+            (plugin.as_str(), page.as_str()),
+            (tau_reasoning::NAME, "choices")
+        );
+        assert_eq!(params.get("run").map(String::as_str), Some(&*run.0));
+        ws.navigate(route, cx);
+    });
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Plan(run.clone()), cx);
+    });
+    cx.run_until_parked();
 }
 
 #[gpui::test]

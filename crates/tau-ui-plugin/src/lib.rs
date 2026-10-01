@@ -47,6 +47,41 @@ pub use view::{
     ViewCx,
 };
 
+/// A published body's key saying where history shows it. A run's history
+/// stores a turn's messages when the turn ends, after what plugins
+/// published during it; an interface replaying history places each body
+/// as it showed live:
+///
+/// - none: with the turn it was published in, once the turn's tool
+///   cards exist (a check on a call);
+/// - [`PLACE_NOW`]: where it was stored, before the turn's messages (a
+///   choice made before a request);
+/// - [`PLACE_MESSAGE`]: after the message the run started on, which
+///   history stores after what plugins published as the run started.
+pub const PLACE: &str = "place";
+pub const PLACE_NOW: &str = "now";
+pub const PLACE_MESSAGE: &str = "message";
+
+/// `body`, placed in history at `place` ([`PLACE`]).
+pub fn placed(mut body: Value, place: &str) -> Value {
+    body[PLACE] = place.into();
+    body
+}
+
+/// What a plugin that asks Jev says of itself on the Plugins screen:
+/// `what` it does, and that it needs a TypeSafe key when there is none.
+pub fn needs_jev(jev: bool, what: &str) -> String {
+    if jev {
+        format!("{what}, with Jev")
+    } else {
+        format!("{what}: needs a TypeSafe key (Models)")
+    }
+}
+
+/// What a plugin that asks Jev says in a run's plugin list when there is
+/// no TypeSafe key.
+pub const NO_KEY: &str = "off · no TypeSafe key";
+
 /// The seams a plugin can use, in the order the loop reaches them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Seam {

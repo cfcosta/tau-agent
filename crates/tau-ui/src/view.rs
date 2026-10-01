@@ -45,9 +45,6 @@ pub struct RunView {
     pub items: Vec<Item>,
     /// The `RunPlan` fields worth showing, after every plugin's `start`.
     pub plan: Vec<PlanField>,
-    /// The effort tau-reasoning last ran a message at; `None` for the
-    /// model's default. A note shows only when it changes.
-    pub ran_at: Option<String>,
     pub limits: Limits,
     pub usage: Totals,
     pub context: ContextWindow,
@@ -263,7 +260,8 @@ pub enum Item {
     /// Assistant text; deltas append to the last one.
     Text(String),
     Thinking(String),
-    Tool(ToolCard),
+    /// Boxed: a card is the largest item by far.
+    Tool(Box<ToolCard>),
     Plugin(PluginNote),
     /// A plugin's anchor: the plugin draws what goes here, at the
     /// transcript's point (ADR 0017).
@@ -654,16 +652,6 @@ pub enum NoteBody {
     #[default]
     None,
     Chips(Vec<String>),
-    /// A choice over ordered levels, such as reasoning effort.
-    Distribution {
-        levels: Vec<(String, f32)>,
-        chosen: usize,
-        note: String,
-        /// The answer's confidence and the threshold it had to pass.
-        confidence: Option<(f32, f32)>,
-        /// What each level suits, in the order of `levels`.
-        hints: Vec<String>,
-    },
     /// Notes a plugin suggests keeping.
     Proposals(Vec<Proposal>),
 }
@@ -969,7 +957,6 @@ impl RunView {
             turn: 0,
             items: Vec::new(),
             plan: Vec::new(),
-            ran_at: None,
             limits: Limits::default(),
             usage: Totals::default(),
             context: ContextWindow::default(),
@@ -1009,9 +996,8 @@ impl RunView {
     /// [`Self::from_messages`], with the plugins' records shown where
     /// they happened. The store writes a turn's messages when the turn
     /// ends, after what plugins recorded during it, so a record shows
-    /// after the turn that follows it, once its tool cards exist.
-    /// tau-reasoning's is written as a message starts, so it shows
-    /// right after that message, as it does live.
+    /// after the turn that follows it, once its tool cards exist, unless
+    /// it says otherwise (`tau_ui_plugin::PLACE`).
     pub fn from_timeline(
         id: RunId,
         title: impl Into<String>,
@@ -1022,7 +1008,7 @@ impl RunView {
         let mut view = Self::new(id, title, agent, model);
         // The ledger marks the cards that follow it, so it comes last.
         let mut ledger: Option<&Value> = None;
-        let mut starting: Vec<&Value> = Vec::new();
+        let mut starting: Vec<(&str, &Value)> = Vec::new();
         let mut during: Vec<(&str, &Value)> = Vec::new();
         // Whether the turn the records in `during` belong to has begun.
         let mut begun = false;
@@ -1048,16 +1034,18 @@ impl RunView {
                     ledger = Some(body);
                 }
                 Stored::Rewrite { .. } => {}
-                // A choice made as a message came in shows after that
-                // message; one made between turns, where it was made.
+                // What a plugin published as the run started shows after
+                // the message it started on; what it says shows now,
+                // where it was stored.
                 Stored::Record { plugin, body }
-                    if plugin == tau_reasoning::NAME
-                        && body["turn"].is_null() =>
+                    if body[tau_ui_plugin::PLACE]
+                        == tau_ui_plugin::PLACE_MESSAGE =>
                 {
-                    starting.push(body);
+                    starting.push((plugin, body));
                 }
                 Stored::Record { plugin, body }
-                    if plugin == tau_reasoning::NAME =>
+                    if body[tau_ui_plugin::PLACE]
+                        == tau_ui_plugin::PLACE_NOW =>
                 {
                     flush(&mut view, &mut during);
                     view.report(plugin, body);
@@ -1101,16 +1089,16 @@ impl RunView {
                     }
                     view.push_message(message);
                     if matches!(message, Message::User(_)) {
-                        for body in starting.drain(..) {
-                            view.report(tau_reasoning::NAME, body);
+                        for (plugin, body) in starting.drain(..) {
+                            view.report(plugin, body);
                         }
                     }
                 }
             }
         }
         flush(&mut view, &mut during);
-        for body in starting {
-            view.report(tau_reasoning::NAME, body);
+        for (plugin, body) in starting {
+            view.report(plugin, body);
         }
         if let Some(body) = ledger {
             view.ledger_report(body);
@@ -1163,7 +1151,7 @@ impl RunView {
                             .push(Item::Thinking(thinking.thinking.clone())),
                         AssistantBlock::ToolCall(call) => {
                             let args = Value::Object(call.arguments.clone());
-                            view.items.push(Item::Tool(ToolCard {
+                            view.items.push(Item::Tool(Box::new(ToolCard {
                                 call_id: call.id.clone(),
                                 tool: call.name.clone(),
                                 summary: summarize_args(&args),
@@ -1176,7 +1164,7 @@ impl RunView {
                                 cut: None,
                                 anchors: Vec::new(),
                                 size: 0,
-                            }))
+                            })))
                         }
                     }
                 }
@@ -1292,7 +1280,7 @@ impl RunView {
     pub fn last_diff(&self) -> Option<(&ToolCard, &[DiffLine])> {
         self.items.iter().rev().find_map(|item| match item {
             Item::Tool(card) => match &card.body {
-                ToolBody::Diff(lines) => Some((card, lines.as_slice())),
+                ToolBody::Diff(lines) => Some((&**card, lines.as_slice())),
                 _ => None,
             },
             _ => None,
@@ -1305,7 +1293,13 @@ impl RunView {
         self.items
             .iter()
             .take_while(|item| {
-                matches!(item, Item::User(_) | Item::Goal(_) | Item::Plugin(_))
+                matches!(
+                    item,
+                    Item::User(_)
+                        | Item::Goal(_)
+                        | Item::Plugin(_)
+                        | Item::Anchor { .. }
+                )
             })
             .filter_map(|item| match item {
                 Item::Plugin(note) => Some(note),
@@ -1364,7 +1358,7 @@ impl RunView {
                     ToolState::Blocked { .. } | ToolState::Flagged { .. }
                 ) =>
             {
-                Some(card)
+                Some(&**card)
             }
             _ => None,
         })
@@ -1474,14 +1468,14 @@ impl RunView {
 
     pub fn tool(&self, call_id: &str) -> Option<&ToolCard> {
         self.items.iter().find_map(|item| match item {
-            Item::Tool(card) if card.call_id == call_id => Some(card),
+            Item::Tool(card) if card.call_id == call_id => Some(&**card),
             _ => None,
         })
     }
 
     pub fn tool_mut(&mut self, call_id: &str) -> Option<&mut ToolCard> {
         self.items.iter_mut().find_map(|item| match item {
-            Item::Tool(card) if card.call_id == call_id => Some(card),
+            Item::Tool(card) if card.call_id == call_id => Some(&mut **card),
             _ => None,
         })
     }
@@ -1522,7 +1516,7 @@ impl RunView {
                 tool,
                 args,
                 ..
-            } => self.items.push(Item::Tool(ToolCard {
+            } => self.items.push(Item::Tool(Box::new(ToolCard {
                 call_id: call_id.clone(),
                 tool: tool.to_string(),
                 summary: summarize_args(args),
@@ -1535,7 +1529,7 @@ impl RunView {
                 cut: None,
                 anchors: Vec::new(),
                 size: 0,
-            })),
+            }))),
             RunEvent::ToolUpdate {
                 call_id, partial, ..
             } => {
@@ -1877,10 +1871,6 @@ impl RunView {
             return;
         }
         use tau_constitution::{Verdict, VerdictKind};
-        if plugin == tau_reasoning::NAME {
-            self.reasoning_report(body);
-            return;
-        }
         if plugin == tau_fast_compaction::NAME {
             if body["kind"] == "output" {
                 self.output_report(body);
@@ -1991,139 +1981,6 @@ impl RunView {
             detail: Some(detail),
             tone,
             body: NoteBody::None,
-        });
-    }
-
-    /// What tau-reasoning chose, as a note with its distribution, the
-    /// plan's reasoning, and its line in the plugin list.
-    fn reasoning_report(&mut self, body: &Value) {
-        let plugin = tau_reasoning::NAME;
-        if body["kind"] == "error" {
-            // The message goes on as the last one did; the failure is
-            // worth a note all the same.
-            self.push_note(PluginNote {
-                plugin: plugin.to_owned(),
-                text: body["message"].as_str().unwrap_or("failed").to_owned(),
-                detail: Some({
-                    let stayed = match body["runs_at"].as_str() {
-                        Some(effort) => format!("stayed at {effort}"),
-                        None => "kept the default".into(),
-                    };
-                    match body["turn"].as_u64() {
-                        Some(turn) => format!("turn {turn} · {stayed}"),
-                        None => stayed,
-                    }
-                }),
-                tone: Tone::Danger,
-                body: NoteBody::None,
-            });
-            return;
-        }
-        let Some(choice) = tau_reasoning::Choice::parse(body) else {
-            return;
-        };
-        let chose = choice.kind == "chose";
-        // A choice between turns is for the agent's next step, or for a
-        // message the user steered in.
-        let what = match (choice.turn, choice.step.as_str()) {
-            (None, _) => "this message",
-            (Some(_), "user_turn") => "the message steered in",
-            (Some(_), _) => "this step",
-        };
-        // What the message runs at: the pick, else what the last one ran
-        // at (a record from before `runs_at` was kept has only the pick).
-        let runs_at = choice
-            .runs_at
-            .clone()
-            .or_else(|| chose.then(|| choice.effort.clone()));
-        let before = std::mem::replace(&mut self.ran_at, runs_at.clone());
-        let state = match &runs_at {
-            Some(effort) if chose => format!("chose {effort}"),
-            Some(effort) => format!("stayed at {effort}"),
-            None => "kept the default".to_owned(),
-        };
-        match self.plugins.iter_mut().find(|status| status.name == plugin) {
-            Some(status) => status.state = state,
-            None => self.plugins.insert(
-                0,
-                PluginStatus {
-                    name: plugin.to_owned(),
-                    state,
-                    tone: Tone::Quiet,
-                },
-            ),
-        }
-        let value = runs_at.clone().unwrap_or_else(|| "default".into());
-        match self.plan.iter_mut().find(|field| field.name == "reasoning") {
-            Some(field) => {
-                field.value = value;
-                field.set_by = Some(plugin.to_owned());
-            }
-            None => self.plan.insert(
-                0,
-                PlanField {
-                    name: "reasoning".into(),
-                    value,
-                    set_by: Some(plugin.to_owned()),
-                },
-            ),
-        }
-        // Only a change gets a note: the first pick, or a new effort.
-        if runs_at == before {
-            return;
-        }
-        let name = |effort: &Option<String>| match effort {
-            Some(effort) => format!("**{effort}**"),
-            None => "the model's default".to_owned(),
-        };
-        let text = match &before {
-            None if chose => {
-                format!("picked {} reasoning for {what}", name(&runs_at))
-            }
-            _ => format!("reasoning {} → {}", name(&before), name(&runs_at)),
-        };
-        let comparison = if chose { "above" } else { "below" };
-        let mut outcome = match &runs_at {
-            Some(effort) if chose => {
-                format!("so {what} runs at {effort}.")
-            }
-            Some(effort) => format!("so {what} stays at {effort}."),
-            None => format!("so {what} runs at the model's default."),
-        };
-        // With deciding again on, how long Jev said the effort holds.
-        if let Some(lease) = choice
-            .lease
-            .as_deref()
-            .and_then(tau_reasoning::Lease::parse)
-        {
-            outcome.push_str(&format!(" It holds {}.", lease.holds()));
-        }
-        self.push_note(PluginNote {
-            plugin: plugin.to_owned(),
-            text,
-            detail: Some(format!("Jev · {}", usd(choice.cost))),
-            tone: Tone::Info,
-            body: NoteBody::Distribution {
-                levels: choice
-                    .levels
-                    .iter()
-                    .map(|level| (level.effort.clone(), level.p as f32))
-                    .collect(),
-                chosen: choice.chosen(),
-                note: format!(
-                    "Confidence {:.2} is {comparison} {:.2}, {outcome}",
-                    choice.confidence, choice.threshold
-                ),
-                confidence: Some((
-                    choice.confidence as f32,
-                    choice.threshold as f32,
-                )),
-                hints: choice
-                    .levels
-                    .iter()
-                    .map(|level| level.suits.clone())
-                    .collect(),
-            },
         });
     }
 
@@ -2601,54 +2458,7 @@ pub fn diff_stat(lines: &[DiffLine]) -> String {
     format!("+{added} −{removed}")
 }
 
-/// `4810` as `4,810`.
-pub fn grouped(count: usize) -> String {
-    let digits = count.to_string();
-    let mut out = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
-}
-
-/// `184000` as `184k`.
-pub fn tokens(count: u64) -> String {
-    match count {
-        0..1_000 => count.to_string(),
-        1_000..1_000_000 => format!("{}k", count / 1_000),
-        _ => format!("{:.1}M", count as f64 / 1_000_000.0),
-    }
-}
-
-/// Dollars to the cent, or to a tenth of one under a dollar: `$0.042`,
-/// `$1.00`, `$12.34`. The choice is made on the rounded amount, so
-/// `0.9996` reads `$1.00`, never `$1.000`.
-pub fn usd(amount: f64) -> String {
-    let fine = format!("{amount:.3}");
-    if fine.parse::<f64>().is_ok_and(|rounded| rounded < 1.0) {
-        format!("${fine}")
-    } else {
-        format!("${amount:.2}")
-    }
-}
-
-/// A Jev cost, which is often a fraction of a cent: to four places
-/// under a cent, else as [`usd`].
-pub fn fine_usd(amount: f64) -> String {
-    if amount < 0.01 {
-        format!("${amount:.4}")
-    } else {
-        usd(amount)
-    }
-}
-
-pub fn clock(duration: Duration) -> String {
-    let secs = duration.as_secs();
-    format!("{}:{:02}", secs / 60, secs % 60)
-}
+pub use tau_ui_kit::format::{clock, fine_usd, grouped, tokens, usd};
 
 #[cfg(test)]
 mod tests {
@@ -3412,62 +3222,6 @@ mod tests {
         );
     }
 
-    /// A choice as tau-reasoning reports it, on gpt-5.5's levels.
-    fn choice(kind: &str, effort: &str, runs_at: Option<&str>) -> Value {
-        let levels: Vec<Value> = ["none", "low", "medium", "high", "xhigh"]
-            .iter()
-            .map(|effort| json!({ "effort": effort, "suits": "", "p": 0.2 }))
-            .collect();
-        json!({
-            "kind": kind, "effort": effort, "confidence": 0.8,
-            "threshold": 0.7, "levels": levels, "cost": 0.0,
-            "runs_at": runs_at,
-        })
-    }
-
-    #[test]
-    fn a_reasoning_note_shows_only_when_the_effort_changes() {
-        let mut view =
-            RunView::new(RunId("r".into()), "t", "coder", "gpt-6-sol");
-        let notes = |view: &RunView| -> Vec<String> {
-            view.items
-                .iter()
-                .filter_map(|item| match item {
-                    Item::Plugin(note)
-                        if note.plugin == tau_reasoning::NAME =>
-                    {
-                        Some(note.text.clone())
-                    }
-                    _ => None,
-                })
-                .collect()
-        };
-        // Unsure with nothing before: the default, no note.
-        view.report(tau_reasoning::NAME, &choice("kept", "low", None));
-        view.report(
-            tau_reasoning::NAME,
-            &choice("chose", "high", Some("high")),
-        );
-        // Unsure, staying at high; then sure of high again.
-        view.report(tau_reasoning::NAME, &choice("kept", "low", Some("high")));
-        view.report(
-            tau_reasoning::NAME,
-            &choice("chose", "high", Some("high")),
-        );
-        view.report(tau_reasoning::NAME, &choice("chose", "low", Some("low")));
-        assert_eq!(
-            notes(&view),
-            [
-                "picked **high** reasoning for this message",
-                "reasoning **high** → **low**",
-            ]
-        );
-        assert_eq!(view.ran_at.as_deref(), Some("low"));
-        let reasoning =
-            view.plan.iter().find(|f| f.name == "reasoning").unwrap();
-        assert_eq!(reasoning.value, "low");
-    }
-
     #[test]
     fn numbers_read_the_way_the_mockups_write_them() {
         assert_eq!(tokens(184_000), "184k");
@@ -3527,97 +3281,6 @@ mod tests {
             .collect();
         assert_eq!(markers, [1, 2]);
         assert_eq!(view.turn, 2);
-    }
-
-    /// A choice made as a message came in shows after the message; one
-    /// made between turns shows where it was made, before the reply it
-    /// chose for.
-    #[test]
-    fn stored_reasoning_choices_show_where_they_were_made() {
-        let user: Message = serde_json::from_value(json!({
-            "role": "user", "content": "go", "timestamp": 0
-        }))
-        .unwrap();
-        let reply = |text: &str| -> Message {
-            serde_json::from_value(json!({
-                "role": "assistant",
-                "content": [{"type": "text", "text": text}],
-                "api": "responses", "provider": "openai", "model": "m",
-                "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
-                          "totalTokens": 0,
-                          "cost": {"input": 0, "output": 0, "cacheRead": 0,
-                                   "cacheWrite": 0, "total": 0}},
-                "stopReason": "stop", "timestamp": 0
-            }))
-            .unwrap()
-        };
-        let record = |body: Value| Stored::Record {
-            plugin: tau_reasoning::NAME.into(),
-            body,
-        };
-        let mut step = choice("chose", "low", Some("low"));
-        step["step"] = "tool_step".into();
-        step["turn"] = 2.into();
-        step["lease"] = "tool_chain".into();
-        // A failed scoring is recorded too, with its turn.
-        let failed = json!({
-            "kind": "error", "message": "Jev could not score the step: offline",
-            "runs_at": "low", "step": "tool_step", "turn": 3,
-        });
-        let view = RunView::from_timeline(
-            run(),
-            "t",
-            "a",
-            "gpt-6-sol",
-            &[
-                record(choice("chose", "high", Some("high"))),
-                Stored::Message(user),
-                Stored::Message(reply("one")),
-                record(step),
-                Stored::Message(reply("two")),
-                record(failed),
-                record(json!({"kind": "context", "task": "go",
-                              "proposal": "two"})),
-            ],
-        );
-        let notes: Vec<&PluginNote> = view
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Plugin(note) => Some(note),
-                _ => None,
-            })
-            .collect();
-        let NoteBody::Distribution { note, .. } = &notes[1].body else {
-            panic!("{:?}", notes[1]);
-        };
-        assert!(
-            note.ends_with(
-                "so this step runs at low. It holds while tool \
-                            calls succeed."
-            ),
-            "{note}"
-        );
-        assert_eq!(notes[2].detail.as_deref(), Some("turn 3 · stayed at low"));
-        let order: Vec<String> = view
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Plugin(note) => Some(note.text.clone()),
-                Item::Text(text) => Some(text.clone()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            order,
-            [
-                "picked **high** reasoning for this message",
-                "one",
-                "reasoning **high** → **low**",
-                "two",
-                "Jev could not score the step: offline",
-            ]
-        );
     }
 
     /// A stored run that fast-compaction rewrote starts with its
@@ -3774,7 +3437,7 @@ mod tests {
         };
         let args = card.args.to_string().len();
         card.size = args + 4_000;
-        view.items.push(Item::Tool(card.clone()));
+        view.items.push(Item::Tool(Box::new(card.clone())));
         view.context.used = 5_000;
         let parts = view.context_parts().unwrap();
         assert_eq!(parts.results, 1_000);
@@ -3783,7 +3446,7 @@ mod tests {
 
         // A dropped result counts only its call.
         card.pruned = Some(Pruned::ResultDropped);
-        view.items[2] = Item::Tool(card);
+        view.items[2] = Item::Tool(Box::new(card));
         assert_eq!(view.context_parts().unwrap().results, 0);
 
         // A summary replaced what came before it; an estimate over the

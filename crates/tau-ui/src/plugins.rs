@@ -25,7 +25,8 @@ use crate::{
 
 /// Every plugin, in the order the host adds them to a run's agent.
 pub fn registry() -> &'static Registry {
-    static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
+    static REGISTRY: LazyLock<Registry> =
+        LazyLock::new(|| Registry::new().with(tau_reasoning::ReasoningPlugin));
     &REGISTRY
 }
 
@@ -39,7 +40,7 @@ pub(crate) type Requests = Rc<std::cell::RefCell<Vec<(&'static str, Request)>>>;
 
 impl Workspace {
     /// The handle `plugin`'s UI asks the workspace through.
-    pub(crate) fn plugin_handle(&self, plugin: &'static str) -> Handle {
+    pub fn plugin_handle(&self, plugin: &'static str) -> Handle {
         let queue = self.plugin_requests.clone();
         let workspace = self.weak.clone();
         Handle::new(

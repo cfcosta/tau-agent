@@ -186,25 +186,6 @@ impl Workspace {
         self.save_model_settings(cx);
     }
 
-    /// Turns tau-reasoning's deciding again between steps on or off, and
-    /// saves it; runs started from now on take it.
-    pub fn toggle_redecide(&mut self, cx: &mut Context<Self>) {
-        let reasoning = &mut self.catalog.models.settings.reasoning;
-        reasoning.redecide = !reasoning.redecide;
-        self.save_model_settings(cx);
-    }
-
-    /// Sets how sure Jev must be for tau-reasoning to change the effort,
-    /// and saves it.
-    pub fn set_reasoning_threshold(
-        &mut self,
-        threshold: f64,
-        cx: &mut Context<Self>,
-    ) {
-        self.catalog.models.settings.reasoning.threshold = threshold;
-        self.save_model_settings(cx);
-    }
-
     fn save_model_settings(&mut self, cx: &mut Context<Self>) {
         cx.emit(WorkspaceEvent::SaveModelSettings(
             self.catalog.models.settings.clone(),
@@ -288,7 +269,17 @@ impl Workspace {
         let models = &self.catalog.models;
         let filter = self.model_search.read(cx).text().to_owned();
         let signed_in = models.access.chatgpt;
-        let jev = models.access.jev;
+        // What auto does, as the plugin that picks the effort says.
+        let auto_caption = self
+            .contributions(
+                tau_ui_plugin::points::PICKER_AUTO,
+                &tau_ui_plugin::points::AtApp,
+                cx,
+            )
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "Auto leaves the effort to the model.".into());
+        let models = &self.catalog.models;
         // One list, in the account's order.
         let rows: Vec<AnyElement> = models
             .shown(&filter)
@@ -447,13 +438,7 @@ impl Workspace {
                     )
                     .when(choice.effort == Effort::Auto, |section| {
                         section.child(ui::text(
-                            if jev {
-                                "Auto lets tau-reasoning pick the effort for \
-                                 each message, with Jev."
-                            } else {
-                                "Auto leaves the effort to the model: \
-                                 tau-reasoning needs a TypeSafe key (Models)."
-                            },
+                            auto_caption.clone(),
                             Type::CAPTION,
                             t.muted,
                         ))

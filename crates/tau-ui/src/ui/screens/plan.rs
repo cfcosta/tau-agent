@@ -6,7 +6,7 @@ use tau_agent::tool::RunId;
 use crate::{
     assets::Icon,
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, Material as _, dot, heading, icon, mono, rich, transcript},
+    ui::{self, dot, heading, icon, mono, rich, transcript},
     view::{Item, NoteBody, PluginNote},
     workspace::Workspace,
 };
@@ -23,9 +23,16 @@ pub fn render(
             .into_any_element();
     };
     let notes: Vec<&PluginNote> = run.start_notes().collect();
-    let effort = run
-        .plan
-        .iter()
+    // What plugins with their UI decided in `start`.
+    let plugin_steps = ws.contributions(
+        tau_ui_plugin::points::PLAN_STEPS,
+        &tau_ui_plugin::points::AtRun { run: run.info() },
+        cx,
+    );
+    let no_plugin_steps = plugin_steps.is_empty();
+    let effort = ws
+        .run_plan(run, cx)
+        .into_iter()
         .find(|field| field.name == "reasoning")
         .map_or("its own effort".to_owned(), |field| field.value.clone());
     let prompt = run.items.iter().find_map(|item| match item {
@@ -35,16 +42,6 @@ pub fn render(
 
     let steps = notes.iter().enumerate().map(|(index, note)| {
         let body = match &note.body {
-            NoteBody::Distribution {
-                levels,
-                chosen,
-                confidence,
-                hints,
-                ..
-            } => Some(
-                chart(levels, *chosen, *confidence, hints, t, compact)
-                    .into_any_element(),
-            ),
             NoteBody::Chips(chips) => Some(
                 transcript::chips_view(ws, chips, index, t, cx)
                     .into_any_element(),
@@ -113,7 +110,10 @@ pub fn render(
                 .flex_col()
                 .p(sp(4.))
                 .children(steps)
-                .when(notes.is_empty(), |timeline| {
+                .children(plugin_steps.into_iter().map(|body| {
+                    step(t.green, div().pb(sp(4.5)).child(body), true, t)
+                }))
+                .when(notes.is_empty() && no_plugin_steps, |timeline| {
                     timeline.child(ui::empty(
                         "No plugin changed this run's plan.",
                         t,
@@ -189,116 +189,6 @@ pub fn render(
             .child(side),
     )
     .into_any_element()
-}
-
-/// The effort chart at full size: the confidence, then a bar per level
-/// with what the level suits.
-fn chart(
-    levels: &[(String, f32)],
-    chosen: usize,
-    confidence: Option<(f32, f32)>,
-    hints: &[String],
-    t: &Theme,
-    compact: bool,
-) -> Div {
-    let max_bar = 104.;
-    let bars = levels.iter().enumerate().map(|(index, (_, p))| {
-        let pick = index == chosen;
-        let ink: Hsla = if pick { t.text } else { t.muted };
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_end()
-            .gap(sp(1.))
-            .child(mono(format!("{p:.2}"), Type::MICRO, ink))
-            .child(
-                div()
-                    .w(px(36.))
-                    .h(px((p * max_bar).max(3.)))
-                    .rounded_t(radius::SMALL)
-                    .bg(if pick { t.blue } else { t.bar_idle }),
-            )
-    });
-    let labels = levels.iter().enumerate().map(|(index, (name, _))| {
-        let pick = index == chosen;
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(sp(0.5))
-            .child(mono(
-                name.clone(),
-                Type::CAPTION,
-                if pick { t.text } else { t.muted },
-            ))
-            .children(hints.get(index).map(|hint| {
-                div()
-                    .typeset(Type::MICRO)
-                    .text_color(t.dim)
-                    .child(hint.clone())
-            }))
-    });
-    div()
-        .flex()
-        .when(compact, |chart| chart.flex_col())
-        .gap(sp(5.))
-        .p(sp(4.))
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::BOX)
-        .well(t)
-        .children(confidence.map(|(value, threshold)| {
-            let verdict = if value >= threshold {
-                "is applied"
-            } else {
-                "is not applied"
-            };
-            div()
-                .w(px(180.))
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .justify_end()
-                .gap(sp(1.5))
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.muted)
-                        .child("Confidence"),
-                )
-                .child(mono(format!("{value:.2}"), Type::DISPLAY, t.text))
-                .child(div().typeset(Type::CAPTION).text_color(t.muted).child(
-                    format!(
-                        "threshold {threshold:.2}, so the choice {verdict}"
-                    ),
-                ))
-        }))
-        .child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap(sp(2.))
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.muted)
-                        .child("Probability of each effort level"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_end()
-                        .h(px(max_bar + 24.))
-                        .border_b_1()
-                        .border_color(t.border_strong)
-                        .children(bars),
-                )
-                .child(div().flex().children(labels)),
-        )
 }
 
 /// The plan as a bordered table: name, value, and who set it.

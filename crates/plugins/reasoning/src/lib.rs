@@ -26,6 +26,7 @@
 //! request is reported and never fails the run.
 
 pub mod replay;
+pub mod ui;
 
 use std::sync::Arc;
 
@@ -49,6 +50,7 @@ use tau_ai::{
     responses::request::ReasoningEffort,
 };
 use tau_jev::{Answer, Jev, Question, Request};
+pub use ui::ReasoningPlugin;
 
 /// The name the plugin goes by in events, reports and records.
 pub const NAME: &str = "tau-reasoning";
@@ -668,18 +670,24 @@ impl Plugin for Reasoning {
                 steps.lease = lease;
                 choice.runs_at =
                     plan.reasoning.map(|effort| effort.as_str().to_owned());
-                let body = serde_json::to_value(&choice).unwrap_or_default();
+                let body = tau_ui_plugin::placed(
+                    serde_json::to_value(&choice).unwrap_or_default(),
+                    tau_ui_plugin::PLACE_MESSAGE,
+                );
                 let _ = ctx.publish(&body).await;
             }
             Err(error) => {
                 plan.reasoning = previous;
                 steps.lease = Some(Lease::ToolChain);
                 // Recorded as well, so the run shows it when reopened.
-                let body = json!({
-                    "kind": "error",
-                    "message": format!("Jev could not score the task: {error}"),
-                    "runs_at": previous.map(ReasoningEffort::as_str),
-                });
+                let body = tau_ui_plugin::placed(
+                    json!({
+                        "kind": "error",
+                        "message": format!("Jev could not score the task: {error}"),
+                        "runs_at": previous.map(ReasoningEffort::as_str),
+                    }),
+                    tau_ui_plugin::PLACE_MESSAGE,
+                );
                 let _ = ctx.publish(&body).await;
             }
         }
@@ -722,18 +730,25 @@ impl PluginRun for Steps {
                 choice.step = step;
                 choice.turn = Some(view.turn);
                 choice.runs_at = runs_at.map(|effort| effort.as_str().into());
-                let body = serde_json::to_value(&choice).unwrap_or_default();
+                // It shows before the reply it chose for.
+                let body = tau_ui_plugin::placed(
+                    serde_json::to_value(&choice).unwrap_or_default(),
+                    tau_ui_plugin::PLACE_NOW,
+                );
                 let _ = ctx.publish(&body).await;
                 Ok(chosen.filter(|effort| Some(*effort) != view.effort))
             }
             Err(error) => {
-                let body = json!({
-                    "kind": "error",
-                    "message": format!("Jev could not score the step: {error}"),
-                    "runs_at": view.effort.map(ReasoningEffort::as_str),
-                    "step": step,
-                    "turn": view.turn,
-                });
+                let body = tau_ui_plugin::placed(
+                    json!({
+                        "kind": "error",
+                        "message": format!("Jev could not score the step: {error}"),
+                        "runs_at": view.effort.map(ReasoningEffort::as_str),
+                        "step": step,
+                        "turn": view.turn,
+                    }),
+                    tau_ui_plugin::PLACE_NOW,
+                );
                 let _ = ctx.publish(&body).await;
                 Ok(None)
             }

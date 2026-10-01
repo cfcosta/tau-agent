@@ -156,8 +156,6 @@ pub struct ModelSettings {
     pub defaults: Vec<(String, ModelChoice)>,
     /// Models the picker leaves out.
     pub hidden: Vec<String>,
-    /// How tau-reasoning picks the effort of runs on auto.
-    pub reasoning: ReasoningSettings,
     /// Each plugin's settings, as it saves them, by plugin (ADR 0017).
     pub plugins: std::collections::BTreeMap<String, serde_json::Value>,
 }
@@ -167,34 +165,7 @@ impl Default for ModelSettings {
         Self {
             defaults: vec![("coder".into(), ModelChoice::default())],
             hidden: Vec::new(),
-            reasoning: ReasoningSettings::default(),
             plugins: Default::default(),
-        }
-    }
-}
-
-/// How tau-reasoning picks the effort of runs on auto
-/// (`docs/reference/plugins.md`).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ReasoningSettings {
-    /// Decide again between a run's steps, when the effort's lease ends,
-    /// and not only as each message comes in. Off by default: every
-    /// change of effort resends the whole context uncached.
-    pub redecide: bool,
-    /// How sure Jev must be to change the effort; one of
-    /// [`THRESHOLDS`].
-    pub threshold: f64,
-}
-
-/// The confidences tau-reasoning can be asked to need, lowest first.
-pub const THRESHOLDS: [f64; 5] = [0.5, 0.6, 0.7, 0.8, 0.9];
-
-impl Default for ReasoningSettings {
-    fn default() -> Self {
-        Self {
-            redecide: false,
-            threshold: tau_reasoning::DEFAULT_THRESHOLD,
         }
     }
 }
@@ -358,17 +329,19 @@ mod tests {
         for id in tc.draw(gs::subsequences(ids)) {
             settings.toggle_hidden(&id);
         }
-        settings.reasoning = ReasoningSettings {
-            redecide: tc.draw(gs::booleans()),
-            threshold: tc.draw(gs::sampled_from(THRESHOLDS.to_vec())),
-        };
+        if tc.draw(gs::booleans()) {
+            settings.plugins.insert(
+                "tau-reasoning".into(),
+                serde_json::json!({ "redecide": true }),
+            );
+        }
         let text = serde_json::to_string(&settings).unwrap();
         let back: ModelSettings = serde_json::from_str(&text).unwrap();
         assert_eq!(back, settings);
         let mut older: serde_json::Value = serde_json::from_str(&text).unwrap();
-        older.as_object_mut().unwrap().remove("reasoning");
+        older.as_object_mut().unwrap().remove("plugins");
         let back: ModelSettings = serde_json::from_value(older).unwrap();
-        assert_eq!(back.reasoning, ReasoningSettings::default());
+        assert!(back.plugins.is_empty());
         assert_eq!(back.hidden, settings.hidden);
     }
 

@@ -1371,7 +1371,10 @@ pub fn catalog() -> Catalog {
         agent: "coder".into(),
         agent_source: Some("src/agents.rs:14".into()),
         plugins: vec![
-            plugin("tau-reasoning", "Scores the job and picks the reasoning effort", &[Seam::Start], 0.004, Some(PluginScreen::Plan)),
+            PluginInfo {
+                page: Some(tau_ui_plugin::Link::page("choices").param("run", "")),
+                ..plugin(tau_reasoning::NAME, "Scores the job and picks the reasoning effort", &[Seam::Start], 0.004, None)
+            },
             plugin("tau-memory", "Zettelkasten notes on docbert", &[Seam::Start, Seam::Tools, Seam::Finish], 0.212, Some(PluginScreen::Memory)),
             plugin("tau-constitution", "6 rules on edit, write, bash and the final answer", &[Seam::BeforeTool, Seam::BeforeStop], 0.031, Some(PluginScreen::Constitution)),
             plugin(tau_fast_compaction::NAME, "Prunes large bash outputs as they arrive, and stale tool history, with Jev", &[Seam::Start, Seam::Rewrite], 0.046, Some(PluginScreen::Ledger)),
@@ -3189,8 +3192,18 @@ mod tests {
             view.tool("c7").map(|card| &card.body),
             Some(crate::view::ToolBody::Terminal(_))
         ));
-        // What `start` decided comes before the first turn.
-        assert_eq!(view.start_notes().count(), 2);
+        // What `start` decided comes before the first turn: memory's
+        // note, and tau-reasoning's choice, which it draws itself.
+        assert_eq!(view.start_notes().count(), 1);
+        assert!(matches!(
+            view.items.get(1),
+            Some(Item::Anchor { plugin, .. }) if plugin == tau_reasoning::NAME
+        ));
+        let reasoning: tau_reasoning::ui::State = serde_json::from_value(
+            view.plugin_states[tau_reasoning::NAME].clone(),
+        )
+        .unwrap();
+        assert_eq!(reasoning.plan.as_deref(), Some("high"));
         assert_eq!(view.proposals().count(), 2);
     }
 }
