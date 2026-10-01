@@ -14,7 +14,8 @@
 //! - `insufficient_scope` asks for the granted scopes and the new one;
 //! - a configured client skips registration, sends its secret, and uses
 //!   `authServerMetadataUrl`;
-//! - the callback ignores answers for another state.
+//! - the callback ignores answers for another state;
+//! - the host's page shows the sign-in, and its actions sign in and out.
 
 mod common;
 
@@ -32,6 +33,7 @@ use tau_mcp::{
     auth::{self, Grant, TokenStore, pkce_challenge, valid_verifier},
     config::{HttpConfig, OAuthConfig, Origin, ServerConfig, Transport},
     connection::{CallFailure, Connection, Environment, Progress, State},
+    ui::{Host, NEEDS_AUTH},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -837,4 +839,84 @@ async fn the_callback_waits_for_its_own_state() {
     assert_eq!(browse(&url).await, 200);
     let grant = finish.await.unwrap().unwrap();
     assert!(grant.is_signed_in());
+}
+
+/// The page shows a server waiting for a sign-in, the host's sign-in
+/// connects it and the row says who and what, and signing out waits
+/// again.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_host_signs_in_and_out() {
+    let fake = Fake::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("mcp.json"),
+        json!({ "mcpServers": { "remote": { "url": fake.url() } } })
+            .to_string(),
+    )
+    .unwrap();
+    let host = Arc::new(Host::new(
+        tokio::runtime::Handle::current(),
+        Some(dir.path().to_owned()),
+    ));
+    let settings = tau_mcp::config::Settings::default();
+    let plugin = host.plugin(None, &settings);
+    let connection = plugin.connections()[0].clone();
+    settle(&connection).await;
+    let row = host.servers(None, &settings).servers[0].clone();
+    assert_eq!(row.state.as_deref(), Some(NEEDS_AUTH));
+    assert!(!row.auth.as_ref().unwrap().signed_in);
+    assert_eq!(
+        host.servers(None, &settings).summary(),
+        "1 server · 0 connected · 1 needs sign-in"
+    );
+
+    let (sender, done) = oneshot::channel();
+    let signing = host.clone();
+    let url = tokio::task::spawn_blocking(move || {
+        signing.sign_in(
+            None,
+            &tau_mcp::config::Settings::default(),
+            "remote",
+            move |done| {
+                let _ = sender.send(done.map(|grant| grant.client_id));
+            },
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(browse(&url).await, 200);
+    let done = tokio::time::timeout(Duration::from_secs(10), done)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(done.unwrap(), "client-1");
+    settle(&connection).await;
+    assert_eq!(connection.status().state, State::Connected);
+    let row = host.servers(None, &settings).servers[0].clone();
+    let auth = row.auth.unwrap();
+    assert!(auth.signed_in);
+    assert_eq!(auth.scopes, vec!["read".to_owned()]);
+    assert_eq!(auth.issuer.as_deref(), Some(fake.base.as_str()));
+
+    let out = host.clone();
+    let was = tokio::task::spawn_blocking(move || {
+        out.sign_out(None, &tau_mcp::config::Settings::default(), "remote")
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(was);
+    fake.revoke_access();
+    settle(&connection).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    settle(&connection).await;
+    assert_eq!(connection.status().state, State::NeedsAuth);
+    assert!(
+        !host.servers(None, &settings).servers[0]
+            .auth
+            .as_ref()
+            .unwrap()
+            .signed_in
+    );
 }

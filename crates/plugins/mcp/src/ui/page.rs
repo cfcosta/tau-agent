@@ -84,6 +84,8 @@ impl Ui {
                 self.handle.alert("The prompt could not be had", error, cx);
                 self.handle.composer(command, cx);
             }
+            // The browser signs in; the host waits for it to come back.
+            super::Reply::SignIn { url, .. } => cx.open_url(&url),
         }
     }
 
@@ -239,6 +241,41 @@ impl Ui {
                 repo: repo.map(str::to_owned),
                 name: name.to_owned(),
                 enabled,
+            },
+            cx,
+        );
+        self.changed(cx);
+    }
+
+    /// Starts signing in to `server`: the host answers with the page to
+    /// open in the browser.
+    pub fn sign_in(
+        &mut self,
+        repo: Option<&str>,
+        server: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle.act(
+            Act::SignIn {
+                repo: repo.map(str::to_owned),
+                server: server.to_owned(),
+            },
+            cx,
+        );
+        self.changed(cx);
+    }
+
+    /// Signs out of `server`.
+    pub fn sign_out(
+        &mut self,
+        repo: Option<&str>,
+        server: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle.act(
+            Act::SignOut {
+                repo: repo.map(str::to_owned),
+                server: server.to_owned(),
             },
             cx,
         );
@@ -524,8 +561,87 @@ fn state_color(state: Option<&str>, t: &Theme) -> gpui::Hsla {
         Some("connected") => t.green,
         Some("connecting") => t.accent,
         Some("failed") => t.red,
+        Some(super::NEEDS_AUTH) => t.accent,
         _ => t.dim,
     }
+}
+
+/// A state as the page says it.
+pub fn state_label(state: &str) -> &str {
+    match state {
+        super::NEEDS_AUTH => "needs sign-in",
+        other => other,
+    }
+}
+
+/// Sign in, when the server waits for it; Sign out, when signed in.
+fn sign_in_actions(
+    ui: &Entity<Ui>,
+    repo: Option<&str>,
+    server: &ServerRow,
+    t: &Theme,
+) -> Div {
+    let waiting = server.state.as_deref() == Some(super::NEEDS_AUTH);
+    let signed_in = server.auth.as_ref().is_some_and(|auth| auth.signed_in);
+    let name = server.name.clone();
+    div()
+        .flex()
+        .items_center()
+        .gap(sp(2.))
+        .when(waiting && server.auth.is_some(), |row| {
+            let (repo, name) = (repo.map(str::to_owned), name.clone());
+            row.child(action(
+                format!("mcp-sign-in-{name}"),
+                if signed_in {
+                    "Sign in again"
+                } else {
+                    "Sign in"
+                },
+                ButtonKind::Primary,
+                ui,
+                t,
+                move |ui, cx| ui.sign_in(repo.as_deref(), &name, cx),
+            ))
+        })
+        .when(signed_in, |row| {
+            let (repo, name) = (repo.map(str::to_owned), name.clone());
+            row.child(action(
+                format!("mcp-sign-out-{name}"),
+                "Sign out",
+                ButtonKind::Secondary,
+                ui,
+                t,
+                move |ui, cx| ui.sign_out(repo.as_deref(), &name, cx),
+            ))
+        })
+}
+
+/// Who is signed in, where, with which scopes; or what the server wants.
+pub fn sign_in_line(server: &ServerRow) -> Option<String> {
+    let auth = server.auth.as_ref()?;
+    if !auth.signed_in {
+        return auth
+            .wants_scope
+            .as_ref()
+            .map(|scope| format!("Asks for {scope}"));
+    }
+    let mut parts = vec![match &auth.account {
+        Some(account) => format!("Signed in as {account}"),
+        None => "Signed in".to_owned(),
+    }];
+    if let Some(issuer) = &auth.issuer {
+        parts[0].push_str(&format!(" at {issuer}"));
+    }
+    if !auth.scopes.is_empty() {
+        parts.push(format!("scopes {}", auth.scopes.join(" ")));
+    }
+    if let Some(scope) = &auth.wants_scope {
+        parts.push(format!("asks for {scope}"));
+    }
+    if auth.refreshes {
+        parts.push("refreshes".to_owned());
+    }
+    Some(parts.join(" · "))
 }
 
 /// One server: its name, where it comes from, how it is reached and
@@ -539,16 +655,19 @@ fn server_card(
     t: &Theme,
 ) -> Div {
     let name = server.name.clone();
-    let state = server.state.clone().unwrap_or_else(|| {
-        match repo.is_none() && per_repo(server) {
+    let state = server
+        .state
+        .as_deref()
+        .map(|state| state_label(state).to_owned())
+        .unwrap_or_else(|| match repo.is_none() && per_repo(server) {
             true => "starts in each repository".into(),
             false => "not started".into(),
-        }
-    });
+        });
     let actions = div()
         .flex()
         .items_center()
         .gap(sp(2.))
+        .child(sign_in_actions(ui, repo, server, t))
         .when(server.state.is_some() && server.enabled, |row| {
             let (repo, name) = (repo.map(str::to_owned), name.clone());
             row.child(action(
@@ -612,8 +731,15 @@ fn server_card(
         .when_some(server.description.clone(), |card, description| {
             card.child(ui::text(description, Type::SMALL, t.muted))
         })
+        .when_some(sign_in_line(server), |card, line| {
+            card.child(mono(line, Type::CAPTION, t.muted))
+        })
         .when_some(server.error.clone(), |card, error| {
-            card.child(mono(error, Type::CAPTION, t.red))
+            let color = match server.state.as_deref() {
+                Some(super::NEEDS_AUTH) => t.accent,
+                _ => t.red,
+            };
+            card.child(mono(error, Type::CAPTION, color))
         })
         .when(!server.tools.is_empty(), |card| {
             card.child(
@@ -652,6 +778,7 @@ fn server_actions_compact(
         .flex()
         .flex_wrap()
         .gap(sp(2.))
+        .child(sign_in_actions(ui, repo, server, t))
         .when(server.state.is_some() && server.enabled, |row| {
             let (repo, name) = (repo.map(str::to_owned), name.clone());
             row.child(action(

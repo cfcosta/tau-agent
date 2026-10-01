@@ -55,6 +55,7 @@ use tau_mcp::{
     ui::{
         self,
         Act,
+        AuthRow,
         Defined,
         Host,
         McpUi,
@@ -1319,6 +1320,95 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
             |view| { ui::status(&AtRun { run: quiet.clone() }, view) }
         )
         .is_none()
+    );
+}
+
+/// A server waiting for a sign-in shows Sign in, and a signed-in one
+/// who and what; both draw, the buttons ask the host, the host's answer
+/// opens the browser, and the run's line and the summary count the
+/// server that waits.
+#[gpui::test]
+fn the_page_signs_in_and_out(cx: &mut TestAppContext) {
+    let (ui, asked) = window_ui(cx);
+    let mut servers = servers();
+    servers.pending.clear();
+    servers.servers[1].state = Some(ui::NEEDS_AUTH.into());
+    servers.servers[1].error = Some("the server asks you to sign in".into());
+    servers.servers[1].auth = Some(AuthRow {
+        wants_scope: Some("write".into()),
+        ..AuthRow::default()
+    });
+    servers.servers[0].auth = Some(AuthRow {
+        signed_in: true,
+        account: Some("ada@example.com".into()),
+        scopes: vec!["read".into()],
+        issuer: Some("https://auth.dev".into()),
+        refreshes: true,
+        ..AuthRow::default()
+    });
+    assert_eq!(
+        page::sign_in_line(&servers.servers[0]).as_deref(),
+        Some(
+            "Signed in as ada@example.com at https://auth.dev · scopes read · refreshes"
+        )
+    );
+    assert_eq!(
+        page::sign_in_line(&servers.servers[1]).as_deref(),
+        Some("Asks for write")
+    );
+    assert_eq!(page::state_label(ui::NEEDS_AUTH), "needs sign-in");
+    assert_eq!(
+        servers.summary(),
+        "2 servers · 1 connected · 1 needs sign-in"
+    );
+    let repos = BTreeMap::from([("r".to_owned(), servers)]);
+    let at_repo = BTreeMap::from([("repo".to_owned(), "r".to_owned())]);
+    for compact in [false, true] {
+        draw_page(cx, &ui, &repos, at_repo.clone(), compact);
+    }
+    let run = info("r");
+    let status = with_view(
+        cx,
+        &ui,
+        &repos,
+        &BTreeMap::new(),
+        Some(&run),
+        false,
+        |view| ui::status(&AtRun { run: run.clone() }, view),
+    )
+    .unwrap();
+    assert_eq!(status.state, "2 servers · 1 connected · 1 needs sign-in");
+    assert_eq!(status.tone, tau_ui_kit::theme::Tone::Warn);
+
+    ui.update(cx, |ui, cx| {
+        ui.sign_in(Some("r"), "db", cx);
+        ui.sign_out(None, "git", cx);
+        McpUi.reply(
+            ui,
+            serde_json::to_value(Reply::SignIn {
+                server: "db".into(),
+                url: "https://auth.dev/authorize?state=s".into(),
+            })
+            .unwrap(),
+            cx,
+        );
+    });
+    assert_eq!(
+        acts(&asked),
+        [
+            Act::SignIn {
+                repo: Some("r".into()),
+                server: "db".into(),
+            },
+            Act::SignOut {
+                repo: None,
+                server: "git".into(),
+            },
+        ]
+    );
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some("https://auth.dev/authorize?state=s")
     );
 }
 

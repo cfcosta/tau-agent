@@ -80,6 +80,7 @@ use tau_ui_plugin::{
 use crate::{
     McpPlugin,
     NAME,
+    auth::{Grant, GrantKey, SIGN_IN_TIMEOUT, TokenStore},
     config::{
         ConfigError,
         McpConfig,
@@ -181,6 +182,9 @@ pub struct Host {
     /// The user's servers, one connection each for every repository.
     shared: Pool,
     scopes: Mutex<BTreeMap<Scope, Built>>,
+    /// The sign-ins waiting for the browser, by grant: a new one for the
+    /// same grant ends the old.
+    signing_in: Mutex<BTreeMap<GrantKey, tokio::task::AbortHandle>>,
 }
 
 impl Host {
@@ -189,13 +193,21 @@ impl Host {
         runtime: tokio::runtime::Handle,
         user_dir: Option<PathBuf>,
     ) -> Self {
+        let auth = user_dir.as_deref().map(TokenStore::in_dir);
         Self {
             runtime,
             user_dir,
             servers: Mutex::default(),
-            shared: Pool::new(Environment::process(None)),
+            shared: Pool::new(Environment::process(None).with_auth(auth)),
             scopes: Mutex::default(),
+            signing_in: Mutex::default(),
         }
+    }
+
+    /// `~/.config/tau/mcp-auth.json`, where sign-ins are kept; none
+    /// without a configuration directory.
+    pub fn token_store(&self) -> Option<TokenStore> {
+        self.user_dir.as_deref().map(TokenStore::in_dir)
     }
 
     /// Servers every scope gets after the files and the settings, as the
@@ -298,9 +310,10 @@ impl Host {
         }
         let pool = scopes.remove(&scope).map_or_else(
             || {
-                Pool::new(Environment::process(
-                    scope.repo().map(Path::to_owned),
-                ))
+                Pool::new(
+                    Environment::process(scope.repo().map(Path::to_owned))
+                        .with_auth(self.token_store()),
+                )
             },
             |built| built.pool,
         );
@@ -379,7 +392,129 @@ impl Host {
             repo,
         )
     }
+
+    /// Every connection signing in with `key`, in every pool.
+    fn signed_with(&self, key: &GrantKey) -> Vec<Arc<Connection>> {
+        let mut connections = self.shared.connections();
+        for built in self.scopes.lock().expect("not poisoned").values() {
+            connections.extend(built.pool.connections());
+        }
+        connections
+            .into_iter()
+            .filter(|c| c.oauth().is_some_and(|(_, k)| k == *key))
+            .collect()
+    }
+
+    /// The connection of `server` in `repo`'s scope (or the user's
+    /// alone), its scope built if it was not.
+    fn connection(
+        &self,
+        repo: Option<&Path>,
+        settings: &Settings,
+        server: &str,
+    ) -> Result<Arc<Connection>, String> {
+        self.plugin(repo, settings)
+            .connections()
+            .iter()
+            .find(|c| c.name() == server && c.config().enabled)
+            .cloned()
+            .ok_or_else(|| format!("No server `{server}` is on here."))
+    }
+
+    /// Starts signing in to `server` in `repo`'s scope: finds its
+    /// authorization server, registers a client if it must, and returns
+    /// the URL to open. The browser has [`SIGN_IN_TIMEOUT`] to come
+    /// back; then the grant is saved, every connection that uses it
+    /// connects again, and `done` hears how it went. A sign-in already
+    /// waiting for the same grant is dropped.
+    pub fn sign_in(
+        &self,
+        repo: Option<&Path>,
+        settings: &Settings,
+        server: &str,
+        done: impl FnOnce(Result<Grant, String>) + Send + 'static,
+    ) -> Result<String, String> {
+        let connection = self.connection(repo, settings, server)?;
+        let (store, request) = connection.sign_in_request()?;
+        let key = request.key();
+        let (sender, answer) = std::sync::mpsc::channel();
+        self.runtime.spawn(async move {
+            let begun = tokio::time::timeout(
+                SIGN_IN_WAIT,
+                crate::auth::begin(&store, request),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(format!(
+                    "the authorization server gave no answer in {} s",
+                    SIGN_IN_WAIT.as_secs()
+                ))
+            });
+            let _ = sender.send(begun);
+        });
+        let sign_in = answer
+            .recv()
+            .unwrap_or_else(|_| Err("the host stopped".to_owned()))?;
+        let url = sign_in.url().to_owned();
+        let mut connections = self.signed_with(&key);
+        if !connections.iter().any(|c| Arc::ptr_eq(c, &connection)) {
+            connections.push(connection);
+        }
+        let task = self.runtime.spawn(async move {
+            let finished =
+                tokio::time::timeout(SIGN_IN_TIMEOUT, sign_in.finish())
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(format!(
+                            "the browser did not come back in {} minutes",
+                            SIGN_IN_TIMEOUT.as_secs() / 60
+                        ))
+                    });
+            if finished.is_ok() {
+                for connection in &connections {
+                    connection.restart();
+                }
+            }
+            done(finished);
+        });
+        if let Some(old) = self
+            .signing_in
+            .lock()
+            .expect("not poisoned")
+            .insert(key, task.abort_handle())
+        {
+            old.abort();
+        }
+        Ok(url)
+    }
+
+    /// Signs out of `server` in `repo`'s scope: forgets the grant's
+    /// tokens, keeping its client, and connects every connection that
+    /// used it again. Whether it was signed in.
+    pub fn sign_out(
+        &self,
+        repo: Option<&Path>,
+        settings: &Settings,
+        server: &str,
+    ) -> Result<bool, String> {
+        let connection = self.connection(repo, settings, server)?;
+        let (store, key) = connection
+            .oauth()
+            .ok_or_else(|| format!("`{server}` has no sign-in."))?;
+        let was = store.sign_out(&key).map_err(|error| {
+            format!("cannot save {}: {error}", store.path().display())
+        })?;
+        let _runtime = self.runtime.enter();
+        for connection in self.signed_with(&key) {
+            connection.restart();
+        }
+        Ok(was)
+    }
 }
+
+/// How long the host waits for discovery and registration, at most.
+pub const SIGN_IN_WAIT: std::time::Duration =
+    std::time::Duration::from_secs(60);
 
 impl Drop for Host {
     /// Closes every connection, runs going on included: the host is
@@ -478,6 +613,60 @@ pub struct ServerRow {
     pub prompts: Vec<PromptRow>,
     /// The entry, as the page edits it: only a settings server's.
     pub entry: Option<Value>,
+    /// Its sign-in, when OAuth applies to it.
+    pub auth: Option<AuthRow>,
+}
+
+/// A server's sign-in, as the page shows it. Never a token.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthRow {
+    pub signed_in: bool,
+    /// Who signed in, when the authorization server said.
+    pub account: Option<String>,
+    /// The scopes granted.
+    pub scopes: Vec<String>,
+    /// Where it signed in: the authorization server's issuer.
+    pub issuer: Option<String>,
+    /// Unix seconds the access token expires, when known.
+    pub expires_at: Option<u64>,
+    /// Whether the access token can be refreshed.
+    pub refreshes: bool,
+    /// The scopes the server asks for beyond those granted.
+    pub wants_scope: Option<String>,
+}
+
+/// The sign-in of `config` as the page shows it, when OAuth applies.
+fn auth_row(
+    store: Option<&TokenStore>,
+    config: &ServerConfig,
+    connection: Option<&Arc<Connection>>,
+) -> Option<AuthRow> {
+    let Transport::Http(http) = &config.transport else {
+        return None;
+    };
+    let store = store.filter(|_| http.uses_oauth())?;
+    let key = GrantKey {
+        url: http.url.clone(),
+        client: http.oauth.as_ref().and_then(|o| o.client_id.clone()),
+    };
+    let grant = store
+        .get(&key)
+        .ok()
+        .flatten()
+        .filter(Grant::is_signed_in)
+        .unwrap_or_default();
+    Some(AuthRow {
+        signed_in: grant.is_signed_in(),
+        expires_at: grant.expires_at(),
+        refreshes: grant.can_refresh(),
+        account: grant.account,
+        scopes: grant.scopes,
+        issuer: grant.issuer,
+        wants_scope: connection
+            .and_then(|c| c.auth_need())
+            .and_then(|need| need.scope),
+    })
 }
 
 /// One of a server's prompts, and the composer command that gets it.
@@ -595,6 +784,14 @@ impl Servers {
             .count()
     }
 
+    /// Servers waiting for a sign-in.
+    pub fn needs_sign_in(&self) -> usize {
+        self.servers
+            .iter()
+            .filter(|server| server.state.as_deref() == Some(NEEDS_AUTH))
+            .count()
+    }
+
     pub fn failed(&self) -> usize {
         self.servers
             .iter()
@@ -613,21 +810,36 @@ impl Servers {
         })
     }
 
-    /// `3 servers · 2 connected · 1 needs approval`.
+    /// `3 servers · 2 connected · 1 needs sign-in · 1 needs approval`.
     pub fn summary(&self) -> String {
-        summary(
+        summary_with_sign_in(
             self.servers.len(),
             self.started.then(|| self.connected()),
+            self.needs_sign_in(),
             self.pending.len(),
         )
     }
 }
+
+/// A server's state while it waits for a sign-in.
+pub const NEEDS_AUTH: &str = "needs-auth";
 
 /// `3 servers · 2 connected · 1 needs approval`; connected is left out
 /// before the servers start (`None`), and approval when none waits.
 pub fn summary(
     servers: usize,
     connected: Option<usize>,
+    pending: usize,
+) -> String {
+    summary_with_sign_in(servers, connected, 0, pending)
+}
+
+/// [`summary`] with the servers waiting for a sign-in:
+/// `3 servers · 2 connected · 1 needs sign-in · 1 needs approval`.
+pub fn summary_with_sign_in(
+    servers: usize,
+    connected: Option<usize>,
+    sign_in: usize,
     pending: usize,
 ) -> String {
     let mut parts = vec![match servers {
@@ -637,6 +849,11 @@ pub fn summary(
     }];
     if let Some(connected) = connected.filter(|_| servers > 0) {
         parts.push(format!("{connected} connected"));
+    }
+    match sign_in {
+        0 => {}
+        1 => parts.push("1 needs sign-in".to_owned()),
+        n => parts.push(format!("{n} need sign-in")),
     }
     match pending {
         0 => {}
@@ -759,6 +976,11 @@ fn servers_view(
                 entry: (*origin == Origin::Settings)
                     .then(|| settings.servers.get(&config.name).cloned())
                     .flatten(),
+                auth: auth_row(
+                    user_dir.map(TokenStore::in_dir).as_ref(),
+                    config,
+                    connection,
+                ),
             }
         })
         .collect();
@@ -817,6 +1039,19 @@ pub enum Act {
         repo: Option<String>,
         server: Option<String>,
     },
+    /// Starts signing in to `server` of `repo` (or of the user's servers
+    /// alone). The answer is [`Reply::SignIn`], the page to open.
+    SignIn {
+        #[serde(default)]
+        repo: Option<String>,
+        server: String,
+    },
+    /// Signs out of `server`: its tokens are forgotten.
+    SignOut {
+        #[serde(default)]
+        repo: Option<String>,
+        server: String,
+    },
     /// Gets the prompt whose command is `command`, in `repo` (or the
     /// user's servers alone), with the `key=value` pairs of `arguments`.
     /// The answer is a [`Reply`].
@@ -838,6 +1073,8 @@ pub enum Reply {
     /// Why the prompt could not be had, and the command as it was
     /// written, for the composer to hold again.
     PromptFailed { error: String, command: String },
+    /// The page to open in the browser to sign in to `server`.
+    SignIn { server: String, url: String },
 }
 
 /// How long the host waits for a prompt, at most: a connect and the
@@ -974,7 +1211,10 @@ pub fn apply(
             }
             next.disabled.set(repo_key, name, !enabled);
         }
-        Act::Reconnect { .. } | Act::Prompt { .. } => {}
+        Act::Reconnect { .. }
+        | Act::Prompt { .. }
+        | Act::SignIn { .. }
+        | Act::SignOut { .. } => {}
     }
     Ok(next)
 }
@@ -1105,6 +1345,7 @@ impl UiPlugin for McpUi {
         // Servers by name, connected where any repository connected it.
         let mut names = BTreeSet::new();
         let mut connected = BTreeSet::new();
+        let mut sign_in = BTreeSet::new();
         let mut started = false;
         let mut pending = 0;
         let scopes = std::iter::once(None)
@@ -1118,6 +1359,9 @@ impl UiPlugin for McpUi {
                 if server.state.as_deref() == Some("connected") {
                     connected.insert(server.name.clone());
                 }
+                if server.state.as_deref() == Some(NEEDS_AUTH) {
+                    sign_in.insert(server.name.clone());
+                }
             }
         }
         let description = if names.is_empty() && pending == 0 {
@@ -1125,9 +1369,10 @@ impl UiPlugin for McpUi {
         } else {
             format!(
                 "MCP servers: {}",
-                summary(
+                summary_with_sign_in(
                     names.len(),
                     started.then_some(connected.len()),
+                    sign_in.len(),
                     pending
                 )
             )
@@ -1182,6 +1427,45 @@ impl UiPlugin for McpUi {
                     },
                 };
                 return Ok(Some(serde_json::to_value(reply)?));
+            }
+            Act::SignIn { repo: name, server } => {
+                let checkout = match name {
+                    Some(name) => Some(repo(cx, name)?.checkout.clone()),
+                    None => None,
+                };
+                let (done_cx, name) = (cx.clone(), server.clone());
+                let url = host
+                    .sign_in(
+                        checkout.as_deref(),
+                        &settings,
+                        server,
+                        move |done| {
+                            if let Err(error) = done {
+                                done_cx.alert(
+                                    format!(
+                                        "Signing in to {name} did not finish"
+                                    ),
+                                    error,
+                                );
+                            }
+                            done_cx.refresh();
+                        },
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                cx.refresh();
+                let reply = Reply::SignIn {
+                    server: server.clone(),
+                    url,
+                };
+                return Ok(Some(serde_json::to_value(reply)?));
+            }
+            Act::SignOut { repo: name, server } => {
+                let checkout = match name {
+                    Some(name) => Some(repo(cx, name)?.checkout.clone()),
+                    None => None,
+                };
+                host.sign_out(checkout.as_deref(), &settings, server)
+                    .map_err(anyhow::Error::msg)?;
             }
             Act::Reconnect { repo: name, server } => {
                 let checkout = match name {
@@ -1340,7 +1624,7 @@ pub fn status(
     if servers.servers.is_empty() && servers.pending.is_empty() {
         return None;
     }
-    let tone = if !servers.pending.is_empty() {
+    let tone = if !servers.pending.is_empty() || servers.needs_sign_in() > 0 {
         Tone::Warn
     } else if servers.failed() > 0 {
         Tone::Danger
