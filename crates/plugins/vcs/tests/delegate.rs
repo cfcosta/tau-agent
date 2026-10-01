@@ -521,7 +521,7 @@ impl AgentTool for Gauge {
         "gauge"
     }
     fn description(&self) -> &str {
-        "Waits a little."
+        "Waits for others to run beside it."
     }
     fn parameters(&self) -> &Value {
         static SCHEMA: std::sync::LazyLock<Value> =
@@ -538,7 +538,14 @@ impl AgentTool for Gauge {
             now.0 += 1;
             now.1 = now.1.max(now.0);
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for four to run at once, so they overlap however slowly
+        // they start; the calls past them never see four.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while self.now.lock().unwrap().0 < 4
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
         self.now.lock().unwrap().0 -= 1;
         Ok(ToolOutput::text("waited"))
     }
