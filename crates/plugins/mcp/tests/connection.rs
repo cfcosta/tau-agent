@@ -18,6 +18,7 @@ use std::{
 };
 
 use common::State as Fixture;
+use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_mcp::{
     config::{HttpConfig, Origin, ServerConfig, Transport},
@@ -148,10 +149,9 @@ async fn progress_restarts_the_timeout() {
             .await
             .unwrap();
         assert_eq!(result["content"][0]["text"], json!("done"));
-        // Every step reached the caller in order; the last may race the
-        // result, and tau ignores updates after a call ends anyway.
+        // Every step reached the caller, in order, before the result.
         let seen = seen.lock().unwrap().clone();
-        assert!(seen.len() >= 5, "{seen:?}");
+        assert_eq!(seen.len(), 6, "{seen:?}");
         for (index, progress) in seen.iter().enumerate() {
             assert_eq!(progress.progress, index as f64 + 1.0);
             assert_eq!(progress.total, Some(6.0));
@@ -163,6 +163,54 @@ async fn progress_restarts_the_timeout() {
         connection.shutdown().await;
     })
     .await;
+}
+
+/// However many progress notifications a server sends right before its
+/// result, every one reaches the caller, in order, before the call
+/// returns: tau ignores updates after a call ends, so one that raced the
+/// result would be lost.
+#[hegel::test(test_cases = 40)]
+fn progress_sent_before_the_result_arrives_before_it(tc: TestCase) {
+    let steps: u64 = tc.draw(gs::integers().max_value(40_u64));
+    let calls: usize = tc.draw(gs::integers().min_value(1_usize).max_value(4));
+    let legacy: bool = tc.draw(gs::booleans());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async move {
+        let fixture = Fixture::new(legacy);
+        let connection = connect(&fixture, 60.0);
+        settle(&connection).await;
+        // Calls side by side, so progress for one never counts for another.
+        let runs = (0..calls).map(|_| {
+            let connection = connection.clone();
+            async move {
+                let seen = Arc::new(Mutex::new(Vec::new()));
+                let record = {
+                    let seen = seen.clone();
+                    move |progress: Progress| {
+                        seen.lock().unwrap().push(progress.progress)
+                    }
+                };
+                connection
+                    .call(
+                        "slow",
+                        json!({"steps": steps, "ms": 0}),
+                        &record,
+                        &CancellationToken::new(),
+                    )
+                    .await
+                    .unwrap();
+                seen.lock().unwrap().clone()
+            }
+        });
+        let expected: Vec<f64> = (1..=steps).map(|step| step as f64).collect();
+        for seen in futures_util::future::join_all(runs).await {
+            assert_eq!(seen, expected);
+        }
+        connection.shutdown().await;
+    });
 }
 
 /// The run's token cancels the request, and the server hears of it.

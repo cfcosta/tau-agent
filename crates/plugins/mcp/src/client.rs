@@ -13,7 +13,8 @@
 #![allow(deprecated)]
 
 use std::{
-    collections::HashMap,
+    borrow::Cow,
+    collections::{HashMap, hash_map::Entry},
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
@@ -33,10 +34,12 @@ use rmcp::{
         ClientCapabilities,
         ClientConfig,
         ClientRequest,
+        GetMeta,
         GetPromptRequest,
         GetPromptRequestParams,
         Implementation,
         JsonObject,
+        JsonRpcMessage,
         ListRootsResult,
         LoggingLevel,
         LoggingMessageNotificationParam,
@@ -46,6 +49,7 @@ use rmcp::{
         ReadResourceRequest,
         ReadResourceRequestParams,
         Root,
+        ServerJsonRpcMessage,
         ServerNotification,
         ServerResult,
         SubscriptionFilter,
@@ -60,8 +64,10 @@ use rmcp::{
         RunningServiceCancellationToken,
     },
     transport::{
+        IntoTransport,
         StreamableHttpClientTransport,
         TokioChildProcess,
+        Transport,
         auth::{AuthClient, AuthError},
         streamable_http_client::{
             AuthRequiredError,
@@ -185,42 +191,176 @@ pub(crate) enum CallError {
     Protocol(String),
 }
 
-type Routes =
-    Arc<Mutex<HashMap<ProgressToken, mpsc::UnboundedSender<Progress>>>>;
+/// Where each tool call's progress goes, by progress token.
+///
+/// rmcp hands every notification to its handler in a task of its own
+/// but a response straight to the request, so a progress notification
+/// the server sent just before its result could reach the handler after
+/// the call had returned, and be lost. [`Ordered`] routes progress here
+/// as the transport receives it instead, in order with the result.
+#[derive(Clone, Default)]
+struct Routes(Arc<Mutex<HashMap<ProgressToken, Route>>>);
+
+/// One call's route.
+#[derive(Default)]
+struct Route {
+    /// The request went out.
+    sent: bool,
+    /// The call ended: what comes for it now is dropped.
+    ended: bool,
+    /// The call's progress channel, once [`Routes::attach`]ed.
+    sender: Option<mpsc::UnboundedSender<Progress>>,
+    /// Progress that came before the call attached.
+    early: Vec<Progress>,
+}
+
+impl Routes {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<ProgressToken, Route>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The call with `token` goes out: its progress is kept from now on.
+    fn sent(&self, token: ProgressToken) {
+        let mut routes = self.lock();
+        let route = routes.entry(token.clone()).or_default();
+        if route.ended {
+            routes.remove(&token);
+        } else {
+            route.sent = true;
+        }
+    }
+
+    /// The call with `token` takes its progress: what came already, and
+    /// from now on what comes.
+    fn attach(
+        &self,
+        token: ProgressToken,
+        sender: mpsc::UnboundedSender<Progress>,
+    ) {
+        let mut routes = self.lock();
+        let route = routes.entry(token).or_default();
+        for update in route.early.drain(..) {
+            let _ = sender.send(update);
+        }
+        route.sender = Some(sender);
+    }
+
+    /// The call with `token` ended.
+    fn end(&self, token: &ProgressToken) {
+        let mut routes = self.lock();
+        if let Entry::Occupied(mut entry) = routes.entry(token.clone()) {
+            if entry.get().sent {
+                entry.remove();
+            } else {
+                // It never went out; [`Self::sent`] removes it if it does.
+                *entry.get_mut() = Route {
+                    ended: true,
+                    ..Route::default()
+                };
+            }
+        }
+    }
+
+    /// A progress notification for `token`, as it arrives.
+    fn deliver(&self, token: &ProgressToken, update: Progress) {
+        let mut routes = self.lock();
+        let Some(route) = routes.get_mut(token) else {
+            return;
+        };
+        if route.ended {
+            return;
+        }
+        match &route.sender {
+            Some(sender) => {
+                let _ = sender.send(update);
+            }
+            None => route.early.push(update),
+        }
+    }
+}
+
+/// A transport that routes tool calls' progress to [`Routes`] in the
+/// order it receives messages, so all progress a server sends before a
+/// result reaches the call before the result does.
+struct Ordered<T> {
+    inner: T,
+    routes: Routes,
+}
+
+impl<T: Transport<RoleClient>> Transport<RoleClient> for Ordered<T> {
+    type Error = T::Error;
+
+    fn name() -> Cow<'static, str> {
+        T::name()
+    }
+
+    fn send(
+        &mut self,
+        item: rmcp::model::ClientJsonRpcMessage,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'static {
+        if let JsonRpcMessage::Request(request) = &item
+            && matches!(request.request, ClientRequest::CallToolRequest(_))
+            && let Some(token) = request.request.get_meta().get_progress_token()
+        {
+            self.routes.sent(token);
+        }
+        self.inner.send(item)
+    }
+
+    async fn receive(&mut self) -> Option<ServerJsonRpcMessage> {
+        let message = self.inner.receive().await?;
+        if let JsonRpcMessage::Notification(notification) = &message
+            && let ServerNotification::ProgressNotification(progress) =
+                &notification.notification
+        {
+            let params: &ProgressNotificationParam = &progress.params;
+            self.routes.deliver(
+                &params.progress_token,
+                Progress {
+                    progress: params.progress,
+                    total: params.total,
+                    message: params.message.clone(),
+                },
+            );
+        }
+        Some(message)
+    }
+
+    fn close(
+        &mut self,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.inner.close()
+    }
+}
+
+/// `transport`, its tool calls' progress routed to `routes`.
+fn ordered<E, A>(
+    transport: impl IntoTransport<RoleClient, E, A>,
+    routes: &Routes,
+) -> Ordered<impl Transport<RoleClient, Error = E> + 'static>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    Ordered {
+        inner: transport.into_transport(),
+        routes: routes.clone(),
+    }
+}
 
 /// The client side of a session: answers the server's requests and
-/// passes its notifications on.
+/// passes its notifications on. Progress goes through [`Ordered`].
 #[derive(Clone)]
 struct Handler {
     server: Arc<str>,
     roots: Vec<Root>,
-    routes: Routes,
     events: mpsc::UnboundedSender<SessionEvent>,
     /// The version `initialize` asks for.
     protocol: ProtocolVersion,
 }
 
 impl ClientHandler for Handler {
-    async fn on_progress(
-        &self,
-        params: ProgressNotificationParam,
-        _context: NotificationContext<RoleClient>,
-    ) {
-        let route = self
-            .routes
-            .lock()
-            .expect("routes lock")
-            .get(&params.progress_token)
-            .cloned();
-        if let Some(route) = route {
-            let _ = route.send(Progress {
-                progress: params.progress,
-                total: params.total,
-                message: params.message,
-            });
-        }
-    }
-
     async fn on_tool_list_changed(
         &self,
         _context: NotificationContext<RoleClient>,
@@ -332,7 +472,6 @@ impl Session {
                     vec![Root::new(format!("file://{}", root.display()))]
                 })
                 .unwrap_or_default(),
-            routes: routes.clone(),
             events: events.clone(),
             protocol: ProtocolVersion::V_2026_07_28,
         };
@@ -340,7 +479,8 @@ impl Session {
             preferred_versions: vec![ProtocolVersion::V_2026_07_28],
             legacy_version: Some(ProtocolVersion::V_2025_11_25),
         };
-        let mut opened = open(server, endpoint, handler.clone(), auto).await;
+        let mut opened =
+            open(server, endpoint, handler.clone(), &routes, auto).await;
         // `Auto` falls back to `initialize` only for a server that does
         // not know `server/discover`. One that knows it but offers only
         // 2025-11-25 gets a new connection that initializes.
@@ -356,6 +496,7 @@ impl Session {
                 server,
                 endpoint,
                 handler,
+                &routes,
                 ClientLifecycleMode::Initialize,
             )
             .await;
@@ -671,11 +812,7 @@ impl Session {
             routes: self.routes.clone(),
             token: handle.progress_token.clone(),
         };
-        route
-            .routes
-            .lock()
-            .expect("routes lock")
-            .insert(route.token.clone(), sender);
+        route.routes.attach(route.token.clone(), sender);
         let response = handle.await_response();
         tokio::pin!(response);
         let response = loop {
@@ -693,7 +830,8 @@ impl Session {
                 Some(update) = progress.recv() => on_progress(update),
             }
         };
-        // Progress that came in with the result still counts.
+        // [`Ordered`] routed every update the server sent before its
+        // result before rmcp saw the result: they are all queued.
         while let Ok(update) = progress.try_recv() {
             on_progress(update);
         }
@@ -744,6 +882,7 @@ async fn open(
     server: &str,
     endpoint: &Endpoint,
     handler: Handler,
+    routes: &Routes,
     lifecycle: ClientLifecycleMode,
 ) -> Result<Opened, OpenError> {
     let ours = OpenError::Transport;
@@ -773,7 +912,9 @@ async fn open(
             if let Some(stderr) = stderr {
                 tokio::spawn(log_stderr(server.to_owned(), stderr));
             }
-            handler.serve_with_lifecycle(child, lifecycle).await
+            handler
+                .serve_with_lifecycle(ordered(child, routes), lifecycle)
+                .await
         }
         Endpoint::Http { url, headers, auth } => {
             let mut config =
@@ -811,14 +952,24 @@ async fn open(
                         AuthClient::new(HttpClient(mcp_client()), manager),
                         config,
                     );
-                    handler.serve_with_lifecycle(transport, lifecycle).await
+                    handler
+                        .serve_with_lifecycle(
+                            ordered(transport, routes),
+                            lifecycle,
+                        )
+                        .await
                 }
                 None => {
                     let transport = StreamableHttpClientTransport::with_client(
                         HttpClient(mcp_client()),
                         config,
                     );
-                    handler.serve_with_lifecycle(transport, lifecycle).await
+                    handler
+                        .serve_with_lifecycle(
+                            ordered(transport, routes),
+                            lifecycle,
+                        )
+                        .await
                 }
             }
         }
@@ -827,7 +978,9 @@ async fn open(
                 ours(format!("cannot open the stream: {error}"))
             })?;
             let (read, write) = tokio::io::split(stream);
-            handler.serve_with_lifecycle((read, write), lifecycle).await
+            handler
+                .serve_with_lifecycle(ordered((read, write), routes), lifecycle)
+                .await
         }
     };
     match service {
@@ -1039,9 +1192,7 @@ struct RouteGuard {
 
 impl Drop for RouteGuard {
     fn drop(&mut self) {
-        if let Ok(mut routes) = self.routes.lock() {
-            routes.remove(&self.token);
-        }
+        self.routes.end(&self.token);
     }
 }
 

@@ -6,7 +6,7 @@
 //!   content, with an output schema;
 //! - `fail`: an `isError` result with no content;
 //! - `slow {steps, ms}`: a progress notification every `ms`, `steps`
-//!   times, then `done`;
+//!   times, then `done`; with `ms: 0`, all at once;
 //! - `hang`: waits until cancelled, and records the cancel;
 //! - `crash`: drops the connection while the call is open.
 //!
@@ -565,7 +565,10 @@ impl ServerHandler for Server {
                 let ms = args.get("ms").and_then(Value::as_u64).unwrap_or(10);
                 let token = context.meta.get_progress_token();
                 for step in 0..steps {
-                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    // `ms: 0` sends every step and the result back to back.
+                    if ms > 0 {
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                    }
                     if let Some(token) = &token {
                         let _ = context
                             .peer

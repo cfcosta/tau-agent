@@ -426,7 +426,11 @@ result does not depend on order. A server's namespace is
 - **Execution mode:** `Parallel`.
 - **Progress** notifications become `ToolUpdate`s: the message and
   `(progress/total)` as text, `{ progress, total, message }` as
-  details. One that arrives with the result may be dropped.
+  details. Every notification the server sent before its result
+  reaches the run, in order, before the call ends: tau routes progress
+  as the transport receives it, because rmcp hands notifications to
+  their handler in tasks of their own that may run after the result.
+  Updates after the result are dropped.
 - **Cancel:** the run's token cancels the request
   (`notifications/cancelled`). The server may still finish it.
 
@@ -836,7 +840,10 @@ From the design above, as first written:
   feature in dev-dependencies) over a duplex stream, on 2026-07-28 and
   on 2025-11-25: listing every page, calling, structured content,
   `isError`, progress, cancel, `list_changed`, a server that drops and
-  reconnects, a call that is not retried. Over a child process, the
+  reconnects, a call that is not retried. As a property: however many
+  progress notifications a server sends right before its result, on
+  calls side by side, each call gets all of its own, in order, before
+  it returns. Over a child process, the
   test binary run as a stdio server: a call, and closing ends the
   server and a process it started. A local HTTP server answering 503
   gets three tries; one answering 404, one.
