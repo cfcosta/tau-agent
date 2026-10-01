@@ -4,9 +4,9 @@
 //! them in parallel, and filters large results before the model reads
 //! them.
 //!
-//! This crate is the engine. It reaches the run only through
-//! [`Host`], so the plugin can wire it to `ToolCtx::call` and tests can
-//! wire it to fakes.
+//! The engine reaches the run only through [`Host`], so tests can wire
+//! it to fakes; [`plugin`] wires it to `ToolCtx::call` as the
+//! [`Codemode`] plugin.
 //!
 //! - [`options::parse`] splits the `-- @options:` line off the source.
 //! - [`run`] runs a script in a fresh VM and returns an [`Outcome`].
@@ -14,6 +14,7 @@
 //! - [`signature`] renders tools as Luau signatures and picks those
 //!   that fit the run's context; [`description`] is the tool's text.
 //! - [`store`] folds the store's records and keeps a script's writes.
+//! - [`Codemode`] is the plugin, and [`CodemodeTool`] its tool.
 
 pub mod description;
 mod engine;
@@ -21,6 +22,7 @@ pub mod host;
 pub mod image;
 pub mod jev;
 pub mod options;
+pub mod plugin;
 pub mod result;
 pub mod search;
 pub mod signature;
@@ -37,6 +39,7 @@ pub use engine::{
 };
 pub use host::{Host, Namespace, ToolCall, ToolEntry};
 pub use options::{Options, Source, SourceError};
+pub use plugin::{Codemode, CodemodeTool, PLUGIN};
 pub use result::{CallRow, CallStatus, Failure, Item, Outcome, Rendered};
 pub use signature::describe;
 pub use tokio_util::sync::CancellationToken;

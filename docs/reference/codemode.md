@@ -191,9 +191,11 @@ b` appends each value that is not `nil`. A return value JSON cannot
   most 256 KiB of JSON text each and 1 MiB in all. Keys are strings.
 - **In tau:** a successful script's writes become one plugin record,
   `{ "store": { "set": { key: value }, "delete": [key] } }`, through
-  `ToolCtx::plugin()`: `publish` once step 1 of
-  [0017](../decisions/0017-plugins-bring-their-ui.md) lands, `record`
-  and `report` until then. A failed script writes nothing.
+  `PluginCtx::publish` on `ToolCtx::plugin()`, which reports the record
+  and stores it with the run
+  ([0017](../decisions/0017-plugins-bring-their-ui.md)). When the
+  record cannot be stored, the call fails and says so; the report has
+  gone out already. A failed script writes nothing.
 - **Loading:** each call folds the plugin's records along the run's
   fork chain (`PluginCtx::records`), oldest first, into the snapshot.
   Records that do not parse are skipped. A fork sees the values its

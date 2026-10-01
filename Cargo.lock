@@ -8988,8 +8988,11 @@ dependencies = [
  "hegeltest",
  "mlua",
  "serde_json",
+ "tau-agent",
  "tau-ai",
  "tau-jev",
+ "tau-store",
+ "tau-testing",
  "tokio",
  "tokio-util",
 ]
