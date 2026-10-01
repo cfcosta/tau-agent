@@ -251,7 +251,7 @@ impl Panel {
             .border_1()
             .border_color(t.border_strong)
             .raised(t)
-            .child(self.tabs(&draft, t))
+            .child(self.tabs(&draft, compact, t))
             .child(body)
             .children(refused.map(|why| {
                 ui::text(why, Type::CAPTION, t.red)
@@ -264,7 +264,9 @@ impl Panel {
     }
 
     /// A tab per question, by its header, then the review's.
-    fn tabs(&self, draft: &Draft, t: &Theme) -> Div {
+    /// On a phone the tabs wrap, and what the question takes is left
+    /// to its rows.
+    fn tabs(&self, draft: &Draft, compact: bool, t: &Theme) -> Div {
         let ask = &self.ask;
         let tab = |id: ElementId,
                    label: String,
@@ -338,6 +340,7 @@ impl Panel {
         };
         div()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap(sp(0.5))
             .px(sp(2.5))
@@ -354,8 +357,10 @@ impl Panel {
                 false,
                 last,
             ))
-            .child(div().flex_1())
-            .child(ui::text(mode, Type::MICRO, t.dim).pr(sp(1.5)))
+            .when(!compact, |tabs| {
+                tabs.child(div().flex_1())
+                    .child(ui::text(mode, Type::MICRO, t.dim).pr(sp(1.5)))
+            })
     }
 
     /// The question in view: its rows, with the preview of the row in
@@ -438,7 +443,7 @@ impl Panel {
                 None => rows,
             })
             .when(draft.note_open, |body| {
-                body.child(self.note(draft, note, t))
+                body.child(self.note(draft, note, compact, t))
             })
             .when(
                 !draft.note_open && !draft.notes[i].trim().is_empty(),
@@ -576,8 +581,15 @@ impl Panel {
         }
     }
 
-    /// The note of the question in view, open to write.
-    fn note(&self, draft: &Draft, note: &Entity<TextInput>, t: &Theme) -> Div {
+    /// The note of the question in view, open to write; its keys, on a
+    /// computer.
+    fn note(
+        &self,
+        draft: &Draft,
+        note: &Entity<TextInput>,
+        compact: bool,
+        t: &Theme,
+    ) -> Div {
         let i = draft.tab;
         let answer = draft.answer(&self.ask, i).text();
         let label = if answer.is_empty() {
@@ -601,14 +613,16 @@ impl Panel {
                     .child(ui::icon(Icon::Pencil, IconSize::SMALL, t.accent))
                     .child(ui::text(label, Type::CAPTION, t.muted))
                     .child(div().flex_1())
-                    .child(hint_row(
-                        &[
-                            ("Enter", "save"),
-                            ("Shift+Enter", "new line"),
-                            ("Esc", "close"),
-                        ],
-                        t,
-                    )),
+                    .when(!compact, |head| {
+                        head.child(hint_row(
+                            &[
+                                ("Enter", "save"),
+                                ("Shift+Enter", "new line"),
+                                ("Esc", "close"),
+                            ],
+                            t,
+                        ))
+                    }),
             )
             .child(
                 div()
