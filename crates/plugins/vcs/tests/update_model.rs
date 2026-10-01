@@ -14,9 +14,6 @@
 //! where it put it until upstream moves it too, and trunk then takes
 //! upstream's.
 //!
-//! One case is pinned as an ignored test at the end, and the model
-//! steps around it: the main chat does not catch up once upstream
-//! dropped what it stands on.
 
 use std::{
     collections::BTreeMap,
@@ -396,8 +393,8 @@ impl Machine {
             .success()
     }
 
-    /// Whether upstream dropped what the main chat stands on: its base
-    /// is no longer under trunk.
+    /// Whether upstream dropped what the main chat stands on: the trunk
+    /// it last caught up with is no longer under trunk.
     fn base_dropped(&self) -> bool {
         !self.git_ancestor(&self.base, &self.trunk)
             && !self.own_ancestor_of_trunk()
@@ -591,14 +588,12 @@ impl Machine {
         }
     }
 
-    /// The host's catch-up before a main chat's turn: its commits and
-    /// `@` move onto trunk's head. Skipped when upstream dropped what it
-    /// stands on: see
-    /// `a_catch_up_brings_back_what_upstream_dropped`.
-    fn do_catch_up(&mut self, tc: &TestCase) -> bool {
+    /// The host's catch-up before a main chat's turn: its own commits
+    /// and `@` move onto trunk's head, and nothing else, even when
+    /// upstream dropped what they stood on.
+    fn do_catch_up(&mut self, tc: &TestCase) {
         if self.base_dropped() {
             tc.event("upstream dropped the main chat's base");
-            return false;
         }
         let name = self.project.trunk_name().unwrap();
         let trunk = self.trunk.clone();
@@ -624,7 +619,9 @@ impl Machine {
         };
         assert_eq!(ids, want, "the catch-up moves the main chat's commits");
         assert!(moved.conflicts.is_empty(), "{moved:?}");
-        if !want.is_empty() {
+        if want.is_empty() {
+            assert_eq!(moved.head, trunk, "the catch-up moved trunk");
+        } else {
             tc.event("a catch-up restacks the main chat's commits");
         }
         if let Some(oldest) = self.own.first()
@@ -671,7 +668,6 @@ impl Machine {
                 self.chats[i].commit_id = now;
             }
         }
-        true
     }
 
     fn check_own(&self) {
@@ -743,9 +739,7 @@ impl Machine {
     /// own on trunk.
     #[rule(weight = 3)]
     fn main_commit(&mut self, tc: TestCase) {
-        if !self.do_catch_up(&tc) {
-            return;
-        }
+        self.do_catch_up(&tc);
         let name = self.project.trunk_name().unwrap();
         let file = format!("m{}.txt", self.own.len());
         let dir = self.project.workspace_dir(DEFAULT_WORKSPACE);
@@ -849,40 +843,11 @@ fn caught_up() -> (tempfile::TempDir, PathBuf, Project, Vcs) {
     (home, work, project, main)
 }
 
-/// Upstream drops a commit the main chat stands on (a reset here; an
-/// amend or a force-push does the same), and the main chat has no
-/// commit of its own. Its catch-up should leave trunk where upstream
-/// has it.
-///
-/// It does not: `move_onto` moves what `@` has that trunk lacks
-/// (`land.rs`, `rebase_run`), and the dropped commit is one of those.
-/// It goes back on top of trunk, and trunk's bookmark with it, so the
-/// project's trunk holds a commit upstream deleted. After an amend, the
-/// old commit lands on its own rewrite and conflicts. A chat standing
-/// on the dropped commit is dragged along too.
-///
-/// The reference is silent: "its commits that upstream lacks go on
-/// top" does not say whether upstream's own dropped commits count.
-/// Options:
-///
-/// 1. Move only the main chat's own commits: those `@` has that the
-///    trunk it last caught up with lacks, rebased onto the new trunk
-///    (`jj rebase -s` from the oldest of them). What upstream dropped
-///    stays dropped. Needs the base it last caught up with, which the
-///    host or the bookmark's history can give.
-/// 2. Import with `abandon_unreachable_commits` on, as `jj git fetch`
-///    does: commits no ref reaches any more are abandoned, and what
-///    stands on them is rebased onto their parents. Chats on old trunk
-///    commits would be rebased by an update, which the reference says
-///    keeps them as they are.
-/// 3. Keep it, and say in the reference that rewritten upstream
-///    history comes back on top of trunk.
-///
-/// Option 1 keeps upstream's history as upstream has it and runs
-/// untouched by updates.
+/// Upstream drops a commit the main chat stands on, and the main chat
+/// has no commit of its own. Its catch-up leaves trunk where upstream
+/// has it: what upstream dropped stays dropped.
 #[test]
-#[ignore = "bug: a catch-up brings back commits upstream dropped"]
-fn a_catch_up_brings_back_what_upstream_dropped() {
+fn a_catch_up_leaves_what_upstream_dropped() {
     let (_home, work, project, main) = caught_up();
     std::fs::write(work.join("f.txt"), "1\n").unwrap();
     git(&work, &["commit", "--quiet", "-am", "second"]);
@@ -898,6 +863,34 @@ fn a_catch_up_brings_back_what_upstream_dropped() {
     let moved = block_on(main.move_onto(first.clone(), name, true)).unwrap();
     assert_eq!(moved.changes, [], "the catch-up moved upstream's commits");
     assert_eq!(project.trunk().unwrap(), first);
+}
+
+/// Upstream amends the commit the main chat's own commit stands on.
+/// The catch-up moves the main chat's commit onto the amended one, and
+/// not the commit the amend replaced, so nothing conflicts.
+#[test]
+fn a_catch_up_onto_an_amend_moves_only_the_main_chats_commits() {
+    let (_home, work, project, main) = caught_up();
+    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
+    let name = project.trunk_name().unwrap();
+    let ours = block_on(main.commit_all("ours", name.clone())).unwrap();
+
+    std::fs::write(work.join("f.txt"), "amended\n").unwrap();
+    git(
+        &work,
+        &["commit", "--quiet", "-a", "--amend", "-m", "amended"],
+    );
+    let amended = git(&work, &["rev-parse", "HEAD"]);
+    project.update(UpdateFrom::Checkout(&work)).unwrap();
+    assert_eq!(project.trunk().unwrap(), amended);
+    let moved = block_on(main.move_onto(amended.clone(), name, true)).unwrap();
+    let ids: Vec<&str> =
+        moved.changes.iter().map(|c| c.change_id.as_str()).collect();
+    assert_eq!(ids, [ours.change_id.as_str()]);
+    assert!(moved.conflicts.is_empty(), "{moved:?}");
+    assert_eq!(project.parent_of(&moved.head).unwrap(), Some(amended));
+    assert_eq!(project.trunk().unwrap(), moved.head);
 }
 
 /// The main chat commits on `main`, and upstream renames `main` to

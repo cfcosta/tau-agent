@@ -190,8 +190,14 @@ fn conflicts(commit: &Commit) -> Vec<String> {
 
 /// Moves this workspace's run, its changes up to `@`, onto `onto` (a
 /// full commit id in hex), and points `bookmark` at its newest commit
-/// there. The run's changes are what `@` has that `onto` lacks. With
-/// `confirm` off, nothing changes.
+/// there. With `confirm` off, nothing changes.
+///
+/// The run's changes are what `@` has that neither `onto` nor the
+/// commit it last moved onto has. That commit is upstream's, as trunk
+/// was then, so upstream's commits under the run are never the run's,
+/// even once upstream drops them (a reset, an amend, a force-push):
+/// they stay dropped. The workspace records it in `.jj/tau-moved-onto`
+/// after each move, unless `onto` is one of the run's own commits.
 pub(crate) fn move_onto(
     worker: &mut Worker,
     onto: &str,
@@ -200,16 +206,54 @@ pub(crate) fn move_onto(
 ) -> Result<Landing, VcsError> {
     let onto = CommitId::try_from_hex(onto)
         .ok_or_else(|| VcsError::NotCommitId(onto.to_owned()))?;
-    let name = worker.workspace()?.workspace_name().to_owned();
+    let workspace = worker.workspace()?;
+    let name = workspace.workspace_name().to_owned();
+    let record = workspace.workspace_root().join(".jj").join(MOVED_ONTO);
+    let last = std::fs::read_to_string(&record)
+        .ok()
+        .and_then(|hex| CommitId::try_from_hex(hex.trim()));
     if confirm {
+        let mut onto_is_own = false;
         let (_, moved) = session::mutate(worker, "move_onto", |tx, wc| {
-            rebase_run(tx, wc, &name, &onto, bookmark)
+            onto_is_own = is_own(tx.repo(), wc, last.as_ref(), &onto)?;
+            rebase_run(tx, wc, &name, &onto, last.as_ref(), bookmark)
         })?;
+        if !onto_is_own {
+            std::fs::write(&record, onto.hex())?;
+        }
         return Ok(moved);
     }
     let snapshot = session::snapshot(worker)?;
     let mut tx = snapshot.repo.start_transaction();
-    rebase_run(&mut tx, &snapshot.wc, &name, &onto, bookmark)
+    rebase_run(&mut tx, &snapshot.wc, &name, &onto, last.as_ref(), bookmark)
+}
+
+/// Where a workspace keeps the commit it last moved onto, below `.jj`.
+const MOVED_ONTO: &str = "tau-moved-onto";
+
+/// Whether `onto` is one of the run's own commits: under `wc`, and not
+/// under `last`, the commit the run last moved onto.
+fn is_own(
+    repo: &dyn Repo,
+    wc: &Commit,
+    last: Option<&CommitId>,
+    onto: &CommitId,
+) -> Result<bool, VcsError> {
+    let index = repo.index();
+    if !block_on(index.is_ancestor(onto, wc.id()))? {
+        return Ok(false);
+    }
+    Ok(match last.filter(|last| known(repo, last)) {
+        Some(last) => !block_on(index.is_ancestor(onto, last))?,
+        None => true,
+    })
+}
+
+/// Whether the repository has `id`: a recorded commit may be from
+/// before the repository was made again.
+fn known(repo: &dyn Repo, id: &CommitId) -> bool {
+    repo.store().get_commit(id).is_ok()
+        && block_on(repo.index().has_id(id)).unwrap_or(false)
 }
 
 fn rebase_run(
@@ -217,12 +261,18 @@ fn rebase_run(
     wc: &Commit,
     workspace: &jj_lib::ref_name::WorkspaceName,
     onto: &CommitId,
+    last: Option<&CommitId>,
     bookmark: &str,
 ) -> Result<Landing, VcsError> {
     let moving: Vec<CommitId> = {
+        let mut upstream = ResolvedRevsetExpression::commit(onto.clone());
+        if let Some(last) = last.filter(|last| known(tx.repo(), last)) {
+            upstream =
+                upstream.union(&ResolvedRevsetExpression::commit(last.clone()));
+        }
         let revset = ResolvedRevsetExpression::commit(wc.id().clone())
             .ancestors()
-            .minus(&ResolvedRevsetExpression::commit(onto.clone()).ancestors())
+            .minus(&upstream.ancestors())
             .evaluate(tx.repo())?;
         block_on(revset.stream().collect::<Vec<_>>())
             .into_iter()

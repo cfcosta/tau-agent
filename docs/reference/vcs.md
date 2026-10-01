@@ -415,7 +415,13 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
 
 `Vcs::move_onto(trunk, bookmark, confirm)`, on a run's `Vcs`, rebases
 the run's changes, up to `@`, onto trunk's newest commit, and points
-`bookmark` at the run's newest commit there. Each change keeps its
+`bookmark` at the run's newest commit there. The run's changes are
+what `@` has that neither trunk nor the commit the workspace last moved
+onto has. The workspace records that commit (in `.jj/tau-moved-onto`)
+after each move, unless it was one of the run's own commits. So
+upstream's commits under the run never count as the run's: once
+upstream drops them (a reset, an amend, a force-push), they stay
+dropped. Each change keeps its
 change id, and the run's files follow. With `confirm` off it changes
 nothing and returns what it would do, as a `Landing`; its `conflicts`
 include any in `@`. The main chat catches up with trunk this way (see
@@ -441,8 +447,8 @@ upstream's trunk. So it does for any bookmark of the source's that it
 leaves with two targets: one the main chat moved, then upstream moved,
 renamed or deleted, goes where upstream has it, or goes. Before each of its turns, and before a chat lands on
 it, the host moves its workspace onto trunk's head (`Vcs::move_onto`):
-its commits that upstream lacks go on top, keeping their change ids,
-and so does its work in `@`. Its next commit moves trunk forward rather
+its own commits go on top, keeping their change ids, and so does its
+work in `@`; commits upstream dropped do not come back. Its next commit moves trunk forward rather
 than aside.
 
 ## Delegating to a sub-agent
