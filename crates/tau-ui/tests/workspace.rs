@@ -251,7 +251,9 @@ fn forking_from_a_turn_sends_that_turn(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
-    cx.update(|_, cx| demo::respond(&workspace, cx));
+    cx.update(|_, cx| {
+        demo::start(&workspace, cx);
+    });
     let run = demo::run_id();
     workspace.update(&mut cx, |ws, cx| {
         for (_, update) in demo::script() {
@@ -596,6 +598,7 @@ fn a_fork_can_run_on_another_model(cx: &mut TestAppContext) {
 }
 
 /// The demo's workspace: three repositories, tau-agent open.
+/// The demo's runs and repositories, its host answering.
 fn open_demo(
     cx: &mut TestAppContext,
 ) -> (
@@ -603,13 +606,29 @@ fn open_demo(
     VisualTestContext,
     std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>,
 ) {
+    let (workspace, cx, events, _) = open_demo_host(cx);
+    (workspace, cx, events)
+}
+
+/// What the workspace emitted, in order.
+type Events = std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>;
+
+fn open_demo_host(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Workspace>,
+    VisualTestContext,
+    Events,
+    std::sync::Arc<demo::DemoHost>,
+) {
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.add_history(demo::history(), cx);
         ws.set_catalog(demo::catalog(), cx);
     });
+    let host = cx.update(|_, cx| demo::start(&workspace, cx));
     events.borrow_mut().clear();
-    (workspace, cx, events)
+    (workspace, cx, events, host)
 }
 
 #[gpui::test]
@@ -1099,7 +1118,6 @@ fn a_message_to_a_finished_run_goes_on_with_it(cx: &mut TestAppContext) {
 fn the_demo_goes_on_with_a_finished_run(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_demo(cx);
     finish_demo_run(&workspace, &mut cx);
-    cx.update(|_, cx| demo::respond(&workspace, cx));
     let run = demo::run_id();
     let (turn, cost) = workspace.read_with(&cx, |ws, _| {
         let view = ws.run(&run).unwrap();
@@ -1235,7 +1253,6 @@ fn the_typesafe_key_is_asked_for_and_forgotten(cx: &mut TestAppContext) {
 #[gpui::test]
 fn history_runs_the_query_typed_and_shows_its_rows(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
-    cx.update(|_, cx| demo::respond(&workspace, cx));
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::History, cx);
         ws.run_query(cx);
@@ -2832,4 +2849,53 @@ fn a_nested_delegate_opens_and_closes_its_chat(cx: &mut TestAppContext) {
     });
     assert!(events.borrow().iter().any(|event| matches!(event,
         WorkspaceEvent::CloseRun { run } if *run == child)));
+}
+
+/// Every screen the demo opens by name opens on the demo, with its host
+/// answering, and draws.
+#[gpui::test]
+fn every_demo_screen_opens(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _, host) = open_demo_host(cx);
+    for (name, _) in demo::SCREENS {
+        workspace.update(&mut cx, |ws, cx| {
+            assert!(demo::open(name, ws, &host, cx), "{name}");
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+}
+
+/// A rule added on the demo's Constitution page is kept by
+/// tau-constitution's host half, and comes back in the catalog.
+#[gpui::test]
+fn the_demo_keeps_rules_in_the_constitution(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    let rules = |ws: &Workspace| {
+        ws.catalog()
+            .repo("tau-agent")
+            .and_then(|repo| repo.plugins.get(tau_constitution::NAME))
+            .map(|rules| rules.get::<tau_constitution::ui::Rules>().clone())
+            .unwrap_or_default()
+    };
+    let before = workspace.read_with(&cx, |ws, _| rules(ws).rules.len());
+    assert_eq!(before, 6, "the demo's rules");
+    let add = tau_constitution::ui::Act::Add {
+        repo: "tau-agent".into(),
+        text: "Keep the changelog current.".into(),
+        on: vec!["final answer".into()],
+        review: 0.4,
+        block: 0.8,
+    };
+    workspace.update(&mut cx, |_, cx| {
+        cx.emit(WorkspaceEvent::PluginAct {
+            plugin: tau_constitution::NAME.into(),
+            action: serde_json::to_value(add).unwrap(),
+        })
+    });
+    cx.run_until_parked();
+    workspace.read_with(&cx, |ws, _| {
+        let rules = rules(ws);
+        assert_eq!(rules.rules.len(), before + 1);
+        assert_eq!(rules.rules[before].text, "Keep the changelog current.");
+    });
 }

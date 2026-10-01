@@ -241,9 +241,9 @@ impl Workspace {
                 div()
                     .id("jev-key-save")
                     .child(ui::button("Use this key", ButtonKind::Primary, t))
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        ws.submit_jev_key(cx)
-                    })),
+                    .on_click(
+                        cx.listener(|ws, _, _, cx| ws.submit_jev_key(cx)),
+                    ),
             );
         ui::modal(
             ui::icon(Icon::Key, IconSize::LARGE, t.muted),

@@ -10,6 +10,8 @@ publish.workspace = true
 default = []
 # docbert's ColBERT model as the encoder.
 docbert = ["dep:docbert-pylate", "dep:candle-core"]
+# The notes tau-ui's demo shows.
+demo = []
 
 [[bin]]
 name = "tau-memory-eval"

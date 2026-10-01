@@ -11,13 +11,16 @@ use tau_agent::{
     tool::{RunId, ToolOutput},
 };
 use tau_ai::message::{Usage, UsageCost};
-use tau_constitution::ui::{Act as RulesAct, RuleInfo, Rules};
-use tau_memory::ui::{LinkView as Link, NoteView as Note, Notebook as Memory};
+use tau_ui_plugin::Push;
 
+pub use self::{
+    host::DemoHost,
+    screens::{SCREENS, Screen, open},
+};
 use crate::{
     Workspace,
     WorkspaceEvent,
-    catalog::{Catalog, JevStats, PluginInfo, Repo, Seam, StoreInfo},
+    catalog::{Catalog, JevStats, Repo, StoreInfo},
     models::{AccountState, ChatGptAccount},
     pairing::{
         Computer,
@@ -39,6 +42,7 @@ use crate::{
         SetupStep,
         SetupUpdate,
     },
+    update::HostUpdate,
     view::{
         BranchCode,
         ContextWindow,
@@ -55,6 +59,9 @@ use crate::{
         Tone,
     },
 };
+
+mod host;
+mod screens;
 
 /// One scripted update, and how long to wait before it.
 pub type Step = (Duration, RunUpdate);
@@ -87,56 +94,6 @@ pub fn retry_after() -> RunView {
     );
     view.plugins = plugins(["waiting", "waiting", "watching edits", "idle"]);
     view
-}
-
-/// A goal's records as tau-goal stores them: `working` (two checks, not
-/// met), `met` (at the third) or `stopped` (out of continuations).
-pub fn goal_records(condition: &str, state: &str) -> Vec<Value> {
-    use tau_goal::{Check, Exhausted, Record};
-    let check = |n: u32, met: bool, p: f64, turn: u32, continuation| {
-        Record::Check(Check {
-            n,
-            met,
-            p,
-            turn,
-            continuation,
-            cost: 0.00003,
-            spent: 0.12 * f64::from(n),
-        })
-    };
-    let mut records = vec![Record::Set {
-        goal: condition.into(),
-        continuations: 10,
-        budget: 2.0,
-    }];
-    match state {
-        "stopped" => {
-            records.push(Record::Set {
-                goal: condition.into(),
-                continuations: 2,
-                budget: 2.0,
-            });
-            records.push(check(1, false, 0.12, 9, Some(1)));
-            records.push(check(2, false, 0.11, 11, Some(2)));
-            records.push(check(3, false, 0.11, 13, None));
-            records.push(Record::Stopped {
-                why: Exhausted::Continuations,
-            });
-        }
-        _ => {
-            records.push(check(1, false, 0.03, 8, Some(1)));
-            records.push(check(2, false, 0.08, 10, Some(2)));
-            if state == "met" {
-                records.push(check(3, true, 0.96, 11, None));
-            }
-        }
-    }
-    records
-        .iter()
-        .map(|record| {
-            serde_json::to_value(record).expect("a record serializes")
-        })
-        .collect()
 }
 
 /// The condition the demo's goals share.
@@ -274,11 +231,14 @@ pub fn history() -> Vec<RunView> {
             match title {
                 "mutants-triage" => view.restate(
                     tau_goal::NAME,
-                    &goal_records("Every mutant in retry.rs is caught", "met"),
+                    &tau_goal::demo::records(
+                        "Every mutant in retry.rs is caught",
+                        "met",
+                    ),
                 ),
                 "lane-audit" => view.restate(
                     tau_goal::NAME,
-                    &goal_records(
+                    &tau_goal::demo::records(
                         "Every lane has an owner in lanes.toml",
                         "stopped",
                     ),
@@ -634,52 +594,6 @@ pub fn resume_script(run: &RunView, prompt: &str) -> Vec<Step> {
     s.steps
 }
 
-/// A demo screen by name, for `--open`.
-pub fn route(name: &str) -> Option<crate::route::Route> {
-    use crate::route::Route;
-    Some(match name {
-        "run" => Route::Run(run_id()),
-        "history" => Route::History,
-        "memory" => Route::Plugin {
-            plugin: tau_memory::plugin::NAME.into(),
-            page: "notes".into(),
-            params: [("repo".to_owned(), "tau-agent".to_owned())].into(),
-        },
-        "plugins" => Route::Plugins,
-        "constitution" => Route::Plugin {
-            plugin: tau_constitution::NAME.into(),
-            page: "rules".into(),
-            params: [("repo".to_owned(), "tau-agent".to_owned())].into(),
-        },
-        "compare" => Route::Compare {
-            main: run_id(),
-            fork: fork_id(),
-        },
-        "plan" => Route::Plan(run_id()),
-        "ledger" => Route::Plugin {
-            plugin: tau_fast_compaction::NAME.into(),
-            page: "ledger".into(),
-            params: [("run".to_owned(), run_id().0.to_string())].into(),
-        },
-        "welcome" | "setup" => Route::Setup(SetupStep::Welcome),
-        "github" => Route::Setup(SetupStep::GitHub),
-        "token" => Route::Setup(SetupStep::Token),
-        "model" => Route::Setup(SetupStep::Model),
-        "repos" => Route::Setup(SetupStep::Repos),
-        "ready" => Route::Setup(SetupStep::Ready),
-        "phones" => Route::Phones,
-        "pair" => Route::Pair(PairStep::Welcome),
-        "pair-scan" => Route::Pair(PairStep::Scan),
-        "pair-address" => Route::Pair(PairStep::Address),
-        "pair-paired" => Route::Pair(PairStep::Paired),
-        "pair-unreachable" => Route::Pair(PairStep::Unreachable),
-        "land" => Route::Run(fork_id()),
-        "pr" | "pr-opened" => Route::PullRequest(run_id()),
-        "models" => Route::Models,
-        _ => return None,
-    })
-}
-
 const DEVICE_CODE: &str = "WDJB-MJHT";
 
 fn device_code() -> DeviceCode {
@@ -896,10 +810,53 @@ pub fn opened() -> PrState {
     }
 }
 
+/// Starts the demo's host on `workspace`: the plugins' host halves fill
+/// its catalog, and it answers what the workspace asks.
+pub fn start(workspace: &Entity<Workspace>, cx: &mut App) -> Arc<DemoHost> {
+    let host = Arc::new(
+        DemoHost::new(workspace.read(cx).catalog())
+            .expect("the demo's plugins have a place to keep their files"),
+    );
+    workspace.update(cx, |ws, cx| {
+        let catalog = host.catalog(ws.catalog().clone());
+        ws.apply(HostUpdate::catalog(catalog), cx);
+    });
+    respond(workspace, host.clone(), cx);
+    host
+}
+
 /// Answers what the workspace asks for the way a host would, after a
-/// pause: sign-ins succeed, clones progress, pull requests open.
-pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
-    cx.subscribe(workspace, |workspace, event: &WorkspaceEvent, cx| {
+/// pause: sign-ins succeed, clones progress, pull requests open, and
+/// plugins act through their host halves in `host`. Every answer is a
+/// [`HostUpdate`], so a paired phone sees it too.
+fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
+    if let Some(mut pushed) = host.pushed() {
+        let (workspace, host) = (workspace.downgrade(), host.clone());
+        cx.spawn(async move |cx| {
+            while let Some(push) = pushed.recv().await {
+                let update = match push {
+                    Push::Record { run, plugin, body } => {
+                        HostUpdate::PluginRecord { run, plugin, body }
+                    }
+                    Push::Catalog => match workspace.read_with(cx, |ws, _| {
+                        host.catalog(ws.catalog().clone())
+                    }) {
+                        Ok(catalog) => HostUpdate::catalog(catalog),
+                        Err(_) => return,
+                    },
+                    Push::Alert { title, message } => {
+                        HostUpdate::alert(title, message)
+                    }
+                };
+                if workspace.update(cx, |ws, cx| ws.apply(update, cx)).is_err()
+                {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+    cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
         // Each answer comes after its pause, in milliseconds.
         let later = |steps: Vec<(u64, Answer)>, cx: &mut App| {
             let workspace = workspace.downgrade();
@@ -909,26 +866,8 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                         .timer(Duration::from_millis(wait))
                         .await;
                     let done = workspace.update(cx, |ws, cx| match answer {
-                        Answer::Setup(update) => ws.update_setup(update, cx),
+                        Answer::Host(update) => ws.apply(update, cx),
                         Answer::Pair(update) => ws.update_pairing(update, cx),
-                        Answer::Pr(run, state) => {
-                            ws.set_pull_request_state(&run, state, cx)
-                        }
-                        Answer::Code(main, fork, code) => ws.set_branch_code(
-                            &main,
-                            &fork,
-                            crate::view::CodeState::Ready(code),
-                            cx,
-                        ),
-                        Answer::Trial(trials, cost) => {
-                            let tried: tau_constitution::ui::TrialResult =
-                                Ok((trials, cost));
-                            ws.plugin_reply(
-                                tau_constitution::NAME,
-                                serde_json::to_value(tried).unwrap_or_default(),
-                                cx,
-                            )
-                        }
                     });
                     if done.is_err() {
                         return;
@@ -937,13 +876,22 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
             })
             .detach();
         };
-        let setup = Answer::Setup;
+        // The catalog as `change` leaves it.
+        let recatalog = |change: &dyn Fn(&mut Catalog), cx: &mut App| {
+            workspace.update(cx, |ws, cx| {
+                let mut catalog = ws.catalog().clone();
+                change(&mut catalog);
+                ws.apply(HostUpdate::catalog(catalog), cx);
+            });
+        };
+        let setup = |update| Answer::Host(HostUpdate::Setup(update));
         let signed_in = || {
             setup(SetupUpdate::GitHub(GitHub::SignedIn {
                 user: "cfcosta".into(),
             }))
         };
         let computer = computer();
+        // Pairing is the phone's own: the computer it reaches answers.
         let progress =
             |progress| Answer::Pair(PairingUpdate::Progress(progress));
         let connecting = || {
@@ -1013,13 +961,11 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                 };
                 later(vec![(600, setup(SetupUpdate::Model(connected)))], cx)
             }
-            WorkspaceEvent::SwitchChatGpt { account } => {
-                let account = account.clone();
-                workspace.update(cx, |ws, cx| {
-                    let mut catalog = ws.catalog().clone();
+            WorkspaceEvent::SwitchChatGpt { account } => recatalog(
+                &|catalog| {
                     let access = &mut catalog.models.access;
                     for known in &mut access.accounts {
-                        known.active = known.id == account;
+                        known.active = known.id == *account;
                     }
                     access.chatgpt =
                         access.active_account().is_some_and(|active| {
@@ -1030,9 +976,9 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     } else {
                         "signed out".into()
                     };
-                    ws.set_catalog(catalog, cx);
-                });
-            }
+                },
+                cx,
+            ),
             WorkspaceEvent::CloneRepos { repos } => {
                 let steps = (1..=10)
                     .flat_map(|tenth| {
@@ -1056,13 +1002,18 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                 later(steps, cx)
             }
             WorkspaceEvent::PreparePullRequest { run } => {
-                let run = run.clone();
-                workspace.update(cx, |ws, cx| {
-                    ws.set_pull_request(&run, pull_request(), cx)
-                });
+                let update = HostUpdate::PullRequest {
+                    run: run.clone(),
+                    pr: Box::new(pull_request()),
+                };
+                workspace.update(cx, |ws, cx| ws.apply(update, cx));
             }
             WorkspaceEvent::CreatePullRequest { run, .. } => {
-                later(vec![(1200, Answer::Pr(run.clone(), opened()))], cx)
+                let opened = HostUpdate::PullRequestState {
+                    run: run.clone(),
+                    state: opened(),
+                };
+                later(vec![(1200, Answer::Host(opened))], cx)
             }
             WorkspaceEvent::Fork {
                 run,
@@ -1074,108 +1025,93 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                 static FORKS: AtomicU32 = AtomicU32::new(0);
                 let n = FORKS.fetch_add(1, Ordering::Relaxed) + 1;
                 let id = RunId(Arc::from(format!("{}/fork-{n}", run.0)));
-                let (run, turn, prompt, model) =
-                    (run.clone(), *turn, prompt.clone(), model.clone());
                 workspace.update(cx, |ws, cx| {
-                    let Some(from) = ws.run(&run).cloned() else {
+                    let Some(from) = ws.run(run).cloned() else {
                         return;
                     };
                     let turn = turn.unwrap_or(from.turn);
                     let (view, steps) =
-                        fork_run(&from, turn, &prompt, &model, id.clone());
-                    ws.push_run(view, cx);
+                        fork_run(&from, turn, prompt, model, id.clone());
+                    ws.apply(HostUpdate::Run(Box::new(view)), cx);
                     ws.replay(id, steps, cx);
                 });
             }
-            // Rules change in the catalog, as the host's store would.
-            WorkspaceEvent::PluginAct { plugin, action }
-                if plugin == tau_constitution::NAME =>
-            {
-                let Ok(act) =
-                    serde_json::from_value::<RulesAct>(action.clone())
-                else {
-                    return;
-                };
-                if let RulesAct::Try { calls, answers, .. } = act {
-                    // Jev's scores, as the demo scripts them: the calls in
-                    // the order they came.
-                    const SCORES: [f64; 6] =
-                        [0.94, 0.41, 0.06, 0.12, 0.33, 0.71];
-                    let shown = calls
-                        .iter()
-                        .map(|(tool, args)| {
-                            (
-                                Some(tool.clone()),
-                                crate::view::summarize_args(args),
-                            )
-                        })
-                        .chain(
-                            answers.iter().map(|answer| (None, answer.clone())),
-                        );
-                    let trials = shown
-                        .zip(SCORES.iter().cycle())
-                        .map(|((tool, shown), score)| tau_constitution::Trial {
-                            tool,
-                            shown,
-                            score: *score,
-                        })
-                        .collect::<Vec<_>>();
-                    let cost = 0.00001 * trials.len() as f64;
-                    later(vec![(900, Answer::Trial(trials, cost))], cx);
-                    return;
-                }
+            // Off the UI thread, as on a host: an action may ask Jev.
+            WorkspaceEvent::PluginAct { plugin, action } => {
+                let (job, plugin, action) =
+                    (host.clone(), plugin.clone(), action.clone());
+                let workspace = workspace.downgrade();
+                let acting = cx.background_executor().spawn({
+                    let plugin = plugin.clone();
+                    async move { job.act(&plugin, action) }
+                });
+                let host = host.clone();
+                cx.spawn(async move |cx| {
+                    let done = acting.await;
+                    let _ = workspace.update(cx, |ws, cx| {
+                        match done {
+                            Ok(Some(reply)) => ws.apply(
+                                HostUpdate::PluginReply { plugin, reply },
+                                cx,
+                            ),
+                            Ok(None) => {}
+                            Err(error) => ws.apply(
+                                HostUpdate::alert(
+                                    format!("{plugin} could not do that"),
+                                    format!("{error:#}"),
+                                ),
+                                cx,
+                            ),
+                        }
+                        let catalog = host.catalog(ws.catalog().clone());
+                        ws.apply(HostUpdate::catalog(catalog), cx);
+                    });
+                })
+                .detach();
+            }
+            WorkspaceEvent::PluginSettings { plugin, settings } => {
+                host.save_settings(plugin, settings.clone());
                 workspace.update(cx, |ws, cx| {
-                    let mut catalog = ws.catalog().clone();
-                    demo_rules_act(&mut catalog, act);
-                    ws.set_catalog(catalog, cx);
+                    let catalog = host.catalog(ws.catalog().clone());
+                    ws.apply(HostUpdate::catalog(catalog), cx);
                 });
             }
             WorkspaceEvent::JevKey { key } => {
                 let saved = key.is_some();
-                workspace.update(cx, |ws, cx| {
-                    let mut catalog = ws.catalog().clone();
-                    catalog.models.access.jev = saved;
-                    ws.set_catalog(catalog, cx);
-                });
+                recatalog(&|catalog| catalog.models.access.jev = saved, cx);
             }
             // The demo's store answers every query with its runs' costs.
             WorkspaceEvent::Query { .. } => {
+                let table = tau_store::Table {
+                    columns: vec!["agent".into(), "sum(cost_usd)".into()],
+                    rows: vec![
+                        vec!["coder".into(), "4.312".into()],
+                        vec!["reviewer".into(), "0.206".into()],
+                    ],
+                    truncated: false,
+                };
                 workspace.update(cx, |ws, cx| {
-                    let table = tau_store::Table {
-                        columns: vec!["agent".into(), "sum(cost_usd)".into()],
-                        rows: vec![
-                            vec!["coder".into(), "4.312".into()],
-                            vec!["reviewer".into(), "0.206".into()],
-                        ],
-                        truncated: false,
-                    };
-                    ws.set_query_result(Ok(table), cx);
+                    ws.apply(HostUpdate::QueryResult(Ok(table)), cx)
                 });
             }
             // Updating finds nothing new.
             WorkspaceEvent::UpdateRepo { repo } => {
                 let text = format!("{repo} is up to date");
-                workspace.update(cx, |ws, cx| {
-                    let mut catalog = ws.catalog().clone();
-                    catalog.update = Some(text);
-                    ws.set_catalog(catalog, cx);
-                });
+                recatalog(&|catalog| catalog.update = Some(text.clone()), cx);
             }
             // A finished run goes on with one more turn.
             WorkspaceEvent::Resume { run, prompt, .. } => {
-                let (run, prompt) = (run.clone(), prompt.clone());
                 workspace.update(cx, |ws, cx| {
-                    let Some(view) = ws.run(&run).cloned() else {
+                    let Some(view) = ws.run(run).cloned() else {
                         return;
                     };
-                    let steps = resume_script(&view, &prompt);
-                    ws.replay(run, steps, cx);
+                    let steps = resume_script(&view, prompt);
+                    ws.replay(run.clone(), steps, cx);
                 });
             }
             // Signing out leaves the active account signed out.
-            WorkspaceEvent::SignOut => {
-                workspace.update(cx, |ws, cx| {
-                    let mut catalog = ws.catalog().clone();
+            WorkspaceEvent::SignOut => recatalog(
+                &|catalog| {
                     let access = &mut catalog.models.access;
                     access.chatgpt = false;
                     access.label = "signed out".into();
@@ -1184,16 +1120,17 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                             account.state = AccountState::SignedOut;
                         }
                     }
-                    ws.set_catalog(catalog, cx);
-                });
-            }
-            WorkspaceEvent::CompareCode { main, fork } => later(
-                vec![(
-                    400,
-                    Answer::Code(main.clone(), fork.clone(), branch_code()),
-                )],
+                },
                 cx,
             ),
+            WorkspaceEvent::CompareCode { main, fork } => {
+                let code = HostUpdate::BranchCode {
+                    main: main.clone(),
+                    fork: fork.clone(),
+                    code: crate::view::CodeState::Ready(branch_code()),
+                };
+                later(vec![(400, Answer::Host(code))], cx)
+            }
             other => eprintln!("tau-ui: {other:?}"),
         }
     })
@@ -1201,11 +1138,8 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
 }
 
 enum Answer {
-    Setup(SetupUpdate),
+    Host(HostUpdate),
     Pair(PairingUpdate),
-    Pr(RunId, PrState),
-    Code(RunId, RunId, BranchCode),
-    Trial(Vec<tau_constitution::Trial>, f64),
 }
 
 /// The code of `retry-after`, tau-agent's main chat, and its `backoff`
@@ -1284,74 +1218,15 @@ pub fn branch_code() -> BranchCode {
     }
 }
 
-/// The plugins, notes, rules and store the demo workspace shows.
+/// The repositories and store the demo workspace shows. Its plugins'
+/// part comes from their host halves: [`DemoHost::catalog`].
 pub fn catalog() -> Catalog {
-    let plugin =
-        |name: &str,
-         description: &str,
-         seams: &[Seam],
-         spend: f64,
-         page: Option<tau_ui_plugin::Link>| PluginInfo {
-            name: name.into(),
-            description: description.into(),
-            seams: seams.to_vec(),
-            spend,
-            page,
-        };
-    let link = |to: &str, why: &str| Link {
-        to: to.into(),
-        why: why.into(),
-    };
-    let note = |id: &str,
-                title: &str,
-                body: &[&str],
-                links: Vec<Link>,
-                paths: &[&str],
-                _used: u32| Note {
-        id: id.into(),
-        title: title.into(),
-        body: body.iter().map(|p| (*p).to_owned()).collect(),
-        links,
-        paths: paths.iter().map(|p| (*p).to_owned()).collect(),
-        written_by: "coder · lane-audit".into(),
-        edited: "Sep 26".into(),
-    };
-    let rule =
-        |id: &str, text: &str, on: &[&str], review: f64, block: f64| RuleInfo {
-            id: id.into(),
-            text: text.into(),
-            applies_to: on.iter().map(|f| (*f).to_owned()).collect(),
-            review,
-            block,
-        };
     Catalog {
         plugin_data: Default::default(),
         plugin_settings: Default::default(),
+        plugins: Vec::new(),
         agent: "coder".into(),
         agent_source: Some("src/agents.rs:14".into()),
-        plugins: vec![
-            PluginInfo {
-                page: Some(tau_ui_plugin::Link::page("choices").param("run", "")),
-                ..plugin(tau_reasoning::NAME, "Scores the job and picks the reasoning effort", &[Seam::Start], 0.004, None)
-            },
-            plugin(tau_memory::plugin::NAME, "Zettelkasten notes on docbert", &[Seam::Start, Seam::Tools, Seam::Finish], 0.212, Some(tau_ui_plugin::Link::page("notes").param("repo", ""))),
-            PluginInfo {
-                page: Some(tau_ui_plugin::Link::page("rules").param("repo", "")),
-                ..plugin(tau_constitution::NAME, "6 rules on edit, write, bash and the final answer", &[Seam::BeforeTool, Seam::BeforeStop], 0.031, None)
-            },
-            PluginInfo {
-                page: Some(tau_ui_plugin::Link::page("ledger").param("run", "")),
-                ..plugin(tau_fast_compaction::NAME, "Prunes large bash outputs as they arrive, and stale tool history, with Jev", &[Seam::Start, Seam::Rewrite], 0.046, None)
-            },
-            plugin(tau_compaction::NAME, "Summarizes when pruning is not enough", &[Seam::Start, Seam::Rewrite], 0.061, None),
-            plugin(tau_goal::NAME, "Keeps a conversation going until its /goal holds, with Jev", &[Seam::Start, Seam::AfterTool, Seam::BeforeStop], 0.009, None),
-            plugin("tau-tools", "read bash edit write grep find ls", &[Seam::Tools], 0.0, None),
-            PluginInfo {
-                page: Some(tau_ui_plugin::Link::page("servers").param("repo", "")),
-                ..plugin(tau_mcp::NAME, "MCP servers: 3 servers · 2 connected · 1 needs approval", &[Seam::Start, Seam::Tools], 0.0, None)
-            },
-            plugin(tau_codemode::PLUGIN, &tau_codemode::ui::description(true), &[Seam::Start, Seam::Tools], 0.002, None),
-        ],
         jev: Some(JevStats {
             model: "Jev 1.13".into(),
             key_env: "typesafe-key, set on Models".into(),
@@ -1364,61 +1239,16 @@ pub fn catalog() -> Catalog {
         }),
         repos: vec![
             Repo {
-                name: "tau-agent".into(),
-                plugins: {
-                    let mut data = repo_data(
-                        tau_agent_memory(&note, &link),
-                        tau_agent_rules(&rule));
-                    data.insert(
-                        tau_mcp::NAME.to_owned(),
-                        tau_ui_plugin::PluginValue::typed(tau_agent_servers()),
-                    );
-                    data
-                },
-                path: "~/Code/cfcosta/tau-agent".into(),
                 main: Some(run_id()),
+                ..Repo::new("tau-agent", "~/Code/cfcosta/tau-agent")
             },
             Repo {
-                name: "docbert".into(),
-                plugins: repo_data(
-                    Memory {
-                    path: "~/.tau/memory/docbert".into(),
-                    notes: vec![
-                        note("d-0102", "Scanned pages have no text layer", &[
-                            "PDFs made from scans come in with empty pages. Run OCR on a page only when it has no text layer, so born-digital PDFs stay fast.",
-                        ], vec![], &["src/ingest/pdf.rs"], 3),
-                        note("d-0118", "Rerank only the top 50", &[
-                            "ColBERT reranking costs grow with the candidate list. BM25 recalls 200, and only the top 50 go to the reranker.",
-                        ], vec![link("d-0131", "BM25 recalls the candidates")], &["src/search/rerank.rs"], 4),
-                        note("d-0131", "The BM25 tokenizer keeps identifiers whole", &[
-                            "`snake_case` and `CamelCase` stay one token, and are also split into their parts, so both searches hit.",
-                        ], vec![], &["src/search/bm25.rs"], 2),
-                    ],
-                },
-                    Rules {
-                    max_holds: 3,
-                    rules: vec![
-                        rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
-                        rule("D2", "Search results keep their scores; never sort them away.", &["edit.newText"], 0.40, 0.85),
-                        rule("D3", "The final answer names the tests that ran.", &["final answer"], 0.40, 0.75),
-                    ],
-                    ..Rules::default()
-                }),
-                path: "~/Code/cfcosta/docbert".into(),
                 main: Some(RunId(Arc::from("docbert-main"))),
+                ..Repo::new("docbert", "~/Code/cfcosta/docbert")
             },
             Repo {
-                name: "homelab.nix".into(),
-                plugins: repo_data(
-                    Memory {
-                    path: "~/.tau/memory/homelab.nix".into(),
-                    notes: vec![note("h-0007", "Backups run from a systemd timer", &[
-                        "`restic` runs from `backup.timer` at 03:00, never from cron, so a missed run catches up on boot.",
-                    ], vec![], &["hosts/nas/backup.nix"], 1)],
-                },
-                    Rules::default()),
-                path: "~/Code/cfcosta/homelab.nix".into(),
                 main: Some(RunId(Arc::from("homelab-main"))),
+                ..Repo::new("homelab.nix", "~/Code/cfcosta/homelab.nix")
             },
         ],
         open_repos: vec!["tau-agent".into()],
@@ -1432,372 +1262,6 @@ pub fn catalog() -> Catalog {
         project: Default::default(),
         update: None,
         models: models(),
-    }
-}
-
-type NoteFn<'a> =
-    &'a dyn Fn(&str, &str, &[&str], Vec<Link>, &[&str], u32) -> Note;
-type LinkFn<'a> = &'a dyn Fn(&str, &str) -> Link;
-/// What the constitution's host half does with `act`, on the demo's
-/// catalog: rules change in place, as the store would keep them.
-fn demo_rules_act(catalog: &mut Catalog, act: RulesAct) {
-    let rules_of = |catalog: &mut Catalog, repo: &str| -> Option<Rules> {
-        let data = catalog.repo(repo)?.plugins.get(tau_constitution::NAME)?;
-        Some(data.get::<Rules>().clone())
-    };
-    let save = |catalog: &mut Catalog, repo: &str, rules: Rules| {
-        if let Some(listed) = catalog.repo_mut(repo) {
-            listed.plugins.extend(rules_data(rules));
-        }
-    };
-    let info =
-        |id: String, text: String, on: Vec<String>, review, block| RuleInfo {
-            id,
-            text,
-            applies_to: on,
-            review,
-            block,
-        };
-    match act {
-        RulesAct::Add {
-            repo,
-            text,
-            on,
-            review,
-            block,
-        } => {
-            let Some(mut rules) = rules_of(catalog, &repo) else {
-                return;
-            };
-            let id = (1..)
-                .map(|n| format!("R{n}"))
-                .find(|id| rules.rules.iter().all(|rule| &rule.id != id))
-                .unwrap_or_default();
-            rules.rules.push(info(id, text, on, review, block));
-            save(catalog, &repo, rules);
-        }
-        RulesAct::Update {
-            repo,
-            id,
-            text,
-            on,
-            review,
-            block,
-        } => {
-            let Some(mut rules) = rules_of(catalog, &repo) else {
-                return;
-            };
-            if let Some(rule) =
-                rules.rules.iter_mut().find(|rule| rule.id == id)
-            {
-                *rule = info(id, text, on, review, block);
-            }
-            save(catalog, &repo, rules);
-        }
-        RulesAct::Remove { repo, id } => {
-            let Some(mut rules) = rules_of(catalog, &repo) else {
-                return;
-            };
-            rules.rules.retain(|rule| rule.id != id);
-            save(catalog, &repo, rules);
-        }
-        RulesAct::Settings {
-            repo,
-            blocks_unchecked,
-            max_holds,
-        } => {
-            let Some(mut rules) = rules_of(catalog, &repo) else {
-                return;
-            };
-            rules.blocks_unchecked = blocks_unchecked;
-            rules.max_holds = max_holds;
-            save(catalog, &repo, rules);
-        }
-        RulesAct::Reset { repo } => save(catalog, &repo, Rules::default()),
-        RulesAct::Reviewed { run, key } => {
-            catalog
-                .plugin_data
-                .entry(tau_constitution::NAME.to_owned())
-                .or_default()
-                .get_mut::<tau_constitution::ui::Data>()
-                .reviewed
-                .push((run, key));
-        }
-        RulesAct::Try { .. } => {}
-    }
-}
-
-type RuleFn<'a> = &'a dyn Fn(&str, &str, &[&str], f64, f64) -> RuleInfo;
-
-/// A repository's plugin data: `notes` as its memory, and `rules` as its
-/// constitution.
-fn repo_data(
-    notes: Memory,
-    rules: Rules,
-) -> std::collections::BTreeMap<String, tau_ui_plugin::PluginValue> {
-    let mut data = rules_data(rules);
-    data.insert(
-        tau_memory::plugin::NAME.to_owned(),
-        tau_ui_plugin::PluginValue::typed(notes),
-    );
-    data
-}
-
-/// tau-agent's MCP servers: two connected, one waiting for approval.
-fn tau_agent_servers() -> tau_mcp::ui::Servers {
-    use tau_mcp::{
-        connection::Annotations,
-        ui::{Defined, PendingRow, ServerRow, Servers, ToolRow},
-    };
-    let tool =
-        |server: &str, tool: &str, exposure: &str, annotations| ToolRow {
-            name: Some(format!("mcp__{server}__{tool}")),
-            tool: tool.into(),
-            description: None,
-            exposure: exposure.into(),
-            annotations,
-        };
-    let read_only = Annotations {
-        read_only: Some(true),
-        ..Annotations::default()
-    };
-    Servers {
-        started: true,
-        servers: vec![
-            ServerRow {
-                name: "linear".into(),
-                defined: Defined::User,
-                transport: "https://mcp.linear.app/mcp (headers Authorization)"
-                    .into(),
-                exposure: "direct".into(),
-                enabled: true,
-                description: Some("Linear issues and projects.".into()),
-                state: Some("connected".into()),
-                tools: vec![
-                    tool("linear", "list_issues", "direct", read_only),
-                    tool(
-                        "linear",
-                        "create_issue",
-                        "direct",
-                        Annotations::default(),
-                    ),
-                ],
-                ..ServerRow::default()
-            },
-            ServerRow {
-                name: "git".into(),
-                defined: Defined::Settings,
-                transport: "uvx mcp-server-git".into(),
-                exposure: "codemode".into(),
-                enabled: true,
-                state: Some("connected".into()),
-                tools: vec![
-                    tool("git", "git_status", "codemode", read_only),
-                    tool(
-                        "git",
-                        "git_push",
-                        "hidden",
-                        Annotations {
-                            destructive: Some(true),
-                            ..Annotations::default()
-                        },
-                    ),
-                ],
-                entry: Some(serde_json::json!({
-                    "command": "uvx", "args": ["mcp-server-git"], "exposure": "codemode",
-                    "toolExposure": { "git_push": "hidden" },
-                })),
-                ..ServerRow::default()
-            },
-            ServerRow {
-                name: "browser".into(),
-                defined: Defined::Settings,
-                transport: "npx @playwright/mcp".into(),
-                exposure: "codemode".into(),
-                enabled: true,
-                state: Some("failed".into()),
-                error: Some(
-                    "the environment variable `PLAYWRIGHT_BROWSERS` is not set"
-                        .into(),
-                ),
-                entry: Some(
-                    serde_json::json!({ "command": "npx", "args": ["@playwright/mcp"], "exposure": "codemode" }),
-                ),
-                ..ServerRow::default()
-            },
-        ],
-        pending: vec![PendingRow {
-            name: "db".into(),
-            transport: "./scripts/db-mcp --readonly".into(),
-            entry: serde_json::json!({ "command": "./scripts/db-mcp", "args": ["--readonly"] }),
-            hash: "4f1c…".into(),
-        }],
-        errors: Vec::new(),
-        user_names: ["linear".to_owned()].into(),
-        user_file: Some("~/.config/tau/mcp.json".into()),
-        repo_file: Some("~/Code/cfcosta/tau-agent/.tau/mcp.json".into()),
-    }
-}
-
-/// A repository's plugin data with `rules` as its constitution.
-fn rules_data(
-    rules: Rules,
-) -> std::collections::BTreeMap<String, tau_ui_plugin::PluginValue> {
-    [(
-        tau_constitution::NAME.to_owned(),
-        tau_ui_plugin::PluginValue::typed(rules),
-    )]
-    .into()
-}
-
-/// tau-agent's notes, the ones the mockups show.
-fn tau_agent_memory(note: NoteFn<'_>, link: LinkFn<'_>) -> Memory {
-    Memory {
-        path: "~/.tau/memory".into(),
-        notes: vec![
-            note(
-                "n-0417",
-                "Rotation must drain lanes first",
-                &[
-                    "A connection that is past its deadline can still carry lanes with a response in flight. Retiring it right away breaks their continuation: the next request would name a `previous_response_id` that the new socket has never seen.",
-                    "So the pool marks the connection as draining, sends no new lanes to it, and closes it when its last lane finishes.",
-                    "Jitter on the deadline only moves when draining starts. It does not replace it.",
-                ],
-                vec![
-                    link("n-0212", "how a lane knows what it continues"),
-                    link("n-0433", "jitter moves the deadline"),
-                ],
-                &[
-                    "crates/tau-ai/src/ws/proto/pool.rs",
-                    "crates/tau-ai/src/ws/proto/lane.rs",
-                ],
-                7,
-            ),
-            note(
-                "n-0433",
-                "Spread reconnects with jitter",
-                &[
-                    "Connections opened together expire together unless the deadline moves. A jitter drawn at open time spreads the rotations.",
-                ],
-                vec![link("n-0417", "draining still applies")],
-                &["crates/tau-ai/src/ws/proto/pool.rs"],
-                2,
-            ),
-            note(
-                "n-0212",
-                "Continuation ids are call_id|item_id",
-                &[
-                    "The Responses API needs both halves to resume a tool call. tau-ai joins them with a `|` in the tool call id.",
-                ],
-                vec![],
-                &["crates/tau-ai/src/responses/input.rs"],
-                9,
-            ),
-            note(
-                "n-0301",
-                "16 in flight per connection",
-                &[
-                    "The pool enforces the limit per socket, not per client. Draining sockets still count.",
-                ],
-                vec![link("n-0417", "draining sockets still count")],
-                &["crates/tau-ai/src/ws/proto/pool.rs"],
-                3,
-            ),
-            note(
-                "n-0388",
-                "Retry policy honors server hints",
-                &[
-                    "When the server sends `retry-after`, it wins over our backoff, capped at `max_delay`. The header can be seconds or an HTTP date.",
-                ],
-                vec![link("n-0212", "retries resume the same continuation")],
-                &["crates/tau-ai/src/retry.rs"],
-                4,
-            ),
-            note(
-                "n-0390",
-                "429 vs 503 in the Responses API",
-                &[
-                    "429 means we sent too much; 503 means they are overloaded. Both are retried, and both may carry `retry-after`.",
-                ],
-                vec![link("n-0388", "both carry the hint")],
-                &["crates/tau-ai/src/retry.rs"],
-                2,
-            ),
-            note(
-                "n-0205",
-                "Tests use the fake OpenAI server",
-                &[
-                    "`tau-testing` runs a fake Responses server over WebSocket. Tests never reach the network.",
-                ],
-                vec![],
-                &["crates/tau-testing/src/fake_openai.rs"],
-                11,
-            ),
-            note(
-                "n-0350",
-                "Rewrites force one full resend",
-                &[
-                    "Any edit to the transcript breaks the delta chain once. The next request goes in full, and turns are deltas again after it.",
-                ],
-                vec![link("n-0417", "a resend can land on a draining socket")],
-                &["crates/tau-agent/src/plugin.rs"],
-                5,
-            ),
-        ],
-    }
-}
-
-/// tau-agent's rules.
-fn tau_agent_rules(rule: RuleFn<'_>) -> Rules {
-    Rules {
-        max_holds: 3,
-        blocks_unchecked: false,
-        history: Vec::new(),
-        error: None,
-        rules: vec![
-            rule(
-                "R1",
-                "Never delete outside target/ or rewrite published history.",
-                &["bash.command"],
-                0.30,
-                0.60,
-            ),
-            rule(
-                "R2",
-                "Library code returns errors. No unwrap or expect outside tests.",
-                &["edit.newText", "write.content"],
-                0.30,
-                0.80,
-            ),
-            rule(
-                "R3",
-                "Every sqlx query uses the checked macros.",
-                &["edit.newText", "write.content"],
-                0.40,
-                0.85,
-            ),
-            rule(
-                "R4",
-                "Comments explain why, not what the code does.",
-                &["edit.newText"],
-                0.50,
-                0.90,
-            ),
-            rule(
-                "R5",
-                "No network calls from tests except the fake server.",
-                &["write.content"],
-                0.35,
-                0.80,
-            ),
-            rule(
-                "R6",
-                "The final answer names the tests that ran and their result.",
-                &["final answer"],
-                0.40,
-                0.75,
-            ),
-        ],
     }
 }
 
@@ -3202,20 +2666,16 @@ mod tests {
     use crate::view::{Item, ToolState};
 
     #[test]
-    fn every_demo_screen_has_a_route() {
-        for name in [
-            "run",
-            "history",
-            "memory",
-            "plugins",
-            "constitution",
-            "compare",
-            "plan",
-            "ledger",
-        ] {
-            assert!(route(name).is_some(), "{name}");
+    fn every_demo_screen_has_one_name() {
+        let mut names: Vec<&str> =
+            SCREENS.iter().map(|(name, _)| *name).collect();
+        let listed = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), listed, "a name opens one screen");
+        for name in ["run", "memory", "constitution", "ledger", "pr-opened"] {
+            assert!(names.contains(&name), "{name}");
         }
-        assert!(route("nowhere").is_none());
     }
 
     #[test]
@@ -3280,8 +2740,9 @@ mod tests {
 
     #[test]
     fn catalog_links_point_at_notes_of_their_repository() {
-        let catalog = catalog();
-        let notes = |repo: &Repo| -> Memory {
+        let host = DemoHost::new(&catalog()).unwrap();
+        let catalog = host.catalog(catalog());
+        let notes = |repo: &Repo| -> tau_memory::ui::Notebook {
             serde_json::from_value(
                 repo.plugins[tau_memory::plugin::NAME].json().clone(),
             )

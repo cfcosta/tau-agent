@@ -15,37 +15,16 @@ use tau_ui_plugin::{
     RunKind,
     SavedSettings,
     Services,
-    registry::HostState,
 };
 
 use super::*;
-use crate::plugins::registry;
-
-/// A plugin with its UI, and its state on this host.
-#[derive(Clone)]
-pub(super) struct Hosted {
-    pub plugin: Arc<dyn ErasedPlugin>,
-    pub state: Arc<HostState>,
-}
+use crate::plugins::hosted;
+pub(super) use crate::plugins::hosted::Hosted;
 
 impl Host {
-    /// Makes each plugin's host state; a plugin whose state cannot be
-    /// made is left out, and says why.
+    /// Makes each plugin's host state.
     pub(super) fn host_plugins(&mut self) {
-        let cx = self.host_cx();
-        self.hosted = registry()
-            .plugins()
-            .filter_map(|plugin| match plugin.host(&cx) {
-                Ok(state) => Some(Hosted {
-                    plugin: plugin.clone(),
-                    state: Arc::new(state),
-                }),
-                Err(error) => {
-                    eprintln!("tau-ui: {} is off: {error:#}", plugin.name());
-                    None
-                }
-            })
-            .collect();
+        self.hosted = hosted::host_all(&self.host_cx());
     }
 
     /// What every plugin reaches of this host now.
@@ -216,32 +195,10 @@ impl Host {
     }
 
     /// Each plugin's catalog entry, its data, and its settings.
-    pub(super) fn registered_catalog(
-        &self,
-    ) -> (
-        Vec<PluginInfo>,
-        BTreeMap<String, PluginValue>,
-        BTreeMap<String, PluginValue>,
-    ) {
-        let cx = self.host_cx();
-        let mut plugins = Vec::new();
-        let mut data = BTreeMap::new();
-        let mut settings = BTreeMap::new();
-        for hosted in &self.hosted {
-            let name = hosted.plugin.name().to_owned();
-            let saved = self.plugin_settings(hosted.plugin.as_ref());
-            let info = hosted.plugin.catalog(&hosted.state, &cx, &saved);
-            plugins.push(PluginInfo {
-                name: info.name,
-                description: info.description,
-                seams: info.seams,
-                spend: info.spend,
-                page: info.page,
-            });
-            data.insert(name.clone(), hosted.plugin.data(&hosted.state, &cx));
-            settings.insert(name, saved);
-        }
-        (plugins, data, settings)
+    pub(super) fn registered_catalog(&self) -> hosted::Catalogued {
+        hosted::catalog(&self.hosted, &self.host_cx(), |plugin| {
+            self.plugin_settings(plugin)
+        })
     }
 
     /// Each plugin's data for the repository in `slot`.
@@ -249,17 +206,7 @@ impl Host {
         &self,
         slot: &RepoSlot,
     ) -> BTreeMap<String, PluginValue> {
-        let cx = self.host_cx();
-        let repo = self.repo_ctx(slot);
-        self.hosted
-            .iter()
-            .map(|hosted| {
-                (
-                    hosted.plugin.name().to_owned(),
-                    hosted.plugin.repo_data(&hosted.state, &repo, &cx),
-                )
-            })
-            .collect()
+        hosted::repo_data(&self.hosted, &self.repo_ctx(slot), &self.host_cx())
     }
 
     /// Carries out what `plugin`'s UI asked; its answer, if any, goes
@@ -269,12 +216,7 @@ impl Host {
         plugin: &str,
         action: Value,
     ) -> anyhow::Result<Option<Value>> {
-        let hosted = self
-            .hosted
-            .iter()
-            .find(|hosted| hosted.plugin.name() == plugin)
-            .ok_or_else(|| anyhow::anyhow!("No plugin {plugin} here"))?;
-        hosted.plugin.act(&hosted.state, action, &self.host_cx())
+        hosted::act(&self.hosted, plugin, action, &self.host_cx())
     }
 
     /// Saves `plugin`'s settings with the model settings; runs started

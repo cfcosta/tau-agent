@@ -211,7 +211,11 @@ impl Workspace {
     /// not even ctrl+k to open search again.
     /// Gives the keys where a plugin asked, unless the person is writing
     /// in the composer.
-    pub(super) fn plugin_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn plugin_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let composer = self.composer.read(cx);
         let writing = composer.focus_handle(cx).is_focused(window)
             && !composer.text().trim().is_empty();
@@ -222,7 +226,11 @@ impl Workspace {
         }
     }
 
-    pub(super) fn release_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn release_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let stranded = (!self.searching
             && self.search.read(cx).focus_handle(cx).is_focused(window))
             || (self.picker.is_none()
@@ -432,7 +440,11 @@ impl Workspace {
             })
     }
 
-    pub(super) fn inspector(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn inspector(
+        &self,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let run = self.current();
         div()
             .flex_1()
@@ -635,7 +647,11 @@ impl Workspace {
         }
     }
 
-    pub(super) fn phone(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn phone(
+        &self,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         if self.route.is_focused() {
             return self.focused(true, t, cx);
         }

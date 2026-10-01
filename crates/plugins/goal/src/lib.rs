@@ -16,6 +16,8 @@
 //!   (pause, resume, extend, clear): the plugin reads its records again
 //!   at each check.
 
+#[cfg(feature = "demo")]
+pub mod demo;
 pub mod ui;
 
 use std::collections::VecDeque;

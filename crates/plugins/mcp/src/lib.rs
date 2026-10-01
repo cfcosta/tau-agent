@@ -23,6 +23,8 @@ pub mod results;
 
 mod client;
 pub mod connection;
+#[cfg(feature = "demo")]
+pub mod demo;
 mod plugin;
 pub mod pool;
 pub mod prompts;

@@ -6,6 +6,10 @@ edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The goals tau-ui's demo shows.
+demo = []
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

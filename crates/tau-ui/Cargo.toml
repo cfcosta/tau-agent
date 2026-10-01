@@ -9,7 +9,6 @@ publish.workspace = true
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
-tempfile.workspace = true
 tau-testing.workspace = true
 
 [dependencies]
@@ -23,12 +22,12 @@ tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
 tau-codemode.workspace = true
 tau-compaction.workspace = true
-tau-constitution.workspace = true
+tau-constitution = { workspace = true, features = ["demo"] }
 tau-ask.workspace = true
-tau-goal.workspace = true
+tau-goal = { workspace = true, features = ["demo"] }
 tau-jev.workspace = true
-tau-mcp.workspace = true
-tau-memory = { workspace = true, features = ["docbert"] }
+tau-mcp = { workspace = true, features = ["demo"] }
+tau-memory = { workspace = true, features = ["docbert", "demo"] }
 tau-reasoning.workspace = true
 tau-remote.workspace = true
 tau-fast-compaction.workspace = true
@@ -50,6 +49,8 @@ unicode-segmentation = "1.12.0"
 if-addrs.workspace = true
 libc.workspace = true
 qrcode.workspace = true
+# Where the demo's plugins keep their files.
+tempfile.workspace = true
 
 # The desktop's windows. A phone build brings its own platform
 # (gpui-pre-mobile), and this crate has none for Android.

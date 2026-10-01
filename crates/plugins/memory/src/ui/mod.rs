@@ -526,6 +526,6 @@ impl PluginUi for page::Ui {
 
 /// Where a repository's notes are kept: in tau's directory for it,
 /// beside its rules, out of the repository's history.
-fn repo_dir(repo: &RepoCtx) -> PathBuf {
+pub(crate) fn repo_dir(repo: &RepoCtx) -> PathBuf {
     repo.dir.join("memory")
 }

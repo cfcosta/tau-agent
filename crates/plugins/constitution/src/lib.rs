@@ -25,6 +25,8 @@
 //!   tool call, in runs already going too.
 
 pub mod db;
+#[cfg(feature = "demo")]
+pub mod demo;
 pub mod rules;
 pub mod ui;
 
