@@ -1,0 +1,981 @@
+//! Updating a project while its main chat commits on trunk
+//! (`docs/reference/vcs.md`, "Projects" and "A repository's main chat").
+//!
+//! A Git checkout is changed by drawn `git` commands: commits, amends,
+//! resets, branches made, moved, renamed and deleted, a new `HEAD`,
+//! tags, packed refs and `git gc`. The project is made from it as a
+//! checkout, a linked worktree, a bare repository or a remote reached
+//! through a `file://` URL, and is updated from it again and again. The
+//! main chat commits on trunk and catches up between updates, and chats
+//! sit on the trunk as it was.
+//!
+//! The oracles are `git`, for the source's branches, tags and `HEAD`,
+//! and a model of what the main chat moved: a bookmark it moved stays
+//! where it put it until upstream moves it too, and trunk then takes
+//! upstream's.
+//!
+//! Two cases the reference leaves open are pinned as ignored tests at
+//! the end, and the model steps around them: the main chat does not
+//! catch up once upstream dropped what it stands on, and a bookmark it
+//! moved that upstream then moved or deleted, not trunk's, may keep two
+//! targets.
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+use hegel::{Generator as _, TestCase, generators as gs};
+use tau_testing::block_on;
+use tau_vcs::{
+    DEFAULT_WORKSPACE,
+    Identity,
+    Link,
+    Project,
+    UpdateFrom,
+    Vcs,
+    clone_bare,
+};
+
+const BRANCHES: [&str; 5] = ["main", "master", "trunk", "feature", "feat/x"];
+const TAGS: [&str; 2] = ["v1", "v2"];
+/// jj's root commit, in a Git-backed repository.
+const ROOT: &str = "0000000000000000000000000000000000000000";
+
+fn run_git(dir: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(["-c", "init.defaultBranch=main", "-c", "gc.auto=0"])
+        .args(["-c", "protocol.file.allow=always"])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap()
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = run_git(dir, args);
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// The refs under `prefix` in the repository at `dir`, by short name.
+fn refs(dir: &Path, prefix: &str) -> BTreeMap<String, String> {
+    let format = "--format=%(refname) %(objectname)";
+    git(dir, &["for-each-ref", format, prefix])
+        .lines()
+        .map(|line| {
+            let (name, id) = line.split_once(' ').unwrap();
+            (name.strip_prefix(prefix).unwrap().to_owned(), id.to_owned())
+        })
+        .collect()
+}
+
+/// The branch `HEAD` names in the Git directory `git_dir`, if any.
+fn head_branch(git_dir: &Path) -> Option<String> {
+    std::fs::read_to_string(git_dir.join("HEAD"))
+        .unwrap()
+        .trim()
+        .strip_prefix("ref: refs/heads/")
+        .map(str::to_owned)
+}
+
+/// Where the project comes from.
+#[derive(Debug, Clone, Copy, PartialEq, hegel::PrettyPrintable)]
+enum Kind {
+    /// The checkout itself, with a `core.worktree` key in its config.
+    Checkout,
+    /// A linked worktree of the checkout, on a detached `HEAD`.
+    Worktree,
+    /// A bare repository the checkout pushes to.
+    Bare,
+    /// A clone of that bare repository, updated over a `file://` URL.
+    Remote,
+}
+
+/// Something done to the checkout.
+#[derive(Debug, Clone, hegel::PrettyPrintable)]
+enum Op {
+    /// A commit on whatever `HEAD` is, rewriting `f.txt`.
+    Commit,
+    /// `HEAD`'s commit replaced by another on the same parent.
+    Amend,
+    /// `HEAD` moved back by one commit.
+    Reset,
+    /// A branch at `HEAD`.
+    Branch(String),
+    Checkout(String),
+    Detach,
+    Delete(String),
+    /// `git branch -m`: `HEAD` follows when it names the branch.
+    Rename(String, String),
+    /// A branch moved to another's commit.
+    Move(String, String),
+    Tag(String, bool),
+    DeleteTag(String),
+    PackRefs,
+    /// `git gc` that prunes what no ref reaches.
+    Gc,
+    /// Every object in one new pack with a multi-pack index, and the
+    /// loose ones and old packs gone.
+    Repack,
+}
+
+#[hegel::composite]
+fn op(tc: &TestCase) -> Op {
+    let branch = || gs::sampled_from(BRANCHES.to_vec()).map(String::from);
+    let tag = || gs::sampled_from(TAGS.to_vec()).map(String::from);
+    match tc.draw(gs::integers::<u8>().max_value(15)) {
+        0..=2 => Op::Commit,
+        3 => Op::Amend,
+        4 => Op::Reset,
+        5 | 6 => Op::Branch(tc.draw(branch())),
+        7 => Op::Checkout(tc.draw(branch())),
+        8 => Op::Detach,
+        9 | 10 => Op::Delete(tc.draw(branch())),
+        11 => Op::Rename(tc.draw(branch()), tc.draw(branch())),
+        12 => Op::Move(tc.draw(branch()), tc.draw(branch())),
+        13 => Op::Tag(tc.draw(tag()), tc.draw(gs::booleans())),
+        14 => Op::DeleteTag(tc.draw(tag())),
+        _ => tc.draw(gs::sampled_from(vec![Op::PackRefs, Op::Gc, Op::Repack])),
+    }
+}
+
+/// One of the main chat's own commits.
+#[derive(Debug, Clone)]
+struct Own {
+    change_id: String,
+    file: String,
+}
+
+/// A chat, standing on trunk as it was when it started.
+#[derive(Debug, Clone)]
+struct Chat {
+    name: String,
+    commit_id: String,
+    change_id: String,
+    wc: String,
+    file: String,
+}
+
+struct Machine {
+    home: tempfile::TempDir,
+    kind: Kind,
+    /// The checkout the drawn commands change.
+    work: PathBuf,
+    project: Project,
+    main: Vcs,
+    /// Commits made in the checkout, for distinct contents.
+    commits: usize,
+    /// The source's branches as the last import or update saw them.
+    imported: BTreeMap<String, String>,
+    /// Bookmarks the main chat moved since upstream last moved them:
+    /// where it put them.
+    local: BTreeMap<String, String>,
+    /// Bookmarks left with two targets: the main chat moved them, and
+    /// upstream moved or deleted them, and they are not trunk's.
+    conflicted: BTreeSet<String>,
+    /// The main chat's own commits, oldest first. None is pushed, so
+    /// upstream never has them.
+    own: Vec<Own>,
+    /// The upstream commit the main chat's commits (or its `@`) stand
+    /// on; the root commit before its first catch-up.
+    base: String,
+    /// Trunk, as the project should report it.
+    trunk: String,
+    chats: Vec<Chat>,
+    /// The checkout changed since the last update.
+    dirty: bool,
+}
+
+impl Machine {
+    fn new(tc: &TestCase) -> Self {
+        let kind = tc.draw(gs::sampled_from(vec![
+            Kind::Checkout,
+            Kind::Worktree,
+            Kind::Bare,
+            Kind::Remote,
+        ]));
+        tc.event(match kind {
+            Kind::Checkout => "from a checkout",
+            Kind::Worktree => "from a linked worktree",
+            Kind::Bare => "from a bare repository",
+            Kind::Remote => "from a remote",
+        });
+        let initial = tc.draw(gs::sampled_from(BRANCHES.to_vec()));
+        let home = tempfile::tempdir().unwrap();
+        let work = home.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        git(&work, &["init", "--quiet", "-b", initial]);
+        std::fs::write(work.join("f.txt"), "0\n").unwrap();
+        git(&work, &["add", "-A"]);
+        git(&work, &["commit", "--quiet", "-m", "first"]);
+        let source = match kind {
+            Kind::Checkout => {
+                let path = work.to_str().unwrap();
+                git(&work, &["config", "core.worktree", path]);
+                work.clone()
+            }
+            Kind::Worktree => {
+                git(
+                    &work,
+                    &["worktree", "add", "--quiet", "--detach", "../wt"],
+                );
+                home.path().join("wt")
+            }
+            Kind::Bare | Kind::Remote => {
+                let bare = home.path().join("bare.git");
+                std::fs::create_dir_all(&bare).unwrap();
+                git(&bare, &["init", "--quiet", "--bare"]);
+                // The checkout's pushes may delete the branch `HEAD`
+                // names; the next push sets `HEAD` again.
+                git(&bare, &["config", "receive.denyDeleteCurrent", "ignore"]);
+                home.path().join("bare.git")
+            }
+        };
+        publish(kind, &work, &home.path().join("bare.git"));
+        let from = match kind {
+            Kind::Remote => {
+                let clone = home.path().join("clone.git");
+                clone_bare(&url(home.path()), None, &clone).unwrap();
+                clone
+            }
+            _ => source,
+        };
+        let project = Project::import(
+            from.to_str().unwrap(),
+            home.path().join("p"),
+            Identity::default(),
+        )
+        .unwrap();
+        let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+        let main = Vcs::open(&dir, Identity::default()).unwrap();
+        let mut machine = Self {
+            home,
+            kind,
+            work,
+            project,
+            main,
+            commits: 0,
+            imported: BTreeMap::new(),
+            local: BTreeMap::new(),
+            conflicted: BTreeSet::new(),
+            own: Vec::new(),
+            base: ROOT.to_owned(),
+            trunk: ROOT.to_owned(),
+            chats: Vec::new(),
+            dirty: false,
+        };
+        machine.imported = machine.branches();
+        machine.trunk = machine.want_trunk().1;
+        machine.check_mirror();
+        machine
+    }
+
+    /// The Git directory the project mirrors.
+    fn source_git(&self) -> PathBuf {
+        match self.kind {
+            Kind::Checkout | Kind::Worktree => self.work.join(".git"),
+            Kind::Bare | Kind::Remote => self.home.path().join("bare.git"),
+        }
+    }
+
+    /// The source's branches, as `git` reports them.
+    fn branches(&self) -> BTreeMap<String, String> {
+        refs(&self.source_git(), "refs/heads/")
+    }
+
+    /// The bookmarks the project should have, but for `tau/` ones: the
+    /// source's branches, with the main chat's moves on top.
+    fn want_bookmarks(&self) -> BTreeMap<String, Option<String>> {
+        let mut want: BTreeMap<String, Option<String>> = self
+            .branches()
+            .into_iter()
+            .map(|(name, id)| (name, Some(id)))
+            .collect();
+        for (name, id) in &self.local {
+            want.insert(name.clone(), Some(id.clone()));
+        }
+        for name in &self.conflicted {
+            want.insert(name.clone(), None);
+        }
+        want
+    }
+
+    /// Trunk's name and commit, by the reference's rule: the branch
+    /// `HEAD` names, else `main`, `master` or `trunk`, whichever is a
+    /// bookmark with one target; else the root commit, named after
+    /// `HEAD`'s branch or `main`.
+    fn want_trunk(&self) -> (String, String) {
+        let bookmarks = self.want_bookmarks();
+        let head = head_branch(&self.source_git());
+        head.iter()
+            .cloned()
+            .chain(["main", "master", "trunk"].map(String::from))
+            .find_map(|name| {
+                let id = bookmarks.get(&name)?.clone()?;
+                Some((name, id))
+            })
+            .unwrap_or_else(|| {
+                (head.unwrap_or_else(|| "main".to_owned()), ROOT.to_owned())
+            })
+    }
+
+    /// The project's Git store has the source's branches, tags and
+    /// `HEAD`, and the project its bookmarks and trunk.
+    fn check_mirror(&self) {
+        let store = self.project.root().join("git");
+        let source = self.source_git();
+        assert_eq!(
+            refs(&store, "refs/heads/"),
+            self.branches(),
+            "the Git store's branches"
+        );
+        assert_eq!(
+            refs(&store, "refs/tags/"),
+            refs(&source, "refs/tags/"),
+            "the Git store's tags"
+        );
+        assert_eq!(
+            self.project.default_branch(),
+            head_branch(&source),
+            "the default branch"
+        );
+        let got: BTreeMap<String, Option<String>> = self
+            .project
+            .bookmarks("")
+            .unwrap()
+            .into_iter()
+            .filter(|name| !name.starts_with("tau/"))
+            .map(|name| {
+                let id = self.project.bookmark(&name).unwrap();
+                (name, id)
+            })
+            .collect();
+        assert_eq!(got, self.want_bookmarks(), "bookmarks");
+        let (name, id) = self.want_trunk();
+        assert_eq!(self.project.trunk_name().unwrap(), name, "trunk's name");
+        assert_eq!(self.project.trunk().unwrap(), id, "trunk");
+        // Every branch's files are readable at its commit.
+        for id in self.branches().values() {
+            let want = git(&source, &["show", &format!("{id}:f.txt")]);
+            let (got, _) = self.project.file_at(id, "f.txt").unwrap().unwrap();
+            assert_eq!(String::from_utf8(got).unwrap().trim(), want);
+        }
+    }
+
+    /// Where the change `change_id` is now: one visible commit.
+    fn now(&self, change_id: &str) -> String {
+        let link = Link {
+            turn: 0,
+            workspace: String::new(),
+            commit_id: String::new(),
+            change_id: change_id.to_owned(),
+            changed: false,
+            from: None,
+            snapshot: false,
+        };
+        let now = self.project.current([link]).unwrap().remove(0);
+        assert!(!now.commit_id.is_empty(), "change {change_id} is gone");
+        now.commit_id
+    }
+
+    /// Whether `ancestor` is an ancestor of `of`, as `git` says in the
+    /// project's store.
+    fn git_ancestor(&self, ancestor: &str, of: &str) -> bool {
+        if ancestor == ROOT {
+            return true;
+        }
+        if of == ROOT {
+            return false;
+        }
+        let store = self.project.root().join("git");
+        run_git(&store, &["merge-base", "--is-ancestor", ancestor, of])
+            .status
+            .success()
+    }
+
+    /// Whether upstream dropped what the main chat stands on: its base
+    /// is no longer under trunk.
+    fn base_dropped(&self) -> bool {
+        !self.git_ancestor(&self.base, &self.trunk)
+            && !self.own_ancestor_of_trunk()
+    }
+
+    /// Trunk is the main chat's newest commit.
+    fn own_ancestor_of_trunk(&self) -> bool {
+        self.own
+            .last()
+            .is_some_and(|own| self.now(&own.change_id) == self.trunk)
+    }
+
+    fn do_op(&mut self, tc: &TestCase, op: &Op) {
+        let work = self.work.clone();
+        let branches = refs(&work.join(".git"), "refs/heads/");
+        let current = head_branch(&work.join(".git"));
+        let tags = refs(&work.join(".git"), "refs/tags/");
+        let write = |me: &mut Self| {
+            me.commits += 1;
+            std::fs::write(work.join("f.txt"), format!("{}\n", me.commits))
+                .unwrap();
+            git(&work, &["add", "-A"]);
+        };
+        match op {
+            Op::Commit => {
+                write(self);
+                git(&work, &["commit", "--quiet", "-m", "upstream"]);
+            }
+            Op::Amend => {
+                write(self);
+                git(&work, &["commit", "--quiet", "--amend", "-m", "amended"]);
+                tc.event("upstream amends");
+            }
+            Op::Reset
+                if run_git(
+                    &work,
+                    &["rev-parse", "--verify", "-q", "HEAD~1"],
+                )
+                .status
+                .success() =>
+            {
+                git(&work, &["reset", "--quiet", "--hard", "HEAD~1"]);
+                tc.event("upstream resets back");
+            }
+            Op::Branch(name) if !branches.contains_key(name) => {
+                if branches.keys().any(|b| {
+                    b.starts_with(&format!("{name}/"))
+                        || name.starts_with(&format!("{b}/"))
+                }) {
+                    return;
+                }
+                git(&work, &["branch", name]);
+            }
+            Op::Checkout(name) if branches.contains_key(name) => {
+                git(&work, &["checkout", "--quiet", name]);
+            }
+            Op::Detach => {
+                git(&work, &["checkout", "--quiet", "--detach"]);
+            }
+            Op::Delete(name)
+                if branches.contains_key(name)
+                    && current.as_ref() != Some(name) =>
+            {
+                git(&work, &["branch", "--quiet", "-D", name]);
+                tc.event("upstream deletes a branch");
+            }
+            Op::Rename(from, to)
+                if branches.contains_key(from)
+                    && !branches.contains_key(to)
+                    && !branches.keys().any(|b| {
+                        b != from
+                            && (b.starts_with(&format!("{to}/"))
+                                || to.starts_with(&format!("{b}/")))
+                    })
+                    && !(to.starts_with(&format!("{from}/"))
+                        || from.starts_with(&format!("{to}/"))) =>
+            {
+                git(&work, &["branch", "--quiet", "-m", from, to]);
+                tc.event("upstream renames a branch");
+            }
+            Op::Move(name, to)
+                if branches.contains_key(name)
+                    && branches.contains_key(to)
+                    && current.as_ref() != Some(name) =>
+            {
+                git(&work, &["branch", "--quiet", "-f", name, to]);
+            }
+            Op::Tag(name, annotated) if !tags.contains_key(name) => {
+                if *annotated {
+                    git(&work, &["tag", "-a", "-m", "tag", name]);
+                } else {
+                    git(&work, &["tag", name]);
+                }
+            }
+            Op::DeleteTag(name) if tags.contains_key(name) => {
+                git(&work, &["tag", "-d", name]);
+            }
+            Op::PackRefs => {
+                git(&work, &["pack-refs", "--all"]);
+            }
+            Op::Gc => {
+                git(&work, &["reflog", "expire", "--expire=now", "--all"]);
+                git(&work, &["gc", "--quiet", "--prune=now"]);
+                tc.event("upstream collects garbage");
+            }
+            Op::Repack => {
+                git(&work, &["repack", "--quiet", "-a", "-d", "--write-midx"]);
+                git(&work, &["prune", "--expire=now"]);
+                tc.event("upstream repacks with a multi-pack index");
+            }
+            _ => return,
+        }
+        self.dirty = true;
+    }
+
+    /// `Project::update`, against the model.
+    fn do_update(&mut self, tc: &TestCase) {
+        publish(self.kind, &self.work, &self.home.path().join("bare.git"));
+        let from = match self.kind {
+            Kind::Remote => None,
+            Kind::Checkout => Some(self.work.clone()),
+            Kind::Worktree => Some(self.home.path().join("wt")),
+            Kind::Bare => Some(self.source_git()),
+        };
+        let url = url(self.home.path());
+        let before = self.trunk.clone();
+        let updated = match &from {
+            Some(path) => self.project.update(UpdateFrom::Checkout(path)),
+            None => self.project.update(UpdateFrom::Remote {
+                url: &url,
+                token: None,
+            }),
+        }
+        .unwrap();
+        if !self.dirty {
+            tc.event("an update with nothing new");
+        }
+
+        // jj's import: a bookmark the main chat moved stays where it put
+        // it while upstream leaves it; once upstream moves it too, trunk's
+        // takes upstream's, and any other keeps both targets.
+        let now = self.branches();
+        let head = head_branch(&self.source_git());
+        for (name, id) in std::mem::take(&mut self.local) {
+            let base = self.imported.get(&name);
+            let new = now.get(&name);
+            if new == base {
+                self.local.insert(name, id);
+            } else if new != Some(&id) {
+                tc.event("an update under the main chat's commits");
+                self.conflicted.insert(name);
+            }
+        }
+        // Trunk's bookmark takes upstream's side: the first of the
+        // default branch, `main`, `master` and `trunk` that is a
+        // bookmark.
+        let trunk_name = head
+            .iter()
+            .cloned()
+            .chain(["main", "master", "trunk"].map(String::from))
+            .find(|name| {
+                now.contains_key(name)
+                    || self.local.contains_key(name)
+                    || self.conflicted.contains(name)
+            });
+        if let Some(name) = trunk_name
+            && now.contains_key(&name)
+            && self.conflicted.remove(&name)
+        {
+            tc.event("trunk takes upstream's side");
+        }
+        // A conflicted bookmark upstream no longer has, or not trunk's.
+        // These are questions: see
+        // `a_bookmark_the_main_chat_moved_keeps_two_targets`.
+        for name in &self.conflicted {
+            if !now.contains_key(name) {
+                tc.event("a moved bookmark upstream deleted stays conflicted");
+            } else {
+                tc.event("a moved bookmark that is not trunk stays conflicted");
+            }
+        }
+        self.imported = now;
+        let (_, trunk) = self.want_trunk();
+        self.trunk = trunk;
+        assert_eq!(updated.before, before, "Updated::before");
+        assert_eq!(updated.after, self.trunk, "Updated::after");
+        if updated.changed() {
+            tc.event("an update moves trunk");
+        }
+        if head.is_none() {
+            tc.event("an update from a detached HEAD");
+        }
+        if self.trunk == ROOT {
+            tc.event("an update leaves no trunk branch");
+        }
+        self.dirty = false;
+        self.check_mirror();
+        // Chats stay as they were.
+        for chat in &self.chats {
+            assert_eq!(
+                self.project
+                    .bookmark(&format!("tau/{}", chat.name))
+                    .unwrap(),
+                Some(chat.commit_id.clone()),
+                "an update moved {}",
+                chat.name
+            );
+            assert_eq!(
+                self.project.workspace_head(&chat.name).unwrap(),
+                Some(chat.wc.clone())
+            );
+        }
+    }
+
+    /// The host's catch-up before a main chat's turn: its commits and
+    /// `@` move onto trunk's head. Skipped when upstream dropped what it
+    /// stands on: see
+    /// `a_catch_up_brings_back_what_upstream_dropped`.
+    fn do_catch_up(&mut self, tc: &TestCase) -> bool {
+        if self.base_dropped() {
+            tc.event("upstream dropped the main chat's base");
+            return false;
+        }
+        let name = self.project.trunk_name().unwrap();
+        let trunk = self.trunk.clone();
+        let ahead = self.own_ancestor_of_trunk();
+        let old: BTreeMap<String, String> = self
+            .own
+            .iter()
+            .map(|own| (self.now(&own.change_id), own.change_id.clone()))
+            .collect();
+        let moved =
+            block_on(self.main.move_onto(trunk.clone(), name.clone(), true))
+                .unwrap();
+        let ids: Vec<&str> =
+            moved.changes.iter().map(|c| c.change_id.as_str()).collect();
+        let want: Vec<&str> = if ahead {
+            Vec::new()
+        } else {
+            self.own
+                .iter()
+                .rev()
+                .map(|o| o.change_id.as_str())
+                .collect()
+        };
+        assert_eq!(ids, want, "the catch-up moves the main chat's commits");
+        assert!(moved.conflicts.is_empty(), "{moved:?}");
+        if !want.is_empty() {
+            tc.event("a catch-up restacks the main chat's commits");
+        }
+        if let Some(oldest) = self.own.first()
+            && !ahead
+        {
+            let first = self.now(&oldest.change_id);
+            assert_eq!(
+                self.project.parent_of(&first).unwrap(),
+                (trunk != ROOT).then(|| trunk.clone()),
+                "the main chat's commits go on top of trunk"
+            );
+        }
+        if !ahead {
+            self.base = trunk.clone();
+        }
+        // jj moves bookmarks with the commits they name.
+        for id in self.local.values_mut() {
+            if let Some(change) = old.get(id) {
+                let link = Link {
+                    turn: 0,
+                    workspace: String::new(),
+                    commit_id: id.clone(),
+                    change_id: change.clone(),
+                    changed: false,
+                    from: None,
+                    snapshot: false,
+                };
+                *id = self.project.current([link]).unwrap().remove(0).commit_id;
+            }
+        }
+        let head = moved.head.clone();
+        if self.imported.get(&name) != Some(&head) && head != ROOT {
+            self.conflicted.remove(&name);
+            self.local.insert(name, head.clone());
+        }
+        self.trunk = head;
+        assert_eq!(self.project.trunk().unwrap(), self.trunk);
+        // jj settles a bookmark with two targets once one of them
+        // descends from the other, as the catch-up's rewrite of the main
+        // chat's side can make it. Which side wins is not the
+        // reference's to say: the model takes the project's word.
+        for name in std::mem::take(&mut self.conflicted) {
+            match self.project.bookmark(&name).unwrap() {
+                None => {
+                    self.conflicted.insert(name);
+                }
+                Some(id) => {
+                    tc.event("a catch-up settles a conflicted bookmark");
+                    if self.imported.get(&name) != Some(&id) {
+                        self.local.insert(name, id);
+                    }
+                }
+            }
+        }
+        // A chat on a commit the catch-up rewrote moves with it.
+        for i in 0..self.chats.len() {
+            let now = self.now(&self.chats[i].change_id);
+            if now != self.chats[i].commit_id {
+                tc.event("a catch-up moves a chat");
+                let wc = self.project.workspace_head(&self.chats[i].name);
+                self.chats[i].wc = wc.unwrap().unwrap();
+                self.chats[i].commit_id = now;
+            }
+        }
+        true
+    }
+
+    fn check_own(&self) {
+        // The main chat's commits stay, each one visible, with its file.
+        for own in &self.own {
+            let at = self.now(&own.change_id);
+            assert!(
+                self.project.file_at(&at, &own.file).unwrap().is_some(),
+                "{own:?} lost its file"
+            );
+        }
+        for chat in &self.chats {
+            let at = self.now(&chat.change_id);
+            assert!(self.project.file_at(&at, &chat.file).unwrap().is_some());
+        }
+    }
+}
+
+/// The bare repository's URL.
+fn url(home: &Path) -> String {
+    format!("file://{}", home.join("bare.git").display())
+}
+
+/// Copies the checkout's refs and `HEAD` to the bare repository, for
+/// the kinds that have one.
+fn publish(kind: Kind, work: &Path, bare: &Path) {
+    if !matches!(kind, Kind::Bare | Kind::Remote) {
+        return;
+    }
+    let to = bare.to_str().unwrap();
+    git(work, &["push", "--quiet", "--mirror", "--force", to]);
+    match head_branch(&work.join(".git")) {
+        Some(name) => {
+            git(
+                bare,
+                &["symbolic-ref", "HEAD", &format!("refs/heads/{name}")],
+            );
+        }
+        None => {
+            // A detached `HEAD` needs its commit there, under a ref that
+            // is neither a branch nor a tag.
+            git(
+                work,
+                &["push", "--quiet", "--force", to, "HEAD:refs/keep/head"],
+            );
+            let id = git(work, &["rev-parse", "HEAD"]);
+            git(bare, &["update-ref", "--no-deref", "HEAD", &id]);
+        }
+    }
+}
+
+#[hegel::state_machine]
+impl Machine {
+    /// Upstream moves on: a few commands in the checkout.
+    #[rule(weight = 3)]
+    fn upstream(&mut self, tc: TestCase) {
+        let ops = tc.draw(gs::vecs(op()).min_size(1).max_size(4));
+        for op in &ops {
+            self.do_op(&tc, op);
+        }
+    }
+
+    #[rule(weight = 3)]
+    fn update(&mut self, tc: TestCase) {
+        self.do_update(&tc);
+    }
+
+    /// The main chat's turn: it catches up, then commits a file of its
+    /// own on trunk.
+    #[rule(weight = 3)]
+    fn main_commit(&mut self, tc: TestCase) {
+        if !self.do_catch_up(&tc) {
+            return;
+        }
+        let name = self.project.trunk_name().unwrap();
+        let file = format!("m{}.txt", self.own.len());
+        let dir = self.project.workspace_dir(DEFAULT_WORKSPACE);
+        std::fs::write(dir.join(&file), "ours\n").unwrap();
+        let before = self.trunk.clone();
+        let committed =
+            block_on(self.main.commit_all("ours", name.clone())).unwrap();
+        assert!(committed.changed);
+        assert_eq!(
+            self.project.parent_of(&committed.commit_id).unwrap(),
+            (before != ROOT).then_some(before)
+        );
+        self.own.push(Own {
+            change_id: committed.change_id,
+            file,
+        });
+        self.local.insert(name.clone(), committed.commit_id.clone());
+        self.conflicted.remove(&name);
+        self.trunk = committed.commit_id;
+        tc.event("the main chat commits");
+    }
+
+    #[rule]
+    fn catch_up(&mut self, tc: TestCase) {
+        self.do_catch_up(&tc);
+    }
+
+    /// A chat starts on trunk and commits.
+    #[rule]
+    fn chat(&mut self, tc: TestCase) {
+        if self.chats.len() >= 2 {
+            return;
+        }
+        let name = format!("chat{}", self.chats.len());
+        let vcs = self.project.add_workspace(&name, &self.trunk).unwrap();
+        let file = format!("{name}.txt");
+        std::fs::write(self.project.workspace_dir(&name).join(&file), "c\n")
+            .unwrap();
+        let committed =
+            block_on(vcs.commit_all("chat", format!("tau/{name}"))).unwrap();
+        let wc = self.project.workspace_head(&name).unwrap().unwrap();
+        self.chats.push(Chat {
+            name,
+            commit_id: committed.commit_id,
+            change_id: committed.change_id,
+            wc,
+            file,
+        });
+        tc.event("a chat on trunk as it was");
+    }
+
+    #[invariant(always_run)]
+    fn the_project_follows(&self, tc: TestCase) {
+        tc.event_value("main chat commits", self.own.len() as f64);
+        assert_eq!(self.project.trunk().unwrap(), self.trunk, "trunk");
+        self.check_own();
+    }
+}
+
+/// Updates, history rewrites, main chat commits and catch-ups against
+/// the model, from each kind of source.
+#[hegel::test(
+    test_cases = 40,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
+fn updates_follow_the_source(tc: TestCase) {
+    let machine = Machine::new(&tc);
+    hegel::stateful::machine(machine).steps(30).run(tc);
+}
+
+#[hegel::test(
+    profile = "nightly_slow",
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
+#[ignore = "nightly"]
+fn updates_follow_the_source_nightly(tc: TestCase) {
+    let machine = Machine::new(&tc);
+    hegel::stateful::machine(machine).steps(40).run(tc);
+}
+
+/// A checkout with one commit on `main`, writing `f.txt`, and a
+/// project made from it whose main chat has caught up with trunk.
+fn caught_up() -> (tempfile::TempDir, PathBuf, Project, Vcs) {
+    let home = tempfile::tempdir().unwrap();
+    let work = home.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["init", "--quiet"]);
+    std::fs::write(work.join("f.txt"), "0\n").unwrap();
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "--quiet", "-m", "first"]);
+    let project = Project::import(
+        work.to_str().unwrap(),
+        home.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    let trunk = project.trunk().unwrap();
+    block_on(main.move_onto(trunk, project.trunk_name().unwrap(), true))
+        .unwrap();
+    (home, work, project, main)
+}
+
+/// Upstream drops a commit the main chat stands on (a reset here; an
+/// amend or a force-push does the same), and the main chat has no
+/// commit of its own. Its catch-up should leave trunk where upstream
+/// has it.
+///
+/// It does not: `move_onto` moves what `@` has that trunk lacks
+/// (`land.rs`, `rebase_run`), and the dropped commit is one of those.
+/// It goes back on top of trunk, and trunk's bookmark with it, so the
+/// project's trunk holds a commit upstream deleted. After an amend, the
+/// old commit lands on its own rewrite and conflicts. A chat standing
+/// on the dropped commit is dragged along too.
+///
+/// The reference is silent: "its commits that upstream lacks go on
+/// top" does not say whether upstream's own dropped commits count.
+/// Options:
+///
+/// 1. Move only the main chat's own commits: those `@` has that the
+///    trunk it last caught up with lacks, rebased onto the new trunk
+///    (`jj rebase -s` from the oldest of them). What upstream dropped
+///    stays dropped. Needs the base it last caught up with, which the
+///    host or the bookmark's history can give.
+/// 2. Import with `abandon_unreachable_commits` on, as `jj git fetch`
+///    does: commits no ref reaches any more are abandoned, and what
+///    stands on them is rebased onto their parents. Chats on old trunk
+///    commits would be rebased by an update, which the reference says
+///    keeps them as they are.
+/// 3. Keep it, and say in the reference that rewritten upstream
+///    history comes back on top of trunk.
+///
+/// Option 1 keeps upstream's history as upstream has it and runs
+/// untouched by updates.
+#[test]
+#[ignore = "bug: a catch-up brings back commits upstream dropped"]
+fn a_catch_up_brings_back_what_upstream_dropped() {
+    let (_home, work, project, main) = caught_up();
+    std::fs::write(work.join("f.txt"), "1\n").unwrap();
+    git(&work, &["commit", "--quiet", "-am", "second"]);
+    project.update(UpdateFrom::Checkout(&work)).unwrap();
+    let name = project.trunk_name().unwrap();
+    block_on(main.move_onto(project.trunk().unwrap(), name.clone(), true))
+        .unwrap();
+
+    git(&work, &["reset", "--quiet", "--hard", "HEAD~1"]);
+    let first = git(&work, &["rev-parse", "HEAD"]);
+    let updated = project.update(UpdateFrom::Checkout(&work)).unwrap();
+    assert_eq!(updated.after, first);
+    let moved = block_on(main.move_onto(first.clone(), name, true)).unwrap();
+    assert_eq!(moved.changes, [], "the catch-up moved upstream's commits");
+    assert_eq!(project.trunk().unwrap(), first);
+}
+
+/// The main chat commits on `main`, and upstream renames `main` to
+/// `trunk`. The update makes `trunk` the trunk, but leaves `main` with
+/// two targets, the main chat's commit and none, for good: upstream
+/// will never move it again, and `take_upstream_trunk`
+/// (`project.rs`) only settles the bookmark that is trunk's now. The
+/// same happens when upstream deletes the branch.
+///
+/// The reference is silent on bookmarks the main chat moved that stop
+/// being trunk's. Options:
+///
+/// 1. Take upstream's side for every bookmark left with two targets,
+///    deleting it when upstream did. The main chat's commits stay
+///    reachable from its `@`, and its next catch-up moves them onto the
+///    new trunk.
+/// 2. Keep the conflict, and show it, for the person to settle.
+///
+/// Option 1 matches what an update does for trunk.
+#[test]
+#[ignore = "bug: a bookmark the main chat moved keeps two targets"]
+fn a_bookmark_the_main_chat_moved_keeps_two_targets() {
+    let (_home, work, project, main) = caught_up();
+    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
+    let ours = block_on(main.commit_all("ours", "main")).unwrap();
+
+    git(&work, &["branch", "--quiet", "-m", "main", "trunk"]);
+    project.update(UpdateFrom::Checkout(&work)).unwrap();
+    assert_eq!(project.trunk_name().unwrap(), "trunk");
+    assert_eq!(project.bookmarks("").unwrap(), ["trunk"]);
+    let moved = block_on(main.move_onto(
+        project.trunk().unwrap(),
+        project.trunk_name().unwrap(),
+        true,
+    ))
+    .unwrap();
+    assert_eq!(moved.changes[0].change_id, ours.change_id);
+}
