@@ -453,7 +453,10 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
 
 `Vcs::move_onto(trunk, bookmark, confirm)`, on a run's `Vcs`, rebases
 the run's changes, up to `@`, onto trunk's newest commit, and points
-`bookmark` at the run's newest commit there. The run's changes are
+`bookmark` at the run's newest commit there. A run with no commit of
+its own, moved onto the root commit (upstream deleted every trunk
+branch), has none, and the bookmark goes: no bookmark names the root
+commit. The run's changes are
 what `@` has that neither trunk nor the commit the workspace last moved
 onto has. The workspace records that commit (in `.jj/tau-moved-onto`)
 after each move, unless it was one of the run's own commits. So

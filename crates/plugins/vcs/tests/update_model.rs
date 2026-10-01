@@ -653,7 +653,11 @@ impl Machine {
             }
         }
         let head = moved.head.clone();
-        if self.imported.get(&name) != Some(&head) && head != ROOT {
+        // No bookmark names the root commit: a catch-up onto no trunk
+        // with nothing of its own leaves trunk's name unset.
+        if head == ROOT {
+            self.local.remove(&name);
+        } else if self.imported.get(&name) != Some(&head) {
             self.local.insert(name, head.clone());
         }
         self.trunk = head;
@@ -917,4 +921,23 @@ fn a_bookmark_the_main_chat_moved_takes_upstreams_side() {
     ))
     .unwrap();
     assert_eq!(moved.changes[0].change_id, ours.change_id);
+}
+
+/// Upstream deletes its only branch, so trunk is the root commit, and
+/// the main chat, with no commit of its own, catches up. It moves onto
+/// the root commit, but points no bookmark there: a bookmark on the
+/// root commit names no branch's work, and the next update would find
+/// trunk's bookmark on a commit upstream never had.
+#[test]
+fn a_catch_up_onto_no_trunk_points_no_bookmark_at_the_root() {
+    let (_home, work, project, main) = caught_up();
+    git(&work, &["checkout", "--quiet", "--detach"]);
+    git(&work, &["branch", "--quiet", "-D", "main"]);
+    let updated = project.update(UpdateFrom::Checkout(&work)).unwrap();
+    assert_eq!(updated.after, ROOT);
+    let name = project.trunk_name().unwrap();
+    let moved = block_on(main.move_onto(ROOT, name, true)).unwrap();
+    assert_eq!(moved.head, ROOT);
+    assert_eq!(project.bookmarks("").unwrap(), Vec::<String>::new());
+    assert_eq!(project.trunk().unwrap(), ROOT);
 }

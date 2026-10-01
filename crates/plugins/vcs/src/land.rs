@@ -276,7 +276,8 @@ fn conflicts(commit: &Commit) -> Vec<String> {
 
 /// Moves this workspace's run, its changes up to `@`, onto `onto` (a
 /// full commit id in hex), and points `bookmark` at its newest commit
-/// there. With `confirm` off, nothing changes.
+/// there, or removes it when that is the root commit. With `confirm`
+/// off, nothing changes.
 ///
 /// The run's changes are what `@` has that neither `onto` nor the
 /// commit it last moved onto has. That commit is upstream's, as trunk
@@ -457,10 +458,16 @@ fn rebase_run(
         [head] => tx.repo().store().get_commit(head)?,
         _ => return Err(VcsError::ParentMerge),
     };
-    tx.repo_mut().set_local_bookmark_target(
-        RefName::new(bookmark),
-        RefTarget::normal(head.id().clone()),
-    );
+    // A run with no commit of its own, moved onto the root commit (a
+    // repository whose trunk branch upstream deleted), has no newest
+    // commit to name: the bookmark goes rather than name the root.
+    let target = if head.id() == tx.repo().store().root_commit_id() {
+        RefTarget::absent()
+    } else {
+        RefTarget::normal(head.id().clone())
+    };
+    tx.repo_mut()
+        .set_local_bookmark_target(RefName::new(bookmark), target);
     let mut changes = Vec::new();
     for id in &moving {
         if id == wc.id() {
