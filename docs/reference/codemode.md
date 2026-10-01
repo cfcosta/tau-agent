@@ -1,7 +1,8 @@
 # Codemode (`tau-codemode`)
 
-- Status: not built. Decided in
-  [0018](../decisions/0018-codemode-and-mcp.md).
+- Status: the engine is built (`crates/plugins/codemode`, behind a
+  `Host` trait); the plugin that wires it to `ToolCtx::call` is not.
+  Decided in [0018](../decisions/0018-codemode-and-mcp.md).
 - Date: 2026-10-01
 
 `codemode` is a tool whose input is a Luau script. The script runs in
@@ -29,8 +30,17 @@ tau differs from pi, it says so.
 
   Another key, bad JSON, an options line with no code after it, or
   empty code fails the call before anything runs, with only the
-  message, for example
-  ``@options only supports `max_output_tokens` and `timeout_ms`; got `yield` ``.
+  message:
+  - ``@options only supports `max_output_tokens` and `timeout_ms`; got `yield` ``
+  - `@options is not valid JSON: <serde's error>`
+  - `@options must be a JSON object.`
+  - `@options must be followed by code on the next lines.`
+  - ``The code is empty: pass Luau source in `code`.``
+  - `` `max_output_tokens` must be a non-negative integer.``
+  - `` `timeout_ms` must be a positive integer up to 2147483647.``
+
+  The options line stays in the source the VM runs: it is a Luau
+  comment, so error line numbers match the model's input.
 
 - **Execution mode:** `Parallel`. Two codemode calls in one batch run
   side by side in separate VMs.
@@ -43,16 +53,29 @@ tau differs from pi, it says so.
 - **Memory:** 256 MiB (`set_memory_limit`). Going past it fails the
   script with `not enough memory`.
 - **CPU:** an interrupt (`set_interrupt`) checks the cancel token and
-  the deadline. It returns `VmState::Yield` every few thousand ticks,
-  so a loop with no call in it neither blocks a tokio worker nor
-  outlives a cancel.
+  the deadline. It returns `VmState::Yield` every 4,096 ticks, so a
+  loop with no call in it neither blocks a tokio worker nor outlives a
+  cancel. It yields only the threads the engine runs (the script's and
+  those `parallel` starts): a yield inside a coroutine the script made
+  would reach that coroutine's `resume` as if the script had yielded.
+  A loop there still stops, because once the deadline passes or the
+  run is cancelled the interrupt raises an error at every tick, which
+  `pcall` cannot outrun.
 - **What a script cannot reach:** files, processes, the network,
-  timers, `require`, `loadstring` of bytecode. Only the globals below
+  timers, `require`, `loadstring` of bytecode. mlua adds a `require`
+  that reads files, so the engine removes it. Only the globals below
   reach outside the VM, and every one of them goes through the loop or
   the plugin.
+- **Output:** at most 64 MiB of output text and images, which live
+  outside the VM's memory limit; past it `text`, `print` and `image`
+  raise.
 - **Stalls:** pi fails a script that waits on a promise no call can
   settle. Luau has no promises: a script either runs or waits on a
   host call, so it cannot stall.
+- **Ending:** the engine resets its suspended threads and collects
+  garbage before it drops the VM. A pending call's future holds the VM,
+  so without this the two would keep each other alive and the call
+  would never be cancelled.
 
 ## Globals
 
@@ -100,6 +123,25 @@ json.null          -- JSON null inside a table
 array({})          -- an empty table that encodes as [] instead of {}
 ```
 
+### Values
+
+- JSON `null` is `json.null`; JSON arrays carry mlua's array
+  metatable, which `array(t)` sets, so `[]` comes back as `[]`. A table
+  without it is an array when its keys are exactly `1..n`, `n > 0`,
+  and an object otherwise.
+- Numbers are doubles: integral values within ±2^53 come back as JSON
+  integers, non-finite ones as `null` (as `JSON.stringify` does).
+  Object keys come back sorted.
+- `text(nil)` appends `null`; `print` shows `nil` as `nil`. `return a,
+b` appends each value that is not `nil`. A return value JSON cannot
+  hold (a function) fails the script with
+  `The script's return value: a function cannot be encoded as JSON`.
+- Globals that reach out return `(ok, ...)` to a small Luau prelude
+  that raises a string error, so `pcall` gets a message, not a
+  userdata. Argument errors carry the caller's line
+  (`codemode:3: store(): the key must be a string`); a tool's error
+  text is raised as it is.
+
 ### Tool calls
 
 - A call goes through `ToolCtx::call`, so the loop repairs and
@@ -119,7 +161,9 @@ array({})          -- an empty table that encodes as [] instead of {}
     `isError`);
   - otherwise the output's text, joined;
   - a failed call with no structured output raises a Lua error whose
-    message is the tool's error text. `pcall` catches it.
+    message is the tool's error text. `pcall` catches it. When nothing
+    catches it, the result shows it with the script's line, as
+    `codemode:4: tool broke`.
 - **Images** a tool returns are not shown to the model unless the
   script passes them to `image()`.
 - **Parallel calls:** a call inside a `parallel` function yields its
@@ -131,13 +175,17 @@ array({})          -- an empty table that encodes as [] instead of {}
   waits for the others and runs alone.
   Jev requests are limited to 4 in flight, as pi limits classifier
   calls.
-- If prototyping shows mlua cannot await coroutines inside an async
-  callback of the same VM, `parallel` is built on call handles instead
-  (`tools.x.start(args)` returns a handle, `await_all(handles)` joins
-  them). The globals above stay as written.
+- The first error `parallel` raises is the first in argument order.
+  `exit()` in one of its functions ends the script at once, and the
+  others' calls are cancelled.
+- Prototyped: mlua 0.12 awaits several `into_async` threads inside an
+  async callback of the same VM, and their calls overlap. `parallel`
+  is built that way; the call-handle fallback is not needed.
 
 ### The store
 
+- `exit()` ends the script even inside `pcall`: the engine stops
+  polling it, and its writes are kept.
 - **What pi does:** "Codemode state is maintained as part of the
   session transcript instead of the file system." Values are JSON, at
   most 256 KiB of JSON text each and 1 MiB in all. Keys are strings.
@@ -163,8 +211,26 @@ array({})          -- an empty table that encodes as [] instead of {}
   2 to 10 score levels). Answers are checked as tau-jev checks them.
 - Each request's usage is charged to the run
   (`PluginCtx::charge`), so it counts toward the run's limits and the
-  plugin's cost. The call rows in `details` carry it.
+  plugin's cost. The call rows in `details` carry it; their ids are
+  `<parent>/jev/<n>`, apart from the tools' `<parent>/<n>`.
 - A failed request raises a Lua error with the error's text.
+
+### Discovery
+
+- `search_tools` ranks with BM25 (k1 1.2, b 0.75) as pi's tool search
+  does. A tool's document is its name, its name with `_` as spaces, its
+  description, its input schema's property names and descriptions, and
+  its namespace's name, description and instructions. Tokens split on
+  camelCase and on anything not a letter or digit, are lowercased, drop
+  21 stop words, and lose a naive plural (`queries` → `query`, `boxes`
+  → `box`, `files` → `file`). Tools that match no term are left out.
+- Unlike pi, a tool whose name is the whole query ranks first.
+- Namespace names match without case, with `-` as `_`, and with or
+  without `mcp__`, in `search_tools`'s `namespace` and in
+  `describe_namespace`.
+- `describe_tool` returns the tool's signature (its description is the
+  signature's comment), followed by the `CallToolResult` types when it
+  uses them.
 
 ## The description
 
@@ -239,7 +305,15 @@ A hand-written renderer over `serde_json::Value`, after pi's
 | anything else                 | `any`                                                            |
 
 - A property with a description goes on its own line with a `--`
-  comment; otherwise the object stays on one line.
+  comment; otherwise the object stays on one line. Comments split at
+  `\r` as well as `\n`, and other control characters become spaces:
+  Luau ends a comment at `\r` and stops reading at NUL.
+- A property whose name is not an identifier is `["name"]: T`.
+  Control characters in it are three-digit escapes (`\031`), so a digit
+  after one is not read into it. A name holding NUL cannot be written
+  in Luau: it falls to the `[string]: any` indexer.
+- An object with no properties is `{ [string]: any }`; a `type` list
+  is a union, and `null` in a union makes it optional (`T?`).
 - An input type over 16,000 characters becomes `any`.
 - The return type comes from the tool's output schema, else `string`.
   MCP results render as `CallToolResult<T>`, with a shared
@@ -257,22 +331,27 @@ A hand-written renderer over `serde_json::Value`, after pi's
   `Wall time X.X seconds`, then `Output:`, then the output items in the
   order they were made.
 - **On failure** a last text item: `Script error:` and the error with
-  its line, then `Tool calls made before the failure (they are not
-undone): read (ok), bash (error)` or `No tool calls were made.` Heads
-  for other failures: `Script timed out: …`, `Script cancelled: …`,
+  its line, then
+  `Tool calls made before the failure (they are not undone): read (ok), bash (error)`
+  (`, and N more` past the rows' cap) or `No tool calls were made.`
+  Heads for other failures:
+  `Script timed out: it ran past its timeout_ms of N ms.`,
+  `Script cancelled: the run was cancelled before the script finished.`,
   `Script sandbox failed: …`.
 - **Budget:** the text items are measured at chars / 4. Past
-  `max_output_tokens`, they are merged and cut in the middle, half kept
+  `max_output_tokens`, they are merged (joined by newlines) and cut in
+  the middle, half kept
   from each end at UTF-8 boundaries, as
   `Warning: truncated output (original token count: N)\nTotal output lines: L\n\n<head>…N tokens truncated…<tail>\n\n[Full output: <path> (read it with offset/limit)]`,
   the full text written to `$TMPDIR/tau-codemode-<hex>.txt`. Images
   follow.
 - **`is_error`** on failure.
-- **`details`:** `{ calls, store, usage }`.
-  - `calls`: at most 256 rows `{ id, name, args, status, ms, error,
-cost }`, `args` cut at 200 characters and `error` at 500, with
-    `complete: false` past the cap. The interface draws the card from
-    these. Compaction reads them for the files a script read or changed.
+- **`details`:** `{ calls, complete, store, usage }`.
+  - `calls`: at most 256 rows
+    `{ id, name, args, status, ms, error, cost }`, `args` cut at 200
+    characters and `error` at 500 (a cut ends in `…`); `complete` is
+    false past the cap. The interface draws the card from these.
+    Compaction reads them for the files a script read or changed.
   - `store`: the writes, when the script succeeded.
   - `usage`: Jev's usage, summed.
 
