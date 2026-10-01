@@ -19,7 +19,8 @@
 //!   model-signed-in, plan-declined and not-eligible, its other states;
 //!   a phone pairing: pair, pair-scan, pair-address, pair-paired or
 //!   pair-unreachable; phones, the computer's Phones screen; land,
-//!   merge or resolving, a run's landing card (ADR 0014);
+//!   merge or resolving, a run's landing card (ADR 0014); ask, ask-note
+//!   or ask-review, tau-ask's panel waiting on questions (ADR 0019);
 //!   models, picker, run-picker, fork-picker, log, status, show or diff
 //!   (demo screens).
 //!   With a sign-in, only `page:<plugin>/<page>[?key=value&...]`, a
@@ -337,6 +338,12 @@ fn open_demo_screen(
                 },
                 cx,
             );
+            return;
+        }
+        // tau-ask's panel in the composer's place: a question with
+        // previews; a checklist with a note being written; the review.
+        Some(open @ ("ask" | "ask-note" | "ask-review")) => {
+            open_ask(workspace, open, cx);
             return;
         }
         // The vcs_log card, open, with a change picked.
@@ -659,4 +666,91 @@ fn open_demo_screen(
         Some(route) => workspace.navigate(route, cx),
         None => {}
     }
+}
+
+/// The live demo run waiting on tau-ask's questions, its panel in the
+/// state `open` names.
+fn open_ask(
+    workspace: &mut Workspace,
+    open: &str,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    use tau_ask::{Ask, Record, ui::Key};
+    use tau_ui::update::HostUpdate;
+    let run = demo::run_id();
+    let ask: Ask = serde_json::from_value(serde_json::json!({ "questions": [
+        {
+            "question": "How should the ask tool wait for your answer?",
+            "header": "Waiting",
+            "options": [
+                {
+                    "label": "Hold the call open (Recommended)",
+                    "description": "The tool blocks on a channel; your answer comes back as its result and the turn goes on.",
+                    "preview": "let (tx, rx) = oneshot::channel();\nself.pending.insert(ctx.call_id, tx);\nselect! {\n    a = rx => Ok(a?),\n    _ = ctx.cancel => Err(Cancelled),\n}"
+                },
+                {
+                    "label": "End the turn",
+                    "description": "Like vcs_land: the run stops, and your answer arrives as the next message.",
+                    "preview": "ctx.publish(&asked)?;\nOk(ToolOutput::text(\"Asked; waiting.\"))"
+                },
+                {
+                    "label": "Hold, then time out",
+                    "description": "Block for a while; if nobody answers, stop the run and keep the panel open.",
+                    "preview": "select! {\n    a = rx => Ok(a?),\n    _ = sleep(timeout) => stop(),\n}"
+                }
+            ]
+        },
+        {
+            "question": "Where else should a pending question show up?",
+            "header": "Surfaces",
+            "multi_select": true,
+            "options": [
+                { "label": "Run list badge", "description": "An amber dot on the run in the sidebar until you answer." },
+                { "label": "Desktop notification", "description": "Only when the window is not focused." },
+                { "label": "Parent run", "description": "A child run's question surfaces on the run that spawned it." }
+            ]
+        },
+        {
+            "question": "How long should a question hold the run?",
+            "header": "Timeout",
+            "options": [
+                { "label": "5 minutes", "description": "Short; the run stops soon and resumes when you answer." },
+                { "label": "Never", "description": "Hold until you answer or cancel the run." }
+            ]
+        }
+    ]}))
+    .expect("the demo's questions read");
+    workspace.navigate(Route::Run(run.clone()), cx);
+    workspace.apply(
+        HostUpdate::PluginFold {
+            run: run.clone(),
+            plugin: tau_ask::NAME.into(),
+            body: Record::Asked {
+                call: "call_ask".into(),
+                ask: ask.clone(),
+            }
+            .to_value(),
+        },
+        cx,
+    );
+    let Some(ui) = workspace.plugin_ui::<tau_ask::ui::Ui>(tau_ask::NAME) else {
+        return;
+    };
+    ui.update(cx, |ui, _| {
+        let key = (run.0.to_string(), "call_ask".to_owned());
+        let draft = ui.draft_for(&key, &ask);
+        if open == "ask" {
+            return;
+        }
+        draft.key(&ask, Key::Digit(1));
+        draft.key(&ask, Key::Digit(1));
+        draft.key(&ask, Key::Digit(3));
+        draft.notes[1] = "Only when the run has waited a while.".into();
+        if open == "ask-note" {
+            draft.note_open = true;
+            return;
+        }
+        draft.key(&ask, Key::Right);
+        draft.key(&ask, Key::Digit(2));
+    });
 }
