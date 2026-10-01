@@ -90,7 +90,6 @@ use crate::{
         RunStatus,
         RunUpdate,
         RunView,
-        ToolState,
     },
 };
 
@@ -938,11 +937,13 @@ impl Workspace {
             && self.run(run).is_none()
             && let Some(view) = self.run(parent)
         {
+            // The call may be the model's or one a tool made, such as a
+            // codemode script's.
             let task = call
                 .as_deref()
-                .and_then(|call| view.tool(call))
-                .filter(|card| card.tool == tau_vcs::delegate::NAME)
-                .and_then(|card| card.args().get("task")?.as_str())
+                .and_then(|call| view.call(call))
+                .filter(|(tool, _)| *tool == tau_vcs::delegate::NAME)
+                .and_then(|(_, args)| args.get("task")?.as_str())
                 .map(str::to_owned)
                 .unwrap_or_default();
             let mut child = RunView::new(
@@ -975,12 +976,13 @@ impl Workspace {
             parent.items.push(Item::ForkReady { fork: run.clone() });
         }
         // A sub-agent closes once its parent's call returns: landed, or
-        // dropped. Its siblings wait for their own calls.
+        // dropped. Its siblings wait for their own calls. The call may be
+        // nested, as a codemode script's is.
         if let RunEvent::ToolEnd { run, call_id, .. } = event
             && let Some(view) = self.run(run)
             && view
-                .tool(call_id)
-                .is_some_and(|card| card.tool == tau_vcs::delegate::NAME)
+                .call(call_id)
+                .is_some_and(|(tool, _)| tool == tau_vcs::delegate::NAME)
         {
             let done: Vec<RunId> = view
                 .children
@@ -1010,12 +1012,14 @@ impl Workspace {
             RunEvent::RunStart { run, .. } => {
                 self.resuming.remove(run);
             }
-            RunEvent::ToolEnd {
-                run,
-                call_id,
-                is_error: false,
-                ..
-            } if self.proposes_landing(run, call_id) => {
+            // Top-level or nested, at any depth: a script's `vcs_land`
+            // proposes as the model's does. A set, so a nested call and
+            // the call that made it propose once.
+            RunEvent::ToolEnd { run, call_id, .. }
+                if self
+                    .run(run)
+                    .is_some_and(|view| view.proposes_landing(call_id)) =>
+            {
                 self.proposed.insert(run.clone());
             }
             // A run that proposed its landing stopped: its landing card
@@ -1332,19 +1336,6 @@ impl Workspace {
         view.status = RunStatus::Planning;
         self.runs.insert(0, view);
         cx.notify();
-    }
-
-    /// The run proposed its landing with `vcs_land` (ADR 0014): once it
-    /// stops, its landing card opens for the person to confirm.
-    fn proposes_landing(&self, run: &RunId, call_id: &str) -> bool {
-        self.run(run).is_some_and(|view| {
-            view.items.iter().any(|item| {
-                matches!(item, Item::Tool(card)
-                    if card.call_id == call_id
-                        && card.tool == "vcs_land"
-                        && matches!(card.state, ToolState::Done { .. }))
-            })
-        })
     }
 
     pub fn set_landing_preview(

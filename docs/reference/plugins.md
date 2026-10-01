@@ -839,7 +839,12 @@ pub struct ToolCall {        // what hooks see, in `tau_agent::hook`
   verdict in `CallData::nested_marks` for the call's row without
   changing the card's state, and `dropped` and `cut` answer false: a
   nested result never reaches the model's context. The Events tab lists
-  nested calls as `NestedStart` and `NestedEnd`.
+  nested calls as `NestedStart` and `NestedEnd`. What the workspace
+  does for a call it does for a nested one too: a nested `vcs_land`
+  proposes the run's landing, and a nested `delegate`'s sub-agent gets
+  its task and closes when that call returns (`vcs.md`). After the
+  model's call ends, they read its `details.calls`, whose rows have
+  at least `name` and `status` (`ok` for a call that succeeded).
 - **Not callable:** unknown names (`Tool x not found`), `ModelOnly`
   tools (`Tool x cannot be called from a tool`), and any call once the
   outer call has ended, or outside a run. Each fails with a message.

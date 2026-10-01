@@ -441,6 +441,12 @@ it after the other plugins: a plugin that adds tools in its `start`
   come from `details.calls`, which is all a stored run has, and
   tau-ui has dropped the live rows: a live card and a stored one draw
   the same thing. Verdicts come from `CallData::nested_marks` in both.
+- **A script's calls count as the model's.** A `vcs_land` a script
+  calls proposes the run's landing, and a `delegate` it calls opens
+  and closes its sub-agent's chat, as the model's would: tau-ui reads
+  them from the nested calls' events while the script runs, and from
+  `details.calls` once it ended, so a stored run reads the same
+  (`vcs.md`, "vcs_land" and "Delegating to a sub-agent").
 - **The store:** the fold applies each published store record to
   per-run state, as the plugin folds its snapshot. The inspector
   (`INSPECTOR`) lists the keys and their values; the plugin list says

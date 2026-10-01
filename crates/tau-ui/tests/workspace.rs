@@ -2586,3 +2586,247 @@ fn a_chat_under_main_offers_no_fork(cx: &mut TestAppContext) {
         assert!(matches!(ws.slash("/fo"), tau_ui::slash::Slash::None));
     });
 }
+
+/// Events of a run's tool calls, as a host feeds them in.
+mod calls {
+    use std::sync::Arc;
+
+    use serde_json::Value;
+    use tau_agent::{
+        event::{RunEvent, StopReason},
+        tool::{RunId, ToolOutput},
+    };
+
+    pub fn start(
+        run: &RunId,
+        id: &str,
+        tool: &str,
+        args: Value,
+        parent: Option<&str>,
+    ) -> RunEvent {
+        RunEvent::ToolStart {
+            run: run.clone(),
+            call_id: id.into(),
+            tool: Arc::from(tool),
+            args,
+            parent: parent.map(str::to_owned),
+        }
+    }
+
+    pub fn end(
+        run: &RunId,
+        id: &str,
+        error: bool,
+        details: Option<Value>,
+        parent: Option<&str>,
+    ) -> RunEvent {
+        RunEvent::ToolEnd {
+            run: run.clone(),
+            call_id: id.into(),
+            output: Arc::new(ToolOutput {
+                details,
+                ..ToolOutput::text(if error { "no" } else { "ok" })
+            }),
+            is_error: error,
+            parent: parent.map(str::to_owned),
+        }
+    }
+
+    pub fn run_end(run: &RunId, parent: Option<&RunId>) -> RunEvent {
+        RunEvent::RunEnd {
+            run: run.clone(),
+            parent: parent.cloned(),
+            stop: StopReason::Stop,
+            cost: 0.0,
+        }
+    }
+}
+
+/// One `vcs_land` a run makes: from the model, or from inside a call
+/// the model made, `depth` levels down.
+#[derive(Debug, Clone)]
+struct Land {
+    depth: usize,
+    ok: bool,
+    /// The nested calls' events reached the workspace. Without them, all
+    /// it has is the outermost call's result: its `details.calls`, which
+    /// list that call's own calls (codemode's), as a stored run has.
+    seen: bool,
+    /// The outermost call failed anyway, as a script can after its
+    /// `vcs_land` went through.
+    outer_fails: bool,
+}
+hegel::pretty_print_as_debug!(Land);
+
+impl Land {
+    /// Whether the workspace can know it proposed.
+    fn proposes(&self) -> bool {
+        self.ok && (self.depth <= 1 || self.seen)
+    }
+
+    /// Its events, its calls numbered `n`.
+    fn events(
+        &self,
+        run: &tau_agent::tool::RunId,
+        n: usize,
+    ) -> Vec<tau_agent::event::RunEvent> {
+        use serde_json::json;
+        let top = format!("c{n}");
+        if self.depth == 0 {
+            return vec![
+                calls::start(run, &top, "vcs_land", json!({}), None),
+                calls::end(run, &top, !self.ok, None, None),
+            ];
+        }
+        // codemode → other → … → vcs_land.
+        let ids: Vec<String> = (0..=self.depth)
+            .map(|d| {
+                std::iter::once(top.clone())
+                    .chain((0..d).map(|_| "1".to_owned()))
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
+            .collect();
+        let tool = |d: usize| match d {
+            0 => "codemode",
+            d if d == self.depth => "vcs_land",
+            _ => "other",
+        };
+        let mut events = vec![calls::start(
+            run,
+            &top,
+            "codemode",
+            json!({ "code": "" }),
+            None,
+        )];
+        if self.seen {
+            for d in 1..=self.depth {
+                events.push(calls::start(
+                    run,
+                    &ids[d],
+                    tool(d),
+                    json!({}),
+                    Some(&ids[d - 1]),
+                ));
+            }
+            for d in (1..=self.depth).rev() {
+                let error = d == self.depth && !self.ok;
+                events.push(calls::end(
+                    run,
+                    &ids[d],
+                    error,
+                    None,
+                    Some(&ids[d - 1]),
+                ));
+            }
+        }
+        let own_ok = if self.depth == 1 { self.ok } else { true };
+        let details = json!({
+            "calls": [{
+                "id": ids[1], "name": tool(1), "args": "{}",
+                "status": if own_ok { "ok" } else { "error" },
+                "ms": 1, "error": null, "cost": null,
+            }],
+            "complete": true,
+        });
+        events.push(calls::end(
+            run,
+            &top,
+            self.outer_fails,
+            Some(details),
+            None,
+        ));
+        events
+    }
+}
+
+/// Whether a run's `vcs_land` comes from the model or from a call it
+/// made, at any depth, and whether the workspace saw the nested calls'
+/// events or only the outermost call's result (as a stored run keeps
+/// it), the run's landing card opens once when it stops: once however
+/// many times it proposed, and never when no landing went through.
+#[gpui::test]
+fn a_landing_is_proposed_once_from_any_depth(cx: &mut TestAppContext) {
+    use hegel::generators as gs;
+    use tau_agent::tool::RunId;
+    use tau_ui::view::RunView;
+
+    let (workspace, mut cx, events) = open_demo(cx);
+    let mut case = 0;
+    hegel::Hegel::new(|tc: hegel::TestCase| {
+        case += 1;
+        let lands: Vec<Land> = tc.draw(
+            gs::vecs(hegel::compose!(|tc| {
+                Land {
+                    depth: tc.draw(gs::integers::<usize>().max_value(3)),
+                    ok: tc.draw(gs::booleans()),
+                    seen: tc.draw(gs::booleans()),
+                    outer_fails: tc.draw(gs::booleans()),
+                }
+            }))
+            .max_size(3),
+        );
+        let run = RunId(format!("proposes-{case}").into());
+        events.borrow_mut().clear();
+        workspace.update(&mut cx, |ws, cx| {
+            ws.push_run(RunView::new(run.clone(), "run", "coder", "m"), cx);
+            for (n, land) in lands.iter().enumerate() {
+                for event in land.events(&run, n) {
+                    ws.apply_event(&event, cx);
+                }
+            }
+            ws.apply_event(&calls::run_end(&run, None), cx);
+        });
+        let previews = events
+            .borrow()
+            .iter()
+            .filter(|event| {
+                matches!(event,
+                WorkspaceEvent::PreviewLanding { run: r } if *r == run)
+            })
+            .count();
+        let expected = usize::from(lands.iter().any(Land::proposes));
+        assert_eq!(previews, expected, "{lands:?}");
+    })
+    .settings(hegel::Settings::new().test_cases(100))
+    .run();
+}
+
+/// A sub-agent a codemode script delegates to is a chat of its own on
+/// the task the script handed it, and closes once the script's call
+/// returns, as one the model delegates to.
+#[gpui::test]
+fn a_nested_delegate_opens_and_closes_its_chat(cx: &mut TestAppContext) {
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use tau_agent::{event::RunEvent, tool::RunId};
+
+    let (workspace, mut cx, events) = open_demo(cx);
+    let parent = demo::run_id();
+    let child = RunId("sub-nested".into());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply_event(&calls::start(&parent, "s1", "codemode", json!({ "code": "" }), None), cx);
+        ws.apply_event(
+            &calls::start(&parent, "s1/1", "delegate", json!({ "task": "write the tests" }), Some("s1")),
+            cx,
+        );
+        ws.apply_event(
+            &RunEvent::RunStart {
+                run: child.clone(),
+                parent: Some(parent.clone()),
+                agent: Arc::from("coder"),
+                call: Some("s1/1".into()),
+            },
+            cx,
+        );
+        let view = ws.run(&child).expect("a chat for the sub-agent");
+        assert!(matches!(view.items.first(), Some(Item::User(task)) if task == "write the tests"));
+        ws.apply_event(&calls::run_end(&child, Some(&parent)), cx);
+        assert!(!ws.is_closed(&child), "open until its call returns");
+        ws.apply_event(&calls::end(&parent, "s1/1", false, None, Some("s1")), cx);
+        assert!(ws.is_closed(&child), "its call returned");
+    });
+    assert!(events.borrow().iter().any(|event| matches!(event,
+        WorkspaceEvent::CloseRun { run } if *run == child)));
+}

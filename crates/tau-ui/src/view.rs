@@ -1122,6 +1122,55 @@ impl RunView {
         })
     }
 
+    /// The tool and arguments of the call `call_id`: a model's call, or
+    /// a call nested under one (at any depth) while that call runs. A
+    /// nested call is known only until the model's call ends: its card
+    /// keeps nothing of it after (ADR 0018).
+    pub fn call(&self, call_id: &str) -> Option<(&str, &Value)> {
+        let card = self.card_of(call_id)?;
+        if card.call_id == call_id {
+            return Some((card.tool.as_str(), card.args()));
+        }
+        card.data
+            .nested
+            .iter()
+            .find(|call| call.id == call_id)
+            .map(|call| (call.tool.as_str(), &call.args))
+    }
+
+    /// Whether the call `call_id`, which just ended, proposed the run's
+    /// landing with `vcs_land` (ADR 0014):
+    ///
+    /// - a model's `vcs_land` call that succeeded;
+    /// - a `vcs_land` nested under a model's call, at any depth, that
+    ///   succeeded, while the model's call runs;
+    /// - a model's call whose result lists a `vcs_land` that succeeded
+    ///   among the calls it made (`details.calls`, as codemode's do).
+    ///   That is all a stored run has of its nested calls, and what a
+    ///   live card keeps of them once the call ended.
+    ///
+    /// A run that proposed may be told so more than once, by a nested
+    /// call and by the call that made it: the workspace keeps a set.
+    pub fn proposes_landing(&self, call_id: &str) -> bool {
+        let Some(card) = self.card_of(call_id) else {
+            return false;
+        };
+        if card.call_id != call_id {
+            return card.data.nested.iter().any(|call| {
+                call.id == call_id
+                    && call.tool == LAND
+                    && call.result.as_ref().is_some_and(|result| !result.error)
+            });
+        }
+        (card.tool == LAND && matches!(card.state, ToolState::Done { .. }))
+            || card
+                .data
+                .result
+                .as_ref()
+                .and_then(|result| result.details.as_ref())
+                .is_some_and(lists_landing)
+    }
+
     /// Folds one run event into the view. Events of other runs are
     /// ignored, except a child's start and end, which update
     /// [`RunView::children`].
@@ -1548,6 +1597,24 @@ impl RunView {
             self.fold(plugin, body);
         }
     }
+}
+
+/// The tool that proposes a run's landing (ADR 0014).
+const LAND: &str = "vcs_land";
+
+/// Whether a result's `details.calls`, the calls a tool made through
+/// the loop as it lists them (`plugins.md`, "In tau-ui"), hold a
+/// `vcs_land` that succeeded.
+fn lists_landing(details: &Value) -> bool {
+    details
+        .get("calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| {
+            calls.iter().any(|call| {
+                call.get("name").and_then(Value::as_str) == Some(LAND)
+                    && call.get("status").and_then(Value::as_str) == Some("ok")
+            })
+        })
 }
 
 fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {

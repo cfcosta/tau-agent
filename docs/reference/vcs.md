@@ -220,6 +220,13 @@ A changed path is a `FileChange`:
 (…). Commit your work with vcs_commit first.`), and otherwise returns
   `{ "proposed": true, "head": <@'s parent> }` for the host, which
   shows the person what would land and waits for them to confirm.
+- tau-ui opens the landing card once the run stops, if a `vcs_land`
+  went through during it: one the model called, or one a tool called
+  through the loop at any depth, such as a codemode script's
+  (`RunView::proposes_landing`). It knows a nested one from its
+  `ToolEnd`, while the model's call runs, or from that call's
+  `details.calls` once it ended, the only record a stored run has.
+  However many times the run proposed, the card opens once.
 
 ### vcs_new: `{ message? }`
 
@@ -555,7 +562,11 @@ digits>`, so that no process reuses one an earlier one left, starts
 
 The caller's links record what came to its stack during the turn: each
 landed change with `from` naming the sub-agent, then the turn's
-snapshot. Only a top-level run (a repository's main chat) gets
+snapshot. A call a tool makes through the loop, such as a codemode
+script's, is a call like the model's: in tau-ui its sub-agent gets a
+chat on its task and closes once that nested call returns
+(`RunView::call` finds a nested call while the model's call runs).
+Only a top-level run (a repository's main chat) gets
 `delegate`: runs nest one level
 ([ADR 0016](../decisions/0016-runs-nest-one-level.md)).
 
