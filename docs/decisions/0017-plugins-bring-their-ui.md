@@ -315,3 +315,55 @@ a `context` entry's details to the plugin that wrote it.
    pages that keep their own state.
 5. Then the plugins that draw tool cards: `tau-tools`, `tau-vcs` and
    `tau-compaction`.
+
+## As built
+
+All eight plugin crates now bring their UI. The interface differs from
+the sketch above in these places:
+
+- **The methods.** `UiPlugin` has `host`, `agent_plugins`, `starting`,
+  `catalog`, `data`, `repo_data`, `act`, `apply`, `new_ui`, `reply`,
+  `read_prompt` and `manifest`. `agent_plugins` returns
+  `anyhow::Result<Vec<Box<dyn Plugin>>>`: none when the plugin is off
+  for the run, and an error fails the run (rules that cannot be read).
+  `starting` gives bodies the host folds as a run starts or goes on,
+  such as whether the plugin is on and why not. `read_prompt` reads a
+  run's prompt as the plugin's own command, for the run's title
+  (`/goal`).
+- **Window state.** Each plugin has one `Ui` entity per window, made by
+  `new_ui` in its own context so it can subscribe to what it makes,
+  such as a field's Enter. Pages are functions that draw from a
+  `ViewCx`, not entities of their own. Drafts, open tabs and the
+  reset confirmation live in the plugin's `Ui`.
+- **What a fold reaches.** `RunCx` places anchors (`transcript`,
+  `attach`) and marks cards: `mark` (blocked or flagged), `dropped`
+  (what a context rewrite dropped), `cut` (a result a plugin cut), and
+  `rewrite`, which names one of the plugin's context rewrites so it
+  draws it at the `REWRITE` point. History starts at a run's last
+  context rewrite; tau-ui folds its stored details as
+  `{ "rewrite": details }` once the transcript after it is in place.
+- **Where history places a body.** A run's messages are stored when
+  its turn ends, after what plugins published during it. A body can
+  say where history shows it with the `place` key (`placed`): with
+  its turn (no key), before the turn's messages (`now`), or after the
+  message the run started on (`message`).
+- **Tool cards.** tau-ui keeps a card's frame and what the call sent
+  and returned (`CallData`: arguments, updates, result). The tool's
+  own plugin draws the rest at the `CARD` point (`CardView`: its head,
+  label, edge, body, and whether it folds). tau-tools and tau-vcs draw
+  only cards: the host still builds their tools with each run's
+  workspace, where they act, which keeps the order of the vcs and
+  workspace hooks around jj as it was. Their `agent_plugins` return
+  none.
+- **Services.** `RunCtx` and `HostCx` carry a typemap of services: the
+  metered Jev, how memory searches, and `TurnHooks`, through which a
+  plugin hears each turn's commit in the run's workspace (memory marks
+  notes stale with it).
+- **Actions.** A plugin's UI asks through a `Handle`: `act` (its host
+  half, answered through `reply`), `record` (fold and store a change
+  the interface makes), `navigate`, `send`, `steer`, `composer`,
+  `alert`, `open_run`, `ask_jev_key` and `refresh`.
+- **What stays in tau-ui.** The Plan screen, generic plugin notes for
+  `Continued` and `PluginError` from plugins without a UI, and the
+  landing cards of ADR 0009, which draw changes with tau-vcs's pieces.
+  The demo's note suggestions, which no plugin produced, are gone.

@@ -345,6 +345,18 @@ production uses the HTTP client, `tau_jev::TypeSafe`.
   have a low-confidence fallback. They never act on an unsure answer
   as if it were sure.
 
+## A plugin's UI
+
+`tau-agent`'s `Plugin` has no UI. In this repository, each crate in
+`crates/plugins` also exports a `UiPlugin` (`tau-ui-plugin`), which
+builds its agent plugin for a run, folds what it publishes
+(`PluginCtx::publish`) into its state for the run, live and from
+history alike, and adds its pages and contributions to the interface
+at extension points. `tau-ui` registers them in `plugins.rs` and builds
+a run's plugins only through that registry. See
+[ADR 0017](../decisions/0017-plugins-bring-their-ui.md), and its "As
+built" section for the interface as it is.
+
 ## The first four plugins
 
 Token estimates and overflow detection, which the loop uses for
