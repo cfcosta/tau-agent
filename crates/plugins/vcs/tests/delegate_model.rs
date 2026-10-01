@@ -35,14 +35,16 @@ use async_trait::async_trait;
 use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
-    agent::Agent,
+    agent::{Agent, RunControl},
+    event::StopReason,
     tool::{AgentTool, ToolCtx, ToolError, ToolOutput},
 };
 use tau_ai::message::{InputBlock, Message, UserContent};
-use tau_store::Store;
+use tau_store::{Entry, Store};
 use tau_testing::scripted::ScriptedModel;
 use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
+    DEFAULT_WORKSPACE,
     Delegate,
     Identity,
     Link,
@@ -50,7 +52,7 @@ use tau_vcs::{
     RunWorkspace,
     VcsPlugin,
     delegate::{ChildModel, MAX_RUNNING},
-    run_workspace::{PLUGIN, bookmark},
+    run_workspace::PLUGIN,
 };
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
@@ -183,16 +185,14 @@ fn coder(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
         .plugin(workspace.clone())
 }
 
-/// The paths jj holds in conflict at `commit` (a full hex id).
-fn jj_conflicts(home: &Path, commit: &str) -> BTreeSet<String> {
+/// The project's repository at its head, read with jj-lib.
+fn load(home: &Path) -> std::sync::Arc<jj_lib::repo::ReadonlyRepo> {
     use jj_lib::{
-        backend::CommitId,
         config::{ConfigLayer, ConfigSource, StackedConfig},
         default_backend_factories::{
             default_backend_factories,
             default_working_copy_factories,
         },
-        repo::Repo as _,
         settings::UserSettings,
         workspace::Workspace,
     };
@@ -209,8 +209,13 @@ fn jj_conflicts(home: &Path, commit: &str) -> BTreeSet<String> {
         &default_working_copy_factories(),
     )
     .unwrap();
-    let repo =
-        pollster::block_on(workspace.repo_loader().load_at_head()).unwrap();
+    pollster::block_on(workspace.repo_loader().load_at_head()).unwrap()
+}
+
+/// The paths jj holds in conflict at `commit` (a full hex id).
+fn jj_conflicts(home: &Path, commit: &str) -> BTreeSet<String> {
+    use jj_lib::{backend::CommitId, repo::Repo as _};
+    let repo = load(home);
     let id = CommitId::try_from_hex(commit).unwrap();
     repo.store()
         .get_commit(&id)
@@ -219,6 +224,38 @@ fn jj_conflicts(home: &Path, commit: &str) -> BTreeSet<String> {
         .conflicts()
         .map(|(path, _)| path.as_internal_file_string().to_owned())
         .collect()
+}
+
+/// A commit on a stack, as [`walk`] finds it.
+#[derive(Debug)]
+struct Walked {
+    change_id: String,
+    commit_id: String,
+    description: String,
+}
+
+/// The commits from `head` down to `stop` (full hex ids), oldest first,
+/// along first parents: the caller's stack, wherever its bookmark is.
+fn walk(home: &Path, head: &str, stop: &str) -> Vec<Walked> {
+    use jj_lib::{
+        backend::CommitId,
+        object_id::ObjectId as _,
+        repo::Repo as _,
+    };
+    let repo = load(home);
+    let mut found = Vec::new();
+    let mut at = CommitId::try_from_hex(head).unwrap();
+    while at.hex() != stop {
+        let commit = repo.store().get_commit(&at).unwrap();
+        found.push(Walked {
+            change_id: commit.change_id().reverse_hex(),
+            commit_id: at.hex(),
+            description: commit.description().to_owned(),
+        });
+        at = commit.parent_ids()[0].clone();
+    }
+    found.reverse();
+    found
 }
 
 /// A sub-agent's script: its turns of writes, each committed or not,
@@ -309,7 +346,6 @@ fn sub_script(index: usize, sub: &Sub, dirty: bool) -> ScriptedModel {
     }
 }
 
-
 /// Holds each sub-agent at its gate until the conductor lets it on.
 #[derive(Clone, Default)]
 struct Gates {
@@ -338,13 +374,16 @@ impl AgentTool for Gates {
     async fn call(
         &self,
         args: Value,
-        _ctx: ToolCtx,
+        ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
         let id = args["id"].as_u64().unwrap() as usize;
         self.state.lock().unwrap().waiting.insert(id);
         loop {
             if self.state.lock().unwrap().open.contains(&id) {
                 return Ok(ToolOutput::text("open"));
+            }
+            if ctx.cancel.is_cancelled() {
+                return Err("cancelled at the gate".into());
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
@@ -353,12 +392,14 @@ impl AgentTool for Gates {
 
 /// Lets the sub-agents on one at a time: once every running one waits at
 /// its gate, the one first in `rank` goes, and the next waits until its
-/// workspace is gone. Returns the order they went in.
+/// workspace is gone. With `cancel`, the caller is cancelled once that
+/// many went. Returns the order they went in.
 async fn conduct(
     gates: Gates,
     project: Project,
     names: Arc<Mutex<HashMap<usize, String>>>,
     rank: Vec<usize>,
+    cancel: Option<(usize, RunControl)>,
 ) -> Vec<usize> {
     let n = rank.len();
     let mut order = Vec::new();
@@ -366,7 +407,10 @@ async fn conduct(
     while order.len() < n {
         let running = MAX_RUNNING.min(n - order.len());
         let next = loop {
-            assert!(Instant::now() < deadline, "the sub-agents never reached their gates");
+            assert!(
+                Instant::now() < deadline,
+                "the sub-agents never reached their gates"
+            );
             {
                 let state = gates.state.lock().unwrap();
                 if state.waiting.len() == running {
@@ -379,6 +423,13 @@ async fn conduct(
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         };
+        // The cancel comes while the running ones wait at their gates.
+        if let Some((after, control)) = &cancel
+            && order.len() == *after
+        {
+            control.cancel();
+            return order;
+        }
         {
             let mut state = gates.state.lock().unwrap();
             state.waiting.remove(&next);
@@ -434,16 +485,27 @@ fn note(changes: usize, conflicts: &[String]) -> String {
 /// conflicts reported, failures dropped, every sub-agent closed; a caller
 /// with uncommitted work is refused.
 #[hegel::test(
-    test_cases = 30,
+    test_cases = 40,
     suppress_health_check = [hegel::HealthCheck::TooSlow]
 )]
 fn a_batch_lands_as_the_model_says(tc: TestCase) {
     let caller_writes = tc.draw(writes());
-    let caller_commits = tc.draw(gs::weighted_booleans(0.85));
+    let caller_commits = tc.draw(gs::weighted_booleans(0.7));
+    // The repository's main chat, which commits on trunk in jj's own
+    // workspace, or a run of its own.
+    let main_chat = tc.draw(gs::booleans());
+    let calls: usize =
+        tc.draw(gs::integers().min_value(1).max_value(MAX_BATCH));
     let subs: Vec<Sub> =
-        tc.draw(gs::vecs(sub()).min_size(1).max_size(MAX_BATCH));
+        tc.draw(gs::vecs(sub()).min_size(calls).max_size(calls));
     let rank: Vec<usize> =
         tc.draw(gs::permutations((0..subs.len()).collect::<Vec<_>>()));
+    // The caller is cancelled once this many sub-agents have finished.
+    let cancel_after: Option<usize> = if tc.draw(gs::weighted_booleans(0.4)) {
+        Some(tc.draw(gs::integers().max_value(calls - 1)))
+    } else {
+        None
+    };
 
     let home = tempfile::tempdir().unwrap();
     let project = project(home.path());
@@ -451,10 +513,15 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
         .enable_all()
         .build()
         .unwrap();
-    let dirty = !caller_commits && with(&trunk_tree(), &caller_writes) != trunk_tree();
+    let dirty =
+        !caller_commits && with(&trunk_tree(), &caller_writes) != trunk_tree();
     let base = with(&trunk_tree(), &caller_writes);
     if dirty {
         tc.event("the caller has uncommitted work");
+    }
+    let cancelled = cancel_after.is_some() && !dirty;
+    if cancelled {
+        tc.event("the caller is cancelled during the batch");
     }
     if subs.len() > MAX_RUNNING {
         tc.event("more sub-agents than run at once");
@@ -462,9 +529,30 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
 
     runtime.block_on(async {
         let store = Store::memory().await.unwrap();
-        let caller =
+        let trunk = project.trunk().unwrap();
+        let caller = if main_chat {
+            tc.event("the caller is the main chat");
+            RunWorkspace::new(
+                project.clone(),
+                DEFAULT_WORKSPACE,
+                Identity::default(),
+            )
+            .unwrap()
+            .commits_to(project.trunk_name().unwrap())
+        } else {
             RunWorkspace::new(project.clone(), "caller", Identity::default())
+                .unwrap()
+        };
+
+        // The host brings the main chat up to trunk before its turns:
+        // jj's own workspace starts on the root commit.
+        if main_chat {
+            caller
+                .vcs()
+                .move_onto(trunk.clone(), project.trunk_name().unwrap(), true)
+                .await
                 .unwrap();
+        }
 
         // The caller's script.
         let writes = caller_writes.clone();
@@ -483,7 +571,6 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
             }
             t
         });
-        let calls = subs.len();
         llm = llm.turn(move |mut t| {
             for i in 0..calls {
                 t = t.tool_call(
@@ -533,20 +620,24 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                 },
             )
         };
+        let run = coder(llm.clone(), &caller)
+            .tool(delegate)
+            .start("split the work", &store);
         let conductor = (!dirty).then(|| {
             tokio::spawn(conduct(
                 gates.clone(),
                 project.clone(),
                 names.clone(),
                 rank.clone(),
+                cancel_after.map(|after| (after, run.control())),
             ))
         });
-        let outcome = coder(llm.clone(), &caller)
-            .tool(delegate)
-            .run("split the work", &store)
-            .await
-            .unwrap();
-        llm.assert_exhausted();
+        let outcome = run.outcome().await.unwrap();
+        if cancelled {
+            assert_eq!(outcome.stop, StopReason::Cancelled);
+        } else {
+            llm.assert_exhausted();
+        }
         let order = match conductor {
             Some(conductor) => conductor.await.unwrap(),
             None => Vec::new(),
@@ -554,15 +645,22 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
         if order.iter().zip(1..).any(|(i, at)| *i + 1 != at) {
             tc.event("sub-agents finish out of call order");
         }
-        for script in &scripts {
-            if !dirty {
-                script.assert_exhausted();
-            }
+        for &i in &order {
+            scripts[i].assert_exhausted();
         }
 
         // The results, in call order.
-        let results: Vec<(String, bool, Value)> = llm.requests()[2]
-            .transcript
+        let transcript: Vec<Message> = store
+            .transcript(&outcome.run.0)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Entry::Message { body, .. } => serde_json::from_str(&body).ok(),
+                _ => None,
+            })
+            .collect();
+        let results: Vec<(String, bool, Value)> = transcript
             .iter()
             .filter_map(|message| match message {
                 Message::ToolResult(result) if result.tool_name == "delegate" => {
@@ -576,8 +674,9 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
             })
             .collect();
         assert_eq!(results.len(), calls);
-        let head = project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap();
-        let stack = project.stack(&head).unwrap();
+        let caller_bookmark = caller.bookmark_of(&outcome.run);
+        let head = project.bookmark(&caller_bookmark).unwrap().unwrap();
+        let stack = walk(home.path(), &head, &trunk);
         let mut at = 0;
         let mut want_stack: Vec<(String, Tree)> = Vec::new();
         if caller_commits && !caller_writes.is_empty() {
@@ -666,6 +765,13 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                     from_links.push((id, run.clone()));
                 }
             }
+            // Nothing lands from the sub-agents a cancel stopped.
+            for (i, (text, error, _)) in results.iter().enumerate() {
+                if !order.contains(&i) {
+                    assert!(cancelled, "sub-agent {i} never finished");
+                    assert!(*error, "sub-agent {i} after the cancel: {text}");
+                }
+            }
             // The caller links each landed change, in landing order, from
             // its sub-agent, then the turn's snapshot.
             let turn2: Vec<&Link> = links.iter().filter(|l| l.turn == 2).collect();
@@ -704,7 +810,12 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
         }
 
         // Every sub-agent closed: its workspace and bookmark are gone.
-        assert_eq!(project.workspaces().unwrap(), ["caller"]);
-        assert_eq!(project.bookmarks("tau/").unwrap(), [bookmark(&outcome.run)]);
+        let (workspaces, bookmarks) = if main_chat {
+            (Vec::new(), Vec::new())
+        } else {
+            (vec!["caller".to_owned()], vec![caller_bookmark])
+        };
+        assert_eq!(project.workspaces().unwrap(), workspaces);
+        assert_eq!(project.bookmarks("tau/").unwrap(), bookmarks);
     });
 }
