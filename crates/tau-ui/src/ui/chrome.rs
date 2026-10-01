@@ -730,18 +730,9 @@ fn run_row(
     let hovered = ws.hovered_run.as_ref() == Some(&run.id);
     let unread = ws.unread(run);
     let (hover_id, close_id) = (run.id.clone(), run.id.clone());
-    // A goal adds its line under the title, and its count at the end.
-    let goal = run.goal.as_ref().map(|goal| {
-        let tone = crate::goal::tone(goal, t);
-        let line = match goal.status {
-            tau_goal::Status::Met => format!("goal met · {}", goal.condition),
-            tau_goal::Status::Stopped(_) => {
-                format!("goal not met · {}", goal.condition)
-            }
-            _ => format!("goal · {}", goal.condition),
-        };
-        (tone, line, crate::goal::badge(goal))
-    });
+    // What plugins add to the row: a line under the title, and a count
+    // at the end.
+    let note = ws.run_rows(run, cx).into_iter().next();
     let title = div()
         .truncate()
         .text_color(if active { t.text } else { t.text_soft })
@@ -756,7 +747,10 @@ fn run_row(
         .items_center()
         .gap(sp(2.5))
         .min_h(px(34.))
-        .py(sp(goal.as_ref().map_or(0., |_| 1.5)))
+        .py(sp(note
+            .as_ref()
+            .and_then(|note| note.line.as_ref())
+            .map_or(0., |_| 1.5)))
         .pl(sp(indent(depth)))
         .pr(sp(2.))
         .rounded(radius::CONTROL)
@@ -780,19 +774,25 @@ fn run_row(
                 .flex_col()
                 .gap(sp(0.25))
                 .child(title)
-                .when_some(goal.clone(), |column, (tone, line, _)| {
-                    column.child(
-                        div()
-                            .truncate()
-                            .typeset(Type::MICRO)
-                            .text_color(if tone == t.accent {
-                                t.dim
-                            } else {
-                                tone
-                            })
-                            .child(line),
-                    )
-                }),
+                .when_some(
+                    note.as_ref()
+                        .and_then(|note| Some((note.tone, note.line.clone()?))),
+                    |column, (tone, line)| {
+                        column.child(
+                            div()
+                                .truncate()
+                                .typeset(Type::MICRO)
+                                .text_color(
+                                    if tone == crate::view::Tone::Warn {
+                                        t.dim
+                                    } else {
+                                        t.tone(tone)
+                                    },
+                                )
+                                .child(line),
+                        )
+                    },
+                ),
         )
         .map(|row| {
             if hovered && !ws.is_main(&run.id) {
@@ -813,14 +813,18 @@ fn run_row(
                 )
             } else if unread > 0 {
                 row.child(super::count_pill(unread, t))
-            } else if let Some((tone, _, badge)) = goal {
+            } else if let Some((glyph, tone, count)) =
+                note.as_ref().and_then(|note| {
+                    Some((note.icon, note.tone, note.count.clone()?))
+                })
+            {
                 row.child(
                     div()
                         .flex()
                         .items_center()
                         .gap(sp(1.))
-                        .child(icon(Icon::Target, IconSize::SMALL, tone))
-                        .child(mono(badge, Type::MICRO, tone)),
+                        .child(icon(glyph, IconSize::SMALL, t.tone(tone)))
+                        .child(mono(count, Type::MICRO, t.tone(tone))),
                 )
             } else if nested && run.status.is_live() {
                 row.child(live_dot(t.accent, 6.))
@@ -1382,18 +1386,19 @@ fn phone_run_row(
     } else {
         label.to_string()
     };
-    // With a goal, the line under the title is where the goal stands.
-    let (meta, color) = match &run.goal {
-        Some(goal) => (
-            format!("goal · {}", crate::goal::status_line(goal)),
-            crate::goal::tone(goal, t),
-        ),
+    // What plugins add to the row: where a goal stands, under the
+    // title, and its count at the end.
+    let note = ws.run_rows(run, cx).into_iter().next();
+    let (meta, color) = match note
+        .as_ref()
+        .and_then(|note| Some((note.phone_line.clone()?, note.tone)))
+    {
+        Some((line, tone)) => (line, t.tone(tone)),
         None => (meta, color),
     };
-    let badge = run
-        .goal
-        .as_ref()
-        .map(|goal| (crate::goal::badge(goal), crate::goal::tone(goal, t)));
+    let badge = note.as_ref().and_then(|note| {
+        Some((note.count.clone()?, t.tone(note.tone), note.icon))
+    });
     div()
         .id(SharedString::from(format!("phone-run-{}", run.id)))
         .flex()
@@ -1423,7 +1428,7 @@ fn phone_run_row(
                 .child(mono(meta, Type::MICRO, color).truncate()),
         )
         .when(unread > 0, |row| row.child(super::count_pill(unread, t)))
-        .when_some(badge.filter(|_| unread == 0), |row, (badge, tone)| {
+        .when_some(badge.filter(|_| unread == 0), |row, (badge, tone, _)| {
             row.child(mono(badge, Type::CAPTION, tone))
         })
         .on_click(

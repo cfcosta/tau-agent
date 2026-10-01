@@ -88,22 +88,17 @@ pub enum HostUpdate {
         plugin: String,
         body: serde_json::Value,
     },
+    /// A plugin's state in a run as `records` leave it, where what the
+    /// interface showed could not be saved.
+    PluginRestate {
+        run: RunId,
+        plugin: String,
+        records: Vec<serde_json::Value>,
+    },
     /// What a plugin's host half answered its UI.
     PluginReply {
         plugin: String,
         reply: serde_json::Value,
-    },
-    /// A run's goal as tau-goal's stored records leave it, where what the
-    /// interface showed could not be saved.
-    GoalRecords {
-        run: RunId,
-        records: Vec<serde_json::Value>,
-    },
-    /// Whether tau-goal checks a run's goal as it goes now: a run that
-    /// went on, with or without a TypeSafe key.
-    GoalChecks {
-        run: RunId,
-        checks: bool,
     },
     /// A model wrote a run's title.
     Titled {

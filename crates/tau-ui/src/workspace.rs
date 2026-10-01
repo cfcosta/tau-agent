@@ -135,13 +135,6 @@ pub fn bind_keys(cx: &mut App) {
 /// What the user asked for. The host subscribes and acts on these.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WorkspaceEvent {
-    /// Change a conversation's goal: pause, resume, extend or clear it.
-    /// The host stores the record for tau-goal, which reads it at its
-    /// next check.
-    Goal {
-        run: RunId,
-        record: tau_goal::Record,
-    },
     /// Start a new run with this prompt, on this model, in this
     /// repository.
     NewRun {
@@ -544,9 +537,6 @@ pub struct Workspace {
     pub(crate) slash_selected: usize,
     pub(crate) slash_dismissed: Option<String>,
     pub(crate) slash_seen: String,
-    /// The `/goal` popover's limits.
-    pub(crate) goal_continuations: Entity<TextInput>,
-    pub(crate) goal_budget: Entity<TextInput>,
     /// The open run's transcript: only the items in view are laid out.
     /// While `follow` holds, it is kept scrolled to the newest item.
     transcript: ListState,
@@ -600,6 +590,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let plugin_requests = crate::plugins::Requests::default();
         let composer =
             cx.new(|cx| TextInput::new("Start a new run", cx).multiline());
         let history_filter = cx.new(|cx| {
@@ -656,16 +647,6 @@ impl Workspace {
                 .keep_on_submit()
         });
         let jev_key = cx.new(|cx| TextInput::new("ts-…", cx).masked());
-        let limit = |text: String, cx: &mut Context<Self>| {
-            cx.new(|cx| {
-                let mut input = TextInput::new("", cx).keep_on_submit();
-                input.set_text(text, cx);
-                input
-            })
-        };
-        let goal_continuations =
-            limit(tau_goal::DEFAULT_CONTINUATIONS.to_string(), cx);
-        let goal_budget = limit(format!("{:.2}", tau_goal::DEFAULT_BUDGET), cx);
         let subscriptions = vec![
             cx.subscribe_in(
                 &composer,
@@ -687,12 +668,6 @@ impl Workspace {
             cx.observe(&rule_text, |_, _, cx| cx.notify()),
             // Its popover follows what is typed.
             cx.observe(&composer, |ws, _, cx| ws.composer_changed(cx)),
-            cx.subscribe(&goal_continuations, |ws, _, _: &InputEvent, cx| {
-                ws.submit_from_button(cx)
-            }),
-            cx.subscribe(&goal_budget, |ws, _, _: &InputEvent, cx| {
-                ws.submit_from_button(cx)
-            }),
             // Filters apply as you type.
             cx.observe(&history_filter, |_, _, cx| cx.notify()),
             cx.observe(&memory_search, |_, _, cx| cx.notify()),
@@ -817,18 +792,26 @@ impl Workspace {
             rule_menu: None,
             resetting_rules: None,
             weak: cx.weak_entity(),
-            plugin_ui: crate::plugins::registry()
-                .plugins()
-                .map(|plugin| (plugin.name().to_owned(), plugin.new_ui(cx)))
-                .collect(),
-            plugin_requests: Default::default(),
+            plugin_ui: {
+                let weak = cx.weak_entity();
+                crate::plugins::registry()
+                    .plugins()
+                    .map(|plugin| {
+                        let handle = crate::plugins::handle_for(
+                            plugin.name(),
+                            plugin_requests.clone(),
+                            weak.clone(),
+                        );
+                        (plugin.name().to_owned(), plugin.new_ui(handle, cx))
+                    })
+                    .collect()
+            },
+            plugin_requests,
             adding_jev_key: false,
             jev_key,
             slash_selected: 0,
             slash_dismissed: None,
             slash_seen: String::new(),
-            goal_continuations,
-            goal_budget,
             transcript: ListState::new(0, ListAlignment::Top, px(600.)),
             listed: None,
             transcript_width: None,
@@ -995,24 +978,20 @@ impl Workspace {
                 }
                 cx.notify();
             }
+            HostUpdate::PluginRestate {
+                run,
+                plugin,
+                records,
+            } => {
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| view.id == run)
+                {
+                    view.restate(&plugin, &records);
+                }
+                cx.notify();
+            }
             HostUpdate::PluginReply { plugin, reply } => {
                 self.plugin_reply(&plugin, reply, cx);
-            }
-            HostUpdate::GoalRecords { run, records } => {
-                if let Some(view) =
-                    self.runs.iter_mut().find(|view| view.id == run)
-                {
-                    view.set_goal_records(&records);
-                }
-                cx.notify();
-            }
-            HostUpdate::GoalChecks { run, checks } => {
-                if let Some(view) =
-                    self.runs.iter_mut().find(|view| view.id == run)
-                {
-                    view.goal_checks = checks;
-                }
-                cx.notify();
             }
             HostUpdate::Titled { run, title } => self.retitle(&run, title, cx),
             HostUpdate::Repo { repo, main } => {
@@ -2068,10 +2047,7 @@ impl Workspace {
         };
         if let Some(view) = self.runs.iter_mut().find(|view| &view.id == run) {
             view.status = status;
-            if matches!(
-                view.items.last(),
-                Some(crate::view::Item::User(_) | crate::view::Item::Goal(_))
-            ) {
+            if matches!(view.items.last(), Some(crate::view::Item::User(_))) {
                 view.items.pop();
             }
         }
@@ -2100,7 +2076,7 @@ impl Workspace {
                 .update(cx, |input, cx| input.move_vertical(rows, cx))
     }
 
-    fn submit_from_button(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn submit_from_button(&mut self, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).text().trim().to_owned();
         if !text.is_empty() {
             self.composer.update(cx, |input, cx| input.clear(cx));
@@ -3658,11 +3634,6 @@ impl Workspace {
             .flex()
             .flex_col()
             .when(!compact, |screen| screen.child(self.run_header(t, cx)))
-            .when(!compact && self.route != Route::NewRun, |screen| {
-                screen.children(
-                    self.current().and_then(|run| self.goal_banner(run, t, cx)),
-                )
-            })
             .when(self.route != Route::NewRun, |screen| {
                 // What plugins put above the transcript.
                 let banners = self
@@ -3820,7 +3791,6 @@ impl Workspace {
         match (&self.route, self.current()) {
             (Route::Run(_), Some(run)) => screen
                 .child(chrome::phone_run_bar(run, self.is_main(&run.id), t, cx))
-                .children(self.phone_goal_bar(run, t, cx))
                 .child(self.run_screen(true, t, cx))
                 .when(self.sheet_open, |screen| {
                     screen.child(self.sheet(run, t, cx))

@@ -248,13 +248,15 @@ fn a_new_chat_shows_the_goal_it_inherits() {
         .turn(|t| t.text("ok"));
     let (host, mut events) = host_on(llm, dir.path());
     let main = host.main_of(REPO).unwrap();
-    host.goal_record(
+    host.store_plugin_record(
         &main,
+        tau_goal::NAME,
         &tau_goal::Record::Set {
             goal: "the docs build".into(),
             continuations: 4,
             budget: 1.0,
-        },
+        }
+        .to_value(),
     )
     .unwrap();
     // A turn after it: new chats fork from there, the goal before.
@@ -264,12 +266,35 @@ fn a_new_chat_shows_the_goal_it_inherits() {
     let view = host
         .start("look around", &ModelChoice::default(), REPO)
         .unwrap();
-    let goal = view.goal.clone().expect("the inherited goal shows");
+    let state = goal_of(&view);
+    let goal = state.goal.expect("the inherited goal shows");
     assert_eq!(goal.condition, "the docs build");
     assert_eq!(goal.max_continuations, 4);
-    assert!(!view.goal_checks, "no key: nothing checks it");
+    assert!(!state.checks, "no key: nothing checks it");
     until_end(&mut events);
     wait_until_done(&host, &view.id);
+}
+
+/// tau-goal's state in `view`, as its fold leaves it.
+fn goal_of(view: &tau_ui::view::RunView) -> tau_goal::ui::State {
+    view.plugin_states
+        .get(tau_goal::NAME)
+        .map(|state| serde_json::from_value(state.clone()).unwrap())
+        .unwrap_or_default()
+}
+
+/// The text of tau-goal's notes in `view`'s transcript, in order.
+fn goal_notes(view: &tau_ui::view::RunView) -> Vec<String> {
+    let state = goal_of(view);
+    view.items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Anchor { plugin, key } if plugin == tau_goal::NAME => {
+                Some(state.notes[key].text.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// tau-reasoning's state in `view`, as its fold leaves it.
@@ -1881,57 +1906,31 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     let prompt = "/goal --continuations 3 the tests pass";
     let mut view = host.start(prompt, &ModelChoice::default(), REPO).unwrap();
     assert_eq!(view.title, "the tests pass");
-    assert!(view.goal_checks, "with a key, tau-goal checks the run");
+    assert!(goal_of(&view).checks, "with a key, tau-goal checks the run");
     for event in until_end(&mut events) {
         view.apply(&event);
     }
     wait_until_done(&host, &view.id);
     assert_eq!(llm.requests().len(), 2, "sent back once");
-    let goal = view.goal.clone().expect("the goal shows live");
+    let goal = goal_of(&view).goal.expect("the goal shows live");
     assert_eq!(goal.condition, "the tests pass");
     assert_eq!(goal.status, tau_goal::Status::Met);
     assert_eq!((goal.continuations, goal.max_continuations), (1, 3));
-    let notes: Vec<String> = view
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            Item::Plugin(note) if note.plugin == tau_goal::NAME => {
-                Some(note.text.clone())
-            }
-            _ => None,
-        })
-        .collect();
-    assert_eq!(notes, ["the goal is not met yet", "the goal is met"]);
+    assert_eq!(
+        goal_notes(&view),
+        ["the goal is not met yet", "the goal is met"]
+    );
 
-    // History has the goal: the card, the continuation as tau-goal's
-    // note, and the state from the records.
+    // History has the goal: the message that set it, the same notes as
+    // live, and the state from the records; the check's note holds the
+    // continuation it sent.
     let history = host.history().unwrap();
     let stored = &history[0];
-    assert_eq!(stored.goal, view.goal);
-    assert!(matches!(&stored.items[0], Item::Goal(c) if c == "the tests pass"));
-    // The same notes as live: the continuation for the check that sent
-    // the model back, and the check that met it.
-    let stored_notes: Vec<String> = stored
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            Item::Plugin(note) if note.plugin == tau_goal::NAME => {
-                Some(note.text.clone())
-            }
-            _ => None,
-        })
-        .collect();
-    assert_eq!(stored_notes.len(), 2, "{stored_notes:?}");
-    assert!(stored_notes[0].starts_with("the goal is not met yet"));
-    assert_eq!(stored_notes[1], "the goal is met");
-    assert!(
-        !stored
-            .items
-            .iter()
-            .any(|item| matches!(item, Item::User(text)
-            if text.starts_with(tau_goal::CONTINUATION_PREFIX))),
-        "no continuation shows as the person's message"
-    );
+    assert_eq!(goal_of(stored).goal, goal_of(&view).goal);
+    assert!(matches!(&stored.items[0], Item::User(text)
+        if tau_goal::set_message(text).as_deref() == Some("the tests pass")));
+    assert_eq!(goal_notes(stored), goal_notes(&view));
+    assert_eq!(goal_of(stored).held, [1].into());
 
     // A met goal is not checked again; a new one is, until paused. This
     // one runs out at once, then gets one more continuation, paused.
@@ -1951,16 +1950,19 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     until_end(&mut events);
     wait_until_done(&host, &view.id);
     assert_eq!(goal_checks(), asked + 1);
-    host.goal_record(&view.id, &tau_goal::Record::Extended { by: 1 })
-        .unwrap();
-    host.goal_record(&view.id, &tau_goal::Record::Paused)
-        .unwrap();
+    for record in [
+        tau_goal::Record::Extended { by: 1 },
+        tau_goal::Record::Paused,
+    ] {
+        host.store_plugin_record(&view.id, tau_goal::NAME, &record.to_value())
+            .unwrap();
+    }
     host.resume(&view.id, "one more thing", &ModelChoice::default())
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &view.id);
     assert_eq!(goal_checks(), asked + 1, "paused: not checked");
-    let goal = host.history().unwrap()[0].goal.clone().unwrap();
+    let goal = goal_of(&host.history().unwrap()[0]).goal.unwrap();
     assert_eq!(goal.condition, "it is released");
     assert_eq!(goal.status, tau_goal::Status::Paused);
     assert_eq!(goal.max_continuations, 1);

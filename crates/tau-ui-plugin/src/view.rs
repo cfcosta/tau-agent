@@ -111,6 +111,20 @@ pub struct PluginStatus {
     pub tone: Tone,
 }
 
+/// What a plugin adds to a run's row in the sidebar: a line under its
+/// title, and small print at its end.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RowNote {
+    /// Under the title in the sidebar.
+    pub line: Option<String>,
+    /// Under the title in a phone's list, which has room for more.
+    pub phone_line: Option<String>,
+    /// At the row's end, after its icon.
+    pub count: Option<String>,
+    pub icon: Icon,
+    pub tone: Tone,
+}
+
 /// A field of a run's plan, and who set it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanField {
@@ -150,6 +164,10 @@ pub enum Request {
     },
     /// Puts `text` in the composer.
     Composer(String),
+    /// Shows the run's details: the inspector, or a phone's sheet.
+    RunDetails,
+    /// Sends what the composer holds, as Enter in it would.
+    Submit,
     /// Draws the interface again.
     Refresh,
 }
@@ -247,6 +265,10 @@ impl Handle {
 
     pub fn composer(&self, text: impl Into<String>, cx: &mut App) {
         self.request(Request::Composer(text.into()), cx);
+    }
+
+    pub fn run_details(&self, cx: &mut App) {
+        self.request(Request::RunDetails, cx);
     }
 
     pub fn refresh(&self, cx: &mut App) {

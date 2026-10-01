@@ -13,73 +13,75 @@ use gpui::{
     prelude::*,
     px,
 };
-use tau_agent::tool::RunId;
 
 use crate::{
     assets::Icon,
     route::Route,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp},
+    theme::{IconSize, Theme, Type, radius, sp},
     ui,
     ui::Material as _,
-    workspace::{PickerTarget, Workspace, WorkspaceEvent},
+    workspace::{PickerTarget, Workspace},
 };
 
-/// A command the composer runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A command the composer runs: tau-ui's own, or a plugin's.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
-    pub name: &'static str,
+    /// With its slash: `/fork`.
+    pub name: String,
     /// What follows the name, as the menu shows it.
     pub args: &'static str,
     pub about: &'static str,
     pub glyph: Icon,
     /// Whether it acts on the open conversation.
     pub needs_run: bool,
+    /// The plugin whose command it is.
+    pub plugin: Option<&'static str>,
+    /// Whether the plugin's command has a popover while it is written.
+    pub popover: bool,
 }
 
-pub const COMMANDS: [Command; 6] = [
-    Command {
-        name: "/goal",
-        args: "<condition>",
-        about: "Keep working until a condition holds",
-        glyph: Icon::Target,
-        needs_run: false,
-    },
-    Command {
-        name: "/model",
+/// tau-ui's own commands.
+fn builtin() -> [Command; 5] {
+    let command = |name: &str,
+                   about: &'static str,
+                   glyph: Icon,
+                   needs_run: bool| Command {
+        name: name.to_owned(),
         args: "",
-        about: "Pick the model for new runs",
-        glyph: Icon::Settings,
-        needs_run: false,
-    },
-    Command {
-        name: "/fork",
-        args: "",
-        about: "Fork this conversation at its last turn",
-        glyph: Icon::Fork,
-        needs_run: true,
-    },
-    Command {
-        name: "/attach",
-        args: "",
-        about: "Attach text files to the message",
-        glyph: Icon::Paperclip,
-        needs_run: false,
-    },
-    Command {
-        name: "/pr",
-        args: "",
-        about: "Open a pull request from this run",
-        glyph: Icon::PullRequest,
-        needs_run: true,
-    },
-    Command {
-        name: "/close",
-        args: "",
-        about: "Close this conversation",
-        glyph: Icon::Close,
-        needs_run: true,
-    },
-];
+        about,
+        glyph,
+        needs_run,
+        plugin: None,
+        popover: false,
+    };
+    [
+        command(
+            "/model",
+            "Pick the model for new runs",
+            Icon::Settings,
+            false,
+        ),
+        command(
+            "/fork",
+            "Fork this conversation at its last turn",
+            Icon::Fork,
+            true,
+        ),
+        command(
+            "/attach",
+            "Attach text files to the message",
+            Icon::Paperclip,
+            false,
+        ),
+        command(
+            "/pr",
+            "Open a pull request from this run",
+            Icon::PullRequest,
+            true,
+        ),
+        command("/close", "Close this conversation", Icon::Close, true),
+    ]
+}
 
 /// What the composer's text asks for.
 #[derive(Debug, Clone, PartialEq)]
@@ -88,40 +90,62 @@ pub enum Slash {
     None,
     /// A command being typed: the ones that match.
     Menu(Vec<Command>),
-    /// A goal being written: what follows `/goal `.
-    Goal(String),
-}
-
-impl Slash {
-    pub fn is_goal(&self) -> bool {
-        matches!(self, Self::Goal(_))
-    }
+    /// A plugin's command being written, past its name: what follows.
+    Writing {
+        plugin: &'static str,
+        command: &'static str,
+        args: String,
+    },
 }
 
 impl Workspace {
-    /// The commands that work here: the ones about a conversation only
-    /// when one is open.
-    fn commands(&self) -> impl Iterator<Item = Command> + '_ {
+    /// The commands that work here, plugins' first: the ones about a
+    /// conversation only when one is open.
+    fn commands(&self) -> Vec<Command> {
         let run = self.current().filter(|_| self.route != Route::NewRun);
         let in_run = run.is_some();
         // Only a main chat can be forked.
         let forks = run.is_some_and(|run| self.can_fork(run));
-        COMMANDS
-            .into_iter()
-            .filter(move |command| in_run || !command.needs_run)
-            .filter(move |command| command.name != "/fork" || forks)
+        let plugins = crate::plugins::registry().plugins().flat_map(|plugin| {
+            let name = plugin.name();
+            plugin.commands().into_iter().map(move |command| Command {
+                name: format!("/{}", command.name),
+                args: command.args,
+                about: command.hint,
+                glyph: command.icon,
+                needs_run: false,
+                plugin: Some(name),
+                popover: command.popover,
+            })
+        });
+        plugins
+            .chain(builtin())
+            .filter(|command| in_run || !command.needs_run)
+            .filter(|command| command.name != "/fork" || forks)
+            .collect()
     }
 
     /// What `text` in the composer asks for.
     pub fn slash(&self, text: &str) -> Slash {
-        if let Some(rest) = text.strip_prefix("/goal ") {
-            return Slash::Goal(rest.trim_start().to_owned());
+        for plugin in crate::plugins::registry().plugins() {
+            for command in plugin.commands().into_iter().filter(|c| c.popover) {
+                if let Some(rest) =
+                    text.strip_prefix(&format!("/{} ", command.name))
+                {
+                    return Slash::Writing {
+                        plugin: plugin.name(),
+                        command: command.name,
+                        args: rest.trim_start().to_owned(),
+                    };
+                }
+            }
         }
         if !text.starts_with('/') || text.contains(char::is_whitespace) {
             return Slash::None;
         }
         let matches: Vec<Command> = self
             .commands()
+            .into_iter()
             .filter(|command| command.name.starts_with(text))
             .collect();
         if matches.is_empty() {
@@ -146,7 +170,7 @@ impl Workspace {
         match self.composer_slash(cx) {
             Slash::None => 0,
             Slash::Menu(commands) => commands.len(),
-            Slash::Goal(_) => 0,
+            Slash::Writing { .. } => 0,
         }
     }
 
@@ -172,12 +196,12 @@ impl Workspace {
                     return false;
                 };
                 if command.args.is_empty() {
-                    command.name.to_owned()
+                    command.name.clone()
                 } else {
                     format!("{} ", command.name)
                 }
             }
-            Slash::Goal(_) => return false,
+            Slash::Writing { .. } => return false,
         };
         self.slash_selected = 0;
         self.composer
@@ -218,34 +242,18 @@ impl Workspace {
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) -> bool {
-        // `/goal` alone is not a goal yet: it stays, to be written.
-        if text.trim() == "/goal" && self.slash(&self.slash_seen).is_goal() {
-            self.composer
-                .update(cx, |input, cx| input.set_text("/goal ", cx));
-            return true;
-        }
         // A command still being typed runs the one selected.
         if let Slash::Menu(commands) = self.slash(text)
             && self.slash_dismissed.as_deref() != Some(text)
         {
             let command = commands
                 .get(self.slash_selected)
-                .copied()
-                .unwrap_or(commands[0]);
+                .cloned()
+                .unwrap_or_else(|| commands[0].clone());
             self.slash_selected = 0;
             return self.run_command(command, window, cx);
         }
-        if self.run_plugin_command(text, cx) {
-            return true;
-        }
-        if let Some(command) = tau_goal::Command::parse(text) {
-            // Limits typed with the command win over the popover's.
-            let typed =
-                text.contains("--continuations") || text.contains("--budget");
-            self.set_goal(command, typed, cx);
-            return true;
-        }
-        false
+        self.run_plugin_command(text, cx)
     }
 
     fn run_command(
@@ -254,14 +262,22 @@ impl Workspace {
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) -> bool {
+        // A plugin's command with arguments is written first.
+        if command.plugin.is_some() {
+            if command.args.is_empty() {
+                return self.run_plugin_command(&command.name, cx);
+            }
+            let text = format!("{} ", command.name);
+            self.composer
+                .update(cx, |input, cx| input.set_text(text, cx));
+            cx.notify();
+            return true;
+        }
         let run = self
             .current()
             .filter(|_| self.route != Route::NewRun)
             .map(|run| run.id.clone());
-        match (command.name, run) {
-            ("/goal", _) => self
-                .composer
-                .update(cx, |input, cx| input.set_text("/goal ", cx)),
+        match (command.name.as_str(), run) {
             ("/model", _) => match window {
                 Some(window) => {
                     self.open_picker(PickerTarget::Next, window, cx)
@@ -283,115 +299,6 @@ impl Workspace {
         true
     }
 
-    /// `/goal ...`: sets the open conversation's goal, or a new run's,
-    /// with the limits from the popover unless `typed` says the command
-    /// gave its own. `/goal clear` clears it.
-    fn set_goal(
-        &mut self,
-        command: tau_goal::Command,
-        typed: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let run = self
-            .current()
-            .filter(|_| self.route != Route::NewRun)
-            .map(|run| (run.id.clone(), run.status.is_live(), run.goal_checks));
-        let tau_goal::Command::Set {
-            condition,
-            continuations,
-            budget,
-        } = command
-        else {
-            if let Some((run, _, _)) = run {
-                self.goal_control(&run, tau_goal::Record::Cleared, cx);
-            }
-            return;
-        };
-        if !self.catalog.models.access.jev {
-            self.show_alert(
-                "Goals need Jev",
-                "tau-goal checks goals with Jev. Add a TypeSafe key on the \
-                 Models screen, then set the goal again.",
-                cx,
-            );
-            self.composer.update(cx, |input, cx| {
-                input.set_text(format!("/goal {condition}"), cx)
-            });
-            return;
-        }
-        let (continuations, budget) = if typed {
-            (continuations, budget)
-        } else {
-            self.goal_limits(cx)
-        };
-        let text = format!(
-            "/goal --continuations {continuations} --budget {budget:.2} \
-             {condition}"
-        );
-        match run {
-            // A run going on without tau-goal, started before the key or
-            // as a sub-agent: the goal is kept for when it goes on, and
-            // nothing tells the model it is checked now.
-            Some((run, true, false)) => {
-                self.goal_control(
-                    &run,
-                    tau_goal::Record::Set {
-                        goal: condition.clone(),
-                        continuations,
-                        budget,
-                    },
-                    cx,
-                );
-                self.show_alert(
-                    "The goal is checked from the next message",
-                    "This run started without tau-goal, so nothing checks \
-                     the goal while it goes on. It is kept, and checked once \
-                     the conversation goes on.",
-                    cx,
-                );
-            }
-            // A run going on takes it at its next stop, and the model is
-            // told.
-            Some((run, true, true)) => {
-                self.goal_control(
-                    &run,
-                    tau_goal::Record::Set {
-                        goal: condition.clone(),
-                        continuations,
-                        budget,
-                    },
-                    cx,
-                );
-                cx.emit(WorkspaceEvent::Steer {
-                    run,
-                    text: tau_goal::set_input(&condition),
-                });
-            }
-            _ => self.send(text, cx),
-        }
-    }
-
-    /// The limits in the `/goal` popover, or the defaults where a field
-    /// does not read as a number.
-    pub fn goal_limits(&self, cx: &gpui::App) -> (u32, f64) {
-        let continuations = self
-            .goal_continuations
-            .read(cx)
-            .text()
-            .trim()
-            .parse()
-            .unwrap_or(tau_goal::DEFAULT_CONTINUATIONS);
-        let budget = self
-            .goal_budget
-            .read(cx)
-            .text()
-            .trim()
-            .trim_start_matches('$')
-            .parse()
-            .unwrap_or(tau_goal::DEFAULT_BUDGET);
-        (continuations, budget)
-    }
-
     /// The composer's popover, if its text opens one.
     pub(crate) fn slash_popover(
         &self,
@@ -401,10 +308,14 @@ impl Workspace {
     ) -> Option<AnyElement> {
         let body = match self.composer_slash(cx) {
             Slash::None => return None,
-            Slash::Menu(commands) => {
-                self.command_menu(&commands, compact, t, cx)
-            }
-            Slash::Goal(_) => self.goal_popover(compact, t),
+            Slash::Menu(commands) => self
+                .command_menu(&commands, compact, t, cx)
+                .into_any_element(),
+            Slash::Writing {
+                plugin,
+                command,
+                args,
+            } => self.plugin_popover(plugin, command, &args, cx)?,
         };
         let popover = div()
             .flex()
@@ -444,7 +355,7 @@ impl Workspace {
     ) -> Div {
         let rows = commands.iter().enumerate().map(|(n, command)| {
             let selected = n == self.slash_selected;
-            let command = *command;
+            let command = command.clone();
             div()
                 .id(SharedString::from(format!("command-{}", command.name)))
                 .flex()
@@ -471,7 +382,7 @@ impl Workspace {
                         )),
                 )
                 .child(
-                    ui::mono(command.name, Type::SMALL, t.text)
+                    ui::mono(command.name.clone(), Type::SMALL, t.text)
                         .w(px(64.))
                         .flex_shrink_0(),
                 )
@@ -494,10 +405,12 @@ impl Workspace {
                         })
                         .child(command.about),
                 )
-                .when(selected && !compact, |row| row.child(key("Tab", t)))
+                .when(selected && !compact, |row| {
+                    row.child(ui::key_hint("Tab", t))
+                })
                 .on_click(cx.listener(move |ws, _, window, cx| {
                     ws.composer.update(cx, |input, cx| input.clear(cx));
-                    ws.run_command(command, Some(window), cx);
+                    ws.run_command(command.clone(), Some(window), cx);
                 }))
         });
         div()
@@ -513,7 +426,7 @@ impl Workspace {
             )
             .children(rows)
             .when(!compact, |menu| {
-                menu.child(hints(
+                menu.child(ui::hints(
                     &[
                         ("↑↓", "move"),
                         ("Tab", "complete"),
@@ -524,148 +437,4 @@ impl Workspace {
                 ))
             })
     }
-
-    fn goal_popover(&self, compact: bool, t: &Theme) -> Div {
-        let jev = self.catalog.models.access.jev;
-        let limit = |label: &'static str,
-                     input: &gpui::Entity<crate::input::TextInput>,
-                     unit: &'static str| {
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .typeset(Type::CAPTION)
-                .text_color(t.muted)
-                .child(label)
-                .child(
-                    div()
-                        .w(px(64.))
-                        .h(px(28.))
-                        .flex()
-                        .items_center()
-                        .px(sp(2.))
-                        .rounded(radius::CONTROL)
-                        .well(t)
-                        .typeset(Type::CAPTION.mono())
-                        .text_color(t.text)
-                        .child(input.clone()),
-                )
-                .when(!unit.is_empty(), |row| row.child(unit))
-        };
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(0.5))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(1.5))
-                    .px(sp(2.5))
-                    .pt(sp(2.))
-                    .pb(sp(2.5))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(sp(2.))
-                            .child(ui::icon(
-                                Icon::Target,
-                                IconSize::BASE,
-                                t.accent,
-                            ))
-                            .child(ui::mono("/goal", Type::SMALL, t.accent))
-                            .child(ui::mono(
-                                "<condition>",
-                                Type::CAPTION,
-                                t.dim,
-                            )),
-                    )
-                    .child(ui::text(
-                        if jev {
-                            "The agent keeps going until this holds. Each time \
-                             it would stop, tau-goal asks Jev whether the goal \
-                             is met; if not, the agent goes on."
-                        } else {
-                            "Goals are checked with Jev: add a TypeSafe key on \
-                             the Models screen first."
-                        },
-                        Type::CAPTION,
-                        if jev { t.muted } else { t.accent },
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(sp(4.))
-                    .px(sp(2.5))
-                    .py(sp(2.))
-                    .border_t_1()
-                    .border_b_1()
-                    .border_color(t.border)
-                    .child(limit(
-                        "Stop after",
-                        &self.goal_continuations,
-                        "continuations",
-                    ))
-                    .child(limit("Budget $", &self.goal_budget, "")),
-            )
-            .when(!compact, |popover| {
-                popover.child(hints(
-                    &[("Enter", "set the goal and start"), ("Esc", "close")],
-                    t,
-                ))
-            })
-    }
-
-    /// Stores a change to `run`'s goal, and shows it at once.
-    pub fn goal_control(
-        &mut self,
-        run: &RunId,
-        record: tau_goal::Record,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(view) = self.runs.iter_mut().find(|view| &view.id == run) {
-            view.apply_goal(&record);
-        }
-        cx.emit(WorkspaceEvent::Goal {
-            run: run.clone(),
-            record,
-        });
-        cx.notify();
-    }
-}
-
-/// A key, as the popovers' hints show it.
-fn key(label: &'static str, t: &Theme) -> Div {
-    ui::mono(label, Type::MICRO, t.dim)
-        .px(sp(1.25))
-        .py(sp(0.25))
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::SMALL)
-}
-
-/// The keys a popover takes, in a row at its foot.
-fn hints(keys: &[(&'static str, &'static str)], t: &Theme) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(sp(3.5))
-        .px(sp(2.5))
-        .pt(sp(2.))
-        .pb(sp(1.))
-        .mt(sp(1.))
-        .border_t_1()
-        .border_color(t.border)
-        .children(keys.iter().map(|(label, does)| {
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(1.5))
-                .child(key(label, t))
-                .child(ui::text(*does, Type::CAPTION, t.dim))
-        }))
 }

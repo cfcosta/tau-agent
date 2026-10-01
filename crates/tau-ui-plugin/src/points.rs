@@ -3,7 +3,7 @@
 
 use crate::{
     manifest::{Point, PointCx},
-    view::{NavEntry, PlanField, PluginStatus, RunInfo},
+    view::{NavEntry, PlanField, PluginStatus, RowNote, RunInfo},
 };
 
 /// No context: the app as a whole.
@@ -27,6 +27,21 @@ pub struct AtRun {
 }
 
 impl PointCx for AtRun {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+}
+
+/// A message the person sent, in a run's transcript.
+#[derive(Debug, Clone)]
+pub struct AtMessage {
+    pub run: RunInfo,
+    pub text: String,
+    /// Its place among the transcript's items, for element ids.
+    pub index: usize,
+}
+
+impl PointCx for AtMessage {
     fn run(&self) -> Option<&RunInfo> {
         Some(&self.run)
     }
@@ -81,8 +96,11 @@ pub const PLAN: Point<AtRun, PlanField> = Point::new("tau.run.plan");
 /// window.
 pub const CONTEXT_TRIGGER: Point<AtRun, f32> =
     Point::new("tau.run.context.trigger");
-/// Small print on a run's row in the sidebar: a goal's `2/10`.
-pub const RUN_BADGE: Point<AtRun, String> = Point::new("tau.sidebar.run.badge");
+/// A line and small print on a run's row in the sidebar: a goal's.
+pub const RUN_ROW: Point<AtRun, RowNote> = Point::new("tau.sidebar.run.row");
+/// A message the person sent, drawn by the plugin that reads it as its
+/// own (a `/goal`); the first contribution draws it.
+pub const USER_MESSAGE: Point<AtMessage> = Point::new("tau.run.user_message");
 /// The sidebar's own entries, above the repositories.
 pub const SIDEBAR: Point<AtApp, NavEntry> = Point::new("tau.sidebar");
 /// Entries under each repository in the sidebar and the phone's Runs
@@ -99,7 +117,7 @@ pub const PLAN_STEPS: Point<AtRun> = Point::new("tau.run.plan.steps");
 pub const PICKER_AUTO: Point<AtApp, String> = Point::new("tau.picker.auto");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 15] = [
+pub const ALL: [&str; 16] = [
     TRANSCRIPT.name,
     CARD_BADGE.name,
     CARD_BODY.name,
@@ -108,7 +126,8 @@ pub const ALL: [&str; 15] = [
     STATUS.name,
     PLAN.name,
     CONTEXT_TRIGGER.name,
-    RUN_BADGE.name,
+    RUN_ROW.name,
+    USER_MESSAGE.name,
     SIDEBAR.name,
     SIDEBAR_REPO.name,
     MODELS.name,

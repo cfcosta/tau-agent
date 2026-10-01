@@ -109,12 +109,22 @@ fn item_view(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     match item {
-        Item::User(text) => {
-            user(text, t, compact, room, window).into_any_element()
-        }
-        Item::Goal(condition) => {
-            goal_set(run, condition, t, compact).into_any_element()
-        }
+        // A plugin that reads the message as its own draws it.
+        Item::User(text) => ws
+            .contributions(
+                tau_ui_plugin::points::USER_MESSAGE,
+                &tau_ui_plugin::points::AtMessage {
+                    run: run.info(),
+                    text: text.clone(),
+                    index,
+                },
+                cx,
+            )
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| {
+                user(text, t, compact, room, window).into_any_element()
+            }),
         Item::Text(text) => div()
             .w_full()
             .text_color(t.text_soft)
@@ -284,51 +294,6 @@ fn user(
                                 t.muted,
                             ))
                             .child(name.to_owned())
-                    }),
-                ))
-            }),
-    )
-}
-
-/// The person setting a goal: the condition, and the goal's limits
-/// while it is the conversation's goal.
-fn goal_set(run: &RunView, condition: &str, t: &Theme, compact: bool) -> Div {
-    let limits = run
-        .goal
-        .as_ref()
-        .filter(|goal| goal.condition == condition)
-        .map(|goal| {
-            [
-                format!("up to {} continuations", goal.max_continuations),
-                format!("{} budget", usd(goal.budget)),
-                "checked by Jev".to_owned(),
-            ]
-        });
-    div().flex().justify_end().child(
-        super::bubble(t)
-            .border_color(t.accent_border)
-            .max_w(px(if compact { 300. } else { 620. }))
-            .flex()
-            .flex_col()
-            .gap(sp(2.))
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(sp(2.))
-                    .child(icon(Icon::Target, IconSize::BASE, t.accent))
-                    .child(mono("/goal", Type::CAPTION, t.accent))
-                    .child(div().flex_1().child(rich(condition, t.text, t))),
-            )
-            .when_some(limits, |bubble, limits| {
-                bubble.child(div().flex().flex_wrap().gap(sp(1.5)).children(
-                    limits.into_iter().map(|limit| {
-                        mono(limit, Type::MICRO, t.muted)
-                            .px(sp(2.))
-                            .py(sp(0.5))
-                            .border_1()
-                            .border_color(t.border)
-                            .rounded(radius::LARGE)
                     }),
                 ))
             }),

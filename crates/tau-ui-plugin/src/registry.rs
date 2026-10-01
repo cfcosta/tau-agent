@@ -52,6 +52,10 @@ pub struct PageInfo {
 pub struct CommandInfo {
     pub name: &'static str,
     pub hint: &'static str,
+    pub args: &'static str,
+    pub icon: tau_ui_kit::assets::Icon,
+    /// Whether it has a popover while it is written.
+    pub popover: bool,
 }
 
 /// A host half's state, made once per host by [`ErasedPlugin::host`].
@@ -93,7 +97,7 @@ pub trait ErasedPlugin: Send + Sync {
 
     fn apply(&self, state: &mut Value, body: &Value, run: &mut dyn RunCx);
 
-    fn new_ui(&self, cx: &mut App) -> AnyEntity;
+    fn new_ui(&self, handle: Handle, cx: &mut App) -> AnyEntity;
     fn reply(&self, ui: AnyEntity, reply: Value, cx: &mut App);
     fn declared(&self) -> Vec<&'static str>;
     fn contributes_to(&self) -> Vec<&'static str>;
@@ -111,6 +115,16 @@ pub trait ErasedPlugin: Send + Sync {
     fn commands(&self) -> Vec<CommandInfo>;
     /// Runs the command `name`; false when the plugin has none.
     fn run_command(&self, name: &str, args: &str, env: Env<'_>) -> bool;
+    /// The popover of command `name` while it is written.
+    fn command_popover(
+        &self,
+        name: &str,
+        args: &str,
+        env: Env<'_>,
+    ) -> Option<AnyElement>;
+    /// What a run on `prompt` is about, when the plugin reads it as its
+    /// own: `/goal the tests pass` is about the tests passing.
+    fn read_prompt(&self, prompt: &str) -> Option<String>;
 }
 
 struct Typed<P: UiPlugin> {
@@ -236,8 +250,8 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         *state = encode(&typed);
     }
 
-    fn new_ui(&self, cx: &mut App) -> AnyEntity {
-        let ui = self.plugin.new_ui(cx);
+    fn new_ui(&self, handle: Handle, cx: &mut App) -> AnyEntity {
+        let ui = self.plugin.new_ui(handle, cx);
         cx.new(|_| ui).into_any()
     }
 
@@ -316,6 +330,9 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
             .map(|command| CommandInfo {
                 name: command.name,
                 hint: command.hint,
+                args: command.args,
+                icon: command.icon,
+                popover: command.has_popover(),
             })
             .collect()
     }
@@ -328,6 +345,21 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         };
         self.with_view(env, |view| command.run(args, view))
             .is_some()
+    }
+
+    fn command_popover(
+        &self,
+        name: &str,
+        args: &str,
+        env: Env<'_>,
+    ) -> Option<AnyElement> {
+        let command = self.manifest.commands.iter().find(|c| c.name == name)?;
+        self.with_view(env, |view| command.draw_popover(args, view))
+            .flatten()
+    }
+
+    fn read_prompt(&self, prompt: &str) -> Option<String> {
+        self.plugin.read_prompt(prompt)
     }
 }
 
@@ -466,7 +498,7 @@ mod tests {
             }
         }
 
-        fn new_ui(&self, _: &mut App) {}
+        fn new_ui(&self, _: Handle, _: &mut App) {}
 
         fn manifest(&self) -> Manifest<Self> {
             Manifest::new()

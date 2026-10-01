@@ -16,6 +16,8 @@
 //!   (pause, resume, extend, clear): the plugin reads its records again
 //!   at each check.
 
+pub mod ui;
+
 use std::collections::VecDeque;
 
 use async_trait::async_trait;
@@ -33,6 +35,8 @@ use tau_jev::{Jev, NoulCriteria, Question, Request};
 
 /// The name the plugin goes by in events, reports and records.
 pub const NAME: &str = "tau-goal";
+
+pub use ui::GoalUi;
 
 /// Continuations a goal allows when `/goal` does not say.
 pub const DEFAULT_CONTINUATIONS: u32 = 10;

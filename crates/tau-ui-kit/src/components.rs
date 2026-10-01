@@ -1239,3 +1239,35 @@ pub fn note(
             card.child(div().pl(sp(indent)).child(body))
         })
 }
+
+/// A key, as a popover's hints show it.
+pub fn key_hint(label: &'static str, t: &Theme) -> Div {
+    mono(label, Type::MICRO, t.dim)
+        .px(sp(1.25))
+        .py(sp(0.25))
+        .border_1()
+        .border_color(t.border)
+        .rounded(radius::SMALL)
+}
+
+/// The keys a popover takes, in a row at its foot.
+pub fn hints(keys: &[(&'static str, &'static str)], t: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(sp(3.5))
+        .px(sp(2.5))
+        .pt(sp(2.))
+        .pb(sp(1.))
+        .mt(sp(1.))
+        .border_t_1()
+        .border_color(t.border)
+        .children(keys.iter().map(|(label, does)| {
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(1.5))
+                .child(key_hint(label, t))
+                .child(text(*does, Type::CAPTION, t.dim))
+        }))
+}

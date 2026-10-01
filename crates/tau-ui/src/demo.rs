@@ -277,14 +277,17 @@ pub fn history() -> Vec<RunView> {
             view.push_user(format!("(stored transcript of {title})"));
             // Goals, as history has them.
             match title {
-                "mutants-triage" => view.set_goal_records(&goal_records(
-                    "Every mutant in retry.rs is caught",
-                    "met",
-                )),
-                "lane-audit" => view.set_goal_records(&goal_records(
-                    "Every lane has an owner in lanes.toml",
-                    "stopped",
-                )),
+                "mutants-triage" => view.restate(
+                    tau_goal::NAME,
+                    &goal_records("Every mutant in retry.rs is caught", "met"),
+                ),
+                "lane-audit" => view.restate(
+                    tau_goal::NAME,
+                    &goal_records(
+                        "Every lane has an owner in lanes.toml",
+                        "stopped",
+                    ),
+                ),
                 _ => {}
             }
             let Some(stop) = stop else {

@@ -1082,39 +1082,18 @@ impl Host {
             .block_on(tau_constitution::try_rule(&*jev, &rule, calls, answers))
     }
 
-    /// Stores a change to `run`'s goal for tau-goal, which reads it at
-    /// its next check, or when the run starts again.
-    pub fn goal_record(
+    /// `plugin`'s records for `run`, along its fork chain, as stored.
+    pub fn plugin_records(
         &self,
         run: &RunId,
-        record: &tau_goal::Record,
-    ) -> anyhow::Result<()> {
-        let entry = Entry::Plugin {
-            plugin: tau_goal::NAME.into(),
-            body: record.to_value().to_string(),
-        };
-        self.runtime.block_on(self.store.append_turn(
-            &run.0,
-            &[entry],
-            tau_store::TurnUsage::default(),
-        ))?;
-        Ok(())
-    }
-
-    /// tau-goal's records for `run`, along its fork chain, as stored.
-    pub fn goal_records(&self, run: &RunId) -> Vec<serde_json::Value> {
+        plugin: &str,
+    ) -> Vec<serde_json::Value> {
         self.runtime
-            .block_on(self.store.records(&run.0, tau_goal::NAME))
+            .block_on(self.store.records(&run.0, plugin))
             .unwrap_or_default()
             .iter()
             .filter_map(|body| serde_json::from_str(body).ok())
             .collect()
-    }
-
-    /// Whether runs started now have tau-goal, which needs Jev: their
-    /// goal is checked.
-    pub fn checks_goals(&self) -> bool {
-        self.jev().is_some()
     }
 
     /// Remembers which repositories the sidebar shows open.
@@ -1273,17 +1252,6 @@ impl Host {
             page: None,
         });
         plugins.push(PluginInfo {
-            name: tau_goal::NAME.into(),
-            description: needs_jev(
-                jev,
-                "Keeps a conversation going until its /goal holds",
-            ),
-            seams: vec![Seam::Start, Seam::AfterTool, Seam::BeforeStop],
-            spend: 0.0,
-            screen: None,
-            page: None,
-        });
-        plugins.push(PluginInfo {
             name: tau_memory::plugin::NAME.into(),
             description: "Linked notes each repository's runs keep, and \
                           yours across them; searched at the start of a run"
@@ -1375,30 +1343,21 @@ impl Host {
             let base = self.base.lock().expect("not poisoned").clone();
             let jev = jev.clone();
             let archive_dir = self.archive_dir(repo);
-            let registered = self.registered(repo);
             let repo = repo.name.clone();
-            move |choice: &ModelChoice, kind: tau_ui_plugin::RunKind| {
-                registered(
-                    for_model(
-                        base.clone(),
-                        choice,
-                        jev.clone(),
-                        &archive_dir,
-                        &repo,
-                    ),
-                    kind,
+            move |choice: &ModelChoice| {
+                for_model(
+                    base.clone(),
                     choice,
+                    jev.clone(),
+                    &archive_dir,
+                    &repo,
                 )
             }
         };
-        let agent = for_model(
-            choice,
-            if main {
-                tau_ui_plugin::RunKind::Main
-            } else {
-                tau_ui_plugin::RunKind::Chat
-            },
-        );
+        // The plugins with their UI, after the rest: tau-goal's hold of a
+        // stop comes after the constitution's.
+        let registered = self.registered(repo);
+        let agent = for_model(choice);
         // The repository's rules, checked with Jev when there is a key.
         // Rules that cannot be read fail the run: they are never skipped.
         let constitution = match jev {
@@ -1407,9 +1366,6 @@ impl Host {
             }
             None => None,
         };
-        // The conversation's goal, checked with Jev too; after the
-        // constitution, whose hold of a stop wins.
-        let goal = self.jev().map(tau_goal::GoalPlugin::new);
         let memory = self.memory_plugin(repo);
         let project = repo.project()?;
         // A run and its sub-agents work the same way, each in its own
@@ -1448,6 +1404,7 @@ impl Host {
         };
         let delegate = {
             let on_workspace = on_workspace.clone();
+            let registered = registered.clone();
             let caller = choice.clone();
             let models: Vec<String> =
                 plan_models().into_iter().map(|model| model.id).collect();
@@ -1457,17 +1414,22 @@ impl Host {
                 &models,
                 move |child, asked| {
                     let choice = child_choice(&caller, asked)?;
-                    Ok(on_workspace(
-                        for_model(&choice, tau_ui_plugin::RunKind::SubAgent),
-                        child,
-                        false,
+                    Ok(registered(
+                        on_workspace(for_model(&choice), child, false),
+                        tau_ui_plugin::RunKind::SubAgent,
+                        &choice,
                     ))
                 },
             )
         };
         let agent = if main { agent.tool(delegate) } else { agent };
         let agent = on_workspace(agent, workspace, !main);
-        Ok((with_plugin(agent, goal), name))
+        let kind = if main {
+            tau_ui_plugin::RunKind::Main
+        } else {
+            tau_ui_plugin::RunKind::Chat
+        };
+        Ok((registered(agent, kind, choice), name))
     }
 
     /// Jev, when there is a TypeSafe key (or one given for tests).
@@ -1871,26 +1833,50 @@ impl Host {
             .after_turn(turn)
             .start(prompt, &self.store);
         let id = self.track(forked, workspace, choice, &repo.name);
-        // The goal it inherits, which tau-goal goes on checking.
-        let goal = self.goal_records_at(&source, seq);
+        // What each plugin's state is as the fork inherits it: a goal set
+        // in the main chat, which tau-goal goes on checking; then what it
+        // says as the fork starts.
+        let starting = self.starting(&self.run_ctx(
+            tau_ui_plugin::RunKind::Chat,
+            repo,
+            choice,
+        ));
+        let inherited: Vec<(String, Vec<serde_json::Value>)> = self
+            .hosted
+            .iter()
+            .map(|hosted| {
+                let name = hosted.plugin.name();
+                let mut records = self.plugin_records_at(&source, seq, name);
+                records.extend(
+                    starting
+                        .iter()
+                        .filter(|(plugin, _)| plugin == name)
+                        .map(|(_, body)| body.clone()),
+                );
+                (name.to_owned(), records)
+            })
+            .collect();
         let mut view = self
             .view(id, prompt, repo)
             .with_origin(Origin::Fork { from: source, turn });
-        view.set_goal_records(&goal);
+        for (plugin, records) in inherited {
+            view.restate(&plugin, &records);
+        }
         Ok(view)
     }
 
-    /// tau-goal's records a fork of `source` at `seq` inherits: along
+    /// `plugin`'s records a fork of `source` at `seq` inherits: along
     /// `source`'s chain, without what `source` stored after `seq`.
-    fn goal_records_at(
+    fn plugin_records_at(
         &self,
         source: &RunId,
         seq: i64,
+        plugin: &str,
     ) -> Vec<serde_json::Value> {
-        let all = self.goal_records(source);
+        let all = self.plugin_records(source, plugin);
         let after = self
             .runtime
-            .block_on(self.store.plugin_entries(&source.0, tau_goal::NAME))
+            .block_on(self.store.plugin_entries(&source.0, plugin))
             .unwrap_or_default()
             .iter()
             .filter(|(at, _)| *at > seq)
@@ -2380,8 +2366,6 @@ impl Host {
         .in_repo(repo.name.clone())
         .started("just now");
         view.push_user(prompt);
-        // A run started now has tau-goal only with a key.
-        view.goal_checks = self.jev().is_some();
         // What plugins say as it starts.
         let run = self.run_ctx(tau_ui_plugin::RunKind::Chat, repo, &choice);
         for (plugin, body) in self.starting(&run) {
@@ -2798,17 +2782,6 @@ impl Host {
                         }
                     });
                 }
-                WorkspaceEvent::Goal { run, record } => {
-                    if let Err(error) = handler.goal_record(run, record) {
-                        // The interface showed the change already: put
-                        // back what tau-goal will read, and say so.
-                        let records = handler.goal_records(run);
-                        workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::GoalRecords { run: run.clone(), records }, cx);
-                            ws.apply(HostUpdate::alert("Could not save the goal", format!("{error:#}")), cx);
-                        });
-                    }
-                }
                 WorkspaceEvent::PluginAct { plugin, action } => {
                     // Off the UI thread: an action may ask Jev, or the
                     // store.
@@ -2853,7 +2826,11 @@ impl Host {
                     if let Err(error) =
                         handler.store_plugin_record(run, plugin, body)
                     {
+                        // The interface showed the change already: put
+                        // back what the plugin will read, and say so.
+                        let records = handler.plugin_records(run, plugin);
                         workspace.update(cx, |ws, cx| {
+                            ws.apply(HostUpdate::PluginRestate { run: run.clone(), plugin: plugin.clone(), records }, cx);
                             ws.apply(HostUpdate::alert(format!("Could not save what {plugin} changed"), format!("{error:#}")), cx);
                         });
                     }
@@ -2875,10 +2852,8 @@ impl Host {
                     let _ = handler.set_closed(run, false);
                     match handler.resume(run, prompt, model) {
                         Ok(()) => {
-                            let checks = handler.checks_goals();
                             let starting = handler.starting_of(run, model);
                             workspace.update(cx, |ws, cx| {
-                                ws.apply(HostUpdate::GoalChecks { run: run.clone(), checks }, cx);
                                 for (plugin, body) in starting {
                                     ws.apply(HostUpdate::PluginFold { run: run.clone(), plugin, body }, cx);
                                 }
@@ -3860,7 +3835,6 @@ async fn stored_view(
             }
             Entry::Plugin { plugin, body }
                 if plugin == tau_constitution::NAME
-                    || plugin == tau_goal::NAME
                     || plugin == LANDING_RECORD
                     || crate::plugins::registry().get(&plugin).is_some() =>
             {
@@ -3919,13 +3893,6 @@ async fn stored_view(
         .map(|cost| cost.cost_usd)
         .sum();
     view.finish_stored(stop, record.cost_usd, plugin_cost);
-    let goal: Vec<serde_json::Value> = store
-        .records(&record.id, tau_goal::NAME)
-        .await?
-        .iter()
-        .filter_map(|body| serde_json::from_str(body).ok())
-        .collect();
-    view.set_goal_records(&goal);
     if let RunKind::Fork { parent, fork_seq } = &record.kind {
         let turn = store
             .plugin_entries(parent, WORKSPACE_PLUGIN)
@@ -4291,8 +4258,8 @@ fn clone_into_tau(
 /// A branch name's words from the prompt: its first four, or its
 /// goal's, lowercase and joined by dashes.
 pub fn branch_slug(prompt: &str) -> String {
-    let goal = tau_goal::set_message(prompt);
-    let prompt = goal.as_deref().unwrap_or(prompt);
+    let read = crate::plugins::read_prompt(prompt);
+    let prompt = read.as_deref().unwrap_or(prompt);
     let words: Vec<&str> = prompt
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())

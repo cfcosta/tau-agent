@@ -42,7 +42,7 @@ fn instructions() -> String {
 /// What a run on `prompt` is about: the goal's words for a `/goal`,
 /// the prompt itself otherwise.
 fn task(prompt: &str) -> String {
-    tau_goal::set_message(prompt).unwrap_or_else(|| prompt.to_owned())
+    crate::plugins::read_prompt(prompt).unwrap_or_else(|| prompt.to_owned())
 }
 
 /// The request for `prompt`'s title, at most [`PROMPT_MAX_BYTES`]: the

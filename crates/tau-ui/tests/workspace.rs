@@ -1658,10 +1658,10 @@ fn composer_slash(
     })
 }
 
-fn names(slash: tau_ui::slash::Slash) -> Vec<&'static str> {
+fn names(slash: tau_ui::slash::Slash) -> Vec<String> {
     match slash {
         tau_ui::slash::Slash::Menu(commands) => {
-            commands.iter().map(|command| command.name).collect()
+            commands.into_iter().map(|command| command.name).collect()
         }
         _ => Vec::new(),
     }
@@ -1726,6 +1726,46 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     );
 }
 
+/// tau-goal's state in `run`, as its fold leaves it.
+fn goal_of(
+    ws: &Workspace,
+    run: &tau_agent::tool::RunId,
+) -> tau_goal::ui::State {
+    ws.run(run)
+        .unwrap()
+        .plugin_states
+        .get(tau_goal::NAME)
+        .map(|state| serde_json::from_value(state.clone()).unwrap())
+        .unwrap_or_default()
+}
+
+/// The records tau-goal's UI stored, by run.
+fn goal_records(events: &[WorkspaceEvent]) -> Vec<(String, tau_goal::Record)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::PluginRecord { run, plugin, body }
+                if plugin == tau_goal::NAME =>
+            {
+                Some((run.0.to_string(), tau_goal::Record::parse(body)?))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether tau-goal checks `run` now, as the host says when it goes on.
+fn goal_checks(
+    run: &tau_agent::tool::RunId,
+    checks: bool,
+) -> tau_ui::update::HostUpdate {
+    tau_ui::update::HostUpdate::PluginFold {
+        run: run.clone(),
+        plugin: tau_goal::NAME.into(),
+        body: serde_json::json!({ "kind": "starting", "checks": checks }),
+    }
+}
+
 #[gpui::test]
 fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
@@ -1735,6 +1775,8 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
         // /goal alone is not a goal yet: it stays, to be written.
         ws.set_composer("/goal ", cx);
         ws.submit_prompt("/goal".into(), cx);
+    });
+    workspace.update(&mut cx, |ws, cx| {
         assert_eq!(ws.composer_text(cx), "/goal ");
         ws.set_composer("", cx);
         ws.submit_prompt(
@@ -1743,22 +1785,14 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
         );
     });
     workspace.update(&mut cx, |ws, cx| {
-        let view = ws.run(&done).unwrap();
-        assert!(matches!(view.items.last(),
-            Some(Item::Goal(c)) if c == "Every lane has an owner in lanes.toml"));
         // The host says the run went on with tau-goal.
-        ws.apply(
-            tau_ui::update::HostUpdate::GoalChecks {
-                run: done.clone(),
-                checks: true,
-            },
-            cx,
-        );
+        ws.apply(goal_checks(&done, true), cx);
         // Going on now: a new goal is stored for its next stop, and the
         // model is told. Typed limits win over the popover's.
         ws.set_composer("", cx);
         ws.submit_prompt("/goal --continuations 3 it ships".into(), cx);
     });
+    cx.run_until_parked();
     {
         let events = events.borrow();
         let prompts: Vec<&str> = events
@@ -1773,14 +1807,17 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
             ["/goal --continuations 10 --budget 2.00 Every lane has an \
               owner in lanes.toml"]
         );
-        assert!(events.contains(&WorkspaceEvent::Goal {
-            run: done.clone(),
-            record: tau_goal::Record::Set {
-                goal: "it ships".into(),
-                continuations: 3,
-                budget: 2.0,
-            },
-        }));
+        assert_eq!(
+            goal_records(&events),
+            [(
+                "plugin-docs".to_owned(),
+                tau_goal::Record::Set {
+                    goal: "it ships".into(),
+                    continuations: 3,
+                    budget: 2.0,
+                }
+            )]
+        );
         assert!(events.contains(&WorkspaceEvent::Steer {
             run: done.clone(),
             text: tau_goal::set_input("it ships"),
@@ -1792,25 +1829,22 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
     // kept for the next message, and the model is not told it is
     // checked now.
     workspace.update(&mut cx, |ws, cx| {
-        ws.apply(
-            tau_ui::update::HostUpdate::GoalChecks {
-                run: done.clone(),
-                checks: false,
-            },
-            cx,
-        );
+        ws.apply(goal_checks(&done, false), cx);
         ws.set_composer("", cx);
         ws.submit_prompt("/goal it ships later".into(), cx);
+    });
+    workspace.update(&mut cx, |ws, cx| {
         assert!(ws.alert().is_some());
-        let goal = ws.run(&done).unwrap().goal.clone().unwrap();
+        let goal = goal_of(ws, &done).goal.unwrap();
         assert_eq!(goal.condition, "it ships later");
         ws.dismiss_alert(cx);
     });
     {
         let events = events.borrow();
-        assert!(events.iter().any(|event| matches!(event,
-            WorkspaceEvent::Goal { record: tau_goal::Record::Set { goal, .. }, .. }
-                if goal == "it ships later")));
+        assert!(goal_records(&events).iter().any(|(_, record)| matches!(
+            record,
+            tau_goal::Record::Set { goal, .. } if goal == "it ships later"
+        )));
         assert!(
             !events
                 .iter()
@@ -1827,62 +1861,76 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
         ws.set_catalog(catalog, cx);
         ws.navigate(Route::NewRun, cx);
         ws.submit_prompt("/goal it ships".into(), cx);
+    });
+    workspace.update(&mut cx, |ws, cx| {
         assert!(ws.alert().is_some());
         assert_eq!(ws.composer_text(cx), "/goal it ships");
     });
-    assert!(events.borrow().is_empty());
+    assert!(events.borrow().is_empty(), "{:?}", events.borrow());
+}
+
+/// Carries out a goal button's `act` on `run`, as a click does.
+fn goal_act(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+    run: &tau_agent::tool::RunId,
+    act: tau_goal::ui::Act,
+) {
+    workspace.update(cx, |ws, cx| {
+        let goal = goal_of(ws, run).goal.unwrap();
+        let info = ws.run(run).unwrap().info();
+        let jev = ws.catalog().models.access.jev;
+        let handle = ws.plugin_handle(tau_goal::NAME);
+        tau_goal::ui::act(act, &info, &goal, jev, &handle, cx);
+    });
+    cx.run_until_parked();
 }
 
 #[gpui::test]
 fn goal_buttons_store_changes_and_keep_going(cx: &mut TestAppContext) {
-    use tau_goal::{Record, Status};
+    use tau_goal::{Record, Status, ui::Act};
     let (workspace, mut cx, events) = open_demo(cx);
     let stopped = tau_agent::tool::RunId("lane-audit".into());
     let met = tau_agent::tool::RunId("mutants-triage".into());
     workspace.update(&mut cx, |ws, cx| {
-        assert!(ws.run(&stopped).unwrap().goal.is_some());
+        assert!(goal_of(ws, &stopped).goal.is_some());
         let done = tau_agent::tool::RunId("plugin-docs".into());
-        assert!(ws.run(&done).unwrap().goal.is_none());
-
-        // Keep going: more continuations, and the conversation goes on.
+        assert!(goal_of(ws, &done).goal.is_none());
         ws.navigate(Route::Run(stopped.clone()), cx);
-        ws.keep_going(&stopped, cx);
-        let goal = ws.run(&stopped).unwrap().goal.clone().unwrap();
+    });
+    // Keep going: more continuations, and the conversation goes on.
+    goal_act(&workspace, &mut cx, &stopped, Act::KeepGoing);
+    workspace.update(&mut cx, |ws, _| {
+        let goal = goal_of(ws, &stopped).goal.unwrap();
         assert_eq!(goal.status, Status::Active);
         assert_eq!(goal.max_continuations, 12);
-        // Edit puts the goal back in the composer.
-        ws.edit_goal(&stopped, cx);
+    });
+    // Edit puts the goal back in the composer.
+    goal_act(&workspace, &mut cx, &stopped, Act::Edit);
+    workspace.update(&mut cx, |ws, cx| {
         assert_eq!(
             ws.composer_text(cx),
             "/goal Every lane has an owner in lanes.toml"
         );
-        ws.pause_goal(&stopped, cx);
-        assert_eq!(
-            ws.run(&stopped).unwrap().goal.as_ref().unwrap().status,
-            Status::Paused
-        );
-        ws.clear_goal(&met, cx);
-        assert!(ws.run(&met).unwrap().goal.is_none());
+    });
+    goal_act(&workspace, &mut cx, &stopped, Act::Pause);
+    goal_act(&workspace, &mut cx, &met, Act::Clear);
+    workspace.update(&mut cx, |ws, _| {
+        assert_eq!(goal_of(ws, &stopped).goal.unwrap().status, Status::Paused);
+        assert!(goal_of(ws, &met).goal.is_none());
     });
     let events = events.borrow();
-    let records: Vec<(&str, &Record)> = events
-        .iter()
-        .filter_map(|event| match event {
-            WorkspaceEvent::Goal { run, record } => Some((&*run.0, record)),
-            _ => None,
-        })
-        .collect();
     assert_eq!(
-        records,
+        goal_records(&events),
         [
-            ("lane-audit", &Record::Extended { by: 10 }),
-            ("lane-audit", &Record::Paused),
-            ("mutants-triage", &Record::Cleared),
+            ("lane-audit".to_owned(), Record::Extended { by: 10 }),
+            ("lane-audit".to_owned(), Record::Paused),
+            ("mutants-triage".to_owned(), Record::Cleared),
         ]
     );
     assert!(events.iter().any(|event| matches!(event,
         WorkspaceEvent::Resume { run, prompt, .. }
-            if run == &stopped && prompt == tau_ui::goal::KEEP_GOING)));
+            if run == &stopped && prompt == tau_goal::ui::KEEP_GOING)));
 }
 
 /// Without a TypeSafe key a goal is not checked: the banner says so,
@@ -1890,7 +1938,7 @@ fn goal_buttons_store_changes_and_keep_going(cx: &mut TestAppContext) {
 /// not save is put back as stored.
 #[gpui::test]
 fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
-    use tau_goal::{Record, Status};
+    use tau_goal::{Record, Status, ui::Act};
     let (workspace, mut cx, events) = open_demo(cx);
     let stopped = tau_agent::tool::RunId("lane-audit".into());
     let set = || {
@@ -1910,23 +1958,26 @@ fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
         ws.navigate(Route::Run(stopped.clone()), cx);
         // A goal still to be met, then paused.
         ws.apply(
-            tau_ui::update::HostUpdate::GoalRecords {
+            tau_ui::update::HostUpdate::PluginRestate {
                 run: stopped.clone(),
+                plugin: tau_goal::NAME.into(),
                 records: set(),
             },
             cx,
         );
-        ws.pause_goal(&stopped, cx);
-        let view = ws.run(&stopped).unwrap();
-        let goal = view.goal.as_ref().unwrap();
+    });
+    goal_act(&workspace, &mut cx, &stopped, Act::Pause);
+    workspace.update(&mut cx, |ws, _| {
+        let goal = goal_of(ws, &stopped).goal.unwrap();
         assert_eq!(goal.status, Status::Paused);
-        assert!(tau_ui::goal::unchecked(goal, false, view).is_some());
-        assert!(tau_ui::goal::unchecked(goal, true, view).is_none());
-        ws.keep_going(&stopped, cx);
+        let live = ws.run(&stopped).unwrap().info().live;
+        assert!(tau_goal::ui::unchecked(&goal, false, live, false).is_some());
+        assert!(tau_goal::ui::unchecked(&goal, true, live, false).is_none());
+    });
+    goal_act(&workspace, &mut cx, &stopped, Act::KeepGoing);
+    workspace.update(&mut cx, |ws, _| {
         assert!(ws.alert().is_some(), "says it needs a key");
     });
-    // Drawn with the warning.
-    cx.run_until_parked();
     assert!(
         !events
             .borrow()
@@ -1936,23 +1987,15 @@ fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
     );
     // The pause could not be saved: the host puts back what is stored.
     workspace.update(&mut cx, |ws, cx| {
-        let stored = vec![
-            Record::Set {
-                goal: "Every lane has an owner in lanes.toml".into(),
-                continuations: 10,
-                budget: 2.0,
-            }
-            .to_value(),
-        ];
         ws.apply(
-            tau_ui::update::HostUpdate::GoalRecords {
+            tau_ui::update::HostUpdate::PluginRestate {
                 run: stopped.clone(),
-                records: stored,
+                plugin: tau_goal::NAME.into(),
+                records: set(),
             },
             cx,
         );
-        let goal = ws.run(&stopped).unwrap().goal.clone().unwrap();
-        assert_eq!(goal.status, Status::Active);
+        assert_eq!(goal_of(ws, &stopped).goal.unwrap().status, Status::Active);
     });
 }
 

@@ -76,11 +76,6 @@ pub fn content(
     cx: &mut Context<Workspace>,
 ) -> Div {
     let body = div().flex().flex_col().gap(sp(5.5));
-    let body = if run.goal.is_some() {
-        crate::goal::tab(run, body, t)
-    } else {
-        body
-    };
     let body = body.child(context(ws, run, t, cx));
     // What plugins add to the inspector.
     let body = body.children(ws.contributions(

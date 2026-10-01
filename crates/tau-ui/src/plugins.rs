@@ -25,9 +25,21 @@ use crate::{
 
 /// Every plugin, in the order the host adds them to a run's agent.
 pub fn registry() -> &'static Registry {
-    static REGISTRY: LazyLock<Registry> =
-        LazyLock::new(|| Registry::new().with(tau_reasoning::ReasoningPlugin));
+    static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
+        Registry::new()
+            .with(tau_reasoning::ReasoningPlugin)
+            .with(tau_goal::GoalUi)
+    });
     &REGISTRY
+}
+
+/// What a run on `prompt` is about, as the first plugin that reads it as
+/// its own command says: `/goal the tests pass` is about the tests
+/// passing.
+pub fn read_prompt(prompt: &str) -> Option<String> {
+    registry()
+        .plugins()
+        .find_map(|plugin| plugin.read_prompt(prompt))
 }
 
 /// The points tau-ui declares.
@@ -38,22 +50,29 @@ pub const DECLARED: [&str; points::ALL.len()] = points::ALL;
 /// update.
 pub(crate) type Requests = Rc<std::cell::RefCell<Vec<(&'static str, Request)>>>;
 
+/// A handle for `plugin` that asks `workspace`, through `queue`.
+pub(crate) fn handle_for(
+    plugin: &'static str,
+    queue: Requests,
+    workspace: gpui::WeakEntity<Workspace>,
+) -> Handle {
+    Handle::new(
+        plugin,
+        Rc::new(move |plugin, request, cx: &mut App| {
+            queue.borrow_mut().push((plugin, request));
+            let workspace = workspace.clone();
+            cx.defer(move |cx| {
+                let _ =
+                    workspace.update(cx, |ws, cx| ws.drain_plugin_requests(cx));
+            });
+        }),
+    )
+}
+
 impl Workspace {
     /// The handle `plugin`'s UI asks the workspace through.
     pub fn plugin_handle(&self, plugin: &'static str) -> Handle {
-        let queue = self.plugin_requests.clone();
-        let workspace = self.weak.clone();
-        Handle::new(
-            plugin,
-            Rc::new(move |plugin, request, cx: &mut App| {
-                queue.borrow_mut().push((plugin, request));
-                let workspace = workspace.clone();
-                cx.defer(move |cx| {
-                    let _ = workspace
-                        .update(cx, |ws, cx| ws.drain_plugin_requests(cx));
-                });
-            }),
-        )
+        handle_for(plugin, self.plugin_requests.clone(), self.weak.clone())
     }
 
     /// Carries out what plugins' handles asked.
@@ -122,6 +141,12 @@ impl Workspace {
                 self.composer
                     .update(cx, |input, cx| input.set_text(text, cx));
             }
+            Request::RunDetails => {
+                if self.compact() && !self.sheet_is_open() {
+                    self.toggle_sheet(cx);
+                }
+            }
+            Request::Submit => self.submit_from_button(cx),
             Request::Refresh => {}
         }
         cx.notify();
@@ -349,10 +374,14 @@ impl Workspace {
             .min_by(|a, b| a.total_cmp(b))
     }
 
-    /// Small print plugins put on `run`'s row in the sidebar.
-    pub fn run_badges(&self, run: &RunView, cx: &mut App) -> Vec<String> {
+    /// What plugins add to `run`'s row in the sidebar.
+    pub fn run_rows(
+        &self,
+        run: &RunView,
+        cx: &mut App,
+    ) -> Vec<tau_ui_plugin::RowNote> {
         self.contributions(
-            points::RUN_BADGE,
+            points::RUN_ROW,
             &points::AtRun { run: run.info() },
             cx,
         )
@@ -391,5 +420,28 @@ impl Workspace {
             .unwrap_or(false);
         cx.notify();
         ran
+    }
+
+    /// The popover of `plugin`'s command `command` while it is written,
+    /// with what follows its name.
+    pub(crate) fn plugin_popover(
+        &self,
+        plugin: &str,
+        command: &str,
+        args: &str,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let erased = registry().get(plugin)?;
+        let run = self
+            .current()
+            .filter(|_| self.route != crate::route::Route::NewRun);
+        self.with_plugin(
+            erased.as_ref(),
+            run,
+            &BTreeMap::new(),
+            cx,
+            |plugin, env| plugin.command_popover(command, args, env),
+        )
+        .flatten()
     }
 }

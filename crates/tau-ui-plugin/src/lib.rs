@@ -42,6 +42,7 @@ pub use view::{
     PlanField,
     PluginStatus,
     Request,
+    RowNote,
     RunInfo,
     Sink,
     ViewCx,
@@ -211,10 +212,18 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
 
     // In the interface.
 
-    fn new_ui(&self, cx: &mut App) -> Self::Ui;
+    /// The plugin's state for a new window. `handle` is its way back to
+    /// that window, for the entities it makes (a field's Enter).
+    fn new_ui(&self, handle: Handle, cx: &mut App) -> Self::Ui;
 
     /// What [`Self::act`] answered.
     fn reply(&self, _ui: &mut Self::Ui, _reply: Value) {}
+
+    /// What a run on `prompt` is about, when the plugin reads it as its
+    /// own command: for the run's title.
+    fn read_prompt(&self, _prompt: &str) -> Option<String> {
+        None
+    }
 
     fn manifest(&self) -> Manifest<Self>;
 }

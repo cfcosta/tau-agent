@@ -107,14 +107,22 @@ impl<P: UiPlugin> Page<P> {
 }
 
 type Run<P> = Box<dyn for<'a> Fn(&str, &mut ViewCx<'a, P>) + Send + Sync>;
+type Popover<P> =
+    Box<dyn for<'a> Fn(&str, &mut ViewCx<'a, P>) -> AnyElement + Send + Sync>;
 
 /// A command typed in the composer: `/goal the tests pass`.
 pub struct SlashCommand<P: UiPlugin> {
     /// Without the slash: `goal`.
     pub name: &'static str,
-    /// What it does, in the composer's popover.
+    /// What it does, in the composer's menu.
     pub hint: &'static str,
+    /// What follows the name, as the menu shows it: `<condition>`. A
+    /// command with arguments is written before it runs: picked from the
+    /// menu, it fills the composer with `/name `.
+    pub args: &'static str,
+    pub icon: tau_ui_kit::assets::Icon,
     run: Run<P>,
+    popover: Option<Popover<P>>,
 }
 
 impl<P: UiPlugin> SlashCommand<P> {
@@ -128,12 +136,50 @@ impl<P: UiPlugin> SlashCommand<P> {
         Self {
             name,
             hint,
+            args: "",
+            icon: tau_ui_kit::assets::Icon::Plug,
             run: Box::new(run),
+            popover: None,
         }
+    }
+
+    pub fn args(mut self, args: &'static str) -> Self {
+        self.args = args;
+        self
+    }
+
+    pub fn icon(mut self, icon: tau_ui_kit::assets::Icon) -> Self {
+        self.icon = icon;
+        self
+    }
+
+    /// What the composer's popover shows while the command is written,
+    /// given what follows its name so far.
+    pub fn popover(
+        mut self,
+        popover: impl for<'a> Fn(&str, &mut ViewCx<'a, P>) -> AnyElement
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.popover = Some(Box::new(popover));
+        self
     }
 
     pub(crate) fn run(&self, args: &str, cx: &mut ViewCx<'_, P>) {
         (self.run)(args, cx)
+    }
+
+    pub(crate) fn draw_popover(
+        &self,
+        args: &str,
+        cx: &mut ViewCx<'_, P>,
+    ) -> Option<AnyElement> {
+        self.popover.as_ref().map(|popover| popover(args, cx))
+    }
+
+    pub(crate) fn has_popover(&self) -> bool {
+        self.popover.is_some()
     }
 }
 

@@ -317,7 +317,7 @@ impl UiPlugin for ReasoningPlugin {
         state.apply(body, run);
     }
 
-    fn new_ui(&self, _cx: &mut App) -> Ui {
+    fn new_ui(&self, _handle: tau_ui_plugin::Handle, _cx: &mut App) -> Ui {
         Ui::default()
     }
 

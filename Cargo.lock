@@ -8978,8 +8978,10 @@ dependencies = [
 name = "tau-goal"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
+ "gpui-pre",
  "hegeltest",
  "schemars",
  "serde",
@@ -8989,6 +8991,8 @@ dependencies = [
  "tau-jev",
  "tau-store",
  "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "tokio",
 ]
 

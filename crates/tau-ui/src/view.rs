@@ -64,17 +64,10 @@ pub struct RunView {
     pub cost_before: f64,
     /// What tau-constitution checked and decided in the run.
     pub constitution: ConstitutionStats,
-    /// The conversation's goal, from tau-goal's reports and records.
-    pub goal: Option<tau_goal::Goal>,
     /// Each plugin's state in the run, as its fold leaves it, by plugin
     /// name (ADR 0017).
     #[serde(default)]
     pub plugin_states: std::collections::BTreeMap<String, Value>,
-    /// Whether tau-goal runs with the run as it goes now, and checks its
-    /// goal: there was a TypeSafe key when it started, and it is not a
-    /// sub-agent. A stored run is checked again only once it goes on.
-    #[serde(default)]
-    pub goal_checks: bool,
     /// What the pruning plugin said about its pass, for the rewrite it
     /// explains, which comes right after.
     pending_rewrite: Option<String>,
@@ -255,8 +248,6 @@ impl RunStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Item {
     User(String),
-    /// The person set a goal (`/goal`).
-    Goal(String),
     /// Assistant text; deltas append to the last one.
     Text(String),
     Thinking(String),
@@ -665,6 +656,30 @@ pub struct Proposal {
 pub use tau_ui_kit::theme::Tone;
 pub use tau_ui_plugin::{PlanField, PluginStatus};
 
+/// A run a fold reaches without placing anchors: the anchors of what it
+/// restates are in the transcript already, or belong to another run.
+struct Quiet<'a>(&'a RunView);
+
+impl tau_ui_plugin::RunCx for Quiet<'_> {
+    fn transcript(&mut self, _key: &str) {}
+
+    fn attach(&mut self, call_id: &str, _key: &str) -> bool {
+        self.0.tool(call_id).is_some()
+    }
+
+    fn cards(&self) -> Vec<tau_ui_plugin::CardInfo> {
+        Folding::cards_of(self.0)
+    }
+
+    fn last_text(&self) -> Option<String> {
+        self.0.last_text().map(str::to_owned)
+    }
+
+    fn turn(&self) -> u32 {
+        self.0.turn
+    }
+}
+
 /// A run as a plugin's fold reaches it: one plugin's anchors go in.
 struct Folding<'a> {
     view: &'a mut RunView,
@@ -692,9 +707,24 @@ impl tau_ui_plugin::RunCx for Folding<'_> {
     }
 
     fn cards(&self) -> Vec<tau_ui_plugin::CardInfo> {
+        Folding::cards_of(self.view)
+    }
+
+    fn last_text(&self) -> Option<String> {
+        self.view.last_text().map(str::to_owned)
+    }
+
+    fn turn(&self) -> u32 {
+        self.view.turn
+    }
+}
+
+impl Folding<'_> {
+    /// `view`'s tool calls, in order, with the turn of each.
+    fn cards_of(view: &RunView) -> Vec<tau_ui_plugin::CardInfo> {
         let mut turn = 1;
         let mut cards = Vec::new();
-        for item in &self.view.items {
+        for item in &view.items {
             match item {
                 Item::TurnEnd { turn: ended } => turn = ended + 1,
                 Item::Tool(card) => cards.push(tau_ui_plugin::CardInfo {
@@ -708,14 +738,6 @@ impl tau_ui_plugin::RunCx for Folding<'_> {
             }
         }
         cards
-    }
-
-    fn last_text(&self) -> Option<String> {
-        self.view.last_text().map(str::to_owned)
-    }
-
-    fn turn(&self) -> u32 {
-        self.view.turn
     }
 }
 
@@ -778,7 +800,7 @@ impl ContextParts {
         let (mut conversation, mut results) = (0, 0);
         for item in &items[from..] {
             match item {
-                Item::User(text) | Item::Goal(text) | Item::Text(text) => {
+                Item::User(text) | Item::Text(text) => {
                     conversation += tokens(text.len())
                 }
                 Item::Tool(card) => {
@@ -968,8 +990,6 @@ impl RunView {
             log: Vec::new(),
             cost_before: 0.0,
             constitution: ConstitutionStats::default(),
-            goal: None,
-            goal_checks: false,
             plugin_states: Default::default(),
             pending_rewrite: None,
         }
@@ -1063,15 +1083,6 @@ impl RunView {
                         )));
                     }
                 }
-                // A check that sent the model back says no more than the
-                // continuation message that follows it, which shows.
-                Stored::Record { plugin, body }
-                    if plugin == tau_goal::NAME
-                        && matches!(
-                            tau_goal::Record::parse(body),
-                            Some(tau_goal::Record::Check(check))
-                                if check.continuation.is_some()
-                        ) => {}
                 Stored::Record { plugin, body } => {
                     if during.is_empty() {
                         begun = false;
@@ -1259,6 +1270,25 @@ impl RunView {
         self.plugin_states.insert(plugin.to_owned(), state);
     }
 
+    /// `plugin`'s state in the run as `bodies` alone leave it, folded
+    /// afresh without placing anchors: what a fork inherits, or what a
+    /// change that could not be saved leaves.
+    pub fn restate(&mut self, plugin: &str, bodies: &[Value]) {
+        let Some(erased) = crate::plugins::registry().get(plugin) else {
+            return;
+        };
+        let mut state = Value::Null;
+        for body in bodies {
+            erased.apply(&mut state, body, &mut Quiet(self));
+        }
+        // Nothing folded: no state, as before anything was published.
+        if state.is_null() {
+            self.plugin_states.remove(plugin);
+        } else {
+            self.plugin_states.insert(plugin.to_owned(), state);
+        }
+    }
+
     /// The run, as a plugin's UI sees it.
     pub fn info(&self) -> tau_ui_plugin::RunInfo {
         tau_ui_plugin::RunInfo {
@@ -1295,10 +1325,7 @@ impl RunView {
             .take_while(|item| {
                 matches!(
                     item,
-                    Item::User(_)
-                        | Item::Goal(_)
-                        | Item::Plugin(_)
-                        | Item::Anchor { .. }
+                    Item::User(_) | Item::Plugin(_) | Item::Anchor { .. }
                 )
             })
             .filter_map(|item| match item {
@@ -1416,28 +1443,10 @@ impl RunView {
         }
     }
 
-    /// Adds the user's message. The run's own events never carry it.
-    /// A person's message. A `/goal` shows as the goal it set; tau-goal
-    /// sending the model back, which history stores as a user message,
-    /// shows as tau-goal's note.
+    /// Adds the user's message. The run's own events never carry it. A
+    /// plugin that reads it as its own draws it (a `/goal`).
     pub fn push_user(&mut self, text: impl Into<String>) {
-        let text = text.into();
-        if let Some(condition) = tau_goal::set_message(&text) {
-            self.items.push(Item::Goal(condition));
-        } else if let Some(said) =
-            text.strip_prefix(tau_goal::CONTINUATION_PREFIX)
-        {
-            let first = said.lines().next().unwrap_or_default();
-            self.push_note(PluginNote {
-                plugin: tau_goal::NAME.into(),
-                text: first.trim_end_matches('.').to_owned(),
-                detail: Some("before_stop".into()),
-                tone: Tone::Warn,
-                body: NoteBody::None,
-            });
-        } else {
-            self.items.push(Item::User(text));
-        }
+        self.items.push(Item::User(text.into()));
     }
 
     pub fn push_note(&mut self, note: PluginNote) {
@@ -1609,10 +1618,11 @@ impl RunView {
                 delay: *delay,
                 error: error.clone(),
             }),
-            // The constitution's report of the hold already says it.
+            // The constitution's report of the hold already says it, and a
+            // plugin with its UI says it in what it publishes.
             RunEvent::Continued { plugin, .. }
                 if &**plugin == tau_constitution::NAME
-                    || &**plugin == tau_goal::NAME => {}
+                    || crate::plugins::registry().get(plugin).is_some() => {}
             RunEvent::PluginReport { plugin, body, .. } => {
                 self.report(plugin, body)
             }
@@ -1879,10 +1889,6 @@ impl RunView {
             }
             return;
         }
-        if plugin == tau_goal::NAME {
-            self.goal_report(body);
-            return;
-        }
         if plugin != tau_constitution::NAME {
             return;
         }
@@ -2104,115 +2110,6 @@ impl RunView {
             }),
         }
         self.update(RunUpdate::Ledger(entries));
-    }
-
-    /// The goal as `records` leave it, from history: its checks show in
-    /// the Goal tab, and the continuations in the transcript already.
-    pub fn set_goal_records(&mut self, records: &[Value]) {
-        self.goal = tau_goal::Goal::fold(records);
-        self.sync_goal_status();
-    }
-
-    /// What tau-goal did: the goal changes, and checks and stops show in
-    /// the transcript.
-    pub fn goal_report(&mut self, body: &Value) {
-        use tau_goal::{Exhausted, Goal, Record};
-        let Some(record) = Record::parse(body) else {
-            return;
-        };
-        Goal::apply(&mut self.goal, &record);
-        let plugin = tau_goal::NAME.to_owned();
-        let note = |text: String, detail: String, tone| PluginNote {
-            plugin: plugin.clone(),
-            text,
-            detail: Some(detail),
-            tone,
-            body: NoteBody::None,
-        };
-        match &record {
-            Record::Check(check) => {
-                let max = self.goal.as_ref().map_or(0, |g| g.max_continuations);
-                let (text, detail, tone) = if check.met {
-                    (
-                        "the goal is met".to_owned(),
-                        format!(
-                            "check {} · turn {} · p {:.2} · the run stops",
-                            check.n, check.turn, check.p
-                        ),
-                        Tone::Good,
-                    )
-                } else {
-                    let next = match check.continuation {
-                        Some(n) => format!("continuing {n} of {max}"),
-                        None => "not continuing".to_owned(),
-                    };
-                    (
-                        "the goal is not met yet".to_owned(),
-                        format!(
-                            "check {} · turn {} · p {:.2} · {next}",
-                            check.n, check.turn, check.p
-                        ),
-                        Tone::Warn,
-                    )
-                };
-                self.push_note(note(text, detail, tone));
-            }
-            Record::Stopped { why } => {
-                let why = match why {
-                    Exhausted::Continuations => "out of continuations",
-                    Exhausted::Budget => "out of budget",
-                };
-                self.push_note(note(
-                    format!("stopped the goal: {why}, and it is not met"),
-                    "before_stop".into(),
-                    Tone::Danger,
-                ));
-            }
-            Record::Error { message } => self.push_note(note(
-                message.clone(),
-                "not checked".into(),
-                Tone::Danger,
-            )),
-            _ => {}
-        }
-        self.sync_goal_status();
-    }
-
-    /// A change to the goal made here (pause, extend, clear), before
-    /// tau-goal stores and reports it.
-    pub fn apply_goal(&mut self, record: &tau_goal::Record) {
-        tau_goal::Goal::apply(&mut self.goal, record);
-        self.sync_goal_status();
-    }
-
-    /// The run's plugin list says where the goal stands.
-    fn sync_goal_status(&mut self) {
-        use tau_goal::Status;
-        let state = self.goal.as_ref().map(|goal| match goal.status {
-            Status::Active => format!(
-                "{} of {} continuations",
-                goal.continuations, goal.max_continuations
-            ),
-            Status::Paused => "paused".to_owned(),
-            Status::Met => format!("met at check {}", goal.checks.len()),
-            Status::Stopped(_) => "stopped, not met".to_owned(),
-        });
-        let found = self
-            .plugins
-            .iter()
-            .position(|status| status.name == tau_goal::NAME);
-        match (state, found) {
-            (Some(state), Some(at)) => self.plugins[at].state = state,
-            (Some(state), None) => self.plugins.push(PluginStatus {
-                name: tau_goal::NAME.into(),
-                state,
-                tone: Tone::Quiet,
-            }),
-            (None, Some(at)) => {
-                self.plugins.remove(at);
-            }
-            (None, None) => {}
-        }
     }
 
     /// The run's plugin list says what the constitution did so far.
@@ -2519,111 +2416,6 @@ mod tests {
             }
         }
         assert_eq!(view.usage.plugin_cost, charged);
-    }
-
-    #[test]
-    fn goals_show_as_their_card_notes_and_state() {
-        use tau_goal::{Check, Record, Status};
-        let mut view = view();
-        // As typed, and as history stores what the model got.
-        view.push_user("/goal --continuations 3 tests pass");
-        view.push_user(tau_goal::set_input("tests pass"));
-        assert_eq!(
-            view.items[..2],
-            [
-                Item::Goal("tests pass".into()),
-                Item::Goal("tests pass".into())
-            ]
-        );
-        let report = |view: &mut RunView, record: Record| {
-            view.apply(&RunEvent::PluginReport {
-                run: run(),
-                plugin: tau_goal::NAME.into(),
-                body: record.to_value(),
-            })
-        };
-        report(
-            &mut view,
-            Record::Set {
-                goal: "tests pass".into(),
-                continuations: 3,
-                budget: 2.0,
-            },
-        );
-        let check = |n, met, continuation| {
-            Record::Check(Check {
-                n,
-                met,
-                p: if met { 0.9 } else { 0.1 },
-                turn: n,
-                continuation,
-                cost: 0.001,
-                spent: 0.1,
-            })
-        };
-        report(&mut view, check(1, false, Some(1)));
-        // The continuation's event says nothing more than the check.
-        view.apply(&RunEvent::Continued {
-            run: run(),
-            plugin: tau_goal::NAME.into(),
-            message: "tau-goal: the goal is not met yet".into(),
-        });
-        report(&mut view, check(2, true, None));
-        let notes: Vec<(&str, Tone)> = view
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Plugin(note) => Some((note.text.as_str(), note.tone)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            notes,
-            [
-                ("the goal is not met yet", Tone::Warn),
-                ("the goal is met", Tone::Good)
-            ]
-        );
-        let goal = view.goal.clone().unwrap();
-        assert_eq!(goal.status, Status::Met);
-        assert_eq!(goal.continuations, 1);
-        assert_eq!(view.usage.plugin_cost, 0.0, "reports charge nothing");
-        // Each check's note names the turn it checked.
-        let details: Vec<&str> = view
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Plugin(note) => note.detail.as_deref(),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            details,
-            [
-                "check 1 · turn 1 · p 0.10 · continuing 1 of 3",
-                "check 2 · turn 2 · p 0.90 · the run stops"
-            ]
-        );
-        let status = view
-            .plugins
-            .iter()
-            .find(|status| status.name == tau_goal::NAME)
-            .unwrap();
-        assert_eq!(status.state, "met at check 2");
-
-        // History: the continuation is tau-goal's note, not the person's.
-        let mut stored = self::view();
-        stored.push_user(format!(
-            "{}the goal is not met yet (check 1, probability 0.10).\nGoal: x",
-            tau_goal::CONTINUATION_PREFIX
-        ));
-        assert!(matches!(&stored.items[0], Item::Plugin(note)
-            if note.plugin == tau_goal::NAME
-                && note.text == "the goal is not met yet (check 1, probability 0.10)"));
-        // Clearing takes the goal and its plugin line away.
-        view.apply_goal(&Record::Cleared);
-        assert!(view.goal.is_none());
-        assert!(view.plugins.iter().all(|s| s.name != tau_goal::NAME));
     }
 
     /// fast-compaction's report on a pruned `bash` output, as it
