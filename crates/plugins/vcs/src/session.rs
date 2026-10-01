@@ -13,6 +13,8 @@ use jj_lib::{
     git::REMOTE_NAME_FOR_LOCAL_GIT_REPO,
     gitignore::GitIgnoreFile,
     matchers::{EverythingMatcher, Matcher, NothingMatcher, PrefixMatcher},
+    merge::Merge,
+    merged_tree::MergedTree,
     object_id::{HexPrefix, ObjectId as _, PrefixResolution},
     ref_name::WorkspaceName,
     repo::{ReadonlyRepo, Repo, RepoLoader},
@@ -119,6 +121,13 @@ fn snapshot_locked(
     loader: &RepoLoader,
     name: &WorkspaceName,
 ) -> Result<Snapshot, VcsError> {
+    let options = SnapshotOptions {
+        base_ignores: GitIgnoreFile::empty(),
+        progress: None,
+        start_tracking_matcher: &EverythingMatcher,
+        force_tracking_matcher: &NothingMatcher,
+        max_new_file_size: MAX_NEW_FILE_SIZE,
+    };
     let mut repo = block_on(loader.load_at_head())?;
     let mut wc = wc_commit(&repo, name)?;
     match block_on(WorkingCopyFreshness::check_stale(
@@ -134,8 +143,30 @@ fn snapshot_locked(
         // Another workspace's operation rewrote this one's commit: the
         // main chat catching up with trunk restacks the commits a chat
         // stands on. The files move to it, as jj's `workspace
-        // update-stale` does.
+        // update-stale` does, with what was edited on disk since the last
+        // snapshot merged on top, as a rebase would.
         WorkingCopyFreshness::WorkingCopyStale => {
+            let before = locked.locked_wc().old_tree().clone();
+            let (disk, _) = block_on(locked.locked_wc().snapshot(&options))?;
+            if disk.tree_ids_and_labels() != before.tree_ids_and_labels() {
+                let merged =
+                    block_on(MergedTree::merge(Merge::from_vec(vec![
+                        (wc.tree(), "the rewritten working copy".to_owned()),
+                        (before, "the last snapshot".to_owned()),
+                        (disk, "edits since".to_owned()),
+                    ])))?;
+                let mut tx = repo.start_transaction();
+                tx.set_is_snapshot(true);
+                tx.set_workspace_name(name);
+                let edited = block_on(
+                    tx.repo_mut().rewrite_commit(&wc).set_tree(merged).write(),
+                )?;
+                tx.repo_mut()
+                    .set_wc_commit(name.to_owned(), edited.id().clone())?;
+                block_on(tx.repo_mut().rebase_descendants())?;
+                repo = block_on(tx.commit("snapshot working copy"))?;
+                wc = edited;
+            }
             block_on(locked.locked_wc().check_out(&wc))?;
         }
         WorkingCopyFreshness::SiblingOperation => {
@@ -143,13 +174,6 @@ fn snapshot_locked(
         }
     }
 
-    let options = SnapshotOptions {
-        base_ignores: GitIgnoreFile::empty(),
-        progress: None,
-        start_tracking_matcher: &EverythingMatcher,
-        force_tracking_matcher: &NothingMatcher,
-        max_new_file_size: MAX_NEW_FILE_SIZE,
-    };
     let (tree, stats) = block_on(locked.locked_wc().snapshot(&options))?;
     // Every new file matches `start_tracking_matcher`, so size is the
     // only reason a file stays out.

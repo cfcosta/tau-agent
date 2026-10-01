@@ -258,11 +258,60 @@ fn a_chat_follows_the_main_chat_onto_upstream() {
         block_on(main.move_onto(theirs.clone(), trunk.clone(), true)).unwrap();
 
     let turn = block_on(chat.end_turn("tau/chat", None)).unwrap();
-    assert_eq!(turn.head, moved.head, "the chat stands on the restacked commit");
+    assert_eq!(
+        turn.head, moved.head,
+        "the chat stands on the restacked commit"
+    );
     for file in ["ours.txt", "theirs.txt", "draft.txt"] {
         assert!(chat_dir.join(file).exists(), "{file}");
     }
     assert_eq!(turn.paths, ["draft.txt"]);
+}
+
+/// A chat edits its files before its next tool runs, while the main
+/// chat's catch-up has restacked what it stands on: the edits merge onto
+/// the rewritten `@`, as a rebase would. One the rewrite does not touch
+/// stays; one to a file upstream changed too conflicts, with markers.
+#[test]
+fn edits_on_a_stale_chat_merge_onto_the_rewrite() {
+    let src = tempfile::tempdir().unwrap();
+    source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    let trunk = project.trunk_name().unwrap();
+    block_on(main.move_onto(project.trunk().unwrap(), trunk.clone(), true))
+        .unwrap();
+    std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
+    let ours = block_on(main.commit_all("ours", trunk.clone())).unwrap();
+    let chat = project.add_workspace("chat", &ours.commit_id).unwrap();
+    let chat_dir = project.workspace_dir("chat");
+
+    std::fs::write(src.path().join("README.md"), "upstream\n").unwrap();
+    git(src.path(), &["commit", "--quiet", "-am", "upstream"]);
+    project.update(UpdateFrom::Checkout(src.path())).unwrap();
+    block_on(main.move_onto(project.trunk().unwrap(), trunk, true)).unwrap();
+
+    // The chat's edits, before any tool of its own runs.
+    std::fs::write(chat_dir.join("ours.txt"), "chat\n").unwrap();
+    std::fs::write(chat_dir.join("README.md"), "chat\n").unwrap();
+    let turn = block_on(chat.end_turn("tau/chat", None)).unwrap();
+    assert_eq!(turn.paths, ["README.md", "ours.txt"]);
+    let read =
+        |file: &str| std::fs::read_to_string(chat_dir.join(file)).unwrap();
+    assert_eq!(read("ours.txt"), "chat\n");
+    let readme = read("README.md");
+    assert!(readme.contains("<<<<<<<"), "{readme}");
+    assert!(
+        readme.contains("upstream") && readme.contains("chat"),
+        "{readme}"
+    );
 }
 
 #[test]

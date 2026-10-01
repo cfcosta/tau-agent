@@ -84,10 +84,11 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
   rewrote this workspace's commit, as the main chat's catch-up with
   trunk does to the commits its chats stand on, the next tool or turn
   first moves the files to the rewritten commit, as jj's `workspace
-  update-stale` does; files on disk that neither commit has stay. When
-  a concurrent operation forked the operation log instead, the tools
-  fail with `The working copy is stale: ...` and ask for the user to
-  update the workspace.
+  update-stale` does, with what was edited on disk since the last
+  snapshot merged on top, as a rebase would: an edit to a file the
+  rewrite changed too becomes a conflict. When a concurrent operation
+  forked the operation log instead, the tools fail with `The working
+  copy is stale: ...` and ask for the user to update the workspace.
 
 ## Results
 
