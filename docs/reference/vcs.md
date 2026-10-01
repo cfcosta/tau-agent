@@ -372,15 +372,21 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   `Project::current` moves them to where their change is now. A failed
   snapshot stores `{ "turn": n, "error": "…" }` and the run goes on.
   Observers given with `on_turn` hear each `TurnSnapshot`, with the
-  paths the turn changed. They count from the turn before's snapshot
-  rebased onto its parent as that is now, as a fork merges a snapshot
-  (a parent the run took back into `@` with `vcs_undo` is not followed:
-  its parent is), with the changes landed on the run since applied on top: what a
-  catch-up brought by restacking the commit the run stands on, or a
-  landing by stacking on it, is not the turn's. The landing's own links
-  record what landed. A confirmed landing tags its operation with the
-  change ids it landed (`tau.vcs.landed`), and the turn finds them in
-  the operation log back to its snapshot.
+  paths the turn changed. They count from the turn before's snapshot,
+  with what each landing and catch-up since did to the run's newest
+  commit applied on top: what a landing stacked on the run, or a
+  catch-up brought by restacking the commit the run stands on, is not
+  the turn's. Nothing else is followed: the run's own commits, undos and
+  recommits are the turn's work. A confirmed landing tags its operation
+  with the change ids it landed (`tau.vcs.landed`), and a catch-up
+  (`Vcs::move_onto`, or the step a run's commit, turn end or landing
+  takes after an update) with the commit it moved onto
+  (`tau.vcs.caught_up`). The turn walks the operation log back to its
+  snapshot, and for each tagged operation applies the change of the
+  run's newest commit (its working copy's parent) from before to after
+  it, whichever workspace made it: a catch-up of the main chat moves
+  the chats standing on its commits too. The landing's own links record
+  what landed.
 
 - **Before it stops** with changes in `@`, the run is held once, with
   `COMMIT_FIRST` and the paths as the next user message.

@@ -39,6 +39,10 @@ pub(crate) const BOOKMARK_ATTRIBUTE: &str = "tau.vcs.bookmark";
 /// The operation attribute of a landing: the change ids it landed,
 /// separated by spaces. A turn's paths leave them out.
 pub(crate) const LANDED_ATTRIBUTE: &str = "tau.vcs.landed";
+/// The operation attribute of a catch-up: the commit, in hex, a run moved
+/// onto (`move_onto`, or a step that follows an update). A turn's paths
+/// leave out what it brought, to that run and to the runs standing on it.
+pub(crate) const CAUGHT_UP_ATTRIBUTE: &str = "tau.vcs.caught_up";
 
 /// New files larger than this stay out of the snapshot, as jj's
 /// default. Every other new file is tracked: nothing is staged.

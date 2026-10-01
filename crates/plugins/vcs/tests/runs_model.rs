@@ -11,9 +11,9 @@
 //!   that changed nothing names the commit before it; the run's bookmark
 //!   `tau/<run>` names its newest commit;
 //! - a turn that ends as `RunWorkspace` ends one snapshots `@` and leaves
-//!   it uncommitted, listing the paths changed since the last snapshot
-//!   rebased onto its parent as that is now, with what landed since on
-//!   top;
+//!   it uncommitted, listing the paths changed since the last snapshot,
+//!   with what each landing and catch-up since brought to the run's
+//!   newest commit applied on top;
 //! - a fork at a change's link starts on exactly that link's files; one
 //!   at a snapshot starts on the snapshot's files, on its parent as it
 //!   is now, with what the parent gained since merged in;
@@ -199,11 +199,13 @@ struct Run {
     /// Its links.
     links: Vec<Linked>,
     /// The last turn's snapshot and its tree, which the next turn's
-    /// paths are counted from, as `RunWorkspace` keeps it, with the
-    /// commit `@` stood on then and that commit's tree then.
-    since: Option<(String, Tree, usize, Tree)>,
-    /// The commits landed on it since that snapshot, oldest first.
-    landed: Vec<usize>,
+    /// paths are counted from, as `RunWorkspace` keeps it: a fork's `@`
+    /// as it started, until its first turn.
+    since: Option<(String, Tree)>,
+    /// How the run's newest commit moved under it since that snapshot,
+    /// oldest first, by a landing or a catch-up: its tree before and
+    /// after. A turn's paths leave out what each brought.
+    moves: Vec<(Tree, Tree)>,
     turns: u32,
     state: State,
     /// A turn has set `tau/<name>`.
@@ -294,7 +296,7 @@ impl Machine {
             seen: tree,
             stale: None,
             links: Vec::new(),
-            landed: Vec::new(),
+            moves: Vec::new(),
             since: None,
             turns: 0,
             state: State::Open,
@@ -799,27 +801,17 @@ impl Machine {
             since.as_ref().map(|(id, ..)| id.clone()),
         ))
         .unwrap();
-        // The paths count from the turn before's snapshot, rebased onto
-        // its parent as that is now, else from the run's head.
+        // The paths count from the turn before's snapshot with what each
+        // landing and catch-up since brought applied, else from the
+        // run's head.
         let base = match since {
-            Some((_, tree, at, then)) => {
-                let now = if self.commits[at].abandoned {
-                    then.clone()
-                } else {
-                    self.commits[at].tree.clone()
-                };
-                let mut base = rebase_tree(&now, &then, &tree);
-                // What landed since is not the turn's.
-                if !self.runs[run].landed.is_empty() {
-                    tc.event("a turn leaves out what landed");
-                }
-                for &at in &self.runs[run].landed {
-                    let parent = self.commits[at].parent.unwrap();
-                    base = rebase_tree(
-                        &self.commits[at].tree,
-                        &self.commits[parent].tree,
-                        &base,
-                    );
+            Some((_, tree)) => {
+                let mut base = tree;
+                for (from, to) in &self.runs[run].moves {
+                    if from != to {
+                        tc.event("a turn leaves out what landed or caught up");
+                    }
+                    base = rebase_tree(to, from, &base);
                 }
                 base
             }
@@ -839,13 +831,8 @@ impl Machine {
         r.seen = tree.clone();
         r.turns += 1;
         r.bookmarked = true;
-        r.landed.clear();
-        r.since = Some((
-            snapshot.commit_id.clone(),
-            tree.clone(),
-            head,
-            head_tree.clone(),
-        ));
+        r.moves.clear();
+        r.since = Some((snapshot.commit_id.clone(), tree.clone()));
         r.links.push(Linked {
             link: Link {
                 turn: r.turns,
@@ -906,6 +893,7 @@ impl Machine {
             self.project.add_workspace(&name, &now.commit_id).unwrap()
         };
         let links = self.runs[parent].links[..=k].to_vec();
+        let name_of_fork = name.clone();
         self.runs.push(Run {
             bookmark: format!("tau/{name}"),
             name,
@@ -915,11 +903,13 @@ impl Machine {
             seen: self.fork_tree(&linked),
             stale: None,
             links,
-            landed: Vec::new(),
-            since: link.snapshot.then(|| {
-                let (then, tree) = linked.snapshot.clone().unwrap();
-                (link.commit_id.clone(), tree, linked.at, then)
-            }),
+            moves: Vec::new(),
+            // `RunWorkspace` counts a fork's first turn from its `@` as
+            // it started.
+            since: Some((
+                self.project.workspace_head(&name_of_fork).unwrap().unwrap(),
+                self.fork_tree(&linked),
+            )),
             turns: link.turn,
             state: State::Open,
             bookmarked: false,
@@ -951,7 +941,7 @@ impl Machine {
             seen: self.commits[self.trunk].tree.clone(),
             stale: None,
             links: Vec::new(),
-            landed: Vec::new(),
+            moves: Vec::new(),
             since: None,
             turns: 0,
             state: State::Open,
@@ -1085,7 +1075,10 @@ impl Machine {
             self.runs[parent].bookmarked = true;
         }
 
-        self.runs[parent].landed.extend(moving.iter().copied());
+        let new_head_tree = self.commits[self.runs[parent].head].tree.clone();
+        self.runs[parent]
+            .moves
+            .push((old_head_tree.clone(), new_head_tree));
         // The host links the landed changes in the parent.
         let from = self.runs[child].name.clone();
         let turn = self.runs[parent].turns;
@@ -1217,6 +1210,8 @@ impl Machine {
         self.learn(&dragged);
         let new_head = chain.last().copied().unwrap_or(trunk);
         let r = &mut self.runs[MAIN];
+        r.moves
+            .push((before[head].clone(), self.commits[new_head].tree.clone()));
         r.head = new_head;
         r.wc = rebase_tree(&self.commits[new_head].tree, &before[head], &r.wc);
         r.seen = r.wc.clone();
@@ -1234,6 +1229,8 @@ impl Machine {
                 continue;
             }
             tc.event("a catch-up moves a chat's @");
+            let moved =
+                (before[r.head].clone(), self.commits[r.head].tree.clone());
             // jj's `@`: the last snapshot, or what rewrote it before.
             let repo_wc = r.stale.clone().unwrap_or_else(|| r.seen.clone());
             let stale = rebase_tree(
@@ -1242,6 +1239,7 @@ impl Machine {
                 &repo_wc,
             );
             self.runs[run].stale = Some(stale);
+            self.runs[run].moves.push(moved);
         }
 
         // The conflicts in the new head, then any more in `@`.

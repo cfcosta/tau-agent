@@ -109,6 +109,7 @@ pub(crate) fn follow_bookmark(
         return Ok((wc.clone(), None));
     }
     rebase_run(tx, wc, workspace, &target, last, bookmark)?;
+    tx.set_attribute(session::CAUGHT_UP_ATTRIBUTE.to_owned(), target.hex());
     let id = tx
         .repo()
         .view()
@@ -305,6 +306,10 @@ pub(crate) fn move_onto(
             if !is_own(tx.repo(), wc, last.as_ref(), &onto)? {
                 moved_onto = Some(onto.clone());
             }
+            tx.set_attribute(
+                session::CAUGHT_UP_ATTRIBUTE.to_owned(),
+                onto.hex(),
+            );
             rebase_run(tx, wc, &name, &onto, last.as_ref(), bookmark)
         })?;
         record.save(moved_onto.as_ref())?;

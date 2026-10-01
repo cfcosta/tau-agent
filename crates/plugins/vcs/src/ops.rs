@@ -29,6 +29,7 @@ use crate::{
     session::{
         self,
         BOOKMARK_ATTRIBUTE,
+        CAUGHT_UP_ATTRIBUTE,
         LANDED_ATTRIBUTE,
         Snapshot,
         TOOL_ATTRIBUTE,
@@ -604,10 +605,10 @@ pub(crate) fn end_turn(
     let name = workspace_name(worker)?;
     let record = crate::land::MovedOnto::load(worker)?;
     let mut followed = None;
-    let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, wc| {
+    let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, snapped| {
         let (wc, onto) = crate::land::follow_bookmark(
             tx,
-            wc,
+            snapped,
             &name,
             bookmark,
             record.last(),
@@ -617,13 +618,16 @@ pub(crate) fn end_turn(
         let head = wc.parent_ids().first().ok_or(VcsError::NoParent)?.clone();
         let before = match since.and_then(CommitId::try_from_hex) {
             Some(id) => {
-                let landed =
-                    landed_since(tx.base_repo().operation(), &name, &id)?;
-                with_landed(
+                let mut moves =
+                    moved_since(tx.base_repo().operation(), &name, &id)?;
+                // This operation's own step after an update.
+                if wc.id() != snapped.id() {
+                    moves.push((snapped.id().clone(), wc.id().clone()));
+                }
+                replay(
                     tx.repo(),
-                    since_tree(tx.repo(), &id)?,
-                    &head,
-                    &landed,
+                    tx.repo().store().get_commit(&id)?.tree(),
+                    &moves,
                 )?
             }
             None => block_on(wc.parent_tree(tx.repo()))?,
@@ -645,133 +649,76 @@ pub(crate) fn end_turn(
     Ok(turn)
 }
 
-/// The tree a turn's paths count from: the turn before's snapshot
-/// `since`, rebased onto its parent as that is now
-/// (`parent now + snapshot - parent then`), as
-/// `Project::add_workspace_from_snapshot` merges a snapshot. What a
-/// catch-up brought by restacking the parent is not the turn's. A parent
-/// whose change is a working copy now (undone with `vcs_undo`) is not
-/// followed: its parent is, as a fork's is.
-fn since_tree(
-    repo: &dyn Repo,
-    since: &CommitId,
-) -> Result<jj_lib::merged_tree::MergedTree, VcsError> {
-    let snapshot = repo.store().get_commit(since)?;
-    let Some(then) = snapshot.parent_ids().first() else {
-        return Ok(snapshot.tree());
-    };
-    let mut then = repo.store().get_commit(then)?;
-    let mut now = match block_on(repo.resolve_change_id(then.change_id()))? {
-        Some(targets) => {
-            let visible: Vec<&CommitId> =
-                targets.visible_with_offsets().map(|(_, id)| id).collect();
-            match visible.as_slice() {
-                [id] => repo.store().get_commit(id)?,
-                _ => then.clone(),
-            }
-        }
-        None => then.clone(),
-    };
-    // An undo can take the parent's change back into a working copy,
-    // with the edits made since: those are the turn's, not a catch-up's.
-    // As a fork does, go one change down.
-    if repo
-        .view()
-        .wc_commit_ids()
-        .values()
-        .any(|id| id == now.id())
-    {
-        let (Some(up_then), Some(up_now)) =
-            (then.parent_ids().first(), now.parent_ids().first())
-        else {
-            return Ok(snapshot.tree());
-        };
-        then = repo.store().get_commit(up_then)?;
-        now = repo.store().get_commit(up_now)?;
-    }
-    if now.id() == then.id() {
-        return Ok(snapshot.tree());
-    }
-    Ok(block_on(jj_lib::merged_tree::MergedTree::merge(
-        jj_lib::merge::Merge::from_vec(vec![
-            (now.tree(), "the parent now".to_owned()),
-            (then.tree(), "the parent then".to_owned()),
-            (snapshot.tree(), "the turn before".to_owned()),
-        ]),
-    ))?)
-}
-
-/// The change ids landed on this workspace's run since the turn whose
-/// snapshot is `since`: what its `land` operations record, newest
-/// operation first. The walk back stops where `since` was this
-/// workspace's working copy, or where the workspace did not exist yet
-/// (a fork, whose `since` is its parent's snapshot).
-fn landed_since(
+/// How this workspace's run moved under it since the turn whose
+/// snapshot is `since`, oldest first: for each landing (`land`) and
+/// catch-up (`move_onto`, or a step after an update) since, in any
+/// workspace, the run's newest commit before and after it, when it
+/// changed. A turn's paths count from `since` with these moves replayed
+/// on it ([`replay`]), so what they brought is not the turn's, and
+/// nothing else the run's commits went through is followed: an undo or a
+/// commit of the run's own is the turn's. The walk back stops where
+/// `since` was this workspace's working copy, or where the workspace did
+/// not exist yet.
+fn moved_since(
     head: &Operation,
     name: &WorkspaceName,
     since: &CommitId,
-) -> Result<HashSet<String>, VcsError> {
-    let mut landed = HashSet::new();
+) -> Result<Vec<(CommitId, CommitId)>, VcsError> {
+    let mut moves = Vec::new();
     let mut op = head.clone();
     loop {
         let view = block_on(op.view())?;
-        match view.get_wc_commit_id(name) {
-            None => return Ok(landed),
-            Some(wc) if wc == since => return Ok(landed),
-            Some(_) => {}
-        }
-        let metadata = op.metadata();
-        if metadata.workspace_name.as_deref() == Some(name)
-            && let Some(ids) = metadata.attributes.get(LANDED_ATTRIBUTE)
-        {
-            landed.extend(ids.split_whitespace().map(str::to_owned));
-        }
+        let after = match view.get_wc_commit_id(name) {
+            None => break,
+            Some(wc) if wc == since => break,
+            Some(wc) => wc.clone(),
+        };
         // Concurrent operations merge into one: follow the first.
-        match block_on(op.parents())?.into_iter().next() {
-            Some(parent) => op = parent,
-            None => return Ok(landed),
+        let Some(parent) = block_on(op.parents())?.into_iter().next() else {
+            break;
+        };
+        let attributes = &op.metadata().attributes;
+        if attributes.contains_key(LANDED_ATTRIBUTE)
+            || attributes.contains_key(CAUGHT_UP_ATTRIBUTE)
+        {
+            let before =
+                block_on(parent.view())?.get_wc_commit_id(name).cloned();
+            if let Some(before) = before {
+                moves.push((before, after));
+            }
         }
+        op = parent;
     }
+    moves.reverse();
+    Ok(moves)
 }
 
-/// `base` with the changes of the `landed` commits under `head` (this
-/// run's newest commit) applied on top, oldest first: what came to the
-/// run's stack by landing is not the turn's.
-fn with_landed(
+/// `base` with each move's change applied on top, oldest first: the
+/// run's newest commit (the working copy's parent) after it, against the
+/// one before. `moves` name working-copy commits.
+fn replay(
     repo: &dyn Repo,
     mut base: jj_lib::merged_tree::MergedTree,
-    head: &CommitId,
-    landed: &HashSet<String>,
+    moves: &[(CommitId, CommitId)],
 ) -> Result<jj_lib::merged_tree::MergedTree, VcsError> {
-    if landed.is_empty() {
-        return Ok(base);
-    }
-    let ids: Vec<CommitId> = {
-        let revset = ResolvedRevsetExpression::commit(head.clone())
-            .ancestors()
-            .evaluate(repo)?;
-        block_on(revset.stream().collect::<Vec<_>>())
-            .into_iter()
-            .collect::<Result<_, _>>()?
-    };
-    let mut left = landed.clone();
-    let mut commits = Vec::new();
-    for id in ids {
-        if left.is_empty() {
-            break;
+    for (before, after) in moves {
+        let head = |id: &CommitId| -> Result<Option<CommitId>, VcsError> {
+            let commit = repo.store().get_commit(id)?;
+            Ok(commit.parent_ids().first().cloned())
+        };
+        let (Some(from), Some(to)) = (head(before)?, head(after)?) else {
+            continue;
+        };
+        if from == to {
+            continue;
         }
-        let commit = repo.store().get_commit(&id)?;
-        if left.remove(&commit.change_id().reverse_hex()) {
-            commits.push(commit);
-        }
-    }
-    for commit in commits.into_iter().rev() {
-        let parent = block_on(commit.parent_tree(repo))?;
+        let from = repo.store().get_commit(&from)?.tree();
+        let to = repo.store().get_commit(&to)?.tree();
         base = block_on(jj_lib::merged_tree::MergedTree::merge(
             jj_lib::merge::Merge::from_vec(vec![
                 (base, "the turn before".to_owned()),
-                (parent, "before the landing".to_owned()),
-                (commit.tree(), "the landing".to_owned()),
+                (from, "the run's head before".to_owned()),
+                (to, "the run's head after".to_owned()),
             ]),
         ))?;
     }
