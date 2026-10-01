@@ -1823,6 +1823,20 @@ impl Script {
         self.verdict(body);
     }
 
+    /// What a plugin charged to the run, as the run emits it.
+    fn charged(&mut self, plugin: &str, cost: f64) {
+        let mut usage = tau_ai::message::Usage::default();
+        usage.cost.total = cost;
+        self.event(
+            0,
+            RunEvent::PluginCharged {
+                run: self.run.clone(),
+                plugin: plugin.into(),
+                usage,
+            },
+        );
+    }
+
     /// A report from tau-constitution.
     fn verdict(&mut self, body: Value) {
         self.report("tau-constitution", body);
@@ -2665,7 +2679,7 @@ pub fn script() -> Vec<Step> {
         "call_id": "c4", "tool": "edit", "reason": reason,
     }));
     s.end_tool(500, "c4", ToolOutput::text(reason));
-    s.at(0, RunUpdate::PluginCost(0.00007));
+    s.charged("tau-constitution", 0.00007);
     s.end_turn(21_400, 610, 0.027);
 
     s.turn();
@@ -2905,7 +2919,7 @@ pub fn script() -> Vec<Step> {
             ),
         ]),
     );
-    s.at(0, RunUpdate::PluginCost(0.0011));
+    s.charged(tau_fast_compaction::NAME, 0.0011);
     s.at(
         0,
         RunUpdate::Plugins(plugins([
@@ -3033,7 +3047,7 @@ pub fn script() -> Vec<Step> {
     );
     s.end_turn(82_600, 300, 0.012);
     s.checked(None, &[("R6", 0.04)]);
-    s.at(0, RunUpdate::PluginCost(0.012));
+    s.charged("tau-constitution", 0.012);
     s.event(
         400,
         RunEvent::RunEnd {

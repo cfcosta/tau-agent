@@ -171,6 +171,15 @@ pub struct RunRecord {
     pub created_at: String,
 }
 
+/// What one plugin charged to a run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PluginCost {
+    pub plugin: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cost_usd: f64,
+}
+
 /// The cost of one agent's runs in a workflow.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentCost {
@@ -504,6 +513,20 @@ impl Store {
         entries: &[Entry],
         usage: TurnUsage,
     ) -> Result<i64> {
+        self.append_charged(run, entries, usage, &[]).await
+    }
+
+    /// [`Store::append_turn`], with what each plugin charged among
+    /// `usage`: added to the run's per-plugin costs in the same
+    /// transaction. `usage` already counts it; `plugins` only says whose
+    /// it is.
+    pub async fn append_charged(
+        &self,
+        run: &str,
+        entries: &[Entry],
+        usage: TurnUsage,
+        plugins: &[(&str, TurnUsage)],
+    ) -> Result<i64> {
         // The wait covers the connection and the write lock, which
         // another process can hold.
         let started = Instant::now();
@@ -568,8 +591,62 @@ impl Store {
             .await?;
         }
 
+        for (plugin, usage) in plugins {
+            let input_tokens = i64::from(usage.input_tokens);
+            let output_tokens = i64::from(usage.output_tokens);
+            sqlx::query!(
+                "INSERT INTO plugin_costs (run_id, plugin, input_tokens, output_tokens, cost_usd)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (run_id, plugin) DO UPDATE SET
+                   input_tokens = input_tokens + excluded.input_tokens,
+                   output_tokens = output_tokens + excluded.output_tokens,
+                   cost_usd = cost_usd + excluded.cost_usd",
+                run,
+                plugin,
+                input_tokens,
+                output_tokens,
+                usage.cost_usd,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
         tx.commit().await?;
         Ok(next + entries.len() as i64 - 1)
+    }
+
+    /// What each plugin charged to the run itself, by plugin name.
+    pub async fn plugin_costs(&self, run: &str) -> Result<Vec<PluginCost>> {
+        Ok(sqlx::query_as!(
+            PluginCost,
+            r#"SELECT plugin AS "plugin!: String",
+                      input_tokens AS "input_tokens!: i64",
+                      output_tokens AS "output_tokens!: i64",
+                      cost_usd AS "cost_usd!: f64"
+               FROM plugin_costs WHERE run_id = ?1 ORDER BY plugin"#,
+            run
+        )
+        .fetch_all(&self.reader)
+        .await?)
+    }
+
+    /// Each plugin's cost over the runs started at `since` or later (a
+    /// time as [`RunRecord::created_at`] writes it), by plugin name.
+    pub async fn plugin_spend(
+        &self,
+        since: &str,
+    ) -> Result<Vec<(String, f64)>> {
+        let rows = sqlx::query!(
+            r#"SELECT plugin_costs.plugin AS "plugin!: String",
+                      sum(plugin_costs.cost_usd) AS "usd!: f64"
+               FROM plugin_costs JOIN runs ON runs.id = plugin_costs.run_id
+               WHERE runs.created_at >= ?1
+               GROUP BY plugin_costs.plugin ORDER BY plugin_costs.plugin"#,
+            since
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        Ok(rows.into_iter().map(|row| (row.plugin, row.usd)).collect())
     }
 
     /// The run's transcript: the inherited messages of its fork chain,

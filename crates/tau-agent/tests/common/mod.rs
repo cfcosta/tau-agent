@@ -61,6 +61,8 @@ pub fn assert_grammar(events: &[RunEvent]) {
                 assert!(in_turn.is_none(), "{event:?} inside a turn")
             }
             RunEvent::ContextRewritten { .. }
+            | RunEvent::PluginCharged { .. }
+            | RunEvent::PluginReport { .. }
             | RunEvent::PluginError { .. } => {}
             _ => assert!(in_turn.is_some(), "{event:?} outside a turn"),
         }

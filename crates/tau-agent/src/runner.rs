@@ -586,13 +586,30 @@ impl Runner {
 
     /// Stores the usage plugins charged since the last write.
     async fn save_charged(&mut self) -> Result<(), StoreError> {
-        let unsaved = std::mem::take(
-            &mut self.charged.lock().expect("not poisoned").unsaved,
-        );
-        if unsaved != Usage::default() {
-            self.store
-                .append_turn(&self.run.0, &[], turn_usage(&unsaved, 0))
-                .await?;
+        let (unsaved, by) =
+            self.charged.lock().expect("not poisoned").take_unsaved();
+        if unsaved != Usage::default() || !by.is_empty() {
+            let plugins = plugin_usage(&by);
+            let plugins: Vec<(&str, TurnUsage)> = plugins
+                .iter()
+                .map(|(plugin, usage)| (&**plugin, *usage))
+                .collect();
+            let written = self
+                .store
+                .append_charged(
+                    &self.run.0,
+                    &[],
+                    turn_usage(&unsaved, 0),
+                    &plugins,
+                )
+                .await;
+            if let Err(error) = written {
+                self.charged
+                    .lock()
+                    .expect("not poisoned")
+                    .untake(&unsaved, by);
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -985,8 +1002,25 @@ impl Runner {
     }
 
     /// Hands an event to every plugin, in order, then to the subscriber;
-    /// plugins' reports go first.
+    /// what plugins charged goes first, then their reports. `RunStart`
+    /// stays first: what plugins charged or reported as the run started
+    /// follows it.
     async fn emit(&mut self, event: RunEvent) {
+        let starts = matches!(event, RunEvent::RunStart { .. });
+        if starts {
+            self.deliver(event.clone()).await;
+        }
+        let charges = std::mem::take(
+            &mut self.charged.lock().expect("not poisoned").unreported,
+        );
+        for (plugin, usage) in charges {
+            self.deliver(RunEvent::PluginCharged {
+                run: self.run.clone(),
+                plugin,
+                usage,
+            })
+            .await;
+        }
         let reports =
             std::mem::take(&mut *self.reports.lock().expect("not poisoned"));
         for (plugin, body) in reports {
@@ -997,7 +1031,9 @@ impl Runner {
             })
             .await;
         }
-        self.deliver(event).await;
+        if !starts {
+            self.deliver(event).await;
+        }
     }
 
     async fn deliver(&mut self, event: RunEvent) {
@@ -1065,19 +1101,31 @@ impl Runner {
         turns: u32,
     ) -> Result<(), StoreError> {
         let mut usage = usage.clone();
-        let unsaved = std::mem::take(
-            &mut self.charged.lock().expect("not poisoned").unsaved,
-        );
+        let (unsaved, by) =
+            self.charged.lock().expect("not poisoned").take_unsaved();
         usage += &unsaved;
+        let plugins = plugin_usage(&by);
+        let plugins: Vec<(&str, TurnUsage)> = plugins
+            .iter()
+            .map(|(plugin, usage)| (&**plugin, *usage))
+            .collect();
         let last = match self
             .store
-            .append_turn(&self.run.0, &entries, turn_usage(&usage, turns))
+            .append_charged(
+                &self.run.0,
+                &entries,
+                turn_usage(&usage, turns),
+                &plugins,
+            )
             .await
         {
             Ok(last) => last,
             Err(error) => {
                 // Not stored: charge it again with the next write.
-                self.charged.lock().expect("not poisoned").unsaved += &unsaved;
+                self.charged
+                    .lock()
+                    .expect("not poisoned")
+                    .untake(&unsaved, by);
                 return Err(error);
             }
         };
@@ -1152,6 +1200,13 @@ fn entry(message: &Message) -> Entry {
         role: message.role().to_owned(),
         body: serde_json::to_string(message).expect("messages serialize"),
     }
+}
+
+/// What each plugin charged, as the store takes it.
+fn plugin_usage(by: &[(Arc<str>, Usage)]) -> Vec<(Arc<str>, TurnUsage)> {
+    by.iter()
+        .map(|(plugin, usage)| (plugin.clone(), turn_usage(usage, 0)))
+        .collect()
 }
 
 fn turn_usage(usage: &Usage, turns: u32) -> TurnUsage {

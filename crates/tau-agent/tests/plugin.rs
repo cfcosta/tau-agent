@@ -503,6 +503,124 @@ fn charged_usage_counts() {
     });
 }
 
+/// Each plugin's charges are stored as its own cost, adding up, and
+/// within the run's total. Those made while the run goes come to the
+/// subscriber as `PluginCharged` after `RunStart`, one per charge; those
+/// made while it finishes, after `RunEnd`, are only stored.
+#[hegel::test(test_cases = 40)]
+fn charges_are_kept_per_plugin(tc: hegel::TestCase) {
+    use hegel::generators::{self as gs, Generator as _};
+    let names = tc.draw(gs::subsequences(vec!["judge", "pruner", "goal"]));
+    // Costs are multiples of 1/1024, so sums are exact.
+    let cost = || {
+        gs::integers::<u32>()
+            .max_value(1024)
+            .map(|n| f64::from(n) / 1024.0)
+    };
+    let charge = |input: u64, total: f64| Usage {
+        input,
+        output: input / 2,
+        cost: UsageCost {
+            total,
+            ..UsageCost::default()
+        },
+        ..Usage::default()
+    };
+    let mut probes = Vec::new();
+    for name in names {
+        let at_start = tc.draw(gs::optional(hegel::tuples!(
+            gs::integers::<u64>().max_value(10_000),
+            cost(),
+        )));
+        let at_finish = tc.draw(gs::optional(hegel::tuples!(
+            gs::integers::<u64>().max_value(10_000),
+            cost(),
+        )));
+        probes.push(Probe {
+            charge: at_start.map(|(input, usd)| charge(input, usd)),
+            charge_at_finish: at_finish.map(|(input, usd)| charge(input, usd)),
+            ..Probe::named(name)
+        });
+    }
+    block_on(async {
+        let model = ScriptedModel::new().turn(|t| t.text("done").cost(0.5));
+        let mut agent = Agent::new(model);
+        for probe in &probes {
+            agent = agent.plugin(probe.clone());
+        }
+        let store = Store::memory().await.unwrap();
+        let mut run = agent.start("go", &store);
+        let mut events = Vec::new();
+        {
+            use futures_util::StreamExt;
+            let mut stream = run.events();
+            while let Some(event) = stream.next().await {
+                events.push(event);
+            }
+        }
+        let outcome = run.outcome().await.unwrap();
+        assert_grammar(&events);
+        let reported: Vec<(&str, f64)> = events
+            .iter()
+            .filter_map(|event| match event {
+                RunEvent::PluginCharged { plugin, usage, .. } => {
+                    Some((&**plugin, usage.cost.total))
+                }
+                _ => None,
+            })
+            .collect();
+        let started: Vec<(&str, f64)> = probes
+            .iter()
+            .filter_map(|probe| {
+                Some((probe.name, probe.charge.as_ref()?.cost.total))
+            })
+            .collect();
+        assert_eq!(reported, started, "one event per charge, in order");
+
+        let mut costs = store.plugin_costs(&outcome.run.0).await.unwrap();
+        costs.sort_by(|a, b| a.plugin.cmp(&b.plugin));
+        let mut expected: Vec<(String, i64, i64, f64)> = probes
+            .iter()
+            .filter(|probe| {
+                probe.charge.is_some() || probe.charge_at_finish.is_some()
+            })
+            .map(|probe| {
+                let mut all = Usage::default();
+                for usage in [&probe.charge, &probe.charge_at_finish]
+                    .into_iter()
+                    .flatten()
+                {
+                    all += usage;
+                }
+                (
+                    probe.name.to_owned(),
+                    all.input as i64,
+                    all.output as i64,
+                    all.cost.total,
+                )
+            })
+            .collect();
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+        let stored: Vec<(String, i64, i64, f64)> = costs
+            .into_iter()
+            .map(|cost| {
+                (
+                    cost.plugin,
+                    cost.input_tokens,
+                    cost.output_tokens,
+                    cost.cost_usd,
+                )
+            })
+            .collect();
+        assert_eq!(stored, expected);
+
+        let charged: f64 = expected.iter().map(|line| line.3).sum();
+        let record = store.run(&outcome.run.0).await.unwrap().unwrap();
+        assert_eq!(record.cost_usd, 0.5 + charged, "within the run's total");
+        assert_eq!(outcome.usage.cost.total, 0.5 + charged);
+    });
+}
+
 /// Records a plugin stores go with the run: a fork's `start` gets its
 /// ancestors' records, in order, and a root run gets none. The model
 /// never sees them.

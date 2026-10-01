@@ -77,6 +77,25 @@ message types. Only the fields that queries filter on get their own
 columns.
 
 ```sql
+CREATE TABLE plugin_costs (
+  run_id        TEXT    NOT NULL REFERENCES runs (id),
+  plugin        TEXT    NOT NULL,
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd      REAL    NOT NULL DEFAULT 0,
+  PRIMARY KEY (run_id, plugin)
+) STRICT;
+```
+
+- What each plugin charged to a run (`PluginCtx::charge`): a breakdown
+  of the run's own totals, which already count it. It is written in
+  the same transaction as the turn that adds it to the totals
+  (`Store::append_charged`).
+- `Store::plugin_costs` reads one run's breakdown;
+  `Store::plugin_spend` sums each plugin's cost over the runs started
+  since a time, for the Plugins screen.
+
+```sql
 CREATE TABLE constitutions (
   repo       TEXT    PRIMARY KEY,
   on_error   TEXT    NOT NULL CHECK (on_error IN ('allow', 'block')),

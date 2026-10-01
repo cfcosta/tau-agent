@@ -131,6 +131,15 @@ pub enum RunEvent {
         plugin: Arc<str>,
         body: Value,
     },
+    /// A plugin charged usage to the run (`PluginCtx::charge`): a side
+    /// request of its own, such as a Jev check. It is already part of
+    /// the run's totals; this says whose it is. Comes before the event
+    /// that follows the charge.
+    PluginCharged {
+        run: RunId,
+        plugin: Arc<str>,
+        usage: Usage,
+    },
     /// A plugin failed at a seam where failing does not end the run.
     PluginError {
         run: RunId,
@@ -162,6 +171,7 @@ impl RunEvent {
             | Self::Retry { run, .. }
             | Self::Continued { run, .. }
             | Self::PluginReport { run, .. }
+            | Self::PluginCharged { run, .. }
             | Self::PluginError { run, .. }
             | Self::RunEnd { run, .. } => run,
         }
@@ -212,6 +222,11 @@ mod tests {
                 run: run.clone(),
                 plugin: Arc::from("tau-constitution"),
                 body: json!({"verdict": "block"}),
+            },
+            RunEvent::PluginCharged {
+                run: run.clone(),
+                plugin: Arc::from("tau-goal"),
+                usage: Usage::default(),
             },
             RunEvent::RunEnd {
                 run,

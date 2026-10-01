@@ -18,6 +18,7 @@ use tau_store::{
     AgentCost,
     Entry,
     NewRun,
+    PluginCost,
     RunKind,
     Status,
     Store,
@@ -49,6 +50,8 @@ struct ModelRun {
     result: Option<String>,
     error: Option<String>,
     title: Option<String>,
+    /// What each plugin charged: input, output and cost.
+    plugins: BTreeMap<&'static str, (i64, i64, f64)>,
 }
 
 #[derive(Default)]
@@ -264,6 +267,7 @@ impl StoreMachine {
                 result: None,
                 error: None,
                 title: None,
+                plugins: BTreeMap::new(),
             },
         );
     }
@@ -315,6 +319,39 @@ impl StoreMachine {
         m.output += i64::from(usage.output_tokens);
         m.cost += usage.cost_usd;
         m.turns += i64::from(usage.turns);
+    }
+
+    /// What plugins charged goes to the run's totals with the turn, and
+    /// to each plugin's own line, adding up across writes.
+    #[rule]
+    fn append_charged(&mut self, tc: TestCase) {
+        let run = self.pick(&tc);
+        let entries: Vec<Entry> = tc.draw(gs::vecs(entry()).max_size(2));
+        let total = tc.draw(usage());
+        let plugins: Vec<(&'static str, TurnUsage)> = tc.draw(
+            gs::vecs(hegel::tuples!(
+                gs::sampled_from(vec!["tau-goal", "tau-reasoning"]),
+                usage(),
+            ))
+            .max_size(3),
+        );
+        self.runtime
+            .block_on(
+                self.store.append_charged(&run, &entries, total, &plugins),
+            )
+            .unwrap();
+        let m = self.model.runs.get_mut(&run).unwrap();
+        m.own.extend(entries);
+        m.input += i64::from(total.input_tokens);
+        m.output += i64::from(total.output_tokens);
+        m.cost += total.cost_usd;
+        m.turns += i64::from(total.turns);
+        for (plugin, usage) in plugins {
+            let line = m.plugins.entry(plugin).or_default();
+            line.0 += i64::from(usage.input_tokens);
+            line.1 += i64::from(usage.output_tokens);
+            line.2 += usage.cost_usd;
+        }
     }
 
     #[rule]
@@ -458,6 +495,21 @@ impl StoreMachine {
             assert_eq!(record.result, m.result, "result of {id}");
             assert_eq!(record.error, m.error, "error of {id}");
             assert_eq!(record.title, m.title, "title of {id}");
+            let costs: Vec<PluginCost> = m
+                .plugins
+                .iter()
+                .map(|(plugin, (input, output, usd))| PluginCost {
+                    plugin: (*plugin).into(),
+                    input_tokens: *input,
+                    output_tokens: *output,
+                    cost_usd: *usd,
+                })
+                .collect();
+            assert_eq!(
+                store.plugin_costs(id).await.unwrap(),
+                costs,
+                "plugin costs of {id}"
+            );
             let first = m.own.iter().find_map(|entry| match entry {
                 Entry::Message { role, body } if role == "user" => {
                     Some(body.clone())
@@ -470,6 +522,23 @@ impl StoreMachine {
                 "first prompt of {id}"
             );
         }
+        // Every run started after the epoch, so all of them count.
+        let mut spend: BTreeMap<&str, f64> = BTreeMap::new();
+        for m in model.runs.values() {
+            for (plugin, (_, _, usd)) in &m.plugins {
+                *spend.entry(plugin).or_default() += usd;
+            }
+        }
+        let spend: Vec<(String, f64)> = spend
+            .into_iter()
+            .map(|(plugin, usd)| (plugin.into(), usd))
+            .collect();
+        assert_eq!(store.plugin_spend("1970").await.unwrap(), spend);
+        assert_eq!(
+            store.plugin_spend("9999").await.unwrap(),
+            Vec::new(),
+            "no run started after"
+        );
         for workflow in ["wf_1", "wf_2"] {
             let mut expected: BTreeMap<&str, (i64, f64)> = BTreeMap::new();
             for m in

@@ -350,6 +350,49 @@ pub(crate) struct Charged {
     /// What the store does not have yet; the loop writes it with the
     /// next turn.
     pub unsaved: Usage,
+    /// [`Self::unsaved`] by plugin, in the order each first charged.
+    pub unsaved_by: Vec<(Arc<str>, Usage)>,
+    /// Charges the run has not emitted as [`RunEvent::PluginCharged`]
+    /// yet.
+    pub unreported: Vec<(Arc<str>, Usage)>,
+}
+
+impl Charged {
+    fn add(&mut self, plugin: &Arc<str>, usage: &Usage) {
+        self.total += usage;
+        self.unsaved += usage;
+        add_to(&mut self.unsaved_by, plugin, usage);
+        self.unreported.push((plugin.clone(), usage.clone()));
+    }
+
+    /// What the store does not have yet, in all and by plugin, taken to
+    /// be written.
+    pub(crate) fn take_unsaved(&mut self) -> (Usage, Vec<(Arc<str>, Usage)>) {
+        (
+            std::mem::take(&mut self.unsaved),
+            std::mem::take(&mut self.unsaved_by),
+        )
+    }
+
+    /// Puts back what [`Self::take_unsaved`] took, when it could not be
+    /// written, for the next write.
+    pub(crate) fn untake(&mut self, all: &Usage, by: Vec<(Arc<str>, Usage)>) {
+        self.unsaved += all;
+        for (plugin, usage) in by {
+            add_to(&mut self.unsaved_by, &plugin, &usage);
+        }
+    }
+}
+
+fn add_to(
+    lines: &mut Vec<(Arc<str>, Usage)>,
+    plugin: &Arc<str>,
+    usage: &Usage,
+) {
+    match lines.iter_mut().find(|(name, _)| name == plugin) {
+        Some((_, line)) => *line += usage,
+        None => lines.push((plugin.clone(), usage.clone())),
+    }
 }
 
 /// What a plugin can reach during a run.
@@ -495,11 +538,14 @@ impl PluginCtx {
     }
 
     /// Charges usage, cost included, to the run: it counts toward the
-    /// run's limits and outcome, and is stored with the run's totals.
+    /// run's limits and outcome, and is stored with the run's totals and
+    /// as this plugin's cost. The run emits it as
+    /// [`RunEvent::PluginCharged`] before its next event.
     pub fn charge(&self, usage: &Usage) {
-        let mut charged = self.charged.lock().expect("not poisoned");
-        charged.total += usage;
-        charged.unsaved += usage;
+        self.charged
+            .lock()
+            .expect("not poisoned")
+            .add(&self.plugin, usage);
     }
 
     /// Reports what the plugin decided, for interfaces: the run emits it

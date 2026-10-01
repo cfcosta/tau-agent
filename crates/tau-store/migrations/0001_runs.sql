@@ -34,6 +34,17 @@ CREATE TABLE messages (
   PRIMARY KEY (run_id, seq)
 ) STRICT;
 
+-- What each plugin charged to a run, part of the run's own totals: the
+-- usage of its side requests (a Jev check, a summary).
+CREATE TABLE plugin_costs (
+  run_id        TEXT    NOT NULL REFERENCES runs (id),
+  plugin        TEXT    NOT NULL,
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd      REAL    NOT NULL DEFAULT 0,
+  PRIMARY KEY (run_id, plugin)
+) STRICT;
+
 -- A repository's constitution, edited in tau's UI: how its checks behave,
 -- and its rules in order. `repo` names the repository's checkout.
 CREATE TABLE constitutions (

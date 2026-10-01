@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT plugin AS \"plugin!: String\",\n                      input_tokens AS \"input_tokens!: i64\",\n                      output_tokens AS \"output_tokens!: i64\",\n                      cost_usd AS \"cost_usd!: f64\"\n               FROM plugin_costs WHERE run_id = ?1 ORDER BY plugin",
+  "describe": {
+    "columns": [
+      {
+        "name": "plugin!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "plugin_costs",
+            "name": "plugin"
+          }
+        }
+      },
+      {
+        "name": "input_tokens!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "plugin_costs",
+            "name": "input_tokens"
+          }
+        }
+      },
+      {
+        "name": "output_tokens!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "plugin_costs",
+            "name": "output_tokens"
+          }
+        }
+      },
+      {
+        "name": "cost_usd!: f64",
+        "ordinal": 3,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "plugin_costs",
+            "name": "cost_usd"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1336b10424a1af5b7a23844863ae6a22878c422ebde35c800d9a7ab509caff2c"
+}

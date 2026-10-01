@@ -846,7 +846,6 @@ pub enum RunUpdate {
     },
     /// Extra detail on the last context rewrite.
     RewriteDetail(String),
-    PluginCost(f64),
     /// The pruning plugin's decisions, replacing the last ledger.
     Ledger(Vec<LedgerEntry>),
 }
@@ -1094,8 +1093,16 @@ impl RunView {
     }
 
     /// Ends a rebuilt run: its status, and the stop line.
-    pub fn finish_stored(&mut self, stop: StopReason, cost: f64) {
+    /// A stored run's end: `cost` in all, `plugin_cost` of it charged by
+    /// plugins.
+    pub fn finish_stored(
+        &mut self,
+        stop: StopReason,
+        cost: f64,
+        plugin_cost: f64,
+    ) {
         self.usage.cost = cost;
+        self.usage.plugin_cost = plugin_cost;
         self.status = RunStatus::Finished(stop.clone());
         self.items.push(Item::Stop {
             stop,
@@ -1245,7 +1252,6 @@ impl RunView {
                     *detail = Some(text);
                 }
             }
-            RunUpdate::PluginCost(cost) => self.usage.plugin_cost += cost,
             RunUpdate::Ledger(ledger) => {
                 for entry in &ledger {
                     let pruned = match entry.decision {
@@ -1468,6 +1474,9 @@ impl RunView {
                 tone: Tone::Warn,
                 body: NoteBody::None,
             }),
+            RunEvent::PluginCharged { usage, .. } => {
+                self.usage.plugin_cost += usage.cost.total;
+            }
             RunEvent::PluginError {
                 plugin, message, ..
             } => self.push_note(PluginNote {
@@ -1743,7 +1752,6 @@ impl RunView {
             }
             stats.questions += check.scores.len() as u32;
             stats.cost += check.cost;
-            self.usage.plugin_cost += check.cost;
             // Every score shows on the call's card, passed or not.
             if let Some(call_id) = &check.call_id
                 && let Some(card) = self.tool_mut(call_id)
@@ -1865,7 +1873,6 @@ impl RunView {
             .clone()
             .or_else(|| chose.then(|| choice.effort.clone()));
         let before = std::mem::replace(&mut self.ran_at, runs_at.clone());
-        self.usage.plugin_cost += choice.cost;
         let state = match &runs_at {
             Some(effort) if chose => format!("chose {effort}"),
             Some(effort) => format!("stayed at {effort}"),
@@ -2041,9 +2048,6 @@ impl RunView {
     /// the Goal tab, and the continuations in the transcript already.
     pub fn set_goal_records(&mut self, records: &[Value]) {
         self.goal = tau_goal::Goal::fold(records);
-        for check in self.goal.iter().flat_map(|goal| &goal.checks) {
-            self.usage.plugin_cost += check.cost;
-        }
         self.sync_goal_status();
     }
 
@@ -2065,7 +2069,6 @@ impl RunView {
         };
         match &record {
             Record::Check(check) => {
-                self.usage.plugin_cost += check.cost;
                 let max = self.goal.as_ref().map_or(0, |g| g.max_continuations);
                 let (text, detail, tone) = if check.met {
                     (
@@ -2437,7 +2440,7 @@ mod tests {
     use std::sync::Arc;
 
     use serde_json::json;
-    use tau_ai::message::UsageCost;
+    use tau_ai::message::{Usage, UsageCost};
 
     use super::*;
 
@@ -2447,6 +2450,50 @@ mod tests {
 
     fn view() -> RunView {
         RunView::new(run(), "retry-after", "coder", "gpt-5.5")
+    }
+
+    /// What plugins cost a run is what they charged, whatever they
+    /// report: a check's own `cost` in a report is the plugin's figure,
+    /// not a second charge.
+    #[hegel::test(test_cases = 200)]
+    fn plugin_cost_is_what_plugins_charged(tc: hegel::TestCase) {
+        use hegel::generators::{self as gs, Generator as _};
+        let mut view = view();
+        let mut charged = 0.0;
+        let steps = tc.draw(gs::vecs(hegel::tuples!(
+            gs::booleans(),
+            gs::sampled_from(vec![
+                tau_goal::NAME,
+                tau_constitution::NAME,
+                tau_reasoning::NAME,
+            ]),
+            // Multiples of 1/1024, so sums are exact.
+            gs::integers::<u32>()
+                .max_value(1024)
+                .map(|n| f64::from(n) / 1024.0),
+        )));
+        for (charge, plugin, cost) in steps {
+            if charge {
+                let mut usage = Usage::default();
+                usage.cost.total = cost;
+                charged += cost;
+                view.apply(&RunEvent::PluginCharged {
+                    run: run(),
+                    plugin: plugin.into(),
+                    usage,
+                });
+            } else {
+                // A report that carries a cost of its own.
+                view.apply(&RunEvent::PluginReport {
+                    run: run(),
+                    plugin: plugin.into(),
+                    body: serde_json::json!({
+                        "kind": "checked", "scores": [], "cost": cost,
+                    }),
+                });
+            }
+        }
+        assert_eq!(view.usage.plugin_cost, charged);
     }
 
     #[test]
@@ -2515,7 +2562,7 @@ mod tests {
         let goal = view.goal.clone().unwrap();
         assert_eq!(goal.status, Status::Met);
         assert_eq!(goal.continuations, 1);
-        assert!((view.usage.plugin_cost - 0.002).abs() < 1e-9);
+        assert_eq!(view.usage.plugin_cost, 0.0, "reports charge nothing");
         let status = view
             .plugins
             .iter()

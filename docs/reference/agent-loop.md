@@ -161,6 +161,8 @@ pub enum RunEvent {
     ContextRewritten { run: RunId, plugin: Arc<str>, tokens_before: u64, tokens_after: u64 },  // between turns, or in an overflowing turn
     Retry      { run: RunId, turn: u32, attempt: u32, delay: Duration, error: String },
     Continued  { run: RunId, plugin: Arc<str>, message: String },  // between turns
+    PluginReport { run: RunId, plugin: Arc<str>, body: Value },  // before the event it explains
+    PluginCharged { run: RunId, plugin: Arc<str>, usage: Usage },  // a plugin's own usage, before the next event
     PluginError { run: RunId, plugin: Arc<str>, message: String },
     RunEnd     { run: RunId, parent: Option<RunId>, stop: StopReason, cost: f64 },
 }

@@ -1268,6 +1268,17 @@ impl Host {
             spend: 0.0,
             screen: Some(PluginScreen::Memory),
         });
+        // What each plugin cost over the runs of the last 30 days.
+        let spend = self
+            .runtime
+            .block_on(self.store.plugin_spend(&days_ago(SPEND_DAYS)))
+            .unwrap_or_default();
+        for plugin in &mut plugins {
+            plugin.spend = spend
+                .iter()
+                .find(|(name, _)| *name == plugin.name)
+                .map_or(0.0, |(_, usd)| *usd);
+        }
         Catalog {
             agent: "coder".into(),
             agent_source: Some(source.to_owned()),
@@ -3634,7 +3645,13 @@ async fn stored_view(
             StopReason::Error("interrupted: tau closed during the run".into())
         }
     };
-    view.finish_stored(stop, record.cost_usd);
+    let plugin_cost = store
+        .plugin_costs(&record.id)
+        .await?
+        .iter()
+        .map(|cost| cost.cost_usd)
+        .sum();
+    view.finish_stored(stop, record.cost_usd, plugin_cost);
     let goal: Vec<serde_json::Value> = store
         .records(&record.id, tau_goal::NAME)
         .await?
@@ -3753,6 +3770,34 @@ pub async fn history(
 }
 
 /// `2026-09-28T14:03:11.402Z` as `2026-09-28 14:03`.
+/// The days of runs the Plugins screen's spend covers.
+const SPEND_DAYS: u64 = 30;
+
+/// The date `days` ago, as `YYYY-MM-DD`: a prefix the store's times
+/// (`2026-09-28T14:03:11.402Z`) compare after when they are on or after
+/// that day.
+fn days_ago(days: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    civil_date(now / 86_400 - days.min(now / 86_400))
+}
+
+/// The proleptic Gregorian date `days` after 1970-01-01, as
+/// `YYYY-MM-DD` (Howard Hinnant's `civil_from_days`).
+fn civil_date(days: u64) -> String {
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + u64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
 fn started(created_at: &str) -> String {
     created_at.get(..16).map_or_else(
         || created_at.to_owned(),
@@ -3953,6 +3998,48 @@ pub fn branch_slug(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`civil_date`] agrees with counting the days off one year and
+    /// one month at a time.
+    #[hegel::test(test_cases = 500)]
+    fn civil_dates_match_counting_days(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        // Up to the year 2400 or so, past a century that is not a leap
+        // year (2100) and one that is (2000).
+        let days: u64 = tc.draw(gs::integers::<u64>().max_value(157_000));
+        let leap = |year: u64| {
+            (year.is_multiple_of(4) && !year.is_multiple_of(100))
+                || year.is_multiple_of(400)
+        };
+        let (mut year, mut left) = (1970, days);
+        while left >= if leap(year) { 366 } else { 365 } {
+            left -= if leap(year) { 366 } else { 365 };
+            year += 1;
+        }
+        let lengths = [
+            31,
+            if leap(year) { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
+        let mut month = 0;
+        while left >= lengths[month] {
+            left -= lengths[month];
+            month += 1;
+        }
+        assert_eq!(
+            civil_date(days),
+            format!("{year:04}-{:02}-{:02}", month + 1, left + 1)
+        );
+    }
 
     /// A saved list keeps only repositories from GitHub, and opens only
     /// those it keeps: a local checkout listed before is dropped.

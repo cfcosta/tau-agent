@@ -204,7 +204,9 @@ impl PluginCtx {
     pub async fn ask(&self, settings: Settings, input: &[Message])
         -> Result<AssistantMessage, AskError>;
     /// Adds usage (cost included) to the run's total, which limits
-    /// check.
+    /// check, and to this plugin's own cost (`Store::plugin_costs`).
+    /// The run emits it as `RunEvent::PluginCharged` before its next
+    /// event.
     pub fn charge(&self, usage: &Usage);
     /// Stores a record for this plugin in the run's transcript. The
     /// model never sees it. Forks and resumed runs get it back in
@@ -645,7 +647,12 @@ Built: `crates/plugins/goal`. Its reference is [goal.md](goal.md).
    `PluginError { plugin, message }` event reports a plugin failure
    that did not end the run.
 7. Usage from `ctx.charge` flows into the same total as sub-agent
-   usage.
+   usage, and is also stored per plugin (`plugin_costs`). The run emits
+   each charge as `RunEvent::PluginCharged { plugin, usage }`, after
+   `RunStart` for a charge made in `start`. A charge made in `finish`
+   comes after `RunEnd`, so it is only stored. Interfaces show what
+   plugins cost from these, not from the costs plugins put in their
+   reports.
 
 ## Open questions
 
