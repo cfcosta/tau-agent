@@ -399,6 +399,40 @@ fn an_update_from_a_remote_follows_its_refs_and_head() {
     assert_eq!(git(&store, &["tag", "--list"]), "");
 }
 
+/// A shallow clone imports: its `shallow` file comes along, so the
+/// commits whose parents it lacks are where history starts. Updates
+/// bring its new commits.
+#[test]
+fn a_shallow_checkout_imports_and_updates() {
+    let src = tempfile::tempdir().unwrap();
+    source(src.path());
+    commit(src.path(), "b.txt");
+    let home = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", src.path().display());
+    git(
+        home.path(),
+        &["clone", "--quiet", "--depth", "1", &url, "shallow"],
+    );
+    let shallow = home.path().join("shallow");
+    let head = git(&shallow, &["rev-parse", "HEAD"]);
+    let project = Project::import(
+        shallow.to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    assert_eq!(project.trunk().unwrap(), head);
+    assert_eq!(
+        project.file_at(&head, "b.txt").unwrap().unwrap().0,
+        b"more\n"
+    );
+
+    let next = commit(&shallow, "c.txt");
+    let updated = project.update(UpdateFrom::Checkout(&shallow)).unwrap();
+    assert_eq!(updated.after, next);
+    assert_eq!(project.parent_of(&next).unwrap(), Some(head));
+}
+
 #[test]
 fn files_and_parents_are_read_at_a_commit() {
     let src = tempfile::tempdir().unwrap();

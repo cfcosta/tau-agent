@@ -854,12 +854,7 @@ fn copy_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
         std::fs::create_dir_all(into)?;
         copy_tree(&git_dir.join("objects"), &into.join("objects"), true)?;
         copy_tree(&git_dir.join("refs"), &into.join("refs"), false)?;
-        for file in ["packed-refs", "HEAD"] {
-            let from = git_dir.join(file);
-            if from.is_file() {
-                std::fs::copy(&from, into.join(file))?;
-            }
-        }
+        copy_files(&git_dir, into)?;
         let config =
             std::fs::read_to_string(git_dir.join("config")).unwrap_or_default();
         std::fs::write(into.join("config"), bare_config(&config))?;
@@ -891,18 +886,29 @@ fn update_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
             }
             copy_tree(&git_dir.join("refs").join(refs), &target, false)?;
         }
-        for file in ["packed-refs", "HEAD"] {
-            let from = git_dir.join(file);
-            if from.is_file() {
-                std::fs::copy(&from, into.join(file))?;
-            }
-        }
-        Ok(())
+        copy_files(&git_dir, into)
     })()
     .map_err(|error| VcsError::UpdateGitStore {
         path: source.to_owned(),
         source: error,
     })
+}
+
+/// Copies the files beside the refs that say what the refs are: `HEAD`,
+/// the packed refs, and `shallow`, the commits of a shallow clone whose
+/// parents it lacks. One the source does not have goes from the copy:
+/// a stale `shallow` would cut history short, and stale packed refs
+/// bring back branches.
+fn copy_files(git_dir: &Path, into: &Path) -> std::io::Result<()> {
+    for file in ["packed-refs", "HEAD", "shallow"] {
+        let from = git_dir.join(file);
+        if from.is_file() {
+            std::fs::copy(&from, into.join(file))?;
+        } else if into.join(file).is_file() {
+            std::fs::remove_file(into.join(file))?;
+        }
+    }
+    Ok(())
 }
 
 /// Links (or copies) the files under `from` that `into` lacks.

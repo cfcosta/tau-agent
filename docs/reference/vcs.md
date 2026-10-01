@@ -287,8 +287,9 @@ the user's checkout.
   `root`, or makes it from the local repository at `source` (a checkout,
   a linked worktree or a bare repository) and imports every branch as a
   bookmark. No `git` is needed: the object files are hard-linked (they
-  never change once written), and the refs, `HEAD` and config copied.
-  Cloning from a URL is not supported yet. jj-lib's fetch and push run
+  never change once written), and the refs, `HEAD`, config and
+  `shallow` (where a shallow clone's history starts) copied. Cloning
+  from a URL is not supported yet. jj-lib's fetch and push run
   `git` as a subprocess, so the GitHub side will need it, or a fetch
   through gix and a push of our own.
 - `clone_bare(url, token, into)` clones a remote into a bare
