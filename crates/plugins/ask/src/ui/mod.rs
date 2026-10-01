@@ -134,8 +134,6 @@ pub struct Ui {
     pub shown: Option<CallKey>,
     /// The calls whose panel took the focus as it first appeared.
     pub focused: BTreeSet<CallKey>,
-    /// Whether the panel takes the keys back as it draws next.
-    pub refocus: bool,
     /// The calls whose answers went, waiting for the call to end.
     pub sent: BTreeSet<CallKey>,
     /// Why the host could not take a call's answers.
@@ -312,7 +310,6 @@ impl UiPlugin for AskUi {
             drafts: BTreeMap::new(),
             shown: None,
             focused: BTreeSet::new(),
-            refocus: false,
             sent: BTreeSet::new(),
             refused: BTreeMap::new(),
         }

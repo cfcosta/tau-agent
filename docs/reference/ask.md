@@ -102,7 +102,11 @@ place (`points::COMPOSER`) and takes the keys:
   why and takes answers again.
 - **Several runs:** each waiting call keeps its own draft, by its run
   and its id, so the person can go between runs and come back to what
-  they wrote. A panel takes the keys once, as it first appears.
+  they wrote. A panel takes the keys once, as it first appears, and
+  not while the person is writing in the composer; once answered, the
+  composer has them again.
+- **On a phone** the panel's foot has Cancel run, which the run's
+  header has on a computer.
 - The card of an `ask` call shows the headers, and each answer with
   its note, from the call's own arguments and result.
 

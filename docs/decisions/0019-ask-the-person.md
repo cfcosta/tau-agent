@@ -75,11 +75,12 @@ it; the model reads it under the answer.
 
 - While a question waits, the composer is gone: the person cannot
   steer the run until they answer or decline. The run's Cancel stays
-  in its header on a computer; on a phone, Decline is the way out.
-- Contributions draw without the window, so the panel takes the focus
-  through a zero-size canvas as it first appears, and nothing gives
-  the composer the focus back when the panel goes. A key typed in the
-  composer just as the panel appears goes to the panel.
+  in its header on a computer; on a phone, the panel has its own.
+- The panel takes the keys through `Handle::focus` (`Request::Focus`),
+  which tau-ui carries out as the window draws, except while the
+  person is writing in the composer: a key typed then is theirs, not
+  an answer. Once nothing draws in the composer's place, the composer
+  takes the keys back.
 - Sub-agents get no `ask`: nobody watches them.
 - A plugin's reports reach the interface with the run's next event, and
   no event comes while a call waits. The tool sends one update after

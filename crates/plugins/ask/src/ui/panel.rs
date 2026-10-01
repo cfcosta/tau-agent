@@ -20,7 +20,6 @@ use gpui::{
     KeyDownEvent,
     SharedString,
     Window,
-    canvas,
     div,
     prelude::*,
     px,
@@ -60,13 +59,17 @@ pub fn panel(at: &AtRun, view: &mut ViewCx<'_, AskUi>) -> Option<AnyElement> {
         ui.show(&panel.key, cx);
         // The keys come to a panel as it first appears, not each time
         // its run is opened again.
-        let fresh = ui.focused.insert(panel.key.clone());
-        fresh || std::mem::take(&mut ui.refocus)
+        ui.focused.insert(panel.key.clone())
     });
+    if take_focus {
+        // The composer it replaces had the keys.
+        let focus = panel.ui.read(view.cx).focus.clone();
+        panel.handle.focus(&focus, view.cx);
+    }
     let t = view.theme().clone();
     Some(
         panel
-            .draw(&call, take_focus, view.compact, &t, view.cx)
+            .draw(&call, view.compact, &t, view.cx)
             .into_any_element(),
     )
 }
@@ -201,16 +204,7 @@ impl Panel {
         self.then(then, window, cx);
     }
 
-    /// `take_focus`: the panel appeared, or a field it left asked to
-    /// give the keys back.
-    fn draw(
-        &self,
-        call: &Call,
-        take_focus: bool,
-        compact: bool,
-        t: &Theme,
-        cx: &mut App,
-    ) -> Div {
+    fn draw(&self, call: &Call, compact: bool, t: &Theme, cx: &mut App) -> Div {
         let ui = self.ui.read(cx);
         let draft = ui
             .drafts
@@ -257,20 +251,6 @@ impl Panel {
             .border_1()
             .border_color(t.border_strong)
             .raised(t)
-            .when(take_focus, |panel| {
-                // Takes the keys as it appears (the composer it replaces
-                // had them), and back from a field Enter left: focusing
-                // needs the window, which only drawing reaches here.
-                let focus = focus.clone();
-                panel.child(
-                    canvas(
-                        move |_, window, cx| window.focus(&focus, cx),
-                        |_, _, _, _| {},
-                    )
-                    .absolute()
-                    .size_0(),
-                )
-            })
             .child(self.tabs(&draft, t))
             .child(body)
             .children(refused.map(|why| {
@@ -789,6 +769,20 @@ impl Panel {
             )
         };
         let left = ask.questions.len() - draft.count();
+        // A phone has no Cancel beside the panel: the run's header has
+        // it on a computer.
+        let cancel = (compact && !sent).then(|| {
+            let (handle, run) = (self.handle.clone(), self.key.0.clone());
+            div()
+                .id("ask-cancel")
+                .child(ui::button("Cancel run", ButtonKind::Danger, t))
+                .on_click(move |_, _, cx| {
+                    handle.cancel(
+                        &tau_agent::tool::RunId(run.as_str().into()),
+                        cx,
+                    )
+                })
+        });
         let actions: Vec<AnyElement> = if sent {
             vec![
                 div()
@@ -861,6 +855,7 @@ impl Panel {
         };
         div()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap(sp(2.5))
             .min_h(control::MEDIUM)
@@ -869,6 +864,7 @@ impl Panel {
             .border_t_1()
             .border_color(t.border)
             .when(!compact, |foot| foot.child(hint_row(keys, t)))
+            .children(cancel)
             .child(div().flex_1())
             .children(actions)
     }
@@ -892,7 +888,7 @@ fn hint_row(keys: &[(&'static str, &'static str)], t: &Theme) -> Div {
 
 /// Enter in the fields: the note closes, and the person's own answer is
 /// taken (a one-answer question goes on); either way the keys go back
-/// to the panel as it draws again.
+/// to the panel.
 pub fn subscribe(
     other: &Entity<TextInput>,
     note: &Entity<TextInput>,
@@ -909,7 +905,7 @@ pub fn subscribe(
             draft.write_note(ask, text);
             draft.note_open = false;
         }
-        ui.refocus = true;
+        back.focus(&ui.focus, cx);
         back.refresh(cx);
     })
     .detach();
@@ -930,7 +926,7 @@ pub fn subscribe(
         if draft.tab != tab {
             ui.fill_fields(cx);
         }
-        ui.refocus = true;
+        handle.focus(&ui.focus, cx);
         handle.refresh(cx);
     })
     .detach();

@@ -158,7 +158,8 @@ fn a_waiting_question_takes_the_composers_place_and_its_keys(
         }
     );
 
-    // Answered, the composer is back.
+    // Answered, the composer is back with the keys: what the person
+    // types goes into it.
     workspace.update(&mut cx, |ws, cx| {
         ws.apply(
             fold(&Record::Answered {
@@ -169,10 +170,49 @@ fn a_waiting_question_takes_the_composers_place_and_its_keys(
         );
     });
     cx.run_until_parked();
+    cx.simulate_input("thanks");
+    cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {
-        ws.set_composer("", cx);
-        assert_eq!(ws.composer_text(cx), "");
+        assert_eq!(ws.composer_text(cx), "thanks");
     });
+}
+
+/// A question that comes while the person writes a message does not
+/// take their keys: what they type goes nowhere near an answer.
+#[gpui::test]
+fn the_panel_does_not_take_the_keys_from_a_message_being_written(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, events) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(demo::run_id()), cx)
+    });
+    cx.run_until_parked();
+    cx.simulate_input("now also");
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        assert_eq!(ws.composer_text(cx), "now also");
+        ws.apply(fold(&asked()), cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("2 right enter");
+    cx.run_until_parked();
+    assert!(sent(&events).is_empty());
+}
+
+/// A plugin can cancel a run, as the run's Cancel button does: the
+/// panel offers it on a phone, where the header's is not there.
+#[gpui::test]
+fn a_plugin_cancels_a_run(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.plugin_handle(tau_ask::NAME).cancel(&demo::run_id(), cx);
+    });
+    cx.run_until_parked();
+    assert!(events.borrow().iter().any(|event| matches!(
+        event,
+        WorkspaceEvent::Cancel { run } if *run == demo::run_id()
+    )));
 }
 
 #[gpui::test]
