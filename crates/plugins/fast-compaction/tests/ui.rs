@@ -13,12 +13,13 @@ use tau_fast_compaction::{
 use tau_ui_plugin::{
     CardInfo,
     Dropped,
+    Fold as _,
     REWRITE,
     RunCtx,
     RunKind,
     Services,
     UiPlugin,
-    testing::{FakeRun, run_ctx},
+    testing::{FakeRun, fold, run_ctx},
 };
 
 /// A run showing `n` reads, `c0` and on, one a turn.
@@ -93,7 +94,7 @@ fn passes_mark_what_they_drop(tc: hegel::TestCase) {
             body["kind"] = "ledger".into();
             body
         };
-        state.apply(&body, &mut run);
+        fold(FastCompactionUi, &mut state, &body, &mut run);
     }
     assert_eq!(run.rewrites.len(), passes.len());
     assert_eq!(state.passes.len(), passes.len());
@@ -143,9 +144,9 @@ fn a_cut_output_goes_on_its_card() {
             "archive": "/tmp/archive/out.txt",
         })
     };
-    state.apply(&output(false), &mut run);
+    fold(FastCompactionUi, &mut state, &output(false), &mut run);
     assert!(run.cut.is_empty());
-    state.apply(&output(true), &mut run);
+    fold(FastCompactionUi, &mut state, &output(true), &mut run);
     let cut = &run.cut["c0"];
     assert_eq!(cut.label(), "kept 212 of 4,810 lines · 12k → 900 tokens");
     assert_eq!((state.outputs, state.outputs_saved), (1, 11_100));
@@ -173,7 +174,7 @@ fn it_says_whether_it_is_on(tc: hegel::TestCase) {
     let run = run(jev);
     let mut state = State::default();
     for body in FastCompactionUi.starting(&(), &run, &()) {
-        state.apply(&body, &mut FakeRun::default());
+        state.apply(body, &mut FakeRun::default());
     }
     assert_eq!(state.on, Some(jev));
     let status = state.status().unwrap();

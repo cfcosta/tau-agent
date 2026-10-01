@@ -15,7 +15,7 @@ use tau_agent::{
 };
 use tau_ai::responses::request::ReasoningEffort;
 use tau_jev::{Answer, JevError, Request, fake::FakeJev};
-use tau_reasoning::{Choice, NAME, Reasoning};
+use tau_reasoning::{Choice, NAME, Reasoning, Record, Verdict};
 use tau_store::Store;
 use tau_testing::{block_on, scripted::ScriptedModel};
 
@@ -94,8 +94,10 @@ fn a_confident_score_sets_the_effort() {
         run(jev([0.0, 0.01, 0.02, 0.84, 0.09, 0.04], 0.84), None);
     assert_eq!(asked, Some(ReasoningEffort::High));
     assert_eq!(calls, 1);
-    let choice = Choice::parse(&reports[0]).unwrap();
-    assert_eq!(choice.kind, "chose");
+    let choice = Record::parse(&reports[0])
+        .and_then(Record::into_choice)
+        .unwrap();
+    assert_eq!(choice.verdict, Verdict::Chose);
     assert_eq!(choice.effort, "high");
     assert_eq!(choice.chosen(), 3);
     assert_eq!(choice.levels.len(), 6, "gpt-6-sol takes none to max");
@@ -108,10 +110,12 @@ fn an_unsure_score_keeps_the_default() {
     let (asked, reports, _) =
         run(jev([0.1, 0.2, 0.3, 0.2, 0.1, 0.1], 0.3), None);
     assert_eq!(asked, None);
-    let choice = Choice::parse(&reports[0]).unwrap();
+    let choice = Record::parse(&reports[0])
+        .and_then(Record::into_choice)
+        .unwrap();
     assert_eq!(
-        (choice.kind.as_str(), choice.effort.as_str()),
-        ("kept", "medium")
+        (choice.verdict, choice.effort.as_str()),
+        (Verdict::Kept, "medium")
     );
 }
 
@@ -122,7 +126,8 @@ fn the_levels_are_the_models_efforts() {
     let efforts = |model: &str| {
         let (_, reports, _) =
             run_on(model, jev([1.0, 0.0, 0.0, 0.0, 0.0], 1.0), None);
-        Choice::parse(&reports[0])
+        Record::parse(&reports[0])
+            .and_then(Record::into_choice)
             .unwrap()
             .levels
             .into_iter()
@@ -202,10 +207,12 @@ fn the_real_jev_scores_tasks() {
                 })
                 .collect()
         });
-        let choice = Choice::parse(&reports[0]).expect("a choice");
+        let choice = Record::parse(&reports[0])
+            .and_then(Record::into_choice)
+            .expect("a choice");
         println!(
-            "{task}\n  -> {} ({}, confidence {:.2})",
-            choice.effort, choice.kind, choice.confidence
+            "{task}\n  -> {} ({:?}, confidence {:.2})",
+            choice.effort, choice.verdict, choice.confidence
         );
     }
 }
@@ -281,8 +288,10 @@ fn an_unsure_message_goes_on_as_the_last_one() {
         .map(|request| request.settings.reasoning)
         .collect();
     assert_eq!(asked, [Some(ReasoningEffort::High); 3]);
-    let unsure = Choice::parse(&reports[0]).unwrap();
-    assert_eq!(unsure.kind, "kept");
+    let unsure = Record::parse(&reports[0])
+        .and_then(Record::into_choice)
+        .unwrap();
+    assert_eq!(unsure.verdict, Verdict::Kept);
     assert_eq!(unsure.runs_at.as_deref(), Some("high"));
     assert_eq!(reports[1]["kind"], "error");
     assert_eq!(reports[1]["runs_at"], "high");
@@ -422,7 +431,7 @@ fn a_lease_says_when_jev_picks_again() {
     assert_eq!(step["tool_results"]["failed"], 0);
     let picks: Vec<Choice> = reports
         .iter()
-        .map(|body| Choice::parse(body).unwrap())
+        .map(|body| Record::parse(body).and_then(Record::into_choice).unwrap())
         .collect();
     assert_eq!(
         picks

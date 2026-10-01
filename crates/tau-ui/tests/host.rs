@@ -252,12 +252,12 @@ fn a_new_chat_shows_the_goal_it_inherits() {
     host.store_plugin_record(
         &main,
         tau_goal::NAME,
-        &tau_goal::Record::Set {
+        &serde_json::to_value(&tau_goal::Record::Set {
             goal: "the docs build".into(),
             continuations: 4,
             budget: 1.0,
-        }
-        .to_value(),
+        })
+        .unwrap(),
     )
     .unwrap();
     // A turn after it: new chats fork from there, the goal before.
@@ -280,7 +280,7 @@ fn a_new_chat_shows_the_goal_it_inherits() {
 fn goal_of(view: &tau_ui::view::RunView) -> tau_goal::ui::State {
     view.plugin_states
         .get(tau_goal::NAME)
-        .map(|state| serde_json::from_value(state.clone()).unwrap())
+        .map(|state| serde_json::from_value(state.json().clone()).unwrap())
         .unwrap_or_default()
 }
 
@@ -302,7 +302,7 @@ fn goal_notes(view: &tau_ui::view::RunView) -> Vec<String> {
 fn reasoning_of(view: &tau_ui::view::RunView) -> tau_reasoning::ui::State {
     view.plugin_states
         .get(tau_reasoning::NAME)
-        .map(|state| serde_json::from_value(state.clone()).unwrap())
+        .map(|state| serde_json::from_value(state.json().clone()).unwrap())
         .unwrap_or_default()
 }
 
@@ -1075,7 +1075,7 @@ fn repositories_are_listed_and_remembered() {
     let catalog = host.catalog();
     assert_eq!(catalog.closed_runs, std::slice::from_ref(&first));
     let reviewed: tau_constitution::ui::Data = serde_json::from_value(
-        catalog.plugin_data[tau_constitution::NAME].clone(),
+        catalog.plugin_data[tau_constitution::NAME].json().clone(),
     )
     .unwrap();
     assert_eq!(reviewed.reviewed, [("a".to_owned(), "call-1".to_owned())]);
@@ -1339,7 +1339,7 @@ fn rules_act(host: &Host, act: Act) -> Option<serde_json::Value> {
 
 /// A repository's constitution, as its page gets it.
 fn rules_of(repo: &tau_ui::catalog::Repo) -> tau_constitution::ui::Rules {
-    serde_json::from_value(repo.plugins[tau_constitution::NAME].clone())
+    serde_json::from_value(repo.plugins[tau_constitution::NAME].json().clone())
         .unwrap()
 }
 
@@ -1347,7 +1347,7 @@ fn rules_of(repo: &tau_ui::catalog::Repo) -> tau_constitution::ui::Rules {
 fn checks_of(view: &tau_ui::view::RunView) -> tau_constitution::ui::State {
     view.plugin_states
         .get(tau_constitution::NAME)
-        .map(|state| serde_json::from_value(state.clone()).unwrap())
+        .map(|state| serde_json::from_value(state.json().clone()).unwrap())
         .unwrap_or_default()
 }
 
@@ -1653,7 +1653,7 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         .unwrap();
     // With a key, pruning runs with it.
     let pruning: tau_fast_compaction::ui::State = serde_json::from_value(
-        view.plugin_states[tau_fast_compaction::NAME].clone(),
+        view.plugin_states[tau_fast_compaction::NAME].json().clone(),
     )
     .unwrap();
     assert_eq!(pruning.on, Some(true));
@@ -1686,7 +1686,7 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     let whole = std::fs::read_to_string(archive).unwrap();
     assert!(whole.contains(":: line 600\n"));
     let pruning: tau_fast_compaction::ui::State = serde_json::from_value(
-        view.plugin_states[tau_fast_compaction::NAME].clone(),
+        view.plugin_states[tau_fast_compaction::NAME].json().clone(),
     )
     .unwrap();
     assert_eq!(pruning.outputs, 1);
@@ -2096,8 +2096,12 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
         tau_goal::Record::Extended { by: 1 },
         tau_goal::Record::Paused,
     ] {
-        host.store_plugin_record(&view.id, tau_goal::NAME, &record.to_value())
-            .unwrap();
+        host.store_plugin_record(
+            &view.id,
+            tau_goal::NAME,
+            &serde_json::to_value(&record).unwrap(),
+        )
+        .unwrap();
     }
     host.resume(&view.id, "one more thing", &ModelChoice::default())
         .unwrap();
@@ -2263,7 +2267,7 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
             .expect("the repository is listed")
             .clone();
         serde_json::from_value::<tau_memory::ui::Notebook>(
-            repo.plugins[tau_memory::plugin::NAME].clone(),
+            repo.plugins[tau_memory::plugin::NAME].json().clone(),
         )
         .unwrap()
     };

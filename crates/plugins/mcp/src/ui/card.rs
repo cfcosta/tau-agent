@@ -86,7 +86,7 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, McpUi>) -> Option<CardView> {
         return None;
     }
     let t = view.theme().clone();
-    let servers = view.repos.get(&at.run.repo).unwrap_or(view.data);
+    let servers = view.repo(&at.run.repo).unwrap_or(view.data);
     let listed = servers.tool(&at.tool).map(|(server, tool)| {
         (server.name.clone(), tool.tool.clone(), tool.annotations)
     });

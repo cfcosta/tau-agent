@@ -43,6 +43,7 @@ use tau_agent::{
         RequestView,
         Rewrite,
         RunPlan,
+        read_records,
     },
 };
 use tau_ai::{
@@ -79,10 +80,6 @@ const SAID_SEEN: usize = 400;
 /// how much of each.
 const EXCERPTS: usize = 3;
 const EXCERPT_SEEN: usize = 240;
-
-/// The record kind that keeps a message's task and the agent's last
-/// words, for the short message that may follow.
-const CONTEXT: &str = "context";
 
 /// What the effort question asks, whatever the step.
 const ASK: &str = "How much reasoning does the coding agent's next step \
@@ -202,9 +199,9 @@ impl Lease {
 /// What Jev answered, as the plugin reports and records it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Choice {
-    /// `chose` when the run uses `effort`; `kept` when Jev was not sure
-    /// enough, and the run keeps its default.
-    pub kind: String,
+    /// Whether the run uses `effort`, or keeps its default because Jev
+    /// was not sure enough.
+    pub verdict: Verdict,
     /// The most likely effort.
     pub effort: String,
     pub confidence: f64,
@@ -235,10 +232,75 @@ fn user_turn() -> String {
     "user_turn".into()
 }
 
-impl Choice {
-    /// Reads a choice back from a report or record body.
+/// What Jev's answer did to the effort.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    /// The run uses the effort Jev found most likely.
+    Chose,
+    /// Jev was not sure enough: the run keeps the effort it had.
+    Kept,
+}
+
+/// A message's task and the agent's last words, which the next message
+/// is read with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Context {
+    pub task: String,
+    pub proposal: String,
+}
+
+impl Context {
+    pub fn new(task: &str, said: &str) -> Self {
+        Self {
+            task: clip(task, TASK_HEAD, TASK_TAIL),
+            proposal: clip(said, 0, SAID_SEEN),
+        }
+    }
+}
+
+/// What tau-reasoning publishes and records.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Record {
+    /// Jev scored a message, or a step.
+    Choice(Choice),
+    /// Jev could not score the task or the step; the message goes on as
+    /// the last one did.
+    Error {
+        message: String,
+        #[serde(default)]
+        runs_at: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        step: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<u32>,
+    },
+    /// What the message left the next one, recorded as the run ends.
+    Context(Context),
+    /// What the interface folds as a run starts, never stored: on, or
+    /// off and why.
+    Starting { status: Option<String> },
+}
+
+impl Record {
+    /// The record `body` holds, or none, said the first time.
     pub fn parse(body: &Value) -> Option<Self> {
-        serde_json::from_value(body.clone()).ok()
+        tau_agent::plugin::read_record(NAME, body)
+    }
+
+    /// The choice, when this is one.
+    pub fn into_choice(self) -> Option<Choice> {
+        match self {
+            Self::Choice(choice) => Some(choice),
+            _ => None,
+        }
+    }
+}
+
+impl Choice {
+    pub fn chose(&self) -> bool {
+        self.verdict == Verdict::Chose
     }
 
     /// The level Jev found most likely, by index.
@@ -253,7 +315,7 @@ impl Choice {
     fn ran_at(&self) -> Option<&str> {
         self.runs_at
             .as_deref()
-            .or((self.kind == "chose").then_some(self.effort.as_str()))
+            .or(self.chose().then_some(self.effort.as_str()))
     }
 }
 
@@ -267,7 +329,13 @@ pub struct Scored {
 /// The effort the run's last scored message ran at, from the plugin's
 /// records, if one of `levels` still takes it.
 fn previous(records: &[Value], levels: &[Level]) -> Option<ReasoningEffort> {
-    let last = records.iter().rev().find_map(Choice::parse)?;
+    let last = read_records::<Record>(NAME, records)
+        .into_iter()
+        .rev()
+        .find_map(|record| match record {
+            Record::Choice(choice) => Some(choice),
+            _ => None,
+        })?;
     let effort = ReasoningEffort::parse(last.ran_at()?)?;
     levels
         .iter()
@@ -474,10 +542,10 @@ impl Picker {
             .unwrap_or(Lease::ToolChain)
         });
         let choice = Choice {
-            kind: if *confidence >= self.threshold {
-                "chose".into()
+            verdict: if *confidence >= self.threshold {
+                Verdict::Chose
             } else {
-                "kept".into()
+                Verdict::Kept
             },
             effort: effort.as_str().into(),
             confidence: *confidence,
@@ -512,7 +580,7 @@ impl Picker {
 pub fn message_state(
     task: &str,
     instructions: &str,
-    context: Option<&Value>,
+    context: Option<&Context>,
 ) -> Value {
     let mut state = json!({
         "step": "user_turn",
@@ -522,28 +590,21 @@ pub fn message_state(
     if task.chars().count() <= SHORT_ASK
         && let Some(context) = context
     {
-        state["previous_task"] = context["task"].clone();
-        state["last_proposal"] = context["proposal"].clone();
+        state["previous_task"] = context.task.clone().into();
+        state["last_proposal"] = context.proposal.clone().into();
     }
     state
 }
 
-/// The record a message leaves the next one: its task and the agent's
-/// last words.
-pub fn context_record(task: &str, said: &str) -> Value {
-    json!({
-        "kind": CONTEXT,
-        "task": clip(task, TASK_HEAD, TASK_TAIL),
-        "proposal": clip(said, 0, SAID_SEEN),
-    })
-}
-
-/// The latest `context` record among `records`.
-pub fn last_context(records: &[Value]) -> Option<&Value> {
-    records
-        .iter()
+/// The latest context among `records`.
+pub fn last_context(records: &[Value]) -> Option<Context> {
+    read_records::<Record>(NAME, records)
+        .into_iter()
         .rev()
-        .find(|record| record["kind"] == CONTEXT)
+        .find_map(|record| match record {
+            Record::Context(context) => Some(context),
+            _ => None,
+        })
 }
 
 /// What Jev reads between turns: the step, the effort now, what the
@@ -641,7 +702,7 @@ impl Plugin for Reasoning {
         let state = message_state(
             &plan.input,
             &steps.instructions,
-            last_context(plan.records()),
+            last_context(plan.records()).as_ref(),
         );
         // Unsure or failed, the message goes on as the last one did.
         let previous = previous(plan.records(), &steps.picker.levels);
@@ -653,7 +714,7 @@ impl Plugin for Reasoning {
                 usage,
             }) => {
                 ctx.charge(&usage);
-                plan.reasoning = if choice.kind == "chose" {
+                plan.reasoning = if choice.chose() {
                     Some(effort)
                 } else {
                     previous
@@ -662,24 +723,27 @@ impl Plugin for Reasoning {
                 choice.runs_at =
                     plan.reasoning.map(|effort| effort.as_str().to_owned());
                 let body = tau_ui_plugin::placed(
-                    serde_json::to_value(&choice).unwrap_or_default(),
+                    &Record::Choice(choice),
                     tau_ui_plugin::PLACE_MESSAGE,
                 );
-                let _ = ctx.publish(&body).await;
+                ctx.publish(&body).await;
             }
             Err(error) => {
                 plan.reasoning = previous;
                 steps.lease = Some(Lease::ToolChain);
                 // Recorded as well, so the run shows it when reopened.
                 let body = tau_ui_plugin::placed(
-                    json!({
-                        "kind": "error",
-                        "message": format!("Jev could not score the task: {error}"),
-                        "runs_at": previous.map(ReasoningEffort::as_str),
-                    }),
+                    &Record::Error {
+                        message: format!(
+                            "Jev could not score the task: {error}"
+                        ),
+                        runs_at: previous.map(|effort| effort.as_str().into()),
+                        step: None,
+                        turn: None,
+                    },
                     tau_ui_plugin::PLACE_MESSAGE,
                 );
-                let _ = ctx.publish(&body).await;
+                ctx.publish(&body).await;
             }
         }
         Ok(Box::new(steps))
@@ -716,31 +780,34 @@ impl PluginRun for Steps {
             }) => {
                 ctx.charge(&usage);
                 self.lease = lease;
-                let chosen = (choice.kind == "chose").then_some(effort);
+                let chosen = choice.chose().then_some(effort);
                 let runs_at = chosen.or(view.effort);
                 choice.step = step;
                 choice.turn = Some(view.turn);
                 choice.runs_at = runs_at.map(|effort| effort.as_str().into());
                 // It shows before the reply it chose for.
                 let body = tau_ui_plugin::placed(
-                    serde_json::to_value(&choice).unwrap_or_default(),
+                    &Record::Choice(choice),
                     tau_ui_plugin::PLACE_NOW,
                 );
-                let _ = ctx.publish(&body).await;
+                ctx.publish(&body).await;
                 Ok(chosen.filter(|effort| Some(*effort) != view.effort))
             }
             Err(error) => {
                 let body = tau_ui_plugin::placed(
-                    json!({
-                        "kind": "error",
-                        "message": format!("Jev could not score the step: {error}"),
-                        "runs_at": view.effort.map(ReasoningEffort::as_str),
-                        "step": step,
-                        "turn": view.turn,
-                    }),
+                    &Record::Error {
+                        message: format!(
+                            "Jev could not score the step: {error}"
+                        ),
+                        runs_at: view
+                            .effort
+                            .map(|effort| effort.as_str().into()),
+                        step: Some(step),
+                        turn: Some(view.turn),
+                    },
                     tau_ui_plugin::PLACE_NOW,
                 );
-                let _ = ctx.publish(&body).await;
+                ctx.publish(&body).await;
                 Ok(None)
             }
         }
@@ -757,6 +824,9 @@ impl PluginRun for Steps {
     }
 
     async fn finish(&mut self, run: &FinishedRun<'_>, ctx: &PluginCtx) {
-        let _ = ctx.record(&context_record(&self.task, run.text)).await;
+        let context = Record::Context(Context::new(&self.task, run.text));
+        if let Err(error) = ctx.record(&context).await {
+            eprintln!("{NAME}: the run's context could not be stored: {error}");
+        }
     }
 }

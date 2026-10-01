@@ -22,7 +22,6 @@ use gpui::{
     px,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use tau_agent::plugin::Plugin;
 use tau_jev::Jev;
 use tau_ui_kit::{
@@ -34,11 +33,12 @@ use tau_ui_kit::{
     theme::{Design as _, IconSize, Theme, Tone, Type, radius, sp},
 };
 use tau_ui_plugin::{
+    Fold,
     Handle,
     HostCx,
     Manifest,
     PluginInfo,
-    PluginStatus,
+    PluginUi,
     Request,
     RowNote,
     RunCtx,
@@ -106,17 +106,16 @@ pub struct Ui {
     budget: Entity<TextInput>,
 }
 
-impl State {
+impl Fold for State {
+    type Record = Record;
+
     /// Folds one of the plugin's records, or what it says as a run
     /// starts.
-    pub fn apply(&mut self, body: &Value, run: &mut dyn RunCx) {
-        if body["kind"] == "starting" {
-            self.checks = body["checks"].as_bool().unwrap_or(false);
+    fn apply(&mut self, record: Record, run: &mut dyn RunCx) {
+        if let Record::Starting { checks } = record {
+            self.checks = checks;
             return;
         }
-        let Some(record) = Record::parse(body) else {
-            return;
-        };
         Goal::apply(&mut self.goal, &record);
         let note = match &record {
             Record::Check(check) => {
@@ -172,7 +171,9 @@ impl State {
             run.transcript(&key);
         }
     }
+}
 
+impl State {
     /// The plugin's line in the run's plugin list.
     pub fn status(&self) -> Option<String> {
         let goal = self.goal.as_ref()?;
@@ -284,10 +285,6 @@ impl UiPlugin for GoalUi {
         NAME
     }
 
-    fn host(&self, _cx: &HostCx) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     /// A run's goal, checked with Jev; a sub-agent has none.
     fn agent_plugins(
         &self,
@@ -303,48 +300,27 @@ impl UiPlugin for GoalUi {
         })
     }
 
-    fn starting(&self, _host: &(), run: &RunCtx, _settings: &()) -> Vec<Value> {
+    fn starting(
+        &self,
+        _host: &(),
+        run: &RunCtx,
+        _settings: &(),
+    ) -> Vec<Record> {
         let checks = run.services.get::<Arc<dyn Jev>>().is_some()
             && run.kind != RunKind::SubAgent;
-        vec![json!({ "kind": "starting", "checks": checks })]
+        vec![Record::Starting { checks }]
     }
 
     fn catalog(&self, _host: &(), cx: &HostCx, _settings: &()) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
-            name: NAME.into(),
             description: needs_jev(
                 jev,
                 "Keeps a conversation going until its /goal holds",
             ),
             seams: vec![Seam::Start, Seam::AfterTool, Seam::BeforeStop],
-            spend: 0.0,
             page: None,
-        }
-    }
-
-    fn apply(&self, state: &mut State, body: &Value, run: &mut dyn RunCx) {
-        state.apply(body, run);
-    }
-
-    fn new_ui(&self, handle: Handle, cx: &mut gpui::Context<Ui>) -> Ui {
-        let limit = |text: String, cx: &mut gpui::Context<Ui>| {
-            let input = cx.new(|cx| {
-                let mut input = TextInput::new("", cx).keep_on_submit();
-                input.set_text(text, cx);
-                input
-            });
-            // Enter in a limit sends the goal, as Enter in the composer.
-            let handle = handle.clone();
-            cx.subscribe(&input, move |_, _, _: &InputEvent, cx| {
-                handle.request(Request::Submit, cx)
-            })
-            .detach();
-            input
-        };
-        Ui {
-            continuations: limit(DEFAULT_CONTINUATIONS.to_string(), cx),
-            budget: limit(format!("{DEFAULT_BUDGET:.2}"), cx),
+            ..Default::default()
         }
     }
 
@@ -360,13 +336,7 @@ impl UiPlugin for GoalUi {
                 let t = view.theme().clone();
                 Some(section(&goal, at.run.live, &t).into_any_element())
             })
-            .contribute(points::STATUS, |_: &AtRun, view| {
-                Some(PluginStatus {
-                    name: NAME.into(),
-                    state: view.state?.status()?,
-                    tone: Tone::Quiet,
-                })
-            })
+            .status(State::status)
             .contribute(points::RUN_ROW, |_: &AtRun, view| {
                 let goal = view.state?.goal.as_ref()?;
                 let line = match goal.status {
@@ -421,6 +391,29 @@ impl UiPlugin for GoalUi {
                 .icon(Icon::Target)
                 .popover(|_, view| popover(view)),
             )
+    }
+}
+
+impl PluginUi for Ui {
+    fn new(handle: Handle, cx: &mut Context<Self>) -> Self {
+        let limit = |text: String, cx: &mut gpui::Context<Ui>| {
+            let input = cx.new(|cx| {
+                let mut input = TextInput::new("", cx).keep_on_submit();
+                input.set_text(text, cx);
+                input
+            });
+            // Enter in a limit sends the goal, as Enter in the composer.
+            let handle = handle.clone();
+            cx.subscribe(&input, move |_, _, _: &InputEvent, cx| {
+                handle.request(Request::Submit, cx)
+            })
+            .detach();
+            input
+        };
+        Ui {
+            continuations: limit(DEFAULT_CONTINUATIONS.to_string(), cx),
+            budget: limit(format!("{DEFAULT_BUDGET:.2}"), cx),
+        }
     }
 }
 

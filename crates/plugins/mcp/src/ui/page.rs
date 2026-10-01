@@ -331,7 +331,7 @@ pub fn servers_of<'a>(
     match view
         .param("repo")
         .filter(|repo| !repo.is_empty())
-        .and_then(|repo| Some((repo.to_owned(), view.repos.get(repo)?)))
+        .and_then(|repo| Some((repo.to_owned(), view.repo(repo)?)))
     {
         Some((repo, servers)) => (Some(repo), servers),
         None => (None, view.data),

@@ -66,11 +66,12 @@ use tau_ui_plugin::{
     Manifest,
     NavEntry,
     Page,
+    PluginHost,
     PluginInfo,
     PluginStatus,
+    PluginUi,
     RepoCtx,
     RunCtx,
-    RunCx,
     Seam,
     UiPlugin,
     ViewCx,
@@ -1355,14 +1356,6 @@ impl UiPlugin for McpUi {
         NAME
     }
 
-    fn host(&self, cx: &HostCx) -> anyhow::Result<Host> {
-        let refresher = cx.clone();
-        Ok(
-            Host::new(cx.runtime.clone(), cx.config_dir().map(Path::to_owned))
-                .with_refresh(Arc::new(move || refresher.refresh())),
-        )
-    }
-
     /// The repository's servers, started on its first run, when it has
     /// any that would connect.
     fn agent_plugins(
@@ -1430,11 +1423,10 @@ impl UiPlugin for McpUi {
             )
         };
         PluginInfo {
-            name: NAME.into(),
             description,
             seams: vec![Seam::Start, Seam::Tools],
-            spend: 0.0,
             page: Some(Link::page("servers").param("repo", "")),
+            ..Default::default()
         }
     }
 
@@ -1564,8 +1556,6 @@ impl UiPlugin for McpUi {
         Ok(None)
     }
 
-    fn apply(&self, _state: &mut (), _body: &Value, _run: &mut dyn RunCx) {}
-
     /// A prompt goes to the composer; one that failed says why and puts
     /// the command back.
     fn reply(
@@ -1579,7 +1569,31 @@ impl UiPlugin for McpUi {
         }
     }
 
-    fn new_ui(&self, handle: Handle, cx: &mut Context<page::Ui>) -> page::Ui {
+    fn manifest(&self) -> Manifest<Self> {
+        Manifest::new()
+            .page(
+                Page::new("servers", page::render)
+                    .title(|_| "MCP servers".to_owned()),
+            )
+            .contribute(points::SIDEBAR_REPO, sidebar)
+            .contribute(points::CARD, card::card)
+            .contribute(points::STATUS, status)
+            .listed_commands(commands, run_prompt)
+    }
+}
+
+impl PluginHost for Host {
+    fn new(cx: &HostCx) -> anyhow::Result<Self> {
+        let refresher = cx.clone();
+        Ok(
+            Host::new(cx.runtime.clone(), cx.config_dir().map(Path::to_owned))
+                .with_refresh(Arc::new(move || refresher.refresh())),
+        )
+    }
+}
+
+impl PluginUi for page::Ui {
+    fn new(handle: Handle, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| TextInput::new("linear", cx).keep_on_submit());
         let entry = cx.new(|cx| {
             TextInput::new(
@@ -1592,18 +1606,6 @@ impl UiPlugin for McpUi {
         cx.observe(&name, |_, _, cx| cx.notify()).detach();
         cx.observe(&entry, |_, _, cx| cx.notify()).detach();
         page::Ui::new(handle, name, entry)
-    }
-
-    fn manifest(&self) -> Manifest<Self> {
-        Manifest::new()
-            .page(
-                Page::new("servers", page::render)
-                    .title(|_| "MCP servers".to_owned()),
-            )
-            .contribute(points::SIDEBAR_REPO, sidebar)
-            .contribute(points::CARD, card::card)
-            .contribute(points::STATUS, status)
-            .listed_commands(commands, run_prompt)
     }
 }
 
@@ -1622,9 +1624,7 @@ pub fn run_prompt(
     repo: Option<&str>,
     view: &mut ViewCx<'_, McpUi>,
 ) {
-    let servers = repo
-        .and_then(|repo| view.repos.get(repo))
-        .unwrap_or(view.data);
+    let servers = repo.and_then(|repo| view.repo(repo)).unwrap_or(view.data);
     let written = format!("/{command} {arguments}");
     let checked = servers.prompt(command).map(|(_, prompt)| {
         parse_arguments(arguments)
@@ -1638,7 +1638,7 @@ pub fn run_prompt(
         _ => view.handle.act(
             Act::Prompt {
                 repo: repo
-                    .filter(|repo| view.repos.contains_key(*repo))
+                    .filter(|repo| view.repo(repo).is_some())
                     .map(str::to_owned),
                 command: command.to_owned(),
                 arguments: arguments.to_owned(),
@@ -1651,7 +1651,7 @@ pub fn run_prompt(
 /// The repository's servers in the sidebar: how many, and how many wait
 /// for approval.
 pub fn sidebar(at: &AtRepo, view: &mut ViewCx<'_, McpUi>) -> Option<NavEntry> {
-    let servers = view.repos.get(&at.repo).cloned().unwrap_or_default();
+    let servers = view.repo(&at.repo).cloned().unwrap_or_default();
     let waiting = servers.pending.len();
     Some(
         NavEntry::new(
@@ -1672,7 +1672,7 @@ pub fn status(
     at: &AtRun,
     view: &mut ViewCx<'_, McpUi>,
 ) -> Option<PluginStatus> {
-    let servers = view.repos.get(&at.run.repo)?;
+    let servers = view.repo(&at.run.repo)?;
     if servers.servers.is_empty() && servers.pending.is_empty() {
         return None;
     }

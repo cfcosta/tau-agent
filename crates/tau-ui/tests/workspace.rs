@@ -709,12 +709,15 @@ fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
             ws.repo_named(repo)
                 .plugins
                 .get(tau_memory::plugin::NAME)
-                .map_or(0, |book| book["notes"].as_array().map_or(0, Vec::len))
+                .map_or(0, |book| {
+                    book.json()["notes"].as_array().map_or(0, Vec::len)
+                })
         };
         assert_eq!(notes(ws, "docbert"), 3);
         assert_eq!(notes(ws, "tau-agent"), 8);
         let rules: tau_constitution::ui::Rules = serde_json::from_value(
             ws.repo_named("homelab.nix").plugins[tau_constitution::NAME]
+                .json()
                 .clone(),
         )
         .unwrap();
@@ -1418,7 +1421,7 @@ fn goal_of(
         .unwrap()
         .plugin_states
         .get(tau_goal::NAME)
-        .map(|state| serde_json::from_value(state.clone()).unwrap())
+        .map(|state| serde_json::from_value(state.json().clone()).unwrap())
         .unwrap_or_default()
 }
 
@@ -1626,12 +1629,12 @@ fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
     let stopped = tau_agent::tool::RunId("lane-audit".into());
     let set = || {
         vec![
-            Record::Set {
+            serde_json::to_value(Record::Set {
                 goal: "Every lane has an owner in lanes.toml".into(),
                 continuations: 10,
                 budget: 2.0,
-            }
-            .to_value(),
+            })
+            .unwrap(),
         ]
     };
     workspace.update(&mut cx, |ws, cx| {

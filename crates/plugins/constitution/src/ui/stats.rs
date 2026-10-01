@@ -4,9 +4,8 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-use crate::{Check, Verdict, VerdictKind};
+use crate::Record;
 
 /// What the checks did in one run.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -42,38 +41,37 @@ pub struct FlaggedAnswer {
 }
 
 impl Stats {
-    /// Counts one of the plugin's report or record bodies: a check, a
-    /// verdict or a failure. `answer` is the run's last text, which a
-    /// flagged final answer is about.
-    pub fn add(&mut self, body: &Value, answer: Option<String>) {
-        if body["kind"] == "error" {
-            self.failed += 1;
-        } else if let Some(check) = Check::parse(body) {
-            match check.call_id {
-                Some(_) => self.calls += 1,
-                None => self.answers += 1,
-            }
-            self.questions += check.scores.len() as u32;
-            self.cost += check.cost;
-        } else if let Some(verdict) = Verdict::parse(body) {
-            match verdict.kind {
-                VerdictKind::Blocked => self.blocked.push(verdict.rule),
-                VerdictKind::Flagged => {
-                    if verdict.call_id.is_none() {
-                        self.flagged_answers.push(FlaggedAnswer {
-                            rule: verdict.rule.clone(),
-                            text: verdict.text.clone(),
-                            score: verdict.score,
-                            answer: answer.unwrap_or_default(),
-                        });
-                    }
-                    self.flagged.push(verdict.rule)
+    /// Counts one of the plugin's records: a check, a verdict or a
+    /// failure. `answer` is the run's last text, which a flagged final
+    /// answer is about.
+    pub fn add(&mut self, record: &Record, answer: Option<String>) {
+        match record {
+            Record::Error(_) => self.failed += 1,
+            Record::Checked(check) => {
+                match check.call_id {
+                    Some(_) => self.calls += 1,
+                    None => self.answers += 1,
                 }
-                VerdictKind::Held => {
-                    self.held.push(verdict.rule);
-                    self.max_holds = verdict.max_holds.or(self.max_holds);
-                }
+                self.questions += check.scores.len() as u32;
+                self.cost += check.cost;
             }
+            Record::Blocked(verdict) => self.blocked.push(verdict.rule.clone()),
+            Record::Flagged(verdict) => {
+                if verdict.call_id.is_none() {
+                    self.flagged_answers.push(FlaggedAnswer {
+                        rule: verdict.rule.clone(),
+                        text: verdict.text.clone(),
+                        score: verdict.score,
+                        answer: answer.unwrap_or_default(),
+                    });
+                }
+                self.flagged.push(verdict.rule.clone())
+            }
+            Record::Held(verdict) => {
+                self.held.push(verdict.rule.clone());
+                self.max_holds = verdict.max_holds.or(self.max_holds);
+            }
+            Record::Starting { .. } => {}
         }
     }
 

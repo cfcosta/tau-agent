@@ -287,6 +287,22 @@ impl<P: UiPlugin> Manifest<P> {
         self
     }
 
+    /// The plugin's quiet line in a run's plugin list
+    /// ([`crate::points::STATUS`]), from its state in the run: none
+    /// shows when `line` gives none.
+    pub fn status(
+        self,
+        line: impl Fn(&P::State) -> Option<String> + Send + Sync + 'static,
+    ) -> Self {
+        self.contribute(crate::points::STATUS, move |_, view| {
+            Some(crate::PluginStatus {
+                name: view.plugin.name().into(),
+                state: line(view.state?)?,
+                tone: tau_ui_kit::theme::Tone::Quiet,
+            })
+        })
+    }
+
     pub fn command(mut self, command: SlashCommand<P>) -> Self {
         self.commands.push(command);
         self

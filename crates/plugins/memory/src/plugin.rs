@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_agent::{
     error::{PluginError, ToolError, describe},
@@ -42,6 +42,46 @@ use crate::{
 
 /// The name the plugin goes by in events and records.
 pub const NAME: &str = "tau-memory";
+
+/// What tau-memory publishes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Record {
+    /// The notes found for the run's task as it started.
+    Recalled {
+        notes: Vec<Recalled>,
+    },
+    /// What the model wrote or linked from a conversation about to be
+    /// compacted, or at the end of a run: one entry per tool call.
+    Saved {
+        calls: Vec<Saved>,
+    },
+    Error {
+        message: String,
+    },
+    /// What the interface folds as a run starts, never stored: how many
+    /// notes the repository has.
+    Starting {
+        notes: usize,
+    },
+}
+
+/// A note found for a run's task.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Recalled {
+    pub id: String,
+    pub title: String,
+}
+
+/// One memory tool call made while saving, and what it gave.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Saved {
+    pub tool: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
 
 /// Search hits put into a run's context at its start.
 pub const START_HITS: usize = 3;
@@ -267,17 +307,18 @@ impl Plugin for MemoryPlugin {
         // What it found, for interfaces: after the message the run
         // started on.
         if !hits.is_empty() {
-            let notes: Vec<Value> = hits
+            let notes = hits
                 .iter()
-                .map(|hit| json!({ "id": hit.id, "title": hit.title }))
+                .map(|hit| Recalled {
+                    id: hit.id.clone(),
+                    title: hit.title.clone(),
+                })
                 .collect();
-            let body = json!({ "kind": "recalled", "notes": notes });
-            let _ = ctx
-                .publish(&tau_ui_plugin::placed(
-                    body,
-                    tau_ui_plugin::PLACE_MESSAGE,
-                ))
-                .await;
+            ctx.publish(&tau_ui_plugin::placed(
+                &Record::Recalled { notes },
+                tau_ui_plugin::PLACE_MESSAGE,
+            ))
+            .await;
         }
         Ok(Box::new(MemoryRun {
             plugin: self.clone(),
@@ -353,11 +394,10 @@ impl PluginRun for MemoryRun {
         if let Err(error) =
             self.plugin.mark_stale(&[path.to_owned()], &why, now)
         {
-            let _ = ctx
-                .publish(
-                    &json!({ "kind": "error", "message": format!("{error:#}") }),
-                )
-                .await;
+            ctx.publish(&Record::Error {
+                message: format!("{error:#}"),
+            })
+            .await;
         }
         Ok(())
     }
@@ -393,11 +433,10 @@ impl PluginRun for MemoryRun {
         )
         .await;
         if let Err(error) = done {
-            let _ = ctx
-                .publish(
-                    &json!({ "kind": "error", "message": format!("{error:#}") }),
-                )
-                .await;
+            ctx.publish(&Record::Error {
+                message: format!("{error:#}"),
+            })
+            .await;
         }
     }
 }
@@ -478,16 +517,20 @@ async fn distill(
         let mut tool_ctx = ToolCtx::detached();
         tool_ctx.run = ctx.run.clone();
         match tool.call(args, tool_ctx).await {
-            Ok(output) => saved
-                .push(json!({ "tool": call.name, "details": output.details })),
-            Err(error) => saved
-                .push(json!({ "tool": call.name, "error": describe(&error) })),
+            Ok(output) => saved.push(Saved {
+                tool: call.name.clone(),
+                details: output.details,
+                error: None,
+            }),
+            Err(error) => saved.push(Saved {
+                tool: call.name.clone(),
+                details: None,
+                error: Some(describe(&error)),
+            }),
         }
     }
     if !saved.is_empty() {
-        let _ = ctx
-            .publish(&json!({ "kind": "saved", "calls": saved }))
-            .await;
+        ctx.publish(&Record::Saved { calls: saved }).await;
     }
     Ok(())
 }

@@ -39,6 +39,42 @@ use crate::{
     validation::ArgumentSchema,
 };
 
+/// The record `body` holds, when it reads as `R`. One that does not is
+/// skipped, and said once per plugin: a record the plugin can no longer
+/// read must not stop a run.
+pub fn read_record<R: serde::de::DeserializeOwned>(
+    plugin: &str,
+    body: &Value,
+) -> Option<R> {
+    match serde_json::from_value(body.clone()) {
+        Ok(record) => Some(record),
+        Err(error) => {
+            static LOGGED: Mutex<std::collections::BTreeSet<String>> =
+                Mutex::new(std::collections::BTreeSet::new());
+            if LOGGED
+                .lock()
+                .expect("not poisoned")
+                .insert(plugin.to_owned())
+            {
+                eprintln!("{plugin}: skipped a record it cannot read: {error}");
+            }
+            None
+        }
+    }
+}
+
+/// The records among `bodies` that read as `R`, in order
+/// ([`read_record`]).
+pub fn read_records<R: serde::de::DeserializeOwned>(
+    plugin: &str,
+    bodies: &[Value],
+) -> Vec<R> {
+    bodies
+        .iter()
+        .filter_map(|body| read_record(plugin, body))
+        .collect()
+}
+
 /// A tool call as plugins see it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolCall {
@@ -660,21 +696,36 @@ impl PluginCtx {
             .collect()
     }
 
-    /// Reports `body` and records it with the run, in one call: what an
+    /// Reports `record` and stores it with the run, in one call: what an
     /// interface shows of a plugin, live and from history alike (ADR
-    /// 0017). The report goes out even when the record cannot be stored;
-    /// the error says the record is missing.
-    pub async fn publish(&self, body: &Value) -> Result<(), StoreError> {
+    /// 0017). The report goes out even when the record cannot be stored,
+    /// and a record that is missing is said on stderr: an interface folds
+    /// what it has. [`Self::try_publish`] says so to the caller instead.
+    pub async fn publish(&self, record: &impl serde::Serialize) {
+        if let Err(error) = self.try_publish(record).await {
+            eprintln!("{}: a record could not be stored: {error}", self.plugin);
+        }
+    }
+
+    /// [`Self::publish`], failing when the record is not stored.
+    pub async fn try_publish(
+        &self,
+        record: &impl serde::Serialize,
+    ) -> Result<(), StoreError> {
+        let body = serde_json::to_value(record)?;
         self.report(body.clone());
-        self.record(body).await
+        self.record(&body).await
     }
 
     /// Stores a record for this plugin with the run. The model never sees
     /// it. Forks of the run get it back in [`RunPlan::records`].
-    pub async fn record(&self, body: &Value) -> Result<(), StoreError> {
+    pub async fn record(
+        &self,
+        record: &impl serde::Serialize,
+    ) -> Result<(), StoreError> {
         let entry = Entry::Plugin {
             plugin: self.plugin.to_string(),
-            body: body.to_string(),
+            body: serde_json::to_string(record)?,
         };
         let last = self
             .store

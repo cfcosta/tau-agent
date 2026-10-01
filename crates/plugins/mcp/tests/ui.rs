@@ -534,7 +534,7 @@ impl Fixture {
             vec![repo.clone()],
             Arc::new(move |push| pushed.lock().unwrap().push(push)),
         );
-        let host = McpUi.host(&cx).unwrap();
+        let host = <Host as tau_ui_plugin::PluginHost>::new(&cx).unwrap();
         Self {
             _dirs: (user_dir, repo_dir),
             pushes,
@@ -912,7 +912,9 @@ fn window_ui(cx: &mut TestAppContext) -> (Entity<Ui>, Asked) {
         NAME,
         Rc::new(move |_, request, _: &mut App| sink.borrow_mut().push(request)),
     );
-    let ui = cx.update(|cx| cx.new(|cx| McpUi.new_ui(handle, cx)));
+    let ui = cx.update(|cx| {
+        cx.new(|cx| <Ui as tau_ui_plugin::PluginUi>::new(handle, cx))
+    });
     (ui, asked)
 }
 
@@ -1159,6 +1161,8 @@ fn with_view_handle<R>(
     let cards = |_: &RunId| Vec::new();
     let data = Servers::default();
     let settings = Settings::default();
+    let repos = tau_ui_plugin::testing::RepoValues::new(repos);
+    let repos = repos.refs();
     cx.update(|cx| {
         cx.set_global(tau_ui_kit::theme::Theme::graphite());
         let mut view = ViewCx::new(
@@ -1167,7 +1171,7 @@ fn with_view_handle<R>(
             None,
             &data,
             &settings,
-            repos,
+            &repos,
             run,
             params,
             compact,
@@ -1200,7 +1204,9 @@ impl Render for PageView {
         let cards = |_: &RunId| Vec::new();
         let handle = Handle::new(NAME, Rc::new(|_, _, _: &mut App| {}));
         let (data, settings) = (Servers::default(), Settings::default());
-        let (repos, params) = (self.repos.clone(), self.params.clone());
+        let params = self.params.clone();
+        let repos = tau_ui_plugin::testing::RepoValues::new(&self.repos);
+        let repos = repos.refs();
         let mut view = ViewCx::new(
             &McpUi,
             self.ui.clone(),
@@ -1520,8 +1526,8 @@ fn the_card_shows_the_server_and_the_result(cx: &mut TestAppContext) {
 fn prompts_are_commands_that_fill_the_composer(cx: &mut TestAppContext) {
     let registry = tau_ui_plugin::Registry::new().with(McpUi);
     let plugin = registry.get(NAME).unwrap();
-    let repo = serde_json::to_value(servers()).unwrap();
-    let empty = serde_json::to_value(Servers::default()).unwrap();
+    let repo = tau_ui_plugin::PluginValue::typed(servers());
+    let empty = tau_ui_plugin::PluginValue::typed(Servers::default());
     let commands = plugin.commands(tau_ui_plugin::CommandsAt {
         data: &empty,
         repo: Some(("r", &repo)),

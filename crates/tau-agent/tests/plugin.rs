@@ -125,7 +125,7 @@ impl Plugin for Probe {
             ctx.record(record).await?;
         }
         for body in &self.publish {
-            ctx.publish(body).await?;
+            ctx.try_publish(body).await?;
         }
         Ok(Box::new(ProbeRun {
             probe: self.clone(),

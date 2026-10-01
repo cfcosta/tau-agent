@@ -179,7 +179,7 @@ impl Outcome {
         json!({
             "calls": self.calls.iter().map(CallRow::to_json).collect::<Vec<_>>(),
             "complete": self.calls_total <= self.calls.len(),
-            "store": self.store.as_ref().map(Writes::to_json),
+            "store": self.store,
             "usage": self.usage,
             "wall_ms": self.wall.as_millis() as u64,
         })

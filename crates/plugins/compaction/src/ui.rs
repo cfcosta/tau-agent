@@ -2,17 +2,14 @@
 //! line in a run's plugin list. Its rewrites show as the run's, with
 //! what they saved.
 
-use serde_json::Value;
 use tau_agent::plugin::Plugin;
 use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
-    Handle,
     HostCx,
     Manifest,
     PluginInfo,
     PluginStatus,
     RunCtx,
-    RunCx,
     Seam,
     UiPlugin,
     points::{self, AtRun},
@@ -36,10 +33,6 @@ impl UiPlugin for CompactionUi {
         NAME
     }
 
-    fn host(&self, _cx: &HostCx) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     /// Summarizing by the window of the run's own model.
     fn agent_plugins(
         &self,
@@ -56,18 +49,13 @@ impl UiPlugin for CompactionUi {
 
     fn catalog(&self, _host: &(), _cx: &HostCx, _settings: &()) -> PluginInfo {
         PluginInfo {
-            name: NAME.into(),
             description: "Summarizes the context when it nears the window"
                 .into(),
             seams: vec![Seam::Start, Seam::Rewrite],
-            spend: 0.0,
             page: None,
+            ..Default::default()
         }
     }
-
-    fn apply(&self, _state: &mut (), _body: &Value, _run: &mut dyn RunCx) {}
-
-    fn new_ui(&self, _handle: Handle, _cx: &mut gpui::Context<()>) {}
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new().contribute(points::STATUS, |_: &AtRun, _| {

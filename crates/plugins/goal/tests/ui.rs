@@ -4,7 +4,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use hegel::generators::{self as gs, Generator as _};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tau_goal::{
     Check,
     Exhausted,
@@ -14,6 +14,7 @@ use tau_goal::{
     ui::{GoalUi, State},
 };
 use tau_ui_plugin::{
+    Fold as _,
     RunCtx,
     RunKind,
     Services,
@@ -23,7 +24,7 @@ use tau_ui_plugin::{
 
 /// One of tau-goal's records, or what it says as a run starts.
 #[hegel::composite]
-fn body(tc: &hegel::TestCase) -> Value {
+fn record(tc: &hegel::TestCase) -> Record {
     let n: u32 = tc.draw(gs::integers().min_value(1_u32).max_value(9));
     match tc.draw(gs::integers().min_value(0_u8).max_value(8)) {
         0 => Record::Set {
@@ -32,8 +33,7 @@ fn body(tc: &hegel::TestCase) -> Value {
                 .into(),
             continuations: n,
             budget: 1.0,
-        }
-        .to_value(),
+        },
         1 => Record::Check(Check {
             n,
             met: tc.draw(gs::booleans()),
@@ -44,25 +44,24 @@ fn body(tc: &hegel::TestCase) -> Value {
             )),
             cost: 0.0,
             spent: 0.0,
-        })
-        .to_value(),
+        }),
         2 => Record::Stopped {
             why: if tc.draw(gs::booleans()) {
                 Exhausted::Continuations
             } else {
                 Exhausted::Budget
             },
-        }
-        .to_value(),
-        3 => Record::Extended { by: n }.to_value(),
-        4 => Record::Paused.to_value(),
-        5 => Record::Resumed.to_value(),
-        6 => Record::Cleared.to_value(),
+        },
+        3 => Record::Extended { by: n },
+        4 => Record::Paused,
+        5 => Record::Resumed,
+        6 => Record::Cleared,
         7 => Record::Error {
             message: "offline".into(),
-        }
-        .to_value(),
-        _ => json!({ "kind": "starting", "checks": tc.draw(gs::booleans()) }),
+        },
+        _ => Record::Starting {
+            checks: tc.draw(gs::booleans()),
+        },
     }
 }
 
@@ -72,15 +71,18 @@ fn body(tc: &hegel::TestCase) -> Value {
 /// sets whether it checks, and nothing else.
 #[hegel::test(test_cases = 300)]
 fn the_fold_follows_the_records(tc: hegel::TestCase) {
-    let bodies: Vec<Value> = tc.draw(gs::vecs(body()).max_size(12));
+    let records: Vec<Record> =
+        tc.draw(gs::vecs(record().print_as_debug()).max_size(12));
     let mut state = State::default();
     let mut anchors = FakeRun::default();
-    for body in &bodies {
-        state.apply(body, &mut anchors);
+    for record in &records {
+        state.apply(record.clone(), &mut anchors);
     }
+    let bodies: Vec<Value> = records
+        .iter()
+        .map(|record| serde_json::to_value(record).unwrap())
+        .collect();
     assert_eq!(state.goal, Goal::fold(&bodies));
-    let records: Vec<Record> =
-        bodies.iter().filter_map(Record::parse).collect();
     let noted = records
         .iter()
         .filter(|record| {
@@ -109,11 +111,10 @@ fn the_fold_follows_the_records(tc: hegel::TestCase) {
         })
         .collect();
     assert_eq!(state.held, held);
-    let checks = bodies
-        .iter()
-        .rev()
-        .find(|body| body["kind"] == "starting")
-        .is_some_and(|body| body["checks"] == true);
+    let checks = records.iter().rev().find_map(|record| match record {
+        Record::Starting { checks } => Some(*checks),
+        _ => None,
+    }) == Some(true);
     assert_eq!(state.checks, checks);
 }
 
@@ -142,8 +143,8 @@ fn it_says_whether_it_checks(tc: hegel::TestCase) {
     let run = run(kind, jev);
     let on = jev && kind != RunKind::SubAgent;
     let mut state = State::default();
-    for body in GoalUi.starting(&(), &run, &()) {
-        state.apply(&body, &mut FakeRun::default());
+    for record in GoalUi.starting(&(), &run, &()) {
+        state.apply(record, &mut FakeRun::default());
     }
     assert_eq!(state.checks, on);
     let plugins = GoalUi.agent_plugins(&(), &run, &()).unwrap();

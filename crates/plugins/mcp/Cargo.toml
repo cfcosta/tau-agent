@@ -51,6 +51,7 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 url = "2.5.8"
 
 [dev-dependencies]
+tau-ui-plugin = { workspace = true, features = ["testing"] }
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
 mlua.workspace = true

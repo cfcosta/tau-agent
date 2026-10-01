@@ -35,6 +35,7 @@ tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 
 [dev-dependencies]
+tau-ui-plugin = { workspace = true, features = ["testing"] }
 hegeltest.workspace = true
 tau-tools.workspace = true
 serde_json.workspace = true

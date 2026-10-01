@@ -10,6 +10,7 @@ use tau_ui_plugin::{
     Env,
     ErasedPlugin,
     Handle,
+    PluginValue,
     Point,
     PointCx,
     Registry,
@@ -135,9 +136,10 @@ impl Workspace {
                 self.show_alert(title, message, cx);
             }
             Request::Settings(settings) => {
-                self.catalog
-                    .plugin_settings
-                    .insert(plugin.to_owned(), settings.clone());
+                self.catalog.plugin_settings.insert(
+                    plugin.to_owned(),
+                    PluginValue::from_json(settings.clone()),
+                );
                 cx.emit(WorkspaceEvent::PluginSettings {
                     plugin: plugin.to_owned(),
                     settings,
@@ -214,19 +216,29 @@ impl Workspace {
         let name = plugin.name();
         let ui = self.plugin_ui.get(name)?.clone();
         let info = run.map(RunView::info);
-        let null = Value::Null;
+        // Each value the plugin has not got yet is unset, and typed apart
+        // once read.
+        let (no_state, no_data, no_settings): (
+            PluginValue,
+            PluginValue,
+            PluginValue,
+        ) = Default::default();
         let state = run.and_then(|run| run.plugin_states.get(name));
-        let data = self.catalog.plugin_data.get(name).unwrap_or(&null);
-        let settings = self.catalog.plugin_settings.get(name).unwrap_or(&null);
-        let repos: BTreeMap<String, Value> = self
+        let data = self.catalog.plugin_data.get(name).unwrap_or(&no_data);
+        let settings = self
+            .catalog
+            .plugin_settings
+            .get(name)
+            .unwrap_or(&no_settings);
+        let repos: BTreeMap<String, &PluginValue> = self
             .catalog
             .repos
             .iter()
             .filter_map(|repo| {
-                Some((repo.name.clone(), repo.plugins.get(name)?.clone()))
+                Some((repo.name.clone(), repo.plugins.get(name)?))
             })
             .collect();
-        let runs = || -> Vec<(RunInfo, Value)> {
+        let runs = || -> Vec<(RunInfo, PluginValue)> {
             self.runs
                 .iter()
                 .map(|run| {
@@ -235,7 +247,7 @@ impl Workspace {
                         run.plugin_states
                             .get(name)
                             .cloned()
-                            .unwrap_or(Value::Null),
+                            .unwrap_or_default(),
                     )
                 })
                 .collect()
@@ -250,7 +262,7 @@ impl Workspace {
             };
         let env = Env {
             ui,
-            state: state.or(run.map(|_| &null)),
+            state: state.or(run.map(|_| &no_state)),
             data,
             settings,
             repos: &repos,
@@ -444,8 +456,8 @@ impl Workspace {
         plugin: &dyn tau_ui_plugin::ErasedPlugin,
     ) -> Vec<tau_ui_plugin::registry::CommandInfo> {
         let name = plugin.name();
-        let null = serde_json::Value::Null;
-        let data = self.catalog.plugin_data.get(name).unwrap_or(&null);
+        let unset = PluginValue::default();
+        let data = self.catalog.plugin_data.get(name).unwrap_or(&unset);
         let repo = self.command_repo();
         let repo = repo.as_deref().and_then(|repo| {
             let value = self.catalog.repo(repo)?.plugins.get(name)?;

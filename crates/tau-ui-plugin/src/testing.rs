@@ -2,16 +2,21 @@
 
 use std::collections::BTreeMap;
 
+use serde_json::Value;
+
 use crate::{
     CardInfo,
     CardMark,
     Dropped,
     OutputCut,
+    PluginValue,
+    Registry,
     RepoCtx,
     RunCtx,
     RunCx,
     RunKind,
     Services,
+    UiPlugin,
 };
 
 /// A run a fold reaches: the cards and turn it shows, and everything
@@ -102,5 +107,52 @@ pub fn run_ctx(kind: RunKind) -> RunCtx {
         model: "gpt-5.5".into(),
         effort: None,
         services: Services::default(),
+    }
+}
+
+/// Folds `body` into `state` as the interface does: through `plugin`'s
+/// registry entry, which reads it as one of the plugin's records, or as
+/// a rewrite's details, and skips anything else.
+pub fn fold<P: UiPlugin>(
+    plugin: P,
+    state: &mut P::State,
+    body: &Value,
+    run: &mut dyn RunCx,
+) {
+    let name = plugin.name();
+    let registry = Registry::new().with(plugin);
+    let mut value = PluginValue::typed(state.clone());
+    registry
+        .get(name)
+        .expect("the plugin was just added")
+        .apply(&mut value, body, run);
+    *state = value.get::<P::State>().clone();
+}
+
+/// Each repository's data as the interface holds it, for a
+/// [`crate::ViewCx`] made by hand: build it once, then pass
+/// [`RepoValues::refs`].
+pub struct RepoValues(BTreeMap<String, PluginValue>);
+
+impl RepoValues {
+    pub fn new<T>(repos: &BTreeMap<String, T>) -> Self
+    where
+        T: serde::Serialize + Clone + Send + Sync + 'static,
+    {
+        Self(
+            repos
+                .iter()
+                .map(|(name, data)| {
+                    (name.clone(), PluginValue::typed(data.clone()))
+                })
+                .collect(),
+        )
+    }
+
+    pub fn refs(&self) -> BTreeMap<String, &PluginValue> {
+        self.0
+            .iter()
+            .map(|(name, value)| (name.clone(), value))
+            .collect()
     }
 }

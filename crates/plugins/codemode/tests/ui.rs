@@ -438,13 +438,22 @@ fn the_store_folds_as_the_plugin_folds_it(tc: hegel::TestCase) {
                     }
                 }
             }
-            writes.to_record()
+            serde_json::to_value(store::Record::Store(writes)).unwrap()
         })
         .collect();
-    let mut state = State::default();
+    // Folded as the interface folds it: through the registry, which
+    // skips what does not read as a record.
+    let registry = tau_ui_plugin::Registry::new().with(CodemodeUi);
+    let plugin = registry.get(tau_codemode::PLUGIN).unwrap();
+    let mut value = tau_ui_plugin::PluginValue::default();
     for record in &records {
-        state.apply(record);
+        plugin.apply(
+            &mut value,
+            record,
+            &mut tau_ui_plugin::testing::FakeRun::default(),
+        );
     }
+    let state = value.get::<State>();
     assert_eq!(state.store, store::fold(&records));
     assert_eq!(
         state.writes,

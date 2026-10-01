@@ -318,8 +318,9 @@ pub struct ViewCx<'a, P: UiPlugin> {
     pub state: Option<&'a P::State>,
     pub data: &'a P::Data,
     pub settings: &'a P::Settings,
-    /// The plugin's data for each repository, by name.
-    pub repos: &'a BTreeMap<String, P::RepoData>,
+    /// The plugin's data for each repository, by name: see
+    /// [`Self::repo`] and [`Self::repos`].
+    repos: &'a BTreeMap<String, &'a crate::PluginValue>,
     /// The run drawn, when there is one.
     pub run: Option<&'a RunInfo>,
     /// A page's parameters; empty elsewhere.
@@ -331,7 +332,7 @@ pub struct ViewCx<'a, P: UiPlugin> {
     /// The window's width, in pixels: where a table no longer fits.
     pub width: f32,
     pub handle: Handle,
-    runs: &'a dyn Fn() -> Vec<(RunInfo, Value)>,
+    runs: &'a dyn Fn() -> Vec<(RunInfo, crate::PluginValue)>,
     cards: &'a dyn Fn(&RunId) -> Vec<crate::CardInfo>,
     pub cx: &'a mut App,
 }
@@ -344,14 +345,14 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
         state: Option<&'a P::State>,
         data: &'a P::Data,
         settings: &'a P::Settings,
-        repos: &'a BTreeMap<String, P::RepoData>,
+        repos: &'a BTreeMap<String, &'a crate::PluginValue>,
         run: Option<&'a RunInfo>,
         params: &'a BTreeMap<String, String>,
         compact: bool,
         jev: bool,
         width: f32,
         handle: Handle,
-        runs: &'a dyn Fn() -> Vec<(RunInfo, Value)>,
+        runs: &'a dyn Fn() -> Vec<(RunInfo, crate::PluginValue)>,
         cards: &'a dyn Fn(&RunId) -> Vec<crate::CardInfo>,
         cx: &'a mut App,
     ) -> Self {
@@ -383,10 +384,20 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
     pub fn runs(&self) -> Vec<(RunInfo, P::State)> {
         (self.runs)()
             .into_iter()
-            .map(|(run, state)| {
-                (run, serde_json::from_value(state).unwrap_or_default())
-            })
+            .map(|(run, state)| (run, state.get::<P::State>().clone()))
             .collect()
+    }
+
+    /// The plugin's data for the repository `name`.
+    pub fn repo(&self, name: &str) -> Option<&'a P::RepoData> {
+        self.repos.get(name).map(|value| value.get::<P::RepoData>())
+    }
+
+    /// The plugin's data for each repository, by name.
+    pub fn repos(&self) -> impl Iterator<Item = (&'a str, &'a P::RepoData)> {
+        self.repos
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.get::<P::RepoData>()))
     }
 
     /// The page's parameter `name`, or nothing.

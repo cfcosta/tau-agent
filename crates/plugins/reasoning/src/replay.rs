@@ -17,9 +17,11 @@ use tau_ai::{
 
 use crate::{
     Choice,
+    Context,
     Lease,
+    NAME,
     Picker,
-    context_record,
+    Record,
     lease_ended,
     message_state,
     step_state,
@@ -64,7 +66,7 @@ pub async fn replay(
     }
     let mut transcript: Vec<Message> = Vec::new();
     let mut recorded: Option<String> = None;
-    let mut context: Option<Value> = None;
+    let mut context: Option<Context> = None;
     let mut task = String::new();
     let mut effort: Option<ReasoningEffort> = None;
     let mut lease: Option<Lease> = None;
@@ -72,7 +74,9 @@ pub async fn replay(
     for entry in timeline {
         let message = match entry {
             Entry::Record(body) => {
-                if let Some(choice) = Choice::parse(body) {
+                if let Some(Record::Choice(choice)) =
+                    tau_agent::plugin::read_record(NAME, body)
+                {
                     recorded = choice.ran_at().map(str::to_owned);
                 }
                 continue;
@@ -82,7 +86,7 @@ pub async fn replay(
         match message {
             Message::User(user) if answered(&transcript) => {
                 if let Some(said) = transcript.iter().rev().find_map(said) {
-                    context = Some(context_record(&task, &said));
+                    context = Some(Context::new(&task, &said));
                 }
                 task = user_text(&user.content);
                 starts = true;
@@ -105,7 +109,7 @@ pub async fn replay(
                 };
                 let asked = asked.map(|asked| {
                     asked.map(|asked| {
-                        if asked.choice.kind == "chose" {
+                        if asked.choice.chose() {
                             effort = Some(asked.effort);
                         }
                         lease = asked.lease;

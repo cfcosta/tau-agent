@@ -131,7 +131,12 @@ pub fn goal_records(condition: &str, state: &str) -> Vec<Value> {
             }
         }
     }
-    records.iter().map(Record::to_value).collect()
+    records
+        .iter()
+        .map(|record| {
+            serde_json::to_value(record).expect("a record serializes")
+        })
+        .collect()
 }
 
 /// The condition the demo's goals share.
@@ -1366,7 +1371,7 @@ pub fn catalog() -> Catalog {
                         tau_agent_rules(&rule));
                     data.insert(
                         tau_mcp::NAME.to_owned(),
-                        serde_json::to_value(tau_agent_servers()).unwrap_or_default(),
+                        tau_ui_plugin::PluginValue::typed(tau_agent_servers()),
                     );
                     data
                 },
@@ -1438,7 +1443,7 @@ type LinkFn<'a> = &'a dyn Fn(&str, &str) -> Link;
 fn demo_rules_act(catalog: &mut Catalog, act: RulesAct) {
     let rules_of = |catalog: &mut Catalog, repo: &str| -> Option<Rules> {
         let data = catalog.repo(repo)?.plugins.get(tau_constitution::NAME)?;
-        serde_json::from_value(data.clone()).ok()
+        Some(data.get::<Rules>().clone())
     };
     let save = |catalog: &mut Catalog, repo: &str, rules: Rules| {
         if let Some(listed) = catalog.repo_mut(repo) {
@@ -1510,13 +1515,13 @@ fn demo_rules_act(catalog: &mut Catalog, act: RulesAct) {
         }
         RulesAct::Reset { repo } => save(catalog, &repo, Rules::default()),
         RulesAct::Reviewed { run, key } => {
-            let data = catalog
+            catalog
                 .plugin_data
                 .entry(tau_constitution::NAME.to_owned())
-                .or_insert_with(|| serde_json::json!({ "reviewed": [] }));
-            if let Some(list) = data["reviewed"].as_array_mut() {
-                list.push(serde_json::json!([run, key]));
-            }
+                .or_default()
+                .get_mut::<tau_constitution::ui::Data>()
+                .reviewed
+                .push((run, key));
         }
         RulesAct::Try { .. } => {}
     }
@@ -1529,11 +1534,11 @@ type RuleFn<'a> = &'a dyn Fn(&str, &str, &[&str], f64, f64) -> RuleInfo;
 fn repo_data(
     notes: Memory,
     rules: Rules,
-) -> std::collections::BTreeMap<String, serde_json::Value> {
+) -> std::collections::BTreeMap<String, tau_ui_plugin::PluginValue> {
     let mut data = rules_data(rules);
     data.insert(
         tau_memory::plugin::NAME.to_owned(),
-        serde_json::to_value(notes).unwrap_or_default(),
+        tau_ui_plugin::PluginValue::typed(notes),
     );
     data
 }
@@ -1637,10 +1642,10 @@ fn tau_agent_servers() -> tau_mcp::ui::Servers {
 /// A repository's plugin data with `rules` as its constitution.
 fn rules_data(
     rules: Rules,
-) -> std::collections::BTreeMap<String, serde_json::Value> {
+) -> std::collections::BTreeMap<String, tau_ui_plugin::PluginValue> {
     [(
         tau_constitution::NAME.to_owned(),
-        serde_json::to_value(rules).unwrap_or_default(),
+        tau_ui_plugin::PluginValue::typed(rules),
     )]
     .into()
 }
@@ -2729,7 +2734,7 @@ pub fn script() -> Vec<Step> {
     s.report(
         "tau-reasoning",
         json!({
-            "kind": "chose", "effort": "high", "confidence": 0.84,
+            "kind": "choice", "verdict": "chose", "effort": "high", "confidence": 0.84,
             "threshold": 0.7, "cost": 0.00002,
             "levels": [
                 { "effort": "none", "suits": "no thought", "p": 0.01 },
@@ -3278,7 +3283,7 @@ mod tests {
         let catalog = catalog();
         let notes = |repo: &Repo| -> Memory {
             serde_json::from_value(
-                repo.plugins[tau_memory::plugin::NAME].clone(),
+                repo.plugins[tau_memory::plugin::NAME].json().clone(),
             )
             .unwrap()
         };
@@ -3342,7 +3347,7 @@ mod tests {
             .filter(|item| matches!(item, Item::Tool(_)))
             .count();
         let pruning: tau_fast_compaction::ui::State = serde_json::from_value(
-            view.plugin_states[tau_fast_compaction::NAME].clone(),
+            view.plugin_states[tau_fast_compaction::NAME].json().clone(),
         )
         .unwrap();
         assert_eq!(pruning.ledger.len(), calls);
@@ -3380,12 +3385,12 @@ mod tests {
             .collect();
         assert_eq!(anchored, [tau_reasoning::NAME, tau_memory::plugin::NAME]);
         let reasoning: tau_reasoning::ui::State = serde_json::from_value(
-            view.plugin_states[tau_reasoning::NAME].clone(),
+            view.plugin_states[tau_reasoning::NAME].json().clone(),
         )
         .unwrap();
         assert_eq!(reasoning.plan.as_deref(), Some("high"));
         let memory: tau_memory::ui::State = serde_json::from_value(
-            view.plugin_states[tau_memory::plugin::NAME].clone(),
+            view.plugin_states[tau_memory::plugin::NAME].json().clone(),
         )
         .unwrap();
         assert!(

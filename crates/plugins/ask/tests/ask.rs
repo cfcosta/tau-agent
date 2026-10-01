@@ -5,6 +5,7 @@
 //! waits.
 
 use hegel::generators::{self as gs, Generator as _};
+use tau_ui_plugin::Fold as _;
 
 hegel::pretty_print_as_debug!(Step);
 use tau_ask::{
@@ -289,7 +290,10 @@ fn the_fold_shows_the_first_call_still_waiting(tc: hegel::TestCase) {
     let mut state = State::default();
     for record in &records {
         assert_eq!(Record::parse(&record.to_value()).as_ref(), Some(record));
-        state.apply(&record.to_value());
+        state.apply(
+            record.clone(),
+            &mut tau_ui_plugin::testing::FakeRun::default(),
+        );
     }
     let mut order: Vec<&str> = Vec::new();
     for record in &records {
@@ -304,8 +308,8 @@ fn the_fold_shows_the_first_call_still_waiting(tc: hegel::TestCase) {
         matches!(last, Some(Record::Asked { .. }))
     });
     assert_eq!(state.waiting().map(|c| c.call.as_str()), expected);
-    // A body that is not a record is skipped.
-    let before = state.clone();
-    state.apply(&serde_json::json!({ "kind": "nonsense" }));
-    assert_eq!(state, before);
+    // A body that is not a record reads as none, so nothing folds it.
+    assert!(
+        Record::parse(&serde_json::json!({ "kind": "nonsense" })).is_none()
+    );
 }

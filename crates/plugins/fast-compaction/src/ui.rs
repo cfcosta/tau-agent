@@ -7,17 +7,18 @@ use std::{collections::BTreeMap, os::unix::fs::DirBuilderExt as _, sync::Arc};
 
 use gpui::{AnyElement, Div, SharedString, div, prelude::*, px, relative};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tau_agent::plugin::Plugin;
 use tau_jev::Jev;
 use tau_ui_kit::{
     assets::Icon,
     components::{self as ui, bar, dot, heading, icon, key_values, link, mono},
     format::{fine_usd, tokens},
-    theme::{Design as _, IconSize, Theme, Tone, Type, radius, sp},
+    theme::{Design as _, IconSize, Theme, Type, radius, sp},
 };
 use tau_ui_plugin::{
     Dropped,
+    Fold,
     HostCx,
     Link,
     Manifest,
@@ -25,8 +26,6 @@ use tau_ui_plugin::{
     OutputCut,
     Page,
     PluginInfo,
-    PluginStatus,
-    REWRITE,
     RunCtx,
     RunCx,
     RunInfo,
@@ -37,7 +36,15 @@ use tau_ui_plugin::{
     points::{self, AtCard, AtRewrite, AtRun},
 };
 
-use crate::{Action, Details, FastCompaction, NAME, OutputStats, Settings};
+use crate::{
+    Action,
+    Details,
+    FastCompaction,
+    NAME,
+    OutputStats,
+    Record,
+    Settings,
+};
 
 /// fast-compaction with its UI: what tau adds to an agent.
 #[derive(Debug, Clone, Copy, Default)]
@@ -130,36 +137,31 @@ impl From<Action> for Decision {
     }
 }
 
-impl State {
-    /// Folds one of the plugin's reports, a stored rewrite's details, or
-    /// what it says as a run starts.
-    pub fn apply(&mut self, body: &Value, run: &mut dyn RunCx) {
-        if body["kind"] == "starting" {
-            self.on = body["on"].as_bool();
-            return;
-        }
-        if body["kind"] == "output" {
-            self.output(body, run);
-            return;
-        }
-        let details = match body.get(REWRITE) {
-            Some(details) => details,
-            None if body["kind"] == "ledger" => body,
-            None => return,
-        };
-        if let Ok(details) = serde_json::from_value::<Details>(details.clone())
-        {
-            self.pass(&details, run);
+impl Fold for State {
+    type Record = Record;
+
+    /// Folds one of the plugin's reports, or what it says as a run
+    /// starts.
+    fn apply(&mut self, record: Record, run: &mut dyn RunCx) {
+        match record {
+            Record::Starting { on } => self.on = Some(on),
+            Record::Output(stats) => self.output(stats, run),
+            Record::Ledger(details) => self.pass(&details, run),
         }
     }
 
+    /// A stored rewrite's details: the pass that made it.
+    fn rewritten(&mut self, details: Value, run: &mut dyn RunCx) {
+        if let Ok(details) = serde_json::from_value::<Details>(details) {
+            self.pass(&details, run);
+        }
+    }
+}
+
+impl State {
     /// An output cut as it arrived: the call's card says what the model
     /// saw, and where the whole output is.
-    fn output(&mut self, body: &Value, run: &mut dyn RunCx) {
-        let Ok(stats) = serde_json::from_value::<OutputStats>(body.clone())
-        else {
-            return;
-        };
+    fn output(&mut self, stats: OutputStats, run: &mut dyn RunCx) {
         let Some(archive) = stats.archive.filter(|_| stats.pruned) else {
             return;
         };
@@ -322,10 +324,6 @@ impl UiPlugin for FastCompactionUi {
         NAME
     }
 
-    fn host(&self, _cx: &HostCx) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     /// Pruning with Jev, when there is a key, on the run's model's
     /// window, archiving to the repository's directory in tau's.
     fn agent_plugins(
@@ -353,39 +351,32 @@ impl UiPlugin for FastCompactionUi {
         )])
     }
 
-    fn starting(&self, _host: &(), run: &RunCtx, _settings: &()) -> Vec<Value> {
+    fn starting(
+        &self,
+        _host: &(),
+        run: &RunCtx,
+        _settings: &(),
+    ) -> Vec<Record> {
         let on = run.services.get::<Arc<dyn Jev>>().is_some();
-        vec![json!({ "kind": "starting", "on": on })]
+        vec![Record::Starting { on }]
     }
 
     fn catalog(&self, _host: &(), cx: &HostCx, _settings: &()) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
-            name: NAME.into(),
             description: needs_jev(
                 jev,
                 "Prunes large bash outputs as they arrive, and stale tool \
                  history",
             ),
             seams: vec![Seam::Start, Seam::Rewrite],
-            spend: 0.0,
             page: Some(ledger_link()),
+            ..Default::default()
         }
-    }
-
-    fn apply(&self, state: &mut State, body: &Value, run: &mut dyn RunCx) {
-        state.apply(body, run);
     }
 
     fn rewrites_keep_transcript(&self) -> bool {
         true
-    }
-
-    fn new_ui(
-        &self,
-        _handle: tau_ui_plugin::Handle,
-        _cx: &mut gpui::Context<()>,
-    ) {
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -394,13 +385,7 @@ impl UiPlugin for FastCompactionUi {
                 Page::new("ledger", ledger_page)
                     .title(|_| "Context ledger".to_owned()),
             )
-            .contribute(points::STATUS, |_: &AtRun, view| {
-                Some(PluginStatus {
-                    name: NAME.into(),
-                    state: view.state?.status()?,
-                    tone: Tone::Quiet,
-                })
-            })
+            .status(State::status)
             .contribute(points::CONTEXT_TRIGGER, |_: &AtRun, view| {
                 view.state?.on?.then(trigger)
             })

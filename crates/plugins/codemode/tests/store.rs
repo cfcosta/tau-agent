@@ -11,6 +11,11 @@ use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_codemode::store::{self, Store, Writes};
 
+/// `writes` as the record tau-codemode publishes.
+fn record(writes: &Writes) -> Value {
+    serde_json::to_value(store::Record::Store(writes.clone())).unwrap()
+}
+
 #[derive(Debug, Clone)]
 enum Op {
     Set(String, i64),
@@ -53,10 +58,10 @@ fn store_fold_equals_applying_the_writes(tc: TestCase) {
                 }
             }
         }
-        records.push(store.writes().to_record());
+        records.push(record(store.writes()));
         // Records of another shape land anywhere and change nothing.
         if let Some(junk) = junk.get(i)
-            && Writes::from_record(junk).is_none()
+            && serde_json::from_value::<store::Record>(junk.clone()).is_err()
         {
             records.push(junk.clone());
         }
@@ -67,11 +72,11 @@ fn store_fold_equals_applying_the_writes(tc: TestCase) {
 #[test]
 fn malformed_store_records_are_skipped() {
     let records = [
-        json!({ "store": { "set": { "a": 1 } } }),
-        json!({ "store": { "set": 3 } }),
-        json!({ "store": { "delete": [1] } }),
+        json!({ "kind": "store", "set": { "a": 1 } }),
+        json!({ "kind": "store", "set": 3 }),
+        json!({ "kind": "store", "delete": [1] }),
         json!("text"),
-        json!({ "store": { "set": { "b": 2 }, "delete": ["a"] } }),
+        json!({ "kind": "store", "set": { "b": 2 }, "delete": ["a"] }),
     ];
     assert_eq!(store::fold(&records), [("b".to_owned(), json!(2))].into());
 }

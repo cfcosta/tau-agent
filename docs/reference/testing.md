@@ -52,6 +52,7 @@ every test must meet. It covers:
 | `hegeltest` (lib name `hegel`) | Property-based tests: generators, shrinking, stateful model tests    |
 | `cargo nextest`                | Test runner, locally and in CI                                       |
 | `tau-testing`                  | `ScriptedModel`, `FakeOpenAi`, shared generators, replay, async glue |
+| `tau_ui_plugin::testing`       | Feature `testing`: `FakeRun`, `run_ctx`, `fold`, `RepoValues`        |
 | `tokio::time::pause`           | Deterministic time for retries, timeouts, idle timers and rotation   |
 | `turmoil`                      | Deterministic simulated network and clock for the transport tests    |
 | `tempfile`                     | Filesystem fixtures for `tau-tools`                                  |
@@ -681,7 +682,9 @@ move cases to nightly variants rather than lowering the default counts.
 - Fixtures generated at test time and never committed. A fixture that
   is not in the repository cannot catch a regression.
 - Copying a fake or a helper into each test file. Shared fakes live in
-  `tau-testing`.
+  `tau-testing`, and a plugin's UI fakes in `tau_ui_plugin::testing`:
+  `FakeRun` (the run a fold reaches), `run_ctx`, `fold` (a body through
+  the registry, as the interface folds it) and `RepoValues`.
 - One test that checks many unrelated rules. When it fails, the name
   should say which rule broke.
 - Committing a `reproduce_failure` blob instead of a readable

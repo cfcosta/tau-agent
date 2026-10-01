@@ -455,7 +455,7 @@ fn open_demo_screen(
                     if let Some(listed) = catalog.repo_mut(repo) {
                         listed.plugins.insert(
                             tau_constitution::NAME.into(),
-                            serde_json::to_value(rules).unwrap_or_default(),
+                            tau_ui_plugin::PluginValue::typed(rules),
                         );
                     }
                     workspace.set_catalog(catalog, cx);

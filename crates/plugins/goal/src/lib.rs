@@ -259,15 +259,17 @@ pub enum Record {
     Error {
         message: String,
     },
+    /// What the interface folds as a run starts, never stored: whether
+    /// the run's stops are checked.
+    Starting {
+        checks: bool,
+    },
 }
 
 impl Record {
+    /// The record `body` holds, or none, said the first time.
     pub fn parse(body: &Value) -> Option<Self> {
-        serde_json::from_value(body.clone()).ok()
-    }
-
-    pub fn to_value(&self) -> Value {
-        serde_json::to_value(self).unwrap_or_default()
+        tau_agent::plugin::read_record(NAME, body)
     }
 }
 
@@ -424,8 +426,7 @@ impl Plugin for GoalPlugin {
 /// and a stop may be checked again after a restart: not worth failing
 /// the run for.
 async fn tell(record: &Record, ctx: &PluginCtx) {
-    let body = record.to_value();
-    let _ = ctx.publish(&body).await;
+    ctx.publish(record).await;
 }
 
 /// A run's pursuit of its conversation's goal.

@@ -224,7 +224,8 @@ impl AgentTool for CodemodeTool {
         let mut content: Vec<InputBlock> =
             rendered.content.into_iter().map(block).collect();
         if let Some(writes) = outcome.store.filter(|writes| !writes.is_empty())
-            && let Err(error) = plugin.publish(&writes.to_record()).await
+            && let Err(error) =
+                plugin.try_publish(&store::Record::Store(writes)).await
         {
             is_error = true;
             content.push(text_block(format!(

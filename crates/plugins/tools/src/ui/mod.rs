@@ -11,8 +11,7 @@ pub mod term;
 #[cfg(feature = "terminal")]
 pub mod term_card;
 
-use gpui::{Context, Div, div, prelude::*, px};
-use serde_json::Value;
+use gpui::{Div, div, prelude::*, px};
 use tau_agent::plugin::Plugin;
 use tau_ui_kit::{
     diff,
@@ -20,13 +19,11 @@ use tau_ui_kit::{
 };
 use tau_ui_plugin::{
     CallData,
-    Handle,
     HostCx,
     Manifest,
     PluginInfo,
     PluginStatus,
     RunCtx,
-    RunCx,
     Seam,
     UiPlugin,
     ViewCx,
@@ -105,10 +102,6 @@ impl UiPlugin for ToolsUi {
         NAME
     }
 
-    fn host(&self, _cx: &HostCx) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     /// None here: the host builds the tools on the run's workspace,
     /// where they act.
     fn agent_plugins(
@@ -122,20 +115,13 @@ impl UiPlugin for ToolsUi {
 
     fn catalog(&self, _host: &(), _cx: &HostCx, _settings: &()) -> PluginInfo {
         PluginInfo {
-            name: NAME.into(),
             description: "read, bash, edit, write, grep, find and ls on the \
                           run's workspace"
                 .into(),
             seams: vec![Seam::Tools],
-            spend: 0.0,
             page: None,
+            ..Default::default()
         }
-    }
-
-    fn apply(&self, _state: &mut (), _body: &Value, _run: &mut dyn RunCx) {}
-
-    fn new_ui(&self, _handle: Handle, _cx: &mut Context<Ui>) -> Ui {
-        Ui::default()
     }
 
     fn manifest(&self) -> Manifest<Self> {

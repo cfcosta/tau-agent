@@ -345,14 +345,19 @@ fn the_fold_notes_what_memory_did(tc: TestCase) {
             }
             2 => {
                 expected.push(Mark::Saved(n));
-                json!({ "kind": "saved", "calls": vec![json!({}); n] })
+                json!({ "kind": "saved", "calls": vec![json!({ "tool": "memory_write" }); n] })
             }
             _ => {
                 expected.push(Mark::Failed("offline".into()));
                 json!({ "kind": "error", "message": "offline" })
             }
         };
-        state.apply(&body, &mut anchors);
+        tau_ui_plugin::testing::fold(
+            tau_memory::ui::MemoryUi,
+            &mut state,
+            &body,
+            &mut anchors,
+        );
     }
     let marks: Vec<Mark> = anchors
         .anchors

@@ -19,8 +19,6 @@ pub mod ask;
 pub mod host;
 pub mod ui;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 pub use ask::{Answer, Ask, Choice, Question, Reply};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -46,20 +44,10 @@ pub enum Record {
 }
 
 /// Whether an undecodable record was logged already: once is enough.
-static LOGGED: AtomicBool = AtomicBool::new(false);
-
 impl Record {
-    /// The record `body` holds, or none, logged the first time.
+    /// The record `body` holds, or none, said the first time.
     pub fn parse(body: &Value) -> Option<Self> {
-        match serde_json::from_value(body.clone()) {
-            Ok(record) => Some(record),
-            Err(error) => {
-                if !LOGGED.swap(true, Ordering::Relaxed) {
-                    tracing::warn!(%error, "tau-ask skipped a record it cannot read");
-                }
-                None
-            }
-        }
+        tau_agent::plugin::read_record(NAME, body)
     }
 
     pub fn to_value(&self) -> Value {

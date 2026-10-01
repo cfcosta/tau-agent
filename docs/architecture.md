@@ -12,6 +12,7 @@ tau-agent/
 │   ├── tau-testing/  # ScriptedModel, recorded-stream replay
 │   ├── tau-ui-kit/   # the design language: theme tokens, icons, fonts, components,
 │   │                 # text field, marked-up text (ADR 0017)
+│   ├── tau-ui-plugin/ # UiPlugin, its Fold, the registry, extension points (ADR 0017)
 │   ├── terminal/     # tau-terminal: libghostty-vt terminal, PTY command runner,
 │   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
 │   └── plugins/
@@ -39,7 +40,9 @@ Dependency direction:
   `tau-ai` for message types). Core crates never depend on a plugin
   ([0006](decisions/0006-plugin-crates.md)). Each plugin brings its own
   UI through `tau-ui-plugin`, and has no headless form
-  ([0017](decisions/0017-plugins-bring-their-ui.md); not built yet).
+  ([0017](decisions/0017-plugins-bring-their-ui.md)). Its agent half
+  publishes records of one enum, and its state folds them (`Fold`), live
+  and from history alike.
 
 ## Data flow for one turn
 

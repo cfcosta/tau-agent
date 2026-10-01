@@ -63,6 +63,8 @@ pub const NAME: &str = "tau-constitution";
 /// it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Verdict {
+    /// Stored as the record's own kind ([`Record`]).
+    #[serde(skip)]
     pub kind: VerdictKind,
     /// The rule, and its text.
     pub rule: String,
@@ -105,31 +107,94 @@ pub struct Score {
     pub score: f64,
 }
 
-impl Check {
-    /// Reads a check back from a report or record body.
-    pub fn parse(body: &Value) -> Option<Self> {
-        (body["kind"] == "checked")
-            .then(|| serde_json::from_value(body.clone()).ok())
-            .flatten()
+/// A check Jev could not answer, and what `on_error` did about it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Failure {
+    /// The call it was about; `None` for the final answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    pub message: String,
+    /// `block` or `allow`.
+    #[serde(default)]
+    pub on_error: String,
+    /// For the final answer: whether it was sent back.
+    #[serde(default)]
+    pub held: bool,
+}
+
+/// What tau-constitution publishes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", from = "Wire")]
+pub enum Record {
+    /// Every applicable rule's score on a call or the final answer.
+    Checked(Check),
+    Blocked(Verdict),
+    Flagged(Verdict),
+    Held(Verdict),
+    Error(Failure),
+    /// What the interface folds as a run starts, never stored: on, or
+    /// off and why.
+    Starting {
+        status: Option<String>,
+    },
+}
+
+/// [`Record`] as stored: a verdict's kind is the record's.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum Wire {
+    Checked(Check),
+    Blocked(Verdict),
+    Flagged(Verdict),
+    Held(Verdict),
+    Error(Failure),
+    Starting { status: Option<String> },
+}
+
+impl From<Wire> for Record {
+    fn from(wire: Wire) -> Self {
+        let verdict = |kind, verdict| Verdict { kind, ..verdict };
+        match wire {
+            Wire::Checked(check) => Self::Checked(check),
+            Wire::Blocked(v) => Self::Blocked(verdict(VerdictKind::Blocked, v)),
+            Wire::Flagged(v) => Self::Flagged(verdict(VerdictKind::Flagged, v)),
+            Wire::Held(v) => Self::Held(verdict(VerdictKind::Held, v)),
+            Wire::Error(failure) => Self::Error(failure),
+            Wire::Starting { status } => Self::Starting { status },
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+impl Record {
+    /// The record `body` holds, or none, said the first time.
+    pub fn parse(body: &Value) -> Option<Self> {
+        tau_agent::plugin::read_record(NAME, body)
+    }
+
+    /// `verdict` as the record of its kind.
+    pub fn verdict(verdict: Verdict) -> Self {
+        match verdict.kind {
+            VerdictKind::Blocked => Self::Blocked(verdict),
+            VerdictKind::Flagged => Self::Flagged(verdict),
+            VerdictKind::Held => Self::Held(verdict),
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum VerdictKind {
     /// The call was refused.
     Blocked,
     /// The call ran (or the answer stood); a person should look.
+    #[default]
     Flagged,
     /// The final answer was sent back.
     Held,
-}
-
-impl Verdict {
-    /// Reads a verdict back from a report or record body.
-    pub fn parse(body: &Value) -> Option<Self> {
-        serde_json::from_value(body.clone()).ok()
-    }
 }
 
 /// A constitution that can change while runs use it. Share one per
@@ -234,21 +299,18 @@ impl Checks {
                 .collect(),
             cost: usage.cost.total,
         };
-        let mut body = serde_json::to_value(&check).unwrap_or_default();
-        body["kind"] = "checked".into();
-        let _ = ctx.publish(&body).await;
+        ctx.publish(&Record::Checked(check)).await;
         Ok(scores)
     }
 
     /// Reports and records a check Jev could not answer: history shows it,
     /// and the Constitution screen counts it.
-    async fn failed(&self, body: Value, ctx: &PluginCtx) {
-        let _ = ctx.publish(&body).await;
+    async fn failed(&self, failure: Failure, ctx: &PluginCtx) {
+        ctx.publish(&Record::Error(failure)).await;
     }
 
-    async fn tell(&self, verdict: &Verdict, ctx: &PluginCtx) {
-        let body = serde_json::to_value(verdict).unwrap_or_default();
-        let _ = ctx.publish(&body).await;
+    async fn tell(&self, verdict: Verdict, ctx: &PluginCtx) {
+        ctx.publish(&Record::verdict(verdict)).await;
     }
 }
 
@@ -390,13 +452,13 @@ impl PluginRun for Checks {
             Err(error) => {
                 let message = format!("Jev could not check the call: {error}");
                 self.failed(
-                    json!({
-                        "kind": "error",
-                        "call_id": call.id,
-                        "tool": call.name,
-                        "message": message,
-                        "on_error": constitution.on_error.as_str(),
-                    }),
+                    Failure {
+                        call_id: Some(call.id.clone()),
+                        tool: Some(call.name.clone()),
+                        message: message.clone(),
+                        on_error: constitution.on_error.as_str().to_owned(),
+                        held: false,
+                    },
                     ctx,
                 )
                 .await;
@@ -452,7 +514,7 @@ impl PluginRun for Checks {
                 hold: None,
                 max_holds: None,
             };
-            self.tell(&verdict, ctx).await;
+            self.tell(verdict, ctx).await;
         }
         Ok(match reason {
             Some(reason) => Decision::Block(reason),
@@ -489,12 +551,13 @@ impl PluginRun for Checks {
                 let held = constitution.on_error == OnError::Block
                     && self.holds < constitution.max_holds;
                 self.failed(
-                    json!({
-                        "kind": "error",
-                        "message": message,
-                        "on_error": constitution.on_error.as_str(),
-                        "held": held,
-                    }),
+                    Failure {
+                        call_id: None,
+                        tool: None,
+                        message: message.clone(),
+                        on_error: constitution.on_error.as_str().to_owned(),
+                        held,
+                    },
                     ctx,
                 )
                 .await;
@@ -540,7 +603,7 @@ impl PluginRun for Checks {
                 hold: held.then_some(self.holds + 1),
                 max_holds: held.then_some(constitution.max_holds),
             };
-            self.tell(&verdict, ctx).await;
+            self.tell(verdict, ctx).await;
         }
         if held.is_empty() {
             return Ok(StopDecision::Stop);

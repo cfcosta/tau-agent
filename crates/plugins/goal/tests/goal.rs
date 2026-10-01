@@ -287,7 +287,7 @@ fn a_goal_stops_when_out_of_continuations_or_budget() {
 fn store_record(store: &Store, run: &RunId, record: &Record) {
     let entry = Entry::Plugin {
         plugin: NAME.into(),
-        body: record.to_value().to_string(),
+        body: serde_json::to_string(record).unwrap(),
     };
     block_on_io(store.append_turn(&run.0, &[entry], TurnUsage::default()))
         .unwrap();

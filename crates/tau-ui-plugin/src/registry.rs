@@ -8,12 +8,15 @@ use std::{
 };
 
 use gpui::{AnyElement, AnyEntity, App, AppContext as _};
-use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
 
 use crate::{
+    Fold,
+    PluginHost,
     PluginInfo,
+    PluginUi,
+    PluginValue,
     UiPlugin,
     host::{HostCx, RepoCtx, RunCtx},
     manifest::Manifest,
@@ -22,15 +25,16 @@ use crate::{
 };
 
 /// What the interface hands a plugin's UI as it draws: the plugin's
-/// values, as JSON.
+/// values.
 pub struct Env<'a> {
     /// The plugin's window state, made by [`ErasedPlugin::new_ui`].
     pub ui: AnyEntity,
     /// The plugin's state in the run drawn, when there is one.
-    pub state: Option<&'a Value>,
-    pub data: &'a Value,
-    pub settings: &'a Value,
-    pub repos: &'a BTreeMap<String, Value>,
+    pub state: Option<&'a PluginValue>,
+    pub data: &'a PluginValue,
+    pub settings: &'a PluginValue,
+    /// Its data for each repository, by name.
+    pub repos: &'a BTreeMap<String, &'a PluginValue>,
     pub run: Option<&'a RunInfo>,
     pub params: &'a BTreeMap<String, String>,
     pub compact: bool,
@@ -39,7 +43,7 @@ pub struct Env<'a> {
     pub width: f32,
     pub handle: Handle,
     /// Every run, with the plugin's state in it.
-    pub runs: &'a dyn Fn() -> Vec<(RunInfo, Value)>,
+    pub runs: &'a dyn Fn() -> Vec<(RunInfo, PluginValue)>,
     /// A run's tool calls.
     pub cards: &'a dyn Fn(&tau_agent::tool::RunId) -> Vec<crate::CardInfo>,
     pub cx: &'a mut App,
@@ -56,8 +60,8 @@ pub struct PageInfo {
 /// plugin's data for it.
 #[derive(Debug, Clone, Copy)]
 pub struct CommandsAt<'a> {
-    pub data: &'a Value,
-    pub repo: Option<(&'a str, &'a Value)>,
+    pub data: &'a PluginValue,
+    pub repo: Option<(&'a str, &'a PluginValue)>,
 }
 
 /// A slash command, by name.
@@ -79,28 +83,32 @@ pub trait ErasedPlugin: Send + Sync {
     fn name(&self) -> &'static str;
 
     fn host(&self, cx: &HostCx) -> anyhow::Result<HostState>;
-    fn default_settings(&self) -> Value;
+    fn default_settings(&self) -> PluginValue;
     fn agent_plugins(
         &self,
         host: &HostState,
         run: &RunCtx,
-        settings: &Value,
+        settings: &PluginValue,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>>;
     fn starting(
         &self,
         host: &HostState,
         run: &RunCtx,
-        settings: &Value,
+        settings: &PluginValue,
     ) -> Vec<Value>;
     fn catalog(
         &self,
         host: &HostState,
         cx: &HostCx,
-        settings: &Value,
+        settings: &PluginValue,
     ) -> PluginInfo;
-    fn data(&self, host: &HostState, cx: &HostCx) -> Value;
-    fn repo_data(&self, host: &HostState, repo: &RepoCtx, cx: &HostCx)
-    -> Value;
+    fn data(&self, host: &HostState, cx: &HostCx) -> PluginValue;
+    fn repo_data(
+        &self,
+        host: &HostState,
+        repo: &RepoCtx,
+        cx: &HostCx,
+    ) -> PluginValue;
     fn act(
         &self,
         host: &HostState,
@@ -108,7 +116,9 @@ pub trait ErasedPlugin: Send + Sync {
         cx: &HostCx,
     ) -> anyhow::Result<Option<Value>>;
 
-    fn apply(&self, state: &mut Value, body: &Value, run: &mut dyn RunCx);
+    /// Folds `body`, a record the plugin published (or the details of a
+    /// rewrite, [`crate::REWRITE`]), into its state in a run.
+    fn apply(&self, state: &mut PluginValue, body: &Value, run: &mut dyn RunCx);
 
     fn new_ui(&self, handle: Handle, cx: &mut App) -> AnyEntity;
     fn reply(&self, ui: AnyEntity, reply: Value, cx: &mut App);
@@ -153,14 +163,6 @@ struct Typed<P: UiPlugin> {
     manifest: Manifest<P>,
 }
 
-fn decode<T: DeserializeOwned + Default>(value: &Value) -> T {
-    serde_json::from_value(value.clone()).unwrap_or_default()
-}
-
-fn encode(value: &impl Serialize) -> Value {
-    serde_json::to_value(value).unwrap_or_default()
-}
-
 impl<P: UiPlugin> Typed<P> {
     fn host<'h>(&self, host: &'h HostState) -> &'h P::Host {
         host.downcast_ref()
@@ -174,21 +176,13 @@ impl<P: UiPlugin> Typed<P> {
         f: impl for<'b> FnOnce(&mut ViewCx<'b, P>) -> R,
     ) -> Option<R> {
         let ui = env.ui.downcast::<P::Ui>().ok()?;
-        let state: Option<P::State> = env.state.map(decode);
-        let data: P::Data = decode(env.data);
-        let settings: P::Settings = decode(env.settings);
-        let repos: BTreeMap<String, P::RepoData> = env
-            .repos
-            .iter()
-            .map(|(name, value)| (name.clone(), decode(value)))
-            .collect();
         let mut view = ViewCx::new(
             &self.plugin,
             ui,
-            state.as_ref(),
-            &data,
-            &settings,
-            &repos,
+            env.state.map(PluginValue::get::<P::State>),
+            env.data.get::<P::Data>(),
+            env.settings.get::<P::Settings>(),
+            env.repos,
             env.run,
             env.params,
             env.compact,
@@ -209,44 +203,53 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
     }
 
     fn host(&self, cx: &HostCx) -> anyhow::Result<HostState> {
-        Ok(Box::new(self.plugin.host(cx)?))
+        Ok(Box::new(<P::Host as PluginHost>::new(cx)?))
     }
 
-    fn default_settings(&self) -> Value {
-        encode(&P::Settings::default())
+    fn default_settings(&self) -> PluginValue {
+        PluginValue::typed(P::Settings::default())
     }
 
     fn agent_plugins(
         &self,
         host: &HostState,
         run: &RunCtx,
-        settings: &Value,
+        settings: &PluginValue,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         self.plugin
-            .agent_plugins(self.host(host), run, &decode(settings))
+            .agent_plugins(self.host(host), run, settings.get())
     }
 
     fn starting(
         &self,
         host: &HostState,
         run: &RunCtx,
-        settings: &Value,
+        settings: &PluginValue,
     ) -> Vec<Value> {
         self.plugin
-            .starting(self.host(host), run, &decode(settings))
+            .starting(self.host(host), run, settings.get())
+            .iter()
+            .map(|record| {
+                serde_json::to_value(record)
+                    .expect("a plugin's record serializes")
+            })
+            .collect()
     }
 
     fn catalog(
         &self,
         host: &HostState,
         cx: &HostCx,
-        settings: &Value,
+        settings: &PluginValue,
     ) -> PluginInfo {
-        self.plugin.catalog(self.host(host), cx, &decode(settings))
+        PluginInfo {
+            name: self.plugin.name().to_owned(),
+            ..self.plugin.catalog(self.host(host), cx, settings.get())
+        }
     }
 
-    fn data(&self, host: &HostState, cx: &HostCx) -> Value {
-        encode(&self.plugin.data(self.host(host), cx))
+    fn data(&self, host: &HostState, cx: &HostCx) -> PluginValue {
+        PluginValue::typed(self.plugin.data(self.host(host), cx))
     }
 
     fn repo_data(
@@ -254,8 +257,8 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         host: &HostState,
         repo: &RepoCtx,
         cx: &HostCx,
-    ) -> Value {
-        encode(&self.plugin.repo_data(self.host(host), repo, cx))
+    ) -> PluginValue {
+        PluginValue::typed(self.plugin.repo_data(self.host(host), repo, cx))
     }
 
     fn act(
@@ -267,14 +270,28 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         self.plugin.act(self.host(host), action, cx)
     }
 
-    fn apply(&self, state: &mut Value, body: &Value, run: &mut dyn RunCx) {
-        let mut typed: P::State = decode(state);
-        self.plugin.apply(&mut typed, body, run);
-        *state = encode(&typed);
+    fn apply(
+        &self,
+        state: &mut PluginValue,
+        body: &Value,
+        run: &mut dyn RunCx,
+    ) {
+        let state = state.get_mut::<P::State>();
+        if let Some(details) = body.get(crate::REWRITE)
+            && body.get("kind").is_none()
+        {
+            state.rewritten(details.clone(), run);
+            return;
+        }
+        if let Some(record) =
+            tau_agent::plugin::read_record(self.plugin.name(), body)
+        {
+            state.apply(record, run);
+        }
     }
 
     fn new_ui(&self, handle: Handle, cx: &mut App) -> AnyEntity {
-        cx.new(|cx| self.plugin.new_ui(handle, cx)).into_any()
+        cx.new(|cx| <P::Ui as PluginUi>::new(handle, cx)).into_any()
     }
 
     fn reply(&self, ui: AnyEntity, reply: Value, cx: &mut App) {
@@ -354,10 +371,8 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
             popover: command.has_popover(),
         });
         let listed = self.manifest.listed.as_ref().map(|listed| {
-            let data: P::Data = decode(at.data);
-            let repo: Option<P::RepoData> =
-                at.repo.map(|(_, value)| decode(value));
-            (listed.list)(&data, repo.as_ref())
+            let repo = at.repo.map(|(_, value)| value.get::<P::RepoData>());
+            (listed.list)(at.data.get::<P::Data>(), repo)
         });
         let mut commands: Vec<CommandInfo> = own.collect();
         for command in listed.into_iter().flatten() {
@@ -492,6 +507,7 @@ impl Registry {
 
 #[cfg(test)]
 mod tests {
+    use serde::{Deserialize, Serialize};
     use serde_json::json;
 
     use super::*;
@@ -505,12 +521,32 @@ mod tests {
     /// Counts what it is published, and anchors each at the transcript.
     struct Counter;
 
+    /// What the counter folds: the numbers published to it.
+    #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+    struct Counted(Vec<u32>);
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum Count {
+        N { n: u32 },
+    }
+
+    impl Fold for Counted {
+        type Record = Count;
+
+        fn apply(&mut self, record: Count, run: &mut dyn RunCx) {
+            let Count::N { n } = record;
+            self.0.push(n);
+            run.transcript(&format!("n-{n}"));
+        }
+    }
+
     const ELSEWHERE: Point<AtApp, NavEntry> =
         Point::new("nobody.declares.this");
     const MINE: Point<AtApp, NavEntry> = Point::new("counter.mine");
 
     impl UiPlugin for Counter {
-        type State = Vec<u32>;
+        type State = Counted;
         type Data = ();
         type RepoData = ();
         type Settings = ();
@@ -519,10 +555,6 @@ mod tests {
 
         fn name(&self) -> &'static str {
             "counter"
-        }
-
-        fn host(&self, _cx: &HostCx) -> anyhow::Result<()> {
-            Ok(())
         }
 
         fn agent_plugins(
@@ -537,20 +569,6 @@ mod tests {
         fn catalog(&self, _: &(), _: &HostCx, _: &()) -> PluginInfo {
             unreachable!()
         }
-
-        fn apply(
-            &self,
-            state: &mut Vec<u32>,
-            body: &Value,
-            run: &mut dyn RunCx,
-        ) {
-            if let Some(n) = body["n"].as_u64() {
-                state.push(n as u32);
-                run.transcript(&format!("n-{n}"));
-            }
-        }
-
-        fn new_ui(&self, _: Handle, _: &mut gpui::Context<()>) {}
 
         fn manifest(&self) -> Manifest<Self> {
             Manifest::new()
@@ -568,9 +586,8 @@ mod tests {
     }
 
     /// Folding through the registry is folding the typed state: every
-    /// body lands in order, with its anchor, and the state travels as
-    /// JSON between bodies. A body the plugin does not read changes
-    /// nothing.
+    /// record lands in order, with its anchor. A body the plugin cannot
+    /// read changes nothing.
     #[hegel::test(test_cases = 100)]
     fn the_erased_fold_is_the_typed_fold(tc: hegel::TestCase) {
         use hegel::generators as gs;
@@ -578,20 +595,18 @@ mod tests {
             tc.draw(gs::vecs(gs::optional(gs::integers::<u32>())).max_size(8));
         let registry = Registry::new().with(Counter);
         let plugin = registry.get("counter").unwrap();
-        let mut state = Value::Null;
+        let mut state = PluginValue::default();
         let mut anchors = crate::testing::FakeRun::default();
         for body in &bodies {
             let body = match body {
-                Some(n) => json!({ "n": n }),
+                Some(n) => json!({ "kind": "n", "n": n }),
                 None => json!({ "kind": "other" }),
             };
             plugin.apply(&mut state, &body, &mut anchors);
         }
         let kept: Vec<u32> = bodies.iter().flatten().copied().collect();
-        // No body at all leaves the state as the interface starts it.
-        let folded: Vec<u32> =
-            serde_json::from_value(state).unwrap_or_default();
-        assert_eq!(folded, kept);
+        // A record the plugin cannot read is skipped.
+        assert_eq!(state.get::<Counted>().0, kept);
         let keys: Vec<String> = kept.iter().map(|n| format!("n-{n}")).collect();
         assert_eq!(anchors.anchors, keys);
     }

@@ -70,8 +70,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Some(Ok(choice)) => {
                         cost += choice.cost;
                         format!(
-                            "{} {} at {:.2}, lease {}",
-                            choice.kind,
+                            "{:?} {} at {:.2}, lease {}",
+                            choice.verdict,
                             choice.effort,
                             choice.confidence,
                             choice.lease.as_deref().unwrap_or("none"),

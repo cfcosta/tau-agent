@@ -615,8 +615,7 @@ pub fn rules_stats(
         .map(|(run, state)| (&*run.id.0, &state.stats))
         .collect();
     let history = view
-        .repos
-        .get(repo)
+        .repo(repo)
         .map(|rules| rules.history.as_slice())
         .unwrap_or_default();
     let mut stats = RulesStats::of(&loaded, history);
@@ -674,7 +673,7 @@ pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> AnyElement {
             .into_any_element();
     };
     let focus = view.param("rule").map(str::to_owned);
-    let rules = view.repos.get(&repo).cloned().unwrap_or_default();
+    let rules = view.repo(&repo).cloned().unwrap_or_default();
     let stats = rules_stats(view, &repo);
     let jev = view.jev;
     let ui = view.ui.clone();

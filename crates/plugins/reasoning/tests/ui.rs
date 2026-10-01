@@ -7,15 +7,22 @@ use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_reasoning::{
     NAME,
+    Record,
     ui::{Note, ReasoningPlugin, State},
 };
 use tau_ui_plugin::{
+    Fold as _,
     RunCtx,
     RunKind,
     Services,
     UiPlugin,
     testing::{FakeRun, run_ctx},
 };
+
+/// Folds `body` as the registry does: as one of the plugin's records.
+fn fold(state: &mut State, body: &Value, run: &mut FakeRun) {
+    state.apply(Record::parse(body).expect("a record"), run);
+}
 
 /// A choice as the plugin publishes it, on gpt-5.5's levels.
 fn choice(chose: bool, effort: &str, runs_at: Option<&str>) -> Value {
@@ -24,7 +31,8 @@ fn choice(chose: bool, effort: &str, runs_at: Option<&str>) -> Value {
         .map(|effort| json!({ "effort": effort, "suits": "", "p": 0.2 }))
         .collect();
     json!({
-        "kind": if chose { "chose" } else { "kept" },
+        "kind": "choice",
+        "verdict": if chose { "chose" } else { "kept" },
         "effort": effort, "confidence": 0.8, "threshold": 0.7,
         "levels": levels, "cost": 0.0, "runs_at": runs_at,
     })
@@ -52,14 +60,19 @@ fn notes_show_only_where_the_effort_changes(tc: hegel::TestCase) {
     for step in &steps {
         match step {
             None => {
-                state.apply(
+                fold(
+                    &mut state,
                     &json!({ "kind": "error", "message": "offline" }),
                     &mut anchors,
                 );
                 notes += 1;
             }
             Some((chose, effort, runs_at)) => {
-                state.apply(&choice(*chose, effort, *runs_at), &mut anchors);
+                fold(
+                    &mut state,
+                    &choice(*chose, effort, *runs_at),
+                    &mut anchors,
+                );
                 choices += 1;
                 let now = runs_at
                     .map(str::to_owned)
@@ -105,10 +118,18 @@ fn notes_show_only_where_the_effort_changes(tc: hegel::TestCase) {
 fn a_note_says_what_changed() {
     let mut state = State::default();
     let mut anchors = FakeRun::default();
-    state.apply(&choice(false, "low", None), &mut anchors);
-    state.apply(&choice(true, "high", Some("high")), &mut anchors);
-    state.apply(&choice(false, "low", Some("high")), &mut anchors);
-    state.apply(&choice(true, "low", Some("low")), &mut anchors);
+    fold(&mut state, &choice(false, "low", None), &mut anchors);
+    fold(
+        &mut state,
+        &choice(true, "high", Some("high")),
+        &mut anchors,
+    );
+    fold(
+        &mut state,
+        &choice(false, "low", Some("high")),
+        &mut anchors,
+    );
+    fold(&mut state, &choice(true, "low", Some("low")), &mut anchors);
     let texts: Vec<String> = anchors
         .anchors
         .iter()
@@ -152,7 +173,7 @@ fn it_says_whether_it_is_on(tc: hegel::TestCase) {
     let bodies = ReasoningPlugin.starting(&(), &run, &settings);
     let mut state = State::default();
     for body in &bodies {
-        state.apply(body, &mut FakeRun::default());
+        state.apply(body.clone(), &mut FakeRun::default());
     }
     let status = state.starting.unwrap();
     let on = jev && effort.is_none();

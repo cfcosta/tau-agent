@@ -27,12 +27,12 @@ use tau_agent::{
 };
 use tau_ai::message::{InputBlock, Message};
 use tau_constitution::{
-    Check,
     Constitution,
     ConstitutionPlugin,
     Live,
     NAME,
     OnError,
+    Record,
     Target,
     Verdict,
     VerdictKind,
@@ -153,7 +153,12 @@ fn verdicts(events: &[RunEvent]) -> Vec<Verdict> {
             RunEvent::PluginReport { plugin, body, .. }
                 if &**plugin == NAME =>
             {
-                Verdict::parse(body)
+                match Record::parse(body)? {
+                    Record::Blocked(verdict)
+                    | Record::Flagged(verdict)
+                    | Record::Held(verdict) => Some(verdict),
+                    _ => None,
+                }
             }
             _ => None,
         })
@@ -236,19 +241,26 @@ fn a_call_that_breaks_a_rule_is_refused_with_the_rule() {
     // The call's check with every score, its verdict, then the check
     // of the final answer, which passed.
     assert_eq!(records.len(), 3);
-    let answer = Check::parse(&records[2]).unwrap();
+    let check_of = |body: &Value| match Record::parse(body) {
+        Some(Record::Checked(check)) => check,
+        other => panic!("not a check: {other:?}"),
+    };
+    let answer = check_of(&records[2]);
     assert_eq!(
         (answer.call_id, answer.scores[0].rule.as_str()),
         (None, "R6")
     );
-    let check = Check::parse(&records[0]).unwrap();
+    let check = check_of(&records[0]);
     assert_eq!(
         check.call_id.as_deref(),
         Some(found[0].call_id.as_deref().unwrap())
     );
     assert_eq!(check.scores[0].rule, "R2");
     assert!(check.cost > 0.0, "Jev's cost is counted");
-    assert_eq!(Verdict::parse(&records[1]).unwrap(), found[0]);
+    assert_eq!(
+        Record::parse(&records[1]),
+        Some(Record::verdict(found[0].clone()))
+    );
 }
 
 #[test]

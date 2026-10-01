@@ -18,18 +18,19 @@ use std::{
 
 use gpui::{AppContext as _, Context};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use tau_agent::plugin::Plugin;
-use tau_ui_kit::{assets::Icon, input::TextInput, theme::Tone};
+use tau_ui_kit::{assets::Icon, input::TextInput};
 use tau_ui_plugin::{
+    Fold,
     Handle,
     HostCx,
     Link,
     Manifest,
     NavEntry,
     Page,
+    PluginHost,
     PluginInfo,
-    PluginStatus,
+    PluginUi,
     RepoCtx,
     RunCtx,
     RunCx,
@@ -37,7 +38,7 @@ use tau_ui_plugin::{
     TurnCommit,
     TurnHooks,
     UiPlugin,
-    points::{self, AtApp, AtRepo, AtRun},
+    points::{self, AtApp, AtRepo},
 };
 
 use crate::{
@@ -46,7 +47,7 @@ use crate::{
     Scopes,
     index::{Bm25, Index},
     note::{By, LinkType, Note as MemoryNote},
-    plugin::{NAME, Scope},
+    plugin::{NAME, Record, Scope},
     store::Notes,
 };
 
@@ -360,41 +361,33 @@ pub enum Mark {
     Failed(String),
 }
 
-impl State {
+impl Fold for State {
+    type Record = Record;
+
     /// Folds one of the plugin's records, or what it says as a run
     /// starts.
-    pub fn apply(&mut self, body: &Value, run: &mut dyn RunCx) {
-        let mark = match body["kind"].as_str() {
-            Some("starting") => {
-                self.notes = body["notes"].as_u64().map(|n| n as usize);
+    fn apply(&mut self, record: Record, run: &mut dyn RunCx) {
+        let mark = match record {
+            Record::Starting { notes } => {
+                self.notes = Some(notes);
                 return;
             }
-            Some("recalled") => Mark::Recalled(
-                body["notes"]
-                    .as_array()
+            Record::Recalled { notes } => Mark::Recalled(
+                notes
                     .into_iter()
-                    .flatten()
-                    .filter_map(|note| {
-                        Some((
-                            note["id"].as_str()?.to_owned(),
-                            note["title"].as_str()?.to_owned(),
-                        ))
-                    })
+                    .map(|note| (note.id, note.title))
                     .collect(),
             ),
-            Some("saved") => {
-                Mark::Saved(body["calls"].as_array().map_or(0, Vec::len))
-            }
-            Some("error") => Mark::Failed(
-                body["message"].as_str().unwrap_or("failed").to_owned(),
-            ),
-            _ => return,
+            Record::Saved { calls } => Mark::Saved(calls.len()),
+            Record::Error { message } => Mark::Failed(message),
         };
         let key = format!("m{}", self.marks.len());
         self.marks.insert(key.clone(), mark);
         run.transcript(&key);
     }
+}
 
+impl State {
     /// The plugin's line in the run's plugin list.
     pub fn status(&self) -> Option<String> {
         Some(match self.notes? {
@@ -427,14 +420,6 @@ impl UiPlugin for MemoryUi {
         NAME
     }
 
-    fn host(&self, cx: &HostCx) -> anyhow::Result<Host> {
-        let search = cx.services.get::<Search>().copied().unwrap_or_default();
-        Ok(Host {
-            memories: Memories::new(search),
-            user: cx.dir.join("memory"),
-        })
-    }
-
     /// Notes for a run and its sub-agents alike, marked stale when a
     /// turn changes what they are about. Notes that cannot be opened
     /// leave memory out of the run, which goes on.
@@ -465,9 +450,9 @@ impl UiPlugin for MemoryUi {
         host: &Host,
         run: &RunCtx,
         _settings: &(),
-    ) -> Vec<Value> {
+    ) -> Vec<Record> {
         let notes = host.memories.notebook(&repo_dir(&run.repo)).notes.len();
-        vec![json!({ "kind": "starting", "notes": notes })]
+        vec![Record::Starting { notes }]
     }
 
     fn catalog(
@@ -477,7 +462,6 @@ impl UiPlugin for MemoryUi {
         _settings: &(),
     ) -> PluginInfo {
         PluginInfo {
-            name: NAME.into(),
             description: "Linked notes each repository's runs keep, and yours \
                           across them; searched at the start of a run"
                 .into(),
@@ -487,8 +471,8 @@ impl UiPlugin for MemoryUi {
                 Seam::AfterTool,
                 Seam::Rewrite,
             ],
-            spend: 0.0,
             page: Some(notes_link("")),
+            ..Default::default()
         }
     }
 
@@ -498,16 +482,6 @@ impl UiPlugin for MemoryUi {
 
     fn repo_data(&self, host: &Host, repo: &RepoCtx, _cx: &HostCx) -> Notebook {
         host.memories.notebook(&repo_dir(repo))
-    }
-
-    fn apply(&self, state: &mut State, body: &Value, run: &mut dyn RunCx) {
-        state.apply(body, run);
-    }
-
-    fn new_ui(&self, _handle: Handle, cx: &mut Context<page::Ui>) -> page::Ui {
-        let search = cx.new(|cx| TextInput::new("Search notes", cx));
-        cx.observe(&search, |_, _, cx| cx.notify()).detach();
-        page::Ui { search }
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -521,20 +495,32 @@ impl UiPlugin for MemoryUi {
             })
             .contribute_at(points::SIDEBAR_REPO, -10, |at: &AtRepo, view| {
                 let notes =
-                    view.repos.get(&at.repo).map_or(0, |book| book.notes.len());
+                    view.repo(&at.repo).map_or(0, |book| book.notes.len());
                 Some(
                     NavEntry::new("Memory", Icon::Memory, notes_link(&at.repo))
                         .detail(format!("{notes} notes")),
                 )
             })
-            .contribute(points::STATUS, |_: &AtRun, view| {
-                Some(PluginStatus {
-                    name: NAME.into(),
-                    state: view.state?.status()?,
-                    tone: Tone::Quiet,
-                })
-            })
+            .status(State::status)
             .contribute(points::TRANSCRIPT, page::mark)
+    }
+}
+
+impl PluginHost for Host {
+    fn new(cx: &HostCx) -> anyhow::Result<Self> {
+        let search = cx.services.get::<Search>().copied().unwrap_or_default();
+        Ok(Host {
+            memories: Memories::new(search),
+            user: cx.dir.join("memory"),
+        })
+    }
+}
+
+impl PluginUi for page::Ui {
+    fn new(_handle: Handle, cx: &mut Context<Self>) -> Self {
+        let search = cx.new(|cx| TextInput::new("Search notes", cx));
+        cx.observe(&search, |_, _, cx| cx.notify()).detach();
+        page::Ui { search }
     }
 }
 

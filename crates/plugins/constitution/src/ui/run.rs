@@ -143,8 +143,7 @@ pub fn blocked(
     let t = view.theme().clone();
     let compact = view.compact;
     let thresholds = view
-        .repos
-        .get(&at.run.repo)
+        .repo(&at.run.repo)
         .and_then(|rules| rules.rule(&verdict.rule))
         .map(|rule| (rule.review as f32, rule.block as f32));
     let p = verdict.score as f32;

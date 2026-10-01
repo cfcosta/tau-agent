@@ -2,14 +2,15 @@
 //! scripts.
 //!
 //! A successful script's writes become one record,
-//! `{ "store": { "set": { key: value }, "delete": [key] } }`. Each run
-//! folds the records along its fork chain, oldest first, into the
+//! `{ "kind": "store", "set": { key: value }, "delete": [key] }`. Each
+//! run folds the records along its fork chain, oldest first, into the
 //! snapshot the script starts from. Records that do not parse are
 //! skipped.
 
 use std::collections::BTreeMap;
 
-use serde_json::{Map, Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// The most JSON text one stored value may take, in bytes.
 pub const MAX_VALUE_BYTES: usize = 256 * 1024;
@@ -22,10 +23,18 @@ pub type Snapshot = BTreeMap<String, Value>;
 
 /// One script's writes, in the order they apply: sets, then deletes.
 /// A key is in at most one of the two.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Writes {
     pub set: BTreeMap<String, Value>,
     pub delete: Vec<String>,
+}
+
+/// What tau-codemode publishes: a script's store writes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Record {
+    Store(Writes),
 }
 
 impl Writes {
@@ -33,35 +42,6 @@ impl Writes {
         self.set.is_empty() && self.delete.is_empty()
     }
 
-    /// The record that keeps these writes.
-    pub fn to_record(&self) -> Value {
-        json!({ "store": { "set": self.set, "delete": self.delete } })
-    }
-
-    /// The writes a record holds, or `None` for a record of another
-    /// shape.
-    pub fn from_record(record: &Value) -> Option<Self> {
-        let store = record.get("store")?.as_object()?;
-        let set = match store.get("set") {
-            None => BTreeMap::new(),
-            Some(Value::Object(map)) => map
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect(),
-            Some(_) => return None,
-        };
-        let delete = match store.get("delete") {
-            None => Vec::new(),
-            Some(Value::Array(keys)) => keys
-                .iter()
-                .map(|key| key.as_str().map(str::to_owned))
-                .collect::<Option<Vec<_>>>()?,
-            Some(_) => return None,
-        };
-        Some(Self { set, delete })
-    }
-
-    /// Applies the writes to `snapshot`.
     pub fn apply(&self, snapshot: &mut Snapshot) {
         for (key, value) in &self.set {
             snapshot.insert(key.clone(), value.clone());
@@ -70,26 +50,16 @@ impl Writes {
             snapshot.remove(key);
         }
     }
-
-    /// The details' `store` field.
-    pub fn to_json(&self) -> Value {
-        let set: Map<String, Value> = self
-            .set
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect();
-        json!({ "set": set, "delete": self.delete })
-    }
 }
 
 /// Folds `records`, oldest first, into a snapshot. Records of another
 /// shape are skipped.
-pub fn fold<'a>(records: impl IntoIterator<Item = &'a Value>) -> Snapshot {
+pub fn fold(records: &[Value]) -> Snapshot {
     let mut snapshot = Snapshot::new();
-    for record in records {
-        if let Some(writes) = Writes::from_record(record) {
-            writes.apply(&mut snapshot);
-        }
+    for Record::Store(writes) in
+        tau_agent::plugin::read_records(crate::PLUGIN, records)
+    {
+        writes.apply(&mut snapshot);
     }
     snapshot
 }

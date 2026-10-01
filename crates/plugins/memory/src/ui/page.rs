@@ -100,7 +100,7 @@ fn notebook(view: &ViewCx<'_, MemoryUi>, repo: &str) -> Notebook {
     if repo == USER {
         view.data.clone()
     } else {
-        view.repos.get(repo).cloned().unwrap_or_default()
+        view.repo(repo).cloned().unwrap_or_default()
     }
 }
 

@@ -24,6 +24,7 @@ tokio = { workspace = true, features = ["sync", "time"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
+tau-ui-plugin = { workspace = true, features = ["testing"] }
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
 tau-store.workspace = true

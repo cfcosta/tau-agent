@@ -100,7 +100,7 @@ estimated with `chars / 4`.
 ## After compaction
 
 - Compaction's rewrite ([plugins.md](plugins.md)) is stored as a
-  `messages` row with `kind = 'context'` and `plugin = 'compaction'`.
+  `messages` row with `kind = 'context'` and `plugin = 'tau-compaction'`.
   Its body holds the summary, the token count before compaction, the
   file lists and a timestamp. The summary message and the kept messages
   are written after it, in the same transaction, because loading a

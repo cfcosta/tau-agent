@@ -213,20 +213,36 @@ impl PluginCtx {
     /// The run emits it as `RunEvent::PluginCharged` before its next
     /// event.
     pub fn charge(&self, usage: &Usage);
-    /// Reports `body` and records it with the run, in one call: what
+    /// Reports `record` and stores it with the run, in one call: what
     /// an interface shows of a plugin, live and from history alike
-    /// (ADR 0017). Plugins use it for everything they report.
-    pub async fn publish(&self, body: &Value) -> Result<(), StoreError>;
+    /// (ADR 0017). Plugins use it for everything they report. A record
+    /// that is not stored is said on stderr.
+    pub async fn publish(&self, record: &impl Serialize);
+    /// `publish`, failing when the record is not stored.
+    pub async fn try_publish(&self, record: &impl Serialize)
+        -> Result<(), StoreError>;
     /// Stores a record for this plugin in the run's transcript. The
     /// model never sees it. Forks and resumed runs get it back in
     /// `RunPlan::records`.
-    pub async fn record(&self, body: &Value) -> Result<(), StoreError>;
+    pub async fn record(&self, record: &impl Serialize)
+        -> Result<(), StoreError>;
     /// The plugin's records along the run's fork chain as stored now:
     /// its own since the start, and any an interface stored for it
     /// meanwhile (tau-goal's pause, extend and clear).
     pub async fn records(&self) -> Result<Vec<Value>, StoreError>;
 }
+
+/// Reads one of `plugin`'s records as its type. A body that does not
+/// decode is `None`, and said on stderr once per plugin.
+pub fn read_record<R: DeserializeOwned>(plugin: &str, body: &Value)
+    -> Option<R>;
+/// The bodies that decode, in order.
+pub fn read_records<R: DeserializeOwned>(plugin: &str, bodies: &[Value])
+    -> Vec<R>;
 ```
+
+A plugin's records are one `#[serde(tag = "kind")]` enum, which its
+agent half publishes and its UI fold reads.
 
 ## Context rewrites
 
@@ -357,7 +373,21 @@ builds its agent plugin for a run, folds what it publishes
 (`PluginCtx::publish`) into its state for the run, live and from
 history alike, and adds its pages and contributions to the interface
 at extension points. `tau-ui` registers them in `plugins.rs` and builds
-a run's plugins only through that registry. See
+a run's plugins only through that registry.
+
+- **The fold.** `UiPlugin::State` implements `Fold`: its `Record` is
+  the plugin's record enum, `apply(&mut self, record, run)` folds one,
+  and `rewritten(&mut self, details, run)` folds the details of the
+  context rewrite a run's history starts at (`REWRITE`). The registry
+  decodes each body; one that does not decode is skipped, and said
+  once per plugin. `()` folds nothing.
+- **Host and window state.** `type Host: PluginHost` is made once with
+  `new(cx: &HostCx)`, and `type Ui: PluginUi` once per window with
+  `new(handle, cx)`. Any `Default` type is both.
+- **Values.** The interface keeps a plugin's state, data and settings
+  as `PluginValue`: its own type once read, JSON only on the wire.
+
+See
 [ADR 0017](../decisions/0017-plugins-bring-their-ui.md), and its "As
 built" section for the interface as it is.
 

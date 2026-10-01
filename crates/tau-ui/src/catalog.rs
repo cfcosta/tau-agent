@@ -4,6 +4,7 @@
 //! an example.
 
 use serde::{Deserialize, Serialize};
+use tau_ui_plugin::PluginValue;
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Catalog {
@@ -32,13 +33,13 @@ pub struct Catalog {
     pub update: Option<String>,
     /// The models the picker offers, and the user's choices about them.
     pub models: crate::models::Models,
-    /// Each plugin's data across repositories, as JSON, by plugin
+    /// Each plugin's data across repositories, by plugin
     /// (`UiPlugin::data`).
     #[serde(default)]
-    pub plugin_data: std::collections::BTreeMap<String, serde_json::Value>,
+    pub plugin_data: std::collections::BTreeMap<String, PluginValue>,
     /// Each plugin's settings, as JSON, by plugin.
     #[serde(default)]
-    pub plugin_settings: std::collections::BTreeMap<String, serde_json::Value>,
+    pub plugin_settings: std::collections::BTreeMap<String, PluginValue>,
 }
 
 impl Catalog {
@@ -63,10 +64,10 @@ pub struct Repo {
     /// cannot be closed.
     #[serde(default)]
     pub main: Option<tau_agent::tool::RunId>,
-    /// Each plugin's data for the repository, as JSON, by plugin
+    /// Each plugin's data for the repository, by plugin
     /// (`UiPlugin::repo_data`).
     #[serde(default)]
-    pub plugins: std::collections::BTreeMap<String, serde_json::Value>,
+    pub plugins: std::collections::BTreeMap<String, PluginValue>,
 }
 
 impl Repo {

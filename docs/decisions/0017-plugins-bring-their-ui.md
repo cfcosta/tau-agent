@@ -321,18 +321,29 @@ a `context` entry's details to the plugin that wrote it.
 All eight plugin crates now bring their UI. The interface differs from
 the sketch above in these places:
 
-- **The methods.** `UiPlugin` has `host`, `agent_plugins`, `starting`,
-  `catalog`, `data`, `repo_data`, `act`, `apply`, `new_ui`, `reply`,
-  `read_prompt` and `manifest`. `agent_plugins` returns
+- **The methods.** `UiPlugin` has `agent_plugins`, `starting`,
+  `catalog`, `data`, `repo_data`, `act`, `reply`, `read_prompt` and
+  `manifest`. `agent_plugins` returns
   `anyhow::Result<Vec<Box<dyn Plugin>>>`: none when the plugin is off
   for the run, and an error fails the run (rules that cannot be read).
-  `starting` gives bodies the host folds as a run starts or goes on,
-  such as whether the plugin is on and why not. `read_prompt` reads a
+  `starting` gives records (`RecordOf<Self>`) the host folds as a run
+  starts or goes on, such as whether the plugin is on and why not.
+  `catalog` returns a `PluginInfo` with `..Default::default()`: the
+  registry sets its name and the host its spend. `read_prompt` reads a
   run's prompt as the plugin's own command, for the run's title
   (`/goal`).
-- **Window state.** Each plugin has one `Ui` entity per window, made by
-  `new_ui` in its own context so it can subscribe to what it makes,
-  such as a field's Enter. Pages are functions that draw from a
+- **The fold.** `State` implements `Fold`, not `UiPlugin`: its
+  `Record` is the plugin's `#[serde(tag = "kind")]` enum, shared by the
+  agent half that publishes it and the fold that reads it.
+  `apply(&mut self, record, run)` folds one record, and `rewritten`
+  folds a stored rewrite's details. The registry decodes each body; one
+  that does not decode is skipped, and said once per plugin. `()` folds
+  nothing (`Record = Value`).
+- **Host and window state.** `type Host: PluginHost` is made once by
+  `new(cx: &HostCx)`. Each plugin has one `Ui` entity per window
+  (`type Ui: PluginUi`), made by `new(handle, cx)` in its own context
+  so it can subscribe to what it makes, such as a field's Enter. Any
+  `Default` type is both. Pages are functions that draw from a
   `ViewCx`, not entities of their own. Drafts, open tabs and the
   reset confirmation live in the plugin's `Ui`.
 - **What a fold reaches.** `RunCx` places anchors (`transcript`,
@@ -341,10 +352,12 @@ the sketch above in these places:
   `rewrite`, which names one of the plugin's context rewrites so it
   draws it at the `REWRITE` point. History starts at a run's last
   context rewrite; tau-ui folds its stored details as
-  `{ "rewrite": details }` once the transcript after it is in place.
+  `{ "rewrite": details }` (`Fold::rewritten`) once the transcript
+  after it is in place.
 - **Where history places a body.** A run's messages are stored when
   its turn ends, after what plugins published during it. A body can
-  say where history shows it with the `place` key (`placed`): with
+  say where history shows it with the `place` key
+  (`placed(&record, place)`): with
   its turn (no key), before the turn's messages (`now`), or after the
   message the run started on (`message`).
 - **Tool cards.** tau-ui keeps a card's frame and what the call sent
@@ -372,6 +385,13 @@ the sketch above in these places:
   `alert`, `open_run`, `ask_jev_key`, `refresh`, `focus` (give the
   keys to an element the plugin draws, as the window draws next) and
   `cancel` (a run going on).
+- **Values.** The interface keeps a plugin's state, data and settings
+  as `PluginValue`: its own type once read, JSON only on the wire and
+  in snapshots. `ViewCx` reads repository data through `repo(name)`
+  and `repos()`.
+- **Names.** Every plugin has one name, prefixed with `tau-`, for its
+  `UiPlugin`, its agent plugins and its records: `tau-codemode`,
+  `tau-compaction`, `tau-fast-compaction`, `tau-tools`, `tau-vcs`.
 - **What stays in tau-ui.** The Plan screen, generic plugin notes for
   `Continued` and `PluginError` from plugins without a UI, and the
   landing cards of ADR 0009, which draw changes with tau-vcs's pieces.

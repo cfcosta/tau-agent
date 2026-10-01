@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use tau_agent::tool::RunId;
 use tau_constitution::{
     NAME,
+    Record,
     ui::{
         Act,
         ConstitutionUi,
@@ -26,11 +27,13 @@ use tau_ui_plugin::{
     CardInfo,
     CardMark,
     Handle,
+    PluginUi,
+    PluginValue,
     Request,
     RunInfo,
     UiPlugin,
     ViewCx,
-    testing::FakeRun,
+    testing::{FakeRun, fold},
 };
 
 fn card(call_id: &str, tool: &str, summary: &str) -> CardInfo {
@@ -79,7 +82,7 @@ fn loading_a_run_does_not_change_the_totals(tc: hegel::TestCase) {
         .map(|n| {
             let mut stats = Stats::default();
             for body in tc.draw(gs::vecs(record()).max_size(6)) {
-                stats.add(&body, None);
+                stats.add(&Record::parse(&body).unwrap(), None);
             }
             (format!("run-{n}"), stats)
         })
@@ -116,8 +119,8 @@ fn the_fold_marks_what_the_checks_decided(tc: hegel::TestCase) {
     let mut state = State::default();
     let mut stats = Stats::default();
     for body in &bodies {
-        state.apply(body, &mut run);
-        stats.add(body, None);
+        fold(ConstitutionUi, &mut state, body, &mut run);
+        stats.add(&Record::parse(body).unwrap(), None);
     }
     assert_eq!(state.stats, stats);
     // Verdicts here are all on the answer; failures and verdicts each
@@ -151,7 +154,7 @@ fn a_verdict_marks_its_call() {
         json!({"kind": "checked", "call_id": "c2", "tool": "write",
                "scores": [{"rule": "R2", "score": 0.55}], "cost": 0.0}),
     ] {
-        state.apply(&body, &mut run);
+        fold(ConstitutionUi, &mut state, &body, &mut run);
     }
     assert_eq!(
         run.marks["c1"],
@@ -193,7 +196,7 @@ fn ui(cx: &mut TestAppContext) -> (Entity<Ui>, Asked) {
         NAME,
         Rc::new(move |_, request, _: &mut App| sink.borrow_mut().push(request)),
     );
-    let ui = cx.update(|cx| cx.new(|cx| ConstitutionUi.new_ui(handle, cx)));
+    let ui = cx.update(|cx| cx.new(|cx| <Ui as PluginUi>::new(handle, cx)));
     (ui, asked)
 }
 
@@ -362,14 +365,16 @@ fn with_view<R>(
     repos: &BTreeMap<String, Rules>,
     f: impl FnOnce(&mut ViewCx<'_, ConstitutionUi>) -> R,
 ) -> R {
-    let runs: Vec<(RunInfo, Value)> = runs
+    let runs: Vec<(RunInfo, PluginValue)> = runs
         .iter()
-        .map(|(run, state)| (run.clone(), serde_json::to_value(state).unwrap()))
+        .map(|(run, state)| (run.clone(), PluginValue::typed(state.clone())))
         .collect();
     let list = move || runs.clone();
     let cards = |_: &RunId| Vec::new();
     let params = BTreeMap::new();
     let handle = Handle::new(NAME, Rc::new(|_, _, _: &mut App| {}));
+    let repos = tau_ui_plugin::testing::RepoValues::new(repos);
+    let repos = repos.refs();
     cx.update(|cx| {
         let mut view = ViewCx::new(
             &ConstitutionUi,
@@ -377,7 +382,7 @@ fn with_view<R>(
             None,
             data,
             &(),
-            repos,
+            &repos,
             None,
             &params,
             false,
@@ -425,7 +430,7 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
         json!({"kind": "flagged", "rule": "R2", "text": "", "score": 0.55, "call_id": "c2"}),
         json!({"kind": "flagged", "rule": "R6", "text": "", "score": 0.5}),
     ] {
-        state.apply(&body, &mut run);
+        fold(ConstitutionUi, &mut state, &body, &mut run);
     }
     let runs = vec![
         (info("a", "tau-agent"), state.clone()),

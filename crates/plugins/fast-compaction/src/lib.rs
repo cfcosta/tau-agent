@@ -241,6 +241,19 @@ impl FastCompaction {
     }
 }
 
+/// What tau-fast-compaction publishes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Record {
+    /// How pruning one large output went.
+    Output(OutputStats),
+    /// A pass between turns: its ledger, and how it went.
+    Ledger(Details),
+    /// What the interface folds as a run starts, never stored: whether
+    /// it prunes.
+    Starting { on: bool },
+}
+
 /// What a rewrite stores: the ledger, and how the pass went.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Details {
@@ -448,9 +461,7 @@ async fn prune_output(
         archive: pruned.then(|| archive.display().to_string()),
         cost: spent.into_inner().expect("not poisoned"),
     };
-    let mut report = serde_json::to_value(&stats).expect("stats serialize");
-    report["kind"] = "output".into();
-    let _ = ctx.publish(&report).await;
+    ctx.publish(&Record::Output(stats)).await;
     Ok(pruned.then_some(text))
 }
 
@@ -557,10 +568,7 @@ impl FastCompactionRun {
             stats,
         };
         // Published for interfaces; the rewrite also stores it for forks.
-        let mut report =
-            serde_json::to_value(&details).expect("details serialize");
-        report["kind"] = "ledger".into();
-        let _ = ctx.publish(&report).await;
+        ctx.publish(&Record::Ledger(details.clone())).await;
         Ok(Some(Rewrite {
             messages,
             details: serde_json::to_value(details).expect("details serialize"),

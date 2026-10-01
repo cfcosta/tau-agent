@@ -123,13 +123,6 @@ impl AskPlugin {
     }
 }
 
-/// Publishes `record`, logging what could not be stored.
-async fn publish(ctx: &PluginCtx, record: &Record) {
-    if let Err(error) = ctx.publish(&record.to_value()).await {
-        tracing::warn!(%error, call = record.call(), "tau-ask could not store a record");
-    }
-}
-
 #[async_trait]
 impl Plugin for AskPlugin {
     fn name(&self) -> &str {
@@ -157,7 +150,7 @@ impl Plugin for AskPlugin {
             }
         }
         for call in open {
-            publish(ctx, &Record::Closed { call }).await;
+            ctx.publish(&Record::Closed { call }).await;
         }
         Ok(Box::new(()))
     }
@@ -195,7 +188,7 @@ struct Waits<'a> {
 impl Waits<'_> {
     async fn end(&mut self, record: Record) {
         self.ended = true;
-        publish(&self.plugin, &record).await;
+        self.plugin.publish(&record).await;
     }
 }
 
@@ -262,14 +255,12 @@ impl AgentTool for AskTool {
             call: call.clone(),
             ended: false,
         };
-        publish(
-            plugin,
-            &Record::Asked {
+        plugin
+            .publish(&Record::Asked {
                 call: call.clone(),
                 ask: ask.clone(),
-            },
-        )
-        .await;
+            })
+            .await;
         // A plugin's reports go out with the run's next event, and none
         // comes while the call waits: this update carries the question
         // to the interface now.

@@ -31,7 +31,7 @@ use tau_ui_kit::{
 use tau_ui_plugin::{
     CallData,
     CardMark,
-    Handle,
+    Fold,
     HostCx,
     Manifest,
     NestedMark,
@@ -52,7 +52,7 @@ use crate::{
     description::NAME,
     live::JevUpdate,
     result::{MAX_ARGS_CHARS, MAX_ERROR_CHARS, preview},
-    store::{Snapshot, Writes},
+    store::{Record, Snapshot, Writes},
 };
 
 /// tau-codemode with its UI.
@@ -69,14 +69,14 @@ pub struct State {
     pub writes: usize,
 }
 
-impl State {
+impl Fold for State {
+    type Record = Record;
+
     /// Folds one of the plugin's records: a script's store writes.
-    /// Records of another shape are skipped, as the plugin skips them.
-    pub fn apply(&mut self, body: &Value) {
-        if let Some(writes) = Writes::from_record(body) {
-            writes.apply(&mut self.store);
-            self.writes += 1;
-        }
+    fn apply(&mut self, record: Record, _run: &mut dyn RunCx) {
+        let Record::Store(writes) = record;
+        writes.apply(&mut self.store);
+        self.writes += 1;
     }
 }
 
@@ -329,10 +329,6 @@ impl UiPlugin for CodemodeUi {
         PLUGIN
     }
 
-    fn host(&self, _cx: &HostCx) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     /// The `codemode` tool, asking the run's metered Jev when there is a
     /// key; without one, scripts run and `jev` is nil.
     fn agent_plugins(
@@ -348,19 +344,12 @@ impl UiPlugin for CodemodeUi {
     fn catalog(&self, _host: &(), cx: &HostCx, _settings: &()) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
-            name: PLUGIN.into(),
             description: description(jev),
             seams: vec![Seam::Start, Seam::Tools],
-            spend: 0.0,
             page: None,
+            ..Default::default()
         }
     }
-
-    fn apply(&self, state: &mut State, body: &Value, _run: &mut dyn RunCx) {
-        state.apply(body);
-    }
-
-    fn new_ui(&self, _handle: Handle, _cx: &mut gpui::Context<()>) {}
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
@@ -454,9 +443,7 @@ fn body(
 ) -> Div {
     let writes = details
         .and_then(|details| details.get("store"))
-        .and_then(|store| {
-            Writes::from_record(&serde_json::json!({ "store": store }))
-        })
+        .and_then(|store| serde_json::from_value::<Writes>(store.clone()).ok())
         .filter(|writes| !writes.is_empty());
     div()
         .flex()

@@ -8,6 +8,7 @@ use tau_ui_plugin::{
     ConfigDir,
     ErasedPlugin,
     HostCx,
+    PluginValue,
     Push,
     RepoCtx,
     RunCtx,
@@ -130,13 +131,17 @@ impl Host {
     }
 
     /// The saved settings of `plugin`, or its defaults.
-    pub(super) fn plugin_settings(&self, plugin: &dyn ErasedPlugin) -> Value {
+    pub(super) fn plugin_settings(
+        &self,
+        plugin: &dyn ErasedPlugin,
+    ) -> PluginValue {
         self.settings
             .lock()
             .expect("not poisoned")
             .plugins
             .get(plugin.name())
             .cloned()
+            .map(PluginValue::from_json)
             .unwrap_or_else(|| plugin.default_settings())
     }
 
@@ -152,7 +157,7 @@ impl Host {
     + Send
     + Sync
     + 'static {
-        let hosted: Vec<(Hosted, Value)> = self
+        let hosted: Vec<(Hosted, PluginValue)> = self
             .hosted
             .iter()
             .map(|hosted| {
@@ -210,8 +215,8 @@ impl Host {
         &self,
     ) -> (
         Vec<PluginInfo>,
-        BTreeMap<String, Value>,
-        BTreeMap<String, Value>,
+        BTreeMap<String, PluginValue>,
+        BTreeMap<String, PluginValue>,
     ) {
         let cx = self.host_cx();
         let mut plugins = Vec::new();
@@ -238,7 +243,7 @@ impl Host {
     pub(super) fn registered_repo_data(
         &self,
         slot: &RepoSlot,
-    ) -> BTreeMap<String, Value> {
+    ) -> BTreeMap<String, PluginValue> {
         let cx = self.host_cx();
         let repo = self.repo_ctx(slot);
         self.hosted

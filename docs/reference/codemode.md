@@ -213,8 +213,8 @@ b` appends each value that is not `nil`. A return value JSON cannot
   session transcript instead of the file system." Values are JSON, at
   most 256 KiB of JSON text each and 1 MiB in all. Keys are strings.
 - **In tau:** a successful script's writes become one plugin record,
-  `{ "store": { "set": { key: value }, "delete": [key] } }`, through
-  `PluginCtx::publish` on `ToolCtx::plugin()`, which reports the record
+  `{ "kind": "store", "set": { key: value }, "delete": [key] }`, through
+  `PluginCtx::try_publish` on `ToolCtx::plugin()`, which reports the record
   and stores it with the run
   ([0017](../decisions/0017-plugins-bring-their-ui.md)). A failed script
   writes nothing, and a script that wrote nothing stores no record. If

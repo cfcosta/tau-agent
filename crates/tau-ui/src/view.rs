@@ -56,7 +56,8 @@ pub struct RunView {
     /// Each plugin's state in the run, as its fold leaves it, by plugin
     /// name (ADR 0017).
     #[serde(default)]
-    pub plugin_states: std::collections::BTreeMap<String, Value>,
+    pub plugin_states:
+        std::collections::BTreeMap<String, tau_ui_plugin::PluginValue>,
     /// What each plugin named the context rewrite it is about to make
     /// ([`tau_ui_plugin::RunCx::rewrite`]).
     #[serde(default)]
@@ -895,8 +896,7 @@ impl RunView {
         let Some(erased) = crate::plugins::registry().get(plugin) else {
             return;
         };
-        let mut state =
-            self.plugin_states.remove(plugin).unwrap_or(Value::Null);
+        let mut state = self.plugin_states.remove(plugin).unwrap_or_default();
         erased.apply(
             &mut state,
             body,
@@ -916,7 +916,7 @@ impl RunView {
         let Some(erased) = crate::plugins::registry().get(plugin) else {
             return;
         };
-        let mut state = Value::Null;
+        let mut state = tau_ui_plugin::PluginValue::default();
         for body in bodies {
             let mut folding = Folding {
                 view: self,
@@ -1735,7 +1735,7 @@ mod tests {
     fn rules_of(view: &RunView) -> tau_constitution::ui::State {
         view.plugin_states
             .get(tau_constitution::NAME)
-            .map(|state| serde_json::from_value(state.clone()).unwrap())
+            .map(|state| serde_json::from_value(state.json().clone()).unwrap())
             .unwrap_or_default()
     }
 
@@ -1743,7 +1743,7 @@ mod tests {
     fn pruning(view: &RunView) -> tau_fast_compaction::ui::State {
         view.plugin_states
             .get(tau_fast_compaction::NAME)
-            .map(|state| serde_json::from_value(state.clone()).unwrap())
+            .map(|state| serde_json::from_value(state.json().clone()).unwrap())
             .unwrap_or_default()
     }
 
@@ -2153,9 +2153,8 @@ mod tests {
     /// a stored run's records.
     #[test]
     fn codemode_store_folds_live_and_from_history() {
-        let record =
-            json!({ "store": { "set": { "a": 1, "b": [2] }, "delete": [] } });
-        let deleted = json!({ "store": { "set": {}, "delete": ["a"] } });
+        let record = json!({ "kind": "store", "set": { "a": 1, "b": [2] }, "delete": [] });
+        let deleted = json!({ "kind": "store", "set": {}, "delete": ["a"] });
         let mut live = view();
         for body in [&record, &deleted] {
             live.apply(&RunEvent::PluginReport {
@@ -2176,7 +2175,7 @@ mod tests {
         );
         let state = |view: &RunView| -> tau_codemode::ui::State {
             serde_json::from_value(
-                view.plugin_states[tau_codemode::PLUGIN].clone(),
+                view.plugin_states[tau_codemode::PLUGIN].json().clone(),
             )
             .unwrap()
         };

@@ -14,11 +14,13 @@ use serde_json::Value;
 use tau_agent::plugin::Plugin;
 use tau_ui_kit::{input::TextInput, theme::Tone};
 use tau_ui_plugin::{
+    Fold,
     Handle,
     HostCx,
     Manifest,
     PluginInfo,
     PluginStatus,
+    PluginUi,
     RunCtx,
     RunCx,
     Seam,
@@ -57,12 +59,11 @@ impl Call {
     }
 }
 
-impl State {
+impl Fold for State {
+    type Record = Record;
+
     /// Folds one of the plugin's records.
-    pub fn apply(&mut self, body: &Value) {
-        let Some(record) = Record::parse(body) else {
-            return;
-        };
+    fn apply(&mut self, record: Record, _run: &mut dyn RunCx) {
         let found = self.calls.iter().position(|c| c.call == record.call());
         match (record, found) {
             (Record::Asked { call, ask }, Some(at)) => {
@@ -87,7 +88,9 @@ impl State {
             (Record::Answered { .. } | Record::Closed { .. }, None) => {}
         }
     }
+}
 
+impl State {
     /// The first call still waiting for the person.
     pub fn waiting(&self) -> Option<&Call> {
         self.calls.iter().find(|call| call.waits())
@@ -208,10 +211,6 @@ impl UiPlugin for AskUi {
         NAME
     }
 
-    fn host(&self, _cx: &HostCx) -> anyhow::Result<Host> {
-        Ok(Host::default())
-    }
-
     /// The `ask` tool, for a run a person watches: a sub-agent has no
     /// one to ask.
     fn agent_plugins(
@@ -237,13 +236,12 @@ impl UiPlugin for AskUi {
         _settings: &(),
     ) -> PluginInfo {
         PluginInfo {
-            name: NAME.into(),
             description:
                 "Lets the agent ask you questions and waits for your answers"
                     .into(),
             seams: vec![Seam::Start, Seam::Tools],
-            spend: 0.0,
             page: None,
+            ..Default::default()
         }
     }
 
@@ -287,11 +285,28 @@ impl UiPlugin for AskUi {
         }
     }
 
-    fn apply(&self, state: &mut State, body: &Value, _run: &mut dyn RunCx) {
-        state.apply(body);
+    fn manifest(&self) -> Manifest<Self> {
+        Manifest::new()
+            .contribute(points::COMPOSER, panel::panel)
+            .contribute(points::CARD, card::card)
+            .contribute(points::STATUS, |at: &AtRun, view| {
+                let waiting = view.state?.waiting()?;
+                let n = waiting.ask.questions.len();
+                Some(PluginStatus {
+                    name: NAME.into(),
+                    state: match (at.run.live, n) {
+                        (true, 1) => "1 question waiting".to_owned(),
+                        (true, n) => format!("{n} questions waiting"),
+                        (false, _) => "not answered".to_owned(),
+                    },
+                    tone: Tone::Warn,
+                })
+            })
     }
+}
 
-    fn new_ui(&self, handle: Handle, cx: &mut Context<Ui>) -> Ui {
+impl PluginUi for Ui {
+    fn new(handle: Handle, cx: &mut Context<Self>) -> Self {
         let other = cx
             .new(|cx| TextInput::new("Your own answer…", cx).keep_on_submit());
         let note = cx.new(|cx| {
@@ -313,24 +328,5 @@ impl UiPlugin for AskUi {
             sent: BTreeSet::new(),
             refused: BTreeMap::new(),
         }
-    }
-
-    fn manifest(&self) -> Manifest<Self> {
-        Manifest::new()
-            .contribute(points::COMPOSER, panel::panel)
-            .contribute(points::CARD, card::card)
-            .contribute(points::STATUS, |at: &AtRun, view| {
-                let waiting = view.state?.waiting()?;
-                let n = waiting.ask.questions.len();
-                Some(PluginStatus {
-                    name: NAME.into(),
-                    state: match (at.run.live, n) {
-                        (true, 1) => "1 question waiting".to_owned(),
-                        (true, n) => format!("{n} questions waiting"),
-                        (false, _) => "not answered".to_owned(),
-                    },
-                    tone: Tone::Warn,
-                })
-            })
     }
 }

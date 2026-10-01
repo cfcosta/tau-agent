@@ -20,7 +20,6 @@ use gpui::{
     relative,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use tau_agent::{plugin::Plugin, tool::RunId};
 use tau_jev::Jev;
 use tau_ui_kit::{
@@ -30,6 +29,7 @@ use tau_ui_kit::{
     theme::{Design as _, Theme, Tone, Type, radius, sp},
 };
 use tau_ui_plugin::{
+    Fold,
     HostCx,
     Link,
     Manifest,
@@ -47,7 +47,7 @@ use tau_ui_plugin::{
     points::{self, AtAnchor, AtApp, AtRun},
 };
 
-use crate::{Choice, DEFAULT_THRESHOLD, Lease, NAME, Reasoning};
+use crate::{Choice, DEFAULT_THRESHOLD, Lease, NAME, Reasoning, Record};
 
 /// tau-reasoning with its UI: what tau adds to an agent.
 #[derive(Debug, Clone, Copy, Default)]
@@ -118,41 +118,46 @@ pub struct Ui {
     open: HashSet<(RunId, String)>,
 }
 
-impl State {
+impl Fold for State {
+    type Record = Record;
+
     /// Folds one of the plugin's records.
-    pub fn apply(&mut self, body: &Value, run: &mut dyn RunCx) {
-        if body["kind"] == "starting" {
-            self.starting = body["status"].as_str().map(str::to_owned);
-            return;
-        }
-        if body["kind"] == "error" {
-            // The message goes on as the last one did; the failure is
-            // worth a note all the same.
-            let stayed = match body["runs_at"].as_str() {
-                Some(effort) => format!("stayed at {effort}"),
-                None => "kept the default".into(),
-            };
-            let key = format!("n{}", self.notes.len());
-            self.notes.insert(
-                key.clone(),
-                Note::Failed {
-                    message: body["message"]
-                        .as_str()
-                        .unwrap_or("failed")
-                        .to_owned(),
-                    detail: match body["turn"].as_u64() {
-                        Some(turn) => format!("turn {turn} · {stayed}"),
-                        None => stayed,
+    fn apply(&mut self, record: Record, run: &mut dyn RunCx) {
+        let choice = match record {
+            Record::Starting { status } => {
+                self.starting = status;
+                return;
+            }
+            Record::Error {
+                message,
+                runs_at,
+                turn,
+                ..
+            } => {
+                // The message goes on as the last one did; the failure is
+                // worth a note all the same.
+                let stayed = match runs_at {
+                    Some(effort) => format!("stayed at {effort}"),
+                    None => "kept the default".into(),
+                };
+                let key = format!("n{}", self.notes.len());
+                self.notes.insert(
+                    key.clone(),
+                    Note::Failed {
+                        message,
+                        detail: match turn {
+                            Some(turn) => format!("turn {turn} · {stayed}"),
+                            None => stayed,
+                        },
                     },
-                },
-            );
-            run.transcript(&key);
-            return;
-        }
-        let Some(choice) = Choice::parse(body) else {
-            return;
+                );
+                run.transcript(&key);
+                return;
+            }
+            Record::Context(_) => return,
+            Record::Choice(choice) => choice,
         };
-        let chose = choice.kind == "chose";
+        let chose = choice.chose();
         // A choice between turns is for the agent's next step, or for a
         // message the user steered in.
         let what = match (choice.turn, choice.step.as_str()) {
@@ -208,7 +213,9 @@ impl State {
         );
         run.transcript(&key);
     }
+}
 
+impl State {
     /// The choice made as the run's last message came in, if Jev scored
     /// it.
     pub fn starting_choice(&self) -> Option<&Choice> {
@@ -223,11 +230,7 @@ impl Choice {
     /// What the note under a chart says: the confidence against the
     /// threshold, and how it came out.
     fn verdict(&self, outcome: &str) -> String {
-        let comparison = if self.kind == "chose" {
-            "above"
-        } else {
-            "below"
-        };
+        let comparison = if self.chose() { "above" } else { "below" };
         format!(
             "Confidence {:.2} is {comparison} {:.2}, {outcome}",
             self.confidence, self.threshold
@@ -255,10 +258,6 @@ impl UiPlugin for ReasoningPlugin {
         NAME
     }
 
-    fn host(&self, _cx: &HostCx) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     /// On auto, with Jev: an effort picked by hand stands.
     fn agent_plugins(
         &self,
@@ -284,14 +283,16 @@ impl UiPlugin for ReasoningPlugin {
         _host: &(),
         run: &RunCtx,
         _settings: &Settings,
-    ) -> Vec<Value> {
+    ) -> Vec<Record> {
         let jev = run.services.get::<Arc<dyn Jev>>().is_some();
         let status = match (&run.effort, jev) {
             (Some(effort), _) => format!("off · effort set to {effort}"),
             (None, false) => NO_KEY.to_owned(),
             (None, true) => "picks the effort as the run starts".to_owned(),
         };
-        vec![json!({ "kind": "starting", "status": status })]
+        vec![Record::Starting {
+            status: Some(status),
+        }]
     }
 
     fn catalog(
@@ -302,27 +303,14 @@ impl UiPlugin for ReasoningPlugin {
     ) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
-            name: NAME.into(),
             description: needs_jev(
                 jev,
                 "Picks each message's reasoning effort on auto",
             ),
             seams: vec![Seam::Start],
-            spend: 0.0,
             page: Some(Link::page("choices").param("run", "")),
+            ..Default::default()
         }
-    }
-
-    fn apply(&self, state: &mut State, body: &Value, run: &mut dyn RunCx) {
-        state.apply(body, run);
-    }
-
-    fn new_ui(
-        &self,
-        _handle: tau_ui_plugin::Handle,
-        _cx: &mut gpui::Context<Ui>,
-    ) -> Ui {
-        Ui::default()
     }
 
     fn manifest(&self) -> Manifest<Self> {
