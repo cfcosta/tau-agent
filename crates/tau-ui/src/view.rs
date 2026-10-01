@@ -245,58 +245,21 @@ pub use tau_ui_plugin::{
     PluginStatus,
 };
 
-/// A run a fold reaches without placing anchors: the anchors of what it
-/// restates are in the transcript already, or belong to another run.
-struct Quiet<'a>(&'a mut RunView);
-
-impl tau_ui_plugin::RunCx for Quiet<'_> {
-    fn transcript(&mut self, _key: &str) {}
-
-    fn mark(&mut self, call_id: &str, mark: CardMark) -> bool {
-        mark_card(self.0, "", call_id, mark)
-    }
-
-    fn dropped(&mut self, call_id: &str, dropped: Dropped) -> bool {
-        self.0
-            .tool_mut(call_id)
-            .map(|card| card.dropped = Some(dropped))
-            .is_some()
-    }
-
-    fn cut(&mut self, call_id: &str, cut: OutputCut) -> bool {
-        self.0
-            .tool_mut(call_id)
-            .map(|card| card.cut = Some(Box::new(cut)))
-            .is_some()
-    }
-
-    fn rewrite(&mut self, _key: &str) {}
-
-    fn attach(&mut self, call_id: &str, _key: &str) -> bool {
-        self.0.card_of(call_id).is_some()
-    }
-
-    fn cards(&self) -> Vec<tau_ui_plugin::CardInfo> {
-        Folding::cards_of(self.0)
-    }
-
-    fn last_text(&self) -> Option<String> {
-        self.0.last_text().map(str::to_owned)
-    }
-
-    fn turn(&self) -> u32 {
-        self.0.turn
-    }
-}
-
-/// A run as a plugin's fold reaches it: one plugin's anchors go in.
+/// A run as a plugin's fold reaches it. With `anchors`, the plugin's
+/// anchors go in; without, the fold only restates the plugin's state:
+/// the anchors of what it restates are in the transcript already, or
+/// belong to another run.
 struct Folding<'a> {
     view: &'a mut RunView,
     plugin: &'a str,
+    anchors: bool,
 }
 
 impl tau_ui_plugin::RunCx for Folding<'_> {
     fn transcript(&mut self, key: &str) {
+        if !self.anchors {
+            return;
+        }
         self.view.items.push(Item::Anchor {
             plugin: self.plugin.to_owned(),
             key: key.to_owned(),
@@ -310,6 +273,9 @@ impl tau_ui_plugin::RunCx for Folding<'_> {
         let Some(card) = self.view.card_of_mut(call_id) else {
             return false;
         };
+        if !self.anchors {
+            return true;
+        }
         let anchor = (plugin, key.to_owned());
         if !card.anchors.contains(&anchor) {
             card.anchors.push(anchor);
@@ -338,6 +304,9 @@ impl tau_ui_plugin::RunCx for Folding<'_> {
     /// History placed the rewrite before its details were folded; live,
     /// the plugin names it before making it.
     fn rewrite(&mut self, key: &str) {
+        if !self.anchors {
+            return;
+        }
         let plugin = self.plugin;
         let placed =
             self.view
@@ -919,7 +888,6 @@ impl RunView {
         self
     }
 
-    /// The last thing the model said, if anything.
     /// Folds a body `plugin` published (or the host stored for it) into
     /// the plugin's state in the run, through the plugin's own fold. A
     /// plugin the registry does not have folds nothing.
@@ -929,7 +897,15 @@ impl RunView {
         };
         let mut state =
             self.plugin_states.remove(plugin).unwrap_or(Value::Null);
-        erased.apply(&mut state, body, &mut Folding { view: self, plugin });
+        erased.apply(
+            &mut state,
+            body,
+            &mut Folding {
+                view: self,
+                plugin,
+                anchors: true,
+            },
+        );
         self.plugin_states.insert(plugin.to_owned(), state);
     }
 
@@ -942,7 +918,12 @@ impl RunView {
         };
         let mut state = Value::Null;
         for body in bodies {
-            erased.apply(&mut state, body, &mut Quiet(self));
+            let mut folding = Folding {
+                view: self,
+                plugin,
+                anchors: false,
+            };
+            erased.apply(&mut state, body, &mut folding);
         }
         // Nothing folded: no state, as before anything was published.
         if state.is_null() {
@@ -2218,6 +2199,36 @@ mod tests {
         );
     }
 
+    /// A verdict folded afresh, as a fork inherits it, still names the
+    /// plugin that blocked the call, and places no anchor.
+    #[test]
+    fn a_restated_verdict_names_its_plugin() {
+        let mut view = view();
+        view.apply(&RunEvent::ToolStart {
+            run: run(),
+            call_id: "c1".into(),
+            tool: "bash".into(),
+            args: json!({"command": "rm -rf /"}),
+            parent: None,
+        });
+        let anchors = view.items.len();
+        view.restate(
+            tau_constitution::NAME,
+            &[json!({
+                "kind": "blocked", "rule": "R1", "text": "No rm.",
+                "score": 0.95, "call_id": "c1", "tool": "bash",
+                "reason": "rule R1"
+            })],
+        );
+        let card = view.tool("c1").unwrap();
+        assert!(matches!(
+            &card.state,
+            ToolState::Blocked { plugin, .. } if plugin == tau_constitution::NAME
+        ));
+        assert_eq!(view.items.len(), anchors);
+        assert!(card.anchors.is_empty());
+    }
+
     /// A plugin's verdict on a nested call marks its row on the card it
     /// shows on, not the card: the script may catch the refusal. Its
     /// anchor lands on that card; a context rewrite cannot drop it.
@@ -2262,6 +2273,7 @@ mod tests {
             let mut folding = Folding {
                 view: &mut view,
                 plugin: tau_fast_compaction::NAME,
+                anchors: true,
             };
             assert!(!folding.dropped("c1/1", Dropped::Result));
         }
