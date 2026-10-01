@@ -330,6 +330,27 @@ async fn setup() -> Result<(Setup, PathBuf), Error> {
     ))
 }
 
+/// Waits until nothing listens on `port`: the HTTP server that was
+/// killed is gone.
+///
+/// Reaping the `npx` that leads its process group is not enough: the
+/// node process serving the port is a child of it and may take a moment
+/// more to exit, and until it does its socket still accepts connections,
+/// so [`http_ready`] would take the dying server for the new one.
+async fn http_down(port: u16) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err()
+        {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
+}
+
 /// Waits for the HTTP server to listen.
 async fn http_ready(port: u16) -> bool {
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -1065,6 +1086,7 @@ async fn resilience(mcp: &McpPlugin, setup: &mut Setup, report: &mut Report) {
         unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
     }
     let _ = setup.http.wait().await;
+    let down = http_down(setup.http_port).await;
     let npx = which("npx").expect("npx");
     setup.http = tokio::process::Command::new(&npx)
         .args([
@@ -1079,7 +1101,7 @@ async fn resilience(mcp: &McpPlugin, setup: &mut Setup, report: &mut Report) {
         .kill_on_drop(true)
         .spawn()
         .expect("the HTTP server starts again");
-    http_ready(setup.http_port).await;
+    let up = http_ready(setup.http_port).await;
     let mut tries = Vec::new();
     for _ in 0..3 {
         let result = http
@@ -1097,11 +1119,20 @@ async fn resilience(mcp: &McpPlugin, setup: &mut Setup, report: &mut Report) {
     }
     report.check(
         "after the HTTP server restarts, a call reaches it within two tries",
-        ensure(
-            tries.len() <= 2
-                && tries.last().is_some_and(|t| t.contains("after restart")),
-            || format!("{tries:#?}"),
-        )
+        ensure(down && up, || {
+            format!(
+                "the old server went away: {down}, the new one came up: {up}"
+            )
+        })
+        .and_then(|()| {
+            ensure(
+                tries.len() <= 2
+                    && tries
+                        .last()
+                        .is_some_and(|t| t.contains("after restart")),
+                || format!("{tries:#?}"),
+            )
+        })
         .map(|()| format!("{tries:?}")),
     );
 }
