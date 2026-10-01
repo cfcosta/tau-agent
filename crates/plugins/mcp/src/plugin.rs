@@ -21,7 +21,6 @@ use crate::{
         ConfigError,
         EnvLookup,
         Exposure,
-        Origin,
         PendingApproval,
         ServerConfig,
         Settings,
@@ -131,32 +130,7 @@ impl McpPluginBuilder {
             self.repo.as_deref(),
         );
         for server in self.servers {
-            let namespace = server.namespace();
-            let clash = sources.servers.iter().find(|(_, other)| {
-                other.name != server.name && other.namespace() == namespace
-            });
-            if let Some((_, other)) = clash {
-                sources.errors.push(ConfigError {
-                    origin: Some(Origin::Settings),
-                    server: Some(server.name.clone()),
-                    message: format!(
-                        "clashes with server `{}`: names that differ only in `-` and `_` share the namespace `{namespace}`",
-                        other.name
-                    ),
-                });
-                continue;
-            }
-            sources
-                .pending
-                .retain(|pending| pending.server.name != server.name);
-            match sources
-                .servers
-                .iter()
-                .position(|(_, s)| s.name == server.name)
-            {
-                Some(at) => sources.servers[at] = (Origin::Settings, server),
-                None => sources.servers.push((Origin::Settings, server)),
-            }
+            sources.add(server);
         }
         let process = Environment::process(self.repo.clone());
         let environment = Environment {
@@ -174,16 +148,13 @@ impl McpPluginBuilder {
         for connection in &connections {
             connection.connect();
         }
-        McpPlugin {
-            shared: Arc::new(Shared {
-                connections,
-                errors: sources.errors,
-                pending: sources.pending,
-                startup_wait: self.startup_wait,
-                spill: self.spill,
-                tools: Mutex::default(),
-            }),
-        }
+        McpPlugin::from_connections(
+            connections,
+            sources.errors,
+            sources.pending,
+        )
+        .with_startup_wait(self.startup_wait)
+        .with_spill(self.spill)
     }
 }
 
@@ -197,7 +168,8 @@ impl McpPluginBuilder {
 ///   `Nested`, so Codemode scripts call it, and reach a server that
 ///   connected after the run started.
 /// - The connections are the agent's: shared by every run, and closed
-///   when the plugin is dropped, or by [`McpPlugin::shutdown`].
+///   once nothing holds them (the plugin dropped, and the runs that used
+///   them ended), or by [`McpPlugin::shutdown`].
 #[derive(Clone)]
 pub struct McpPlugin {
     shared: Arc<Shared>,
@@ -217,18 +189,6 @@ struct Shared {
     tools: Mutex<Option<(Vec<u64>, Tools)>>,
 }
 
-impl Drop for Shared {
-    fn drop(&mut self) {
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        for connection in &self.connections {
-            let connection = connection.clone();
-            runtime.spawn(async move { connection.shutdown().await });
-        }
-    }
-}
-
 impl McpPlugin {
     pub fn builder() -> McpPluginBuilder {
         McpPluginBuilder {
@@ -241,6 +201,39 @@ impl McpPlugin {
             startup_wait: STARTUP_WAIT,
             spill: Spill::default(),
         }
+    }
+
+    /// A plugin over connections someone else keeps, such as the host's
+    /// pools: it starts none of them.
+    pub(crate) fn from_connections(
+        connections: Vec<Arc<Connection>>,
+        errors: Vec<ConfigError>,
+        pending: Vec<PendingApproval>,
+    ) -> Self {
+        Self {
+            shared: Arc::new(Shared {
+                connections,
+                errors,
+                pending,
+                startup_wait: STARTUP_WAIT,
+                spill: Spill::default(),
+                tools: Mutex::default(),
+            }),
+        }
+    }
+
+    fn with_startup_wait(mut self, wait: Duration) -> Self {
+        Arc::get_mut(&mut self.shared)
+            .expect("not shared yet")
+            .startup_wait = wait;
+        self
+    }
+
+    fn with_spill(mut self, spill: Spill) -> Self {
+        Arc::get_mut(&mut self.shared)
+            .expect("not shared yet")
+            .spill = spill;
+        self
     }
 
     /// Every configured server's connection, enabled or not, in merge

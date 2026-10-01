@@ -5,20 +5,25 @@
 //!
 //! ## On the host
 //!
-//! Connections outlive runs ([`McpPlugin`]), so the host keeps one
-//! plugin per **scope**: a repository, whose file and directory its
-//! servers read, or the user's servers alone. A scope's plugin is built
-//! the first time something needs its connections: a run in the
+//! Connections outlive runs ([`McpPlugin`]). The user's servers (the
+//! user's file, the settings, and the host's own) run once for every
+//! repository, in a shared [`Pool`]; a repository's servers, and a user
+//! server whose `cwd` is relative ([`ServerConfig::per_repo`]), run in
+//! the repository's own pool. The host keeps one plugin per **scope**
+//! (a repository, or the user's servers alone) over the connections it
+//! uses, built the first time something needs them: a run in the
 //! repository, or Connect on the page. Until then the page shows the
-//! servers as configured, not connected.
+//! servers as configured, and a shared server as another scope started
+//! it.
 //!
 //! Each time a scope is used (a run starts, the catalog is drawn, an
 //! action runs) its servers are read again, from the user's file, the
 //! plugin's settings and the repository's file. When they differ from
-//! what its plugin was built from, the plugin is built again and its
-//! connections start over; runs going on keep the old ones until they
-//! end. Files are not watched: an edit by hand shows the next time the
-//! scope is used.
+//! what its plugin was built from, the plugin is built again over the
+//! pools, which keep every connection whose entry did not change: only
+//! new and changed servers connect, and removed, changed or disabled
+//! ones close once the runs going on that use them end. Files are not
+//! watched: an edit by hand shows the next time the scope is used.
 //!
 //! Every run gets a wrapper ([`RunServers`]) around its scope's plugin:
 //! its `start` and tool source. When the host is dropped, every
@@ -42,6 +47,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures_util::future::join_all;
 use gpui::{AppContext as _, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -76,6 +82,7 @@ use crate::{
         McpConfig,
         Origin,
         PendingApproval,
+        Read,
         ServerConfig,
         Settings,
         Sources,
@@ -83,7 +90,8 @@ use crate::{
         USER_FILE,
         valid_name,
     },
-    connection::Annotations,
+    connection::{Annotations, Connection, Environment},
+    pool::Pool,
 };
 
 /// tau-mcp with its UI.
@@ -112,7 +120,7 @@ impl Scope {
 }
 
 /// What a scope's plugin was built from: when it changes, the plugin is
-/// built again.
+/// built again, over the connections of the servers that did not change.
 type Print = (
     Vec<(Origin, ServerConfig)>,
     Vec<ConfigError>,
@@ -127,17 +135,38 @@ fn print(sources: &Sources) -> Print {
     )
 }
 
+/// A scope's servers as read now, and the servers every repository
+/// shares.
+struct Loaded {
+    /// The scope's: the user's file, the settings, the host's and, for
+    /// a repository, its file.
+    sources: Sources,
+    /// The user's file's, the settings' and the host's servers that do
+    /// not run per repository, as the shared pool runs them.
+    shared: Vec<(Origin, ServerConfig)>,
+}
+
+/// A scope's plugin, and the connections it does not share.
 struct Built {
     print: Print,
     plugin: McpPlugin,
+    /// The repository's servers, and the user's that run per
+    /// repository.
+    pool: Pool,
 }
 
-/// The plugin on the host: one [`McpPlugin`] per scope, built when first
-/// needed and shared by every run in it.
+/// The plugin on the host: one pool of connections shared by every
+/// repository for the user's servers, one pool per scope for the rest,
+/// and one [`McpPlugin`] per scope over them, built when first needed
+/// and shared by every run in it.
 pub struct Host {
     runtime: tokio::runtime::Handle,
     /// `~/.config/tau`, whose `mcp.json` is the user's file.
     user_dir: Option<PathBuf>,
+    /// Servers added after the files and the settings, as the settings'.
+    servers: Mutex<Vec<ServerConfig>>,
+    /// The user's servers, one connection each for every repository.
+    shared: Pool,
     scopes: Mutex<BTreeMap<Scope, Built>>,
 }
 
@@ -150,12 +179,62 @@ impl Host {
         Self {
             runtime,
             user_dir,
+            servers: Mutex::default(),
+            shared: Pool::new(Environment::process(None)),
             scopes: Mutex::default(),
         }
     }
 
+    /// Servers every scope gets after the files and the settings, as the
+    /// settings', replacing the ones set before: an in-process server's,
+    /// through [`Transport::Stream`], which no file can name.
+    pub fn set_servers(&self, servers: Vec<ServerConfig>) {
+        *self.servers.lock().expect("not poisoned") = servers;
+    }
+
+    /// Reads the scope's servers, and the shared ones, now.
+    fn load(&self, scope: &Scope, settings: &Settings) -> Loaded {
+        let user = Read::user(self.user_dir.as_deref());
+        let added = self.servers.lock().expect("not poisoned").clone();
+        let with_added = |mut sources: Sources| {
+            for server in &added {
+                sources.add(server.clone());
+            }
+            sources
+        };
+        let shared =
+            with_added(Sources::from_reads(&user, settings, &Read::default()));
+        let sources = match scope.repo() {
+            None => shared.clone(),
+            Some(repo) => with_added(Sources::from_reads(
+                &user,
+                settings,
+                &Read::repo(Some(repo)),
+            )),
+        };
+        Loaded {
+            shared: shared
+                .servers
+                .into_iter()
+                .filter(|(_, server)| !server.per_repo())
+                .collect(),
+            sources,
+        }
+    }
+
     fn sources(&self, scope: &Scope, settings: &Settings) -> Sources {
-        Sources::load(self.user_dir.as_deref(), settings, scope.repo())
+        self.load(scope, settings).sources
+    }
+
+    /// Whether the scope's server runs in the shared pool: it is the
+    /// user's, does not run per repository, and is the same as the
+    /// shared pool's.
+    fn shares(&self, origin: Origin, server: &ServerConfig) -> bool {
+        origin != Origin::Repo
+            && !server.per_repo()
+            && self.shared.get(&server.name).is_some_and(|shared| {
+                shared.origin() == origin && shared.config() == server
+            })
     }
 
     /// The names the user's file gives servers, valid entries or not:
@@ -175,21 +254,25 @@ impl Host {
         settings: &Settings,
     ) -> McpPlugin {
         let scope = Scope::of(repo);
-        let sources = self.sources(&scope, settings);
-        self.fresh(scope, settings, &sources, true)
+        let loaded = self.load(&scope, settings);
+        self.fresh(scope, &loaded, true)
             .expect("built when asked to")
     }
 
     /// The scope's plugin: built again when its servers changed, and
-    /// built at all only when `build`.
+    /// built at all only when `build`. Building starts the connections
+    /// it uses that never started; the others keep going as they were.
     fn fresh(
         &self,
         scope: Scope,
-        settings: &Settings,
-        sources: &Sources,
+        loaded: &Loaded,
         build: bool,
     ) -> Option<McpPlugin> {
-        let print = print(sources);
+        // Connections start, and the ones let go close once their last
+        // run lets go of them, on the host's runtime.
+        let _runtime = self.runtime.enter();
+        self.shared.update(loaded.shared.clone());
+        let print = print(&loaded.sources);
         let mut scopes = self.scopes.lock().expect("not poisoned");
         match scopes.get(&scope) {
             Some(built) if built.print == print => {
@@ -198,37 +281,83 @@ impl Host {
             None if !build => return None,
             _ => {}
         }
-        // The connections start, and an old plugin's close once its last
-        // run lets go of it, on the host's runtime.
-        let _runtime = self.runtime.enter();
-        let mut builder = McpPlugin::builder().settings(settings.clone());
-        if let Some(dir) = &self.user_dir {
-            builder = builder.user_dir(dir);
+        let pool = scopes.remove(&scope).map_or_else(
+            || {
+                Pool::new(Environment::process(
+                    scope.repo().map(Path::to_owned),
+                ))
+            },
+            |built| built.pool,
+        );
+        let servers = &loaded.sources.servers;
+        let own: Vec<(Origin, ServerConfig)> = servers
+            .iter()
+            .filter(|(origin, server)| {
+                !self.shares(*origin, server)
+                    && (scope.repo().is_some() || !server.per_repo())
+            })
+            .cloned()
+            .collect();
+        pool.update(own);
+        let connections: Vec<Arc<Connection>> = servers
+            .iter()
+            .filter_map(|(origin, server)| match self.shares(*origin, server) {
+                true => self.shared.get(&server.name),
+                false => pool.get(&server.name),
+            })
+            .collect();
+        let plugin = McpPlugin::from_connections(
+            connections,
+            loaded.sources.errors.clone(),
+            loaded.sources.pending.clone(),
+        );
+        for connection in plugin.connections() {
+            connection.start();
         }
-        if let Some(repo) = scope.repo() {
-            builder = builder.repo(repo);
-        }
-        let plugin = builder.build();
-        let old = scopes.insert(
+        scopes.insert(
             scope,
             Built {
                 print,
                 plugin: plugin.clone(),
+                pool,
             },
         );
-        drop(old);
         Some(plugin)
     }
 
     /// What the page shows of `repo`'s servers (or of the user's alone):
-    /// as configured, and as connected when the scope's plugin is built.
+    /// as configured, and as connected where they started, for this
+    /// scope or, for a shared server, for any.
     pub fn servers(&self, repo: Option<&Path>, settings: &Settings) -> Servers {
         let scope = Scope::of(repo);
-        let sources = self.sources(&scope, settings);
-        let plugin = self.fresh(scope, settings, &sources, false);
+        let loaded = self.load(&scope, settings);
+        let built = self.fresh(scope, &loaded, false);
+        let started = built.is_some();
+        let sources = &loaded.sources;
+        let shared: BTreeSet<String> = sources
+            .servers
+            .iter()
+            .filter(|(origin, server)| self.shares(*origin, server))
+            .map(|(_, server)| server.name.clone())
+            .collect();
+        // Before the scope is built, the shared servers that started for
+        // another.
+        let plugin = built.unwrap_or_else(|| {
+            McpPlugin::from_connections(
+                shared
+                    .iter()
+                    .filter_map(|name| self.shared.get(name))
+                    .filter(|connection| connection.started())
+                    .collect(),
+                Vec::new(),
+                Vec::new(),
+            )
+        });
         servers_view(
-            &sources,
-            plugin.as_ref(),
+            sources,
+            &plugin,
+            started,
+            &shared,
             settings,
             self.user_names(),
             self.user_dir.as_deref(),
@@ -244,11 +373,16 @@ impl Drop for Host {
         let scopes = std::mem::take(
             &mut *self.scopes.lock().unwrap_or_else(|e| e.into_inner()),
         );
-        let _runtime = self.runtime.enter();
-        for (_, built) in scopes {
-            let plugin = built.plugin;
-            self.runtime.spawn(async move { plugin.shutdown().await });
+        let mut connections = self.shared.connections();
+        for built in scopes.values() {
+            connections.extend(built.pool.connections());
+            connections.extend(built.plugin.connections().iter().cloned());
         }
+        let _runtime = self.runtime.enter();
+        self.runtime.spawn(async move {
+            join_all(connections.iter().map(|c| c.shutdown())).await;
+        });
+        drop(scopes);
     }
 }
 
@@ -312,9 +446,12 @@ pub struct ServerRow {
     pub exposure: String,
     pub enabled: bool,
     pub description: Option<String>,
-    /// `connecting`, `connected`, `disconnected`, `failed` or `closed`;
-    /// `None` until the scope's servers are started.
+    /// `connecting`, `connected`, `disconnected`, `failed` or `closed`,
+    /// or `disabled`; `None` until it starts.
     pub state: Option<String>,
+    /// One connection shared by every repository: a server of the
+    /// user's file or the settings that does not run per repository.
+    pub shared: bool,
     pub error: Option<String>,
     pub tools: Vec<ToolRow>,
     /// The entry, as the page edits it: only a settings server's.
@@ -457,25 +594,26 @@ pub fn transport(server: &ServerConfig) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn servers_view(
     sources: &Sources,
-    plugin: Option<&McpPlugin>,
+    plugin: &McpPlugin,
+    started: bool,
+    shared: &BTreeSet<String>,
     settings: &Settings,
     user_names: BTreeSet<String>,
     user_dir: Option<&Path>,
     repo: Option<&Path>,
 ) -> Servers {
-    let tools = plugin.map(McpPlugin::tools).unwrap_or_default();
+    let tools = plugin.tools();
     let servers = sources
         .servers
         .iter()
         .map(|(origin, config)| {
-            let connection = plugin.and_then(|plugin| {
-                plugin
-                    .connections()
-                    .iter()
-                    .find(|c| c.name() == config.name)
-            });
+            let connection = plugin
+                .connections()
+                .iter()
+                .find(|c| c.name() == config.name && c.started());
             let status = connection.map(|connection| connection.status());
             let listed = connection.map(|c| c.tools()).unwrap_or_default();
             ServerRow {
@@ -485,11 +623,14 @@ fn servers_view(
                 exposure: config.exposure.to_string(),
                 enabled: config.enabled,
                 description: config.description.clone(),
-                state: status.as_ref().map(|status| match status.state {
-                    // A disabled server is never connected.
-                    _ if !config.enabled => "disabled".to_owned(),
-                    state => state.to_string(),
-                }),
+                // A disabled server is never connected.
+                state: match &status {
+                    _ if !config.enabled => Some("disabled".to_owned()),
+                    status => {
+                        status.as_ref().map(|status| status.state.to_string())
+                    }
+                },
+                shared: shared.contains(&config.name),
                 error: status.and_then(|status| status.error),
                 tools: listed
                     .into_iter()
@@ -517,7 +658,7 @@ fn servers_view(
         })
         .collect();
     Servers {
-        started: plugin.is_some(),
+        started,
         servers,
         pending: sources
             .pending
@@ -739,11 +880,16 @@ impl UiPlugin for McpUi {
         settings: &Settings,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         let scope = Scope::of(Some(&run.repo.checkout));
-        let sources = host.sources(&scope, settings);
-        if !sources.servers.iter().any(|(_, server)| server.enabled) {
+        let loaded = host.load(&scope, settings);
+        if !loaded
+            .sources
+            .servers
+            .iter()
+            .any(|(_, server)| server.enabled)
+        {
             return Ok(Vec::new());
         }
-        let plugin = host.fresh(scope, settings, &sources, true);
+        let plugin = host.fresh(scope, &loaded, true);
         Ok(vec![Box::new(RunServers {
             plugin,
             runtime: host.runtime.clone(),

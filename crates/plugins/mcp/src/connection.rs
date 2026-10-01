@@ -14,7 +14,7 @@ use std::{
         Arc,
         Mutex,
         Weak,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -270,6 +270,25 @@ pub struct Connection {
     inner: Mutex<Inner>,
     /// Bumped whenever the tools or the instructions change.
     generation: AtomicU64,
+    /// Whether it ever started connecting.
+    started: AtomicBool,
+}
+
+impl Drop for Connection {
+    /// Closes the session once nothing holds the connection: a pool let
+    /// go of it, and the last run that used it ended.
+    fn drop(&mut self) {
+        let session = self
+            .inner
+            .get_mut()
+            .ok()
+            .and_then(|inner| inner.session.take());
+        if let (Some(session), Ok(runtime)) =
+            (session, tokio::runtime::Handle::try_current())
+        {
+            runtime.spawn(async move { session.close().await });
+        }
+    }
 }
 
 impl Connection {
@@ -292,6 +311,7 @@ impl Connection {
             status: watch::channel(Status { state, error: None }).0,
             inner: Mutex::default(),
             generation: AtomicU64::new(0),
+            started: AtomicBool::new(false),
         })
     }
 
@@ -347,6 +367,20 @@ impl Connection {
             .any(|info| info.name == tool)
     }
 
+    /// Whether it ever started connecting.
+    pub fn started(&self) -> bool {
+        self.started.load(Ordering::SeqCst)
+    }
+
+    /// Starts connecting in the background if it never did: a server
+    /// that failed is not tried again here, only by a call,
+    /// [`Self::connect`] or a reconnect.
+    pub fn start(self: &Arc<Self>) {
+        if !self.started() {
+            self.connect();
+        }
+    }
+
     /// Starts connecting in the background, unless the connection is
     /// connected, connecting, or closed.
     pub fn connect(self: &Arc<Self>) {
@@ -358,6 +392,7 @@ impl Connection {
                 return;
             }
             inner.connecting = true;
+            self.started.store(true, Ordering::SeqCst);
             self.set_status(State::Connecting, None);
         }
         let this = self.clone();

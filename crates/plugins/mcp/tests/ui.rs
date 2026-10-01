@@ -526,11 +526,16 @@ fn the_page_edits_only_its_own_servers() {
 
 /// The host keeps one plugin per repository, built when a run or the
 /// page first needs it, shared until its servers change, and built
-/// again when they do.
+/// again when they do, over the connections whose entries did not
+/// change. A user server is the same connection for the user's servers
+/// alone; one whose `cwd` is relative runs per repository.
 #[test]
 fn a_repository_keeps_its_plugin_until_its_servers_change() {
     let fixture = Fixture::new(
-        Some(json!({ "mcpServers": { "a": { "command": MISSING } } })),
+        Some(json!({ "mcpServers": {
+            "a": { "command": MISSING },
+            "here": { "command": MISSING, "cwd": "." },
+        } })),
         None,
     );
     let checkout = fixture.repo.checkout.clone();
@@ -543,13 +548,18 @@ fn a_repository_keeps_its_plugin_until_its_servers_change() {
         &again.connections()[0]
     ));
     assert!(fixture.repo_data().started);
-    // The user's servers alone are another scope.
+    // The user's servers alone share `a`; `here` runs only in a
+    // repository.
     let user = fixture.host().plugin(None, &settings);
-    assert!(!Arc::ptr_eq(
-        &first.connections()[0],
-        &user.connections()[0]
-    ));
-    // A server added on the page: the repository's plugin is built again.
+    assert!(Arc::ptr_eq(&first.connections()[0], &user.connections()[0]));
+    assert_eq!(user.connections().len(), 1);
+    let shown = fixture.repo_data();
+    assert_eq!(
+        shown.servers.iter().map(|s| s.shared).collect::<Vec<_>>(),
+        [true, false]
+    );
+    // A server added on the page: the plugin is built again, and `a`
+    // keeps its connection.
     fixture
         .act(Act::Add {
             name: "b".into(),
@@ -558,22 +568,37 @@ fn a_repository_keeps_its_plugin_until_its_servers_change() {
         .unwrap();
     let settings = fixture.settings();
     let rebuilt = fixture.host().plugin(Some(&checkout), &settings);
-    assert_eq!(rebuilt.connections().len(), 2);
-    assert!(!Arc::ptr_eq(
+    assert_eq!(rebuilt.connections().len(), 3);
+    assert!(Arc::ptr_eq(
         &first.connections()[0],
         &rebuilt.connections()[0]
     ));
-    // So is one the user writes in the file by hand.
+    assert!(Arc::ptr_eq(
+        &first.connections()[1],
+        &rebuilt.connections()[1]
+    ));
+    // One the user changes in the file by hand connects again, alone.
     std::fs::write(
         fixture._dirs.0.path().join("mcp.json"),
-        json!({ "mcpServers": { "a": { "command": MISSING, "args": ["v2"] } } })
-            .to_string(),
+        json!({ "mcpServers": {
+            "a": { "command": MISSING, "args": ["v2"] },
+            "here": { "command": MISSING, "cwd": "." },
+        } })
+        .to_string(),
     )
     .unwrap();
     let edited = fixture.host().plugin(Some(&checkout), &settings);
     assert!(!Arc::ptr_eq(
         &rebuilt.connections()[0],
         &edited.connections()[0]
+    ));
+    assert!(Arc::ptr_eq(
+        &rebuilt.connections()[1],
+        &edited.connections()[1]
+    ));
+    assert!(Arc::ptr_eq(
+        &rebuilt.connections()[2],
+        &edited.connections()[2]
     ));
     // A repository with no server that would connect adds nothing to runs.
     let empty = Fixture::new(None, None);

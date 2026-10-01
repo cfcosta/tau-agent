@@ -6,13 +6,7 @@
 //! Nothing here touches the network or the file system but
 //! [`Sources::load`], which reads the two documented files.
 
-use std::{
-    collections::BTreeSet,
-    fmt,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeSet, fmt, path::Path, sync::Arc, time::Duration};
 
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
@@ -210,6 +204,20 @@ impl ServerConfig {
                 .tool_exposure
                 .iter()
                 .any(|(_, exposure)| *exposure == Exposure::Direct)
+    }
+
+    /// Whether the server depends on the repository it runs for: a
+    /// stdio server whose `cwd` is relative (not absolute, not `~/`)
+    /// starts in the repository. Such a server from the user's file or
+    /// the settings runs once per repository; any other is shared by
+    /// all of them.
+    pub fn per_repo(&self) -> bool {
+        match &self.transport {
+            Transport::Stdio(StdioConfig { cwd: Some(cwd), .. }) => {
+                !cwd.starts_with('~') && Path::new(cwd).is_relative()
+            }
+            _ => false,
+        }
     }
 
     /// The time a call may take.
@@ -765,41 +773,106 @@ impl Sources {
         settings: &Settings,
         repo: Option<&Path>,
     ) -> Self {
-        let mut errors = Vec::new();
-        let mut read = |path: Option<PathBuf>, origin: Origin| {
-            let path = path?;
-            let text = match std::fs::read_to_string(&path) {
-                Ok(text) => text,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return None;
-                }
-                Err(error) => {
-                    errors.push(ConfigError {
+        let user = Read::user(user_dir);
+        let repo = Read::repo(repo);
+        Self::from_reads(&user, settings, &repo)
+    }
+
+    /// [`Self::merge`] of files already read, their errors first.
+    pub fn from_reads(user: &Read, settings: &Settings, repo: &Read) -> Self {
+        let mut sources =
+            Self::merge(user.config.as_ref(), settings, repo.config.as_ref());
+        let mut errors: Vec<ConfigError> =
+            user.errors.iter().chain(&repo.errors).cloned().collect();
+        errors.append(&mut sources.errors);
+        sources.errors = errors;
+        sources
+    }
+
+    /// Adds `server` after every file and the settings, replacing one of
+    /// the same name, as the settings'. A name that clashes with another
+    /// server's namespace is reported and skipped.
+    pub fn add(&mut self, server: ServerConfig) {
+        let namespace = server.namespace();
+        let clash = self.servers.iter().find(|(_, other)| {
+            other.name != server.name && other.namespace() == namespace
+        });
+        if let Some((_, other)) = clash {
+            self.errors.push(ConfigError {
+                origin: Some(Origin::Settings),
+                server: Some(server.name.clone()),
+                message: format!(
+                    "clashes with server `{}`: names that differ only in `-` and `_` share the namespace `{namespace}`",
+                    other.name
+                ),
+            });
+            return;
+        }
+        self.pending
+            .retain(|pending| pending.server.name != server.name);
+        match self.servers.iter().position(|(_, s)| s.name == server.name) {
+            Some(at) => self.servers[at] = (Origin::Settings, server),
+            None => self.servers.push((Origin::Settings, server)),
+        }
+    }
+}
+
+/// A file of servers as read: its servers, when it exists, and what was
+/// wrong with it.
+#[derive(Debug, Clone, Default)]
+pub struct Read {
+    pub config: Option<McpConfig>,
+    pub errors: Vec<ConfigError>,
+}
+
+impl Read {
+    /// Reads `path`, its errors marked as `origin`'s. A file that is not
+    /// there is no servers and no error.
+    pub fn file(path: &Path, origin: Origin) -> Self {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Self::default();
+            }
+            Err(error) => {
+                return Self {
+                    config: None,
+                    errors: vec![ConfigError {
                         origin: Some(origin),
                         server: None,
                         message: format!(
                             "cannot read {}: {error}",
                             path.display()
                         ),
-                    });
-                    return None;
-                }
-            };
-            let (config, file_errors) = McpConfig::parse(&text);
-            errors.extend(file_errors.into_iter().map(|mut error| {
-                error.origin = Some(origin);
-                error
-            }));
-            Some(config)
+                    }],
+                };
+            }
         };
-        let user = read(user_dir.map(|dir| dir.join(USER_FILE)), Origin::User);
-        let repo_config =
-            read(repo.map(|dir| dir.join(REPO_FILE)), Origin::Repo);
-        let mut sources =
-            Self::merge(user.as_ref(), settings, repo_config.as_ref());
-        errors.append(&mut sources.errors);
-        sources.errors = errors;
-        sources
+        let (config, errors) = McpConfig::parse(&text);
+        Self {
+            config: Some(config),
+            errors: errors
+                .into_iter()
+                .map(|mut error| {
+                    error.origin = Some(origin);
+                    error
+                })
+                .collect(),
+        }
+    }
+
+    /// `<user_dir>/mcp.json`, when there is a user directory.
+    pub fn user(user_dir: Option<&Path>) -> Self {
+        user_dir.map_or_else(Self::default, |dir| {
+            Self::file(&dir.join(USER_FILE), Origin::User)
+        })
+    }
+
+    /// `<repo>/.tau/mcp.json`, when there is a repository.
+    pub fn repo(repo: Option<&Path>) -> Self {
+        repo.map_or_else(Self::default, |dir| {
+            Self::file(&dir.join(REPO_FILE), Origin::Repo)
+        })
     }
 }
 

@@ -7,6 +7,8 @@
 //!   scripts.
 //! - [`connection`]: one connection per server, shared by every run;
 //!   only its `client` module touches `rmcp`.
+//! - [`pool`]: connections kept across changes to the servers, for the
+//!   host.
 //! - [`ui`]: the plugin with its UI, [`McpUi`] (ADR 0017): the Servers
 //!   page, MCP tools' cards, and one plugin per repository on the host.
 
@@ -17,6 +19,7 @@ pub mod results;
 mod client;
 pub mod connection;
 mod plugin;
+pub mod pool;
 pub mod tool;
 pub mod ui;
 
