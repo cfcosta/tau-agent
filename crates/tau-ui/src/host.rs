@@ -1813,14 +1813,15 @@ impl Host {
             }
             Err(error) => return Err(error),
         };
+        // A main chat takes landings on trunk as it is now. The catch-up
+        // may restack the child, so its head is read after it.
+        if self.is_main(&parent) {
+            self.catch_up(&project, &parent_workspace)?;
+        }
         let child_head =
             project.bookmark(&bookmark(child))?.ok_or_else(|| {
                 anyhow::anyhow!("{} has no changes to land", child.0)
             })?;
-        // A main chat takes landings on trunk as it is now.
-        if self.is_main(&parent) {
-            self.catch_up(&project, &parent_workspace)?;
-        }
         let parent_vcs =
             project.add_workspace(&parent_workspace, &project.trunk()?)?;
         Ok(LandingPlan {

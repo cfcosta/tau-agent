@@ -676,6 +676,83 @@ fn a_fork_lands_on_its_parent_and_closes() {
     assert_eq!(card.changes.len(), 1);
 }
 
+/// A main chat that committed `a.txt`, a chat forked from it that
+/// committed `c.txt`, and an update that moved trunk to upstream's commit
+/// beside the main chat's, which the chat stands on: the main chat has
+/// not caught up yet.
+struct AfterUpdate {
+    host: Host,
+    project: Project,
+    chat: tau_agent::tool::RunId,
+    _dirs: (tempfile::TempDir, tempfile::TempDir),
+}
+
+fn a_chat_after_an_update() -> AfterUpdate {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.tool_call("write", write("c.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: c")))
+        .turn(|t| t.text("done too"));
+    let (host, mut events) = host_on(llm, src.path());
+    let host = host.with_repo(REPO, project.clone());
+
+    let main = on_main(&host, "write a");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let chat = host
+        .fork(&main, None, "write c", &ModelChoice::default())
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+
+    std::fs::write(src.path().join("NEW.md"), "new\n").unwrap();
+    git(src.path(), &["add", "NEW.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "second"]);
+    project
+        .update(tau_vcs::UpdateFrom::Checkout(src.path()))
+        .unwrap();
+    AfterUpdate {
+        host,
+        project,
+        chat: chat.id,
+        _dirs: (src, repos),
+    }
+}
+
+/// A chat lands after an update, before the main chat caught up.
+/// `Host::land` used to read the chat's head before the catch-up that
+/// restacks it, and so failed every time (`DivergentAfterLanding`).
+#[test]
+fn a_chat_lands_after_an_update() {
+    let after = a_chat_after_an_update();
+    let landed = after.host.land(&after.chat).unwrap();
+    assert_eq!(landed.changes.len(), 1);
+    let trunk = after.project.trunk().unwrap();
+    assert_eq!(trunk, landed.head);
+    for file in ["README.md", "NEW.md", "a.txt", "c.txt"] {
+        let at = after.project.file_at(&trunk, file).unwrap();
+        assert!(at.is_some(), "{file}");
+    }
+}
+
 /// Runs nest one level: a chat under the main chat cannot be forked,
 /// and it lands on the main chat.
 #[test]
