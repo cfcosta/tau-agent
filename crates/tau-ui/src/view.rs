@@ -2113,6 +2113,44 @@ mod tests {
         assert_eq!((tool_starts, nested_starts), (3, calls.len()));
     }
 
+    /// Codemode's store writes fold into its state alike live and from
+    /// a stored run's records.
+    #[test]
+    fn codemode_store_folds_live_and_from_history() {
+        let record =
+            json!({ "store": { "set": { "a": 1, "b": [2] }, "delete": [] } });
+        let deleted = json!({ "store": { "set": {}, "delete": ["a"] } });
+        let mut live = view();
+        for body in [&record, &deleted] {
+            live.apply(&RunEvent::PluginReport {
+                run: run(),
+                plugin: tau_codemode::PLUGIN.into(),
+                body: body.clone(),
+            });
+        }
+        let stored = RunView::from_timeline(
+            run(),
+            "retry-after",
+            "coder",
+            "gpt-5.5",
+            &[record, deleted].map(|body| Stored::Record {
+                plugin: tau_codemode::PLUGIN.into(),
+                body,
+            }),
+        );
+        let state = |view: &RunView| -> tau_codemode::ui::State {
+            serde_json::from_value(
+                view.plugin_states[tau_codemode::PLUGIN].clone(),
+            )
+            .unwrap()
+        };
+        assert_eq!(state(&live), state(&stored));
+        assert_eq!(
+            state(&live).store,
+            [("b".to_owned(), json!([2]))].into_iter().collect()
+        );
+    }
+
     /// A plugin's verdict on a nested call marks its row on the card it
     /// shows on, not the card: the script may catch the refusal. Its
     /// anchor lands on that card; a context rewrite cannot drop it.

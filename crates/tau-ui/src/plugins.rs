@@ -43,6 +43,11 @@ pub fn registry() -> &'static Registry {
             .with(tau_memory::ui::MemoryUi)
             .with(tau_constitution::ui::ConstitutionUi)
             .with(tau_goal::GoalUi)
+            // Codemode's `start` lists the Luau signatures of the tools in
+            // the run's plan when it runs. A plugin that adds tools in its
+            // own `start` (tau-mcp, for its servers' direct tools) must be
+            // registered before it, or scripts' signatures miss them.
+            .with(tau_codemode::CodemodeUi)
     });
     &REGISTRY
 }

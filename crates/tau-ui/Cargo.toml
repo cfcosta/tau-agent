@@ -21,6 +21,7 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
+tau-codemode.workspace = true
 tau-compaction.workspace = true
 tau-constitution.workspace = true
 tau-goal.workspace = true

@@ -1341,6 +1341,7 @@ pub fn catalog() -> Catalog {
             plugin(tau_compaction::NAME, "Summarizes when pruning is not enough", &[Seam::Start, Seam::Rewrite], 0.061, None),
             plugin(tau_goal::NAME, "Keeps a conversation going until its /goal holds, with Jev", &[Seam::Start, Seam::AfterTool, Seam::BeforeStop], 0.009, None),
             plugin("tau-tools", "read bash edit write grep find ls", &[Seam::Tools], 0.0, None),
+            plugin(tau_codemode::PLUGIN, &tau_codemode::ui::description(true), &[Seam::Start, Seam::Tools], 0.002, None),
         ],
         jev: Some(JevStats {
             model: "Jev 1.13".into(),
