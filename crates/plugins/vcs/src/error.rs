@@ -56,6 +56,11 @@ pub enum VcsError {
     LandedMissing,
     #[error("Change {0} is divergent after landing")]
     DivergentAfterLanding(String),
+    #[error(
+        "The child's head {0} is no longer visible: it was rewritten or \
+         abandoned since it was read. Read the child's bookmark again."
+    )]
+    HiddenHead(String),
     #[error("No tau project at {}", .0.display())]
     NoProject(PathBuf),
     #[error("No tau project at {}: {source}", root.display())]

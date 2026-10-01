@@ -419,6 +419,11 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   `land`), so the parent's files follow.
 - A child that already sits on the parent's head (the parent waited on
   it) is not rewritten.
+- A `child_head` that is no longer visible, because something rewrote
+  or abandoned it after the caller read it (the main chat's catch-up
+  restacks the chats on its commits), is refused with
+  `VcsError::HiddenHead`, naming it: landing it would bring the old
+  copies back beside the new ones. Read the child's bookmark again.
 - The parent's uncommitted work stays uncommitted: its working copy
   moves onto the landed changes. Landing is between the parent's turns.
 - The host's `Host::land` records each landed change as a `Link` in

@@ -1144,29 +1144,18 @@ fn dropping_a_chat_after_an_update_abandons_the_main_chats_commits() {
     assert_eq!(read(&repo.main_dir(), "main.txt").as_deref(), Some("x\n"));
 }
 
-/// Landing a chat after an update, before the main chat catches up,
-/// fails with `DivergentAfterLanding`, every time: the chat cannot land.
+/// A landing given a chat head that a catch-up rewrote since it was
+/// read is refused, naming the head, and changes nothing.
 ///
-/// `Host::landing` reads the chat's head from its bookmark, then catches
-/// the main chat up. The catch-up restacks the main chat's commits onto
-/// upstream's, and the chat's commits with them, and moves the chat's
-/// bookmark to the new head. The landing still gets the old head:
-/// `Vcs::land` takes what it has that the main chat's new head lacks,
-/// which is the old copies of the main chat's commit and the chat's,
-/// and rebases them onto the new head. Their change ids now name two
-/// visible commits each, so `land::current` fails. Nothing is written
-/// (the landing's transaction is dropped), but the chat can never land
-/// while the host keeps that order. No race is needed; the
-/// sequential model reads the bookmark after its catch-up.
-///
-/// Fix options:
-/// - In tau-ui, read the chat's bookmark after the catch-up in
-///   `Host::landing`. Recommended: one line moves.
-/// - In tau-vcs, have `Vcs::land` refuse a `child_head` that is no longer
-///   visible, naming it, or land the commit its change names now.
+/// `Host::landing` read the chat's head from its bookmark, then caught
+/// the main chat up, which restacked the chat and moved its bookmark.
+/// `Vcs::land` then took what the old head had that the main chat's new
+/// head lacked: the old copies of the main chat's commit and the chat's,
+/// rebased again beside the new ones, and failed with
+/// `DivergentAfterLanding`, every time. The host now reads the head after
+/// the catch-up, and a stale head gets a clear error.
 #[test]
-#[ignore = "bug: Host::land reads the chat's head before the catch-up that rewrites it"]
-fn landing_a_chat_after_an_update_makes_it_divergent() {
+fn a_landing_refuses_a_head_that_was_rewritten() {
     let repo = Repo::new();
     write(&repo.main_dir(), "main.txt", Some("x\n"));
     let main =
@@ -1179,16 +1168,26 @@ fn landing_a_chat_after_an_update_makes_it_divergent() {
     repo.project
         .update(UpdateFrom::Checkout(&repo.src()))
         .unwrap();
-    // `Host::landing`, then `Host::land`.
-    let head = repo.project.bookmark("tau/c0").unwrap().unwrap();
+    let stale = repo.project.bookmark("tau/c0").unwrap().unwrap();
     catch_up(&repo.project).unwrap();
     let trunk = repo.project.trunk().unwrap();
     let parent = repo
         .project
         .add_workspace(DEFAULT_WORKSPACE, &trunk)
         .unwrap();
-    let landing = block_on(parent.land(head, repo.trunk_name.clone(), true));
-    assert!(landing.is_ok(), "{landing:?}");
+    let err =
+        block_on(parent.land(stale.clone(), repo.trunk_name.clone(), true))
+            .unwrap_err();
+    assert!(
+        matches!(&err, tau_vcs::VcsError::HiddenHead(head) if *head == stale),
+        "{err}"
+    );
+    assert_eq!(repo.project.trunk().unwrap(), trunk, "nothing moved");
+    // The head read after the catch-up lands.
+    let head = repo.project.bookmark("tau/c0").unwrap().unwrap();
+    let landing =
+        block_on(parent.land(head, repo.trunk_name.clone(), true)).unwrap();
+    assert_eq!(landing.changes.len(), 1);
 }
 
 /// The repository's lock never deadlocks: threads that each take turns

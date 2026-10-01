@@ -142,6 +142,13 @@ fn restack(
     child_head: &CommitId,
     bookmark: &str,
 ) -> Result<Landing, VcsError> {
+    // A head the caller read before something rewrote it, as the main
+    // chat's catch-up restacks the chats on its commits: landing it
+    // would bring the old copies back beside the new ones.
+    let child = tx.repo().store().get_commit(child_head)?;
+    if !visible(tx.repo(), &child)? {
+        return Err(VcsError::HiddenHead(child_head.hex()));
+    }
     // The parent's uncommitted work stays in its working copy, which
     // moves onto the landed changes.
     let dirty = !block_on(wc.is_empty(tx.repo()))?;
@@ -232,6 +239,17 @@ fn restack(
         conflicts: conflicts(&new_head),
         head: new_head.id().hex(),
     })
+}
+
+/// Whether `commit` is visible: its change names it.
+fn visible(repo: &dyn Repo, commit: &Commit) -> Result<bool, VcsError> {
+    let Some(targets) = block_on(repo.resolve_change_id(commit.change_id()))?
+    else {
+        return Ok(false);
+    };
+    Ok(targets
+        .visible_with_offsets()
+        .any(|(_, id)| id == commit.id()))
 }
 
 /// The visible commit `commit`'s change names now.
