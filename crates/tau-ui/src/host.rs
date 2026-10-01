@@ -2326,6 +2326,11 @@ impl Host {
         };
         view.context = ContextWindow {
             window: find(&choice.model).map(|model| model.context_window),
+            // Where fast-compaction steps in, when there is a key.
+            trigger: self.jev().is_some().then(|| {
+                (tau_fast_compaction::Settings::default().compact_at_percent
+                    / 100.0) as f32
+            }),
             ..ContextWindow::default()
         };
         let workspace = self
@@ -3716,6 +3721,14 @@ async fn stored_view(
                 serde_json::from_str(&body)
                     .ok()
                     .map(|body| Stored::Record { plugin, body })
+            }
+            // fast-compaction's rewrite carries its ledger.
+            Entry::Context { plugin, body }
+                if plugin == tau_fast_compaction::NAME =>
+            {
+                serde_json::from_str(&body)
+                    .ok()
+                    .map(|body| Stored::Rewrite { plugin, body })
             }
             // What output pruning cut, for the call's card.
             Entry::Plugin { plugin, body }

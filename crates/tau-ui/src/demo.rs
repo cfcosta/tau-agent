@@ -53,11 +53,9 @@ use crate::{
     view::{
         BranchCode,
         ContextWindow,
-        Decision,
         FileChange,
         FileKind,
         FileStat,
-        LedgerEntry,
         Limits,
         NoteBody,
         Origin,
@@ -1373,7 +1371,7 @@ pub fn catalog() -> Catalog {
             plugin("tau-reasoning", "Scores the job and picks the reasoning effort", &[Seam::Start], 0.004, Some(PluginScreen::Plan)),
             plugin("tau-memory", "Zettelkasten notes on docbert", &[Seam::Start, Seam::Tools, Seam::Finish], 0.212, Some(PluginScreen::Memory)),
             plugin("tau-constitution", "6 rules on edit, write, bash and the final answer", &[Seam::BeforeTool, Seam::BeforeStop], 0.031, Some(PluginScreen::Constitution)),
-            plugin("tau-fast-compaction", "Prunes large bash outputs as they arrive, and stale tool history, with Jev", &[Seam::Start, Seam::Rewrite], 0.046, Some(PluginScreen::Ledger)),
+            plugin(tau_fast_compaction::NAME, "Prunes large bash outputs as they arrive, and stale tool history, with Jev", &[Seam::Start, Seam::Rewrite], 0.046, Some(PluginScreen::Ledger)),
             plugin("tau-compaction", "Summarizes when pruning is not enough", &[Seam::Start, Seam::Rewrite], 0.061, Some(PluginScreen::Ledger)),
             plugin("tau-tools", "read bash edit write grep find ls", &[Seam::Tools], 0.0, None),
         ],
@@ -1697,7 +1695,7 @@ fn plugins(states: [&str; 4]) -> Vec<PluginStatus> {
         "tau-reasoning",
         "tau-memory",
         "tau-constitution",
-        "tau-fast-compaction",
+        tau_fast_compaction::NAME,
     ];
     names
         .into_iter()
@@ -2807,123 +2805,47 @@ pub fn script() -> Vec<Step> {
     );
     s.end_turn(96_000, 2_400, 0.063);
 
-    // tau-fast-compaction prunes at the turn boundary.
+    // fast-compaction prunes at the turn boundary: its ledger, then the
+    // rewrite, as a run reports them.
+    s.charged(tau_fast_compaction::NAME, 0.0011);
+    let decision =
+        |call_id: &str, tool: &str, action: &str, odds: (f64, f64)| {
+            json!({
+                "call_id": call_id, "tool": tool, "action": action,
+                "keep_call": odds.0, "keep_result": odds.1,
+            })
+        };
+    s.report(
+        tau_fast_compaction::NAME,
+        json!({
+            "kind": "ledger",
+            "decisions": [
+                decision("c2", "grep", "keep", (0.64, 0.22)),
+                decision("c3", "read", "drop_result", (0.71, 0.18)),
+                decision("c5", "edit", "keep", (0.94, 0.88)),
+                decision("c6", "bash", "keep", (0.18, 0.04)),
+                decision("c7", "bash", "keep", (0.62, 0.03)),
+                decision("c8", "read", "drop_result", (0.52, 0.09)),
+                decision("c9", "read", "drop_result", (0.58, 0.11)),
+            ],
+            "stats": {
+                "calls": 9, "pinned": 2, "kept": 4, "results_dropped": 3,
+                "calls_dropped": 0, "requests": 1, "state_tokens": 18_400,
+                "state_stage": "whole", "chars_before": 688_000,
+                "chars_after": 324_000, "reduction_ratio": 0.53,
+                "cost": 0.0011,
+            },
+        }),
+    );
     s.event(
         700,
         RunEvent::ContextRewritten {
             run: run.clone(),
-            plugin: Arc::from("tau-fast-compaction"),
+            plugin: Arc::from(tau_fast_compaction::NAME),
             tokens_before: 172_000,
             tokens_after: 81_000,
         },
     );
-    s.at(
-        0,
-        RunUpdate::RewriteDetail("38 calls judged · $0.0011".into()),
-    );
-    let entry = |call_id: &str,
-                 turn: u32,
-                 tool: &str,
-                 input: &str,
-                 tokens: u64,
-                 odds: Option<(f32, f32)>,
-                 decision: Decision| LedgerEntry {
-        call_id: call_id.into(),
-        turn,
-        tool: tool.into(),
-        input: input.into(),
-        tokens,
-        matters: odds.map(|(m, _)| m),
-        verbatim: odds.map(|(_, v)| v),
-        decision,
-    };
-    s.at(
-        0,
-        RunUpdate::Ledger(vec![
-            entry(
-                "c1",
-                1,
-                "memory_read",
-                "n-0388",
-                600,
-                None,
-                Decision::Pinned,
-            ),
-            entry(
-                "c2",
-                1,
-                "grep",
-                "\"retry_after|RetryPolicy\" crates/tau-ai/src",
-                300,
-                Some((0.64, 0.22)),
-                Decision::Keep,
-            ),
-            entry(
-                "c3",
-                2,
-                "read",
-                "crates/tau-ai/src/retry.rs",
-                21_700,
-                Some((0.71, 0.18)),
-                Decision::DropResult,
-            ),
-            entry(
-                "c4",
-                2,
-                "edit",
-                "crates/tau-ai/src/retry.rs",
-                200,
-                None,
-                Decision::Pinned,
-            ),
-            entry(
-                "c5",
-                3,
-                "edit",
-                "crates/tau-ai/src/retry.rs",
-                200,
-                Some((0.94, 0.88)),
-                Decision::Keep,
-            ),
-            entry(
-                "c6",
-                3,
-                "bash",
-                "rm -rf target/debug/incremental",
-                100,
-                Some((0.18, 0.04)),
-                Decision::Keep,
-            ),
-            entry(
-                "c7",
-                4,
-                "bash",
-                "cargo nextest run --workspace",
-                18_200,
-                Some((0.62, 0.03)),
-                Decision::Keep,
-            ),
-            entry(
-                "c8",
-                4,
-                "read",
-                "crates/tau-ai/src/client.rs",
-                21_700,
-                Some((0.52, 0.09)),
-                Decision::DropResult,
-            ),
-            entry(
-                "c9",
-                4,
-                "read",
-                "crates/tau-testing/src/fake_openai.rs",
-                14_300,
-                Some((0.58, 0.11)),
-                Decision::DropResult,
-            ),
-        ]),
-    );
-    s.charged(tau_fast_compaction::NAME, 0.0011);
     s.at(
         0,
         RunUpdate::Plugins(plugins([
@@ -3229,8 +3151,24 @@ mod tests {
                 .any(|item| matches!(item, Item::Rewrite { .. }))
         );
         assert!(matches!(view.items.last(), Some(Item::Plugin(_))));
-        // The ledger marks the cards it pruned.
-        assert_eq!(view.ledger.len(), 9);
+        // The ledger lists every call before the rewrite, and marks the
+        // cards it pruned.
+        let rewrite = view
+            .items
+            .iter()
+            .position(|item| matches!(item, Item::Rewrite { .. }))
+            .unwrap();
+        let calls = view.items[..rewrite]
+            .iter()
+            .filter(|item| matches!(item, Item::Tool(_)))
+            .count();
+        assert_eq!(view.ledger.len(), calls);
+        assert!(
+            view.last_rewrite()
+                .and_then(|(_, _, _, detail)| detail)
+                .is_some_and(|detail| detail.contains("$0.0011")),
+            "the pass's cost"
+        );
         assert_eq!(
             view.tool("c8").and_then(|card| card.pruned),
             Some(crate::view::Pruned::ResultDropped)

@@ -115,11 +115,13 @@ needed)]`. The archive is the file `bash` spilled to, or else a new
 Whenever Jev was asked, a `PluginReport` with `kind: "output"` says how
 it went: the call, the output's lines, the chunks and how many stayed,
 the lines dropped, the segments, the requests, the estimated tokens
-before and after, whether the result was replaced, and the archive. The
-same body is stored with the run as a record, so an interface can show
-it again when it reloads the run from history. tau-ui's `bash` card
-shows a pruned output as two tabs, the terminal and the text the model
-saw ([terminal.md](terminal.md)).
+before and after, whether the result was replaced, the archive, and
+what Jev cost (`cost`, also charged to the run). The same body is
+stored with the run as a record, so an interface can show it again when
+it reloads the run from history. tau-ui's `bash` card shows a pruned
+output as two tabs, the terminal and the text the model saw
+([terminal.md](terminal.md)), with the lines kept and the tokens before
+and after; the Ledger screen adds up what pruned outputs saved.
 
 ### Safeguards
 
@@ -341,8 +343,14 @@ by the pruned transcript ([storage.md](storage.md)). The entry's body
 is the ledger, with the archive of each cut result, and the pass's
 stats: calls, pinned, kept, results and calls dropped, requests, the
 largest state's size and `state_stage` (`whole`, or `N segments`), the
-characters before and after, and the reduction. A fork whose latest
-inherited rewrite is fast compaction's resumes its ledger from it.
+characters before and after, the reduction, and what Jev cost for the
+pass (`cost`). The same details go out as the `kind: "ledger"` report
+before the rewrite. A fork whose latest inherited rewrite is fast
+compaction's resumes its ledger from it, and tau-ui rebuilds a stored
+run's ledger, rewrite note and pruned cards from it, a dropped call
+included, so history shows what a live run showed. With a key, tau-ui
+marks where a pass steps in (`compact_at_percent`, 60%) on the context
+meter and the Ledger screen.
 
 ### Where it differs from pi
 

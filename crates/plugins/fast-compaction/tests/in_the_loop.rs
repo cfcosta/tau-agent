@@ -156,6 +156,20 @@ fn a_stale_result_is_cut() {
         };
         let reported: Details = serde_json::from_value(body.clone()).unwrap();
         assert_eq!(reported.stats.results_dropped, 1);
+        // Its cost is what the pass charged, before the report.
+        let charged: f64 = events[..report]
+            .iter()
+            .filter_map(|event| match event {
+                RunEvent::PluginCharged { plugin, usage, .. }
+                    if &**plugin == NAME =>
+                {
+                    Some(usage.cost.total)
+                }
+                _ => None,
+            })
+            .sum();
+        assert!(charged > 0.0);
+        assert_eq!(reported.stats.cost, charged);
 
         let next = &model.requests()[2].transcript;
         let first = result_text(&next[2]);

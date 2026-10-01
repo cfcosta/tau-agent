@@ -1444,6 +1444,8 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     let mut view = host
         .start("build it", &ModelChoice::default(), REPO)
         .unwrap();
+    // With a key, pruning steps in at 60% of the window.
+    assert_eq!(view.context.trigger, Some(0.6));
     for event in until_end(&mut events) {
         view.apply(&event);
     }

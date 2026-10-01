@@ -266,6 +266,20 @@ fn a_large_output_reaches_the_model_pruned() {
         assert!(reports[0].tokens_after < reports[0].tokens_before);
         assert!(reports[0].dropped_lines > 0);
         assert_eq!(reports[0].lines, 3000);
+        // The report's cost is what the plugin charged for it.
+        let charged: f64 = events
+            .iter()
+            .filter_map(|event| match event {
+                RunEvent::PluginCharged { plugin, usage, .. }
+                    if &**plugin == NAME =>
+                {
+                    Some(usage.cost.total)
+                }
+                _ => None,
+            })
+            .sum();
+        assert!(charged > 0.0);
+        assert_eq!(reports[0].cost, charged);
     });
     std::fs::remove_dir_all(&dir).unwrap();
 }

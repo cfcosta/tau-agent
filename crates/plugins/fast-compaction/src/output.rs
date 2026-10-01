@@ -489,6 +489,9 @@ pub struct OutputStats {
     pub pruned: bool,
     /// The file holding the output whole, when it was replaced.
     pub archive: Option<String>,
+    /// What Jev cost for it, in US dollars.
+    #[serde(default)]
+    pub cost: f64,
 }
 
 /// What asking Jev about an output's chunks came to.

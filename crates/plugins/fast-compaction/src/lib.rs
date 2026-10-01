@@ -264,6 +264,9 @@ pub struct Stats {
     pub chars_before: usize,
     pub chars_after: usize,
     pub reduction_ratio: f64,
+    /// What Jev cost for the pass, in US dollars.
+    #[serde(default)]
+    pub cost: f64,
 }
 
 #[async_trait]
@@ -386,7 +389,10 @@ async fn prune_output(
     if planned.requests.is_empty() {
         return Ok(None);
     }
+    // What Jev cost for this output, for the report as well.
+    let spent = std::sync::Mutex::new(0.0);
     let asked = output::ask(jev, &planned, pruning.keep_threshold, |usage| {
+        *spent.lock().expect("not poisoned") += usage.cost.total;
         ctx.charge(usage)
     })
     .await?;
@@ -437,6 +443,7 @@ async fn prune_output(
         tokens_after: if pruned { tokens_after } else { tokens_before },
         pruned,
         archive: pruned.then(|| archive.display().to_string()),
+        cost: spent.into_inner().expect("not poisoned"),
     };
     let mut report = serde_json::to_value(&stats).expect("stats serialize");
     report["kind"] = "output".into();
@@ -477,8 +484,11 @@ impl FastCompactionRun {
         // it exists to space out paid passes and full resends, and a pass
         // with nothing to ask costs neither.
         self.last_pass = Some(view.tokens);
+        // What Jev cost for this pass, for the details as well.
+        let spent = std::sync::Mutex::new(0.0);
         let decided =
             decide::decide(&*self.jev, &entries, &calls, settings, |usage| {
+                *spent.lock().expect("not poisoned") += usage.cost.total;
                 ctx.charge(usage)
             })
             .await?;
@@ -539,6 +549,7 @@ impl FastCompactionRun {
             chars_before,
             chars_after,
             reduction_ratio,
+            cost: spent.into_inner().expect("not poisoned"),
         };
         self.ledger = staged;
         let details = Details {

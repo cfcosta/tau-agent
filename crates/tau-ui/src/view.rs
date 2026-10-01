@@ -350,27 +350,35 @@ pub struct ToolCard {
     /// What context pruning did to this call, if anything.
     pub pruned: Option<Pruned>,
     /// What output pruning cut from the call's result, when it did.
-    pub cut: Option<OutputCut>,
+    /// Boxed: most cards have none, and it is the card's largest part.
+    pub cut: Option<Box<OutputCut>>,
     /// Characters the call's arguments and result take in the context.
     pub size: usize,
 }
 
 /// A result fast compaction pruned as it arrived: the lines the model
 /// saw of the whole output, and the file holding the whole of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutputCut {
     pub kept: usize,
     pub lines: usize,
     pub archive: String,
+    /// Estimated tokens of the whole output, and of what the model saw.
+    pub tokens_before: u64,
+    pub tokens_after: u64,
+    /// What asking Jev about it cost, in US dollars.
+    pub cost: f64,
 }
 
 impl OutputCut {
-    /// `kept 212 of 4,810 lines`.
+    /// `kept 212 of 4,810 lines · 12k → 900 tokens`.
     pub fn label(&self) -> String {
         format!(
-            "kept {} of {} lines",
+            "kept {} of {} lines · {} → {} tokens",
             grouped(self.kept),
-            grouped(self.lines)
+            grouped(self.lines),
+            tokens(self.tokens_before),
+            tokens(self.tokens_after)
         )
     }
 }
@@ -863,17 +871,11 @@ pub enum RunUpdate {
         call_id: String,
         checks: Vec<String>,
     },
-    Pruned {
-        call_id: String,
-        pruned: Pruned,
-    },
     /// The plugin that added a tool, for its card's tag.
     ToolPlugin {
         call_id: String,
         plugin: String,
     },
-    /// Extra detail on the last context rewrite.
-    RewriteDetail(String),
     /// The pruning plugin's decisions, replacing the last ledger.
     Ledger(Vec<LedgerEntry>),
 }
@@ -889,7 +891,16 @@ impl From<RunEvent> for RunUpdate {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Stored {
     Message(Message),
-    Record { plugin: String, body: Value },
+    Record {
+        plugin: String,
+        body: Value,
+    },
+    /// A context rewrite: what the stored transcript starts with after
+    /// one, and the plugin's details (fast-compaction's ledger).
+    Rewrite {
+        plugin: String,
+        body: Value,
+    },
 }
 
 impl RunView {
@@ -958,6 +969,8 @@ impl RunView {
         timeline: &[Stored],
     ) -> Self {
         let mut view = Self::new(id, title, agent, model);
+        // The ledger marks the cards that follow it, so it comes last.
+        let mut ledger: Option<&Value> = None;
         let mut starting: Vec<&Value> = Vec::new();
         let mut during: Vec<(&str, &Value)> = Vec::new();
         // Whether the turn the records in `during` belong to has begun.
@@ -969,6 +982,21 @@ impl RunView {
         };
         for entry in timeline {
             match entry {
+                Stored::Rewrite { plugin, body }
+                    if plugin == tau_fast_compaction::NAME =>
+                {
+                    let chars = |key: &str| {
+                        body["stats"][key].as_u64().unwrap_or(0).div_ceil(4)
+                    };
+                    view.items.push(Item::Rewrite {
+                        plugin: plugin.clone(),
+                        tokens_before: chars("chars_before"),
+                        tokens_after: chars("chars_after"),
+                        detail: None,
+                    });
+                    ledger = Some(body);
+                }
+                Stored::Rewrite { .. } => {}
                 // A choice made as a message came in shows after that
                 // message; one made between turns, where it was made.
                 Stored::Record { plugin, body }
@@ -1023,6 +1051,18 @@ impl RunView {
         flush(&mut view, &mut during);
         for body in starting {
             view.report(tau_reasoning::NAME, body);
+        }
+        if let Some(body) = ledger {
+            view.ledger_report(body);
+            let detail = view.pending_rewrite.take();
+            if let Some(Item::Rewrite { detail: shown, .. }) =
+                view.items.iter_mut().find(|item| {
+                    matches!(item, Item::Rewrite { plugin, .. }
+                        if plugin == tau_fast_compaction::NAME)
+                })
+            {
+                *shown = detail;
+            }
         }
         view.end_stored_turn();
         view
@@ -1197,6 +1237,23 @@ impl RunView {
             .then(|| ContextParts::estimate(&self.items, self.context.used))
     }
 
+    /// Outputs fast-compaction pruned as they arrived, and the tokens
+    /// that saved.
+    pub fn output_savings(&self) -> (usize, u64) {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Tool(card) => card.cut.as_ref(),
+                _ => None,
+            })
+            .fold((0, 0), |(outputs, saved), cut| {
+                (
+                    outputs + 1,
+                    saved + cut.tokens_before.saturating_sub(cut.tokens_after),
+                )
+            })
+    }
+
     pub fn last_rewrite(&self) -> Option<(&str, u64, u64, Option<&str>)> {
         self.items.iter().rev().find_map(|item| match item {
             Item::Rewrite {
@@ -1262,22 +1319,9 @@ impl RunView {
                     card.checks = checks;
                 }
             }
-            RunUpdate::Pruned { call_id, pruned } => {
-                self.mark_pruned(&call_id, pruned);
-            }
             RunUpdate::ToolPlugin { call_id, plugin } => {
                 if let Some(card) = self.tool_mut(&call_id) {
                     card.from_plugin = Some(plugin);
-                }
-            }
-            RunUpdate::RewriteDetail(text) => {
-                if let Some(Item::Rewrite { detail, .. }) = self
-                    .items
-                    .iter_mut()
-                    .rev()
-                    .find(|item| matches!(item, Item::Rewrite { .. }))
-                {
-                    *detail = Some(text);
                 }
             }
             RunUpdate::Ledger(ledger) => {
@@ -2005,11 +2049,14 @@ impl RunView {
             return;
         };
         if let Some(card) = self.tool_mut(&stats.call_id) {
-            card.cut = Some(OutputCut {
+            card.cut = Some(Box::new(OutputCut {
                 kept: stats.lines.saturating_sub(stats.dropped_lines),
                 lines: stats.lines,
                 archive,
-            });
+                tokens_before: stats.tokens_before as u64,
+                tokens_after: stats.tokens_after as u64,
+                cost: stats.cost,
+            }));
         }
     }
 
@@ -2021,8 +2068,31 @@ impl RunView {
         else {
             return;
         };
+        let cost = details.stats.cost;
         let mut turn = 1;
         let mut entries = Vec::new();
+        // Calls the ledger dropped from a stored transcript have no card
+        // left; they still show, first, as they came first.
+        for decision in details.decisions.iter().filter(|decision| {
+            !self.items.iter().any(|item| {
+                matches!(item, Item::Tool(card) if card.call_id == decision.call_id)
+            })
+        }) {
+            entries.push(LedgerEntry {
+                call_id: decision.call_id.clone(),
+                turn: 0,
+                tool: decision.tool.clone(),
+                input: String::new(),
+                tokens: 0,
+                matters: Some(decision.keep_call as f32),
+                verbatim: Some(decision.keep_result as f32),
+                decision: match decision.action {
+                    Action::Keep => Decision::Keep,
+                    Action::DropResult => Decision::DropResult,
+                    Action::DropCall => Decision::DropCall,
+                },
+            });
+        }
         for item in &self.items {
             match item {
                 Item::TurnEnd { turn: ended } => turn = ended + 1,
@@ -2054,14 +2124,21 @@ impl RunView {
         let count = |n: usize, one: &str, many: &str| {
             format!("{n} {}", if n == 1 { one } else { many })
         };
-        self.pending_rewrite = Some(format!(
-            "{} judged in {} · {} cut, {} dropped · −{:.0}%",
+        let mut detail = format!(
+            "{} judged in {} · {} cut, {} dropped · −{:.0}% · Jev read {} \
+             tokens of history, {}",
             count(stats.calls - stats.pinned, "call", "calls"),
             count(stats.requests, "Jev request", "Jev requests"),
             count(stats.results_dropped, "result", "results"),
             count(stats.calls_dropped, "call", "calls"),
-            stats.reduction_ratio * 100.0
-        ));
+            stats.reduction_ratio * 100.0,
+            tokens(stats.state_tokens as u64),
+            stats.state_stage,
+        );
+        if cost > 0.0 {
+            detail.push_str(&format!(" · {}", fine_usd(cost)));
+        }
+        self.pending_rewrite = Some(detail);
         let state = format!(
             "{} pruned · −{:.0}%",
             stats.results_dropped + stats.calls_dropped,
@@ -2468,6 +2545,16 @@ pub fn usd(amount: f64) -> String {
     }
 }
 
+/// A Jev cost, which is often a fraction of a cent: to four places
+/// under a cent, else as [`usd`].
+pub fn fine_usd(amount: f64) -> String {
+    if amount < 0.01 {
+        format!("${amount:.4}")
+    } else {
+        usd(amount)
+    }
+}
+
 pub fn clock(duration: Duration) -> String {
     let secs = duration.as_secs();
     format!("{}:{:02}", secs / 60, secs % 60)
@@ -2658,7 +2745,7 @@ mod tests {
             panic!("a card")
         };
         let cut = card.cut.clone().unwrap();
-        assert_eq!(cut.label(), "kept 212 of 4,810 lines");
+        assert_eq!(cut.label(), "kept 212 of 4,810 lines · 12k → 900 tokens");
         assert_eq!(cut.archive, "/data/tau/repos/app/archive/tau-output-1.txt");
         // Neither the ledger nor the card's context pruning changed.
         assert!(view.ledger.is_empty());
@@ -2739,7 +2826,7 @@ mod tests {
                 _ => None,
             })
             .expect("the card says what was cut");
-        assert_eq!(cut.label(), "kept 212 of 4,810 lines");
+        assert_eq!(cut.label(), "kept 212 of 4,810 lines · 12k → 900 tokens");
     }
 
     #[test]
@@ -3424,6 +3511,89 @@ mod tests {
                 "two",
                 "Jev could not score the step: offline",
             ]
+        );
+    }
+
+    /// A stored run that fast-compaction rewrote starts with its
+    /// ledger: the rewrite shows with what it saved and cost, and the
+    /// ledger lists each call, the dropped ones too, marking the cards
+    /// that are left.
+    #[test]
+    fn a_stored_rewrite_brings_its_ledger_back() {
+        let message = |value: Value| -> Message {
+            serde_json::from_value(value).unwrap()
+        };
+        let usage = json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
+                           "totalTokens": 0, "cost": {"input": 0, "output": 0,
+                           "cacheRead": 0, "cacheWrite": 0, "total": 0}});
+        let call = |id: &str| {
+            message(json!({
+                "role": "assistant",
+                "content": [{"type": "toolCall", "id": id, "name": "read",
+                             "arguments": {"path": "a.rs"}}],
+                "api": "responses", "provider": "openai", "model": "m",
+                "usage": usage, "stopReason": "toolUse", "timestamp": 0
+            }))
+        };
+        let result = |id: &str| {
+            message(json!({
+                "role": "toolResult", "toolCallId": id, "toolName": "read",
+                "content": [{"type": "text", "text": "cut"}],
+                "isError": false, "timestamp": 0
+            }))
+        };
+        let decision = |id: &str, action: &str| {
+            json!({"call_id": id, "tool": "read", "action": action,
+                   "keep_call": 0.6, "keep_result": 0.1})
+        };
+        let ledger = json!({
+            "decisions": [decision("t1", "drop_call"), decision("t2", "drop_result")],
+            "stats": {
+                "calls": 3, "pinned": 1, "kept": 0, "results_dropped": 1,
+                "calls_dropped": 1, "requests": 1, "state_tokens": 2_000,
+                "state_stage": "whole", "chars_before": 40_000,
+                "chars_after": 8_000, "reduction_ratio": 0.8, "cost": 0.0002,
+            },
+        });
+        let view = RunView::from_timeline(
+            run(),
+            "t",
+            "a",
+            "gpt-6-sol",
+            &[
+                Stored::Rewrite {
+                    plugin: tau_fast_compaction::NAME.into(),
+                    body: ledger,
+                },
+                Stored::Message(call("t2")),
+                Stored::Message(result("t2")),
+                Stored::Message(call("t3")),
+                Stored::Message(result("t3")),
+            ],
+        );
+        let (plugin, before, after, detail) = view.last_rewrite().unwrap();
+        assert_eq!(
+            (plugin, before, after),
+            (tau_fast_compaction::NAME, 10_000, 2_000)
+        );
+        let detail = detail.unwrap();
+        assert!(detail.ends_with(", whole · $0.0002"), "{detail}");
+        let decisions: Vec<(&str, Decision)> = view
+            .ledger
+            .iter()
+            .map(|entry| (entry.call_id.as_str(), entry.decision))
+            .collect();
+        assert_eq!(
+            decisions,
+            [
+                ("t1", Decision::DropCall),
+                ("t2", Decision::DropResult),
+                ("t3", Decision::Pinned),
+            ]
+        );
+        assert_eq!(
+            view.tool("t2").and_then(|card| card.pruned),
+            Some(Pruned::ResultDropped)
         );
     }
 

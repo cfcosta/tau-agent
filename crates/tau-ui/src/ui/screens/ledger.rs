@@ -246,6 +246,19 @@ pub fn render(
                 "next request".into(),
                 mono("1 full resend", Type::CAPTION, t.text),
             ),
+            (
+                "outputs pruned".into(),
+                mono(
+                    match run.output_savings() {
+                        (0, _) => "none".to_owned(),
+                        (n, saved) => {
+                            format!("{n} · −{} tokens", tokens(saved))
+                        }
+                    },
+                    Type::CAPTION,
+                    t.text,
+                ),
+            ),
         ],
         t,
     )
