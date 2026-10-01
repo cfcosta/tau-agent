@@ -13,7 +13,11 @@
 //! - each turn links a snapshot of `@` as the turn left it: its files,
 //!   its parent's files and its change id;
 //! - `changed`, and the paths observers hear, are what the turn changed
-//!   since the turn before, or since the run started for the first;
+//!   since the turn before, or since the run started for the first; the
+//!   turn before's files count rebased onto their parent as it is at the
+//!   turn's end, as the reference says (a run that undoes a commit and
+//!   commits again rewrites that parent itself: see the pinned
+//!   `a_turn_that_recommits_an_undone_commit_keeps_its_paths`);
 //! - a run that would stop with changes in `@` is held once; what is left
 //!   at the end of a normal run or one at a limit is committed with the
 //!   model's message, and a failed run keeps it in `@`;
@@ -244,6 +248,7 @@ impl Model {
             wc: self.wc.clone(),
             parent: self.parent_tree(),
             stack: self.stack.clone(),
+            from: None,
         }
     }
 
@@ -339,6 +344,20 @@ struct AtTurn {
     parent: Tree,
     /// The changes under `@`, oldest first.
     stack: Vec<Change>,
+    /// What the turn's paths count from: the turn before's files rebased
+    /// onto its parent as that was at this turn's end, by the rule
+    /// `fork_base` has; `None` when that conflicts.
+    from: Option<Tree>,
+}
+
+/// Records the turn that just ended, with what its paths count from.
+fn push_turn(model: &Model, at: &mut Vec<AtTurn>) {
+    let mut turn = model.at_turn();
+    turn.from = match at.last() {
+        None => Some(trunk_tree()),
+        Some(before) => fork_base(model, before).map(|(_, files)| files),
+    };
+    at.push(turn);
 }
 
 /// One path of a three-way merge, `None` when it conflicts.
@@ -416,7 +435,7 @@ fn plan(
             }
             t
         });
-        at.push(model.at_turn());
+        push_turn(&model, &mut at);
     }
     let dirty = model.dirty();
     let leftover = |model: &mut Model, llm: ScriptedModel| {
@@ -429,10 +448,10 @@ fn plan(
     match end {
         End::Answer => {
             llm = llm.turn(|t| t.text("done"));
-            at.push(model.at_turn());
+            push_turn(&model, &mut at);
             if dirty {
                 llm = llm.turn(|t| t.text("still done"));
-                at.push(model.at_turn());
+                push_turn(&model, &mut at);
                 llm = leftover(&mut model, llm);
             }
         }
@@ -443,7 +462,7 @@ fn plan(
         }
         End::Fail => {
             llm = llm.turn(|t| t.dropped());
-            at.push(model.at_turn());
+            push_turn(&model, &mut at);
         }
     }
     (llm, at, model)
@@ -526,7 +545,6 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
             outcome.stop
         );
         let heard = heard.lock().unwrap().clone();
-        let mut before = trunk_tree();
         for (n, ((_, link), want)) in linked.iter().zip(&at).enumerate() {
             let turn = n + 1;
             assert!(link.snapshot, "turn {turn} links a snapshot");
@@ -542,10 +560,18 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
                 want.parent,
                 "turn {turn}'s parent"
             );
-            let paths = changed_paths(&before, &want.wc.tree);
+            let Some(from) = &want.from else {
+                tc.event("a turn's paths count from a conflict");
+                continue;
+            };
+            if n > 0 && *from != at[n - 1].wc.tree {
+                // The rule counts it as a catch-up's; see
+                // `a_turn_that_recommits_an_undone_commit_keeps_its_paths`.
+                tc.event("a turn rewrote the change under the turn before");
+            }
+            let paths = changed_paths(from, &want.wc.tree);
             assert_eq!(heard[n], paths, "turn {turn}'s paths");
             assert_eq!(link.changed, !paths.is_empty(), "turn {turn} changed");
-            before = want.wc.tree.clone();
         }
         // Links share a change id exactly when the model's `@` was one
         // change.
@@ -744,5 +770,73 @@ fn a_fork_whose_parent_was_undone_stays_apart() {
             trunk_tree(),
             "the run's edit reached the fork"
         );
+    });
+}
+
+/// A turn that undoes the commit the turn before made, edits, and commits
+/// again changed the file it edited.
+///
+/// Turn 1 commits `X` (no files). Turn 2 undoes it, so `X` is `@` again,
+/// writes `a.txt`, and commits `X` once more, with the write. `end_turn`
+/// counts turn 2's paths from turn 1's snapshot rebased onto its parent
+/// as it is now (`since_tree` in `src/ops.rs`), which is the recommitted
+/// `X`: the rebase takes in the write, so turn 2 lists no paths, and its
+/// link says it changed nothing. The rule exists for a catch-up, which
+/// rewrites the commit a run stands on from outside; it cannot tell that
+/// from the run rewriting the commit itself.
+///
+/// Fix options:
+/// - tag catch-ups in the operation log, as landings are
+///   (`tau.vcs.landed`), and count a turn's paths from the turn before's
+///   snapshot with only the tagged catch-ups' and landings' changes
+///   applied, instead of following the parent's change;
+/// - keep following the parent, but not through an operation of this
+///   workspace's own tools since the snapshot (an undo, a commit), found
+///   by walking the operation log as `landed_since` does;
+/// - accept it, and say in the reference that a turn which undoes and
+///   recommits the commit beneath it reports what it recommitted as not
+///   its own.
+///
+/// The first states what the rule means to leave out instead of guessing
+/// it from the graph, and is the recommendation. The fork rule (a fork at
+/// turn 1 starts with the recommitted files) has the same cause.
+#[test]
+#[ignore = "bug: a turn that recommits an undone commit lists no paths"]
+fn a_turn_that_recommits_an_undone_commit_keeps_its_paths() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let store = Store::memory().await.unwrap();
+        let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
+        let first =
+            RunWorkspace::new(project.clone(), "first", Identity::default())
+                .unwrap()
+                .on_turn({
+                    let heard = heard.clone();
+                    move |turn| heard.lock().unwrap().push(turn.paths.clone())
+                });
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("vcs_commit", json!({ "message": "feat: x" }))
+            })
+            .turn(|t| {
+                t.tool_call("vcs_undo", json!({}))
+                    .tool_call(
+                        "write",
+                        json!({ "path": "a.txt", "content": "" }),
+                    )
+                    .tool_call("vcs_commit", json!({ "message": "feat: x" }))
+            })
+            .turn(|t| t.text("done"));
+        agent(llm.clone(), &first)
+            .run("commit, undo, write, commit", &store)
+            .await
+            .unwrap();
+        llm.assert_exhausted();
+        assert_eq!(heard.lock().unwrap()[1], ["a.txt"]);
     });
 }
