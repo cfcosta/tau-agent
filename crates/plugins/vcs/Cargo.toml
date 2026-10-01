@@ -29,6 +29,7 @@ tau-agent.workspace = true
 thiserror.workspace = true
 tau-ai.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }
+uuid.workspace = true
 # Its UI (ADR 0017).
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true

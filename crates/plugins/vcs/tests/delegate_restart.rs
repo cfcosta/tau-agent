@@ -1,6 +1,6 @@
-//! A sub-agent's workspace name after a restart (`docs/reference/vcs.md`,
-//! "Delegating to a sub-agent"). Its own test binary: the names count
-//! from zero in each process, as they do in each run of tau.
+//! A sub-agent's workspace after a restart (`docs/reference/vcs.md`,
+//! "Delegating to a sub-agent"), in a test binary of its own: a fresh
+//! process, as tau is after a restart.
 
 use std::{path::Path, process::Command};
 
@@ -51,29 +51,11 @@ fn coder(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
 }
 
 /// A sub-agent workspace left behind by an earlier process, as a crash
-/// in the middle of a delegation leaves it, is taken over by the first
-/// sub-agent of the next process: it starts on that workspace's stale
-/// commit instead of its caller's head, and the stale commit lands on
-/// the caller.
-///
-/// `child_name` in `src/delegate.rs` numbers sub-agent workspaces with a
-/// counter that starts at zero in each process, so the main chat's first
-/// sub-agent after a restart is `default-sub-0` again.
-/// `Project::add_workspace` opens a workspace that exists as it is, so
-/// `RunWorkspace::with_base` is ignored.
-///
-/// Fix options:
-/// - name sub-agent workspaces uniquely across processes: after the
-///   sub-agent's run id, or with a random suffix;
-/// - have `Delegate::call` forget a workspace that exists under the name
-///   before it makes one (its commits stay in the operation log);
-/// - have the host forget its runs' leftover workspaces when it opens a
-///   project.
-///
-/// The first is the smallest and is the recommendation; the third also
-/// cleans up after any run, not only sub-agents.
+/// in the middle of a delegation leaves it, stays apart from the next
+/// process's sub-agents: their names are random, so the first sub-agent
+/// after a restart starts on its caller's head, and the stale commit
+/// never lands on the caller.
 #[test]
-#[ignore = "bug: a sub-agent takes over a workspace an earlier process left"]
 fn a_sub_agent_starts_on_its_caller_after_a_restart() {
     let home = tempfile::tempdir().unwrap();
     let project = project(home.path());
@@ -135,7 +117,10 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
         ));
         let outcome = agent.run("work, then delegate", &store).await.unwrap();
         assert_eq!(outcome.text, "done");
-        assert_eq!(*named.lock().unwrap(), ["parent-sub-0"]);
+        let named = named.lock().unwrap().clone();
+        assert_eq!(named.len(), 1);
+        assert!(named[0].starts_with("parent-sub-"), "{named:?}");
+        assert_ne!(named[0], "parent-sub-0");
         for file in ["parent.txt", "child.txt"] {
             assert!(parent.dir().join(file).exists(), "{file}");
         }

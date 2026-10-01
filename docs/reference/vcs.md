@@ -444,7 +444,9 @@ and refuses an effort the model does not take.
 
 1. The caller's work must be committed (ADR 0014): with changes in its
    `@`, the tool refuses and says to commit with `vcs_commit` first.
-   The sub-agent's workspace starts on the caller's newest commit
+   The sub-agent's workspace, `<caller's workspace>-sub-<12 random hex
+digits>`, so that no process reuses one an earlier one left, starts
+   on the caller's newest commit
    (`RunWorkspace::with_base`), so it sees the caller's work.
 2. The sub-agent runs through `Agent::as_tool(…).forking()`: a
    `Subagent` run of the caller with a `fork_seq`, its events forwarded

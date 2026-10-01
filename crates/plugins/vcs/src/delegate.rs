@@ -21,10 +21,7 @@
 //! 5. When it fails, or the caller is cancelled, its changes are
 //!    dropped and it closes the same way.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -129,10 +126,13 @@ impl Delegate {
     }
 }
 
-/// Workspace names for sub-agents, unique in the process.
+/// A workspace name for a sub-agent of `parent`: its caller's name and
+/// twelve random hex digits, so no process takes over a workspace an
+/// earlier one left behind.
 fn child_name(parent: &str) -> String {
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    format!("{parent}-sub-{}", COUNT.fetch_add(1, Ordering::Relaxed))
+    // A v7 uuid ends in random bits; its start is the time.
+    let id = uuid::Uuid::now_v7().simple().to_string();
+    format!("{parent}-sub-{}", &id[20..])
 }
 
 /// Runs blocking project work off the async executor.
