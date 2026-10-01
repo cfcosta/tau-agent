@@ -461,6 +461,88 @@ fn a_failed_tool_ends_the_lease() {
     );
 }
 
+/// Everything the plugin reports, choices and failures alike, it also
+/// records, in the same order: a stored run shows what a live one did.
+/// Its own context record for the next message comes last.
+#[hegel::test(test_cases = 30)]
+fn what_is_reported_is_recorded(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    // Each request Jev gets: sure of a level for a lease, or failing.
+    let answers: Vec<Option<(usize, &'static str)>> = tc.draw(
+        gs::vecs(gs::optional(hegel::tuples!(
+            gs::integers::<usize>().max_value(5),
+            gs::sampled_from(vec!["one_call", "tool_chain", "user_turn"]),
+        )))
+        .min_size(1)
+        .max_size(4),
+    );
+    let calls: Vec<&'static str> =
+        tc.draw(gs::vecs(gs::sampled_from(vec!["ok", "fail"])).max_size(3));
+    let answers = Arc::new(std::sync::Mutex::new(answers.into_iter()));
+    let jev = FakeJev::new(move |request| {
+        // Past the drawn answers, Jev fails.
+        let Some((level, lease)) = answers.lock().unwrap().next().flatten()
+        else {
+            return Err(JevError::Transport("offline".into()));
+        };
+        let mut answers = BTreeMap::from([(
+            "effort".to_owned(),
+            Answer::Score {
+                score: level as f64,
+                probabilities: BTreeMap::from([(level.to_string(), 1.0)]),
+                confidence: 0.9,
+            },
+        )]);
+        if request.questions.contains_key("lease") {
+            answers.insert(
+                "lease".into(),
+                Answer::Choice {
+                    choice: lease.into(),
+                    probabilities: BTreeMap::from([(lease.into(), 1.0)]),
+                    confidence: 0.9,
+                },
+            );
+        }
+        Ok(tau_jev::fake::response(answers, request))
+    });
+    let mut llm = ScriptedModel::new();
+    for text in &calls {
+        llm = llm.turn(|t| t.tool_call("probe", json!({"text": text})));
+    }
+    let llm = llm.turn(|t| t.text("done"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm)
+            .model("gpt-6-sol")
+            .tool(Probe::new())
+            .plugin(Reasoning::new(Arc::new(jev)).redecide(true));
+        let mut run = agent.start("fix the lane race", &store);
+        let events: Vec<RunEvent> = run.events().collect().await;
+        let outcome = run.outcome().await.unwrap();
+        let reports: Vec<Value> = events
+            .into_iter()
+            .filter_map(|event| match event {
+                RunEvent::PluginReport { plugin, body, .. }
+                    if &*plugin == NAME =>
+                {
+                    Some(body)
+                }
+                _ => None,
+            })
+            .collect();
+        let records: Vec<Value> = store
+            .records(&outcome.run.0, NAME)
+            .await
+            .unwrap()
+            .iter()
+            .map(|body| serde_json::from_str(body).unwrap())
+            .collect();
+        let (last, kept) = records.split_last().unwrap();
+        assert_eq!(last["kind"], "context");
+        assert_eq!(kept, reports.as_slice());
+    });
+}
+
 /// By default Jev is asked once, with no lease, and the effort holds for
 /// the whole run: a change would cost the next request its cache.
 #[test]

@@ -1847,9 +1847,15 @@ impl RunView {
             self.push_note(PluginNote {
                 plugin: plugin.to_owned(),
                 text: body["message"].as_str().unwrap_or("failed").to_owned(),
-                detail: Some(match body["runs_at"].as_str() {
-                    Some(effort) => format!("stayed at {effort}"),
-                    None => "kept the default".into(),
+                detail: Some({
+                    let stayed = match body["runs_at"].as_str() {
+                        Some(effort) => format!("stayed at {effort}"),
+                        None => "kept the default".into(),
+                    };
+                    match body["turn"].as_u64() {
+                        Some(turn) => format!("turn {turn} · {stayed}"),
+                        None => stayed,
+                    }
                 }),
                 tone: Tone::Danger,
                 body: NoteBody::None,
@@ -1860,11 +1866,12 @@ impl RunView {
             return;
         };
         let chose = choice.kind == "chose";
-        // A choice between turns is for the agent's next step.
-        let what = if choice.turn.is_some() {
-            "this step"
-        } else {
-            "this message"
+        // A choice between turns is for the agent's next step, or for a
+        // message the user steered in.
+        let what = match (choice.turn, choice.step.as_str()) {
+            (None, _) => "this message",
+            (Some(_), "user_turn") => "the message steered in",
+            (Some(_), _) => "this step",
         };
         // What the message runs at: the pick, else what the last one ran
         // at (a record from before `runs_at` was kept has only the pick).
@@ -1919,13 +1926,21 @@ impl RunView {
             _ => format!("reasoning {} → {}", name(&before), name(&runs_at)),
         };
         let comparison = if chose { "above" } else { "below" };
-        let outcome = match &runs_at {
+        let mut outcome = match &runs_at {
             Some(effort) if chose => {
                 format!("so {what} runs at {effort}.")
             }
             Some(effort) => format!("so {what} stays at {effort}."),
             None => format!("so {what} runs at the model's default."),
         };
+        // With deciding again on, how long Jev said the effort holds.
+        if let Some(lease) = choice
+            .lease
+            .as_deref()
+            .and_then(tau_reasoning::Lease::parse)
+        {
+            outcome.push_str(&format!(" It holds {}.", lease.holds()));
+        }
         self.push_note(PluginNote {
             plugin: plugin.to_owned(),
             text,
@@ -3327,6 +3342,12 @@ mod tests {
         let mut step = choice("chose", "low", Some("low"));
         step["step"] = "tool_step".into();
         step["turn"] = 2.into();
+        step["lease"] = "tool_chain".into();
+        // A failed scoring is recorded too, with its turn.
+        let failed = json!({
+            "kind": "error", "message": "Jev could not score the step: offline",
+            "runs_at": "low", "step": "tool_step", "turn": 3,
+        });
         let view = RunView::from_timeline(
             run(),
             "t",
@@ -3338,10 +3359,30 @@ mod tests {
                 Stored::Message(reply("one")),
                 record(step),
                 Stored::Message(reply("two")),
+                record(failed),
                 record(json!({"kind": "context", "task": "go",
                               "proposal": "two"})),
             ],
         );
+        let notes: Vec<&PluginNote> = view
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Plugin(note) => Some(note),
+                _ => None,
+            })
+            .collect();
+        let NoteBody::Distribution { note, .. } = &notes[1].body else {
+            panic!("{:?}", notes[1]);
+        };
+        assert!(
+            note.ends_with(
+                "so this step runs at low. It holds while tool \
+                            calls succeed."
+            ),
+            "{note}"
+        );
+        assert_eq!(notes[2].detail.as_deref(), Some("turn 3 · stayed at low"));
         let order: Vec<String> = view
             .items
             .iter()
@@ -3358,6 +3399,7 @@ mod tests {
                 "one",
                 "reasoning **high** → **low**",
                 "two",
+                "Jev could not score the step: offline",
             ]
         );
     }

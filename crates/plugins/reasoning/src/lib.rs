@@ -169,6 +169,15 @@ impl Lease {
         Self::ALL.into_iter().find(|lease| lease.as_str() == name)
     }
 
+    /// How long the effort holds, in words for people.
+    pub fn holds(self) -> &'static str {
+        match self {
+            Lease::OneCall => "for the next call",
+            Lease::ToolChain => "while tool calls succeed",
+            Lease::UserTurn => "until the user writes again",
+        }
+    }
+
     /// When the lease suits, in words Jev reads.
     fn suits(self) -> &'static str {
         match self {
@@ -666,11 +675,14 @@ impl Plugin for Reasoning {
             Err(error) => {
                 plan.reasoning = previous;
                 steps.lease = Some(Lease::ToolChain);
-                ctx.report(json!({
+                // Recorded as well, so the run shows it when reopened.
+                let body = json!({
                     "kind": "error",
                     "message": format!("Jev could not score the task: {error}"),
                     "runs_at": previous.map(ReasoningEffort::as_str),
-                }))
+                });
+                ctx.report(body.clone());
+                let _ = ctx.record(&body).await;
             }
         }
         Ok(Box::new(steps))
@@ -718,11 +730,15 @@ impl PluginRun for Steps {
                 Ok(chosen.filter(|effort| Some(*effort) != view.effort))
             }
             Err(error) => {
-                ctx.report(json!({
+                let body = json!({
                     "kind": "error",
                     "message": format!("Jev could not score the step: {error}"),
                     "runs_at": view.effort.map(ReasoningEffort::as_str),
-                }));
+                    "step": step,
+                    "turn": view.turn,
+                });
+                ctx.report(body.clone());
+                let _ = ctx.record(&body).await;
                 Ok(None)
             }
         }

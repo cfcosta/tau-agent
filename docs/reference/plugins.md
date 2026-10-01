@@ -393,7 +393,10 @@ after; they are saved with the model settings.
   failed, and up to three excerpts, failed ones first. A confident
   answer sets the effort for that request on; an unsure or failed one
   leaves it. Each choice is reported and recorded with its `turn` and
-  `lease`, and tau-ui shows it before the reply it chose for.
+  `lease`, and tau-ui shows it before the reply it chose for, with how
+  long the effort holds. A request Jev fails is reported and recorded
+  as well (`kind: "error"`, with its `turn` between turns), so a stored
+  run shows it too.
 
 - **Cost:** one Jev round trip (about 180 ms median) before the session
   opens, and with `redecide` one per ended lease. The warm-up, if on,
