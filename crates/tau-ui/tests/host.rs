@@ -238,6 +238,40 @@ fn new_chats_fork_the_repository_main_chat() {
 
 /// A run shows its prompt's first line until a model writes its title;
 /// a written title comes back with history.
+/// A new chat forks the main chat, and with it the goal set there, which
+/// tau-goal goes on checking: the chat shows it from the start.
+#[test]
+fn a_new_chat_shows_the_goal_it_inherits() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("hi"))
+        .turn(|t| t.text("ok"));
+    let (host, mut events) = host_on(llm, dir.path());
+    let main = host.main_of(REPO).unwrap();
+    host.goal_record(
+        &main,
+        &tau_goal::Record::Set {
+            goal: "the docs build".into(),
+            continuations: 4,
+            budget: 1.0,
+        },
+    )
+    .unwrap();
+    // A turn after it: new chats fork from there, the goal before.
+    on_main(&host, "hello");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let view = host
+        .start("look around", &ModelChoice::default(), REPO)
+        .unwrap();
+    let goal = view.goal.clone().expect("the inherited goal shows");
+    assert_eq!(goal.condition, "the docs build");
+    assert_eq!(goal.max_continuations, 4);
+    assert!(!view.goal_checks, "no key: nothing checks it");
+    until_end(&mut events);
+    wait_until_done(&host, &view.id);
+}
+
 /// The Plugins screen lists every plugin that asks Jev, with a key or
 /// without one, which it says it needs; tau-reasoning opens the run's
 /// plan. Spend comes from what each plugin charged.
@@ -1844,6 +1878,7 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     let prompt = "/goal --continuations 3 the tests pass";
     let mut view = host.start(prompt, &ModelChoice::default(), REPO).unwrap();
     assert_eq!(view.title, "the tests pass");
+    assert!(view.goal_checks, "with a key, tau-goal checks the run");
     for event in until_end(&mut events) {
         view.apply(&event);
     }
@@ -1871,8 +1906,21 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     let stored = &history[0];
     assert_eq!(stored.goal, view.goal);
     assert!(matches!(&stored.items[0], Item::Goal(c) if c == "the tests pass"));
-    assert!(stored.items.iter().any(|item| matches!(item,
-        Item::Plugin(note) if note.plugin == tau_goal::NAME)));
+    // The same notes as live: the continuation for the check that sent
+    // the model back, and the check that met it.
+    let stored_notes: Vec<String> = stored
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Plugin(note) if note.plugin == tau_goal::NAME => {
+                Some(note.text.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(stored_notes.len(), 2, "{stored_notes:?}");
+    assert!(stored_notes[0].starts_with("the goal is not met yet"));
+    assert_eq!(stored_notes[1], "the goal is met");
     assert!(
         !stored
             .items

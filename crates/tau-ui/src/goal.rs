@@ -63,6 +63,26 @@ pub fn status_line(goal: &Goal) -> String {
     }
 }
 
+/// Why nothing checks a goal that is still to be met, if nothing does:
+/// there is no TypeSafe key, or the run going on started without
+/// tau-goal.
+pub fn unchecked(
+    goal: &Goal,
+    jev: bool,
+    run: &RunView,
+) -> Option<&'static str> {
+    if !matches!(goal.status, Status::Active | Status::Paused) {
+        return None;
+    }
+    if !jev {
+        return Some("Not checked: tau-goal needs a TypeSafe key (Models).");
+    }
+    (run.status.is_live() && !run.goal_checks).then_some(
+        "Not checked while this run goes on: it started without \
+         tau-goal. It is checked from the next message.",
+    )
+}
+
 /// The goal as the sidebar and the runs list say it: `2/10`, `met`.
 pub fn badge(goal: &Goal) -> String {
     match goal.status {
@@ -88,7 +108,18 @@ impl Workspace {
 
     /// Resume, or Keep going: the goal is active again (a stopped one
     /// with more continuations), and a finished conversation goes on.
+    /// Without a TypeSafe key nothing would check it, so it says so
+    /// instead.
     pub fn keep_going(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        if !self.catalog.models.access.jev {
+            self.show_alert(
+                "Goals need Jev",
+                "tau-goal checks goals with Jev. Add a TypeSafe key on the \
+                 Models screen, then go on.",
+                cx,
+            );
+            return;
+        }
         let Some(view) = self.run(run) else { return };
         let live = view.status.is_live();
         match view.goal.as_ref().map(|goal| goal.status) {
@@ -215,7 +246,15 @@ impl Workspace {
                             status_line(goal),
                             Type::CAPTION,
                             t.muted,
-                        )),
+                        ))
+                        .children(
+                            unchecked(
+                                goal,
+                                self.catalog.models.access.jev,
+                                run,
+                            )
+                            .map(|why| ui::text(why, Type::CAPTION, t.accent)),
+                        ),
                 )
                 .children(actions)
                 .into_any_element(),

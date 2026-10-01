@@ -69,6 +69,11 @@ pub struct RunView {
     pub constitution: ConstitutionStats,
     /// The conversation's goal, from tau-goal's reports and records.
     pub goal: Option<tau_goal::Goal>,
+    /// Whether tau-goal runs with the run as it goes now, and checks its
+    /// goal: there was a TypeSafe key when it started, and it is not a
+    /// sub-agent. A stored run is checked again only once it goes on.
+    #[serde(default)]
+    pub goal_checks: bool,
     /// What the pruning plugin said about its pass, for the rewrite it
     /// explains, which comes right after.
     pending_rewrite: Option<String>,
@@ -933,6 +938,7 @@ impl RunView {
             cost_before: 0.0,
             constitution: ConstitutionStats::default(),
             goal: None,
+            goal_checks: false,
             pending_rewrite: None,
         }
     }
@@ -1024,6 +1030,15 @@ impl RunView {
                         )));
                     }
                 }
+                // A check that sent the model back says no more than the
+                // continuation message that follows it, which shows.
+                Stored::Record { plugin, body }
+                    if plugin == tau_goal::NAME
+                        && matches!(
+                            tau_goal::Record::parse(body),
+                            Some(tau_goal::Record::Check(check))
+                                if check.continuation.is_some()
+                        ) => {}
                 Stored::Record { plugin, body } => {
                     if during.is_empty() {
                         begun = false;

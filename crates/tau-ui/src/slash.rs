@@ -292,14 +292,14 @@ impl Workspace {
         let run = self
             .current()
             .filter(|_| self.route != Route::NewRun)
-            .map(|run| (run.id.clone(), run.status.is_live()));
+            .map(|run| (run.id.clone(), run.status.is_live(), run.goal_checks));
         let tau_goal::Command::Set {
             condition,
             continuations,
             budget,
         } = command
         else {
-            if let Some((run, _)) = run {
+            if let Some((run, _, _)) = run {
                 self.goal_control(&run, tau_goal::Record::Cleared, cx);
             }
             return;
@@ -326,9 +326,30 @@ impl Workspace {
              {condition}"
         );
         match run {
+            // A run going on without tau-goal, started before the key or
+            // as a sub-agent: the goal is kept for when it goes on, and
+            // nothing tells the model it is checked now.
+            Some((run, true, false)) => {
+                self.goal_control(
+                    &run,
+                    tau_goal::Record::Set {
+                        goal: condition.clone(),
+                        continuations,
+                        budget,
+                    },
+                    cx,
+                );
+                self.show_alert(
+                    "The goal is checked from the next message",
+                    "This run started without tau-goal, so nothing checks \
+                     the goal while it goes on. It is kept, and checked once \
+                     the conversation goes on.",
+                    cx,
+                );
+            }
             // A run going on takes it at its next stop, and the model is
             // told.
-            Some((run, true)) => {
+            Some((run, true, true)) => {
                 self.goal_control(
                     &run,
                     tau_goal::Record::Set {

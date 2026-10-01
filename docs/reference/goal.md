@@ -73,3 +73,22 @@ reported as it happens (`tau_goal::Record`):
 folds them again at every check (`PluginCtx::records`), so an
 interface controls a goal by storing a record with the run: tau's
 Pause, Resume, Keep going and Clear do.
+
+## In tau-ui
+
+- tau-goal is on for a run only with a TypeSafe key, and never for a
+  sub-agent. `RunView::goal_checks` says whether the run as it goes
+  now has it: the host sets it as a run starts or goes on.
+- Without a key, `/goal` and Keep going say a goal needs Jev and do
+  nothing, and the banner of a goal still to be met says it is not
+  checked. On a run going on without tau-goal (started before the key
+  was added), `/goal` keeps the goal for the next message, says so, and
+  does not tell the model it is checked now.
+- A chat forks the main chat, records included, so it inherits the goal
+  set there before its fork point; tau-goal checks it, and the chat
+  shows it from the start.
+- History shows what a live run showed: each check that met the goal,
+  failed or stopped it, as a note (a check that sent the model back is
+  its continuation message).
+- A Pause, Resume, Keep going or Clear that cannot be stored is put
+  back as the stored records leave the goal, with an alert.

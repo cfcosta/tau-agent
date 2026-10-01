@@ -1098,6 +1098,22 @@ impl Host {
         Ok(())
     }
 
+    /// tau-goal's records for `run`, along its fork chain, as stored.
+    pub fn goal_records(&self, run: &RunId) -> Vec<serde_json::Value> {
+        self.runtime
+            .block_on(self.store.records(&run.0, tau_goal::NAME))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|body| serde_json::from_str(body).ok())
+            .collect()
+    }
+
+    /// Whether runs started now have tau-goal, which needs Jev: their
+    /// goal is checked.
+    pub fn checks_goals(&self) -> bool {
+        self.jev().is_some()
+    }
+
     /// Remembers which repositories the sidebar shows open.
     pub fn set_open_repos(&self, open: Vec<String>) -> anyhow::Result<()> {
         let mut list = self.list.lock().expect("not poisoned");
@@ -1834,9 +1850,32 @@ impl Host {
             .after_turn(turn)
             .start(prompt, &self.store);
         let id = self.track(forked, workspace, choice, &repo.name);
-        Ok(self
+        // The goal it inherits, which tau-goal goes on checking.
+        let goal = self.goal_records_at(&source, seq);
+        let mut view = self
             .view(id, prompt, repo)
-            .with_origin(Origin::Fork { from: source, turn }))
+            .with_origin(Origin::Fork { from: source, turn });
+        view.set_goal_records(&goal);
+        Ok(view)
+    }
+
+    /// tau-goal's records a fork of `source` at `seq` inherits: along
+    /// `source`'s chain, without what `source` stored after `seq`.
+    fn goal_records_at(
+        &self,
+        source: &RunId,
+        seq: i64,
+    ) -> Vec<serde_json::Value> {
+        let all = self.goal_records(source);
+        let after = self
+            .runtime
+            .block_on(self.store.plugin_entries(&source.0, tau_goal::NAME))
+            .unwrap_or_default()
+            .iter()
+            .filter(|(at, _)| *at > seq)
+            .count();
+        let keep = all.len().saturating_sub(after);
+        all.into_iter().take(keep).collect()
     }
 
     /// Where forking `run` after `turn` starts: the run that took the
@@ -2320,6 +2359,8 @@ impl Host {
         .in_repo(repo.name.clone())
         .started("just now");
         view.push_user(prompt);
+        // A run started now has tau-goal only with a key.
+        view.goal_checks = self.jev().is_some();
         view.limits = ViewLimits {
             max_turns: Some(MAX_TURNS),
             ..ViewLimits::default()
@@ -2737,7 +2778,13 @@ impl Host {
                 }
                 WorkspaceEvent::Goal { run, record } => {
                     if let Err(error) = handler.goal_record(run, record) {
-                        eprintln!("tau-ui: cannot save the goal: {error:#}");
+                        // The interface showed the change already: put
+                        // back what tau-goal will read, and say so.
+                        let records = handler.goal_records(run);
+                        workspace.update(cx, |ws, cx| {
+                            ws.apply(HostUpdate::GoalRecords { run: run.clone(), records }, cx);
+                            ws.apply(HostUpdate::alert("Could not save the goal", format!("{error:#}")), cx);
+                        });
                     }
                 }
                 WorkspaceEvent::Reviewed { run, call_id } => {
@@ -2755,11 +2802,17 @@ impl Host {
                 WorkspaceEvent::Resume { run, prompt, model } => {
                     // A message opens a closed conversation again.
                     let _ = handler.set_closed(run, false);
-                    if let Err(error) = handler.resume(run, prompt, model) {
-                        workspace.update(cx, |ws, cx| {
+                    match handler.resume(run, prompt, model) {
+                        Ok(()) => {
+                            let checks = handler.checks_goals();
+                            workspace.update(cx, |ws, cx| {
+                                ws.apply(HostUpdate::GoalChecks { run: run.clone(), checks }, cx)
+                            });
+                        }
+                        Err(error) => workspace.update(cx, |ws, cx| {
                             ws.apply(HostUpdate::ResumeFailed(run.clone()), cx);
                             ws.apply(HostUpdate::alert("Could not go on with the run", format!("{error:#}")), cx)
-                        })
+                        }),
                     }
                 }
                 WorkspaceEvent::Fork {
@@ -3716,6 +3769,7 @@ async fn stored_view(
             Entry::Plugin { plugin, body }
                 if plugin == tau_reasoning::NAME
                     || plugin == tau_constitution::NAME
+                    || plugin == tau_goal::NAME
                     || plugin == LANDING_RECORD =>
             {
                 serde_json::from_str(&body)

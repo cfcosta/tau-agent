@@ -957,6 +957,22 @@ impl Workspace {
                 self.set_branch_code(&main, &fork, code, cx)
             }
             HostUpdate::ResumeFailed(run) => self.resume_failed(&run, cx),
+            HostUpdate::GoalRecords { run, records } => {
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| view.id == run)
+                {
+                    view.set_goal_records(&records);
+                }
+                cx.notify();
+            }
+            HostUpdate::GoalChecks { run, checks } => {
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| view.id == run)
+                {
+                    view.goal_checks = checks;
+                }
+                cx.notify();
+            }
             HostUpdate::Titled { run, title } => self.retitle(&run, title, cx),
             HostUpdate::Repo { repo, main } => {
                 if let Some(main) = main {

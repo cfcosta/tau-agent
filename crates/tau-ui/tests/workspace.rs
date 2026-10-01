@@ -1674,6 +1674,14 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
         let view = ws.run(&done).unwrap();
         assert!(matches!(view.items.last(),
             Some(Item::Goal(c)) if c == "Every lane has an owner in lanes.toml"));
+        // The host says the run went on with tau-goal.
+        ws.apply(
+            tau_ui::update::HostUpdate::GoalChecks {
+                run: done.clone(),
+                checks: true,
+            },
+            cx,
+        );
         // Going on now: a new goal is stored for its next stop, and the
         // model is told. Typed limits win over the popover's.
         ws.set_composer("", cx);
@@ -1705,6 +1713,38 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
             run: done.clone(),
             text: tau_goal::set_input("it ships"),
         }));
+    }
+    events.borrow_mut().clear();
+
+    // Going on without tau-goal (started before the key): the goal is
+    // kept for the next message, and the model is not told it is
+    // checked now.
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply(
+            tau_ui::update::HostUpdate::GoalChecks {
+                run: done.clone(),
+                checks: false,
+            },
+            cx,
+        );
+        ws.set_composer("", cx);
+        ws.submit_prompt("/goal it ships later".into(), cx);
+        assert!(ws.alert().is_some());
+        let goal = ws.run(&done).unwrap().goal.clone().unwrap();
+        assert_eq!(goal.condition, "it ships later");
+        ws.dismiss_alert(cx);
+    });
+    {
+        let events = events.borrow();
+        assert!(events.iter().any(|event| matches!(event,
+            WorkspaceEvent::Goal { record: tau_goal::Record::Set { goal, .. }, .. }
+                if goal == "it ships later")));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, WorkspaceEvent::Steer { .. })),
+            "the model is not told"
+        );
     }
     events.borrow_mut().clear();
 
@@ -1771,6 +1811,77 @@ fn goal_buttons_store_changes_and_keep_going(cx: &mut TestAppContext) {
     assert!(events.iter().any(|event| matches!(event,
         WorkspaceEvent::Resume { run, prompt, .. }
             if run == &stopped && prompt == tau_ui::goal::KEEP_GOING)));
+}
+
+/// Without a TypeSafe key a goal is not checked: the banner says so,
+/// Keep going says why it does not go on, and a change the host could
+/// not save is put back as stored.
+#[gpui::test]
+fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
+    use tau_goal::{Record, Status};
+    let (workspace, mut cx, events) = open_demo(cx);
+    let stopped = tau_agent::tool::RunId("lane-audit".into());
+    let set = || {
+        vec![
+            Record::Set {
+                goal: "Every lane has an owner in lanes.toml".into(),
+                continuations: 10,
+                budget: 2.0,
+            }
+            .to_value(),
+        ]
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.models.access.jev = false;
+        ws.set_catalog(catalog, cx);
+        ws.navigate(Route::Run(stopped.clone()), cx);
+        // A goal still to be met, then paused.
+        ws.apply(
+            tau_ui::update::HostUpdate::GoalRecords {
+                run: stopped.clone(),
+                records: set(),
+            },
+            cx,
+        );
+        ws.pause_goal(&stopped, cx);
+        let view = ws.run(&stopped).unwrap();
+        let goal = view.goal.as_ref().unwrap();
+        assert_eq!(goal.status, Status::Paused);
+        assert!(tau_ui::goal::unchecked(goal, false, view).is_some());
+        assert!(tau_ui::goal::unchecked(goal, true, view).is_none());
+        ws.keep_going(&stopped, cx);
+        assert!(ws.alert().is_some(), "says it needs a key");
+    });
+    // Drawn with the warning.
+    cx.run_until_parked();
+    assert!(
+        !events
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, WorkspaceEvent::Resume { .. })),
+        "nothing goes on unchecked"
+    );
+    // The pause could not be saved: the host puts back what is stored.
+    workspace.update(&mut cx, |ws, cx| {
+        let stored = vec![
+            Record::Set {
+                goal: "Every lane has an owner in lanes.toml".into(),
+                continuations: 10,
+                budget: 2.0,
+            }
+            .to_value(),
+        ];
+        ws.apply(
+            tau_ui::update::HostUpdate::GoalRecords {
+                run: stopped.clone(),
+                records: stored,
+            },
+            cx,
+        );
+        let goal = ws.run(&stopped).unwrap().goal.clone().unwrap();
+        assert_eq!(goal.status, Status::Active);
+    });
 }
 
 #[gpui::test]
