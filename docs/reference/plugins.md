@@ -830,6 +830,16 @@ pub struct ToolCall {        // what hooks see, in `tau_agent::hook`
   run's cancel reaches it. Ending the outer call cancels the nested
   calls it left running, and fails the ones still waiting to start;
   their `ToolEnd`s may come after the outer call's.
+- **In tau-ui.** A nested call gets no card. Its events fold into the
+  `CallData::nested` rows of the card of the model's call it came from,
+  at any depth, and the card's data drops them when that call ends,
+  since a stored run has no events; a tool whose calls should outlast
+  it lists them in its result's details (codemode's `calls`). A fold's
+  `RunCx::attach` for a nested id lands on that card, `mark` keeps the
+  verdict in `CallData::nested_marks` for the call's row without
+  changing the card's state, and `dropped` and `cut` answer false: a
+  nested result never reaches the model's context. The Events tab lists
+  nested calls as `NestedStart` and `NestedEnd`.
 - **Not callable:** unknown names (`Tool x not found`), `ModelOnly`
   tools (`Tool x cannot be called from a tool`), and any call once the
   outer call has ended, or outside a run. Each fails with a message.

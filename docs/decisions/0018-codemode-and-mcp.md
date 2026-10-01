@@ -2,7 +2,8 @@
 
 - Status: accepted. tau-agent's part (nested calls, exposure,
   structured output, tool sources, per-run tools) is built, and so are
-  `tau-codemode` and `tau-mcp`, except their interfaces. Amends
+  `tau-codemode`, with its interface, and `tau-mcp`, except its
+  interface. Amends
   [0005](0005-plugins.md): tools a plugin adds can be called by other
   tools, and a plugin can add tools for one run.
 - Date: 2026-10-01

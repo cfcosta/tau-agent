@@ -1,10 +1,10 @@
 # Codemode (`tau-codemode`)
 
 - Status: built (`crates/plugins/codemode`): the engine, behind a
-  `Host` trait, and the `Codemode` plugin that wires it to
-  `ToolCtx::call`. Its interface (a `UiPlugin`, after
-  [0017](../decisions/0017-plugins-bring-their-ui.md)) is not.
-  Decided in [0018](../decisions/0018-codemode-and-mcp.md).
+  `Host` trait, the `Codemode` plugin that wires it to `ToolCtx::call`,
+  and its interface, `CodemodeUi` (a `UiPlugin`, after
+  [0017](../decisions/0017-plugins-bring-their-ui.md)), registered in
+  tau-ui. Decided in [0018](../decisions/0018-codemode-and-mcp.md).
 - Date: 2026-10-01
 
 `codemode` is a tool whose input is a Luau script. The script runs in
@@ -377,7 +377,7 @@ A hand-written renderer over `serde_json::Value`, after pi's
   the full text written to `$TMPDIR/tau-codemode-<hex>.txt`. Images
   follow.
 - **`is_error`** on failure.
-- **`details`:** `{ calls, complete, store, usage }`.
+- **`details`:** `{ calls, complete, store, usage, wall_ms }`.
   - `calls`: at most 256 rows
     `{ id, name, args, status, ms, error, cost }`, `args` cut at 200
     characters and `error` at 500 (a cut ends in `…`); `complete` is
@@ -385,6 +385,7 @@ A hand-written renderer over `serde_json::Value`, after pi's
     Compaction reads them for the files a script read or changed.
   - `store`: the writes, when the script succeeded.
   - `usage`: Jev's usage, summed.
+  - `wall_ms`: the script's wall time, in milliseconds.
 
 ## Events
 
@@ -393,6 +394,41 @@ Each nested call has `ToolStart` and `ToolEnd` with
 `<parent>/<n>`, numbered from 1 in the order the loop receives the
 calls. Its updates are `ToolUpdate`s under its own id, with the same
 `parent`. The interface puts them inside the codemode card, live.
+Jev requests make no events: their rows show once the script ends.
+
+## The interface
+
+`CodemodeUi` (`src/ui.rs`) is the plugin with its UI. tau-ui registers
+it after the other plugins: a plugin that adds tools in its `start`
+(tau-mcp) goes before it, so the signatures list them.
+
+- **Per run:** `agent_plugins` builds `Codemode::new(jev)` with the
+  run's metered Jev when a TypeSafe key is saved, else without Jev.
+  Codemode runs either way.
+- **Catalog:** "Runs Luau scripts that call tools, with Jev", or,
+  without a key, "Runs Luau scripts that call tools; with a TypeSafe
+  key (Models), scripts ask Jev too". Seams `start` and `tools`.
+- **The card** (`CARD`, for `codemode` calls): the script's first line
+  (not its options line) in the header, and `N calls · X.X s · $cost`
+  (Jev's cost, from `details.usage`) once it ended. The body has the
+  script as a `luau` code block, a row per call (status, tool, the
+  arguments' preview, time or `cancelled`, cost, the error, and
+  plugins' verdicts: `blocked by <plugin>: <reason>`, `flagged by
+<plugin>`), the output (40 lines at most), the failure in red, and
+  the store's writes. A failed script has a red edge and its error in
+  the header. The body stays open while the script runs, so its calls
+  show as they come, and folds to the header once it ended.
+- **Rows, live and stored.** While the script runs, its rows come
+  from the nested calls tau-ui folds into the card's `CallData`
+  (`plugins.md`, "In tau-ui"): only the script's own calls, with the
+  same argument and error cuts as `details.calls`. Once it ends they
+  come from `details.calls`, which is all a stored run has, and
+  tau-ui has dropped the live rows: a live card and a stored one draw
+  the same thing. Verdicts come from `CallData::nested_marks` in both.
+- **The store:** the fold applies each published store record to
+  per-run state, as the plugin folds its snapshot. The inspector
+  (`INSPECTOR`) lists the keys and their values; the plugin list says
+  `N scripts · K stored`.
 
 ## Tests
 
@@ -419,3 +455,10 @@ holds for every input:
   makes one transcript result however many nested calls it makes; a
   plugin's `before_tool` blocks a nested call; Jev's usage reaches the
   run's total; the store holds across runs and follows forks.
+- **Interface** (`tests/ui.rs`): for any generated script, its calls
+  in turn or in `parallel_settled`, failing or not, the rows folded
+  from its calls as tau-ui folds events equal the rows its details
+  list; the output and failure read back from the result; the store
+  state equals the plugin's fold; the card in gpui's test app. tau-ui's
+  view tests check that nested events make no cards, whatever their
+  depth.
