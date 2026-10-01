@@ -9232,10 +9232,12 @@ dependencies = [
 name = "tau-mcp"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.23.1",
  "futures-util",
  "getrandom 0.4.3",
+ "gpui-pre",
  "hegeltest",
  "libc",
  "regex",
@@ -9248,6 +9250,8 @@ dependencies = [
  "tau-ai",
  "tau-store",
  "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

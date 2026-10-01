@@ -7,6 +7,8 @@
 //!   scripts.
 //! - [`connection`]: one connection per server, shared by every run;
 //!   only its `client` module touches `rmcp`.
+//! - [`ui`]: the plugin with its UI, [`McpUi`] (ADR 0017): the Servers
+//!   page, MCP tools' cards, and one plugin per repository on the host.
 
 pub mod config;
 pub mod names;
@@ -16,6 +18,7 @@ mod client;
 pub mod connection;
 mod plugin;
 pub mod tool;
+pub mod ui;
 
 pub use plugin::{
     DESCRIPTION_LIMIT,
@@ -27,3 +30,4 @@ pub use plugin::{
     STARTUP_WAIT,
     servers_block,
 };
+pub use ui::McpUi;
