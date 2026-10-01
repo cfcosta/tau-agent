@@ -46,7 +46,7 @@ use std::{
 
 use hegel::{TestCase, generators as gs};
 use tau_testing::block_on;
-use tau_vcs::{Identity, Link, Project, Vcs, VcsError};
+use tau_vcs::{DEFAULT_WORKSPACE, Identity, Link, Project, UpdateFrom, Vcs};
 
 const PATHS: [&str; 3] = ["a.txt", "c.txt", "dir/b.txt"];
 const VALUES: [&str; 4] = ["", "one\n", "two\n", "three\n"];
@@ -168,7 +168,6 @@ enum State {
     Landed,
     Dropped,
     Forgotten,
-    Merged,
 }
 
 /// A run's link, and the commit it names: for a turn's snapshot, the
@@ -181,12 +180,20 @@ struct Linked {
 }
 
 struct Run {
+    /// Its workspace: `default` for the main chat.
     name: String,
+    /// The bookmark its commits move: trunk's for the main chat.
+    bookmark: String,
     parent: Option<usize>,
     /// The run's newest commit.
     head: usize,
-    /// `@`'s tree: the files on disk, committed or not.
+    /// The files on disk, committed or not.
     wc: Tree,
+    /// `@`'s tree at the last snapshot or checkout, as jj has it.
+    seen: Tree,
+    /// `@`'s tree as another workspace's operation rewrote it, until
+    /// this workspace's next tool brings the files there.
+    stale: Option<Tree>,
     /// Its links.
     links: Vec<Linked>,
     /// The last turn's snapshot and its tree, which the next turn's
@@ -199,20 +206,20 @@ struct Run {
     vcs: Vcs,
 }
 
-impl Run {
-    fn bookmark(&self) -> String {
-        format!("tau/{}", self.name)
-    }
-}
-
 struct Machine {
     home: tempfile::TempDir,
     project: Project,
     commits: Vec<Commit>,
+    /// The main chat first, then its chats.
     runs: Vec<Run>,
     /// The commit trunk's bookmark names.
     trunk: usize,
+    /// The source checkout's `HEAD`, as the project last imported it.
+    upstream: usize,
 }
+
+/// The main chat.
+const MAIN: usize = 0;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -260,42 +267,45 @@ impl Machine {
             }],
             runs: Vec::new(),
             trunk: 0,
+            upstream: 0,
         };
-        // A first run, so no step waits for one.
-        machine.start_root();
-        machine
-    }
-
-    /// A new run, on trunk.
-    fn start_root(&mut self) {
-        let name = format!("r{}", self.runs.len());
-        let trunk = self.project.trunk().unwrap();
-        assert_eq!(trunk, self.commits[self.trunk].commit_id);
-        let vcs = self.project.add_workspace(&name, &trunk).unwrap();
-        self.runs.push(Run {
-            name,
+        // The repository's main chat, in jj's own workspace, committing
+        // on trunk (ADR 0015). The workspace starts empty, on jj's root
+        // commit: the host's catch-up before its first turn moves it onto
+        // trunk.
+        let dir = machine.project.workspace_dir(DEFAULT_WORKSPACE);
+        let vcs = Vcs::open(&dir, Identity::default()).unwrap();
+        let trunk = machine.commits[0].commit_id.clone();
+        let name = machine.project.trunk_name().unwrap();
+        let moved = block_on(vcs.move_onto(trunk.clone(), name, true)).unwrap();
+        assert_eq!(moved.head, trunk);
+        let tree = machine.commits[0].tree.clone();
+        machine.runs.push(Run {
+            name: DEFAULT_WORKSPACE.to_owned(),
+            bookmark: machine.project.trunk_name().unwrap(),
             parent: None,
-            head: self.trunk,
-            wc: self.commits[self.trunk].tree.clone(),
+            head: 0,
+            wc: tree.clone(),
+            seen: tree,
+            stale: None,
             links: Vec::new(),
             since: None,
             turns: 0,
             state: State::Open,
-            bookmarked: false,
+            bookmarked: true,
             vcs,
         });
+        machine
+    }
+
+    fn src(&self) -> std::path::PathBuf {
+        self.home.path().join("src")
     }
 
     fn open(&self) -> Vec<usize> {
         (0..self.runs.len())
             .filter(|&r| self.runs[r].state == State::Open)
             .collect()
-    }
-
-    fn has_open_children(&self, run: usize) -> bool {
-        self.runs.iter().any(|other| {
-            other.parent == Some(run) && other.state == State::Open
-        })
     }
 
     fn ancestors(&self, mut at: usize) -> BTreeSet<usize> {
@@ -466,11 +476,13 @@ impl Machine {
         let name = self.runs[run].name.clone();
         self.project.forget_workspace(&name).unwrap();
         self.project
-            .remove_bookmark(&self.runs[run].bookmark())
+            .remove_bookmark(&self.runs[run].bookmark.clone())
             .unwrap();
         assert!(!self.project.workspace_dir(&name).exists());
         assert_eq!(
-            self.project.bookmark(&self.runs[run].bookmark()).unwrap(),
+            self.project
+                .bookmark(&self.runs[run].bookmark.clone())
+                .unwrap(),
             None
         );
         self.runs[run].state = state;
@@ -481,60 +493,23 @@ impl Machine {
     /// leaves when it finishes.
     fn clean(&self, run: usize) -> bool {
         let run = &self.runs[run];
-        run.wc == self.commits[run.head].tree
+        run.wc == run.seen
+            && run.stale.as_ref().unwrap_or(&run.seen)
+                == &self.commits[run.head].tree
     }
 
-    /// A child that can land or be dropped, by the host's rule: open or
-    /// forgotten, finished, with an open parent, and no children open or
-    /// holding changes it does not have.
+    /// A chat that can land on the main chat or be dropped: open or
+    /// forgotten, and finished. Runs nest one level (ADR 0016), so no
+    /// chat has runs under it.
     fn closable(&self) -> Vec<usize> {
         (0..self.runs.len())
             .filter(|&r| {
-                let run = &self.runs[r];
-                matches!(run.state, State::Open | State::Forgotten)
+                r != MAIN
+                    && matches!(
+                        self.runs[r].state,
+                        State::Open | State::Forgotten
+                    )
                     && self.clean(r)
-                    && run
-                        .parent
-                        .is_some_and(|p| self.runs[p].state == State::Open)
-                    && !self.has_open_children(r)
-                    && self.runs.iter().all(|child| {
-                        child.parent != Some(r)
-                            || child.state != State::Forgotten
-                            || !child.bookmarked
-                            || self
-                                .ancestors(run.head)
-                                .contains(&self.live(child.head))
-                    })
-            })
-            .collect()
-    }
-
-    /// A top-level run the host lets merge into trunk
-    /// (`Host::merge_plan`): open, and no child holding changes it does
-    /// not have. The host also lets an idle child with a workspace stay
-    /// open, which the merge leaves stale
-    /// (`a_merge_leaves_an_open_fork_stale`); until that is decided, the
-    /// model keeps no child open.
-    fn mergeable(&self) -> Vec<usize> {
-        (0..self.runs.len())
-            .filter(|&r| {
-                let run = &self.runs[r];
-                run.parent.is_none()
-                    && run.state == State::Open
-                    && !self.has_open_children(r)
-                    && self.runs.iter().all(|child| {
-                        let has_bookmark = child.bookmarked
-                            && matches!(
-                                child.state,
-                                State::Open | State::Forgotten
-                            );
-                        child.parent != Some(r)
-                            || !has_bookmark
-                            || run.bookmarked
-                                && self
-                                    .ancestors(self.live(run.head))
-                                    .contains(&self.live(child.head))
-                    })
             })
             .collect()
     }
@@ -694,6 +669,33 @@ fn check_paths(listed: &[String], base: &Tree, tree: &Tree, what: &str) {
 }
 
 impl Machine {
+    /// `edits` to `run`'s files, then what its next tool finds there:
+    /// when another workspace's operation rewrote its `@`, the files move
+    /// to the rewritten tree first, with what was edited since the last
+    /// snapshot merged on top, as a rebase would
+    /// (`session::snapshot_locked`). Returns the files before the edits
+    /// and after, each as the tool reads them.
+    fn edit_then_freshen(
+        &mut self,
+        tc: &TestCase,
+        run: usize,
+        edits: &[(&'static str, Val)],
+    ) -> (Tree, Tree) {
+        let dir = self.project.workspace_dir(&self.runs[run].name);
+        let r = &mut self.runs[run];
+        let was = r.wc.clone();
+        let tree = write_edits(tc, &dir, &was, edits);
+        let Some(stale) = r.stale.take() else {
+            return (was, tree);
+        };
+        tc.event("a stale workspace catches up");
+        if tree != r.seen {
+            tc.event("edits on a stale workspace merge onto the rewrite");
+        }
+        let fresh = |disk: &Tree| rebase_tree(&stale, &r.seen, disk);
+        (fresh(&was), fresh(&tree))
+    }
+
     /// A turn in `run`: `edits` to its files, then a commit of all of
     /// `@`, as a run's model makes one.
     fn do_turn(
@@ -702,20 +704,19 @@ impl Machine {
         run: usize,
         edits: &[(&'static str, Val)],
     ) {
-        let dir = self.project.workspace_dir(&self.runs[run].name);
         let head = self.runs[run].head;
-        let was = self.runs[run].wc.clone();
-        let mut tree = write_edits(tc, &dir, &was, edits);
+        let (was, mut tree) = self.edit_then_freshen(tc, run, edits);
         self.runs[run].turns += 1;
         let r = &self.runs[run];
         let turn = block_on(r.vcs.commit_all(
             format!("tau: run {} turn {}", r.name, r.turns),
-            r.bookmark(),
+            r.bookmark.clone(),
         ))
         .unwrap();
         let conflicted = self.jj_conflicts(&turn.commit_id);
         settle(tc, &was, &mut tree, &conflicted);
         self.runs[run].wc = tree.clone();
+        self.runs[run].seen = tree.clone();
         check_paths(&turn.paths, &self.commits[head].tree, &tree, "the turn");
 
         let at = if !turn.changed {
@@ -752,6 +753,11 @@ impl Machine {
         let r = &mut self.runs[run];
         r.head = at;
         r.bookmarked = true;
+        if run == MAIN {
+            // The main chat commits on trunk.
+            self.trunk = at;
+        }
+        let r = &mut self.runs[run];
         r.links.push(Linked {
             link: Link {
                 turn: r.turns,
@@ -776,18 +782,15 @@ impl Machine {
         run: usize,
         edits: &[(&'static str, Val)],
     ) {
-        let dir = self.project.workspace_dir(&self.runs[run].name);
         let head = self.runs[run].head;
-        let was = self.runs[run].wc.clone();
-        let mut tree = write_edits(tc, &dir, &was, edits);
+        let (was, mut tree) = self.edit_then_freshen(tc, run, edits);
         let r = &self.runs[run];
         let since = r.since.clone();
-        let snapshot =
-            block_on(r.vcs.end_turn(
-                r.bookmark(),
-                since.as_ref().map(|(id, _)| id.clone()),
-            ))
-            .unwrap();
+        let snapshot = block_on(r.vcs.end_turn(
+            r.bookmark.clone(),
+            since.as_ref().map(|(id, _)| id.clone()),
+        ))
+        .unwrap();
         // The paths count from the turn before's snapshot, else from the
         // run's head.
         let base = since
@@ -804,6 +807,7 @@ impl Machine {
         let head_tree = self.commits[head].tree.clone();
         let r = &mut self.runs[run];
         r.wc = tree.clone();
+        r.seen = tree.clone();
         r.turns += 1;
         r.bookmarked = true;
         r.since = Some((snapshot.commit_id.clone(), tree.clone()));
@@ -868,10 +872,13 @@ impl Machine {
         };
         let links = self.runs[parent].links[..=k].to_vec();
         self.runs.push(Run {
+            bookmark: format!("tau/{name}"),
             name,
             parent: Some(parent),
             head: linked.at,
             wc: self.fork_tree(&linked),
+            seen: self.fork_tree(&linked),
+            stale: None,
             links,
             since: link.snapshot.then(|| {
                 (link.commit_id.clone(), linked.snapshot.clone().unwrap().1)
@@ -891,30 +898,60 @@ impl Machine {
         );
     }
 
+    /// A chat started before the main chat has a turn: on trunk, as the
+    /// host starts one.
+    fn do_start(&mut self, tc: &TestCase) {
+        tc.event("a chat starts on trunk");
+        let name = format!("r{}", self.runs.len());
+        let trunk = self.commits[self.trunk].commit_id.clone();
+        let vcs = self.project.add_workspace(&name, &trunk).unwrap();
+        self.runs.push(Run {
+            bookmark: format!("tau/{name}"),
+            name,
+            parent: Some(MAIN),
+            head: self.trunk,
+            wc: self.commits[self.trunk].tree.clone(),
+            seen: self.commits[self.trunk].tree.clone(),
+            stale: None,
+            links: Vec::new(),
+            since: None,
+            turns: 0,
+            state: State::Open,
+            bookmarked: false,
+            vcs,
+        });
+        self.check_files(self.runs.len() - 1);
+    }
+
     /// Lands `child` on its parent, previewed first, then closes it.
     fn do_land(&mut self, tc: &TestCase, child: usize) {
         let parent = self.runs[child].parent.unwrap();
         let child_head = self
             .project
-            .bookmark(&self.runs[child].bookmark())
+            .bookmark(&self.runs[child].bookmark.clone())
             .unwrap()
             .expect("a child's bookmark");
         assert_eq!(child_head, self.commits[self.runs[child].head].commit_id);
         let p = &self.runs[parent];
         let files = self.disk(parent);
-        let bookmark = self.project.bookmark(&p.bookmark()).unwrap();
+        let bookmark = self.project.bookmark(&p.bookmark.clone()).unwrap();
         let wc = self.wc_parent(parent);
 
         let preview =
-            block_on(p.vcs.land(&child_head, p.bookmark(), false)).unwrap();
+            block_on(p.vcs.land(&child_head, p.bookmark.clone(), false))
+                .unwrap();
         let p = &self.runs[parent];
         assert_eq!(self.disk(parent), files, "a preview changed files");
-        assert_eq!(self.project.bookmark(&p.bookmark()).unwrap(), bookmark);
+        assert_eq!(
+            self.project.bookmark(&p.bookmark.clone()).unwrap(),
+            bookmark
+        );
         // A preview snapshots `@`, which may rewrite it; it stays put.
         assert_eq!(self.wc_parent(parent), wc);
 
         let landing =
-            block_on(p.vcs.land(&child_head, p.bookmark(), true)).unwrap();
+            block_on(p.vcs.land(&child_head, p.bookmark.clone(), true))
+                .unwrap();
 
         // The model's landing.
         if !self.clean(parent) {
@@ -982,6 +1019,11 @@ impl Machine {
         // The parent's uncommitted work moves on top, as jj rebases it.
         let p = &mut self.runs[parent];
         p.wc = rebase_tree(&self.commits[head].tree, &old_head_tree, &p.wc);
+        p.seen = p.wc.clone();
+        if parent == MAIN {
+            // Landing on the main chat moves trunk.
+            self.trunk = head;
+        }
         let want_conflicts = conflicts(&self.commits[head].tree);
         if !want_conflicts.is_empty() {
             tc.event("a landing conflicts");
@@ -997,7 +1039,7 @@ impl Machine {
         if !moving.is_empty() {
             assert_eq!(
                 self.project
-                    .bookmark(&self.runs[parent].bookmark())
+                    .bookmark(&self.runs[parent].bookmark.clone())
                     .unwrap(),
                 Some(landing.head.clone()),
                 "the parent's bookmark"
@@ -1035,58 +1077,52 @@ impl Machine {
         self.close(child, State::Landed);
     }
 
-    /// Moves top-level `run`'s changes, up to `@`, onto trunk, previewed
-    /// first. With `merge`, the host's merge goes on: trunk moves
-    /// forward to the run and the run closes, unless nothing moved or
-    /// something conflicts, when the run stays open to resolve it.
-    fn do_move(&mut self, tc: &TestCase, run: usize, merge: bool) {
+    /// The main chat catches up with trunk, as the host has it before
+    /// each of its turns and before a chat lands on it: its changes, up
+    /// to `@`, move onto trunk's head, previewed first, and trunk follows
+    /// them. Whatever stands on the commits it rewrote follows too: a
+    /// chat's `@` moves with them, and its files on its next tool.
+    fn do_catch_up(&mut self, tc: &TestCase) {
         let trunk = self.trunk;
-        let head = self.runs[run].head;
+        let head = self.runs[MAIN].head;
         let trunk_id = self.commits[trunk].commit_id.clone();
-        // Trunk only moves forward.
-        if !self.ancestors(head).contains(&trunk) {
-            tc.event("trunk has moved on past a run");
-            let head_id = self.commits[head].commit_id.clone();
-            let error = self.project.fast_forward_trunk(&head_id).unwrap_err();
-            assert!(
-                matches!(error, VcsError::NotFastForward(_)),
-                "a sideways move of trunk: {error}"
-            );
-            assert_eq!(self.project.trunk().unwrap(), trunk_id);
-        }
-
-        let r = &self.runs[run];
-        let files = self.disk(run);
-        let bookmark = self.project.bookmark(&r.bookmark()).unwrap();
-        let wc = self.wc_parent(run);
-        let preview =
-            block_on(r.vcs.move_onto(trunk_id.clone(), r.bookmark(), false))
-                .unwrap();
-        let r = &self.runs[run];
-        assert_eq!(self.disk(run), files, "a preview changed files");
-        assert_eq!(self.project.bookmark(&r.bookmark()).unwrap(), bookmark);
-        assert_eq!(self.wc_parent(run), wc, "a preview moved @");
+        let r = &self.runs[MAIN];
+        let files = self.disk(MAIN);
+        let wc = self.wc_parent(MAIN);
+        let preview = block_on(r.vcs.move_onto(
+            trunk_id.clone(),
+            r.bookmark.clone(),
+            false,
+        ))
+        .unwrap();
+        let r = &self.runs[MAIN];
+        assert_eq!(self.disk(MAIN), files, "a preview changed files");
+        assert_eq!(
+            self.project.trunk().unwrap(),
+            trunk_id,
+            "a preview moved trunk"
+        );
+        assert_eq!(self.wc_parent(MAIN), wc, "a preview moved @");
         let moved =
-            block_on(r.vcs.move_onto(trunk_id, r.bookmark(), true)).unwrap();
+            block_on(r.vcs.move_onto(trunk_id, r.bookmark.clone(), true))
+                .unwrap();
 
-        // The model's move.
+        // The model's catch-up.
         let chain = self.own_changes(head, trunk);
         let old_ids: Vec<String> = chain
             .iter()
             .map(|&at| self.commits[at].commit_id.clone())
             .collect();
-        let old_head_tree = self.commits[head].tree.clone();
+        let before: Vec<Tree> =
+            self.commits.iter().map(|c| c.tree.clone()).collect();
         let (rewrite, dragged) = self.restack(&chain, trunk);
         match (chain.is_empty(), rewrite) {
             (true, _) if head == trunk => {
-                tc.event("a move with nothing to move")
+                tc.event("a catch-up with nothing to move")
             }
-            (true, _) => tc.event("a move of @ alone onto trunk"),
-            (false, false) => tc.event("a move that rewrites nothing"),
-            (false, true) => tc.event("a move that restacks"),
-        }
-        if !dragged.is_empty() {
-            tc.event("a move drags a forgotten fork along");
+            (true, _) => tc.event("a catch-up moves @ alone onto trunk"),
+            (false, false) => tc.event("a catch-up that rewrites nothing"),
+            (false, true) => tc.event("a catch-up that restacks"),
         }
         let ids: Vec<String> = moved
             .changes
@@ -1122,83 +1158,106 @@ impl Machine {
                 .iter()
                 .map(|&at| self.commits[at].commit_id.clone())
                 .collect();
-            assert_eq!(now, old_ids, "a run on trunk's head moved");
+            assert_eq!(now, old_ids, "a main chat on trunk's head moved");
         }
         self.learn(&dragged);
         let new_head = chain.last().copied().unwrap_or(trunk);
-        let r = &mut self.runs[run];
+        let r = &mut self.runs[MAIN];
         r.head = new_head;
-        r.bookmarked = true;
-        r.wc = rebase_tree(&self.commits[new_head].tree, &old_head_tree, &r.wc);
+        r.wc = rebase_tree(&self.commits[new_head].tree, &before[head], &r.wc);
+        r.seen = r.wc.clone();
+        self.trunk = new_head;
+
+        // The chats on what it rewrote: their `@` moved with it.
+        let rewritten: BTreeSet<usize> = if rewrite {
+            chain.iter().chain(&dragged).copied().collect()
+        } else {
+            BTreeSet::new()
+        };
+        for run in 1..self.runs.len() {
+            let r = &self.runs[run];
+            if r.state != State::Open || !rewritten.contains(&r.head) {
+                continue;
+            }
+            tc.event("a catch-up moves a chat's @");
+            // jj's `@`: the last snapshot, or what rewrote it before.
+            let repo_wc = r.stale.clone().unwrap_or_else(|| r.seen.clone());
+            let stale = rebase_tree(
+                &self.commits[r.head].tree,
+                &before[r.head],
+                &repo_wc,
+            );
+            self.runs[run].stale = Some(stale);
+        }
 
         // The conflicts in the new head, then any more in `@`.
         let mut want = conflicts(&self.commits[new_head].tree);
-        for path in conflicts(&self.runs[run].wc) {
+        for path in conflicts(&self.runs[MAIN].wc) {
             if !want.contains(&path) {
-                tc.event("a move conflicts in @ alone");
+                tc.event("a catch-up conflicts in @ alone");
                 want.push(path);
             }
         }
         if !want.is_empty() {
-            tc.event("a move conflicts");
+            tc.event("a catch-up conflicts");
         }
-        assert_eq!(moved.conflicts, want, "the move's conflicts");
+        assert_eq!(moved.conflicts, want, "the catch-up's conflicts");
         assert_eq!(moved.head, self.commits[new_head].commit_id);
         for &at in chain.iter().chain(&dragged) {
             self.check_commit(at);
         }
         assert_eq!(
-            self.project.bookmark(&self.runs[run].bookmark()).unwrap(),
-            Some(moved.head.clone()),
-            "the run's bookmark"
+            self.project.trunk().unwrap(),
+            moved.head,
+            "trunk follows the main chat"
         );
+    }
 
-        if !merge {
-            return;
+    /// The source moves on: `edits` committed in the user's checkout,
+    /// then brought in with `Project::update`. Trunk takes the source's
+    /// branch, even when the main chat has moved it too.
+    fn do_upstream(&mut self, tc: &TestCase, edits: &[(&'static str, Val)]) {
+        let src = self.src();
+        let tree =
+            write_edits(tc, &src, &self.commits[self.upstream].tree, edits);
+        git(&src, &["add", "-A"]);
+        git(
+            &src,
+            &["commit", "--quiet", "--allow-empty", "-m", "upstream"],
+        );
+        let id = git(&src, &["rev-parse", "HEAD"]);
+        self.commits.push(Commit {
+            change_id: None,
+            commit_id: id.clone(),
+            parent: Some(self.upstream),
+            tree,
+            abandoned: false,
+        });
+        let at = self.commits.len() - 1;
+        if self.trunk != self.upstream {
+            tc.event("an update under the main chat's commits");
         }
-        if moved.changes.is_empty() {
-            tc.event("a merge with nothing to merge");
-            return;
-        }
-        if !moved.conflicts.is_empty() {
-            tc.event("a merge waits on its conflicts");
-            return;
-        }
-        let into = self.project.fast_forward_trunk(&moved.head).unwrap();
-        assert_eq!(into, "main");
-        assert_eq!(self.project.trunk().unwrap(), moved.head);
-        tc.event("a merge into trunk");
-        if !self.runs[run].links.iter().all(|l| l.snapshot.is_none()) {
-            tc.event("a merge of a run with snapshots");
-        }
-        self.trunk = new_head;
-        self.close(run, State::Merged);
+        let before = self.commits[self.trunk].commit_id.clone();
+        let updated = self.project.update(UpdateFrom::Checkout(&src)).unwrap();
+        assert_eq!((updated.before, updated.after), (before, id));
+        self.upstream = at;
+        self.trunk = at;
+        self.check_commit(at);
     }
 }
 
 #[hegel::state_machine]
 impl Machine {
-    /// A new run, on trunk: two open at most, so most steps go to
-    /// children.
-    #[rule]
-    fn new_run(&mut self, tc: TestCase) {
-        let roots = self
-            .runs
-            .iter()
-            .filter(|r| r.parent.is_none() && r.state == State::Open)
-            .count();
-        tc.assume(self.runs.len() < MAX_RUNS && roots < 2);
-        self.start_root();
-    }
-
-    /// A turn: edits in one run's files, then the checkpoint
-    /// `RunWorkspace` makes at `TurnEnd`.
+    /// A turn: edits in one run's files, then a commit of all of them.
+    /// The main chat catches up with trunk first, as the host has it.
     #[rule(weight = 6)]
     fn turn(&mut self, tc: TestCase) {
         let open = self.open();
-        tc.assume(!open.is_empty());
         let run = tc.draw(gs::sampled_from(open));
         let edits = tc.draw(edits());
+        if run == MAIN {
+            self.do_catch_up(&tc);
+        }
         self.do_turn(&tc, run, &edits);
     }
 
@@ -1207,9 +1266,11 @@ impl Machine {
     #[rule(weight = 3)]
     fn snapshot_turn(&mut self, tc: TestCase) {
         let open = self.open();
-        tc.assume(!open.is_empty());
         let run = tc.draw(gs::sampled_from(open));
         let edits = tc.draw(edits());
+        if run == MAIN {
+            self.do_catch_up(&tc);
+        }
         self.do_snapshot(&tc, run, &edits);
     }
 
@@ -1217,56 +1278,37 @@ impl Machine {
     #[rule(weight = 2)]
     fn write(&mut self, tc: TestCase) {
         let open = self.open();
-        tc.assume(!open.is_empty());
         let run = tc.draw(gs::sampled_from(open));
         let edits = tc.draw(edits());
         let dir = self.project.workspace_dir(&self.runs[run].name);
-        self.runs[run].wc = write_edits(&tc, &dir, &self.runs[run].wc, &edits);
+        let r = &mut self.runs[run];
+        r.wc = write_edits(&tc, &dir, &r.wc, &edits);
     }
 
-    /// A fork at one of a run's links, as `RunWorkspace` starts one: on
-    /// the commit `Project::current` gives a change's link, or on a
-    /// snapshot's files, inheriting the links up to it.
+    /// A chat of the main chat, the only run that forks (ADR 0016): at
+    /// one of its links, as `RunWorkspace` starts one, or on trunk before
+    /// it has any.
     #[rule(weight = 3)]
     fn fork(&mut self, tc: TestCase) {
         tc.assume(self.runs.len() < MAX_RUNS);
-        let candidates: Vec<usize> = self
-            .open()
-            .into_iter()
-            .filter(|&r| !self.runs[r].links.is_empty())
-            .collect();
-        tc.assume(!candidates.is_empty());
-        let parent = tc.draw(gs::sampled_from(candidates));
-        let count = self.runs[parent].links.len();
+        let count = self.runs[MAIN].links.len();
+        if count == 0 {
+            self.do_start(&tc);
+            return;
+        }
         let k = tc.draw(gs::integers::<usize>().max_value(count - 1));
-        self.do_fork(&tc, parent, k);
+        self.do_fork(&tc, MAIN, k);
     }
 
-    /// Merges a finished top-level run into trunk, as `Host::merge` and
-    /// `Host::finish_merge` do.
+    /// New commits in the source, brought in by an update.
     #[rule(weight = 2)]
-    fn merge(&mut self, tc: TestCase) {
-        let candidates: Vec<usize> = self
-            .mergeable()
-            .into_iter()
-            .filter(|&r| self.clean(r))
-            .collect();
-        tc.assume(!candidates.is_empty());
-        let run = tc.draw(gs::sampled_from(candidates));
-        self.do_move(&tc, run, true);
+    fn upstream(&mut self, tc: TestCase) {
+        let edits = tc.draw(edits());
+        self.do_upstream(&tc, &edits);
     }
 
-    /// Moves a top-level run onto trunk with its work in `@`, as the
-    /// host brings a main chat up to trunk.
-    #[rule]
-    fn move_onto_trunk(&mut self, tc: TestCase) {
-        let candidates = self.mergeable();
-        tc.assume(!candidates.is_empty());
-        let run = tc.draw(gs::sampled_from(candidates));
-        self.do_move(&tc, run, false);
-    }
-
-    /// Lands a child on its parent, previewed first, then closes it.
+    /// Lands a chat on the main chat, previewed first, then closes it.
+    /// The main chat catches up with trunk first, as the host has it.
     #[rule(weight = 3)]
     fn land(&mut self, tc: TestCase) {
         let candidates: Vec<usize> = self
@@ -1276,6 +1318,7 @@ impl Machine {
             .collect();
         tc.assume(!candidates.is_empty());
         let child = tc.draw(gs::sampled_from(candidates));
+        self.do_catch_up(&tc);
         self.do_land(&tc, child);
     }
 
@@ -1292,7 +1335,7 @@ impl Machine {
         if self.runs[child].bookmarked {
             let head = self
                 .project
-                .bookmark(&self.runs[child].bookmark())
+                .bookmark(&self.runs[child].bookmark.clone())
                 .unwrap()
                 .unwrap();
             let count = self
@@ -1328,11 +1371,7 @@ impl Machine {
         let candidates: Vec<usize> = self
             .open()
             .into_iter()
-            .filter(|&r| {
-                self.runs[r].parent.is_some()
-                    && !self.has_open_children(r)
-                    && self.clean(r)
-            })
+            .filter(|&r| r != MAIN && self.clean(r))
             .collect();
         tc.assume(!candidates.is_empty());
         let run = tc.draw(gs::sampled_from(candidates));
@@ -1346,13 +1385,17 @@ impl Machine {
     #[invariant(always_run)]
     fn the_project_is_the_model(&self, tc: TestCase) {
         tc.event_value("runs", self.runs.len() as f64);
+        // The main chat works in jj's own workspace, which is not a run's.
         let mut open: Vec<String> = self
             .open()
             .into_iter()
+            .filter(|&r| r != MAIN)
             .map(|r| self.runs[r].name.clone())
             .collect();
         open.sort();
         assert_eq!(self.project.workspaces().unwrap(), open, "workspaces");
+        let trunk = &self.commits[self.trunk].commit_id;
+        assert_eq!(&self.project.trunk().unwrap(), trunk, "trunk");
 
         for (r, run) in self.runs.iter().enumerate() {
             let head = &self.commits[self.live(run.head)];
@@ -1367,14 +1410,18 @@ impl Machine {
                     run.name
                 );
             }
-            let bookmark = self.project.bookmark(&run.bookmark()).unwrap();
+            let bookmark =
+                self.project.bookmark(&run.bookmark.clone()).unwrap();
+            // The main chat's bookmark is trunk's, which an update moves
+            // without it.
             let want = match run.state {
+                _ if r == MAIN => Some(trunk.clone()),
                 State::Open | State::Forgotten if run.bookmarked => {
                     Some(head.commit_id.clone())
                 }
                 _ => None,
             };
-            assert_eq!(bookmark, want, "{}'s bookmark", run.bookmark());
+            assert_eq!(bookmark, want, "{}'s bookmark", run.bookmark.clone());
         }
 
         // Every link, of every run, is where its change is now; one to
@@ -1424,39 +1471,46 @@ type Edits = Vec<(&'static str, Val)>;
 /// A turn's edits.
 #[hegel::composite]
 fn edits(tc: &TestCase) -> Edits {
+    tc.draw(some_edits(0))
+}
+
+/// At least `min` edits.
+#[hegel::composite]
+fn some_edits(tc: &TestCase, min: usize) -> Edits {
     tc.draw(
         gs::vecs(gs::tuples!(
             gs::sampled_from(PATHS.to_vec()),
             gs::optional(gs::sampled_from(VALUES.to_vec()))
         ))
+        .min_size(min)
         .max_size(3),
     )
 }
 
-/// Landing, head on: a parent's turns, children forked at drawn links,
-/// turns on every side, the children landing one after another in a
-/// drawn order, and a last parent turn on top, against the same model.
-/// The state machine reaches these steps only now and then.
+/// Landing, head on: the main chat's turns, chats forked at drawn links,
+/// turns on every side, the chats landing one after another in a drawn
+/// order, and a last main chat turn on top, against the same model. The
+/// state machine reaches these steps only now and then.
 #[hegel::test(
     test_cases = 30,
     suppress_health_check = [hegel::HealthCheck::TooSlow]
 )]
-fn children_land_like_the_model(tc: TestCase) {
+fn chats_land_like_the_model(tc: TestCase) {
     let mut m = Machine::new();
     for edits in tc.draw(gs::vecs(edits()).min_size(1).max_size(3)) {
-        m.do_turn(&tc, 0, &edits);
+        m.do_turn(&tc, MAIN, &edits);
     }
-    let children = tc.draw(gs::integers::<usize>().min_value(1).max_value(2));
-    for _ in 0..children {
-        let count = m.runs[0].links.len();
+    let chats = tc.draw(gs::integers::<usize>().min_value(1).max_value(2));
+    for _ in 0..chats {
+        let count = m.runs[MAIN].links.len();
         let k = tc.draw(gs::integers::<usize>().max_value(count - 1));
-        m.do_fork(&tc, 0, k);
+        m.do_fork(&tc, MAIN, k);
     }
-    let kids: Vec<usize> = (1..=children).collect();
-    // Turns in a drawn order: the parent's and its children's.
-    let turns: Vec<(usize, Vec<(&'static str, Val)>)> = tc.draw(
+    let ids: Vec<usize> = (1..=chats).collect();
+    // Turns in a drawn order: the main chat's and its chats'.
+    let turns: Vec<(usize, Edits)> = tc.draw(
         gs::vecs(gs::tuples!(
-            gs::integers::<usize>().max_value(children),
+            gs::integers::<usize>().max_value(chats),
             edits()
         ))
         .max_size(6),
@@ -1464,67 +1518,93 @@ fn children_land_like_the_model(tc: TestCase) {
     for (run, edits) in turns {
         m.do_turn(&tc, run, &edits);
     }
-    for &kid in &kids {
-        if !m.runs[kid].bookmarked {
-            m.do_turn(&tc, kid, &[]);
+    for &chat in &ids {
+        if !m.runs[chat].bookmarked {
+            m.do_turn(&tc, chat, &[]);
         }
     }
-    for kid in tc.draw(gs::permutations(kids)) {
-        m.do_land(&tc, kid);
+    for chat in tc.draw(gs::permutations(ids)) {
+        m.do_catch_up(&tc);
+        m.do_land(&tc, chat);
         m.the_project_is_the_model(tc.clone());
     }
     let last = tc.draw(edits());
-    m.do_turn(&tc, 0, &last);
+    m.do_turn(&tc, MAIN, &last);
     m.the_project_is_the_model(tc.clone());
 }
 
-/// Merging, head on: two top-level runs take turns, committed or left
-/// in `@`; the first merges into trunk, so trunk moves on past the
-/// second, which then moves onto trunk with whatever `@` holds, and
-/// maybe merges too. A fork at one of its links after that starts on a
-/// snapshot whose parent the move rewrote. Against the same model; the
-/// state machine reaches these steps only now and then.
+/// Updating, head on: the main chat takes turns, committed or left in
+/// `@`; chats fork it and work; the source moves on and an update brings
+/// it in, so trunk moves without the main chat; its next turn catches
+/// up, restacking its commits and the chats standing on them. Each chat
+/// then works on, maybe after edits made while it was stale, and lands.
+/// A fork at an older link starts on a snapshot whose parent the
+/// catch-up rewrote. Against the same model; the state machine reaches
+/// these steps only now and then.
 #[hegel::test(
     test_cases = 30,
     suppress_health_check = [hegel::HealthCheck::TooSlow]
 )]
-fn runs_merge_like_the_model(tc: TestCase) {
+fn chats_follow_an_update_like_the_model(tc: TestCase) {
     let mut m = Machine::new();
-    m.start_root();
-    for run in [0, 1] {
-        m.do_turn(&tc, run, &tc.draw(edits()));
-        m.do_snapshot(&tc, run, &tc.draw(edits()));
-    }
-    let steps: Vec<(usize, bool, Edits)> = tc.draw(
-        gs::vecs(gs::tuples!(
-            gs::integers::<usize>().max_value(1),
-            gs::booleans(),
-            edits()
-        ))
-        .max_size(4),
-    );
-    for (run, commit, edits) in steps {
+    // A commit first, so the update has the main chat's own commits to
+    // go under.
+    m.do_turn(&tc, MAIN, &tc.draw(some_edits(1)));
+    let main_turns: Vec<(bool, Edits)> =
+        tc.draw(gs::vecs(gs::tuples!(gs::booleans(), edits())).max_size(3));
+    for (commit, edits) in main_turns {
         if commit {
-            m.do_turn(&tc, run, &edits);
+            m.do_turn(&tc, MAIN, &edits);
         } else {
-            m.do_snapshot(&tc, run, &edits);
+            m.do_snapshot(&tc, MAIN, &edits);
         }
     }
-    if !m.clean(0) {
-        m.do_turn(&tc, 0, &[]);
+    let chats = tc.draw(gs::integers::<usize>().min_value(1).max_value(2));
+    for _ in 0..chats {
+        let count = m.runs[MAIN].links.len();
+        let k = tc.draw(gs::integers::<usize>().max_value(count - 1));
+        m.do_fork(&tc, MAIN, k);
+        let chat = m.runs.len() - 1;
+        if tc.draw(gs::booleans()) {
+            m.do_turn(&tc, chat, &tc.draw(edits()));
+        }
     }
-    m.do_move(&tc, 0, true);
+    m.do_upstream(&tc, &tc.draw(some_edits(1)));
+    m.the_project_is_the_model(tc.clone());
+    m.do_catch_up(&tc);
+    m.do_snapshot(&tc, MAIN, &tc.draw(edits()));
     m.the_project_is_the_model(tc.clone());
 
-    let merge = tc.draw(gs::booleans()) && m.clean(1);
-    m.do_move(&tc, 1, merge);
-    m.the_project_is_the_model(tc.clone());
-    if m.runs[1].state == State::Open {
-        let count = m.runs[1].links.len();
-        let k = tc.draw(gs::integers::<usize>().max_value(count - 1));
-        m.do_fork(&tc, 1, k);
-        let fork = m.runs.len() - 1;
-        m.do_turn(&tc, fork, &tc.draw(edits()));
+    let ids: Vec<usize> = (1..=chats).collect();
+    for &chat in &ids {
+        // Edits made before the chat's next tool runs.
+        if tc.draw(gs::booleans()) {
+            let edits = tc.draw(edits());
+            let dir = m.project.workspace_dir(&m.runs[chat].name);
+            let r = &mut m.runs[chat];
+            r.wc = write_edits(&tc, &dir, &r.wc, &edits);
+        }
+        m.do_turn(&tc, chat, &tc.draw(edits()));
+        m.the_project_is_the_model(tc.clone());
+    }
+    if m.runs.len() < MAX_RUNS {
+        // At a snapshot, when there is one: its parent may be a commit the
+        // catch-up rewrote.
+        let snapshots: Vec<usize> = (0..m.runs[MAIN].links.len())
+            .filter(|&k| m.runs[MAIN].links[k].link.snapshot)
+            .collect();
+        let k = if snapshots.is_empty() {
+            let count = m.runs[MAIN].links.len();
+            tc.draw(gs::integers::<usize>().max_value(count - 1))
+        } else {
+            tc.draw(gs::sampled_from(snapshots))
+        };
+        m.do_fork(&tc, MAIN, k);
+        m.the_project_is_the_model(tc.clone());
+    }
+    for chat in tc.draw(gs::permutations(ids)) {
+        m.do_catch_up(&tc);
+        m.do_land(&tc, chat);
         m.the_project_is_the_model(tc.clone());
     }
 }
@@ -1614,42 +1694,4 @@ fn a_turn_keeps_a_conflict_it_did_not_touch() {
     std::fs::remove_file(dir.join("a.txt")).unwrap();
     let turn = block_on(parent.commit_all("p3", "tau/p")).unwrap();
     assert_eq!(turn.paths, ["a.txt"], "the turn only deleted a.txt");
-}
-
-/// Merging a top-level run whose idle fork still has a workspace: the
-/// host allows it (`Host::merge_plan` refuses only children holding
-/// changes the run lacks), trunk has moved on, so the merge rewrites
-/// the run's commits, and jj rebases the fork's `@` along with them.
-/// The fork's workspace is then stale: its next turn fails with "The
-/// working copy is stale", and its parent is closed.
-///
-/// Open question: should the host refuse the merge while a child has a
-/// workspace, or the merge bring the children's workspaces along? A
-/// landing can do the same to an idle grandchild. Until that is
-/// decided, this expects the fork to go on and is ignored.
-#[test]
-#[ignore = "open question: a merge rewrites the commits under an idle fork's @"]
-fn a_merge_leaves_an_open_fork_stale() {
-    let m = Machine::new();
-    let trunk = m.commits[0].commit_id.clone();
-    let run = m.project.add_workspace("r", &trunk).unwrap();
-    let dir = m.project.workspace_dir("r");
-    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
-    let turn = block_on(run.commit_all("r1", "tau/r")).unwrap();
-    // A fork at that turn, idle, with nothing of its own.
-    let fork = m.project.add_workspace("f", &turn.commit_id).unwrap();
-    // Trunk moves on.
-    let other = m.project.add_workspace("o", &trunk).unwrap();
-    std::fs::write(m.project.workspace_dir("o").join("c.txt"), "one\n")
-        .unwrap();
-    let moved = block_on(other.commit_all("o1", "tau/o")).unwrap();
-    m.project.fast_forward_trunk(&moved.commit_id).unwrap();
-    // The run merges onto it.
-    let merged =
-        block_on(run.move_onto(moved.commit_id.clone(), "tau/r", true))
-            .unwrap();
-    assert!(merged.conflicts.is_empty());
-    m.project.fast_forward_trunk(&merged.head).unwrap();
-    // The fork's next turn.
-    block_on(fork.end_turn("tau/f", None)).unwrap();
 }
