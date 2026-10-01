@@ -150,6 +150,14 @@ signatures.
   commands, `/mcp__<server>__<prompt> key=value ...`, whose messages
   fill the composer. tau-ui-plugin gained commands a plugin lists from
   its data (`Manifest::listed_commands`) for them.
-- Left for later: MCP OAuth (rmcp's `auth`), sampling and elicitation,
-  resource subscriptions (`resources/subscribe`), and prompt argument
-  completion (`completion/complete`).
+- HTTP servers sign in with OAuth when they ask (a 401), as pi's do:
+  rmcp's `auth` does the protocol (discovery, registration, PKCE,
+  refresh, more scopes), tau the loopback the browser returns to, the
+  grants file `~/.config/tau/mcp-auth.json` and its own TLS. A server
+  that asks waits in `needs-auth`; only the user's Sign in on the page
+  opens a browser, since a run must never pop one up. Not
+  `auth-client-credentials-jwt`: it pulls aws-lc-rs.
+- Left for later: pi's `auth.provider` (a `/login` provider's token for
+  a server), sampling and elicitation, resource subscriptions
+  (`resources/subscribe`), and prompt argument completion
+  (`completion/complete`).

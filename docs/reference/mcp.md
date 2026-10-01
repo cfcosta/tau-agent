@@ -11,7 +11,7 @@
 
 `tau-mcp` connects to MCP servers and adds their tools to the agent,
 with their resources as three tools and their prompts as composer
-commands.
+commands. HTTP servers that ask sign in with OAuth ("Signing in").
 By default the model sees them like any other tool, and Codemode
 scripts can call them too. It follows pi's MCP extension
 (`coding-agent/src/extensions/mcp`, audited in
@@ -105,10 +105,12 @@ The common `mcpServers` shape:
   one executable, not a shell line; `args`; `env`; `cwd`, relative to
   the repository. `~/` is expanded in `command`, `args` and `cwd`.
 - **HTTP** (`url`, and `type` absent, `"http"` or `"streamable-http"`):
-  `url` (http or https) and `headers`.
+  `url` (http or https), `headers`, and `oauth`, how to sign in
+  ("Signing in"), only without an `Authorization` header.
 - `type: "sse"` is refused: "SSE servers are not supported; use the
   server's streamable HTTP endpoint".
-- `env` and `headers` values expand `${VAR}` from tau's environment. A
+- `env`, `headers` and `oauth.clientSecret` values expand `${VAR}`
+  from tau's environment. A
   variable that is not set fails that server, naming the variable:
   "the environment variable `X` is not set". `NAME` is a letter or
   `_`, then letters, digits and `_`; any other `${` is left as it is.
@@ -118,7 +120,8 @@ The common `mcpServers` shape:
 - An invalid entry is reported on the page and skipped; the others
   still connect. Unknown keys are ignored. A name that clashes with an
   earlier one is skipped: the first in merge order wins.
-- OAuth, `auth.provider` and the `oauth` block are left for later.
+- pi's `auth.provider` (a `/login` provider's token sent to a server)
+  is left out; `auth` is an unknown key.
 
 ## Connections
 
@@ -129,7 +132,8 @@ The common `mcpServers` shape:
 - **Started in the background** when the plugin is built. The plugin
   does not wait for them, except as below.
 - **States:** `connecting`, `connected`, `disconnected`, `failed`,
-  `closed`, shown on the page with the last error.
+  `needs-auth` ("Signing in"), `closed`, shown on the page with the last
+  error.
 - **Reconnects** lazily: the next call to a dropped or failed server
   connects again. HTTP connects retry transient errors (408, 429, 5xx
   but 501, network errors) after 250 ms and 1 s. **Tool calls are never
@@ -165,6 +169,166 @@ The common `mcpServers` shape:
 - **HTTP** uses tau's TLS: reqwest with rustls, `ring` and the webpki
   roots, as Jev does, with no redirects (so headers never reach another
   host).
+
+## Signing in
+
+OAuth applies to an HTTP server whose entry sends no `Authorization`
+header, when tau has a configuration directory to keep the sign-in in.
+It follows pi (`extensions/mcp`, [research](../research/pi-codemode.md))
+and the MCP authorization spec; the protocol is rmcp's `auth` module
+(discovery, registration, PKCE, refreshing, scopes), and tau adds the
+loopback, the checks on the callback, the grants file and its own HTTP
+(rustls, `ring`, the webpki roots).
+
+### The `oauth` block
+
+```json
+{
+  "url": "https://mcp.example.com/mcp",
+  "oauth": {
+    "clientId": "registered-beforehand",
+    "clientSecret": "${EXAMPLE_SECRET}",
+    "callbackPort": 53682,
+    "callbackUrl": "http://localhost:53682/callback",
+    "scope": "read write",
+    "clientName": "tau on my laptop",
+    "authServerMetadataUrl": "https://auth.example.com/.well-known/oauth-authorization-server"
+  }
+}
+```
+
+Every field is optional, and an empty string or `null` is the same as
+leaving it out. Without the block, sign-in registers a client and asks
+for the scopes the server names.
+
+- `clientId`, `clientSecret`: a client registered beforehand; no
+  registration then. A secret needs a client id and expands `${VAR}`;
+  it is sent with the token requests (HTTP Basic, or in the body when
+  the server takes only that) and never saved in the grants file.
+- `callbackUrl`: the redirect URI, plain `http` on a loopback host
+  (`127.0.0.0/8`, `localhost` or `[::1]`), with a port, no user, query
+  or fragment. `callbackPort` alone is `http://127.0.0.1:<port>/callback`;
+  given both, the ports must agree. Without either, any free port on
+  127.0.0.1, path `/callback`.
+- `scope`: the scopes to ask for, separated by spaces. Without it, those
+  the server names: its challenge's `scope`, then its protected
+  resource metadata's, then the authorization server's
+  `scopes_supported`; `offline_access` is added when the authorization
+  server offers it.
+- `clientName`: a registered client's name, `tau` by default.
+- `authServerMetadataUrl`: the authorization server's metadata, when
+  discovery from the server cannot find it.
+- The block is refused with an `Authorization` header, a secret without
+  a client, a callback that is not loopback or names no port, a port
+  outside 1 to 65535, or a metadata URL that is not http or https.
+
+### When a server asks
+
+- A connect answered 401 (with or without `WWW-Authenticate`), or 403
+  with `error="insufficient_scope"`, leaves the connection in
+  `needs-auth`, with the challenge and the scope it asked for. Nothing
+  opens a browser: the page shows "needs sign-in" and Sign in.
+- While it waits, calls, reads and prompts fail at once, "the server
+  asks you to sign in: sign in on the MCP servers page", without asking
+  the server again. A codemode script's wait does not wait for it.
+- A connection keeps the sign-in it connected under (a random id each
+  sign-in gets, which refreshes keep). Before each use it reads the
+  grants file: when that id changed, because of a sign-in or sign-out
+  here or in another process, it connects again. So `needs-auth` ends
+  on the next use after someone signs in anywhere.
+
+### Signing in
+
+`auth::begin` and `SignIn::finish`; on the host, `Host::sign_in` behind
+the page's Sign in:
+
+1. Listen on the callback address. A client registered before on a port
+   the configuration leaves free gets that port again if it is free, so
+   the client is reused.
+2. Find the authorization server: `authServerMetadataUrl`, else the
+   challenge's `resource_metadata` (RFC 9728), the server's well-known
+   protected resource metadata, then authorization server metadata
+   (RFC 8414 or OpenID), as rmcp does it (same-origin and issuer checks;
+   loopback only for a loopback server). A server that publishes none
+   gets the 2025-03-26 defaults, `/authorize`, `/token`, `/register`.
+3. The client: the configured one; else the one registered before, if
+   its redirect URI and issuer are the same; else registration
+   (RFC 7591), a public client (`token_endpoint_auth_method: none`,
+   `application_type: native`) named `clientName`.
+4. The scopes: as above; for more scopes (`insufficient_scope`), those
+   granted, then the ones asked for.
+5. The authorization URL: `response_type=code`, PKCE S256 (a fresh
+   verifier of 43 to 128 unreserved characters), a fresh `state`, and
+   `resource` (RFC 8707). The page opens it in the browser.
+6. The callback, within 5 minutes: requests to another path get a 404,
+   answers whose `state` is missing, given twice or another's get a 400,
+   and the wait goes on. With this attempt's `state`, an `error` ends
+   the sign-in, else the `code` (and `iss`, checked against the issuer,
+   RFC 9207) goes to the token endpoint with the verifier and redirect
+   URI. The browser gets a page saying how it went.
+7. The grant is saved, every connection that uses it connects again,
+   and the page shows it. A failure is an alert. A second Sign in for the
+   same grant ends the first.
+
+### Using and refreshing
+
+A connection whose grant is signed in sends `Authorization: Bearer`
+with each request (rmcp's `AuthClient`). The access token is refreshed
+before a request when it expires within 30 s, and once when the server
+answers 401 to it; the request is then sent again. A refresh keeps the
+refresh token when the answer has none. A refresh that the server turns
+down (`invalid_grant`), or no refresh token, ends in `needs-auth`. A
+refresh holds a lock file, so two processes do not refresh one grant at
+once.
+
+### Signing out
+
+Sign out (`Host::sign_out`) forgets the grant's tokens, scopes and
+sign-in id, keeping its client for the next sign-in, and connects every
+connection that used it again; the server then asks again. Tokens are
+not revoked at the authorization server.
+
+### The grants file
+
+`~/.config/tau/mcp-auth.json` (`TokenStore`), owner-only (0600, its
+directory 0700 when tau makes it), written whole through a temporary
+file and a rename under `mcp-auth.json.lock`; refreshes hold
+`mcp-auth.json.refresh.lock`. One grant per server URL and configured
+client id (`GrantKey`):
+
+```json
+{
+  "grants": [
+    {
+      "url": "https://mcp.example.com/mcp",
+      "clientId": "issued-by-registration",
+      "clientSecret": "only one registration issued",
+      "redirectUri": "http://127.0.0.1:53682/callback",
+      "metadata": { "issuer": "https://auth.example.com", "token_endpoint": "…" },
+      "issuer": "https://auth.example.com",
+      "tokens": {
+        "access_token": "…",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "refresh_token": "…"
+      },
+      "receivedAt": 1790000000,
+      "scopes": ["read"],
+      "account": "ada@example.com",
+      "signedIn": "5b0c…"
+    }
+  ]
+}
+```
+
+- `client` (the configured client id) is there for a configured
+  client; `resource` when the resource indicator is not the URL.
+- `tokens` is the token response as it came; `account` is an ID token's
+  `email` (else `preferred_username`, `name`, `sub`), read for the page
+  and never trusted.
+- No token, secret or code is logged or printed: `Grant`, `OAuthConfig`,
+  `Callback` and `SignIn` leave them out of `Debug`, and the page shows
+  the account, issuer, scopes, expiry and whether it refreshes.
 
 ## Tools
 
@@ -392,6 +556,10 @@ or, without a repository, the user's and the settings' alone.
   before it starts, `disabled` when off); its description; a switch that
   turns it off or on again, saying where (every repository on the
   user's page, this repository on a repository's), or why it is locked;
+  its sign-in, when OAuth applies: Sign in while it waits (Sign in
+  again when signed in and it asks for more), Sign out when signed in,
+  and a line with who signed in where, the scopes, whether it
+  refreshes, and the scope it asks for;
   and its tools, each with its exposure, its name as tools
   call it, and badges for its hints (read-only, destructive,
   idempotent, open world); then how many resources, resource templates
@@ -418,6 +586,11 @@ or, without a repository, the user's and the settings' alone.
     user server off in every repository;
   - `reconnect { repo, server }` builds the scope's plugin if it was
     not, and connects `server`, or every server, again;
+  - `sign_in { repo, server }` starts signing in, waiting up to 60 s for
+    discovery and registration, and replies `sign_in { server, url }`,
+    which opens the browser; when the browser comes back the host
+    refreshes the page, or alerts why not;
+  - `sign_out { repo, server }` signs out;
   - `prompt { repo, command, arguments }` gets a prompt in that scope,
     waiting up to 2 minutes, and replies `prompt { text }`, which fills
     the composer, or `prompt_failed { error, command }`, which shows the
@@ -432,12 +605,13 @@ or, without a repository, the user's and the settings' alone.
 
 ### Elsewhere
 
-- **Catalog:** "MCP servers: 3 servers · 2 connected · 1 needs
-  approval", counting servers by name across the user's and every
+- **Catalog:** "MCP servers: 3 servers · 2 connected · 1 needs sign-in ·
+  1 needs approval", counting servers by name across the user's and every
   repository's, connected where any scope connected them; "Connects to
   MCP servers and adds their tools" without any.
 - **A run's plugin list:** its repository's servers in the same words,
-  in amber while an approval waits, in red when a server failed;
+  in amber while an approval or a sign-in waits, in red when a server
+  failed;
   nothing for a repository without servers.
 - **Tool cards:** a card for every `mcp__` tool: the server and the
   tool (from the call's details once it ended, else from the
@@ -449,11 +623,17 @@ or, without a repository, the user's and the settings' alone.
 
 ## The crate
 
+- `auth`: `begin`, `SignIn` (`url`, `redirect_uri`, `finish`),
+  `SignInRequest`, `TokenStore` (`get`, `put`, `update`, `sign_out`,
+  `fingerprint`), `Grant`, `GrantKey`, `Loopback`, `read_callback`,
+  `Callback`, `CallbackError`, `pkce_challenge`, `valid_verifier`,
+  `account`. With `client`, the only modules that touch rmcp.
 - `config`: `McpConfig::parse`/`to_json`, `merge`, `Sources::load`
   (`<user dir>/mcp.json`, the settings, `<repo>/.tau/mcp.json`),
   `Sources::disable`, `Read`, `Settings`, `Disabled`, `Off`,
   `repo_key`, `PendingApproval`, `expand_vars`, `expand_home`,
-  `exposure_of`, `ServerConfig::per_repo`.
+  `exposure_of`, `ServerConfig::per_repo`, `OAuthConfig`,
+  `HttpConfig::uses_oauth`, `callback_address`.
 - `pool`: `Pool` (`new`, `update`, `get`, `connections`, `shutdown`)
   and `diff`, for the host.
 - `names`: `tool_names`, `namespace`.
@@ -462,7 +642,8 @@ or, without a repository, the user's and the settings' alone.
 - `connection`: `Connection` (`new`, `start`, `connect`, `status`, `tools`,
   `resources`, `templates`, `prompts`, `offers_resources`,
   `offers_prompts`, `instructions`, `call`, `read_resource`,
-  `get_prompt`, `settled`, `shutdown`), `State`, `Status`, `ToolInfo`,
+  `get_prompt`, `settled`, `shutdown`, `oauth`, `auth_need`,
+  `sign_in_request`, `restart`), `State`, `Status`, `AuthNeed`, `ToolInfo`,
   `ResourceInfo`, `TemplateInfo`, `PromptInfo`, `PromptArgument`,
   `Annotations`, `CallFailure`, `Environment`. Only its private
   `client` module touches rmcp.
@@ -470,9 +651,11 @@ or, without a repository, the user's and the settings' alone.
 - `prompts`: `Prompt`, `prompts`, `command_names`, `parse_arguments`,
   `format_arguments`, `check_arguments`, `usage`, `arguments_hint`,
   `prompt_text`.
-- `ui`: `McpUi`, its `Host`, the page's data (`Servers`, `ServerRow`,
+- `ui`: `McpUi`, its `Host` (with `sign_in`, `sign_out`,
+  `token_store`), the page's data (`Servers`, `ServerRow`, `AuthRow`,
   `ToolRow`, `PendingRow`), `Act` and `apply` (what an action does to
-  the settings), `server_entry`, `summary`; `ui::page` and `ui::card`.
+  the settings), `server_entry`, `summary`, `summary_with_sign_in`;
+  `ui::page` and `ui::card`.
 - `tool::McpTool`; `McpPlugin` and `McpPluginBuilder`:
 
 ```rust
@@ -493,7 +676,9 @@ mcp.reconnect("linear");
 mcp.shutdown().await;            // also on drop, in the background
 ```
 
-The builder also takes `env` (for `${VAR}`), `home` (for `~/`),
+`user_dir` is also where `mcp-auth.json` keeps sign-ins; without it,
+OAuth does not apply and a 401 fails the server. The builder also takes
+`env` (for `${VAR}`), `home` (for `~/`),
 `startup_wait`, `spill_dir`, and `server(ServerConfig)`, which adds a
 server after the files and settings: an in-process one through
 `Transport::Stream(Dial)`, which no file can name.
@@ -533,6 +718,15 @@ From the design above, as first written:
   the tools take no `cursor`.
 - **Prompts fill the composer** rather than being sent: their text comes
   from a server, so the person reads it first.
+- **Signing in waits for the user.** pi signs in from its `/mcp`
+  command; tau never opens a browser on its own, and a run's call to a
+  server that waits fails at once.
+- **A registered client is reused** only on its port and with the same
+  issuer; otherwise sign-in registers again.
+- **The resource indicator** other than the server's URL is known to
+  rmcp only through discovery, so a connection to such a server runs
+  discovery again before using its grant.
+- **No revocation** on sign-out: the tokens are forgotten, not revoked.
 
 ## Tests
 
@@ -564,6 +758,32 @@ From the design above, as first written:
   left out; reading text, an image and other binary; `list_changed`
   for resources and prompts; a read the connection drops under, sent
   once more; a server without the capabilities; prompts with arguments.
+- **Signing in** (`tests/auth.rs`, `tests/oauth.rs`): as properties,
+  every verifier of 43 to 128 unreserved characters is valid and its
+  challenge is the unpadded base64url SHA-256, and any other string is
+  no verifier; the callback gives the code back exactly for this
+  attempt's `state`, given once, on its path, and is a mismatch for any
+  other, a missing or a doubled one, even with an `error`; whatever is
+  put in, signed out of and removed from the grants file, in any order,
+  it holds what a map would, reads back the same, is 0600, and no
+  grant's `Debug` shows a token or secret; a callback URL is accepted
+  exactly when it is plain http on a loopback host with a port and no
+  query, and its redirect URI keeps host, port and path; config
+  round-trips with `oauth` blocks. Against a local authorization server
+  and the in-process MCP server behind a bearer check, over a small
+  tokio HTTP responder, the browser a GET that follows the redirect to
+  the loopback: a 401 waits in `needs-auth` without asking anyone, and
+  sign-in discovers, registers, exchanges with PKCE (every verifier
+  checked) and connects on the next use; a token about to expire is
+  refreshed first; one turned down is refreshed and the call sent
+  again; a sign-out in another process waits again and the next sign-in
+  reuses the client; `insufficient_scope` asks for the granted scopes
+  and the new one; a configured client skips registration, sends its
+  expanded secret and uses `authServerMetadataUrl`; the callback ignores
+  other states and paths; the host's page shows the sign-in and its
+  actions sign in and out. In gpui's test app, the page draws a server
+  waiting and one signed in, its buttons ask the host, and the host's
+  answer opens the browser.
 - **The server list, as a property:** at most 4,096 characters,
   descriptions at most 250, kept servers in order, the overflow count
   right.
