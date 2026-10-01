@@ -269,6 +269,7 @@ impl Workspace {
         let models = &self.catalog.models;
         let filter = self.model_search.read(cx).text().to_owned();
         let signed_in = models.access.chatgpt;
+        let jev = models.access.jev;
         // One list, in the account's order.
         let rows: Vec<AnyElement> = models
             .shown(&filter)
@@ -427,8 +428,13 @@ impl Workspace {
                     )
                     .when(choice.effort == Effort::Auto, |section| {
                         section.child(ui::text(
-                            "Auto leaves the effort to the model, or to a \
-                             reasoning plugin when the agent has one.",
+                            if jev {
+                                "Auto lets tau-reasoning pick the effort for \
+                                 each message, with Jev."
+                            } else {
+                                "Auto leaves the effort to the model: \
+                                 tau-reasoning needs a TypeSafe key (Models)."
+                            },
                             Type::CAPTION,
                             t.muted,
                         ))

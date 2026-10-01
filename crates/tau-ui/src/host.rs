@@ -1164,17 +1164,28 @@ impl Host {
                 screen: None,
             },
         ];
-        if self.jev().is_some() {
-            plugins.push(PluginInfo {
-                name: tau_fast_compaction::NAME.into(),
-                description: "Prunes large bash outputs as they arrive, and \
-                              stale tool history, with Jev"
-                    .into(),
-                seams: vec![Seam::Start, Seam::Rewrite],
-                spend: 0.0,
-                screen: Some(PluginScreen::Ledger),
-            });
-        }
+        let jev = self.jev().is_some();
+        plugins.push(PluginInfo {
+            name: tau_reasoning::NAME.into(),
+            description: needs_jev(
+                jev,
+                "Picks each message's reasoning effort on auto",
+            ),
+            seams: vec![Seam::Start],
+            spend: 0.0,
+            screen: Some(PluginScreen::Plan),
+        });
+        plugins.push(PluginInfo {
+            name: tau_fast_compaction::NAME.into(),
+            description: needs_jev(
+                jev,
+                "Prunes large bash outputs as they arrive, and stale tool \
+                 history",
+            ),
+            seams: vec![Seam::Start, Seam::Rewrite],
+            spend: 0.0,
+            screen: Some(PluginScreen::Ledger),
+        });
         plugins.push(PluginInfo {
             name: "tau-compaction".into(),
             description: "Summarizes the context when it nears the window"
@@ -1223,7 +1234,6 @@ impl Host {
             .collect();
         let rules: usize =
             repos.iter().map(|repo| repo.constitution.rules.len()).sum();
-        let jev = self.config.credentials.jev_key().is_some();
         plugins.push(PluginInfo {
             name: tau_constitution::NAME.into(),
             description: if jev {
@@ -1231,9 +1241,7 @@ impl Host {
                     "{rules} rules across your repositories, checked with Jev"
                 )
             } else {
-                "Checks calls against each repository's rules: needs a \
-                 TypeSafe key (Models)"
-                    .into()
+                needs_jev(false, "Checks calls against each repository's rules")
             },
             seams: vec![Seam::BeforeTool, Seam::BeforeStop],
             spend: 0.0,
@@ -1241,15 +1249,10 @@ impl Host {
         });
         plugins.push(PluginInfo {
             name: tau_goal::NAME.into(),
-            description: if jev {
-                "Keeps a conversation going until its /goal holds, checked \
-                 with Jev"
-                    .into()
-            } else {
-                "Keeps a conversation going until its /goal holds: needs a \
-                 TypeSafe key (Models)"
-                    .into()
-            },
+            description: needs_jev(
+                jev,
+                "Keeps a conversation going until its /goal holds",
+            ),
             seams: vec![Seam::Start, Seam::AfterTool, Seam::BeforeStop],
             spend: 0.0,
             screen: None,
@@ -2276,11 +2279,20 @@ impl Host {
                 set_by: workspace.as_ref().map(|_| "workspace".to_owned()),
             },
         ];
-        view.plugins = vec![PluginStatus {
-            name: "tau-tools".into(),
-            state: "7 tools".into(),
-            tone: Tone::Quiet,
-        }];
+        let jev = self.jev().is_some();
+        let rules = self
+            .constitution(repo)
+            .map_or(0, |live| live.get().rules.len());
+        let [reasoning, pruning, constitution] =
+            jev_statuses(jev, choice.effort, rules);
+        view.plugins = vec![
+            reasoning,
+            PluginStatus {
+                name: "tau-tools".into(),
+                state: "7 tools".into(),
+                tone: Tone::Quiet,
+            },
+        ];
         if workspace.is_some() {
             view.plugins.push(PluginStatus {
                 name: "workspace".into(),
@@ -2288,13 +2300,7 @@ impl Host {
                 tone: Tone::Quiet,
             });
         }
-        if self.jev().is_some() {
-            view.plugins.push(PluginStatus {
-                name: tau_fast_compaction::NAME.into(),
-                state: "pruning large outputs · watching the window".into(),
-                tone: Tone::Quiet,
-            });
-        }
+        view.plugins.push(pruning);
         view.plugins.push(PluginStatus {
             name: "tau-compaction".into(),
             state: "watching the window".into(),
@@ -2314,19 +2320,7 @@ impl Host {
             },
             tone: Tone::Quiet,
         });
-        let rules = self
-            .constitution(repo)
-            .map_or(0, |live| live.get().rules.len());
-        view.plugins.push(PluginStatus {
-            name: tau_constitution::NAME.into(),
-            state: match (self.config.credentials.jev_key(), rules) {
-                (None, _) => "off · no TypeSafe key".into(),
-                (Some(_), 0) => "no rules".into(),
-                (Some(_), 1) => "watching 1 rule".into(),
-                (Some(_), n) => format!("watching {n} rules"),
-            },
-            tone: Tone::Quiet,
-        });
+        view.plugins.push(constitution);
         view
     }
 
@@ -3770,6 +3764,58 @@ pub async fn history(
 }
 
 /// `2026-09-28T14:03:11.402Z` as `2026-09-28 14:03`.
+/// What a plugin that asks Jev says of itself on the Plugins screen:
+/// `what` it does, and that it needs a key when there is none.
+fn needs_jev(jev: bool, what: &str) -> String {
+    if jev {
+        format!("{what}, with Jev")
+    } else {
+        format!("{what}: needs a TypeSafe key (Models)")
+    }
+}
+
+/// What a run's plugins that ask Jev say as it starts: tau-reasoning,
+/// fast-compaction and tau-constitution. Each is there with or without
+/// a key, so a run without one says they are off. (tau-goal says so
+/// only when there is a goal; see `RunView::goal`.)
+fn jev_statuses(jev: bool, effort: Effort, rules: usize) -> [PluginStatus; 3] {
+    const OFF: &str = "off · no TypeSafe key";
+    let status = |name: &str, state: String| PluginStatus {
+        name: name.into(),
+        state,
+        tone: Tone::Quiet,
+    };
+    [
+        status(
+            tau_reasoning::NAME,
+            match (jev, effort) {
+                (_, effort) if effort != Effort::Auto => {
+                    format!("off · effort set to {}", effort.label())
+                }
+                (false, _) => OFF.into(),
+                (true, _) => "picks the effort as the run starts".into(),
+            },
+        ),
+        status(
+            tau_fast_compaction::NAME,
+            if jev {
+                "pruning large outputs · watching the window".into()
+            } else {
+                OFF.into()
+            },
+        ),
+        status(
+            tau_constitution::NAME,
+            match (jev, rules) {
+                (false, _) => OFF.into(),
+                (true, 0) => "no rules".into(),
+                (true, 1) => "watching 1 rule".into(),
+                (true, n) => format!("watching {n} rules"),
+            },
+        ),
+    ]
+}
+
 /// The days of runs the Plugins screen's spend covers.
 const SPEND_DAYS: u64 = 30;
 
@@ -3998,6 +4044,48 @@ pub fn branch_slug(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each plugin that asks Jev says how it stands as a run starts:
+    /// off without a key, and tau-reasoning off as well when the effort
+    /// is picked by hand; on, the constitution counts its rules.
+    #[hegel::test(test_cases = 200)]
+    fn jev_plugins_say_whether_they_are_on(tc: hegel::TestCase) {
+        use hegel::generators::{self as gs, Generator as _};
+        let jev = tc.draw(gs::booleans());
+        let efforts = Effort::offered(DEFAULT_MODEL);
+        let effort = tc.draw(gs::sampled_from(efforts).print_as_debug());
+        let rules = tc.draw(gs::integers::<usize>().max_value(20));
+        let statuses = jev_statuses(jev, effort, rules);
+        let names: Vec<&str> =
+            statuses.iter().map(|status| status.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                tau_reasoning::NAME,
+                tau_fast_compaction::NAME,
+                tau_constitution::NAME
+            ]
+        );
+        let off = |status: &PluginStatus| status.state.starts_with("off");
+        let [reasoning, pruning, constitution] = &statuses;
+        assert_eq!(off(reasoning), !jev || effort != Effort::Auto);
+        assert_eq!(off(pruning), !jev);
+        assert_eq!(off(constitution), !jev);
+        if !jev {
+            for status in [pruning, constitution] {
+                assert_eq!(status.state, "off · no TypeSafe key");
+            }
+        }
+        if effort != Effort::Auto {
+            assert!(reasoning.state.ends_with(effort.label()), "{reasoning:?}");
+        }
+        if jev && rules > 0 {
+            assert!(
+                constitution.state.contains(&rules.to_string()),
+                "{constitution:?}"
+            );
+        }
+    }
 
     /// [`civil_date`] agrees with counting the days off one year and
     /// one month at a time.

@@ -247,7 +247,7 @@ pub struct AccessInfo {
     pub label: String,
     /// Runs use the active ChatGPT account's plan.
     pub chatgpt: bool,
-    /// A TypeSafe key is saved, so tau-constitution checks runs.
+    /// A TypeSafe key is saved, so the plugins that ask Jev run.
     pub jev: bool,
     /// The saved ChatGPT sign-ins, by label.
     pub accounts: Vec<ChatGptAccount>,

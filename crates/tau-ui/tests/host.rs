@@ -237,6 +237,54 @@ fn new_chats_fork_the_repository_main_chat() {
 
 /// A run shows its prompt's first line until a model writes its title;
 /// a written title comes back with history.
+/// The Plugins screen lists every plugin that asks Jev, with a key or
+/// without one, which it says it needs; tau-reasoning opens the run's
+/// plan. Spend comes from what each plugin charged.
+#[test]
+fn every_jev_plugin_is_listed() {
+    let jev_plugins = [
+        tau_reasoning::NAME,
+        tau_fast_compaction::NAME,
+        tau_constitution::NAME,
+        tau_goal::NAME,
+    ];
+    let (host, _events) = host(ScriptedModel::new());
+    let catalog = host.catalog();
+    for name in jev_plugins {
+        let plugin = catalog
+            .plugins
+            .iter()
+            .find(|plugin| plugin.name == name)
+            .unwrap_or_else(|| panic!("{name} is listed"));
+        assert!(
+            plugin.description.contains("needs a TypeSafe key"),
+            "{name}: {}",
+            plugin.description
+        );
+        assert_eq!(plugin.spend, 0.0);
+    }
+    let reasoning = |catalog: &tau_ui::catalog::Catalog| {
+        catalog
+            .plugins
+            .iter()
+            .find(|plugin| plugin.name == tau_reasoning::NAME)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(
+        reasoning(&catalog).screen,
+        Some(tau_ui::catalog::PluginScreen::Plan)
+    );
+    let host = host
+        .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.5)));
+    let catalog = host.catalog();
+    assert!(
+        !reasoning(&catalog).description.contains("needs"),
+        "{:?}",
+        reasoning(&catalog)
+    );
+}
+
 #[test]
 fn written_titles_come_back_in_history() {
     let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
