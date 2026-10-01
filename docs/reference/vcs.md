@@ -291,6 +291,17 @@ the user's checkout.
   Cloning from a URL is not supported yet. jj-lib's fetch and push run
   `git` as a subprocess, so the GitHub side will need it, or a fetch
   through gix and a push of our own.
+- `clone_bare(url, token, into)` clones a remote into a bare
+  repository with gix, keeping every branch and tag under its own
+  name, as `git clone --bare` does; `open_or_import` takes that clone
+  as its source.
+- `update(from)` brings in what changed at the source since the import
+  or the last update: from the checkout (`UpdateFrom::Checkout`) or
+  from a remote (`UpdateFrom::Remote`, a fetch through gix). The
+  copy's branches, tags and `HEAD` become the source's: branches and
+  tags the source deleted go, and trunk follows a new default branch.
+  It returns trunk before and after (`Updated`). Runs keep their
+  workspaces and commits.
 - `trunk()` is the commit new runs start from: the branch the clone's
   `HEAD` names, else `main`, `master` or `trunk`, else the root commit.
 - `add_workspace(name, base)` makes `runs/<name>` on a new empty commit

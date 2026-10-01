@@ -340,6 +340,65 @@ fn a_clone_updates_from_its_remote() {
     assert_eq!(project.trunk().unwrap(), second);
 }
 
+/// A clone keeps every branch of the remote as a branch, so the
+/// project imports each one as a bookmark, as it does from a checkout.
+#[test]
+fn a_clone_imports_every_branch() {
+    let src = tempfile::tempdir().unwrap();
+    let head = source(src.path());
+    git(src.path(), &["branch", "feature"]);
+    let home = tempfile::tempdir().unwrap();
+    let bare = home.path().join("owner/repo");
+    let url = format!("file://{}", src.path().display());
+    clone_bare(&url, None, &bare).unwrap();
+    let project = Project::import(
+        bare.to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    assert_eq!(project.bookmarks("").unwrap(), ["feature", "main"]);
+    assert_eq!(project.bookmark("feature").unwrap(), Some(head));
+}
+
+/// An update from a remote follows what the remote did to its refs:
+/// a branch and a tag it deleted go, and a renamed default branch
+/// becomes trunk, as `HEAD` names it.
+#[test]
+fn an_update_from_a_remote_follows_its_refs_and_head() {
+    let src = tempfile::tempdir().unwrap();
+    source(src.path());
+    git(src.path(), &["branch", "feature"]);
+    git(src.path(), &["tag", "v1"]);
+    let home = tempfile::tempdir().unwrap();
+    let bare = home.path().join("owner/repo");
+    let url = format!("file://{}", src.path().display());
+    clone_bare(&url, None, &bare).unwrap();
+    let project = Project::import(
+        bare.to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+
+    git(src.path(), &["branch", "--quiet", "-D", "feature"]);
+    git(src.path(), &["tag", "-d", "v1"]);
+    git(src.path(), &["branch", "--quiet", "-m", "main", "trunk"]);
+    let second = commit(src.path(), "b.txt");
+    let updated = project
+        .update(UpdateFrom::Remote {
+            url: &url,
+            token: None,
+        })
+        .unwrap();
+    assert_eq!(updated.after, second);
+    assert_eq!(project.bookmarks("").unwrap(), ["trunk"]);
+    assert_eq!(project.default_branch().as_deref(), Some("trunk"));
+    assert_eq!(project.trunk_name().unwrap(), "trunk");
+    let store = project.root().join("git");
+    assert_eq!(git(&store, &["tag", "--list"]), "");
+}
+
 #[test]
 fn files_and_parents_are_read_at_a_commit() {
     let src = tempfile::tempdir().unwrap();
