@@ -1,0 +1,1215 @@
+//! Runs in one project, side by side (`docs/reference/vcs.md`,
+//! "Threading", "Stale working copies", "A repository's main chat"):
+//! the host runs chats in parallel, each on its own `Vcs` thread and
+//! jj workspace of one repository, while the main chat takes turns,
+//! catches up with trunk, takes landings and drops, and an update
+//! brings upstream's commits. jj sees these as concurrent operations
+//! and merges the operation log's heads on the next load.
+//!
+//! The property runs rounds. Each round draws one action for the main
+//! chat, one for the host (an update, or a new chat), and one for each
+//! open chat, then runs them all at once from threads that start
+//! together. Each actor owns one file: the main chat `main.txt`,
+//! upstream `up.txt`, chat `i` `chat<i>.txt`. So every order of a
+//! round's actions has the same outcome, and the model needs no
+//! interleaving: what any sequential order does is what the round must
+//! do. After each round it holds to:
+//! - no action fails;
+//! - each run's own file on disk is what it last wrote: no work is
+//!   lost, whatever ran beside it;
+//! - the main chat's workspace holds each landed chat's file, as the
+//!   chat committed it, and no other chat's;
+//! - trunk's bookmark names one commit, never the root, and holds
+//!   upstream's newest commit;
+//! - `Project::current` resolves every change a run committed to one
+//!   commit, and once the main chat has caught up, trunk holds the main
+//!   chat's commits and every landed chat's;
+//! - an open chat's bookmark names its newest commit.
+//!
+//! At the end the main chat catches up and commits once more, and
+//! trunk's files are the model's: the main chat's, upstream's, and the
+//! landed chats'.
+//!
+//! Races that break these are pinned below as ignored examples, and the
+//! property does not draw them; each restriction names its example.
+
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{Arc, Barrier},
+};
+
+use hegel::{TestCase, generators as gs};
+use tau_testing::block_on;
+use tau_vcs::{DEFAULT_WORKSPACE, Identity, Link, Project, UpdateFrom, Vcs};
+
+/// A file's contents; `None` is no file.
+type Val = Option<&'static str>;
+
+const VALUES: [Val; 3] = [None, Some("x\n"), Some("y\n")];
+/// Chats made in one case, open or closed.
+const MAX_CHATS: usize = 4;
+const ROOT: &str = "0000000000000000000000000000000000000000";
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(["-c", "init.defaultBranch=main"])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn write(dir: &Path, path: &str, value: Val) {
+    let file = dir.join(path);
+    match value {
+        Some(text) => std::fs::write(&file, text).unwrap(),
+        None => match std::fs::remove_file(&file) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => panic!("{e}"),
+        },
+    }
+}
+
+fn read(dir: &Path, path: &str) -> Option<String> {
+    std::fs::read_to_string(dir.join(path)).ok()
+}
+
+fn chat_file(chat: usize) -> String {
+    format!("chat{chat}.txt")
+}
+
+fn change_link(change_id: &str, commit_id: &str) -> Link {
+    Link {
+        turn: 0,
+        workspace: String::new(),
+        commit_id: commit_id.to_owned(),
+        change_id: change_id.to_owned(),
+        changed: true,
+        from: None,
+        snapshot: false,
+    }
+}
+
+/// A project imported from a one-commit checkout, and its main chat's
+/// workspace caught up with trunk, as the host has it before the main
+/// chat's first turn.
+struct Repo {
+    home: tempfile::TempDir,
+    project: Project,
+    trunk_name: String,
+    /// The main chat's own `Vcs`, as its `RunWorkspace` has it.
+    main: Vcs,
+}
+
+impl Repo {
+    fn new() -> Self {
+        let home = tempfile::tempdir().unwrap();
+        let src = home.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        git(&src, &["init", "--quiet"]);
+        std::fs::write(src.join("a.txt"), "one\n").unwrap();
+        git(&src, &["add", "."]);
+        git(&src, &["commit", "--quiet", "-m", "first"]);
+        let project = Project::import(
+            src.to_str().unwrap(),
+            home.path().join("p"),
+            Identity::default(),
+        )
+        .unwrap();
+        let trunk_name = project.trunk_name().unwrap();
+        catch_up(&project).unwrap();
+        let main = Vcs::open(
+            project.workspace_dir(DEFAULT_WORKSPACE),
+            Identity::default(),
+        )
+        .unwrap();
+        Self {
+            home,
+            project,
+            trunk_name,
+            main,
+        }
+    }
+
+    fn src(&self) -> PathBuf {
+        self.home.path().join("src")
+    }
+
+    fn main_dir(&self) -> PathBuf {
+        self.project.workspace_dir(DEFAULT_WORKSPACE)
+    }
+
+    /// Commits `value` as `up.txt` in the source checkout. Returns the
+    /// new commit, for `Project::update` to bring in.
+    fn push_upstream(&self, value: Val) -> String {
+        let src = self.src();
+        write(&src, "up.txt", value);
+        git(&src, &["add", "-A"]);
+        git(
+            &src,
+            &["commit", "--quiet", "--allow-empty", "-m", "upstream"],
+        );
+        git(&src, &["rev-parse", "HEAD"])
+    }
+}
+
+/// The main chat's catch-up as `Host::catch_up` runs it: a `Vcs` of its
+/// own on the default workspace, moving it onto trunk.
+fn catch_up(project: &Project) -> Result<(), String> {
+    let vcs = Vcs::open(
+        project.workspace_dir(DEFAULT_WORKSPACE),
+        Identity::default(),
+    )
+    .map_err(|e| format!("open: {e}"))?;
+    let trunk = project.trunk().map_err(|e| format!("trunk: {e}"))?;
+    let name = project.trunk_name().map_err(|e| format!("name: {e}"))?;
+    block_on(vcs.move_onto(trunk, name, true))
+        .map_err(|e| format!("catch-up: {e}"))?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MainAct {
+    Idle,
+    /// A turn: the host's catch-up, then `main.txt` written, then the
+    /// work committed (`commit_all`) or left in `@` (`end_turn`).
+    Turn {
+        value: Val,
+        commit: bool,
+    },
+    /// The host's catch-up alone.
+    CatchUp,
+    /// `Host::land` of a chat: catch-up, landing, then the chat closes.
+    Land(usize),
+    /// `Host::drop_child` of a chat.
+    Drop(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostAct {
+    Idle,
+    /// Upstream commits `up.txt` before the round, and
+    /// `Project::update` brings it in during the round.
+    Update(Val),
+    /// `Host::start`: a new chat forks the main chat at its latest link.
+    Fork,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChatAct {
+    Idle,
+    /// Its file written, with no tool after it.
+    Write(Val),
+    /// A turn left uncommitted: its file written, then `end_turn`.
+    Snapshot(Val),
+    /// A turn committed: its file written, then `commit_all`.
+    Commit(Val),
+}
+
+hegel::pretty_print_as_debug!(MainAct);
+hegel::pretty_print_as_debug!(HostAct);
+hegel::pretty_print_as_debug!(ChatAct);
+
+/// The main chat's newest link, which a new chat forks at.
+#[derive(Debug, Clone)]
+enum Latest {
+    /// No turn yet: a new chat starts on trunk.
+    Trunk,
+    /// A committed change: found by its change id.
+    Change {
+        change_id: String,
+        commit_id: String,
+    },
+    /// A turn's snapshot: that very commit.
+    Snapshot(String),
+}
+
+struct Chat {
+    name: String,
+    vcs: Vcs,
+    /// Its file on disk.
+    wc: Val,
+    /// Its file in its newest commit.
+    committed: Val,
+    /// A commit has set `tau/<name>`.
+    bookmarked: bool,
+    /// The changes it committed, as `(change id, commit id)`.
+    changes: Vec<(String, String)>,
+    state: State,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum State {
+    Open,
+    /// Landed on the main chat with its file as it committed it.
+    Landed(Val),
+    Dropped,
+}
+
+struct Model {
+    repo: Repo,
+    /// `main.txt` in the main chat's workspace.
+    main_wc: Val,
+    /// The main chat's own commits, as `(change id, commit id)`.
+    main_changes: Vec<(String, String)>,
+    latest: Latest,
+    /// The main chat's newest change link, for when `latest` is a
+    /// snapshot a new chat cannot fork at.
+    last_change: Latest,
+    /// `main.txt` in the main chat's newest commit.
+    main_committed: Val,
+    /// `up.txt` upstream, and upstream's newest commit.
+    up: Val,
+    up_head: String,
+    /// Trunk moved without the main chat since its last catch-up.
+    behind: bool,
+    chats: Vec<Chat>,
+}
+
+/// What an action returned, for the model.
+enum Outcome {
+    Done,
+    Committed(tau_vcs::Committed),
+    Snapshot(tau_vcs::TurnSnapshot),
+    Landed(tau_vcs::Landing),
+    Forked(Vcs),
+}
+
+type Job = Box<dyn FnOnce() -> Result<Outcome, String> + Send>;
+
+/// Runs `jobs` at once, each on its own thread, and waits for all.
+fn run_together(
+    jobs: Vec<(String, Job)>,
+) -> Vec<(String, Result<Outcome, String>)> {
+    let barrier = Arc::new(Barrier::new(jobs.len()));
+    let handles: Vec<_> = jobs
+        .into_iter()
+        .map(|(who, job)| {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                (who, job())
+            })
+        })
+        .collect();
+    handles.into_iter().map(|h| h.join().unwrap()).collect()
+}
+
+impl Model {
+    fn new() -> Self {
+        let repo = Repo::new();
+        let up_head = repo.project.trunk().unwrap();
+        Self {
+            repo,
+            main_wc: None,
+            main_changes: Vec::new(),
+            latest: Latest::Trunk,
+            last_change: Latest::Trunk,
+            main_committed: None,
+            up: None,
+            up_head,
+            behind: false,
+            chats: Vec::new(),
+        }
+    }
+
+    fn open_chats(&self) -> Vec<usize> {
+        (0..self.chats.len())
+            .filter(|&c| self.chats[c].state == State::Open)
+            .collect()
+    }
+
+    /// A chat that can land: open, its work committed, with a bookmark.
+    fn landable(&self) -> Vec<usize> {
+        self.open_chats()
+            .into_iter()
+            .filter(|&c| {
+                let chat = &self.chats[c];
+                chat.bookmarked && chat.wc == chat.committed
+            })
+            .collect()
+    }
+
+    /// The main chat's job for one round, as the host runs it.
+    fn main_job(&self, main: MainAct) -> Option<Job> {
+        let project = self.repo.project.clone();
+        let trunk_name = self.repo.trunk_name.clone();
+        let job: Job = match main {
+            MainAct::Idle => return None,
+            MainAct::Turn { value, commit } => {
+                let vcs = self.repo.main.clone();
+                let dir = self.repo.main_dir();
+                Box::new(move || {
+                    catch_up(&project)?;
+                    write(&dir, "main.txt", value);
+                    if commit {
+                        block_on(vcs.commit_all("main turn", trunk_name))
+                            .map(Outcome::Committed)
+                            .map_err(|e| format!("commit: {e}"))
+                    } else {
+                        block_on(vcs.end_turn(trunk_name, None))
+                            .map(Outcome::Snapshot)
+                            .map_err(|e| format!("end_turn: {e}"))
+                    }
+                })
+            }
+            MainAct::CatchUp => {
+                Box::new(move || catch_up(&project).map(|()| Outcome::Done))
+            }
+            MainAct::Land(c) => {
+                let name = self.chats[c].name.clone();
+                Box::new(move || {
+                    let bookmark = format!("tau/{name}");
+                    catch_up(&project)?;
+                    // After the catch-up, which may restack the chat:
+                    // `Host::land` reads it before, and lands a stale
+                    // head (`landing_a_chat_after_an_update_makes_it_divergent`).
+                    let head = project
+                        .bookmark(&bookmark)
+                        .map_err(|e| e.to_string())?
+                        .ok_or("the chat has no bookmark")?;
+                    let trunk = project.trunk().map_err(|e| e.to_string())?;
+                    let parent = project
+                        .add_workspace(DEFAULT_WORKSPACE, &trunk)
+                        .map_err(|e| format!("open: {e}"))?;
+                    let landing = block_on(parent.land(head, trunk_name, true))
+                        .map_err(|e| format!("land: {e}"))?;
+                    project
+                        .forget_workspace(&name)
+                        .map_err(|e| format!("forget: {e}"))?;
+                    project
+                        .remove_bookmark(&bookmark)
+                        .map_err(|e| format!("remove bookmark: {e}"))?;
+                    Ok(Outcome::Landed(landing))
+                })
+            }
+            MainAct::Drop(c) => {
+                let name = self.chats[c].name.clone();
+                Box::new(move || {
+                    let bookmark = format!("tau/{name}");
+                    let head = project
+                        .bookmark(&bookmark)
+                        .map_err(|e| e.to_string())?;
+                    if let Some(head) = head {
+                        let keep = match project
+                            .bookmark(&trunk_name)
+                            .map_err(|e| e.to_string())?
+                        {
+                            Some(keep) => keep,
+                            None => {
+                                project.trunk().map_err(|e| e.to_string())?
+                            }
+                        };
+                        project
+                            .abandon_between(&keep, &head)
+                            .map_err(|e| format!("abandon: {e}"))?;
+                    }
+                    project
+                        .forget_workspace(&name)
+                        .map_err(|e| format!("forget: {e}"))?;
+                    project
+                        .remove_bookmark(&bookmark)
+                        .map_err(|e| format!("remove bookmark: {e}"))?;
+                    Ok(Outcome::Done)
+                })
+            }
+        };
+        Some(job)
+    }
+
+    /// The host's job for one round.
+    fn host_job(&self, host: HostAct) -> Option<Job> {
+        let project = self.repo.project.clone();
+        let job: Job = match host {
+            HostAct::Idle => return None,
+            HostAct::Update(_) => {
+                let src = self.repo.src();
+                Box::new(move || {
+                    project
+                        .update(UpdateFrom::Checkout(&src))
+                        .map(|_| Outcome::Done)
+                        .map_err(|e| format!("update: {e}"))
+                })
+            }
+            HostAct::Fork => {
+                let name = format!("c{}", self.chats.len());
+                let latest = self.latest.clone();
+                Box::new(move || {
+                    let vcs = match latest {
+                        Latest::Trunk => {
+                            let trunk =
+                                project.trunk().map_err(|e| e.to_string())?;
+                            project.add_workspace(&name, &trunk)
+                        }
+                        Latest::Change {
+                            change_id,
+                            commit_id,
+                        } => {
+                            let now = project
+                                .current([change_link(&change_id, &commit_id)])
+                                .map_err(|e| format!("current: {e}"))?
+                                .remove(0);
+                            project.add_workspace(&name, &now.commit_id)
+                        }
+                        Latest::Snapshot(commit_id) => project
+                            .add_workspace_from_snapshot(&name, &commit_id),
+                    };
+                    vcs.map(Outcome::Forked).map_err(|e| format!("fork: {e}"))
+                })
+            }
+        };
+        Some(job)
+    }
+
+    /// A chat's job for one round.
+    fn chat_job(&self, c: usize, act: ChatAct) -> Option<Job> {
+        let chat = &self.chats[c];
+        let vcs = chat.vcs.clone();
+        let dir = self.repo.project.workspace_dir(&chat.name);
+        let bookmark = format!("tau/{}", chat.name);
+        let file = chat_file(c);
+        let job: Job = match act {
+            ChatAct::Idle => return None,
+            ChatAct::Write(value) => Box::new(move || {
+                write(&dir, &file, value);
+                Ok(Outcome::Done)
+            }),
+            ChatAct::Snapshot(value) => Box::new(move || {
+                write(&dir, &file, value);
+                block_on(vcs.end_turn(bookmark, None))
+                    .map(Outcome::Snapshot)
+                    .map_err(|e| format!("end_turn: {e}"))
+            }),
+            ChatAct::Commit(value) => Box::new(move || {
+                write(&dir, &file, value);
+                block_on(vcs.commit_all("chat turn", bookmark))
+                    .map(Outcome::Committed)
+                    .map_err(|e| format!("commit: {e}"))
+            }),
+        };
+        Some(job)
+    }
+
+    /// Runs one round, all its actions at once, and moves the model on.
+    fn round(
+        &mut self,
+        tc: &TestCase,
+        main: MainAct,
+        host: HostAct,
+        chats: &[(usize, ChatAct)],
+    ) {
+        tc.note(&format!("round: {main:?}, {host:?}, {chats:?}"));
+        if let HostAct::Update(value) = host {
+            self.up_head = self.repo.push_upstream(value);
+        }
+        let mut jobs: Vec<(String, Job)> = Vec::new();
+        if let Some(job) = self.main_job(main) {
+            jobs.push(("main".to_owned(), job));
+        }
+        if let Some(job) = self.host_job(host) {
+            jobs.push(("host".to_owned(), job));
+        }
+        for &(c, act) in chats {
+            if let Some(job) = self.chat_job(c, act) {
+                jobs.push((self.chats[c].name.clone(), job));
+            }
+        }
+        tc.event_value("actions at once", jobs.len() as f64);
+        let mut results: BTreeMap<String, Outcome> = run_together(jobs)
+            .into_iter()
+            .map(|(who, result)| match result {
+                Ok(outcome) => (who, outcome),
+                Err(error) => panic!("{who} failed: {error}"),
+            })
+            .collect();
+
+        match main {
+            MainAct::Idle => {}
+            MainAct::Turn { value, .. } => {
+                self.behind = false;
+                self.main_wc = value;
+                match results.remove("main").unwrap() {
+                    Outcome::Committed(c) => {
+                        self.main_committed = value;
+                        self.latest = Latest::Change {
+                            change_id: c.change_id.clone(),
+                            commit_id: c.commit_id.clone(),
+                        };
+                        self.last_change = self.latest.clone();
+                        if c.changed {
+                            self.main_changes.push((c.change_id, c.commit_id));
+                        }
+                    }
+                    // A chat forked at a snapshot that holds uncommitted
+                    // work would start with the main chat's `main.txt`,
+                    // and one file would have two owners. It forks at
+                    // the newest change instead; `runs_model` covers
+                    // forks at snapshots.
+                    Outcome::Snapshot(s) if value == self.main_committed => {
+                        self.latest = Latest::Snapshot(s.commit_id);
+                    }
+                    Outcome::Snapshot(_) => {
+                        self.latest = self.last_change.clone();
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            MainAct::CatchUp => self.behind = false,
+            MainAct::Land(c) => {
+                self.behind = false;
+                let chat = &mut self.chats[c];
+                chat.state = State::Landed(chat.committed);
+                // `Host::land` links the landed changes at the main chat's
+                // latest turn, so new chats fork at the newest of them.
+                let Some(Outcome::Landed(landing)) = results.remove("main")
+                else {
+                    unreachable!()
+                };
+                if let Some(head) = landing.changes.first() {
+                    self.latest = Latest::Change {
+                        change_id: head.change_id.clone(),
+                        commit_id: head.commit_id.clone(),
+                    };
+                    self.last_change = self.latest.clone();
+                }
+            }
+            MainAct::Drop(c) => self.chats[c].state = State::Dropped,
+        }
+        match host {
+            HostAct::Idle => {}
+            HostAct::Update(value) => {
+                self.up = value;
+                self.behind = true;
+            }
+            HostAct::Fork => {
+                let Some(Outcome::Forked(vcs)) = results.remove("host") else {
+                    unreachable!()
+                };
+                let c = self.chats.len();
+                self.chats.push(Chat {
+                    name: format!("c{c}"),
+                    vcs,
+                    wc: None,
+                    committed: None,
+                    bookmarked: false,
+                    changes: Vec::new(),
+                    state: State::Open,
+                });
+            }
+        }
+        for &(c, act) in chats {
+            let name = self.chats[c].name.clone();
+            let chat = &mut self.chats[c];
+            match act {
+                ChatAct::Idle => {}
+                ChatAct::Write(value) | ChatAct::Snapshot(value) => {
+                    chat.wc = value
+                }
+                ChatAct::Commit(value) => {
+                    chat.wc = value;
+                    chat.committed = value;
+                    chat.bookmarked = true;
+                    let Some(Outcome::Committed(c)) = results.remove(&name)
+                    else {
+                        unreachable!()
+                    };
+                    if c.changed {
+                        chat.changes.push((c.change_id, c.commit_id));
+                    }
+                }
+            }
+        }
+        self.check();
+    }
+
+    /// What every round leaves: see the module docs.
+    fn check(&self) {
+        let project = &self.repo.project;
+
+        // Each run's own file is what it last wrote.
+        let main_dir = self.repo.main_dir();
+        assert_eq!(
+            read(&main_dir, "main.txt").as_deref(),
+            self.main_wc,
+            "the main chat's main.txt"
+        );
+        for (c, chat) in self.chats.iter().enumerate() {
+            let file = chat_file(c);
+            let in_main = match chat.state {
+                State::Landed(value) => value,
+                _ => None,
+            };
+            assert_eq!(
+                read(&main_dir, &file).as_deref(),
+                in_main,
+                "{file} in the main chat"
+            );
+            if chat.state == State::Open {
+                let dir = project.workspace_dir(&chat.name);
+                assert_eq!(
+                    read(&dir, &file).as_deref(),
+                    chat.wc,
+                    "{file} in its chat"
+                );
+            }
+        }
+
+        // Trunk names one commit, not the root, with upstream's in it.
+        let trunk = project
+            .bookmark(&self.repo.trunk_name)
+            .unwrap()
+            .expect("trunk's bookmark names one commit");
+        assert_eq!(project.trunk().unwrap(), trunk);
+        assert_ne!(trunk, ROOT, "trunk is the root commit");
+        assert!(
+            project.is_ancestor(&self.up_head, &trunk).unwrap(),
+            "trunk lacks upstream's newest commit"
+        );
+
+        // Every change a run committed is one commit; once the main chat
+        // has caught up, trunk holds its commits and the landed chats'.
+        let mut on_trunk = self.main_changes.clone();
+        let mut open = Vec::new();
+        for chat in &self.chats {
+            match chat.state {
+                State::Landed(_) => on_trunk.extend(chat.changes.clone()),
+                State::Open => open.push(chat),
+                State::Dropped => {}
+            }
+        }
+        let now = project
+            .current(on_trunk.iter().map(|(ch, co)| change_link(ch, co)))
+            .expect("every committed change is one commit");
+        if !self.behind {
+            for link in &now {
+                assert!(
+                    project.is_ancestor(&link.commit_id, &trunk).unwrap(),
+                    "trunk lacks {}",
+                    link.change_id
+                );
+            }
+        }
+        for chat in open {
+            let now = project
+                .current(
+                    chat.changes.iter().map(|(ch, co)| change_link(ch, co)),
+                )
+                .expect("every committed change is one commit");
+            let bookmark =
+                project.bookmark(&format!("tau/{}", chat.name)).unwrap();
+            if let Some(last) = now.last() {
+                assert_eq!(
+                    bookmark.as_ref(),
+                    Some(&last.commit_id),
+                    "{}'s bookmark",
+                    chat.name
+                );
+            }
+        }
+    }
+
+    /// The main chat catches up and commits all it has: trunk's files
+    /// are then the main chat's, upstream's, and the landed chats'.
+    fn finish(&self) {
+        let project = &self.repo.project;
+        catch_up(project).unwrap();
+        block_on(
+            self.repo
+                .main
+                .commit_all("main last", self.repo.trunk_name.clone()),
+        )
+        .unwrap();
+        let trunk = project.trunk().unwrap();
+        let at = |path: &str| {
+            project
+                .file_at(&trunk, path)
+                .unwrap()
+                .map(|(bytes, _)| String::from_utf8(bytes).unwrap())
+        };
+        assert_eq!(at("a.txt").as_deref(), Some("one\n"));
+        assert_eq!(at("main.txt").as_deref(), self.main_wc, "main.txt");
+        assert_eq!(at("up.txt").as_deref(), self.up, "up.txt");
+        for (c, chat) in self.chats.iter().enumerate() {
+            let want = match chat.state {
+                State::Landed(value) => value,
+                _ => None,
+            };
+            assert_eq!(at(&chat_file(c)).as_deref(), want, "{}", chat_file(c));
+        }
+    }
+}
+
+/// Draws a round: one action for the main chat, one for the host, one
+/// for each open chat the main chat's action leaves alone.
+fn draw_round(
+    tc: &TestCase,
+    m: &Model,
+) -> (MainAct, HostAct, Vec<(usize, ChatAct)>) {
+    let open = m.open_chats();
+    let landable = m.landable();
+    let value = || tc.draw(gs::sampled_from(VALUES.to_vec()));
+
+    let mut mains = vec![
+        MainAct::Idle,
+        MainAct::CatchUp,
+        MainAct::Turn {
+            value: value(),
+            commit: tc.draw(gs::booleans()),
+        },
+    ];
+    if !landable.is_empty() {
+        // Twice: a chat must commit before it can land, and drops close
+        // chats as well.
+        let chat = tc.draw(gs::sampled_from(landable));
+        mains.extend([MainAct::Land(chat), MainAct::Land(chat)]);
+    }
+    // A drop after an update, before the main chat catches up, abandons
+    // the main chat's own commits:
+    // `dropping_a_chat_after_an_update_abandons_the_main_chats_commits`.
+    if !open.is_empty() && !m.behind {
+        mains.push(MainAct::Drop(tc.draw(gs::sampled_from(open.clone()))));
+    }
+    let main = tc.draw(gs::sampled_from(mains));
+
+    let mut hosts = vec![HostAct::Idle];
+    if m.chats.len() < MAX_CHATS {
+        hosts.push(HostAct::Fork);
+    }
+    // An update racing whatever moves trunk's bookmark leaves it
+    // conflicted: `an_update_racing_a_main_chat_commit_conflicts_trunk`.
+    if matches!(main, MainAct::Idle | MainAct::Drop(_)) {
+        hosts.push(HostAct::Update(value()));
+    }
+    let host = tc.draw(gs::sampled_from(hosts));
+
+    // A catch-up that restacks the commits a chat stands on, racing that
+    // chat's tool, loses the chat's work:
+    // `a_catch_up_racing_a_chat_turn_loses_the_chats_work`.
+    let restacks = m.behind
+        && matches!(
+            main,
+            MainAct::Turn { .. } | MainAct::CatchUp | MainAct::Land(_)
+        );
+    let busy = match main {
+        MainAct::Land(c) | MainAct::Drop(c) => Some(c),
+        _ => None,
+    };
+    let mut chats = Vec::new();
+    for c in open {
+        if Some(c) == busy {
+            continue;
+        }
+        let mut acts = vec![ChatAct::Idle, ChatAct::Write(value())];
+        if !restacks {
+            acts.push(ChatAct::Snapshot(value()));
+            acts.push(ChatAct::Commit(value()));
+            acts.push(ChatAct::Commit(value()));
+        }
+        chats.push((c, tc.draw(gs::sampled_from(acts))));
+    }
+    (main, host, chats)
+}
+
+/// Records which races a round runs, for `HEGEL_STATISTICS=1`.
+fn events(
+    tc: &TestCase,
+    m: &Model,
+    main: MainAct,
+    host: HostAct,
+    chats: &[(usize, ChatAct)],
+) {
+    let tools = chats
+        .iter()
+        .filter(|(_, act)| {
+            matches!(act, ChatAct::Commit(_) | ChatAct::Snapshot(_))
+        })
+        .count();
+    let commits = chats
+        .iter()
+        .filter(|(_, act)| matches!(act, ChatAct::Commit(_)))
+        .count();
+    if commits >= 2 {
+        tc.event("two chats commit at once");
+    }
+    if tools > 0 {
+        match main {
+            MainAct::Turn { commit: true, .. } => {
+                tc.event("a main chat commit races a chat's turn")
+            }
+            MainAct::Turn { commit: false, .. } => {
+                tc.event("a main chat snapshot races a chat's turn")
+            }
+            MainAct::CatchUp => tc.event("a catch-up races a chat's turn"),
+            MainAct::Land(_) => tc.event("a landing races a chat's turn"),
+            MainAct::Drop(_) => tc.event("a drop races a chat's turn"),
+            MainAct::Idle => {}
+        }
+        match host {
+            HostAct::Update(_) => tc.event("an update races a chat's turn"),
+            HostAct::Fork => tc.event("a new chat races a chat's turn"),
+            HostAct::Idle => {}
+        }
+    }
+    match (main, host) {
+        (MainAct::Drop(_), HostAct::Update(_)) => {
+            tc.event("an update races a drop")
+        }
+        (MainAct::Land(_), HostAct::Fork) => {
+            tc.event("a new chat races a landing")
+        }
+        (MainAct::Drop(_), HostAct::Fork) => {
+            tc.event("a new chat races a drop")
+        }
+        (MainAct::Turn { .. } | MainAct::CatchUp, HostAct::Fork) => {
+            tc.event(if m.behind {
+                "a new chat races a catch-up that restacks"
+            } else {
+                "a new chat races a main chat turn"
+            })
+        }
+        _ => {}
+    }
+    if m.behind && !matches!(main, MainAct::Idle | MainAct::Drop(_)) {
+        if m.open_chats().is_empty() {
+            tc.event("a catch-up after an update");
+        } else {
+            tc.event("a catch-up after an update restacks chats");
+        }
+    }
+    if let MainAct::Land(c) = main
+        && !m.chats[c].changes.is_empty()
+    {
+        tc.event("a landing with changes");
+    }
+}
+
+/// Runs side by side keep every run's work, trunk and the links: see
+/// the module docs. Each case starts a main chat turn and up to three
+/// chats, then runs up to 8 rounds.
+#[hegel::test(
+    test_cases = 25,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
+fn runs_side_by_side_behave_like_one_after_another(tc: TestCase) {
+    side_by_side(tc);
+}
+
+#[hegel::test(
+    profile = "nightly_slow",
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
+#[ignore = "nightly"]
+fn runs_side_by_side_behave_like_one_after_another_nightly(tc: TestCase) {
+    side_by_side(tc);
+}
+
+fn side_by_side(tc: TestCase) {
+    let mut m = Model::new();
+    // A main chat turn and a few chats first, one after another, so the
+    // races start with the first round.
+    let value = tc.draw(gs::sampled_from(VALUES.to_vec()));
+    let first = MainAct::Turn {
+        value,
+        commit: tc.draw(gs::booleans()),
+    };
+    m.round(&tc, first, HostAct::Idle, &[]);
+    for _ in 0..tc.draw(gs::integers::<usize>().min_value(1).max_value(3)) {
+        m.round(&tc, MainAct::Idle, HostAct::Fork, &[]);
+    }
+    let rounds = tc.draw(gs::integers::<usize>().min_value(1).max_value(8));
+    for _ in 0..rounds {
+        let (main, host, chats) = draw_round(&tc, &m);
+        events(&tc, &m, main, host, &chats);
+        m.round(&tc, main, host, &chats);
+    }
+    m.finish();
+}
+
+// Races that break the property, pinned as examples. Each is a decision
+// for the host or for how tau-vcs serializes its operations.
+
+/// Runs `a` and `b` at once and fails on either's error.
+fn race(a: (&str, Job), b: (&str, Job)) {
+    let jobs = vec![(a.0.to_owned(), a.1), (b.0.to_owned(), b.1)];
+    for (who, result) in run_together(jobs) {
+        if let Err(error) = result {
+            panic!("{who} failed: {error}");
+        }
+    }
+}
+
+/// An update racing the main chat's commit leaves trunk's bookmark
+/// conflicted, and `Project::trunk` falls back to the root commit.
+///
+/// Both operations start from the same operation. The update sets trunk
+/// to upstream's commit, and the commit sets it to the main chat's new
+/// commit, a sibling. jj merges the two operation heads on the next
+/// load and keeps both targets. `Project::update` resolves exactly this
+/// conflict when the main chat moved trunk before it
+/// (`take_upstream_trunk`), but the merge happens after it, so nothing
+/// does. Then `trunk()` is `000…` (`project.rs`, `trunk_bookmark` takes
+/// only a normal target), a chat started on trunk starts on the empty
+/// root commit, and the host's next catch-up moves the main chat "onto"
+/// the root: it rebases nothing and points trunk at the main chat's
+/// head, dropping upstream's commits from trunk. The same holds for an
+/// update racing a catch-up or a landing on the main chat: anything that
+/// moves trunk's bookmark. The host runs `update_repo` on a blocking
+/// thread whatever the runs do.
+///
+/// Fix options:
+/// - Serialize every operation tau-vcs makes on one repository (a lock
+///   per repository, held from loading the head to committing the
+///   transaction, in `session::mutate`, `snapshot` and the `Project`
+///   writers). Then concurrent calls behave as some order of the same
+///   calls one after another, which the sequential models already
+///   cover. This also fixes `a_catch_up_racing_a_chat_turn_loses_the_chats_work`.
+///   Recommended.
+/// - Resolve a conflicted trunk where it is read: when trunk's bookmark
+///   has two targets and one is upstream's (`main@git`), take upstream's,
+///   as `take_upstream_trunk` does, and let the catch-up put the main
+///   chat's commits on top.
+/// - Make the host never update while the main chat runs or a landing is
+///   under way.
+#[test]
+#[ignore = "bug: an update racing a main chat commit leaves trunk's bookmark conflicted"]
+fn an_update_racing_a_main_chat_commit_conflicts_trunk() {
+    for _ in 0..5 {
+        let repo = Repo::new();
+        repo.push_upstream(Some("x\n"));
+        write(&repo.main_dir(), "main.txt", Some("x\n"));
+        let (project, src) = (repo.project.clone(), repo.src());
+        let (main, name) = (repo.main.clone(), repo.trunk_name.clone());
+        race(
+            (
+                "update",
+                Box::new(move || {
+                    project
+                        .update(UpdateFrom::Checkout(&src))
+                        .map(|_| Outcome::Done)
+                        .map_err(|e| e.to_string())
+                }),
+            ),
+            (
+                "commit",
+                Box::new(move || {
+                    block_on(main.commit_all("main turn", name))
+                        .map(Outcome::Committed)
+                        .map_err(|e| e.to_string())
+                }),
+            ),
+        );
+        let trunk = repo.project.bookmark(&repo.trunk_name).unwrap();
+        assert!(
+            trunk.is_some(),
+            "trunk's bookmark is conflicted, and trunk() is {}",
+            repo.project.trunk().unwrap()
+        );
+    }
+}
+
+/// The main chat's catch-up racing a chat's turn loses the chat's work:
+/// its uncommitted file is deleted from its workspace, and its change is
+/// divergent.
+///
+/// The catch-up restacks the main chat's commits onto upstream's, and
+/// with them the chat's `@`, which stands on one of them: `@` becomes
+/// `@'` with the old files. At the same time the chat's `end_turn`
+/// snapshots its new file into `@`, as `@s`. Both rewrote `@` from the
+/// same operation, so after jj merges the operation heads, `@'` and
+/// `@s` are both visible under one change id, and the workspace points
+/// at one of them (`merge_wc_commit` keeps one side). When it is `@'`,
+/// the chat's next tool finds its working copy stale
+/// (`WorkingCopyFreshness::WorkingCopyStale`, not `SiblingOperation`,
+/// since the merge descends from the chat's own operation), and
+/// `session::snapshot_locked` takes the last snapshot (`@s`'s files) as
+/// the base of the edits since: none, so it checks out `@'` and deletes
+/// the file. The work is only in the hidden-in-plain-sight `@s`. With
+/// `commit_all` in place of `end_turn`, the chat's commit is divergent
+/// and `Vcs::land` refuses it (`DivergentAfterLanding`), so the chat
+/// cannot land. The host runs chats while the main chat resumes, and a
+/// resume catches up first.
+///
+/// Fix options:
+/// - Serialize operations per repository, as in
+///   `an_update_racing_a_main_chat_commit_conflicts_trunk`. Recommended.
+/// - Detect the case in `snapshot_locked`: when `@`'s change is
+///   divergent after a merge of operation heads, rebase the other side's
+///   files onto the rewrite (or fail with `VcsError::Stale`, as the
+///   reference says a forked operation log does, and give the host a way
+///   to update the workspace).
+#[test]
+#[ignore = "bug: a catch-up racing a chat's turn deletes the chat's work"]
+fn a_catch_up_racing_a_chat_turn_loses_the_chats_work() {
+    for _ in 0..5 {
+        let repo = Repo::new();
+        write(&repo.main_dir(), "main.txt", Some("x\n"));
+        let main = block_on(
+            repo.main.commit_all("main turn", repo.trunk_name.clone()),
+        )
+        .unwrap();
+        let chat = repo.project.add_workspace("c0", &main.commit_id).unwrap();
+        repo.push_upstream(Some("x\n"));
+        repo.project
+            .update(UpdateFrom::Checkout(&repo.src()))
+            .unwrap();
+        let dir = repo.project.workspace_dir("c0");
+        write(&dir, "chat0.txt", Some("x\n"));
+        let project = repo.project.clone();
+        let vcs = chat.clone();
+        race(
+            (
+                "catch-up",
+                Box::new(move || catch_up(&project).map(|()| Outcome::Done)),
+            ),
+            (
+                "chat",
+                Box::new(move || {
+                    block_on(vcs.end_turn("tau/c0", None))
+                        .map(Outcome::Snapshot)
+                        .map_err(|e| e.to_string())
+                }),
+            ),
+        );
+        let wc = block_on(chat.working_copy()).unwrap();
+        assert_eq!(wc.paths, ["chat0.txt"], "the chat's @ lost its work");
+        assert_eq!(read(&dir, "chat0.txt").as_deref(), Some("x\n"));
+    }
+}
+
+/// An update while the main chat's turn runs moves trunk aside: the
+/// turn's commit points trunk at the main chat's new commit, which does
+/// not have upstream's, and upstream's commit is no longer on trunk.
+///
+/// No race is needed. The host catches the main chat up before its turn
+/// (`Host::resume`), but `update_repo` can run while the turn does. Then
+/// `commit_all` (and `end_turn`, through `ops::point_bookmark`) sets
+/// trunk's bookmark to the main chat's head unconditionally. The
+/// reference says the main chat's "next commit moves trunk forward
+/// rather than aside", which holds only when nothing moved trunk since
+/// the catch-up. The next catch-up has nothing to do (trunk is the main
+/// chat's head), new chats start without upstream's commits, and they
+/// come back only when upstream moves again and the update finds trunk
+/// conflicted.
+///
+/// Fix options:
+/// - The main chat's checkpoints move trunk only forward: when trunk is
+///   no longer an ancestor of the new head, rebase the run's changes
+///   onto it first (a catch-up inside the commit), or leave trunk and
+///   let the next catch-up do it.
+/// - The host does not update a repository while its main chat runs, or
+///   holds the update until the turn ends.
+#[test]
+#[ignore = "bug: an update during a main chat turn moves trunk aside"]
+fn an_update_during_a_main_chat_turn_moves_trunk_aside() {
+    let repo = Repo::new();
+    write(&repo.main_dir(), "main.txt", Some("x\n"));
+    let up = repo.push_upstream(Some("x\n"));
+    repo.project
+        .update(UpdateFrom::Checkout(&repo.src()))
+        .unwrap();
+    block_on(repo.main.commit_all("main turn", repo.trunk_name.clone()))
+        .unwrap();
+    let trunk = repo.project.trunk().unwrap();
+    assert!(
+        repo.project.is_ancestor(&up, &trunk).unwrap(),
+        "trunk lacks upstream's commit"
+    );
+}
+
+/// Dropping a chat after an update, before the main chat catches up,
+/// abandons the main chat's own commits, and its committed work leaves
+/// its workspace.
+///
+/// `Host::drop_child` abandons what the chat's head has that its
+/// parent's bookmark lacks (`Project::abandon_between`). The main chat's
+/// bookmark is trunk's, and the update moved it to upstream's commit,
+/// which lacks the main chat's commits under the chat. So they are
+/// abandoned with the chat's, the main chat's `@` moves onto their
+/// parent, and its next tool deletes their files. No race is needed;
+/// this is `drop_child`'s sequence after an update, which the
+/// sequential model does not reach (it keeps the main chat's head, not
+/// trunk's bookmark).
+///
+/// Fix options, in tau-ui: catch the main chat up before dropping one of
+/// its chats, as `Host::land` does; or keep what the main chat's
+/// workspace stands on (`@`'s parent) rather than its bookmark.
+#[test]
+#[ignore = "bug: dropping a chat after an update abandons the main chat's commits"]
+fn dropping_a_chat_after_an_update_abandons_the_main_chats_commits() {
+    let repo = Repo::new();
+    write(&repo.main_dir(), "main.txt", Some("x\n"));
+    let main =
+        block_on(repo.main.commit_all("main turn", repo.trunk_name.clone()))
+            .unwrap();
+    let chat = repo.project.add_workspace("c0", &main.commit_id).unwrap();
+    write(&repo.project.workspace_dir("c0"), "chat0.txt", Some("x\n"));
+    let head = block_on(chat.commit_all("chat turn", "tau/c0")).unwrap();
+    repo.push_upstream(Some("x\n"));
+    repo.project
+        .update(UpdateFrom::Checkout(&repo.src()))
+        .unwrap();
+    // `Host::drop_child`.
+    let keep = repo.project.bookmark(&repo.trunk_name).unwrap().unwrap();
+    let dropped = repo
+        .project
+        .abandon_between(&keep, &head.commit_id)
+        .unwrap();
+    assert_eq!(dropped, 1, "only the chat's own commit goes");
+    block_on(repo.main.working_copy()).unwrap();
+    assert_eq!(read(&repo.main_dir(), "main.txt").as_deref(), Some("x\n"));
+}
+
+/// Landing a chat after an update, before the main chat catches up,
+/// fails with `DivergentAfterLanding`, every time: the chat cannot land.
+///
+/// `Host::landing` reads the chat's head from its bookmark, then catches
+/// the main chat up. The catch-up restacks the main chat's commits onto
+/// upstream's, and the chat's commits with them, and moves the chat's
+/// bookmark to the new head. The landing still gets the old head:
+/// `Vcs::land` takes what it has that the main chat's new head lacks,
+/// which is the old copies of the main chat's commit and the chat's,
+/// and rebases them onto the new head. Their change ids now name two
+/// visible commits each, so `land::current` fails. Nothing is written
+/// (the landing's transaction is dropped), but the chat can never land
+/// while the host keeps that order. No race is needed; the
+/// sequential model reads the bookmark after its catch-up.
+///
+/// Fix options:
+/// - In tau-ui, read the chat's bookmark after the catch-up in
+///   `Host::landing`. Recommended: one line moves.
+/// - In tau-vcs, have `Vcs::land` refuse a `child_head` that is no longer
+///   visible, naming it, or land the commit its change names now.
+#[test]
+#[ignore = "bug: Host::land reads the chat's head before the catch-up that rewrites it"]
+fn landing_a_chat_after_an_update_makes_it_divergent() {
+    let repo = Repo::new();
+    write(&repo.main_dir(), "main.txt", Some("x\n"));
+    let main =
+        block_on(repo.main.commit_all("main turn", repo.trunk_name.clone()))
+            .unwrap();
+    let chat = repo.project.add_workspace("c0", &main.commit_id).unwrap();
+    write(&repo.project.workspace_dir("c0"), "chat0.txt", Some("x\n"));
+    block_on(chat.commit_all("chat turn", "tau/c0")).unwrap();
+    repo.push_upstream(Some("x\n"));
+    repo.project
+        .update(UpdateFrom::Checkout(&repo.src()))
+        .unwrap();
+    // `Host::landing`, then `Host::land`.
+    let head = repo.project.bookmark("tau/c0").unwrap().unwrap();
+    catch_up(&repo.project).unwrap();
+    let trunk = repo.project.trunk().unwrap();
+    let parent = repo
+        .project
+        .add_workspace(DEFAULT_WORKSPACE, &trunk)
+        .unwrap();
+    let landing = block_on(parent.land(head, repo.trunk_name.clone(), true));
+    assert!(landing.is_ok(), "{landing:?}");
+}
