@@ -18,7 +18,6 @@ use gpui::{
 
 use super::{
     Material as _,
-    bar,
     button,
     diff_card,
     icon,
@@ -431,17 +430,6 @@ fn tool(
             }),
     };
 
-    let review = matches!(card.state, ToolState::Flagged { .. }).then(|| {
-        let run_id = run.id.clone();
-        let call_id = card.call_id.clone();
-        div()
-            .id(SharedString::from(format!("review-{}", card.call_id)))
-            .child(link("Review", t))
-            .on_click(cx.listener(move |ws, _, _, cx| {
-                ws.review_call(&run_id, &call_id, cx)
-            }))
-    });
-
     // A log, diff or show starts closed; its header opens it.
     let folds = !dropped
         && matches!(
@@ -522,11 +510,7 @@ fn tool(
             },
         )
         .child(summary)
-        .when(!compact && !card.checks.is_empty(), |row| {
-            row.child(mono(card.checks.join(" · "), Type::MICRO, t.dim))
-        })
         .child(state_label(card, t))
-        .children(review)
         .children(badges)
         .when(folds, |row| {
             let run_id = run.id.clone();
@@ -551,17 +535,8 @@ fn tool(
         });
 
     let body: Option<AnyElement> = match (&card.state, &card.body) {
-        (
-            ToolState::Blocked {
-                plugin,
-                rule,
-                reason,
-                score,
-            },
-            _,
-        ) => Some(
-            blocked_body(ws, card, plugin, rule, reason, score, t, compact, cx)
-                .into_any_element(),
+        (ToolState::Blocked { plugin, reason }, _) => Some(
+            blocked_body(card, plugin, reason, t, compact).into_any_element(),
         ),
         (ToolState::Flagged { .. }, _) => None,
         _ if dropped => None,
@@ -818,22 +793,11 @@ fn state_label(card: &ToolCard, t: &Theme) -> Div {
             (text, color)
         }
         ToolState::Failed(error) => (error.clone(), t.red),
-        ToolState::Blocked { rule, .. } => {
-            (format!("Blocked by {rule}"), t.red)
+        ToolState::Blocked { plugin, .. } => {
+            (format!("Blocked by {plugin}"), t.red)
         }
-        ToolState::Flagged { rule, score, .. } => {
-            return div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .flex_shrink_0()
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.accent)
-                        .child("Ran · flagged for review"),
-                )
-                .child(mono(format!("{rule} {score}"), Type::MICRO, t.dim));
+        ToolState::Flagged { .. } => {
+            ("Ran · flagged for review".into(), t.accent)
         }
     };
     div()
@@ -845,31 +809,15 @@ fn state_label(card: &ToolCard, t: &Theme) -> Div {
         .child(text)
 }
 
-/// The first number in a score such as `p 0.95 ≥ 0.80`.
-fn probability(score: &str) -> Option<f32> {
-    score
-        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
-        .find(|part| part.contains('.'))
-        .and_then(|part| part.parse().ok())
-}
-
-#[allow(clippy::too_many_arguments)]
+/// A refused call: what the model proposed, and the reason it got
+/// back. The plugin that refused it draws the rest under it.
 fn blocked_body(
-    ws: &Workspace,
     card: &ToolCard,
     plugin: &str,
-    rule: &str,
     reason: &str,
-    score: &str,
     t: &Theme,
     compact: bool,
-    cx: &mut Context<Workspace>,
 ) -> Div {
-    let repo = ws.current().map_or("", |run| ws.repo_of(run));
-    let route = Route::Constitution {
-        repo: repo.to_owned(),
-        rule: Some(rule.to_owned()),
-    };
     let proposed: Vec<DiffLine> = proposed_text(&card.args)
         .into_iter()
         .map(|text| DiffLine {
@@ -877,71 +825,6 @@ fn blocked_body(
             text,
         })
         .collect();
-    let thresholds = ws
-        .repo_named(repo)
-        .constitution
-        .rules
-        .iter()
-        .find(|known| known.id == rule)
-        .map(|known| (known.review, known.block));
-    let meter = probability(score).map(|p| {
-        let tick = |at: f32| {
-            div()
-                .absolute()
-                .top(px(-3.))
-                .left(relative(at))
-                .w(px(2.))
-                .h(px(14.))
-                .bg(t.text)
-        };
-        div()
-            .w(px(if compact { 150. } else { 220. }))
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .gap(sp(1.5))
-            .child(
-                div()
-                    .flex()
-                    .typeset(Type::CAPTION)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(t.muted)
-                            .child("p(violation)"),
-                    )
-                    .child(mono(format!("{p:.2}"), Type::CAPTION, t.text)),
-            )
-            .child(
-                div()
-                    .relative()
-                    .child(bar(p, 8., t.red, t.border))
-                    .when_some(thresholds, |track, (review, block)| {
-                        track.child(tick(review)).child(tick(block))
-                    }),
-            )
-            .when_some(thresholds, |meter, (review, block)| {
-                meter.child(
-                    div()
-                        .relative()
-                        .h(px(14.))
-                        .child(
-                            div()
-                                .absolute()
-                                .left(relative(review))
-                                .ml(sp(-5.))
-                                .child(mono("review", Type::MICRO, t.dim)),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .left(relative(block))
-                                .ml(sp(-4.))
-                                .child(mono("block", Type::MICRO, t.dim)),
-                        ),
-                )
-            })
-    });
     div()
         .flex()
         .flex_col()
@@ -979,19 +862,6 @@ fn blocked_body(
                                         .typeset(Type::CAPTION)
                                         .text_color(t.muted)
                                         .child("Reason sent to the model"),
-                                )
-                                .child(
-                                    div()
-                                        .id(SharedString::from(format!(
-                                            "rule-{}",
-                                            card.call_id
-                                        )))
-                                        .child(link(format!("Rule {rule}"), t))
-                                        .on_click(cx.listener(
-                                            move |ws, _, _, cx| {
-                                                ws.navigate(route.clone(), cx)
-                                            },
-                                        )),
                                 ),
                         )
                         .child(
@@ -1000,11 +870,7 @@ fn blocked_body(
                                 .line_height(relative(1.5))
                                 .child(rich(reason, t.text_soft, t)),
                         ),
-                )
-                .children(meter)
-                .when(probability(score).is_none(), |row| {
-                    row.child(mono(score.to_owned(), Type::CAPTION, t.red))
-                }),
+                ),
         )
 }
 

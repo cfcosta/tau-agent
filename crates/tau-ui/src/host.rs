@@ -39,7 +39,6 @@ use tau_ai::{
     model::find,
     refusal::Refusal,
 };
-use tau_constitution::{Constitution, ConstitutionPlugin, Live, RuleError};
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools::{path::Root, plugin::CodingTools};
@@ -63,12 +62,10 @@ use crate::{
     accounts::{self, Credentials},
     catalog::{
         Catalog,
-        Constitution as CatalogConstitution,
         PluginInfo,
         PluginScreen,
         ProjectStatus,
         Repo,
-        Rule as CatalogRule,
         Seam,
         StoreInfo,
     },
@@ -208,9 +205,6 @@ struct RepoList {
     /// Conversations closed: History lists them, the sidebar does not.
     #[serde(default)]
     closed: Vec<String>,
-    /// Flagged calls looked at, as `[run, call id]`.
-    #[serde(default)]
-    reviewed: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -484,17 +478,13 @@ pub struct Host {
     /// otherwise.
     not_eligible: Arc<Mutex<Option<String>>>,
     github: github::Api,
-    /// Jev for tau-constitution, in place of TypeSafe's with the saved
-    /// key: for tests.
+    /// Jev for plugins that ask it, in place of TypeSafe's with the
+    /// saved key: for tests.
     jev: Option<Arc<dyn tau_jev::Jev>>,
     /// What every plugin's Jev requests did this session.
     jev_meter: Arc<Mutex<crate::metered::Meter>>,
     /// Each repository's notes and the user's, shared by every run.
     memories: Arc<Memories>,
-    /// Each repository's rules as runs check them, by
-    /// [`Host::constitution_key`]: an edit replaces them here, and every
-    /// run's next check reads the new ones.
-    constitutions: Mutex<HashMap<String, Live>>,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -679,7 +669,6 @@ impl Host {
             jev: None,
             jev_meter: Arc::default(),
             memories: Arc::new(Memories::keywords()),
-            constitutions: Mutex::default(),
             store,
             choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
@@ -916,7 +905,7 @@ impl Host {
         Ok(repo)
     }
 
-    /// Checks constitutions with `jev` instead of TypeSafe's, for tests.
+    /// Asks `jev` instead of TypeSafe's, for tests.
     pub fn with_jev(mut self, jev: Arc<dyn tau_jev::Jev>) -> Self {
         self.jev = Some(jev);
         self
@@ -1008,51 +997,6 @@ impl Host {
             list.closed.push(run.0.to_string());
         }
         list.save(&self.config.repo_list)
-    }
-
-    /// Remembers that a flagged call was looked at.
-    pub fn set_reviewed(
-        &self,
-        run: &RunId,
-        call_id: &str,
-    ) -> anyhow::Result<()> {
-        let mut list = self.list.lock().expect("not poisoned");
-        let entry = (run.0.to_string(), call_id.to_owned());
-        if !list.reviewed.contains(&entry) {
-            list.reviewed.push(entry);
-        }
-        list.save(&self.config.repo_list)
-    }
-
-    /// Asks Jev what a rule being written makes of past `calls` (tool,
-    /// arguments) and final `answers`, as a check would ask. Blocks.
-    pub fn try_rule(
-        &self,
-        text: &str,
-        on: &[String],
-        review: f64,
-        block: f64,
-        calls: &[(String, serde_json::Value)],
-        answers: &[String],
-    ) -> Result<(Vec<tau_constitution::Trial>, f64), String> {
-        let on = on
-            .iter()
-            .map(|place| tau_constitution::rules::Target::parse(place))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
-        let rule = tau_constitution::Rule {
-            id: "new".into(),
-            text: text.to_owned(),
-            on,
-            review,
-            block,
-        };
-        let jev = self.jev().ok_or_else(|| {
-            "Trying a rule asks Jev: add a TypeSafe key on the Models screen."
-                .to_owned()
-        })?;
-        self.runtime
-            .block_on(tau_constitution::try_rule(&*jev, &rule, calls, answers))
     }
 
     /// `plugin`'s records for `run`, along its fork chain, as stored.
@@ -1165,7 +1109,6 @@ impl Host {
             }
             (None, None, None) => ProjectStatus::Unknown,
         };
-        let mut history = self.constitution_history();
         // In the list's order, which adding a repository again keeps.
         let repos: Vec<Repo> = list
             .repos
@@ -1178,31 +1121,11 @@ impl Host {
                     Repo::new(&listed.name, listed.path.display().to_string());
                 repo.main =
                     listed.main.as_deref().map(|main| RunId(main.into()));
-                repo.constitution = self.repo_constitution(slot);
                 repo.plugins = self.registered_repo_data(slot);
-                repo.constitution.history =
-                    history.remove(&listed.name).unwrap_or_default();
                 repo.memory = self.memories.catalog(&self.memory_dir(slot));
                 Some(repo)
             })
             .collect();
-        let rules: usize =
-            repos.iter().map(|repo| repo.constitution.rules.len()).sum();
-        let jev = self.jev().is_some();
-        plugins.push(PluginInfo {
-            name: tau_constitution::NAME.into(),
-            description: if jev {
-                format!(
-                    "{rules} rules across your repositories, checked with Jev"
-                )
-            } else {
-                needs_jev(false, "Checks calls against each repository's rules")
-            },
-            seams: vec![Seam::BeforeTool, Seam::BeforeStop],
-            spend: 0.0,
-            screen: Some(PluginScreen::Constitution),
-            page: None,
-        });
         plugins.push(PluginInfo {
             name: tau_memory::plugin::NAME.into(),
             description: "Linked notes each repository's runs keep, and \
@@ -1247,11 +1170,6 @@ impl Host {
                 .iter()
                 .map(|id| RunId(id.as_str().into()))
                 .collect(),
-            reviewed: list
-                .reviewed
-                .iter()
-                .map(|(run, call)| (RunId(run.as_str().into()), call.clone()))
-                .collect(),
             store: StoreInfo {
                 path: self.config.store.display().to_string(),
                 size: std::fs::metadata(&self.config.store)
@@ -1288,7 +1206,6 @@ impl Host {
                  enable plan use on the Models screen."
             );
         }
-        let jev = self.jev();
         // What hangs on the model: its effort. A sub-agent can run on
         // another model than its caller.
         let for_model = {
@@ -1296,28 +1213,18 @@ impl Host {
             let repo = repo.name.clone();
             move |choice: &ModelChoice| for_model(base.clone(), choice, &repo)
         };
-        // The plugins with their UI, after the rest: tau-goal's hold of a
-        // stop comes after the constitution's, and context compaction
-        // goes by the run's model.
+        // The plugins with their UI, after the rest: the repository's
+        // rules check what the tools do, tau-goal's hold of a stop comes
+        // after theirs, and context compaction goes by the run's model.
         let registered = self.registered(repo);
         let agent = for_model(choice);
-        // The repository's rules, checked with Jev when there is a key.
-        // Rules that cannot be read fail the run: they are never skipped.
-        let constitution = match jev {
-            Some(jev) => {
-                Some(ConstitutionPlugin::live(jev, self.constitution(repo)?))
-            }
-            None => None,
-        };
         let memory = self.memory_plugin(repo);
         let project = repo.project()?;
         // A run and its sub-agents work the same way, each in its own
-        // workspace: tools, memory and the repository's rules. Only the
-        // run itself keeps the conversation's goal and can delegate, so
-        // sub-agents do not nest.
+        // workspace: tools and memory. Only the run itself can delegate,
+        // so sub-agents do not nest.
         let on_workspace = {
             let memory = memory.clone();
-            let constitution = constitution.clone();
             // `lands`: the run proposes its own landing with `vcs_land`
             // (ADR 0014). Sub-agents land as they return, without it.
             move |agent: Agent, workspace: RunWorkspace, lands: bool| {
@@ -1334,8 +1241,7 @@ impl Host {
                     .plugin(CodingTools::new(Root::new(workspace.dir())))
                     .plugin(vcs)
                     .plugin(workspace);
-                let agent = with_plugin(agent, memory.clone());
-                with_plugin(agent, constitution.clone())
+                with_plugin(agent, memory.clone())
             }
         };
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
@@ -1435,145 +1341,6 @@ impl Host {
                 eprintln!("tau-ui: memory is off for this run: {error:#}");
             })
             .ok()
-    }
-
-    /// What a repository's constitution is stored under: its clone, as
-    /// the repository list keeps it.
-    fn constitution_key(repo: &RepoSlot) -> String {
-        canonical(&repo.path).display().to_string()
-    }
-
-    /// Repository `repo`'s rules as runs check them, read from the store
-    /// the first time.
-    fn constitution(&self, repo: &RepoSlot) -> anyhow::Result<Live> {
-        let key = Self::constitution_key(repo);
-        let mut open = self.constitutions.lock().expect("not poisoned");
-        if let Some(live) = open.get(&key) {
-            return Ok(live.clone());
-        }
-        let loaded = self
-            .runtime
-            .block_on(Constitution::load(&self.store, &key))?;
-        let live = Live::new(loaded);
-        open.insert(key, live.clone());
-        Ok(live)
-    }
-
-    /// The constitution of repository `name`, for its screen.
-    fn repo_constitution(&self, slot: &RepoSlot) -> CatalogConstitution {
-        let (loaded, error) = match self.constitution(slot) {
-            Ok(live) => (live.get(), None),
-            Err(error) => (
-                Arc::new(Constitution::default()),
-                Some(format!("{error:#}")),
-            ),
-        };
-        CatalogConstitution {
-            rules: loaded
-                .rules
-                .iter()
-                .map(|rule| CatalogRule {
-                    id: rule.id.clone(),
-                    text: rule.text.clone(),
-                    applies_to: rule.on.iter().map(|on| on.label()).collect(),
-                    review: rule.review as f32,
-                    block: rule.block as f32,
-                })
-                .collect(),
-            max_holds: loaded.max_holds,
-            blocks_unchecked: loaded.on_error
-                == tau_constitution::OnError::Block,
-            error,
-            history: Vec::new(),
-        }
-    }
-
-    /// What the constitution did in each stored run, by repository: its
-    /// records, counted the way a run's view counts them.
-    fn constitution_history(
-        &self,
-    ) -> HashMap<String, Vec<(RunId, crate::view::ConstitutionStats)>> {
-        let (records, repos) = self.runtime.block_on(async {
-            (
-                self.store
-                    .plugin_entries_everywhere(tau_constitution::NAME)
-                    .await,
-                self.store.plugin_entries_everywhere(REPO_PLUGIN).await,
-            )
-        });
-        let (Ok(records), Ok(repos)) = (records, repos) else {
-            return HashMap::new();
-        };
-        let repo_of: HashMap<String, String> = repos
-            .into_iter()
-            .filter_map(|(run, body)| {
-                let body: serde_json::Value =
-                    serde_json::from_str(&body).ok()?;
-                Some((run, body.get("repo")?.as_str()?.to_owned()))
-            })
-            .collect();
-        let mut history: HashMap<
-            String,
-            Vec<(RunId, crate::view::ConstitutionStats)>,
-        > = HashMap::new();
-        for (run, body) in records {
-            let (Some(repo), Ok(body)) = (
-                repo_of.get(&run),
-                serde_json::from_str::<serde_json::Value>(&body),
-            ) else {
-                continue;
-            };
-            let runs = history.entry(repo.clone()).or_default();
-            // Records come by run, so a run's are together.
-            if runs.last().is_none_or(|(last, _)| *last.0 != *run) {
-                runs.push((RunId(run.into()), Default::default()));
-            }
-            if let Some((_, stats)) = runs.last_mut() {
-                stats.add(&body);
-            }
-        }
-        history
-    }
-
-    /// Changes a repository's constitution with `edit`, which checks
-    /// what it adds, and saves it. Runs going on check with the new rules
-    /// from their next tool call.
-    pub fn edit_rules(
-        &self,
-        repo: &str,
-        edit: impl FnOnce(&mut Constitution) -> Result<(), RuleError>,
-    ) -> anyhow::Result<()> {
-        let slot = self
-            .slot(repo)
-            .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
-        let live = self.constitution(&slot)?;
-        let mut constitution = (*live.get()).clone();
-        edit(&mut constitution)?;
-        self.runtime.block_on(
-            constitution.save(&self.store, &Self::constitution_key(&slot)),
-        )?;
-        live.set(constitution);
-        Ok(())
-    }
-
-    /// Replaces a repository's stored constitution with an empty one:
-    /// the way out when the stored one cannot be read, which no edit can
-    /// fix. Runs going on check with no rules from their next tool call.
-    pub fn reset_rules(&self, repo: &str) -> anyhow::Result<()> {
-        let slot = self
-            .slot(repo)
-            .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
-        let key = Self::constitution_key(&slot);
-        let fresh = Constitution::default();
-        self.runtime.block_on(fresh.save(&self.store, &key))?;
-        let mut open = self.constitutions.lock().expect("not poisoned");
-        match open.get(&key) {
-            Some(live) => live.set(fresh),
-            None => {
-                open.insert(key, Live::new(fresh));
-            }
-        }
-        Ok(())
     }
 
     /// The ChatGPT account runs reach models with, if any.
@@ -2341,11 +2108,6 @@ impl Host {
                 set_by: workspace.as_ref().map(|_| "workspace".to_owned()),
             },
         ];
-        let jev = self.jev().is_some();
-        let rules = self
-            .constitution(repo)
-            .map_or(0, |live| live.get().rules.len());
-        let constitution = constitution_status(jev, rules);
         view.plugins = vec![PluginStatus {
             name: "tau-tools".into(),
             state: "7 tools".into(),
@@ -2372,7 +2134,6 @@ impl Host {
             },
             tone: Tone::Quiet,
         });
-        view.plugins.push(constitution);
         view
     }
 
@@ -2489,70 +2250,6 @@ impl Host {
                         ws.apply(HostUpdate::alert("Could not start the run", format!("{error:#}")), cx)
                     }),
                 },
-                WorkspaceEvent::AddRule {
-                    repo,
-                    text,
-                    on,
-                    review,
-                    block,
-                } => {
-                    let added = handler.edit_rules(repo, |rules| {
-                        rules.add(text, on, *review, *block).map(drop)
-                    });
-                    let catalog = handler.catalog();
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx);
-                        if let Err(error) = added {
-                            ws.apply(HostUpdate::alert("Could not add the rule", format!("{error:#}")), cx);
-                        }
-                    });
-                }
-                WorkspaceEvent::UpdateRule {
-                    repo,
-                    id,
-                    text,
-                    on,
-                    review,
-                    block,
-                } => {
-                    let saved = handler.edit_rules(repo, |rules| {
-                        rules.replace(id, text, on, *review, *block)
-                    });
-                    let catalog = handler.catalog();
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx);
-                        if let Err(error) = saved {
-                            ws.apply(HostUpdate::alert("Could not save the rule", format!("{error:#}")), cx);
-                        }
-                    });
-                }
-                WorkspaceEvent::TryRule {
-                    text,
-                    on,
-                    review,
-                    block,
-                    calls,
-                    answers,
-                    ..
-                } => {
-                    let job = {
-                        let host = handler.clone();
-                        let (text, on) = (text.clone(), on.clone());
-                        let (review, block) = (*review, *block);
-                        let (calls, answers) = (calls.clone(), answers.clone());
-                        handler.runtime.spawn_blocking(move || {
-                            host.try_rule(&text, &on, review, block, &calls, &answers)
-                        })
-                    };
-                    let workspace = workspace.downgrade();
-                    cx.spawn(async move |cx| {
-                        let result =
-                            job.await.unwrap_or_else(|e| Err(e.to_string()));
-                        let _ = workspace
-                            .update(cx, |ws, cx| ws.apply(HostUpdate::RuleTrial(result), cx));
-                    })
-                    .detach();
-                }
                 WorkspaceEvent::PreparePullRequest { run } => {
                     let job = {
                         let (host, run) = (handler.clone(), run.clone());
@@ -2644,51 +2341,6 @@ impl Host {
                     })
                     .detach();
                 }
-                WorkspaceEvent::ConstitutionSettings {
-                    repo,
-                    blocks_unchecked,
-                    max_holds,
-                } => {
-                    let saved = handler.edit_rules(repo, |rules| {
-                        rules.on_error = if *blocks_unchecked {
-                            tau_constitution::OnError::Block
-                        } else {
-                            tau_constitution::OnError::Allow
-                        };
-                        rules.max_holds = *max_holds;
-                        Ok(())
-                    });
-                    let catalog = handler.catalog();
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx);
-                        if let Err(error) = saved {
-                            ws.apply(HostUpdate::alert("Could not save the constitution", format!("{error:#}")), cx);
-                        }
-                    });
-                }
-                WorkspaceEvent::ResetRules { repo } => {
-                    let reset = handler.reset_rules(repo);
-                    let catalog = handler.catalog();
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx);
-                        if let Err(error) = reset {
-                            ws.apply(HostUpdate::alert("Could not remove the rules", format!("{error:#}")), cx);
-                        }
-                    });
-                }
-                WorkspaceEvent::RemoveRule { repo, id } => {
-                    let removed = handler.edit_rules(repo, |rules| {
-                        rules.remove(id);
-                        Ok(())
-                    });
-                    let catalog = handler.catalog();
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx);
-                        if let Err(error) = removed {
-                            ws.apply(HostUpdate::alert("Could not remove the rule", format!("{error:#}")), cx);
-                        }
-                    });
-                }
                 WorkspaceEvent::JevKey { key } => {
                     let saved =
                         handler.config.credentials.set_jev_key(key.as_deref());
@@ -2753,13 +2405,6 @@ impl Host {
                         });
                     }
                 }
-                WorkspaceEvent::Reviewed { run, call_id } => {
-                    if let Err(error) = handler.set_reviewed(run, call_id) {
-                        eprintln!("tau-ui: cannot save the review: {error:#}");
-                    }
-                }
-                // Opening a flagged call only shows it; nothing to keep.
-                WorkspaceEvent::ReviewCall { .. } => {}
                 WorkspaceEvent::CloseRun { run } => {
                     if let Err(error) = handler.set_closed(run, true) {
                         eprintln!("tau-ui: cannot save closed runs: {error:#}");
@@ -3740,9 +3385,8 @@ async fn stored_view(
     store: &Store,
     record: &tau_store::RunRecord,
 ) -> anyhow::Result<RunView> {
-    // The messages, and in place among them what tau-reasoning and
-    // the constitution recorded: the effort each message ran at, and
-    // the checks and verdicts on the calls.
+    // The messages, and in place among them what plugins recorded: the
+    // effort each message ran at, the checks and verdicts on the calls.
     let timeline: Vec<Stored> = store
         .timeline(&record.id)
         .await?
@@ -3752,8 +3396,7 @@ async fn stored_view(
                 serde_json::from_str(&body).ok().map(Stored::Message)
             }
             Entry::Plugin { plugin, body }
-                if plugin == tau_constitution::NAME
-                    || plugin == LANDING_RECORD
+                if plugin == LANDING_RECORD
                     || crate::plugins::registry().get(&plugin).is_some() =>
             {
                 serde_json::from_str(&body)
@@ -3906,32 +3549,6 @@ pub async fn history(
         }
     }
     Ok(views)
-}
-
-/// `2026-09-28T14:03:11.402Z` as `2026-09-28 14:03`.
-/// What a plugin that asks Jev says of itself on the Plugins screen:
-/// `what` it does, and that it needs a key when there is none.
-fn needs_jev(jev: bool, what: &str) -> String {
-    if jev {
-        format!("{what}, with Jev")
-    } else {
-        format!("{what}: needs a TypeSafe key (Models)")
-    }
-}
-
-/// What tau-constitution says as a run starts: off without a key, else
-/// how many rules it watches.
-fn constitution_status(jev: bool, rules: usize) -> PluginStatus {
-    PluginStatus {
-        name: tau_constitution::NAME.into(),
-        state: match (jev, rules) {
-            (false, _) => tau_ui_plugin::NO_KEY.into(),
-            (true, 0) => "no rules".into(),
-            (true, 1) => "watching 1 rule".into(),
-            (true, n) => format!("watching {n} rules"),
-        },
-        tone: Tone::Quiet,
-    }
 }
 
 /// The days of runs the Plugins screen's spend covers.
@@ -4162,21 +3779,6 @@ pub fn branch_slug(prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// tau-constitution says how it stands as a run starts: off
-    /// without a key; on, it counts its rules.
-    #[hegel::test(test_cases = 200)]
-    fn the_constitution_says_whether_it_is_on(tc: hegel::TestCase) {
-        use hegel::generators as gs;
-        let jev = tc.draw(gs::booleans());
-        let rules = tc.draw(gs::integers::<usize>().max_value(20));
-        let status = constitution_status(jev, rules);
-        assert_eq!(status.name, tau_constitution::NAME);
-        assert_eq!(status.state == tau_ui_plugin::NO_KEY, !jev);
-        if jev && rules > 0 {
-            assert!(status.state.contains(&rules.to_string()), "{status:?}");
-        }
-    }
 
     /// [`civil_date`] agrees with counting the days off one year and
     /// one month at a time.

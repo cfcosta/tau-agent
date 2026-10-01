@@ -510,20 +510,6 @@ fn repo_group(
     let repo = rows.repo;
     let memory_active =
         matches!(&ws.route, Route::Memory { repo: r, .. } if *r == name);
-    let rules_active =
-        matches!(&ws.route, Route::Constitution { repo: r, .. } if *r == name);
-    let reviews = ws
-        .runs
-        .iter()
-        .filter(|run| ws.repo_of(run) == name)
-        .flat_map(|run| run.reviews().map(move |card| (run, card)))
-        .filter(|(run, card)| {
-            matches!(card.state, crate::view::ToolState::Flagged { .. })
-                && !ws
-                    .dismissed
-                    .contains(&(run.id.clone(), card.call_id.clone()))
-        })
-        .count();
     let current = ws.current().map(|run| run.id.clone());
     let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
 
@@ -549,28 +535,6 @@ fn repo_group(
             .on_click({
                 let name = name.clone();
                 cx.listener(move |ws, _, _, cx| ws.open_memory(&name, cx))
-            }),
-        )
-        .child(
-            nav_row(
-                Icon::Blocked,
-                "Constitution",
-                format!("{} rules", repo.constitution.rules.len()).into(),
-                rules_active,
-                t,
-            )
-            .when(reviews > 0, |row| {
-                row.child(
-                    mono(reviews.to_string(), Type::MICRO, t.bg)
-                        .px(sp(1.5))
-                        .rounded(radius::BOX)
-                        .bg(t.accent),
-                )
-            })
-            .id(SharedString::from(format!("constitution-{name}")))
-            .on_click({
-                let name = name.clone();
-                cx.listener(move |ws, _, _, cx| ws.open_constitution(&name, cx))
             }),
         );
     // What plugins list under the repository.
@@ -866,8 +830,7 @@ fn repo_menu(
             .child(label)
     };
     let owned = |name: &str| name.to_owned();
-    let (new, memory, rules, update, files, remove) = (
-        owned(name),
+    let (new, memory, update, files, remove) = (
         owned(name),
         owned(name),
         owned(name),
@@ -897,12 +860,6 @@ fn repo_menu(
                         ws.open_memory(&memory, cx)
                     }),
                 ),
-        )
-        .child(
-            entry("menu-rules", Icon::Blocked, "Constitution".into(), t.text)
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.open_constitution(&rules, cx)
-                })),
         )
         .child(
             entry(
@@ -1228,7 +1185,7 @@ fn phone_group(
             .child(label.to_owned())
             .child(mono(count.to_string(), Type::SMALL, t.dim))
     };
-    let (memory, rules) = (name.clone(), name.clone());
+    let memory = name.clone();
     let chips = div()
         .flex()
         .gap(sp(2.))
@@ -1245,19 +1202,6 @@ fn phone_group(
             )
             .on_click(
                 cx.listener(move |ws, _, _, cx| ws.open_memory(&memory, cx)),
-            ),
-        )
-        .child(
-            chip(
-                "phone-rules",
-                Icon::Blocked,
-                "Rules",
-                rows.repo.constitution.rules.len(),
-            )
-            .on_click(
-                cx.listener(move |ws, _, _, cx| {
-                    ws.open_constitution(&rules, cx)
-                }),
             ),
         );
     // What plugins list under the repository.

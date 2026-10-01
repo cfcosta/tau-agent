@@ -21,6 +21,8 @@ pub struct RunInfo {
     pub live: bool,
     /// Its title.
     pub title: String,
+    /// The model's last text, once the run has finished: its answer.
+    pub answer: Option<String>,
     /// The tokens in its context, and its model's window when known.
     pub context: u64,
     pub window: Option<u64>,
@@ -173,6 +175,10 @@ pub enum Request {
     Submit,
     /// Draws the interface again.
     Refresh,
+    /// Opens a run's conversation.
+    OpenRun(RunId),
+    /// Asks for the TypeSafe key plugins that ask Jev need.
+    AskJevKey,
 }
 
 /// Where a [`Handle`]'s requests go: the interface, which carries out
@@ -277,6 +283,14 @@ impl Handle {
     pub fn refresh(&self, cx: &mut App) {
         self.request(Request::Refresh, cx);
     }
+
+    pub fn open_run(&self, run: &RunId, cx: &mut App) {
+        self.request(Request::OpenRun(run.clone()), cx);
+    }
+
+    pub fn ask_jev_key(&self, cx: &mut App) {
+        self.request(Request::AskJevKey, cx);
+    }
 }
 
 /// What a contribution, a page or a command reaches as it runs.
@@ -299,8 +313,11 @@ pub struct ViewCx<'a, P: UiPlugin> {
     pub compact: bool,
     /// Whether a TypeSafe key is saved, so plugins that ask Jev run.
     pub jev: bool,
+    /// The window's width, in pixels: where a table no longer fits.
+    pub width: f32,
     pub handle: Handle,
     runs: &'a dyn Fn() -> Vec<(RunInfo, Value)>,
+    cards: &'a dyn Fn(&RunId) -> Vec<crate::CardInfo>,
     pub cx: &'a mut App,
 }
 
@@ -317,8 +334,10 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
         params: &'a BTreeMap<String, String>,
         compact: bool,
         jev: bool,
+        width: f32,
         handle: Handle,
         runs: &'a dyn Fn() -> Vec<(RunInfo, Value)>,
+        cards: &'a dyn Fn(&RunId) -> Vec<crate::CardInfo>,
         cx: &'a mut App,
     ) -> Self {
         Self {
@@ -332,10 +351,17 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             params,
             compact,
             jev,
+            width,
             handle,
             runs,
+            cards,
             cx,
         }
+    }
+
+    /// The tool calls of `run`, in order.
+    pub fn cards(&self, run: &RunId) -> Vec<crate::CardInfo> {
+        (self.cards)(run)
     }
 
     /// Every run the interface has, with the plugin's state in it.

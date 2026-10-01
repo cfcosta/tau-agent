@@ -119,15 +119,6 @@ impl Workspace {
                             note: None,
                         }),
                     },
-                    Hit {
-                        label: format!("{name} constitution"),
-                        detail: "screen".into(),
-                        glyph: Icon::Blocked,
-                        pick: Pick::Screen(Route::Constitution {
-                            repo: name,
-                            rule: None,
-                        }),
-                    },
                 ]
             })
             .collect();

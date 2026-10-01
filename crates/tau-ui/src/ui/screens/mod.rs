@@ -2,7 +2,6 @@
 //! draws itself for the desktop, or `compact` for the phone.
 
 pub mod compare;
-pub mod constitution;
 pub mod history;
 pub mod memory;
 pub mod models;

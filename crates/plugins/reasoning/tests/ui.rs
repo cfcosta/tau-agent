@@ -40,6 +40,10 @@ impl RunCx for Anchors {
         false
     }
 
+    fn mark(&mut self, _: &str, _: tau_ui_plugin::CardMark) -> bool {
+        false
+    }
+
     fn rewrite(&mut self, _: &str) {}
 
     fn cards(&self) -> Vec<CardInfo> {

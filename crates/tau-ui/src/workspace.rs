@@ -153,50 +153,6 @@ pub enum WorkspaceEvent {
     UpdateRepo {
         repo: String,
     },
-    /// Add a rule to the repository's constitution; `on` names where it
-    /// applies (`edit.newText`, `final answer`).
-    AddRule {
-        repo: String,
-        text: String,
-        on: Vec<String>,
-        review: f64,
-        block: f64,
-    },
-    /// Rewrite rule `id` in place.
-    UpdateRule {
-        repo: String,
-        id: String,
-        text: String,
-        on: Vec<String>,
-        review: f64,
-        block: f64,
-    },
-    /// Ask Jev what a rule being written makes of past calls and
-    /// answers; the host answers with `Workspace::set_rule_trial`.
-    TryRule {
-        repo: String,
-        text: String,
-        on: Vec<String>,
-        review: f64,
-        block: f64,
-        calls: Vec<(String, serde_json::Value)>,
-        answers: Vec<String>,
-    },
-    RemoveRule {
-        repo: String,
-        id: String,
-    },
-    /// The constitution's settings: whether what Jev cannot answer is
-    /// refused, and how many times an answer may be sent back.
-    ConstitutionSettings {
-        repo: String,
-        blocks_unchecked: bool,
-        max_holds: u32,
-    },
-    /// Replace a constitution that cannot be read with an empty one.
-    ResetRules {
-        repo: String,
-    },
     /// Save the TypeSafe key tau-constitution checks with, or forget it.
     JevKey {
         key: Option<String>,
@@ -261,17 +217,6 @@ pub enum WorkspaceEvent {
     KeepNote {
         run: RunId,
         title: String,
-    },
-    /// A flagged call was looked at and found fine: it leaves the review
-    /// queue for good.
-    Reviewed {
-        run: RunId,
-        call_id: String,
-    },
-    /// Open a call a plugin flagged.
-    ReviewCall {
-        run: RunId,
-        call_id: String,
     },
     /// Run a query against the store.
     Query {
@@ -468,8 +413,6 @@ pub struct Workspace {
     open_files: HashSet<(RunId, String, String)>,
     /// The change picked in each `vcs_log` card, by full change id.
     picked_changes: HashMap<(RunId, String), String>,
-    /// Flagged calls someone looked at, as `(run, call id)`.
-    pub(crate) dismissed: HashSet<(RunId, String)>,
     pub(crate) kept_branch: Option<RunId>,
     /// Child runs on their way to landing, by run.
     landings: HashMap<RunId, LandingState>,
@@ -517,18 +460,6 @@ pub struct Workspace {
     pub(crate) setup_motion: crate::motion::SetupMotion,
     /// The user asked for less motion: no loops, and plain fades.
     reduce_motion: bool,
-    /// The new rule's text and where it applies, on the Constitution
-    /// screen.
-    pub(crate) rule_text: Entity<TextInput>,
-    pub(crate) rule_on: Entity<TextInput>,
-    /// The rule editor, the Constitution screen's list, and the rule
-    /// whose ⋯ menu is open.
-    pub(crate) rule_draft: Option<crate::rule_editor::RuleDraft>,
-    pub(crate) rules_tab: crate::rule_editor::RulesTab,
-    pub(crate) rule_menu: Option<String>,
-    /// The repository whose unreadable rules the user asked to remove,
-    /// waiting for them to confirm.
-    pub(crate) resetting_rules: Option<String>,
     /// The dialog that asks for the TypeSafe key, with its field.
     pub(crate) adding_jev_key: bool,
     pub(crate) jev_key: Entity<TextInput>,
@@ -635,17 +566,6 @@ impl Workspace {
             cx.new(|cx| TextInput::new("@reviewer", cx).keep_on_submit());
         let sidebar_filter =
             cx.new(|cx| TextInput::new("Filter repositories and runs", cx));
-        let rule_text = cx.new(|cx| {
-            TextInput::new(
-                "A rule in plain words: \"No unwrap or expect outside tests.\"",
-                cx,
-            )
-            .keep_on_submit()
-        });
-        let rule_on = cx.new(|cx| {
-            TextInput::new("tool.field, such as grep.pattern", cx)
-                .keep_on_submit()
-        });
         let jev_key = cx.new(|cx| TextInput::new("ts-…", cx).masked());
         let subscriptions = vec![
             cx.subscribe_in(
@@ -657,15 +577,6 @@ impl Workspace {
                     }
                 },
             ),
-            // The rule editor: Enter in the rule saves it, Enter in the
-            // other field adds it; what is missing updates as you type.
-            cx.subscribe(&rule_text, |ws, _, _: &InputEvent, cx| {
-                ws.save_rule(cx)
-            }),
-            cx.subscribe(&rule_on, |ws, _, _: &InputEvent, cx| {
-                ws.add_other_place(cx);
-            }),
-            cx.observe(&rule_text, |_, _, cx| cx.notify()),
             // Its popover follows what is typed.
             cx.observe(&composer, |ws, _, cx| ws.composer_changed(cx)),
             // Filters apply as you type.
@@ -757,7 +668,6 @@ impl Workspace {
             terms: Default::default(),
             open_files: HashSet::new(),
             picked_changes: HashMap::new(),
-            dismissed: HashSet::new(),
             kept_branch: None,
             landings: HashMap::new(),
             proposed: HashSet::new(),
@@ -785,12 +695,6 @@ impl Workspace {
             setup_goal: None,
             setup_motion: Default::default(),
             reduce_motion: false,
-            rule_text,
-            rule_on,
-            rule_draft: None,
-            rules_tab: Default::default(),
-            rule_menu: None,
-            resetting_rules: None,
             weak: cx.weak_entity(),
             plugin_ui: {
                 let weak = cx.weak_entity();
@@ -862,27 +766,16 @@ impl Workspace {
         &self.route
     }
 
+    /// `plugin`'s state in this window, as its own type.
+    pub fn plugin_ui<T: 'static>(&self, plugin: &str) -> Option<Entity<T>> {
+        self.plugin_ui.get(plugin)?.clone().downcast().ok()
+    }
+
     pub fn catalog(&self) -> &Catalog {
         &self.catalog
     }
 
-    /// Takes a flagged call off the review queue, for good.
-    pub fn mark_reviewed(
-        &mut self,
-        run: &RunId,
-        call_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        self.dismissed.insert((run.clone(), call_id.to_owned()));
-        cx.emit(WorkspaceEvent::Reviewed {
-            run: run.clone(),
-            call_id: call_id.to_owned(),
-        });
-        cx.notify();
-    }
-
     pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
-        self.dismissed.extend(catalog.reviewed.iter().cloned());
         // The query box starts from the store's sample, until typed in.
         let typed = self.query.read(cx).text().to_owned();
         if typed.trim().is_empty() || typed == self.catalog.store.sample_query {
@@ -943,7 +836,6 @@ impl Workspace {
             HostUpdate::PlanRefusal(refusal) => {
                 self.show_plan_refusal(&refusal, cx)
             }
-            HostUpdate::RuleTrial(result) => self.set_rule_trial(result, cx),
             HostUpdate::QueryResult(result) => {
                 self.set_query_result(result, cx)
             }
@@ -1370,10 +1262,6 @@ impl Workspace {
                 repo: self.selected_repo()?.to_owned(),
                 note: None,
             }),
-            PluginScreen::Constitution => Some(Route::Constitution {
-                repo: self.selected_repo()?.to_owned(),
-                rule: None,
-            }),
         }
     }
 
@@ -1562,30 +1450,6 @@ impl Workspace {
             title: title.to_owned(),
         });
         cx.notify();
-    }
-
-    /// Opens the rule that flagged a call, and tells the host.
-    pub fn review_call(
-        &mut self,
-        run: &RunId,
-        call_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let rule = self.run(run).and_then(|view| view.tool(call_id)).and_then(
-            |card| match &card.state {
-                ToolState::Flagged { rule, .. }
-                | ToolState::Blocked { rule, .. } => Some(rule.clone()),
-                _ => None,
-            },
-        );
-        cx.emit(WorkspaceEvent::ReviewCall {
-            run: run.clone(),
-            call_id: call_id.to_owned(),
-        });
-        let repo = self
-            .run(run)
-            .map_or(String::new(), |view| self.repo_of(view).to_owned());
-        self.navigate(Route::Constitution { repo, rule }, cx);
     }
 
     /// Asks what landing `run` on its parent would do (ADR 0014).
@@ -2561,30 +2425,6 @@ impl Workspace {
         self.setup_goal = Some(SetupGoal::Model);
     }
 
-    /// Fills the rule being written, as typing would: for tests.
-    pub fn rule_text_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.rule_text
-            .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
-    }
-
-    /// Fills "Another tool's field", as typing would: for tests.
-    pub fn rule_on_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.rule_on
-            .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
-    }
-
-    pub fn remove_rule(
-        &mut self,
-        repo: &str,
-        id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(WorkspaceEvent::RemoveRule {
-            repo: repo.to_owned(),
-            id: id.to_owned(),
-        });
-    }
-
     /// Asks for the TypeSafe key.
     pub fn ask_for_jev_key(
         &mut self,
@@ -2594,6 +2434,14 @@ impl Workspace {
         self.adding_jev_key = true;
         self.jev_key.update(cx, |input, cx| input.clear(cx));
         self.jev_key.read(cx).focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    /// Opens the TypeSafe key prompt from a plugin's click, which has no
+    /// window to focus it in.
+    pub(crate) fn ask_for_jev_key_later(&mut self, cx: &mut Context<Self>) {
+        self.adding_jev_key = true;
+        self.jev_key.update(cx, |input, cx| input.clear(cx));
         cx.notify();
     }
 
@@ -2900,11 +2748,7 @@ impl Workspace {
 
     /// Esc: closes a dialog if one is open, else goes back.
     pub fn escape(&mut self, cx: &mut Context<Self>) {
-        if self.rule_menu.take().is_some() {
-            cx.notify();
-        } else if self.rule_draft.is_some() {
-            self.close_rule_editor(cx);
-        } else if self.slash_dismiss(cx) {
+        if self.slash_dismiss(cx) {
         } else if self.dialog.is_some() {
             self.dismiss_alert(cx);
         } else if self.plan_alert.take().is_some() {
@@ -3667,16 +3511,6 @@ impl Workspace {
                 t,
                 cx,
             ),
-            Route::Constitution { repo, rule } => {
-                screens::constitution::render(
-                    self,
-                    repo,
-                    rule.as_deref(),
-                    compact,
-                    t,
-                    cx,
-                )
-            }
             Route::Setup(_) | Route::Pair(_) | Route::PullRequest(_) => {
                 self.focused(compact, t, cx)
             }

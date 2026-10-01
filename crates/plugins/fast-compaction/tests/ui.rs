@@ -41,6 +41,7 @@ impl Run {
                 .map(|i| CardInfo {
                     call_id: format!("c{i}"),
                     tool: "read".into(),
+                    args: json!({ "path": format!("f{i}.rs") }),
                     summary: format!("f{i}.rs"),
                     size: 400,
                     turn: i as u32 + 1,
@@ -71,6 +72,10 @@ impl RunCx for Run {
     fn cut(&mut self, call_id: &str, cut: OutputCut) -> bool {
         self.cut.insert(call_id.to_owned(), cut);
         self.has(call_id)
+    }
+
+    fn mark(&mut self, _: &str, _: tau_ui_plugin::CardMark) -> bool {
+        false
     }
 
     fn rewrite(&mut self, key: &str) {

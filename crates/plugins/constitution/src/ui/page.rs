@@ -1,88 +1,727 @@
-//! The rules tau-constitution checks in a repository: what each reads,
-//! how strict it is and what it did, the calls and answers that wait for
-//! a person, and the editor that writes and tries a rule.
+//! A repository's rules: what each reads, how strict it is and what it
+//! did, the calls and answers that wait for a person, and the editor
+//! that writes and tries a rule.
 
-use gpui::{AnyElement, Context, Div, Hsla, SharedString, div, prelude::*, px};
+use std::collections::BTreeSet;
 
-use crate::{
-    assets::Icon,
-    catalog::{Constitution, Rule},
-    route::Route,
-    rule_editor::{
-        HandledKind,
-        Mark,
-        PLACES,
-        Preset,
-        ReviewItem,
-        RulesStats,
-        RulesTab,
-        Trying,
-    },
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, Material as _, components::ButtonKind, heading, icon, mono},
-    view::usd,
-    workspace::Workspace,
+use gpui::{
+    AnyElement,
+    App,
+    ClickEvent,
+    Context,
+    Div,
+    Entity,
+    Hsla,
+    SharedString,
+    Window,
+    div,
+    prelude::*,
+    px,
 };
+use serde_json::Value;
+use tau_ui_kit::{
+    assets::Icon,
+    components::{self as ui, ButtonKind, Material as _, heading, icon, mono},
+    format::usd,
+    input::TextInput,
+    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
+};
+use tau_ui_plugin::{Handle, ViewCx};
 
-pub fn render(
-    ws: &Workspace,
+use super::{
+    Act,
+    ConstitutionUi,
+    Flag,
+    RuleInfo,
+    Rules,
+    TrialResult,
+    stats::RulesStats,
+};
+use crate::{Trial, VerdictKind, rules::Target};
+
+/// The places the editor offers, with what each reads.
+pub const PLACES: [(&str, &str); 4] = [
+    ("bash.command", "the shell command"),
+    ("edit.newText", "each replacement"),
+    ("write.content", "the whole file"),
+    ("final answer", "sent back when broken"),
+];
+
+/// How many past calls, and answers, a rule is tried on.
+const TRIAL_CALLS: usize = 6;
+const TRIAL_ANSWERS: usize = 3;
+
+/// The most times the page lets one run's answer be sent back.
+pub const MAX_HOLDS: u32 = 10;
+
+/// The narrowest screen the rules table fits: its fixed columns (id,
+/// places, strictness, activity, menu, and the gaps between them), room
+/// for a rule's text, and the screen's padding. Narrower, each rule is
+/// stacked as on the phone, so its text never shrinks to a sliver.
+const TABLE_MIN: f32 = 740. + 260. + 64.;
+
+/// Thresholds by name. The editor offers these first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Preset {
+    Lenient,
+    Balanced,
+    Strict,
+}
+
+impl Preset {
+    pub const ALL: [Self; 3] = [Self::Lenient, Self::Balanced, Self::Strict];
+
+    /// Review, then block.
+    pub fn marks(self) -> (f64, f64) {
+        match self {
+            Self::Lenient => (0.5, 0.9),
+            Self::Balanced => (0.3, 0.8),
+            Self::Strict => (0.2, 0.6),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Lenient => "Lenient",
+            Self::Balanced => "Balanced",
+            Self::Strict => "Strict",
+        }
+    }
+}
+
+/// Which threshold a nudge moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    Review,
+    Block,
+}
+
+/// What trying the rule gave.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum Trying {
+    #[default]
+    Not,
+    Asking,
+    Done {
+        trials: Vec<Trial>,
+        cost: f64,
+    },
+    Failed(String),
+}
+
+/// A rule being written (or rewritten), in the editor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Draft {
+    pub repo: String,
+    /// The rule being edited, or `None` for a new one.
+    pub editing: Option<String>,
+    /// Where it applies: `tool.field` or `final answer`.
+    pub places: Vec<String>,
+    pub review: f64,
+    pub block: f64,
+    pub trying: Trying,
+    /// Whether Add was pressed with something missing: the editor then
+    /// says what.
+    pub tried_to_save: bool,
+}
+
+impl Draft {
+    pub fn preset(&self) -> Option<Preset> {
+        Preset::ALL.into_iter().find(|preset| {
+            let (review, block) = preset.marks();
+            (review - self.review).abs() < 1e-6
+                && (block - self.block).abs() < 1e-6
+        })
+    }
+}
+
+/// Which list the page shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tab {
+    #[default]
+    Rules,
+    Review,
+}
+
+/// The page's state in one window.
+pub struct Ui {
+    handle: Handle,
+    /// The rule being written, and a field it applies to.
+    pub(super) rule_text: Entity<TextInput>,
+    pub(super) rule_on: Entity<TextInput>,
+    tab: Tab,
+    /// The rule whose ⋯ menu is open.
+    menu: Option<String>,
+    /// The repository whose unreadable rules the user asked to remove,
+    /// until confirmed.
+    resetting: Option<String>,
+    draft: Option<Draft>,
+    /// What was looked at in this window, before the host says so.
+    dismissed: BTreeSet<(String, String)>,
+}
+
+impl Ui {
+    pub(super) fn new(
+        handle: Handle,
+        rule_text: Entity<TextInput>,
+        rule_on: Entity<TextInput>,
+    ) -> Self {
+        Self {
+            handle,
+            rule_text,
+            rule_on,
+            tab: Tab::default(),
+            menu: None,
+            resetting: None,
+            draft: None,
+            dismissed: BTreeSet::new(),
+        }
+    }
+
+    /// Draws the interface again.
+    fn changed(&self, cx: &mut Context<Self>) {
+        cx.notify();
+        self.handle.refresh(cx);
+    }
+
+    /// Opens the editor on a new rule, or on `rule`.
+    pub fn open_editor(
+        &mut self,
+        repo: &str,
+        rule: Option<RuleInfo>,
+        cx: &mut Context<Self>,
+    ) {
+        let (review, block) = Preset::Balanced.marks();
+        let text = rule
+            .as_ref()
+            .map(|rule| rule.text.clone())
+            .unwrap_or_default();
+        self.rule_text
+            .update(cx, |input, cx| input.set_text(text, cx));
+        self.rule_on.update(cx, |input, cx| input.clear(cx));
+        self.menu = None;
+        self.draft = Some(Draft {
+            repo: repo.to_owned(),
+            editing: rule.as_ref().map(|rule| rule.id.clone()),
+            places: rule
+                .as_ref()
+                .map(|rule| rule.applies_to.clone())
+                .unwrap_or_default(),
+            review: rule.as_ref().map_or(review, |rule| round(rule.review)),
+            block: rule.as_ref().map_or(block, |rule| round(rule.block)),
+            trying: Trying::Not,
+            tried_to_save: false,
+        });
+        self.changed(cx);
+    }
+
+    /// Fills the rule being written, as typing would.
+    pub fn set_rule_text(&self, text: &str, cx: &mut Context<Self>) {
+        self.rule_text
+            .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
+    }
+
+    /// Fills the field typed under the places, as typing would.
+    pub fn set_rule_on(&self, text: &str, cx: &mut Context<Self>) {
+        self.rule_on
+            .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
+    }
+
+    pub fn tab(&self) -> Tab {
+        self.tab
+    }
+
+    pub fn close_editor(&mut self, cx: &mut Context<Self>) {
+        self.draft = None;
+        self.changed(cx);
+    }
+
+    pub fn draft(&self) -> Option<&Draft> {
+        self.draft.as_ref()
+    }
+
+    /// Picks or unpicks a place the rule applies.
+    pub fn toggle_place(&mut self, place: &str, cx: &mut Context<Self>) {
+        let Some(draft) = &mut self.draft else {
+            return;
+        };
+        match draft.places.iter().position(|known| known == place) {
+            Some(at) => {
+                draft.places.remove(at);
+            }
+            None => draft.places.push(place.to_owned()),
+        }
+        draft.trying = Trying::Not;
+        self.changed(cx);
+    }
+
+    /// Adds the field typed under the places, if it names one
+    /// (`tool.field`). Returns whether it did.
+    pub fn add_other_place(&mut self, cx: &mut Context<Self>) -> bool {
+        let typed = self.rule_on.read(cx).text().trim().to_owned();
+        let Ok(target) = Target::parse(&typed) else {
+            return false;
+        };
+        let place = target.label();
+        let Some(draft) = &mut self.draft else {
+            return false;
+        };
+        if !draft.places.contains(&place) {
+            draft.places.push(place);
+        }
+        draft.trying = Trying::Not;
+        self.rule_on.update(cx, |input, cx| input.clear(cx));
+        self.changed(cx);
+        true
+    }
+
+    pub fn set_preset(&mut self, preset: Preset, cx: &mut Context<Self>) {
+        let Some(draft) = &mut self.draft else {
+            return;
+        };
+        (draft.review, draft.block) = preset.marks();
+        self.changed(cx);
+    }
+
+    /// Moves a threshold by `delta`, keeping review at most block.
+    pub fn nudge(&mut self, mark: Mark, delta: f64, cx: &mut Context<Self>) {
+        let Some(draft) = &mut self.draft else {
+            return;
+        };
+        match mark {
+            Mark::Review => {
+                draft.review =
+                    round((draft.review + delta).clamp(0.0, draft.block));
+            }
+            Mark::Block => {
+                draft.block =
+                    round((draft.block + delta).clamp(draft.review, 1.0));
+            }
+        }
+        self.changed(cx);
+    }
+
+    /// What keeps the draft from being saved, if anything.
+    pub fn problem(&self, cx: &App) -> Option<&'static str> {
+        let draft = self.draft.as_ref()?;
+        if self.rule_text.read(cx).text().trim().is_empty() {
+            Some(
+                "Write the rule: one sentence, the way you would tell a person.",
+            )
+        } else if draft.places.is_empty() {
+            Some("Pick at least one place, or Jev has nothing to check.")
+        } else {
+            None
+        }
+    }
+
+    /// Adds the rule, or saves the one being edited. With something
+    /// missing, the editor says what instead.
+    pub fn save(&mut self, cx: &mut Context<Self>) {
+        if self.problem(cx).is_some() {
+            if let Some(draft) = &mut self.draft {
+                draft.tried_to_save = true;
+            }
+            self.changed(cx);
+            return;
+        }
+        let Some(draft) = self.draft.take() else {
+            return;
+        };
+        let text = self.rule_text.read(cx).text().trim().to_owned();
+        self.rule_text.update(cx, |input, cx| input.clear(cx));
+        self.handle.act(
+            match draft.editing {
+                Some(id) => Act::Update {
+                    repo: draft.repo,
+                    id,
+                    text,
+                    on: draft.places,
+                    review: draft.review,
+                    block: draft.block,
+                },
+                None => Act::Add {
+                    repo: draft.repo,
+                    text,
+                    on: draft.places,
+                    review: draft.review,
+                    block: draft.block,
+                },
+            },
+            cx,
+        );
+        self.changed(cx);
+    }
+
+    /// Tries the draft on `calls` and `answers` the rule would read. The
+    /// host asks Jev and answers with [`Self::tried`].
+    pub fn try_rule(
+        &mut self,
+        calls: Vec<(String, Value)>,
+        answers: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.problem(cx).is_some() {
+            if let Some(draft) = &mut self.draft {
+                draft.tried_to_save = true;
+            }
+            self.changed(cx);
+            return;
+        }
+        let text = self.rule_text.read(cx).text().trim().to_owned();
+        let Some(draft) = &mut self.draft else {
+            return;
+        };
+        draft.trying = Trying::Asking;
+        let act = Act::Try {
+            text,
+            on: draft.places.clone(),
+            review: draft.review,
+            block: draft.block,
+            calls,
+            answers,
+        };
+        self.handle.act(act, cx);
+        self.changed(cx);
+    }
+
+    /// What trying the rule gave.
+    pub fn tried(&mut self, result: TrialResult) {
+        if let Some(draft) = &mut self.draft {
+            draft.trying = match result {
+                Ok((trials, cost)) => Trying::Done { trials, cost },
+                Err(error) => Trying::Failed(error),
+            };
+        }
+    }
+
+    /// Saves `repo`'s settings: what Jev cannot answer, and how many
+    /// times an answer may go back.
+    pub fn settings(
+        &mut self,
+        repo: &str,
+        blocks_unchecked: bool,
+        max_holds: u32,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle.act(
+            Act::Settings {
+                repo: repo.to_owned(),
+                blocks_unchecked,
+                max_holds,
+            },
+            cx,
+        );
+        self.changed(cx);
+    }
+
+    /// Asks to remove `repo`'s unreadable rules; the banner asks to
+    /// confirm. `None` takes the question back.
+    pub fn ask_reset(&mut self, repo: Option<&str>, cx: &mut Context<Self>) {
+        self.resetting = repo.map(str::to_owned);
+        self.changed(cx);
+    }
+
+    /// Removes `repo`'s unreadable rules, as confirmed.
+    pub fn reset(&mut self, repo: &str, cx: &mut Context<Self>) {
+        self.resetting = None;
+        self.handle.act(
+            Act::Reset {
+                repo: repo.to_owned(),
+            },
+            cx,
+        );
+        self.changed(cx);
+    }
+
+    pub fn remove(&mut self, repo: &str, id: &str, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.handle.act(
+            Act::Remove {
+                repo: repo.to_owned(),
+                id: id.to_owned(),
+            },
+            cx,
+        );
+        self.changed(cx);
+    }
+
+    pub fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        self.tab = tab;
+        self.changed(cx);
+    }
+
+    /// Opens or closes the ⋯ menu of rule `id`.
+    pub fn toggle_menu(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.menu = match self.menu.as_deref() {
+            Some(open) if open == id => None,
+            _ => Some(id.to_owned()),
+        };
+        self.changed(cx);
+    }
+
+    /// Takes a flagged call or answer off the review queue, for good.
+    pub fn reviewed(&mut self, run: &str, key: &str, cx: &mut Context<Self>) {
+        self.dismissed.insert((run.to_owned(), key.to_owned()));
+        self.handle.act(
+            Act::Reviewed {
+                run: run.to_owned(),
+                key: key.to_owned(),
+            },
+            cx,
+        );
+        self.changed(cx);
+    }
+
+    /// Whether `(run, key)` was looked at.
+    fn looked_at(
+        &self,
+        reviewed: &[(String, String)],
+        run: &str,
+        key: &str,
+    ) -> bool {
+        let entry = (run.to_owned(), key.to_owned());
+        self.dismissed.contains(&entry) || reviewed.contains(&entry)
+    }
+}
+
+/// How many answers may go back after a step of `delta` from `holds`:
+/// from none to [`MAX_HOLDS`].
+pub fn next_holds(holds: u32, delta: i32) -> u32 {
+    holds.saturating_add_signed(delta).min(MAX_HOLDS)
+}
+
+/// A threshold to two places, so steps of 0.05 do not drift.
+fn round(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+/// A click that changes the page's state.
+fn on_ui(
+    ui: &Entity<Ui>,
+    f: impl Fn(&mut Ui, &mut Context<Ui>) + 'static,
+) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    let ui = ui.clone();
+    move |_, _, cx| ui.update(cx, |ui, cx| f(ui, cx))
+}
+
+/// A flagged call or answer that waits for a person.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewItem {
+    pub run: tau_agent::tool::RunId,
+    pub run_title: String,
+    pub flag: Flag,
+}
+
+/// Something the rules dealt with on their own, or a person marked.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Handled {
+    pub what: HandledKind,
+    pub shown: String,
+    pub rule: String,
+    pub run_title: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandledKind {
+    Blocked,
+    Held,
+    LookedFine,
+}
+
+/// Flagged calls and answers in `repo`'s runs nobody has looked at.
+pub fn review_items(
+    view: &ViewCx<'_, ConstitutionUi>,
     repo: &str,
-    focus: Option<&str>,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> AnyElement {
-    let constitution = ws.repo_named(repo).constitution.clone();
-    let stats = ws.rules_stats(repo);
-    let jev = ws.catalog.models.access.jev;
-    let empty = constitution.rules.is_empty() && constitution.error.is_none();
+) -> Vec<ReviewItem> {
+    let ui = view.read_ui();
+    let reviewed = &view.data.reviewed;
+    view.runs()
+        .into_iter()
+        .filter(|(run, _)| run.repo == repo)
+        .flat_map(|(run, state)| {
+            state
+                .flags()
+                .into_iter()
+                .filter(|flag| !ui.looked_at(reviewed, &run.id.0, &flag.key))
+                .map(|flag| ReviewItem {
+                    run: run.id.clone(),
+                    run_title: run.title.clone(),
+                    flag,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// What the rules dealt with in `repo`'s runs, and what a person marked
+/// as fine.
+pub fn handled(view: &ViewCx<'_, ConstitutionUi>, repo: &str) -> Vec<Handled> {
+    let ui = view.read_ui();
+    let reviewed = &view.data.reviewed;
+    let mut handled = Vec::new();
+    for (run, state) in
+        view.runs().into_iter().filter(|(run, _)| run.repo == repo)
+    {
+        for call in state.calls.values() {
+            if let Some(verdict) = &call.verdict
+                && verdict.kind == VerdictKind::Blocked
+            {
+                handled.push(Handled {
+                    what: HandledKind::Blocked,
+                    shown: format!("{} {}", call.tool, call.shown),
+                    rule: verdict.rule.clone(),
+                    run_title: run.title.clone(),
+                });
+            }
+        }
+        for rule in &state.stats.held {
+            handled.push(Handled {
+                what: HandledKind::Held,
+                shown: "final answer".into(),
+                rule: rule.clone(),
+                run_title: run.title.clone(),
+            });
+        }
+        for flag in state.flags() {
+            if ui.looked_at(reviewed, &run.id.0, &flag.key) {
+                handled.push(Handled {
+                    what: HandledKind::LookedFine,
+                    shown: match &flag.tool {
+                        Some(tool) => format!("{tool} {}", flag.shown),
+                        None => format!("final answer: {}", flag.shown),
+                    },
+                    rule: flag.rule,
+                    run_title: run.title.clone(),
+                });
+            }
+        }
+    }
+    handled
+}
+
+/// What `repo`'s runs say about its constitution.
+pub fn rules_stats(
+    view: &ViewCx<'_, ConstitutionUi>,
+    repo: &str,
+) -> RulesStats {
+    let runs: Vec<_> = view
+        .runs()
+        .into_iter()
+        .filter(|(run, _)| run.repo == repo)
+        .collect();
+    let loaded: Vec<(&str, &super::Stats)> = runs
+        .iter()
+        .map(|(run, state)| (&*run.id.0, &state.stats))
+        .collect();
+    let history = view
+        .repos
+        .get(repo)
+        .map(|rules| rules.history.as_slice())
+        .unwrap_or_default();
+    let mut stats = RulesStats::of(&loaded, history);
+    stats.waiting = review_items(view, repo).len();
+    stats
+}
+
+/// The latest calls in `repo`'s runs that `places` read, and its latest
+/// final answers when `places` has them.
+pub fn trial_samples(
+    view: &ViewCx<'_, ConstitutionUi>,
+    repo: &str,
+    places: &[String],
+) -> (Vec<(String, Value)>, Vec<String>) {
+    let targets: Vec<Target> = places
+        .iter()
+        .filter_map(|place| Target::parse(place).ok())
+        .collect();
+    let tools: Vec<&str> = targets
+        .iter()
+        .filter_map(|target| match target {
+            Target::Field { tool, .. } => Some(tool.as_str()),
+            Target::FinalAnswer => None,
+        })
+        .collect();
+    let mut calls: Vec<(String, Value)> = Vec::new();
+    let mut answers = Vec::new();
+    for (run, _) in view.runs().into_iter().filter(|(run, _)| run.repo == repo)
+    {
+        for card in view.cards(&run.id).into_iter().rev() {
+            if tools.contains(&card.tool.as_str())
+                && calls.len() < TRIAL_CALLS
+                && !calls.iter().any(|(_, args)| args == &card.args)
+            {
+                calls.push((card.tool, card.args));
+            }
+        }
+        if targets.contains(&Target::FinalAnswer)
+            && answers.len() < TRIAL_ANSWERS
+            && let Some(text) = run.answer
+        {
+            answers.push(text);
+        }
+    }
+    (calls, answers)
+}
+
+/// The page: its repository is the `repo` parameter; `rule`, when
+/// given, is the rule to show.
+pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> AnyElement {
+    let t = view.theme().clone();
+    let compact = view.compact;
+    let Some(repo) = view.param("repo").map(str::to_owned) else {
+        return ui::empty("Pick a repository to see its rules.", &t)
+            .into_any_element();
+    };
+    let focus = view.param("rule").map(str::to_owned);
+    let rules = view.repos.get(&repo).cloned().unwrap_or_default();
+    let stats = rules_stats(view, &repo);
+    let jev = view.jev;
+    let ui = view.ui.clone();
+    let tab = view.read_ui().tab;
+    let empty = rules.rules.is_empty() && rules.error.is_none();
     let content = div()
         .flex()
         .flex_col()
         .gap(sp(4.5))
-        .child(header(repo, empty, compact, t, cx))
-        .when_some(
-            broken(ws, &constitution, repo, jev, t, cx),
-            |screen, banner| screen.child(banner),
-        )
-        .when(!jev && constitution.error.is_none(), |screen| {
-            screen.child(no_key(compact, t, cx))
+        .child(header(&ui, &repo, empty, compact, &t))
+        .when_some(broken(view, &rules, &repo, jev, &t), |screen, banner| {
+            screen.child(banner)
         })
-        .when(empty, |screen| screen.child(nothing_yet(repo, t, cx)))
-        .when(!empty && constitution.error.is_none(), |screen| {
-            screen
-                .child(stat_tiles(&stats, compact, t))
-                .when(
-                    stats.waiting > 0 && ws.rules_tab() == RulesTab::Rules,
-                    |screen| {
-                        screen.child(waiting_strip(ws, repo, &stats, t, cx))
-                    },
+        .when(!jev && rules.error.is_none(), |screen| {
+            screen.child(no_key(view.handle.clone(), compact, &t))
+        })
+        .when(empty, |screen| screen.child(nothing_yet(&ui, &repo, &t)))
+        .when(!empty && rules.error.is_none(), |screen| {
+            let list = match tab {
+                Tab::Rules => rules_list(
+                    view,
+                    &repo,
+                    &rules,
+                    &stats,
+                    focus.as_deref(),
+                    &t,
                 )
-                .child(tabs(ws, &constitution, &stats, t, cx))
-                .child(match ws.rules_tab() {
-                    RulesTab::Rules => rules_list(
-                        ws,
-                        repo,
-                        &constitution,
-                        &stats,
-                        focus,
-                        compact,
-                        t,
-                        cx,
-                    )
-                    .into_any_element(),
-                    RulesTab::Review => {
-                        review(ws, repo, &constitution, compact, t, cx)
-                            .into_any_element()
-                    }
+                .into_any_element(),
+                Tab::Review => {
+                    review(view, &repo, &rules, &t).into_any_element()
+                }
+            };
+            screen
+                .child(stat_tiles(&stats, compact, &t))
+                .when(stats.waiting > 0 && tab == Tab::Rules, |screen| {
+                    screen.child(waiting_strip(view, &repo, &stats, &t))
                 })
-                .when(ws.rules_tab() == RulesTab::Rules, |screen| {
-                    screen.child(settings(repo, &constitution, t, cx))
+                .child(tabs(&ui, tab, &rules, &stats, &t))
+                .child(list)
+                .when(tab == Tab::Rules, |screen| {
+                    screen.child(settings(&ui, &repo, &rules, &t))
                 })
-                .when(ws.rules_tab() == RulesTab::Rules && !compact, |screen| {
-                    screen.child(legend(t))
+                .when(tab == Tab::Rules && !compact, |screen| {
+                    screen.child(legend(&t))
                 })
         });
+    let editor = editor(view, &t);
     div()
         .relative()
         .flex_1()
@@ -90,19 +729,17 @@ pub fn render(
         .flex()
         .flex_col()
         .child(ui::screen("constitution", compact, content))
-        .when_some(editor(ws, compact, t, cx), |screen, editor| {
-            screen.child(editor)
-        })
+        .when_some(editor, |screen, editor| screen.child(editor))
         .into_any_element()
 }
 
 /// The title, the repository, and what can be done: add a rule.
 fn header(
+    ui: &Entity<Ui>,
     repo: &str,
     empty: bool,
     compact: bool,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> Div {
     let new_repo = repo.to_owned();
     div()
@@ -149,8 +786,8 @@ fn header(
                 div()
                     .id("new-rule")
                     .child(ui::button("New rule", ButtonKind::Primary, t))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.open_rule_editor(&new_repo, None, cx)
+                    .on_click(on_ui(ui, move |ui, cx| {
+                        ui.open_editor(&new_repo, None, cx)
                     })),
             )
         })
@@ -159,14 +796,13 @@ fn header(
 /// Rules that cannot be read from the store: why, what it means, and
 /// the way out: removing them, once confirmed.
 fn broken(
-    ws: &Workspace,
-    constitution: &Constitution,
+    view: &ViewCx<'_, ConstitutionUi>,
+    rules: &Rules,
     repo: &str,
     jev: bool,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> Option<Div> {
-    let error = constitution.error.clone()?;
+    let error = rules.error.clone()?;
     // Without a key no run checks rules, so none fails on them yet.
     let title = if jev {
         format!(
@@ -178,50 +814,46 @@ fn broken(
              added, runs in {repo} fail at start until they can"
         )
     };
-    let confirming = ws.resetting_rules.as_deref() == Some(repo);
+    let confirming = view.read_ui().resetting.as_deref() == Some(repo);
+    let ui = view.ui.clone();
     let (ask, remove) = (repo.to_owned(), repo.to_owned());
-    let actions =
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(2.))
-            .when(!confirming, |row| {
-                row.child(
-                    div()
-                        .id("reset-rules")
-                        .child(ui::button(
-                            "Remove these rules",
-                            ButtonKind::Danger,
-                            t,
-                        ))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.ask_reset_rules(Some(&ask), cx)
-                        })),
-                )
-            })
-            .when(confirming, |row| {
-                row.child(ui::text(
-                    "This deletes them for good, so you can write them again.",
-                    Type::SMALL,
-                    t.text_soft,
-                ))
-                .child(
-                    div()
-                        .id("reset-rules-confirm")
-                        .child(ui::button("Delete", ButtonKind::Danger, t))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.reset_rules(&remove, cx)
-                        })),
-                )
-                .child(
-                    div()
-                        .id("reset-rules-keep")
-                        .child(ui::button("Keep", ButtonKind::Secondary, t))
-                        .on_click(cx.listener(|ws, _, _, cx| {
-                            ws.ask_reset_rules(None, cx)
-                        })),
-                )
-            });
+    let actions = div()
+        .flex()
+        .items_center()
+        .gap(sp(2.))
+        .when(!confirming, |row| {
+            row.child(
+                div()
+                    .id("reset-rules")
+                    .child(ui::button(
+                        "Remove these rules",
+                        ButtonKind::Danger,
+                        t,
+                    ))
+                    .on_click(on_ui(&ui, move |ui, cx| {
+                        ui.ask_reset(Some(&ask), cx)
+                    })),
+            )
+        })
+        .when(confirming, |row| {
+            row.child(ui::text(
+                "This deletes them for good, so you can write them again.",
+                Type::SMALL,
+                t.text_soft,
+            ))
+            .child(
+                div()
+                    .id("reset-rules-confirm")
+                    .child(ui::button("Delete", ButtonKind::Danger, t))
+                    .on_click(on_ui(&ui, move |ui, cx| ui.reset(&remove, cx))),
+            )
+            .child(
+                div()
+                    .id("reset-rules-keep")
+                    .child(ui::button("Keep", ButtonKind::Secondary, t))
+                    .on_click(on_ui(&ui, |ui, cx| ui.ask_reset(None, cx))),
+            )
+        });
     Some(
         div()
             .flex()
@@ -248,12 +880,7 @@ fn broken(
 
 /// How the checks behave beyond each rule: what happens when Jev cannot
 /// answer, and how many times an answer may go back.
-fn settings(
-    repo: &str,
-    constitution: &Constitution,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
+fn settings(ui: &Entity<Ui>, repo: &str, rules: &Rules, t: &Theme) -> Div {
     let row = || {
         div()
             .flex()
@@ -274,6 +901,7 @@ fn settings(
             .child(name.to_owned())
             .child(ui::text(caption, Type::CAPTION, t.muted))
     };
+    let (blocks, holds) = (rules.blocks_unchecked, rules.max_holds);
     let segment = |label: &'static str, on: bool, blocks: bool| {
         let repo = repo.to_owned();
         div()
@@ -288,21 +916,20 @@ fn settings(
             .text_color(if on { t.text } else { t.muted })
             .when(on, |segment| segment.key(t))
             .child(label)
-            .on_click(cx.listener(move |ws, _, _, cx| {
-                ws.set_blocks_unchecked(&repo, blocks, cx)
+            .on_click(on_ui(ui, move |ui, cx| {
+                ui.settings(&repo, blocks, holds, cx)
             }))
     };
-    let blocks = constitution.blocks_unchecked;
     let step = |label: &'static str, delta: i32, id: &'static str| {
         let repo = repo.to_owned();
+        let max_holds = next_holds(holds, delta);
         div()
             .id(id)
             .child(ui::button(label, ButtonKind::Secondary, t))
-            .on_click(cx.listener(move |ws, _, _, cx| {
-                ws.nudge_max_holds(&repo, delta, cx)
+            .on_click(on_ui(ui, move |ui, cx| {
+                ui.settings(&repo, blocks, max_holds, cx)
             }))
     };
-    let holds = constitution.max_holds;
     div()
         .flex()
         .flex_col()
@@ -367,7 +994,7 @@ fn settings(
 }
 
 /// Without a TypeSafe key nothing is checked: say so, and where to fix it.
-fn no_key(compact: bool, t: &Theme, cx: &mut Context<Workspace>) -> Div {
+fn no_key(handle: Handle, compact: bool, t: &Theme) -> Div {
     div()
         .flex()
         .items_center()
@@ -399,14 +1026,12 @@ fn no_key(compact: bool, t: &Theme, cx: &mut Context<Workspace>) -> Div {
             div()
                 .id("add-jev-key")
                 .child(ui::button("Add TypeSafe key", ButtonKind::Primary, t))
-                .on_click(cx.listener(|ws, _, window, cx| {
-                    ws.ask_for_jev_key(window, cx)
-                })),
+                .on_click(move |_, _, cx| handle.ask_jev_key(cx)),
         )
 }
 
 /// No rules: what a rule is, and how to write one.
-fn nothing_yet(repo: &str, t: &Theme, cx: &mut Context<Workspace>) -> Div {
+fn nothing_yet(ui: &Entity<Ui>, repo: &str, t: &Theme) -> Div {
     let new_repo = repo.to_owned();
     div().flex().justify_center().py(sp(12.)).child(
         div()
@@ -432,30 +1057,23 @@ fn nothing_yet(repo: &str, t: &Theme, cx: &mut Context<Workspace>) -> Div {
                     .font_weight(weight::STRONG)
                     .child(format!("No rules for {repo}")),
             )
+            .child(div().text_center().child(ui::text(
+                "A rule is one sentence, checked where you say: a shell \
+                 command, an edit, a written file, or the final answer. Past \
+                 its block mark the call is refused and the model gets the \
+                 rule back.",
+                Type::BODY,
+                t.muted,
+            )))
             .child(
-                div().text_center().child(ui::text(
-                    "A rule is one sentence, checked where you say: a shell \
-                     command, an edit, a written file, or the final answer. Past \
-                     its block mark the call is refused and the model gets the \
-                     rule back.",
-                    Type::BODY,
-                    t.muted,
-                )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(sp(2.))
-                    .mt(sp(1.5))
-                    .child(
-                        div()
-                            .id("first-rule")
-                            .child(ui::button("New rule", ButtonKind::Primary, t))
-                            .on_click(cx.listener(move |ws, _, _, cx| {
-                                ws.open_rule_editor(&new_repo, None, cx)
-                            })),
-                    )
-
+                div().flex().gap(sp(2.)).mt(sp(1.5)).child(
+                    div()
+                        .id("first-rule")
+                        .child(ui::button("New rule", ButtonKind::Primary, t))
+                        .on_click(on_ui(ui, move |ui, cx| {
+                            ui.open_editor(&new_repo, None, cx)
+                        })),
+                ),
             ),
     )
 }
@@ -537,13 +1155,12 @@ fn stat_tiles(stats: &RulesStats, compact: bool, t: &Theme) -> Div {
 
 /// Above the rules: something waits for a person.
 fn waiting_strip(
-    ws: &Workspace,
+    view: &ViewCx<'_, ConstitutionUi>,
     repo: &str,
     stats: &RulesStats,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
-    let first = ws.review_items(repo).into_iter().next();
+    let first = review_items(view, repo).into_iter().next();
     div()
         .id("waiting")
         .flex()
@@ -570,10 +1187,10 @@ fn waiting_strip(
                 mono(
                     format!(
                         "{} {} · {} {:.2} · {}",
-                        item.tool.as_deref().unwrap_or("final answer"),
-                        item.shown,
-                        item.rule,
-                        item.score,
+                        item.flag.tool.as_deref().unwrap_or("final answer"),
+                        item.flag.shown,
+                        item.flag.rule,
+                        item.flag.score,
                         item.run_title
                     ),
                     Type::CAPTION,
@@ -585,23 +1202,18 @@ fn waiting_strip(
             )
         })
         .child(ui::button("Review", ButtonKind::Secondary, t))
-        .on_click(
-            cx.listener(|ws, _, _, cx| ws.set_rules_tab(RulesTab::Review, cx)),
-        )
+        .on_click(on_ui(&view.ui, |ui, cx| ui.set_tab(Tab::Review, cx)))
 }
 
 fn tabs(
-    ws: &Workspace,
-    constitution: &Constitution,
+    ui: &Entity<Ui>,
+    current: Tab,
+    rules: &Rules,
     stats: &RulesStats,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> Div {
-    let tab = |which: RulesTab,
-               name: &'static str,
-               count: usize,
-               badge: bool| {
-        let on = ws.rules_tab() == which;
+    let tab = |which: Tab, name: &'static str, count: usize, badge: bool| {
+        let on = current == which;
         div()
             .id(name)
             .h(px(40.))
@@ -625,22 +1237,15 @@ fn tabs(
                     tab.child(mono(count.to_string(), Type::CAPTION, t.dim))
                 }
             })
-            .on_click(
-                cx.listener(move |ws, _, _, cx| ws.set_rules_tab(which, cx)),
-            )
+            .on_click(on_ui(ui, move |ui, cx| ui.set_tab(which, cx)))
     };
     div()
         .flex()
         .gap(sp(5.5))
         .border_b_1()
         .border_color(t.border)
-        .child(tab(
-            RulesTab::Rules,
-            "Rules",
-            constitution.rules.len(),
-            false,
-        ))
-        .child(tab(RulesTab::Review, "Review", stats.waiting, true))
+        .child(tab(Tab::Rules, "Rules", rules.rules.len(), false))
+        .child(tab(Tab::Review, "Review", stats.waiting, true))
 }
 
 /// Where a rule reads: a tool's field, or the final answer.
@@ -664,7 +1269,7 @@ fn place(text: &str, t: &Theme) -> Div {
 }
 
 /// A rule's last runs in a word: `2 blocked`, `1 flagged`.
-fn activity(rule: &Rule, stats: &RulesStats, t: &Theme) -> (String, Hsla) {
+fn activity(rule: &RuleInfo, stats: &RulesStats, t: &Theme) -> (String, Hsla) {
     let (blocked, flagged, held) =
         stats.per_rule.get(&rule.id).copied().unwrap_or_default();
     let parts: Vec<String> =
@@ -687,29 +1292,23 @@ fn activity(rule: &Rule, stats: &RulesStats, t: &Theme) -> (String, Hsla) {
     }
 }
 
-/// The narrowest screen the rules table fits: its fixed columns (id,
-/// places, strictness, activity, menu, and the gaps between them), room
-/// for a rule's text, and the screen's padding. Narrower, each rule is
-/// stacked as on the phone, so its text never shrinks to a sliver.
-const TABLE_MIN: f32 = 740. + 260. + 64.;
-
-#[allow(clippy::too_many_arguments)]
 fn rules_list(
-    ws: &Workspace,
+    view: &ViewCx<'_, ConstitutionUi>,
     repo: &str,
-    constitution: &Constitution,
+    rules: &Rules,
     stats: &RulesStats,
     focus: Option<&str>,
-    compact: bool,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> Div {
-    let stacked = compact || ws.screen_width() < px(TABLE_MIN);
-    let rows = constitution.rules.iter().map(|rule| {
+    let compact = view.compact;
+    let stacked = compact || view.width < TABLE_MIN;
+    let menu = view.read_ui().menu.clone();
+    let ui = view.ui.clone();
+    let rows = rules.rules.iter().map(|rule| {
         let (act, act_color) = activity(rule, stats, t);
         let focused = focus == Some(rule.id.as_str());
-        let menu_open = ws.rule_menu.as_deref() == Some(rule.id.as_str());
-        let (edit_repo, edit_id) = (repo.to_owned(), rule.id.clone());
+        let menu_open = menu.as_deref() == Some(rule.id.as_str());
+        let (edit_repo, edit_rule) = (repo.to_owned(), rule.clone());
         let menu_id = rule.id.clone();
         let places = div()
             .flex()
@@ -721,8 +1320,8 @@ fn rules_list(
             .flex_col()
             .gap(sp(1.5))
             .child(ui::strictness(
-                rule.review.into(),
-                rule.block.into(),
+                rule.review,
+                rule.block,
                 None,
                 if compact { None } else { Some(180.) },
                 false,
@@ -741,11 +1340,12 @@ fn rules_list(
             .border_color(t.border)
             .when(focused || menu_open, |row| row.pressed(t))
             .hover(|style| style.bg(t.selected))
-            .on_click(cx.listener(move |ws, _, _, cx| {
-                ws.open_rule_editor(&edit_repo, Some(&edit_id), cx)
+            .on_click(on_ui(&ui, move |ui, cx| {
+                ui.open_editor(&edit_repo, Some(edit_rule.clone()), cx)
             }));
         // The ⋯ menu: edit or remove the rule. The phone edits in the
         // editor instead.
+        let toggle = ui.clone();
         let menu_button = div()
             .id(SharedString::from(format!("rule-menu-{}", rule.id)))
             .size(px(30.))
@@ -757,10 +1357,10 @@ fn rules_list(
             .when(menu_open, |button| button.bg(t.border_strong))
             .hover(|style| style.bg(t.border_strong))
             .child(mono("⋯", Type::BODY, t.muted))
-            .on_click(cx.listener(move |ws, _, _, cx| {
+            .on_click(move |_, _, cx| {
                 cx.stop_propagation();
-                ws.toggle_rule_menu(&menu_id, cx)
-            }));
+                toggle.update(cx, |ui, cx| ui.toggle_menu(&menu_id, cx))
+            });
         let row = if stacked {
             row.flex()
                 .flex_col()
@@ -812,7 +1412,7 @@ fn rules_list(
                 )
                 .child(menu_button)
         };
-        row.when(menu_open, |row| row.child(rule_menu(repo, &rule.id, t, cx)))
+        row.when(menu_open, |row| row.child(rule_menu(&ui, repo, rule, t)))
     });
     div()
         .flex()
@@ -844,13 +1444,13 @@ fn rules_list(
 
 /// A rule's ⋯ menu: edit it, or remove it.
 fn rule_menu(
+    ui: &Entity<Ui>,
     repo: &str,
-    id: &str,
+    rule: &RuleInfo,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
-    let (edit_repo, edit_id) = (repo.to_owned(), id.to_owned());
-    let (remove_repo, remove_id) = (repo.to_owned(), id.to_owned());
+    let (edit_repo, edit_rule) = (repo.to_owned(), rule.clone());
+    let (remove_repo, remove_id) = (repo.to_owned(), rule.id.clone());
     let entry = |name: &'static str, color: Hsla| {
         div()
             .id(name)
@@ -862,6 +1462,7 @@ fn rule_menu(
             .hover(|style| style.bg(t.selected))
             .child(name)
     };
+    let (edit, remove) = (ui.clone(), ui.clone());
     div()
         .absolute()
         .right(sp(4.))
@@ -874,19 +1475,16 @@ fn rule_menu(
         .border_1()
         .border_color(t.border_strong)
         .rounded(radius::BOX)
-        .child(entry("Edit", t.text).on_click(cx.listener(
-            move |ws, _, _, cx| {
-                cx.stop_propagation();
-                ws.open_rule_editor(&edit_repo, Some(&edit_id), cx)
-            },
-        )))
-        .child(entry("Remove", t.red).on_click(cx.listener(
-            move |ws, _, _, cx| {
-                cx.stop_propagation();
-                ws.rule_menu = None;
-                ws.remove_rule(&remove_repo, &remove_id, cx)
-            },
-        )))
+        .child(entry("Edit", t.text).on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            edit.update(cx, |ui, cx| {
+                ui.open_editor(&edit_repo, Some(edit_rule.clone()), cx)
+            })
+        }))
+        .child(entry("Remove", t.red).on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            remove.update(cx, |ui, cx| ui.remove(&remove_repo, &remove_id, cx))
+        }))
 }
 
 fn legend(t: &Theme) -> Div {
@@ -920,21 +1518,21 @@ fn legend(t: &Theme) -> Div {
 
 /// What waits for a person, and what the rules handled on their own.
 fn review(
-    ws: &Workspace,
+    view: &ViewCx<'_, ConstitutionUi>,
     repo: &str,
-    constitution: &Constitution,
-    compact: bool,
+    rules: &Rules,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> Div {
-    let items = ws.review_items(repo);
-    let mut cards = Vec::with_capacity(items.len());
-    for (n, item) in items.iter().enumerate() {
-        let rule = constitution.rules.iter().find(|rule| rule.id == item.rule);
-        cards.push(
-            review_card(n, item, rule, repo, compact, t, cx).into_any_element(),
-        );
-    }
+    let compact = view.compact;
+    let items = review_items(view, repo);
+    let cards: Vec<AnyElement> = items
+        .iter()
+        .enumerate()
+        .map(|(n, item)| {
+            review_card(view, n, item, rules.rule(&item.flag.rule), repo, t)
+                .into_any_element()
+        })
+        .collect();
     let waiting = div()
         .flex_1()
         .min_w(px(0.))
@@ -949,7 +1547,7 @@ fn review(
             ))
         })
         .children(cards);
-    let handled = ws.handled(repo);
+    let handled = handled(view, repo);
     let side = div()
         .flex()
         .flex_col()
@@ -1034,18 +1632,20 @@ fn review(
 }
 
 fn review_card(
+    view: &ViewCx<'_, ConstitutionUi>,
     n: usize,
     item: &ReviewItem,
-    rule: Option<&Rule>,
+    rule: Option<&RuleInfo>,
     repo: &str,
-    compact: bool,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
-    let open = Route::Run(item.run.clone());
-    let fine = (item.run.clone(), item.key.clone());
-    let (adjust_repo, adjust_id) = (repo.to_owned(), item.rule.clone());
-    let answer = item.tool.is_none();
+    let compact = view.compact;
+    let ui = view.ui.clone();
+    let handle = view.handle.clone();
+    let open = item.run.clone();
+    let (fine_run, fine_key) = (item.run.0.to_string(), item.flag.key.clone());
+    let (adjust_repo, adjust_rule) = (repo.to_owned(), rule.cloned());
+    let answer = item.flag.tool.is_none();
     div()
         .flex()
         .flex_col()
@@ -1062,13 +1662,13 @@ fn review_card(
                 .gap(sp(2.5))
                 .child(icon(if answer { Icon::Chat } else { Icon::Runs }, IconSize::BASE, t.muted))
                 .child(mono(
-                    item.tool.clone().unwrap_or_else(|| "final answer".into()),
+                    item.flag.tool.clone().unwrap_or_else(|| "final answer".into()),
                     Type::CAPTION,
                     t.blue,
                 ))
                 .child(ui::text(format!("in {}", item.run_title), Type::CAPTION, t.muted))
                 .child(div().flex_1())
-                .child(mono(format!("p {:.2}", item.score), Type::CAPTION, t.accent)),
+                .child(mono(format!("p {:.2}", item.flag.score), Type::CAPTION, t.accent)),
         )
         .child(
             div()
@@ -1078,9 +1678,9 @@ fn review_card(
                 .well(t)
                 .map(|body| {
                     if answer {
-                        body.child(ui::text(item.shown.clone(), Type::BODY, t.text_soft))
+                        body.child(ui::text(item.flag.shown.clone(), Type::BODY, t.text_soft))
                     } else {
-                        body.child(mono(item.shown.clone(), Type::SMALL, t.text_soft))
+                        body.child(mono(item.flag.shown.clone(), Type::SMALL, t.text_soft))
                     }
                 }),
         )
@@ -1099,9 +1699,9 @@ fn review_card(
                     .child(div().flex_1().min_w(px(0.)).text_color(t.text_soft).child(rule.text.clone()))
                     .when(!compact, |row| {
                         row.child(ui::strictness(
-                            rule.review.into(),
-                            rule.block.into(),
-                            Some(item.score),
+                            rule.review,
+                            rule.block,
+                            Some(item.flag.score),
                             Some(160.),
                             false,
                             t,
@@ -1116,52 +1716,48 @@ fn review_card(
                 .items_center()
                 .gap(sp(2.))
                 .when(!compact, |row| {
-                    row.child(
-                        div().flex_1().child(ui::text(
-                            if answer {
-                                "The answer stood, but its score is between this rule's flag and block marks."
-                            } else {
-                                "It ran: its score is between this rule's flag and block marks."
-                            },
-                            Type::CAPTION,
-                            t.dim,
-                        )),
-                    )
+                    row.child(div().flex_1().child(ui::text(
+                        if answer {
+                            "The answer stood, but its score is between this rule's flag and block marks."
+                        } else {
+                            "It ran: its score is between this rule's flag and block marks."
+                        },
+                        Type::CAPTION,
+                        t.dim,
+                    )))
                 })
                 .child(
                     div()
                         .id(("review-adjust", n))
                         .child(ui::button("Adjust rule", ButtonKind::Secondary, t))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.open_rule_editor(&adjust_repo, Some(&adjust_id), cx)
+                        .on_click(on_ui(&ui, move |ui, cx| {
+                            ui.open_editor(&adjust_repo, adjust_rule.clone(), cx)
                         })),
                 )
                 .child(
                     div()
                         .id(("review-open", n))
                         .child(ui::button("Open in run", ButtonKind::Secondary, t))
-                        .on_click(cx.listener(move |ws, _, _, cx| ws.navigate(open.clone(), cx))),
+                        .on_click(move |_, _, cx| handle.open_run(&open, cx)),
                 )
                 .child(
                     div()
                         .id(("review-dismiss", n))
                         .child(ui::button("Looks fine", ButtonKind::Primary, t))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.mark_reviewed(&fine.0, &fine.1, cx);
-                        })),
+                        .on_click(on_ui(&ui, move |ui, cx| ui.reviewed(&fine_run, &fine_key, cx))),
                 ),
         )
 }
 
 /// The rule editor: a drawer on the right, the whole screen on a phone.
-fn editor(
-    ws: &Workspace,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Option<AnyElement> {
-    let draft = ws.rule_draft()?;
-    let problem = ws.draft_problem(cx);
+fn editor(view: &ViewCx<'_, ConstitutionUi>, t: &Theme) -> Option<AnyElement> {
+    let compact = view.compact;
+    let ui_state = view.read_ui();
+    let draft = ui_state.draft()?.clone();
+    let problem = ui_state.problem(view.cx);
+    let (rule_text, rule_on) =
+        (ui_state.rule_text.clone(), ui_state.rule_on.clone());
+    let ui = view.ui.clone();
     let shown_problem = problem.filter(|_| draft.tried_to_save);
     let title = match &draft.editing {
         Some(id) => format!("Edit {id}"),
@@ -1209,9 +1805,7 @@ fn editor(
             .child(ui::checkbox(on, false, t))
             .child(div().flex_1().child(label))
             .child(ui::text(what, Type::CAPTION, t.dim))
-            .on_click(
-                cx.listener(move |ws, _, _, cx| ws.toggle_place(&toggle, cx)),
-            )
+            .on_click(on_ui(&ui, move |ui, cx| ui.toggle_place(&toggle, cx)))
     });
     let applies = div()
         .flex()
@@ -1243,11 +1837,9 @@ fn editor(
                         .px(sp(3.))
                         .pt(sp(1.5))
                         .pb(sp(1.))
-                        .child(div().flex_1().child(ui::field(
-                            &ws.rule_on,
-                            true,
-                            t,
-                        )))
+                        .child(
+                            div().flex_1().child(ui::field(&rule_on, true, t)),
+                        )
                         .child(
                             div()
                                 .id("add-place")
@@ -1256,8 +1848,8 @@ fn editor(
                                     ButtonKind::Secondary,
                                     t,
                                 ))
-                                .on_click(cx.listener(|ws, _, _, cx| {
-                                    ws.add_other_place(cx);
+                                .on_click(on_ui(&ui, |ui, cx| {
+                                    ui.add_other_place(cx);
                                 })),
                         ),
                 ),
@@ -1278,9 +1870,7 @@ fn editor(
             .text_color(if on { t.text } else { t.muted })
             .when(on, |segment| segment.key(t).font_weight(weight::EMPHASIS))
             .child(preset.label())
-            .on_click(
-                cx.listener(move |ws, _, _, cx| ws.set_preset(preset, cx)),
-            )
+            .on_click(on_ui(&ui, move |ui, cx| ui.set_preset(preset, cx)))
     });
     let stepper = |name: &'static str, mark: Mark, value: f64, color: Hsla| {
         let step = |id: &'static str, glyph: &'static str, delta: f64| {
@@ -1296,9 +1886,7 @@ fn editor(
                 .cursor_pointer()
                 .hover(|style| style.bg(t.selected))
                 .child(mono(glyph, Type::SMALL, t.text_soft))
-                .on_click(
-                    cx.listener(move |ws, _, _, cx| ws.nudge(mark, delta, cx)),
-                )
+                .on_click(on_ui(&ui, move |ui, cx| ui.nudge(mark, delta, cx)))
         };
         let (down, up) = match mark {
             Mark::Review => ("review-down", "review-up"),
@@ -1383,7 +1971,7 @@ fn editor(
                 }),
         );
 
-    let trial = try_section(ws, draft, t, cx);
+    let trial = try_section(view, &draft, t);
     let body = div()
         .id("rule-editor-body")
         .flex_1()
@@ -1403,7 +1991,7 @@ fn editor(
                     "one sentence, the way you would tell a person",
                     t,
                 ))
-                .child(ui::field(&ws.rule_text, false, t)),
+                .child(ui::field(&rule_text, false, t)),
         )
         .child(applies)
         .when_some(shown_problem, |body, problem| {
@@ -1423,11 +2011,11 @@ fn editor(
         .id("save-rule")
         .child(ui::button(save_label, ButtonKind::Primary, t))
         .when(problem.is_some(), |button| button.opacity(0.5))
-        .on_click(cx.listener(|ws, _, _, cx| ws.save_rule(cx)));
+        .on_click(on_ui(&ui, |ui, cx| ui.save(cx)));
     let cancel = div()
         .id("cancel-rule")
         .child(ui::button("Cancel", ButtonKind::Secondary, t))
-        .on_click(cx.listener(|ws, _, _, cx| ws.close_rule_editor(cx)));
+        .on_click(on_ui(&ui, |ui, cx| ui.close_editor(cx)));
     let panel = div()
         .flex()
         .flex_col()
@@ -1442,16 +2030,8 @@ fn editor(
                 .px(sp(5.))
                 .border_b_1()
                 .border_color(t.border)
-                .child(
-                    div()
-                        .flex_1()
-                        .typeset(Type::LEAD)
-                        .font_weight(weight::STRONG)
-                        .child(title),
-                )
-                .when(compact, |bar| {
-                    bar.child(phone_save(save_label, problem, t, cx))
-                }),
+                .child(div().flex_1().typeset(Type::LEAD).font_weight(weight::STRONG).child(title))
+                .when(compact, |bar| bar.child(phone_save(&ui, save_label, problem, t))),
         )
         .child(body)
         .when(!compact, |panel| {
@@ -1468,24 +2048,15 @@ fn editor(
                     .child(div().flex_1().child(ui::text(
                         match (shown_problem, &draft.editing) {
                             (Some(problem), _) => problem.to_owned(),
-                            (None, Some(id)) => {
-                                format!(
-                                    "Saves over {id}; runs check with it from \
-                                     their next tool call"
-                                )
-                            }
+                            (None, Some(id)) => format!(
+                                "Saves over {id}; runs check with it from their next tool call"
+                            ),
                             (None, None) => {
-                                "Adds it; runs check with it from their next \
-                                 tool call"
-                                    .to_owned()
+                                "Adds it; runs check with it from their next tool call".to_owned()
                             }
                         },
                         Type::CAPTION,
-                        if shown_problem.is_some() {
-                            t.red
-                        } else {
-                            t.dim
-                        },
+                        if shown_problem.is_some() { t.red } else { t.dim },
                     )))
                     .child(cancel)
                     .child(save),
@@ -1506,9 +2077,11 @@ fn editor(
             .occlude()
             .flex()
             .child(
-                div().id("rule-scrim").flex_1().bg(t.scrim).on_click(
-                    cx.listener(|ws, _, _, cx| ws.close_rule_editor(cx)),
-                ),
+                div()
+                    .id("rule-scrim")
+                    .flex_1()
+                    .bg(t.scrim)
+                    .on_click(on_ui(&ui, |ui, cx| ui.close_editor(cx))),
             )
             .child(
                 panel
@@ -1524,10 +2097,10 @@ fn editor(
 
 /// On a phone, the editor's bar carries Cancel and Add.
 fn phone_save(
+    ui: &Entity<Ui>,
     label: &'static str,
     problem: Option<&str>,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     div()
         .flex()
@@ -1536,14 +2109,14 @@ fn phone_save(
             div()
                 .id("phone-cancel-rule")
                 .child(ui::button("Cancel", ButtonKind::Secondary, t))
-                .on_click(cx.listener(|ws, _, _, cx| ws.close_rule_editor(cx))),
+                .on_click(on_ui(ui, |ui, cx| ui.close_editor(cx))),
         )
         .child(
             div()
                 .id("phone-save-rule")
                 .child(ui::button(label, ButtonKind::Primary, t))
                 .when(problem.is_some(), |button| button.opacity(0.5))
-                .on_click(cx.listener(|ws, _, _, cx| ws.save_rule(cx))),
+                .on_click(on_ui(ui, |ui, cx| ui.save(cx))),
         )
 }
 
@@ -1559,12 +2132,12 @@ fn label_row(name: &'static str, hint: &'static str, t: &Theme) -> Div {
 
 /// Trying the rule on the repository's latest calls, with Jev.
 fn try_section(
-    ws: &Workspace,
-    draft: &crate::rule_editor::RuleDraft,
+    view: &ViewCx<'_, ConstitutionUi>,
+    draft: &Draft,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> Div {
-    let jev = ws.catalog.models.access.jev;
+    let jev = view.jev;
+    let (calls, answers) = trial_samples(view, &draft.repo, &draft.places);
     let button = div()
         .id("try-rule")
         .child(ui::button(
@@ -1576,7 +2149,9 @@ fn try_section(
             t,
         ))
         .when(!jev, |button| button.opacity(0.5))
-        .on_click(cx.listener(|ws, _, _, cx| ws.try_rule(cx)));
+        .on_click(on_ui(&view.ui, move |ui, cx| {
+            ui.try_rule(calls.clone(), answers.clone(), cx)
+        }));
     let body: AnyElement = match &draft.trying {
         Trying::Not => ui::text(
             if jev {

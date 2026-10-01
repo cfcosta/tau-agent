@@ -10,6 +10,7 @@ use tau_agent::{
     agent::Agent,
     event::{RunEvent, StopReason},
 };
+use tau_constitution::ui::Act;
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_ui::{
@@ -973,8 +974,15 @@ fn repositories_are_listed_and_remembered() {
     host.set_closed(&second, true).unwrap();
     host.set_closed(&second, false).unwrap();
     // So are flagged calls someone looked at.
-    host.set_reviewed(&first, "call-1").unwrap();
-    host.set_reviewed(&first, "call-1").unwrap();
+    for _ in 0..2 {
+        rules_act(
+            &host,
+            Act::Reviewed {
+                run: "a".into(),
+                key: "call-1".into(),
+            },
+        );
+    }
     drop(host);
 
     let (host, _events) = Host::new(config_on(data.path())).unwrap();
@@ -982,7 +990,11 @@ fn repositories_are_listed_and_remembered() {
     assert_eq!(names(&host), ["proj-2"]);
     let catalog = host.catalog();
     assert_eq!(catalog.closed_runs, std::slice::from_ref(&first));
-    assert_eq!(catalog.reviewed, [(first, "call-1".to_owned())]);
+    let reviewed: tau_constitution::ui::Data = serde_json::from_value(
+        catalog.plugin_data[tau_constitution::NAME].clone(),
+    )
+    .unwrap();
+    assert_eq!(reviewed.reviewed, [("a".to_owned(), "call-1".to_owned())]);
     // Cloning a removed one lists it again, under its name.
     assert_eq!(host.clone_github("a/proj").unwrap().name, "proj");
     assert_eq!(names(&host), ["proj", "proj-2"]);
@@ -1234,6 +1246,27 @@ fn a_finished_run_goes_on_in_its_workspace() {
     assert_eq!(prompts, ["write a.txt", "now b.txt"]);
 }
 
+/// Asks tau-constitution's host half to carry out `act`, as its page
+/// does; what it answers, if anything.
+fn rules_act(host: &Host, act: Act) -> Option<serde_json::Value> {
+    host.plugin_act(tau_constitution::NAME, serde_json::to_value(act).unwrap())
+        .unwrap()
+}
+
+/// A repository's constitution, as its page gets it.
+fn rules_of(repo: &tau_ui::catalog::Repo) -> tau_constitution::ui::Rules {
+    serde_json::from_value(repo.plugins[tau_constitution::NAME].clone())
+        .unwrap()
+}
+
+/// What the checks did in `view`, as tau-constitution's fold leaves it.
+fn checks_of(view: &tau_ui::view::RunView) -> tau_constitution::ui::State {
+    view.plugin_states
+        .get(tau_constitution::NAME)
+        .map(|state| serde_json::from_value(state.clone()).unwrap())
+        .unwrap_or_default()
+}
+
 /// A stored constitution that cannot be read can be removed from the
 /// UI, which no edit could do, and its settings are saved like its
 /// rules.
@@ -1278,32 +1311,40 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
             },
         ))
         .unwrap();
-    let constitution = || host.catalog().repos[0].constitution.clone();
+    let constitution = || rules_of(&host.catalog().repos[0]);
     assert!(constitution().error.is_some());
     let add = |host: &Host| {
-        host.edit_rules(REPO, |rules| {
-            rules
-                .add("No unwrap.", &["write.content".into()], 0.5, 0.8)
-                .map(drop)
-        })
+        rules_act(
+            host,
+            Act::Add {
+                repo: REPO.into(),
+                text: "No unwrap.".into(),
+                on: vec!["write.content".into()],
+                review: 0.5,
+                block: 0.8,
+            },
+        )
     };
+    add(&host);
     assert!(
-        add(&host).is_err(),
+        constitution().error.is_some(),
         "no edit gets past rules that cannot be read"
     );
 
-    host.reset_rules(REPO).unwrap();
+    rules_act(&host, Act::Reset { repo: REPO.into() });
     let reset = constitution();
     assert_eq!((reset.error, reset.rules.len()), (None, 0));
-    add(&host).unwrap();
+    add(&host);
     assert_eq!(constitution().rules.len(), 1);
 
-    host.edit_rules(REPO, |rules| {
-        rules.on_error = tau_constitution::OnError::Block;
-        rules.max_holds = 5;
-        Ok(())
-    })
-    .unwrap();
+    rules_act(
+        &host,
+        Act::Settings {
+            repo: REPO.into(),
+            blocks_unchecked: true,
+            max_holds: 5,
+        },
+    );
     let saved = constitution();
     assert!(saved.blocks_unchecked);
     assert_eq!(saved.max_holds, 5);
@@ -1345,15 +1386,19 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             })
             .unwrap()
     };
-    // A rule saved the way the Constitution screen saves one.
-    host.edit_rules(REPO, |rules| {
-        rules
-            .add("No unwrap.", &["write.content".into()], 0.5, 0.8)
-            .map(drop)
-    })
-    .unwrap();
+    // A rule saved the way the Constitution page saves one.
+    rules_act(
+        &host,
+        Act::Add {
+            repo: REPO.into(),
+            text: "No unwrap.".into(),
+            on: vec!["write.content".into()],
+            review: 0.5,
+            block: 0.8,
+        },
+    );
     let catalog = host.catalog();
-    let rules = &catalog.repos[0].constitution;
+    let rules = &rules_of(&catalog.repos[0]);
     assert_eq!(rules.rules.len(), 1);
     assert_eq!(rules.rules[0].applies_to, ["write.content"]);
     assert!(rules.error.is_none());
@@ -1378,12 +1423,11 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     let blocked = |view: &tau_ui::view::RunView| {
         view.items.iter().any(|item| {
             matches!(item, Item::Tool(card)
-                if matches!(&card.state, ToolState::Blocked { rule, .. } if rule == "R1"))
-        })
+                if matches!(&card.state, ToolState::Blocked { .. }))
+        }) && checks_of(view).stats.blocked == ["R1"]
     };
     assert!(blocked(&view), "the card shows the block live");
-    assert_eq!(view.constitution.calls, 1);
-    assert_eq!(view.constitution.blocked, ["R1"]);
+    assert_eq!(checks_of(&view).stats.calls, 1);
     // The Plugins screen counts the check Jev answered.
     let stats = host.catalog().jev.expect("Jev is set up");
     assert!(stats.requests >= 1, "{stats:?}");
@@ -1392,20 +1436,21 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     // And in history, from what the plugin recorded.
     let history = host.history().unwrap();
     assert!(blocked(&history[0]));
-    assert_eq!(history[0].constitution, view.constitution);
+    assert_eq!(checks_of(&history[0]).stats, checks_of(&view).stats);
 
     // Editing a rule saves over it, in place.
-    host.edit_rules(REPO, |rules| {
-        rules.replace(
-            "R1",
-            "No unwrap, ever.",
-            &["write.content".into()],
-            0.3,
-            0.9,
-        )
-    })
-    .unwrap();
-    let edited = host.catalog().repos[0].constitution.rules[0].clone();
+    rules_act(
+        &host,
+        Act::Update {
+            repo: REPO.into(),
+            id: "R1".into(),
+            text: "No unwrap, ever.".into(),
+            on: vec!["write.content".into()],
+            review: 0.3,
+            block: 0.9,
+        },
+    );
+    let edited = rules_of(&host.catalog().repos[0]).rules[0].clone();
     assert_eq!(
         (edited.id.as_str(), edited.text.as_str()),
         ("R1", "No unwrap, ever.")
@@ -1419,50 +1464,61 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
         ),
         ("bash".to_owned(), serde_json::json!({ "command": "ls" })),
     ];
-    let (trials, cost) = host
-        .try_rule(
-            "No unwrap.",
-            &["write.content".into()],
-            0.3,
-            0.8,
-            &calls,
-            &[],
-        )
-        .unwrap();
+    let try_rule =
+        |text: &str, on: &str| -> tau_constitution::ui::TrialResult {
+            let reply = rules_act(
+                &host,
+                Act::Try {
+                    text: text.into(),
+                    on: vec![on.into()],
+                    review: 0.3,
+                    block: 0.8,
+                    calls: calls.clone(),
+                    answers: Vec::new(),
+                },
+            )
+            .expect("a trial answers");
+            serde_json::from_value(reply).unwrap()
+        };
+    let (trials, cost) = try_rule("No unwrap.", "write.content").unwrap();
     assert_eq!(trials.len(), 1);
     assert_eq!(trials[0].shown, "x.unwrap()");
     assert!((trials[0].score - 0.95).abs() < 1e-9 && cost > 0.0);
     assert!(
-        host.try_rule("x", &["nowhere".into()], 0.3, 0.8, &calls, &[])
-            .is_err(),
+        try_rule("x", "nowhere").is_err(),
         "a place that names nothing is refused"
     );
 
     // The store's history counts the run, loaded or not.
-    let history = host.catalog().repos[0].constitution.history.clone();
+    let history = rules_of(&host.catalog().repos[0]).history;
     assert_eq!(history.len(), 1);
     let (run, checks) = &history[0];
-    assert_eq!(run, &view.id);
+    assert_eq!(**run, *view.id.0);
     assert_eq!(
         (checks.calls, checks.blocked.as_slice()),
         (1, ["R1".to_owned()].as_slice())
     );
 
     // Removing a rule saves it.
-    host.edit_rules(REPO, |rules| {
-        rules.remove("R1");
-        Ok(())
-    })
-    .unwrap();
-    let constitution = host.catalog().repos[0].constitution.clone();
-    assert!(constitution.rules.is_empty());
+    rules_act(
+        &host,
+        Act::Remove {
+            repo: REPO.into(),
+            id: "R1".into(),
+        },
+    );
+    assert!(rules_of(&host.catalog().repos[0]).rules.is_empty());
     assert!(stored().rules.is_empty());
     // An edit the rules would refuse is not saved.
-    assert!(
-        host.edit_rules(REPO, |rules| rules
-            .add("x", &["write.content".into()], 0.9, 0.1)
-            .map(drop))
-            .is_err()
+    rules_act(
+        &host,
+        Act::Add {
+            repo: REPO.into(),
+            text: "x".into(),
+            on: vec!["write.content".into()],
+            review: 0.9,
+            block: 0.1,
+        },
     );
     assert!(stored().rules.is_empty());
 }

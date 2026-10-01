@@ -4,9 +4,8 @@
 //! [`crate::demo`] has an example.
 
 use serde::{Deserialize, Serialize};
-use tau_agent::tool::RunId;
 
-use crate::view::{ConstitutionStats, Proposal};
+use crate::view::Proposal;
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Catalog {
@@ -25,9 +24,6 @@ pub struct Catalog {
     /// Conversations the user closed: History lists them, the sidebar
     /// does not.
     pub closed_runs: Vec<tau_agent::tool::RunId>,
-    /// Flagged calls someone looked at, as `(run, call id)`: off the
-    /// review queue.
-    pub reviewed: Vec<(tau_agent::tool::RunId, String)>,
     pub store: StoreInfo,
     /// Whether the host can open pull requests from runs.
     pub pull_requests: bool,
@@ -57,8 +53,8 @@ impl Catalog {
     }
 }
 
-/// A repository runs work on: its memory and constitution belong to it
-/// alone.
+/// A repository runs work on: its memory and its plugins' data belong
+/// to it alone.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Repo {
     /// What the sidebar calls it; unique in the catalog.
@@ -70,7 +66,6 @@ pub struct Repo {
     #[serde(default)]
     pub main: Option<tau_agent::tool::RunId>,
     pub memory: Memory,
-    pub constitution: Constitution,
     /// Each plugin's data for the repository, as JSON, by plugin
     /// (`UiPlugin::repo_data`).
     #[serde(default)]
@@ -118,7 +113,6 @@ pub enum PluginScreen {
     /// The run plan: what `start` decided.
     Plan,
     Memory,
-    Constitution,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -226,33 +220,6 @@ impl Note {
 pub struct Link {
     pub to: String,
     pub why: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct Constitution {
-    pub rules: Vec<Rule>,
-    /// How many times one run's final answer may be sent back.
-    pub max_holds: u32,
-    /// What Jev cannot answer is refused (`on_error = "block"`), not
-    /// let through.
-    pub blocks_unchecked: bool,
-    /// Why the rules could not be read from the store, if they could
-    /// not: runs fail until they can.
-    pub error: Option<String>,
-    /// What the checks did in each stored run of the repository that has
-    /// any, from the plugin's records: the Constitution screen counts
-    /// runs no longer loaded with these.
-    pub history: Vec<(RunId, ConstitutionStats)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Rule {
-    pub id: String,
-    pub text: String,
-    /// `tool.field` names, or `final answer`.
-    pub applies_to: Vec<String>,
-    pub review: f32,
-    pub block: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

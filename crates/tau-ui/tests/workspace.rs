@@ -2,7 +2,7 @@
 //! host drives them, in GPUI's test app.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use tau_agent::event::{RunEvent, StopReason};
+use tau_agent::event::StopReason;
 use tau_ui::{
     Workspace,
     WorkspaceEvent,
@@ -12,7 +12,7 @@ use tau_ui::{
     pull_request::PrState,
     route::Route,
     setup::{GitHub, ModelAccess, Setup, SetupStep, SetupUpdate},
-    view::{BranchCode, CodeState, Item, RunStatus, RunUpdate},
+    view::{BranchCode, CodeState, Item, RunStatus},
     workspace::{LandingState, PickerTarget},
 };
 
@@ -706,8 +706,12 @@ fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
         assert_eq!(ws.selected_repo(), Some("docbert"));
         assert_eq!(ws.repo_named("docbert").memory.notes.len(), 3);
         assert_eq!(ws.repo_named("tau-agent").memory.notes.len(), 8);
-        ws.open_constitution("homelab.nix", cx);
-        assert!(ws.repo_named("homelab.nix").constitution.rules.is_empty());
+        let rules: tau_constitution::ui::Rules = serde_json::from_value(
+            ws.repo_named("homelab.nix").plugins[tau_constitution::NAME]
+                .clone(),
+        )
+        .unwrap();
+        assert!(rules.rules.is_empty());
         assert!(ws.repo_named("not listed").memory.notes.is_empty());
     });
 }
@@ -1222,294 +1226,6 @@ fn a_phone_closes_the_conversation_it_shows(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn rules_are_written_edited_and_removed_in_the_editor(cx: &mut TestAppContext) {
-    use tau_ui::rule_editor::{Mark, Preset};
-    let (workspace, mut cx, events) = open_demo(cx);
-    cx.update(|_, cx| demo::respond(&workspace, cx));
-    workspace.update(&mut cx, |ws, cx| {
-        ws.open_constitution("docbert", cx);
-        ws.open_rule_editor("docbert", None, cx);
-        ws.rule_text_for_test("Never delete an index.", cx);
-        // Nothing picked: nothing is sent, and the editor says why, in
-        // place of a dialog.
-        ws.save_rule(cx);
-        assert!(ws.alert().is_none());
-        assert_eq!(
-            ws.draft_problem(cx),
-            Some("Pick at least one place, or Jev has nothing to check.")
-        );
-        assert!(ws.rule_draft().unwrap().tried_to_save);
-        // Places are picked, and any tool's field can be added by name.
-        ws.toggle_place("bash.command", cx);
-        ws.rule_on_for_test("not a field", cx);
-        assert!(!ws.add_other_place(cx));
-        ws.rule_on_for_test("grep.pattern", cx);
-        assert!(ws.add_other_place(cx));
-        // Presets, then a step: review never passes block.
-        ws.set_preset(Preset::Strict, cx);
-        assert_eq!(ws.rule_draft().unwrap().preset(), Some(Preset::Strict));
-        ws.nudge(Mark::Block, 0.05, cx);
-        assert_eq!(ws.rule_draft().unwrap().preset(), None);
-        for _ in 0..20 {
-            ws.nudge(Mark::Review, 0.05, cx);
-        }
-        let draft = ws.rule_draft().unwrap();
-        assert_eq!((draft.review, draft.block), (0.65, 0.65));
-        ws.nudge(Mark::Review, -0.35, cx);
-        ws.save_rule(cx);
-        assert!(ws.rule_draft().is_none());
-    });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::AddRule {
-            repo: "docbert".into(),
-            text: "Never delete an index.".into(),
-            on: vec!["bash.command".into(), "grep.pattern".into()],
-            review: 0.3,
-            block: 0.65,
-        })
-    );
-    cx.run_until_parked();
-    workspace.update(&mut cx, |ws, cx| {
-        let rules = ws.repo_named("docbert").constitution.rules.clone();
-        assert_eq!(rules.len(), 4);
-        // Editing opens with the rule as it is, and saves over it.
-        let id = rules.last().unwrap().id.clone();
-        ws.open_rule_editor("docbert", Some(&id), cx);
-        let draft = ws.rule_draft().unwrap();
-        assert_eq!(draft.editing.as_deref(), Some(id.as_str()));
-        assert_eq!(draft.places, ["bash.command", "grep.pattern"]);
-        ws.toggle_place("grep.pattern", cx);
-        ws.save_rule(cx);
-    });
-    cx.run_until_parked();
-    workspace.update(&mut cx, |ws, cx| {
-        let rules = ws.repo_named("docbert").constitution.rules.clone();
-        let edited = rules.last().unwrap();
-        assert_eq!(edited.applies_to, ["bash.command"]);
-        assert_eq!(rules.len(), 4, "saved over, not added");
-        let id = edited.id.clone();
-        ws.remove_rule("docbert", &id, cx);
-    });
-    cx.run_until_parked();
-    workspace.read_with(&cx, |ws, _| {
-        assert_eq!(ws.repo_named("docbert").constitution.rules.len(), 3);
-    });
-}
-
-#[gpui::test]
-fn a_rule_is_tried_on_the_repositorys_latest_calls(cx: &mut TestAppContext) {
-    use tau_ui::rule_editor::Trying;
-    let (workspace, mut cx, events) = open_demo(cx);
-    cx.update(|_, cx| demo::respond(&workspace, cx));
-    workspace.update(&mut cx, |ws, cx| {
-        for (_, update) in demo::script() {
-            ws.update_run(&demo::run_id(), update, cx);
-        }
-        ws.open_rule_editor("tau-agent", None, cx);
-        ws.rule_text_for_test("Never touch the production database.", cx);
-        ws.toggle_place("bash.command", cx);
-        ws.try_rule(cx);
-        assert_eq!(ws.rule_draft().unwrap().trying, Trying::Asking);
-    });
-    {
-        let events = events.borrow();
-        let Some(WorkspaceEvent::TryRule { calls, answers, .. }) =
-            events.last()
-        else {
-            panic!("no TryRule: {events:?}");
-        };
-        assert!(!calls.is_empty() && calls.len() <= 6);
-        assert!(calls.iter().all(|(tool, _)| tool == "bash"), "{calls:?}");
-        assert!(answers.is_empty(), "the rule reads no answers");
-    }
-    cx.run_until_parked();
-    cx.executor()
-        .advance_clock(std::time::Duration::from_secs(2));
-    cx.run_until_parked();
-    workspace.read_with(&cx, |ws, _| {
-        let Trying::Done { trials, .. } = &ws.rule_draft().unwrap().trying
-        else {
-            panic!("not tried");
-        };
-        assert!(!trials.is_empty());
-    });
-}
-
-#[gpui::test]
-fn the_constitution_counts_its_runs_and_lists_what_waits(
-    cx: &mut TestAppContext,
-) {
-    let (workspace, mut cx, _) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        for (_, update) in demo::script() {
-            ws.update_run(&demo::run_id(), update, cx);
-        }
-        let stats = ws.rules_stats("tau-agent");
-        assert!(stats.checked > 0);
-        assert_eq!((stats.blocked, stats.flagged, stats.waiting), (1, 1, 1));
-        assert_eq!(stats.per_rule.get("R2"), Some(&(1, 0, 0)));
-        let waiting = ws.review_items("tau-agent");
-        assert_eq!(waiting.len(), 1);
-        assert_eq!(waiting[0].rule, "R1");
-        assert_eq!(waiting[0].tool.as_deref(), Some("bash"));
-        // Looks fine: off the queue, and onto what was handled.
-        let (run, key) = (waiting[0].run.clone(), waiting[0].key.clone());
-        ws.mark_reviewed(&run, &key, cx);
-        assert!(ws.review_items("tau-agent").is_empty());
-        let fine = ws
-            .handled("tau-agent")
-            .into_iter()
-            .filter(|done| {
-                done.what == tau_ui::rule_editor::HandledKind::LookedFine
-            })
-            .count();
-        assert_eq!(fine, 1);
-    });
-}
-
-/// The Constitution screen sets what Jev's failures do and how many
-/// answers go back, within bounds, and removes unreadable rules only
-/// once confirmed.
-#[gpui::test]
-fn the_constitution_settings_and_reset(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open_demo(cx);
-    let settings = |events: &[WorkspaceEvent]| -> Vec<(bool, u32)> {
-        events
-            .iter()
-            .filter_map(|event| match event {
-                WorkspaceEvent::ConstitutionSettings {
-                    blocks_unchecked,
-                    max_holds,
-                    ..
-                } => Some((*blocks_unchecked, *max_holds)),
-                _ => None,
-            })
-            .collect()
-    };
-    workspace.update(&mut cx, |ws, cx| {
-        ws.navigate(
-            Route::Constitution {
-                repo: "tau-agent".into(),
-                rule: None,
-            },
-            cx,
-        );
-        ws.set_blocks_unchecked("tau-agent", true, cx);
-        // From 3: down past 0, then up past the most.
-        for _ in 0..5 {
-            ws.nudge_max_holds("tau-agent", -1, cx);
-        }
-        for _ in 0..15 {
-            ws.nudge_max_holds("tau-agent", 1, cx);
-        }
-    });
-    cx.run_until_parked();
-    let saved = settings(&events.borrow());
-    assert_eq!(saved[0], (true, 3));
-    assert_eq!(saved[5], (true, 0), "never below none");
-    assert_eq!(
-        saved.last(),
-        Some(&(true, tau_ui::rule_editor::MAX_HOLDS)),
-        "never past the most"
-    );
-    // Rules that cannot be read: removed only once confirmed.
-    workspace.update(&mut cx, |ws, cx| {
-        let mut catalog = ws.catalog().clone();
-        catalog.repos[0].constitution.error =
-            Some("R1: review is past block".into());
-        let repo = catalog.repos[0].name.clone();
-        ws.set_catalog(catalog, cx);
-        ws.navigate(
-            Route::Constitution {
-                repo: repo.clone(),
-                rule: None,
-            },
-            cx,
-        );
-        ws.ask_reset_rules(Some(&repo), cx);
-    });
-    cx.run_until_parked();
-    let resets = |events: &[WorkspaceEvent]| {
-        events
-            .iter()
-            .filter(|event| matches!(event, WorkspaceEvent::ResetRules { .. }))
-            .count()
-    };
-    assert_eq!(resets(&events.borrow()), 0, "asking is not removing");
-    workspace.update(&mut cx, |ws, cx| {
-        let repo = ws.catalog().repos[0].name.clone();
-        ws.reset_rules(&repo, cx);
-    });
-    assert_eq!(resets(&events.borrow()), 1);
-}
-
-/// A flagged final answer marked fine leaves the queue for what was
-/// handled, as a call does; one not marked stays.
-#[gpui::test]
-fn an_answer_marked_fine_is_handled(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        let run = demo::run_id();
-        for (_, update) in demo::script() {
-            ws.update_run(&run, update, cx);
-        }
-        for (rule, answer) in [("R6", "Done."), ("R6", "Done again.")] {
-            ws.update_run(
-                &run,
-                RunUpdate::Event(RunEvent::TurnStart {
-                    run: run.clone(),
-                    turn: 90,
-                }),
-                cx,
-            );
-            ws.update_run(
-                &run,
-                RunUpdate::Event(RunEvent::TextDelta {
-                    run: run.clone(),
-                    parent: None,
-                    delta: answer.into(),
-                }),
-                cx,
-            );
-            ws.update_run(
-                &run,
-                RunUpdate::Event(RunEvent::PluginReport {
-                    run: run.clone(),
-                    plugin: "tau-constitution".into(),
-                    body: serde_json::json!({
-                        "kind": "flagged", "rule": rule,
-                        "text": "The final answer names the tests that ran.",
-                        "score": 0.5,
-                    }),
-                }),
-                cx,
-            );
-        }
-        let answers = |ws: &Workspace| -> Vec<String> {
-            ws.review_items("tau-agent")
-                .into_iter()
-                .filter(|item| item.tool.is_none())
-                .map(|item| item.key)
-                .collect()
-        };
-        assert_eq!(answers(ws), ["answer-0", "answer-1"]);
-        ws.mark_reviewed(&run, "answer-1", cx);
-        assert_eq!(answers(ws), ["answer-0"]);
-        let fine: Vec<String> = ws
-            .handled("tau-agent")
-            .into_iter()
-            .filter(|done| {
-                done.what == tau_ui::rule_editor::HandledKind::LookedFine
-                    && done.shown.starts_with("final answer")
-            })
-            .map(|done| done.shown)
-            .collect();
-        assert_eq!(fine, ["final answer: Done again."]);
-    });
-}
-
-#[gpui::test]
 fn the_typesafe_key_is_asked_for_and_forgotten(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update_in(&mut cx, |ws, window, cx| {
@@ -1557,22 +1273,6 @@ fn history_runs_the_query_typed_and_shows_its_rows(cx: &mut TestAppContext) {
         ws.set_query_result(Err("no such table: nope".into()), cx);
         assert!(matches!(ws.query_result(), Some(Err(_))));
     });
-}
-
-#[gpui::test]
-fn a_reviewed_call_leaves_the_queue_for_good(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open_demo(cx);
-    let run = demo::run_id();
-    workspace.update(&mut cx, |ws, cx| {
-        ws.mark_reviewed(&run, "c6", cx);
-    });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::Reviewed {
-            run: run.clone(),
-            call_id: "c6".into()
-        })
-    );
 }
 
 #[gpui::test]

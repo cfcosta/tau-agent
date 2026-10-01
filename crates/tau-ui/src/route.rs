@@ -25,11 +25,6 @@ pub enum Route {
         repo: String,
         note: Option<String>,
     },
-    /// A repository's rules.
-    Constitution {
-        repo: String,
-        rule: Option<String>,
-    },
     /// Onboarding: GitHub, a model, repositories, the first run.
     Setup(SetupStep),
     /// A phone pairing with the tau on a computer, or failing to reach
@@ -97,9 +92,7 @@ impl Route {
     /// The repository a screen is about, if it names one.
     pub fn repo(&self) -> Option<&str> {
         match self {
-            Self::Memory { repo, .. } | Self::Constitution { repo, .. } => {
-                Some(repo)
-            }
+            Self::Memory { repo, .. } => Some(repo),
             Self::Plugin { params, .. } => {
                 params.get("repo").map(String::as_str)
             }
@@ -127,7 +120,6 @@ impl Route {
             Self::Plugins => "Plugins",
             Self::Plan(_) => "Run plan",
             Self::Memory { .. } => "Memory",
-            Self::Constitution { .. } => "Constitution",
             Self::Setup(step) => step.title(),
             Self::Pair(step) => step.title(),
             Self::PullRequest(_) => "Pull request",

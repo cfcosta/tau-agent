@@ -26,11 +26,11 @@ pub mod run;
 pub mod services;
 pub mod view;
 
-use gpui::App;
+use gpui::Context;
 pub use host::{HostCx, Push, RepoCtx, RunCtx, RunKind};
 pub use manifest::{Manifest, Page, Point, PointCx, SlashCommand};
 pub use registry::{Env, ErasedPlugin, Registry};
-pub use run::{CardInfo, Dropped, OutputCut, RunCx};
+pub use run::{CardInfo, CardMark, Dropped, OutputCut, RunCx};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 pub use services::Services;
@@ -218,9 +218,10 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
 
     // In the interface.
 
-    /// The plugin's state for a new window. `handle` is its way back to
-    /// that window, for the entities it makes (a field's Enter).
-    fn new_ui(&self, handle: Handle, cx: &mut App) -> Self::Ui;
+    /// The plugin's state for a new window, made in its own entity's
+    /// context so it can subscribe to what it makes (a field's Enter).
+    /// `handle` is its way back to that window.
+    fn new_ui(&self, handle: Handle, cx: &mut Context<Self::Ui>) -> Self::Ui;
 
     /// What [`Self::act`] answered.
     fn reply(&self, _ui: &mut Self::Ui, _reply: Value) {}

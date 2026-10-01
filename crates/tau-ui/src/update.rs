@@ -8,7 +8,6 @@
 
 use serde::{Deserialize, Serialize};
 use tau_agent::{event::RunEvent, tool::RunId};
-use tau_constitution::Trial;
 use tau_vcs::Landing;
 
 use crate::{
@@ -34,9 +33,6 @@ pub enum HostUpdate {
     },
     /// A run the ChatGPT plan stopped, and what to do next.
     PlanRefusal(tau_ai::refusal::Refusal),
-    /// A rule being written, tried on past calls and answers, and what
-    /// Jev cost.
-    RuleTrial(Result<(Vec<Trial>, f64), String>),
     QueryResult(Result<tau_store::Table, String>),
     PullRequest {
         run: RunId,

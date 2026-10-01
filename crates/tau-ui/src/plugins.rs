@@ -32,6 +32,9 @@ pub fn registry() -> &'static Registry {
             // follows when pruning cannot help.
             .with(tau_fast_compaction::ui::FastCompactionUi)
             .with(tau_compaction::ui::CompactionUi)
+            // The repository's rules check what the tools do; a goal's
+            // hold of a stop comes after theirs.
+            .with(tau_constitution::ui::ConstitutionUi)
             .with(tau_goal::GoalUi)
     });
     &REGISTRY
@@ -152,6 +155,10 @@ impl Workspace {
             }
             Request::Submit => self.submit_from_button(cx),
             Request::Refresh => {}
+            Request::OpenRun(run) => {
+                self.navigate(crate::route::Route::Run(run), cx)
+            }
+            Request::AskJevKey => self.ask_for_jev_key_later(cx),
         }
         cx.notify();
     }
@@ -210,6 +217,14 @@ impl Workspace {
                 })
                 .collect()
         };
+        let cards =
+            |id: &tau_agent::tool::RunId| -> Vec<tau_ui_plugin::CardInfo> {
+                self.runs
+                    .iter()
+                    .find(|run| &run.id == id)
+                    .map(RunView::cards)
+                    .unwrap_or_default()
+            };
         let env = Env {
             ui,
             state: state.or(run.map(|_| &null)),
@@ -220,8 +235,10 @@ impl Workspace {
             params,
             compact: self.compact(),
             jev: self.catalog.models.access.jev,
+            width: f32::from(self.screen_width()),
             handle: self.plugin_handle(name),
             runs: &runs,
+            cards: &cards,
             cx,
         };
         Some(f(plugin, env))

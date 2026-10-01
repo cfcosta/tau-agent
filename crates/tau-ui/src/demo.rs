@@ -11,13 +11,13 @@ use tau_agent::{
     tool::{RunId, ToolOutput},
 };
 use tau_ai::message::{Usage, UsageCost};
+use tau_constitution::ui::{Act as RulesAct, RuleInfo, Rules};
 
 use crate::{
     Workspace,
     WorkspaceEvent,
     catalog::{
         Catalog,
-        Constitution,
         JevStats,
         Link,
         Memory,
@@ -25,7 +25,6 @@ use crate::{
         PluginInfo,
         PluginScreen,
         Repo,
-        Rule,
         Seam,
         StoreInfo,
     },
@@ -654,9 +653,10 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
             note: None,
         },
         "plugins" => Route::Plugins,
-        "constitution" => Route::Constitution {
-            repo: "tau-agent".into(),
-            rule: None,
+        "constitution" => Route::Plugin {
+            plugin: tau_constitution::NAME.into(),
+            page: "rules".into(),
+            params: [("repo".to_owned(), "tau-agent".to_owned())].into(),
         },
         "compare" => Route::Compare {
             main: run_id(),
@@ -928,7 +928,13 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                             cx,
                         ),
                         Answer::Trial(trials, cost) => {
-                            ws.set_rule_trial(Ok((trials, cost)), cx)
+                            let tried: tau_constitution::ui::TrialResult =
+                                Ok((trials, cost));
+                            ws.plugin_reply(
+                                tau_constitution::NAME,
+                                serde_json::to_value(tried).unwrap_or_default(),
+                                cx,
+                            )
                         }
                     });
                     if done.is_err() {
@@ -1088,96 +1094,46 @@ pub fn respond(workspace: &Entity<Workspace>, cx: &mut App) {
                     ws.replay(id, steps, cx);
                 });
             }
-            // Rules change in the catalog, as the host's file would.
-            WorkspaceEvent::AddRule {
-                repo,
-                text,
-                on,
-                review,
-                block,
-            } => {
-                let (repo, text, on) = (repo.clone(), text.clone(), on.clone());
-                let (review, block) = (*review as f32, *block as f32);
-                workspace.update(cx, |ws, cx| {
-                    let mut catalog = ws.catalog().clone();
-                    if let Some(listed) = catalog.repo_mut(&repo) {
-                        let rules = &mut listed.constitution.rules;
-                        let id = (1..)
-                            .map(|n| format!("R{n}"))
-                            .find(|id| rules.iter().all(|rule| &rule.id != id))
-                            .unwrap_or_default();
-                        rules.push(Rule {
-                            id,
-                            text,
-                            applies_to: on,
-                            review,
-                            block,
-                        });
-                    }
-                    ws.set_catalog(catalog, cx);
-                });
-            }
-            WorkspaceEvent::UpdateRule {
-                repo,
-                id,
-                text,
-                on,
-                review,
-                block,
-            } => {
-                let (repo, id, text, on) =
-                    (repo.clone(), id.clone(), text.clone(), on.clone());
-                let (review, block) = (*review as f32, *block as f32);
-                workspace.update(cx, |ws, cx| {
-                    let mut catalog = ws.catalog().clone();
-                    if let Some(rule) =
-                        catalog.repo_mut(&repo).and_then(|listed| {
-                            listed
-                                .constitution
-                                .rules
-                                .iter_mut()
-                                .find(|rule| rule.id == id)
+            // Rules change in the catalog, as the host's store would.
+            WorkspaceEvent::PluginAct { plugin, action }
+                if plugin == tau_constitution::NAME =>
+            {
+                let Ok(act) =
+                    serde_json::from_value::<RulesAct>(action.clone())
+                else {
+                    return;
+                };
+                if let RulesAct::Try { calls, answers, .. } = act {
+                    // Jev's scores, as the demo scripts them: the calls in
+                    // the order they came.
+                    const SCORES: [f64; 6] =
+                        [0.94, 0.41, 0.06, 0.12, 0.33, 0.71];
+                    let shown = calls
+                        .iter()
+                        .map(|(tool, args)| {
+                            (
+                                Some(tool.clone()),
+                                crate::view::summarize_args(args),
+                            )
                         })
-                    {
-                        *rule = Rule {
-                            id,
-                            text,
-                            applies_to: on,
-                            review,
-                            block,
-                        };
-                    }
-                    ws.set_catalog(catalog, cx);
-                });
-            }
-            // Jev's scores, as the demo scripts them: the calls in the
-            // order they came.
-            WorkspaceEvent::TryRule { calls, answers, .. } => {
-                const SCORES: [f64; 6] = [0.94, 0.41, 0.06, 0.12, 0.33, 0.71];
-                let shown = calls
-                    .iter()
-                    .map(|(tool, args)| {
-                        (Some(tool.clone()), crate::view::summarize_args(args))
-                    })
-                    .chain(answers.iter().map(|answer| (None, answer.clone())));
-                let trials = shown
-                    .zip(SCORES.iter().cycle())
-                    .map(|((tool, shown), score)| tau_constitution::Trial {
-                        tool,
-                        shown,
-                        score: *score,
-                    })
-                    .collect::<Vec<_>>();
-                let cost = 0.00001 * trials.len() as f64;
-                later(vec![(900, Answer::Trial(trials, cost))], cx)
-            }
-            WorkspaceEvent::RemoveRule { repo, id } => {
-                let (repo, id) = (repo.clone(), id.clone());
+                        .chain(
+                            answers.iter().map(|answer| (None, answer.clone())),
+                        );
+                    let trials = shown
+                        .zip(SCORES.iter().cycle())
+                        .map(|((tool, shown), score)| tau_constitution::Trial {
+                            tool,
+                            shown,
+                            score: *score,
+                        })
+                        .collect::<Vec<_>>();
+                    let cost = 0.00001 * trials.len() as f64;
+                    later(vec![(900, Answer::Trial(trials, cost))], cx);
+                    return;
+                }
                 workspace.update(cx, |ws, cx| {
                     let mut catalog = ws.catalog().clone();
-                    if let Some(listed) = catalog.repo_mut(&repo) {
-                        listed.constitution.rules.retain(|rule| rule.id != id);
-                    }
+                    demo_rules_act(&mut catalog, act);
                     ws.set_catalog(catalog, cx);
                 });
             }
@@ -1369,7 +1325,7 @@ pub fn catalog() -> Catalog {
         used_by_runs: used,
     };
     let rule =
-        |id: &str, text: &str, on: &[&str], review: f32, block: f32| Rule {
+        |id: &str, text: &str, on: &[&str], review: f64, block: f64| RuleInfo {
             id: id.into(),
             text: text.into(),
             applies_to: on.iter().map(|f| (*f).to_owned()).collect(),
@@ -1387,7 +1343,10 @@ pub fn catalog() -> Catalog {
                 ..plugin(tau_reasoning::NAME, "Scores the job and picks the reasoning effort", &[Seam::Start], 0.004, None)
             },
             plugin("tau-memory", "Zettelkasten notes on docbert", &[Seam::Start, Seam::Tools, Seam::Finish], 0.212, Some(PluginScreen::Memory)),
-            plugin("tau-constitution", "6 rules on edit, write, bash and the final answer", &[Seam::BeforeTool, Seam::BeforeStop], 0.031, Some(PluginScreen::Constitution)),
+            PluginInfo {
+                page: Some(tau_ui_plugin::Link::page("rules").param("repo", "")),
+                ..plugin(tau_constitution::NAME, "6 rules on edit, write, bash and the final answer", &[Seam::BeforeTool, Seam::BeforeStop], 0.031, None)
+            },
             PluginInfo {
                 page: Some(tau_ui_plugin::Link::page("ledger").param("run", "")),
                 ..plugin(tau_fast_compaction::NAME, "Prunes large bash outputs as they arrive, and stale tool history, with Jev", &[Seam::Start, Seam::Rewrite], 0.046, None)
@@ -1409,15 +1368,22 @@ pub fn catalog() -> Catalog {
         repos: vec![
             Repo {
                 name: "tau-agent".into(),
-                plugins: Default::default(),
+                plugins: rules_data(tau_agent_rules(&rule)),
                 path: "~/Code/cfcosta/tau-agent".into(),
                 main: Some(run_id()),
                 memory: tau_agent_memory(&note, &link),
-                constitution: tau_agent_rules(&rule),
             },
             Repo {
                 name: "docbert".into(),
-                plugins: Default::default(),
+                plugins: rules_data(Rules {
+                    max_holds: 3,
+                    rules: vec![
+                        rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
+                        rule("D2", "Search results keep their scores; never sort them away.", &["edit.newText"], 0.40, 0.85),
+                        rule("D3", "The final answer names the tests that ran.", &["final answer"], 0.40, 0.75),
+                    ],
+                    ..Rules::default()
+                }),
                 path: "~/Code/cfcosta/docbert".into(),
                 main: Some(RunId(Arc::from("docbert-main"))),
                 memory: Memory {
@@ -1435,21 +1401,10 @@ pub fn catalog() -> Catalog {
                         ], vec![], &["src/search/bm25.rs"], 2),
                     ],
                 },
-                constitution: Constitution {
-                    max_holds: 3,
-                    blocks_unchecked: false,
-                    history: Vec::new(),
-                    error: None,
-                    rules: vec![
-                        rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
-                        rule("D2", "Search results keep their scores; never sort them away.", &["edit.newText"], 0.40, 0.85),
-                        rule("D3", "The final answer names the tests that ran.", &["final answer"], 0.40, 0.75),
-                    ],
-                },
             },
             Repo {
                 name: "homelab.nix".into(),
-                plugins: Default::default(),
+                plugins: rules_data(Rules::default()),
                 path: "~/Code/cfcosta/homelab.nix".into(),
                 main: Some(RunId(Arc::from("homelab-main"))),
                 memory: Memory {
@@ -1459,12 +1414,10 @@ pub fn catalog() -> Catalog {
                         "`restic` runs from `backup.timer` at 03:00, never from cron, so a missed run catches up on boot.",
                     ], vec![], &["hosts/nas/backup.nix"], 1)],
                 },
-                constitution: Constitution::default(),
             },
         ],
         open_repos: vec!["tau-agent".into()],
         closed_runs: Vec::new(),
-        reviewed: Vec::new(),
         store: StoreInfo {
             path: "runs.db".into(),
             size: "18.4 MB".into(),
@@ -1480,7 +1433,107 @@ pub fn catalog() -> Catalog {
 type NoteFn<'a> =
     &'a dyn Fn(&str, &str, &[&str], Vec<Link>, &[&str], u32) -> Note;
 type LinkFn<'a> = &'a dyn Fn(&str, &str) -> Link;
-type RuleFn<'a> = &'a dyn Fn(&str, &str, &[&str], f32, f32) -> Rule;
+/// What the constitution's host half does with `act`, on the demo's
+/// catalog: rules change in place, as the store would keep them.
+fn demo_rules_act(catalog: &mut Catalog, act: RulesAct) {
+    let rules_of = |catalog: &mut Catalog, repo: &str| -> Option<Rules> {
+        let data = catalog.repo(repo)?.plugins.get(tau_constitution::NAME)?;
+        serde_json::from_value(data.clone()).ok()
+    };
+    let save = |catalog: &mut Catalog, repo: &str, rules: Rules| {
+        if let Some(listed) = catalog.repo_mut(repo) {
+            listed.plugins.extend(rules_data(rules));
+        }
+    };
+    let info =
+        |id: String, text: String, on: Vec<String>, review, block| RuleInfo {
+            id,
+            text,
+            applies_to: on,
+            review,
+            block,
+        };
+    match act {
+        RulesAct::Add {
+            repo,
+            text,
+            on,
+            review,
+            block,
+        } => {
+            let Some(mut rules) = rules_of(catalog, &repo) else {
+                return;
+            };
+            let id = (1..)
+                .map(|n| format!("R{n}"))
+                .find(|id| rules.rules.iter().all(|rule| &rule.id != id))
+                .unwrap_or_default();
+            rules.rules.push(info(id, text, on, review, block));
+            save(catalog, &repo, rules);
+        }
+        RulesAct::Update {
+            repo,
+            id,
+            text,
+            on,
+            review,
+            block,
+        } => {
+            let Some(mut rules) = rules_of(catalog, &repo) else {
+                return;
+            };
+            if let Some(rule) =
+                rules.rules.iter_mut().find(|rule| rule.id == id)
+            {
+                *rule = info(id, text, on, review, block);
+            }
+            save(catalog, &repo, rules);
+        }
+        RulesAct::Remove { repo, id } => {
+            let Some(mut rules) = rules_of(catalog, &repo) else {
+                return;
+            };
+            rules.rules.retain(|rule| rule.id != id);
+            save(catalog, &repo, rules);
+        }
+        RulesAct::Settings {
+            repo,
+            blocks_unchecked,
+            max_holds,
+        } => {
+            let Some(mut rules) = rules_of(catalog, &repo) else {
+                return;
+            };
+            rules.blocks_unchecked = blocks_unchecked;
+            rules.max_holds = max_holds;
+            save(catalog, &repo, rules);
+        }
+        RulesAct::Reset { repo } => save(catalog, &repo, Rules::default()),
+        RulesAct::Reviewed { run, key } => {
+            let data = catalog
+                .plugin_data
+                .entry(tau_constitution::NAME.to_owned())
+                .or_insert_with(|| serde_json::json!({ "reviewed": [] }));
+            if let Some(list) = data["reviewed"].as_array_mut() {
+                list.push(serde_json::json!([run, key]));
+            }
+        }
+        RulesAct::Try { .. } => {}
+    }
+}
+
+type RuleFn<'a> = &'a dyn Fn(&str, &str, &[&str], f64, f64) -> RuleInfo;
+
+/// A repository's plugin data with `rules` as its constitution.
+fn rules_data(
+    rules: Rules,
+) -> std::collections::BTreeMap<String, serde_json::Value> {
+    [(
+        tau_constitution::NAME.to_owned(),
+        serde_json::to_value(rules).unwrap_or_default(),
+    )]
+    .into()
+}
 
 /// tau-agent's notes, the ones the mockups show.
 fn tau_agent_memory(note: NoteFn<'_>, link: LinkFn<'_>) -> Memory {
@@ -1581,8 +1634,8 @@ fn tau_agent_memory(note: NoteFn<'_>, link: LinkFn<'_>) -> Memory {
 }
 
 /// tau-agent's rules.
-fn tau_agent_rules(rule: RuleFn<'_>) -> Constitution {
-    Constitution {
+fn tau_agent_rules(rule: RuleFn<'_>) -> Rules {
+    Rules {
         max_holds: 3,
         blocks_unchecked: false,
         history: Vec::new(),

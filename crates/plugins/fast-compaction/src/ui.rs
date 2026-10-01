@@ -5,7 +5,7 @@
 
 use std::{collections::BTreeMap, os::unix::fs::DirBuilderExt as _, sync::Arc};
 
-use gpui::{AnyElement, App, Div, SharedString, div, prelude::*, px, relative};
+use gpui::{AnyElement, Div, SharedString, div, prelude::*, px, relative};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_agent::plugin::Plugin;
@@ -381,7 +381,12 @@ impl UiPlugin for FastCompactionUi {
         true
     }
 
-    fn new_ui(&self, _handle: tau_ui_plugin::Handle, _cx: &mut App) {}
+    fn new_ui(
+        &self,
+        _handle: tau_ui_plugin::Handle,
+        _cx: &mut gpui::Context<()>,
+    ) {
+    }
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()

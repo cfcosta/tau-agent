@@ -347,54 +347,69 @@ fn open_demo_screen(
             workspace.toggle_repo_menu("homelab.nix", cx);
             return;
         }
-        // The Constitution screen's states.
+        // The Constitution page's states.
         Some(
             open @ ("rule-editor" | "rule-missing" | "rules-review"
             | "rules-broken" | "rules-empty"),
         ) => {
+            use tau_constitution::ui::{Rules, page};
             let repo = "tau-agent";
             workspace.navigate(
-                Route::Constitution {
-                    repo: repo.into(),
-                    rule: None,
+                Route::Plugin {
+                    plugin: tau_constitution::NAME.into(),
+                    page: "rules".into(),
+                    params: [("repo".to_owned(), repo.to_owned())].into(),
                 },
                 cx,
             );
+            let Some(rules_ui) =
+                workspace.plugin_ui::<page::Ui>(tau_constitution::NAME)
+            else {
+                return;
+            };
+            let rule = "Never run migrations against the production database.";
             match open {
                 "rule-editor" => {
-                    workspace.open_rule_editor(repo, None, cx);
-                    workspace.rule_text_for_test(
-                        "Never run migrations against the production database.",
-                        cx,
-                    );
-                    workspace.toggle_place("bash.command", cx);
-                    workspace.try_rule(cx);
+                    // Tried on the demo run's shell commands.
+                    let calls: Vec<_> = workspace
+                        .run(&demo::run_id())
+                        .map(|run| run.cards())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|card| card.tool == "bash")
+                        .map(|card| (card.tool, card.args))
+                        .collect();
+                    rules_ui.update(cx, |ui, cx| {
+                        ui.open_editor(repo, None, cx);
+                        ui.set_rule_text(rule, cx);
+                        ui.toggle_place("bash.command", cx);
+                        ui.try_rule(calls, Vec::new(), cx);
+                    });
                 }
-                "rule-missing" => {
-                    workspace.open_rule_editor(repo, None, cx);
-                    workspace.rule_text_for_test(
-                        "Never run migrations against the production database.",
-                        cx,
-                    );
-                    workspace.save_rule(cx);
-                }
-                "rules-review" => workspace
-                    .set_rules_tab(tau_ui::rule_editor::RulesTab::Review, cx),
+                "rule-missing" => rules_ui.update(cx, |ui, cx| {
+                    ui.open_editor(repo, None, cx);
+                    ui.set_rule_text(rule, cx);
+                    ui.save(cx);
+                }),
+                "rules-review" => rules_ui
+                    .update(cx, |ui, cx| ui.set_tab(page::Tab::Review, cx)),
                 _ => {
                     let mut catalog = workspace.catalog().clone();
+                    let mut rules = Rules::default();
+                    if open == "rules-broken" {
+                        rules.error = Some(
+                            "The constitution stored for tau-agent is not \
+                             valid: Rule R4: review (0.95) is above block (0.9)"
+                                .into(),
+                        );
+                    } else {
+                        catalog.models.access.jev = false;
+                    }
                     if let Some(listed) = catalog.repo_mut(repo) {
-                        let rules = &mut listed.constitution;
-                        if open == "rules-broken" {
-                            rules.error = Some(
-                                "The constitution stored for tau-agent is not \
-                                 valid: Rule R4: review (0.95) is above block (0.9)"
-                                    .into(),
-                            );
-                            rules.rules.clear();
-                        } else {
-                            rules.rules.clear();
-                            catalog.models.access.jev = false;
-                        }
+                        listed.plugins.insert(
+                            tau_constitution::NAME.into(),
+                            serde_json::to_value(rules).unwrap_or_default(),
+                        );
                     }
                     workspace.set_catalog(catalog, cx);
                 }

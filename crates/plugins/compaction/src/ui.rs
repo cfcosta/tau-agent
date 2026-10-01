@@ -2,7 +2,6 @@
 //! line in a run's plugin list. Its rewrites show as the run's, with
 //! what they saved.
 
-use gpui::App;
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
 use tau_ui_kit::theme::Tone;
@@ -68,7 +67,7 @@ impl UiPlugin for CompactionUi {
 
     fn apply(&self, _state: &mut (), _body: &Value, _run: &mut dyn RunCx) {}
 
-    fn new_ui(&self, _handle: Handle, _cx: &mut App) {}
+    fn new_ui(&self, _handle: Handle, _cx: &mut gpui::Context<()>) {}
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new().contribute(points::STATUS, |_: &AtRun, _| {

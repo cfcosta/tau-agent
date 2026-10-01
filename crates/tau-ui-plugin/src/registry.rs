@@ -35,9 +35,13 @@ pub struct Env<'a> {
     pub params: &'a BTreeMap<String, String>,
     pub compact: bool,
     pub jev: bool,
+    /// The window's width, in pixels.
+    pub width: f32,
     pub handle: Handle,
     /// Every run, with the plugin's state in it.
     pub runs: &'a dyn Fn() -> Vec<(RunInfo, Value)>,
+    /// A run's tool calls.
+    pub cards: &'a dyn Fn(&tau_agent::tool::RunId) -> Vec<crate::CardInfo>,
     pub cx: &'a mut App,
 }
 
@@ -173,8 +177,10 @@ impl<P: UiPlugin> Typed<P> {
             env.params,
             env.compact,
             env.jev,
+            env.width,
             env.handle,
             env.runs,
+            env.cards,
             env.cx,
         );
         Some(f(&mut view))
@@ -252,8 +258,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
     }
 
     fn new_ui(&self, handle: Handle, cx: &mut App) -> AnyEntity {
-        let ui = self.plugin.new_ui(handle, cx);
-        cx.new(|_| ui).into_any()
+        cx.new(|cx| self.plugin.new_ui(handle, cx)).into_any()
     }
 
     fn reply(&self, ui: AnyEntity, reply: Value, cx: &mut App) {
@@ -503,7 +508,7 @@ mod tests {
             }
         }
 
-        fn new_ui(&self, _: Handle, _: &mut App) {}
+        fn new_ui(&self, _: Handle, _: &mut gpui::Context<()>) {}
 
         fn manifest(&self) -> Manifest<Self> {
             Manifest::new()
@@ -538,6 +543,10 @@ mod tests {
         }
 
         fn cut(&mut self, _: &str, _: crate::OutputCut) -> bool {
+            false
+        }
+
+        fn mark(&mut self, _: &str, _: crate::CardMark) -> bool {
             false
         }
 

@@ -60,8 +60,6 @@ pub struct RunView {
     /// What the chat cost before its latest message: each start of a
     /// resumed run reports only its own cost.
     pub cost_before: f64,
-    /// What tau-constitution checked and decided in the run.
-    pub constitution: ConstitutionStats,
     /// Each plugin's state in the run, as its fold leaves it, by plugin
     /// name (ADR 0017).
     #[serde(default)]
@@ -70,92 +68,6 @@ pub struct RunView {
     /// ([`tau_ui_plugin::RunCx::rewrite`]).
     #[serde(default)]
     pending_rewrites: std::collections::BTreeMap<String, String>,
-}
-
-/// tau-constitution's work in one run, from its reports.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ConstitutionStats {
-    /// Tool calls checked, and final answers checked.
-    pub calls: u32,
-    pub answers: u32,
-    /// Questions asked of Jev: one per rule per check.
-    pub questions: u32,
-    /// Checks Jev could not answer.
-    pub failed: u32,
-    /// What Jev cost, in US dollars.
-    pub cost: f64,
-    /// The rules behind each block, flag and hold, in order.
-    pub blocked: Vec<String>,
-    pub flagged: Vec<String>,
-    pub held: Vec<String>,
-    /// How many holds a run may have.
-    pub max_holds: Option<u32>,
-    /// Final answers that stood but were flagged for a person, with the
-    /// rule and its score.
-    pub flagged_answers: Vec<FlaggedAnswer>,
-}
-
-/// A final answer flagged for review.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FlaggedAnswer {
-    pub rule: String,
-    pub text: String,
-    pub score: f64,
-    pub answer: String,
-}
-
-impl ConstitutionStats {
-    /// Counts one of tau-constitution's report or record bodies: a
-    /// check, a verdict or a failure. Flagged answers' text is the
-    /// view's to add, from the transcript.
-    pub fn add(&mut self, body: &Value) {
-        use tau_constitution::{Check, Verdict, VerdictKind};
-        if body["kind"] == "error" {
-            self.failed += 1;
-        } else if let Some(check) = Check::parse(body) {
-            match check.call_id {
-                Some(_) => self.calls += 1,
-                None => self.answers += 1,
-            }
-            self.questions += check.scores.len() as u32;
-            self.cost += check.cost;
-        } else if let Some(verdict) = Verdict::parse(body) {
-            match verdict.kind {
-                VerdictKind::Blocked => self.blocked.push(verdict.rule),
-                VerdictKind::Flagged => self.flagged.push(verdict.rule),
-                VerdictKind::Held => {
-                    self.held.push(verdict.rule);
-                    self.max_holds = verdict.max_holds.or(self.max_holds);
-                }
-            }
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.calls == 0 && self.answers == 0
-    }
-
-    /// The plugin's state in a line: `1 blocked · 1 flagged`.
-    pub fn summary(&self) -> String {
-        let parts: Vec<String> = [
-            (self.blocked.len(), "blocked"),
-            (self.flagged.len(), "flagged"),
-            (self.held.len(), "held"),
-        ]
-        .into_iter()
-        .filter(|(count, _)| *count > 0)
-        .map(|(count, what)| format!("{count} {what}"))
-        .collect();
-        if parts.is_empty() {
-            let checks = self.calls + self.answers;
-            format!(
-                "{checks} {}, all clear",
-                if checks == 1 { "check" } else { "checks" }
-            )
-        } else {
-            parts.join(" · ")
-        }
-    }
 }
 
 /// One run event, as the Events tab lists it.
@@ -313,8 +225,6 @@ pub struct ToolCard {
     pub body: ToolBody,
     /// The plugin that added the tool, when a plugin did.
     pub from_plugin: Option<String>,
-    /// Rule scores that passed, shown quietly next to the result.
-    pub checks: Vec<String>,
     /// What a context rewrite left of the call, when it dropped some.
     pub dropped: Option<Dropped>,
     /// What a plugin cut from the call's result, when it did.
@@ -338,15 +248,11 @@ pub enum ToolState {
     /// A plugin refused the call. The reason went back to the model.
     Blocked {
         plugin: String,
-        rule: String,
         reason: String,
-        score: String,
     },
     /// The call ran, but a plugin wants a person to look at it.
     Flagged {
         plugin: String,
-        rule: String,
-        score: String,
     },
 }
 
@@ -574,7 +480,13 @@ pub struct Proposal {
 }
 
 pub use tau_ui_kit::theme::Tone;
-pub use tau_ui_plugin::{Dropped, OutputCut, PlanField, PluginStatus};
+pub use tau_ui_plugin::{
+    CardMark,
+    Dropped,
+    OutputCut,
+    PlanField,
+    PluginStatus,
+};
 
 /// A run a fold reaches without placing anchors: the anchors of what it
 /// restates are in the transcript already, or belong to another run.
@@ -582,6 +494,10 @@ struct Quiet<'a>(&'a mut RunView);
 
 impl tau_ui_plugin::RunCx for Quiet<'_> {
     fn transcript(&mut self, _key: &str) {}
+
+    fn mark(&mut self, call_id: &str, mark: CardMark) -> bool {
+        mark_card(self.0, "", call_id, mark)
+    }
 
     fn dropped(&mut self, call_id: &str, dropped: Dropped) -> bool {
         self.0
@@ -642,6 +558,10 @@ impl tau_ui_plugin::RunCx for Folding<'_> {
         true
     }
 
+    fn mark(&mut self, call_id: &str, mark: CardMark) -> bool {
+        mark_card(self.view, self.plugin, call_id, mark)
+    }
+
     fn dropped(&mut self, call_id: &str, dropped: Dropped) -> bool {
         self.view
             .tool_mut(call_id)
@@ -694,6 +614,24 @@ impl tau_ui_plugin::RunCx for Folding<'_> {
     }
 }
 
+/// Marks what `plugin` decided about the call `call_id` on its card.
+fn mark_card(
+    view: &mut RunView,
+    plugin: &str,
+    call_id: &str,
+    mark: CardMark,
+) -> bool {
+    let Some(card) = view.tool_mut(call_id) else {
+        return false;
+    };
+    let plugin = plugin.to_owned();
+    card.state = match mark {
+        CardMark::Blocked { reason } => ToolState::Blocked { plugin, reason },
+        CardMark::Flagged => ToolState::Flagged { plugin },
+    };
+    true
+}
+
 impl Folding<'_> {
     /// `view`'s tool calls, in order, with the turn of each.
     fn cards_of(view: &RunView) -> Vec<tau_ui_plugin::CardInfo> {
@@ -705,6 +643,7 @@ impl Folding<'_> {
                 Item::Tool(card) => cards.push(tau_ui_plugin::CardInfo {
                     call_id: card.call_id.clone(),
                     tool: card.tool.clone(),
+                    args: card.args.clone(),
                     summary: card.summary.clone(),
                     size: card.size,
                     turn,
@@ -899,10 +838,6 @@ pub enum RunUpdate {
         call_id: String,
         state: ToolState,
     },
-    Checks {
-        call_id: String,
-        checks: Vec<String>,
-    },
     /// The plugin that added a tool, for its card's tag.
     ToolPlugin {
         call_id: String,
@@ -959,7 +894,6 @@ impl RunView {
             started: String::new(),
             log: Vec::new(),
             cost_before: 0.0,
-            constitution: ConstitutionStats::default(),
             plugin_states: Default::default(),
             pending_rewrites: Default::default(),
         }
@@ -1128,7 +1062,6 @@ impl RunView {
                                 state: ToolState::Running,
                                 body: ToolBody::None,
                                 from_plugin: None,
-                                checks: Vec::new(),
                                 dropped: None,
                                 cut: None,
                                 anchors: Vec::new(),
@@ -1247,6 +1180,11 @@ impl RunView {
         }
     }
 
+    /// The run's tool calls, as a plugin sees them.
+    pub fn cards(&self) -> Vec<tau_ui_plugin::CardInfo> {
+        Folding::cards_of(self)
+    }
+
     /// The run, as a plugin's UI sees it.
     pub fn info(&self) -> tau_ui_plugin::RunInfo {
         tau_ui_plugin::RunInfo {
@@ -1254,6 +1192,9 @@ impl RunView {
             repo: self.repo.clone(),
             live: self.status.is_live(),
             title: self.title.clone(),
+            answer: (!self.status.is_live())
+                .then(|| self.last_text().map(str::to_owned))
+                .flatten(),
             context: self.context.used,
             window: self.context.window,
         }
@@ -1344,11 +1285,6 @@ impl RunView {
             RunUpdate::Context(context) => self.context = context,
             RunUpdate::Tool { call_id, state } => {
                 self.mark_tool(&call_id, state);
-            }
-            RunUpdate::Checks { call_id, checks } => {
-                if let Some(card) = self.tool_mut(&call_id) {
-                    card.checks = checks;
-                }
             }
             RunUpdate::ToolPlugin { call_id, plugin } => {
                 if let Some(card) = self.tool_mut(&call_id) {
@@ -1442,7 +1378,6 @@ impl RunView {
                 state: ToolState::Running,
                 body: ToolBody::None,
                 from_plugin: None,
-                checks: Vec::new(),
                 dropped: None,
                 cut: None,
                 anchors: Vec::new(),
@@ -1526,11 +1461,9 @@ impl RunView {
                 delay: *delay,
                 error: error.clone(),
             }),
-            // The constitution's report of the hold already says it, and a
-            // plugin with its UI says it in what it publishes.
+            // A plugin with its UI says it in what it publishes.
             RunEvent::Continued { plugin, .. }
-                if &**plugin == tau_constitution::NAME
-                    || crate::plugins::registry().get(plugin).is_some() => {}
+                if crate::plugins::registry().get(plugin).is_some() => {}
             RunEvent::PluginReport { plugin, body, .. } => {
                 self.report(plugin, body)
             }
@@ -1779,139 +1712,11 @@ pub fn proposed_text(args: &Value) -> Vec<String> {
 }
 
 impl RunView {
-    /// What a plugin reported. The constitution's verdicts mark the call
-    /// they are about, or note what it did with the final answer; other
+    /// What a plugin reported: a plugin with its UI folds it; other
     /// plugins' reports only reach the event log.
     pub fn report(&mut self, plugin: &str, body: &Value) {
-        // A plugin with its UI folds what it published itself.
         if crate::plugins::registry().get(plugin).is_some() {
             self.fold(plugin, body);
-            return;
-        }
-        use tau_constitution::{Verdict, VerdictKind};
-        if plugin != tau_constitution::NAME {
-            return;
-        }
-        self.constitution.add(body);
-        if body["kind"] == "error" {
-            // What `on_error` did with what it could not check.
-            let call = body["call_id"].is_string();
-            let detail = match (body["on_error"].as_str(), call) {
-                (Some("block"), true) => "not checked · blocked",
-                (Some("block"), false) if body["held"] == true => {
-                    "not checked · sent back"
-                }
-                (_, true) => "not checked · ran",
-                (_, false) => "not checked · the answer stands",
-            };
-            self.push_note(PluginNote {
-                plugin: plugin.to_owned(),
-                text: body["message"].as_str().unwrap_or("failed").to_owned(),
-                detail: Some(detail.into()),
-                tone: Tone::Danger,
-                body: NoteBody::None,
-            });
-            return;
-        }
-        if let Some(check) = tau_constitution::Check::parse(body) {
-            // Every score shows on the call's card, passed or not.
-            if let Some(call_id) = &check.call_id
-                && let Some(card) = self.tool_mut(call_id)
-            {
-                card.checks = check
-                    .scores
-                    .iter()
-                    .map(|score| format!("{} {:.2}", score.rule, score.score))
-                    .collect();
-            }
-            self.sync_constitution_status();
-            return;
-        }
-        let Some(verdict) = Verdict::parse(body) else {
-            return;
-        };
-        if verdict.call_id.is_none() && verdict.kind == VerdictKind::Flagged {
-            let answer = self.last_text().unwrap_or_default().to_owned();
-            self.constitution.flagged_answers.push(FlaggedAnswer {
-                rule: verdict.rule.clone(),
-                text: verdict.text.clone(),
-                score: verdict.score,
-                answer,
-            });
-        }
-        self.sync_constitution_status();
-        let score = format!("{:.2}", verdict.score);
-        if let Some(call_id) = &verdict.call_id {
-            if let Some(card) = self.tool_mut(call_id) {
-                card.state = match verdict.kind {
-                    VerdictKind::Blocked => ToolState::Blocked {
-                        plugin: plugin.to_owned(),
-                        rule: verdict.rule,
-                        reason: verdict.reason.unwrap_or(verdict.text),
-                        score,
-                    },
-                    _ => ToolState::Flagged {
-                        plugin: plugin.to_owned(),
-                        rule: verdict.rule,
-                        score,
-                    },
-                };
-            }
-            return;
-        }
-        let (text, tone) = match verdict.kind {
-            VerdictKind::Held => (
-                format!(
-                    "held the stop: the answer breaks {} (\"{}\")",
-                    verdict.rule, verdict.text
-                ),
-                Tone::Warn,
-            ),
-            _ => (
-                format!(
-                    "flagged the answer for review: {} (\"{}\")",
-                    verdict.rule, verdict.text
-                ),
-                Tone::Warn,
-            ),
-        };
-        let detail = match (verdict.hold, verdict.max_holds) {
-            (Some(hold), Some(max)) => {
-                format!("before_stop · continuation {hold} / {max}")
-            }
-            _ => format!("before_stop · {score}"),
-        };
-        self.push_note(PluginNote {
-            plugin: plugin.to_owned(),
-            text,
-            detail: Some(detail),
-            tone,
-            body: NoteBody::None,
-        });
-    }
-
-    /// The run's plugin list says what the constitution did so far.
-    fn sync_constitution_status(&mut self) {
-        let state = self.constitution.summary();
-        let tone = if self.constitution.blocked.is_empty() {
-            Tone::Quiet
-        } else {
-            Tone::Danger
-        };
-        match self
-            .plugins
-            .iter_mut()
-            .find(|status| status.name == tau_constitution::NAME)
-        {
-            Some(status) => {
-                status.state = state;
-                status.tone = tone;
-            }
-            None => self.plugins.push(PluginStatus {
-                name: tau_constitution::NAME.into(),
-                state,
-                tone,
-            }),
         }
     }
 }
@@ -2208,6 +2013,14 @@ mod tests {
         })
     }
 
+    /// tau-constitution's state in `view`, as its fold leaves it.
+    fn rules_of(view: &RunView) -> tau_constitution::ui::State {
+        view.plugin_states
+            .get(tau_constitution::NAME)
+            .map(|state| serde_json::from_value(state.clone()).unwrap())
+            .unwrap_or_default()
+    }
+
     /// fast-compaction's state in `view`, as its fold leaves it.
     fn pruning(view: &RunView) -> tau_fast_compaction::ui::State {
         view.plugin_states
@@ -2433,8 +2246,6 @@ mod tests {
             card.state,
             ToolState::Flagged {
                 plugin: tau_constitution::NAME.into(),
-                rule: "R2".into(),
-                score: "0.55".into(),
             }
         );
         // A held answer is one note, not two.
@@ -2450,7 +2261,9 @@ mod tests {
         let notes = view
             .items
             .iter()
-            .filter(|item| matches!(item, Item::Plugin(_)))
+            .filter(|item| {
+                matches!(item, Item::Plugin(_) | Item::Anchor { .. })
+            })
             .count();
         assert_eq!(notes, 1);
         // Every check counts; passing scores show on their call's card.
@@ -2462,24 +2275,18 @@ mod tests {
         view.apply(&report(serde_json::json!({
             "kind": "checked", "scores": [{"rule": "R6", "score": 0.9}], "cost": 0.00001
         })));
-        let Some(Item::Tool(card)) =
-            view.items.iter().find(|item| matches!(item, Item::Tool(_)))
-        else {
-            panic!("a card")
-        };
-        assert_eq!(card.checks, ["R2 0.55", "R4 0.02"]);
-        let stats = &view.constitution;
+        let state = rules_of(&view);
+        assert_eq!(
+            state.calls["c1"].scores,
+            [("R2".to_owned(), 0.55), ("R4".to_owned(), 0.02)]
+        );
+        let stats = &state.stats;
         assert_eq!((stats.calls, stats.answers, stats.questions), (1, 1, 3));
         assert_eq!(stats.flagged, ["R2"]);
         assert_eq!(stats.held, ["R6"]);
         assert!((stats.cost - 0.00004).abs() < 1e-12);
         // The run's plugin list says so.
-        let status = view
-            .plugins
-            .iter()
-            .find(|status| status.name == tau_constitution::NAME)
-            .unwrap();
-        assert_eq!(status.state, "1 flagged · 1 held");
+        assert_eq!(state.status().unwrap().0, "1 flagged · 1 held");
         // Other plugins' reports only reach the log.
         let before = view.items.len();
         view.apply(&RunEvent::PluginReport {
@@ -2985,11 +2792,14 @@ mod tests {
                 })),
             ],
         );
+        let state = rules_of(&view);
         let details: Vec<&str> = view
             .items
             .iter()
             .filter_map(|item| match item {
-                Item::Plugin(note) => note.detail.as_deref(),
+                Item::Anchor { key, .. } => {
+                    Some(state.notes[key].detail.as_str())
+                }
                 _ => None,
             })
             .collect();
@@ -3001,7 +2811,7 @@ mod tests {
                 "not checked · the answer stands"
             ]
         );
-        assert_eq!(view.constitution.failed, 3);
+        assert_eq!(state.stats.failed, 3);
     }
 
     #[test]
@@ -3017,7 +2827,6 @@ mod tests {
             state: ToolState::Done { summary: None },
             body: ToolBody::None,
             from_plugin: None,
-            checks: Vec::new(),
             dropped: None,
             cut: None,
             anchors: Vec::new(),

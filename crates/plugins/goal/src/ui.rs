@@ -327,8 +327,8 @@ impl UiPlugin for GoalUi {
         state.apply(body, run);
     }
 
-    fn new_ui(&self, handle: Handle, cx: &mut App) -> Ui {
-        let limit = |text: String, cx: &mut App| {
+    fn new_ui(&self, handle: Handle, cx: &mut gpui::Context<Ui>) -> Ui {
+        let limit = |text: String, cx: &mut gpui::Context<Ui>| {
             let input = cx.new(|cx| {
                 let mut input = TextInput::new("", cx).keep_on_submit();
                 input.set_text(text, cx);
@@ -336,7 +336,7 @@ impl UiPlugin for GoalUi {
             });
             // Enter in a limit sends the goal, as Enter in the composer.
             let handle = handle.clone();
-            cx.subscribe(&input, move |_, _: &InputEvent, cx| {
+            cx.subscribe(&input, move |_, _, _: &InputEvent, cx| {
                 handle.request(Request::Submit, cx)
             })
             .detach();

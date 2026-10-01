@@ -25,6 +25,7 @@
 //!   tool call, in runs already going too.
 
 pub mod rules;
+pub mod ui;
 
 use std::sync::{Arc, RwLock};
 

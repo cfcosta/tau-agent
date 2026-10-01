@@ -8943,8 +8943,10 @@ dependencies = [
 name = "tau-constitution"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
+ "gpui-pre",
  "hegeltest",
  "schemars",
  "serde",
@@ -8954,6 +8956,8 @@ dependencies = [
  "tau-jev",
  "tau-store",
  "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

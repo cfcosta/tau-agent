@@ -2,18 +2,30 @@
 //! what the run holds so far. `tau-ui`'s run view implements it.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// A tool call the run made, as a fold reads it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CardInfo {
     pub call_id: String,
     pub tool: String,
+    /// The arguments the model sent.
+    pub args: Value,
     /// The argument worth reading at a glance.
     pub summary: String,
     /// Characters the call and its result take in the context.
     pub size: usize,
     /// The turn it was made in.
     pub turn: u32,
+}
+
+/// What a plugin decided about a tool call, for its card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CardMark {
+    /// Refused; `reason` went back to the model.
+    Blocked { reason: String },
+    /// It ran, and waits for a person to look at it.
+    Flagged,
 }
 
 /// What a context rewrite left of a tool call in the model's context.
@@ -61,6 +73,9 @@ pub trait RunCx {
     /// Attaches the plugin's anchor `key` to the card of `call_id`; false
     /// when the run has no such card (yet).
     fn attach(&mut self, call_id: &str, key: &str) -> bool;
+    /// Marks what the plugin decided about the call `call_id`; false when
+    /// the run has no such card.
+    fn mark(&mut self, call_id: &str, mark: CardMark) -> bool;
     /// Marks what the plugin's context rewrite left of the call
     /// `call_id`; false when the run has no such card.
     fn dropped(&mut self, call_id: &str, dropped: Dropped) -> bool;

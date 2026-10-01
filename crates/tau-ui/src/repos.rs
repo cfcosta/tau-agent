@@ -276,16 +276,6 @@ impl Workspace {
         );
     }
 
-    pub fn open_constitution(&mut self, repo: &str, cx: &mut Context<Self>) {
-        self.navigate(
-            Route::Constitution {
-                repo: repo.to_owned(),
-                rule: None,
-            },
-            cx,
-        );
-    }
-
     pub fn hover_repo(
         &mut self,
         name: &str,
