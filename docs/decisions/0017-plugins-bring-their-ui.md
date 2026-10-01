@@ -77,6 +77,8 @@ pub trait UiPlugin: 'static {
     fn name(&self) -> &'static str;
     /// What the plugin knows of one run. Travels in `RunView` as JSON.
     type State: Serialize + DeserializeOwned + Default + Clone;
+    /// What it knows of one repository. Travels in the catalog as JSON.
+    type RepoData: Serialize + DeserializeOwned + Default + Clone;
     /// What the user set. The host saves it under the plugin's name.
     type Settings: Serialize + DeserializeOwned + Default;
 
@@ -84,15 +86,14 @@ pub trait UiPlugin: 'static {
     fn agent_plugin(&self, run: &RunCtx, settings: &Self::Settings)
         -> Option<Box<dyn Plugin>>;
     fn catalog(&self, cx: &HostCx) -> PluginInfo;
+    fn repo_data(&self, repo: &RepoCtx, cx: &HostCx) -> Self::RepoData;
     fn act(&self, action: &Value, cx: &HostCx) -> anyhow::Result<()>;
 
     // Wherever a run is shown: live or stored, desktop or phone.
     fn apply(&self, state: &mut Self::State, record: &Value, run: &mut Anchors);
 
-    // How it looks.
-    fn render(&self, slot: Slot<'_>, state: &Self::State, cx: &mut ViewCx)
-        -> Option<AnyElement>;
-    fn commands(&self) -> &[SlashCommand] { &[] }
+    // Where its UI goes, and what it is.
+    fn ui(&self) -> Manifest<Self>;
 }
 ```
 
@@ -103,7 +104,11 @@ pub trait UiPlugin: 'static {
 - **`catalog`** is its entry on the Plugins screen, "needs a TypeSafe
   key" included. Spend comes from `plugin_costs`, the same for every
   plugin.
-- **`act`** carries out what the plugin's screens ask for: add a rule,
+- **`repo_data`** is what the plugin shows about one repository: the
+  notes, the rules and their settings, a reason they cannot be read.
+  It replaces `Catalog.repos[i].memory` and `.constitution`, which
+  become `Repo.plugins[name]`.
+- **`act`** carries out what the plugin's pages ask for: add a rule,
   pause a goal, remove a constitution that cannot be read. The
   interface sends `WorkspaceEvent::Plugin { plugin, action }`, which
   replaces the per-plugin events. `HostCx` is the only part of the
@@ -114,37 +119,120 @@ pub trait UiPlugin: 'static {
   plain Rust, with no gpui and no store, so the phone runs it too. It
   places anchors in the run: `run.transcript(key)` puts
   `Item::Plugin { plugin, key }` at the current point of the
-  transcript, `run.card(call_id).attach(key)` marks a tool card, and
-  `run.status`, `run.plan_field` and `run.context_trigger` set the
-  shared lines.
-- **`render`** draws the plugin wherever there is a slot for it, with
-  any gpui it likes. The slots are:
-  - `Transcript { key }`
-  - `CardBadge`, `CardBody` and `CardTab { call_id }`
-  - `RunBanner`
-  - `Inspector`
-  - `Status`
-  - `PlanField`
-  - `ContextMeter`
-  - `Screen { arg }`, reached through `Route::Plugin { name, arg }`
-  - `Settings`, a section of the Models screen
-
-  `tau-ui` keeps the frames: the transcript's layout, the card's
-  shell, routing, and the cost lines, which come from `PluginCharged`.
-
-- **`commands`** are its slash commands, such as `/goal`.
+  transcript, and `run.card(call_id).attach(key)` marks a tool card.
+- **`ui`** returns the plugin's manifest: everything it adds to the
+  interface, and where.
 
 `tau-ui` holds a `Registry` of erased `UiPlugin`s, built in `main.rs`.
-The registry converts each plugin's state between JSON and
-`State`. The host builds a run's plugins only through the registry,
-so a plugin reaches a run only with its UI.
+The registry converts each plugin's state and repository data between
+JSON and their types, and gathers the manifests. The host builds a
+run's plugins only through the registry, so a plugin reaches a run only
+with its UI.
+
+### Extension points
+
+The interface is extended only at **extension points**. Nothing in it
+is a closed list: not the places a plugin can draw, not the navigation,
+not the commands. A point has a name and the context each contribution
+gets:
+
+```rust
+pub struct Point<Cx, Out = AnyElement> { /* a name, such as "tau.sidebar.repo" */ }
+
+pub const SIDEBAR_REPO: Point<RepoNavCx, NavEntry> = Point::new("tau.sidebar.repo");
+pub const CARD_BADGE: Point<CardCx> = Point::new("tau.run.card.badge");
+```
+
+- **Whoever owns a surface declares its points.** `tau-ui` declares its
+  own: the sidebar's main nav and each repository's rows, the phone's
+  tabs and Runs list, search, the transcript anchors, a tool card's
+  badge, body and tabs, the run banner, the inspector, the status line,
+  the plan, the context meter, the title bar's actions, the composer's
+  commands, the Models screen's sections. A plugin can declare points
+  on its own pages, such as `tau-constitution.rule.sections`, and other
+  plugins contribute to them like they do to `tau-ui`'s.
+- **A contribution** is the plugin's content for one point: a nav entry,
+  an element, a command. It carries an `order` and a `when`, a test on
+  its context (for example, only for runs that have a goal), so the
+  point decides nothing about who shows.
+- **A new surface is a new point.** Adding one is a change to whoever
+  owns it, not to every plugin. A contribution to a point nobody
+  declares (its owner is not registered) is dropped, and the registry
+  logs it once.
+- The `Anchors` the fold places are context for the transcript and card
+  points: the point gets the anchor's key, and the plugin that placed it
+  draws it.
+
+### The manifest
+
+`ui()` declares the plugin's pages, the points it adds, and anything
+it contributes, in one place:
+
+```rust
+// tau-constitution
+Manifest::new()
+    .page(Page::new("rules", RulesPage::new).param("repo"))
+    .page(Page::new("rule", RulesPage::focused).params(["repo", "rule"]))
+    .point(RULE_SECTIONS)                       // others add to a rule's page
+    .contribute(SIDEBAR_REPO, |cx| NavEntry::new("Constitution")
+        .icon(Icon::Blocked)
+        .detail(format!("{} rules", cx.data::<Rules>().rules.len()))
+        .badge(waiting(cx))
+        .to(Link::page("rules").param("repo", cx.repo)))
+    .contribute(CARD_BADGE, checks_badge)
+    .contribute(TRANSCRIPT, verdict_note)
+    .contribute(INSPECTOR, run_checks)
+
+// tau-memory
+Manifest::new()
+    .page(Page::new("notes", NotesPage::new).param("repo"))
+    .page(Page::new("note", NotePage::new).params(["repo", "note"]))
+    .contribute(SIDEBAR_REPO, |cx| NavEntry::new("Memory")
+        .icon(Icon::Memory)
+        .detail(format!("{} notes", cx.data::<Notes>().notes.len()))
+        .to(Link::page("notes").param("repo", cx.repo)))
+    .contribute(SIDEBAR, |_| NavEntry::new("Your notes").to(Link::page("notes")))
+    .contribute(TRANSCRIPT, suggested_note)
+```
+
+- **A nav entry** is shown wherever its point is drawn. `tau-ui` draws
+  the sidebar, the phone's tabs and Runs list, and search from the same
+  entries, so a plugin is never listed in one place and missing from
+  another.
+- **A page** is a gpui view the plugin owns (an `Entity` shown as an
+  `AnyView`), named within the plugin and opened with parameters. It
+  keeps its own UI state: the rule draft, the open tab and the reset
+  confirmation leave `Workspace` for `RulesPage`. `tau-ui` makes a page
+  the first time it is opened with those parameters and keeps it while
+  the window is open, so a tab or a draft survives going back and
+  forth. A page supplies its title, for the title bar and history.
+- **A link** names a page and its parameters:
+  `Link::page("rule").param("repo", r).param("rule", "R2")`, from the
+  plugin's own name, or `Link::to("tau-memory", "note")` across
+  plugins. Every route a plugin adds is `Route::Plugin { plugin, page,
+params }`. It replaces `Route::Memory`, `Route::Constitution`,
+  `Route::Plan` and `Route::Ledger`; back, history and the title bar
+  treat it like any route. A link to a page that no registered plugin
+  has resolves to nothing.
+- **`PageCx` and `ViewCx`** are what a page or a contribution can reach:
+  its parameters or context, the plugin's repository data and run
+  states (for a review queue across runs), `emit(action)` to the host,
+  `navigate(link)`, and the kit.
+- **Commands** are contributions too: a slash command such as `/goal`,
+  or a search action, at the composer's and search's points.
+
+`tau-ui` keeps the frames, and fills them from the manifests: the
+sidebar, the tab bar, search, the router, the title bar, the
+transcript's layout, the card's shell, and the cost lines, which come
+from `PluginCharged`.
 
 ### Where positions and drawing split
 
-The fold decides **where** a plugin shows. Anchors are data:
+The fold decides **where** a plugin shows in a run. Anchors are data:
 serializable, in order, and the same in history as live. The view
 decides **how** it shows, with any element. So the phone can lay out a
-run it did not see live, and a plugin's look is its own.
+run it did not see live, and a plugin's look is its own. Outside a run,
+the manifest decides where, and the page or contribution how.
 
 ### State as JSON
 
@@ -173,9 +261,10 @@ a `context` entry's details to the plugin that wrote it.
 - `tau-ui-kit`: theme tokens, components, icons and markdown, moved out
   of `tau-ui`. It keeps the rule that screens never set their own sizes
   or colors (`tests/design.rs`), and plugins follow it too.
-- `tau-ui-plugin`: the interface above, `Anchors`, `Slot`, `RunCtx`,
-  `HostCx`, `ViewCx`, and the shared types (`PluginInfo`,
-  `PluginStatus`, `PlanField`). It depends on `tau-agent`,
+- `tau-ui-plugin`: the interface above, `Anchors`, `Point`,
+  `Manifest`, `Page`, `NavEntry`, `Link`, `RunCtx`, `RepoCtx`, `HostCx`,
+  `PageCx`, `ViewCx`, the points `tau-ui` declares, and the shared
+  types (`PluginInfo`, `PluginStatus`, `PlanField`). It depends on `tau-agent`,
   `tau-store`, gpui and `tau-ui-kit`.
 - Each plugin crate depends on `tau-ui-plugin`. Its UI is part of the
   crate, not behind a feature.
@@ -190,9 +279,11 @@ a `context` entry's details to the plugin that wrote it.
 - Most of the per-plugin code in `view.rs`, `host.rs`, `slash.rs`,
   `rule_editor.rs`, `goal.rs` and `ui/screens/` moves into the plugins.
   `RunView` loses `constitution`, `goal`, `goal_checks`, `ledger` and
-  `ran_at`. `RunUpdate` loses its plugin variants. `PluginScreen`
-  gives way to `Route::Plugin`, and `ModelSettings.reasoning` to
-  per-plugin settings.
+  `ran_at`, and `Repo` loses `memory` and `constitution`. `RunUpdate`
+  loses its plugin variants. `PluginScreen` and the per-plugin routes
+  give way to `Route::Plugin`, and `ModelSettings.reasoning` to
+  per-plugin settings. The sidebar, search and the phone's Runs tab
+  stop naming plugins.
 - Every plugin crate compiles gpui. That includes their in-the-loop
   tests, and the phone, which builds the agent-side code it never
   runs. If that gets slow, that code can be left out of the Android
@@ -203,7 +294,10 @@ a `context` entry's details to the plugin that wrote it.
   internals.
 - Arbitrary gpui in shared places gives up a single look. The kit and
   the design test keep sizes and colors in common; the layout inside a
-  slot is the plugin's.
+  contribution or page is the plugin's.
+- Plugins can depend on each other's points by name. A point is part of
+  its owner's public API: renaming one, or changing its context, is a
+  breaking change for whoever contributes to it.
 - `RunView` JSON from before this change does not load. That is
   acceptable: there are no users yet, so nothing is migrated.
 
@@ -214,9 +308,10 @@ a `context` entry's details to the plugin that wrote it.
 2. Move the theme and components into `tau-ui-kit`, and create
    `tau-ui-plugin` with the registry.
 3. Move `tau-reasoning` first. It is the smallest plugin that uses
-   nearly every slot: a transcript note with its own body, a plan
-   field, a status line, a settings section and a screen.
+   most kinds of point: a transcript note with its own body, a plan
+   field, a status line, a Models section and a page.
 4. Then `tau-goal`, `tau-fast-compaction`, `tau-constitution` and
-   `tau-memory`.
+   `tau-memory`. The last two bring the sidebar's repository rows and
+   pages that keep their own state.
 5. Then the plugins that draw tool cards: `tau-tools`, `tau-vcs` and
    `tau-compaction`.
