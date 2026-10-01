@@ -22,6 +22,7 @@ use tau_vcs::{
     RunWorkspace,
     UpdateFrom,
     Vcs,
+    VcsPlugin,
     clone_bare,
     run_workspace::{PLUGIN, bookmark},
 };
@@ -397,6 +398,56 @@ fn agent(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
         .name("coder")
         .plugin(CodingTools::new(Root::new(workspace.dir())))
         .plugin(workspace.clone())
+}
+
+/// A first turn that writes a file and commits it changed that file:
+/// what it changed is told from `@` as the run started, not from the
+/// commit the turn left `@` on.
+#[test]
+fn a_first_turn_that_commits_still_changed_files() {
+    let src = tempfile::tempdir().unwrap();
+    source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let store = Store::memory().await.unwrap();
+        let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
+        let first =
+            RunWorkspace::new(project.clone(), "first", Identity::default())
+                .unwrap()
+                .on_turn({
+                    let heard = heard.clone();
+                    move |turn| heard.lock().unwrap().push(turn.paths.clone())
+                });
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("write", write("b.txt", "one\n"))
+                    .tool_call("vcs_commit", json!({ "message": "feat: b" }))
+            })
+            .turn(|t| t.text("done"));
+        let outcome = agent(llm.clone(), &first)
+            .plugin(VcsPlugin::new(first.vcs().clone()))
+            .run("write b.txt and commit it", &store)
+            .await
+            .unwrap();
+        llm.assert_exhausted();
+        let changed: Vec<bool> =
+            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap())
+                .iter()
+                .map(|(_, link)| link.changed)
+                .collect();
+        assert_eq!(changed, [true, false]);
+        assert_eq!(*heard.lock().unwrap(), [vec!["b.txt".to_owned()], vec![]]);
+    });
 }
 
 /// Turns are snapshots, not commits (ADR 0014): the run's work stays in

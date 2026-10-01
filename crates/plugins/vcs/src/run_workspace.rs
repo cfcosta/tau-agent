@@ -238,31 +238,37 @@ impl Plugin for RunWorkspace {
         let inherited = plan.records().iter().rev().find_map(|record| {
             serde_json::from_value::<Link>(record.clone()).ok()
         });
-        let since = inherited
+        let inherited_snapshot = inherited
             .as_ref()
             .filter(|link| link.snapshot)
             .map(|link| link.commit_id.clone());
         let project = self.project.clone();
         let name = self.name.clone();
         let base = self.base.clone();
-        tokio::task::spawn_blocking(move || match (inherited, base) {
-            (Some(link), _) if link.snapshot => project
-                .add_workspace_from_snapshot(&name, &link.commit_id)
-                .map(|_| ()),
-            // The change may have been restacked since.
-            (Some(link), _) => {
-                let base = project.current([link])?.remove(0).commit_id;
-                project.add_workspace(&name, &base).map(|_| ())
+        // `@` as the run starts: what its first turn changed is told
+        // from it, unless the run goes on from a turn's snapshot.
+        let start = tokio::task::spawn_blocking(move || {
+            match (inherited, base) {
+                (Some(link), _) if link.snapshot => project
+                    .add_workspace_from_snapshot(&name, &link.commit_id)
+                    .map(|_| ())?,
+                // The change may have been restacked since.
+                (Some(link), _) => {
+                    let base = project.current([link])?.remove(0).commit_id;
+                    project.add_workspace(&name, &base).map(|_| ())?
+                }
+                (None, Some(base)) => {
+                    project.add_workspace(&name, &base).map(|_| ())?
+                }
+                (None, None) => {
+                    let trunk = project.trunk()?;
+                    project.add_workspace(&name, &trunk).map(|_| ())?
+                }
             }
-            (None, Some(base)) => {
-                project.add_workspace(&name, &base).map(|_| ())
-            }
-            (None, None) => {
-                let trunk = project.trunk()?;
-                project.add_workspace(&name, &trunk).map(|_| ())
-            }
+            project.workspace_head(&name)
         })
         .await??;
+        let since = inherited_snapshot.or(start);
         Ok(Box::new(Turns {
             vcs: self.vcs.clone(),
             name: self.name.clone(),
@@ -283,7 +289,8 @@ struct Turns {
     pending: Arc<Mutex<Vec<Pending>>>,
     /// The run's model, which describes work left uncommitted.
     model: String,
-    /// The last turn's snapshot, to tell what a turn changed.
+    /// The last turn's snapshot, or `@` as the run started, to tell what
+    /// a turn changed.
     since: Option<String>,
     /// The run was asked once to commit before stopping.
     held: bool,

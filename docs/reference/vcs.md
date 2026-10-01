@@ -331,7 +331,8 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   `commit_id` is the snapshot: `@` as the turn left it. Later snapshots
   rewrite `@` under the same change id, so a snapshot link is found by
   its commit id, and `Project::current` leaves it as it is. `changed`
-  says whether the turn changed files since the turn before. Links a
+  says whether the turn changed files since the turn before, or, for a
+  run's first turn, since the run started. Links a
   landing stores (`from` set, `snapshot` false) name changes, and
   `Project::current` moves them to where their change is now. A failed
   snapshot stores `{ "turn": n, "error": "…" }` and the run goes on.
