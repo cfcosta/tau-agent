@@ -384,7 +384,11 @@ impl Host {
     /// Brings a main chat's workspace, `name`, up to trunk, which moves
     /// without it on an update from GitHub: its work in `@` goes onto
     /// trunk's head, so its next commit moves trunk forward, not aside.
-    pub(super) fn catch_up(&self, project: &Project, name: &str) -> anyhow::Result<()> {
+    pub(super) fn catch_up(
+        &self,
+        project: &Project,
+        name: &str,
+    ) -> anyhow::Result<()> {
         let exists = name == DEFAULT_WORKSPACE
             || project.workspaces()?.iter().any(|known| known == name);
         if !exists {
@@ -441,7 +445,11 @@ impl Host {
 
     /// Lists the clone of `full_name` at `dir` and starts importing it.
     /// Returns it as the sidebar shows it.
-    pub(super) fn list_clone(&self, dir: &Path, full_name: &str) -> anyhow::Result<Repo> {
+    pub(super) fn list_clone(
+        &self,
+        dir: &Path,
+        full_name: &str,
+    ) -> anyhow::Result<Repo> {
         let name = {
             let mut list = self.list.lock().expect("not poisoned");
             let name = list.list(dir);

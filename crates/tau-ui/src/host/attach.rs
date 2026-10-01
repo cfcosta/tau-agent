@@ -1,11 +1,47 @@
 //! The interface asking the host for something, and the host answering
 //! it off the interface's thread.
 
+use gpui::Context;
+
 use super::*;
 
-/// Updates repository `name` off the UI thread, saying so in the status
-/// bar. An update the user asked for says what went wrong in a dialog;
-/// one at startup only in the status bar.
+/// Runs `job` on the host's blocking pool, off the interface's thread,
+/// then hands what it gave to the workspace: `done` with its value, or
+/// `failed` with what went wrong.
+fn off_thread<T: Send + 'static>(
+    host: &Arc<Host>,
+    workspace: &Entity<Workspace>,
+    job: impl FnOnce(&Host) -> anyhow::Result<T> + Send + 'static,
+    done: impl FnOnce(&mut Workspace, T, &mut Context<Workspace>) + 'static,
+    failed: impl FnOnce(&mut Workspace, String, &mut Context<Workspace>) + 'static,
+    cx: &mut App,
+) {
+    let job = {
+        let worker = host.clone();
+        host.runtime.spawn_blocking(move || job(&worker))
+    };
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let result = match job.await {
+            Ok(result) => result.map_err(|error| format!("{error:#}")),
+            Err(error) => Err(error.to_string()),
+        };
+        let _ = workspace.update(cx, |ws, cx| match result {
+            Ok(value) => done(ws, value, cx),
+            Err(error) => failed(ws, error, cx),
+        });
+    })
+    .detach();
+}
+
+/// A failure as an alert titled `title`.
+fn alert(
+    title: impl Into<String>,
+) -> impl FnOnce(&mut Workspace, String, &mut Context<Workspace>) {
+    let title = title.into();
+    move |ws, error, cx| ws.apply(HostUpdate::alert(title, error), cx)
+}
+
 /// Has a model write `run`'s title from `prompt`, keeps it in the store
 /// and shows it. Without a client, as in tests, or when the call fails,
 /// the run keeps its placeholder. The run's record is written as it
@@ -106,6 +142,9 @@ pub(super) fn resolve(
     }
 }
 
+/// Updates repository `name` off the UI thread, saying so in the status
+/// bar. An update the user asked for says what went wrong in a dialog;
+/// one at startup only in the status bar.
 pub(super) fn update_in_background(
     host: &Arc<Host>,
     name: &str,
@@ -265,27 +304,21 @@ impl Host {
                     }),
                 },
                 WorkspaceEvent::PreparePullRequest { run } => {
-                    let job = {
-                        let (host, run) = (handler.clone(), run.clone());
-                        handler
-                            .runtime
-                            .spawn_blocking(move || host.prepare_pull_request(&run))
-                    };
-                    let (run, workspace) = (run.clone(), workspace.downgrade());
-                    cx.spawn(async move |cx| {
-                        let prepared = match job.await {
-                            Ok(result) => result.map_err(|error| format!("{error:#}")),
-                            Err(error) => Err(error.to_string()),
-                        };
-                        let _ = workspace.update(cx, |ws, cx| match prepared {
-                            Ok(draft) => ws.apply(HostUpdate::PullRequest { run: run.clone(), pr: Box::new(draft) }, cx),
-                            Err(error) => {
-                                ws.back(cx);
-                                ws.apply(HostUpdate::alert("Could not write the pull request", error), cx)
-                            }
-                        });
-                    })
-                    .detach();
+                    let (job_run, run) = (run.clone(), run.clone());
+                    off_thread(
+                        &handler,
+                        &workspace,
+                        move |host| host.prepare_pull_request(&job_run),
+                        move |ws, draft, cx| {
+                            let pr = Box::new(draft);
+                            ws.apply(HostUpdate::PullRequest { run, pr }, cx)
+                        },
+                        |ws, error, cx| {
+                            ws.back(cx);
+                            alert("Could not write the pull request")(ws, error, cx)
+                        },
+                        cx,
+                    );
                 }
                 WorkspaceEvent::CreatePullRequest {
                     run,
@@ -341,19 +374,15 @@ impl Host {
                     .detach();
                 }
                 WorkspaceEvent::Query { sql } => {
-                    let job = {
-                        let (store, sql) = (handler.store.clone(), sql.clone());
-                        handler.runtime.spawn(async move {
-                            store.query(&sql, 200).await.map_err(|e| e.to_string())
-                        })
-                    };
-                    let workspace = workspace.downgrade();
-                    cx.spawn(async move |cx| {
-                        let result = job.await.unwrap_or_else(|e| Err(e.to_string()));
-                        let _ = workspace
-                            .update(cx, |ws, cx| ws.apply(HostUpdate::QueryResult(result), cx));
-                    })
-                    .detach();
+                    let sql = sql.clone();
+                    off_thread(
+                        &handler,
+                        &workspace,
+                        move |host| Ok(host.block_on(host.store.query(&sql, 200))?),
+                        |ws, table, cx| ws.apply(HostUpdate::QueryResult(Ok(table)), cx),
+                        |ws, error, cx| ws.apply(HostUpdate::QueryResult(Err(error)), cx),
+                        cx,
+                    );
                 }
                 WorkspaceEvent::JevKey { key } => {
                     let saved =
@@ -369,31 +398,21 @@ impl Host {
                 WorkspaceEvent::PluginAct { plugin, action } => {
                     // Off the UI thread: an action may ask Jev, or the
                     // store.
-                    let (host, plugin, action) =
-                        (handler.clone(), plugin.clone(), action.clone());
-                    let task = cx.background_spawn({
-                        let plugin = plugin.clone();
-                        async move { host.plugin_act(&plugin, action) }
-                    });
-                    let workspace = workspace.downgrade();
-                    cx.spawn(async move |cx| {
-                        let done = task.await;
-                        let _ = workspace.update(cx, |ws, cx| match done {
-                            Ok(Some(reply)) => ws.apply(
-                                HostUpdate::PluginReply { plugin, reply },
-                                cx,
-                            ),
-                            Ok(None) => {}
-                            Err(error) => ws.apply(
-                                HostUpdate::alert(
-                                    format!("{plugin} could not do that"),
-                                    format!("{error:#}"),
-                                ),
-                                cx,
-                            ),
-                        });
-                    })
-                    .detach();
+                    let (job_plugin, plugin, action) =
+                        (plugin.clone(), plugin.clone(), action.clone());
+                    let failed = alert(format!("{plugin} could not do that"));
+                    off_thread(
+                        &handler,
+                        &workspace,
+                        move |host| host.plugin_act(&job_plugin, action),
+                        move |ws, reply, cx| {
+                            if let Some(reply) = reply {
+                                ws.apply(HostUpdate::PluginReply { plugin, reply }, cx)
+                            }
+                        },
+                        failed,
+                        cx,
+                    );
                 }
                 WorkspaceEvent::PluginSettings { plugin, settings } => {
                     let saved =
@@ -458,25 +477,24 @@ impl Host {
                     }),
                 },
                 WorkspaceEvent::CompareCode { main, fork } => {
-                    let job =
-                        handler.runtime.spawn(handler.branch_code(main, fork));
+                    let code = |ws: &mut Workspace, main, fork, code, cx: &mut Context<Workspace>| {
+                        ws.apply(HostUpdate::BranchCode { main, fork, code }, cx)
+                    };
+                    let (job_main, job_fork) = (main.clone(), fork.clone());
                     let (main, fork) = (main.clone(), fork.clone());
-                    let workspace = workspace.downgrade();
-                    cx.spawn(async move |cx| {
-                        let code = match job.await {
-                            Ok(Ok(code)) => CodeState::Ready(code),
-                            Ok(Err(error)) => {
-                                CodeState::Unavailable(format!("{error:#}"))
-                            }
-                            Err(error) => {
-                                CodeState::Unavailable(error.to_string())
-                            }
-                        };
-                        let _ = workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::BranchCode { main: main.clone(), fork: fork.clone(), code }, cx)
-                        });
-                    })
-                    .detach();
+                    let (failed_main, failed_fork) = (main.clone(), fork.clone());
+                    off_thread(
+                        &handler,
+                        &workspace,
+                        move |host| {
+                            host.block_on(host.branch_code(&job_main, &job_fork))
+                        },
+                        move |ws, ready, cx| code(ws, main, fork, CodeState::Ready(ready), cx),
+                        move |ws, error, cx| {
+                            code(ws, failed_main, failed_fork, CodeState::Unavailable(error), cx)
+                        },
+                        cx,
+                    );
                 }
                 WorkspaceEvent::SaveModelSettings(settings) => {
                     if let Err(error) = handler.save_settings(settings.clone())

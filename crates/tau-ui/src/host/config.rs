@@ -184,7 +184,10 @@ impl RepoList {
 
 /// The saved model choices at `path`, or the defaults with `model` for
 /// coder when there are none (or the file does not read).
-pub(super) fn load_settings(path: &std::path::Path, model: &str) -> ModelSettings {
+pub(super) fn load_settings(
+    path: &std::path::Path,
+    model: &str,
+) -> ModelSettings {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())

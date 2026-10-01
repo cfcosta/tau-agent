@@ -15,7 +15,10 @@ pub(super) struct LandingPlan {
 }
 
 /// The latest link in `entries`, up to `seq` when given.
-pub(super) fn last_link(entries: &[(i64, String)], seq: Option<i64>) -> Option<Link> {
+pub(super) fn last_link(
+    entries: &[(i64, String)],
+    seq: Option<i64>,
+) -> Option<Link> {
     entries
         .iter()
         .filter(|(at, _)| seq.is_none_or(|seq| *at <= seq))

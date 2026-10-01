@@ -92,7 +92,9 @@ pub(super) fn check_eligibility(
 /// The refusal's words when `error` says plan use is not available to
 /// the account: `403 subscription_sharing_user_not_eligible · request
 /// req_…`. `None` for any other failure.
-pub(super) fn not_eligible(error: &tau_ai::chatgpt::ChatGptError) -> Option<String> {
+pub(super) fn not_eligible(
+    error: &tau_ai::chatgpt::ChatGptError,
+) -> Option<String> {
     use tau_ai::chatgpt::ChatGptError;
     if error.recovery() != tau_ai::retry::Recovery::Restricted {
         return None;

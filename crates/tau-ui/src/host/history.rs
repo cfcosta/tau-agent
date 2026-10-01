@@ -83,7 +83,10 @@ pub(super) async fn stored_view(
 
 /// The words a run was started with: its own first message, not one a
 /// fork inherited.
-pub(super) async fn first_prompt(store: &Store, run: &str) -> anyhow::Result<String> {
+pub(super) async fn first_prompt(
+    store: &Store,
+    run: &str,
+) -> anyhow::Result<String> {
     let body = store.first_prompt(run).await?;
     let words = body
         .and_then(|body| serde_json::from_str::<Message>(&body).ok())

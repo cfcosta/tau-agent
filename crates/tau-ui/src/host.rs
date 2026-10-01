@@ -22,7 +22,7 @@ use std::{
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use gpui::{App, AppContext as _, Entity};
+use gpui::{App, Entity};
 use serde::{Deserialize, Serialize};
 use tau_agent::{
     agent::{Agent, Checkpoint, RunControl},
