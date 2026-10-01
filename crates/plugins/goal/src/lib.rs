@@ -415,8 +415,7 @@ impl Plugin for GoalPlugin {
 /// the run for.
 async fn tell(record: &Record, ctx: &PluginCtx) {
     let body = record.to_value();
-    ctx.report(body.clone());
-    let _ = ctx.record(&body).await;
+    let _ = ctx.publish(&body).await;
 }
 
 /// A run's pursuit of its conversation's goal.

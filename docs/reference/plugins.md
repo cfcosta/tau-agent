@@ -208,6 +208,10 @@ impl PluginCtx {
     /// The run emits it as `RunEvent::PluginCharged` before its next
     /// event.
     pub fn charge(&self, usage: &Usage);
+    /// Reports `body` and records it with the run, in one call: what
+    /// an interface shows of a plugin, live and from history alike
+    /// (ADR 0017). Plugins use it for everything they report.
+    pub async fn publish(&self, body: &Value) -> Result<(), StoreError>;
     /// Stores a record for this plugin in the run's transcript. The
     /// model never sees it. Forks and resumed runs get it back in
     /// `RunPlan::records`.

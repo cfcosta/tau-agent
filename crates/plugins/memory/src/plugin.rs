@@ -336,9 +336,11 @@ impl PluginRun for MemoryRun {
         if let Err(error) =
             self.plugin.mark_stale(&[path.to_owned()], &why, now)
         {
-            ctx.report(
-                json!({ "kind": "error", "message": format!("{error:#}") }),
-            );
+            let _ = ctx
+                .publish(
+                    &json!({ "kind": "error", "message": format!("{error:#}") }),
+                )
+                .await;
         }
     }
 
@@ -373,9 +375,11 @@ impl PluginRun for MemoryRun {
         )
         .await;
         if let Err(error) = done {
-            ctx.report(
-                json!({ "kind": "error", "message": format!("{error:#}") }),
-            );
+            let _ = ctx
+                .publish(
+                    &json!({ "kind": "error", "message": format!("{error:#}") }),
+                )
+                .await;
         }
     }
 }
@@ -469,7 +473,9 @@ async fn distill(
         }
     }
     if !saved.is_empty() {
-        ctx.report(json!({ "kind": "saved", "calls": saved }));
+        let _ = ctx
+            .publish(&json!({ "kind": "saved", "calls": saved }))
+            .await;
     }
     Ok(())
 }

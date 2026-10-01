@@ -55,6 +55,8 @@ struct Probe {
     charge: Option<Usage>,
     /// Stores this record in `start`.
     record: Option<Value>,
+    /// Publishes these in `start`, in order.
+    publish: Vec<Value>,
     tools: Vec<Arc<dyn AgentTool>>,
     log: Arc<Mutex<Vec<String>>>,
     finished: Arc<Mutex<Vec<(usize, StopReason, String)>>>,
@@ -119,6 +121,9 @@ impl Plugin for Probe {
         }
         if let Some(record) = &self.record {
             ctx.record(record).await?;
+        }
+        for body in &self.publish {
+            ctx.publish(body).await?;
         }
         Ok(Box::new(ProbeRun {
             probe: self.clone(),
@@ -618,6 +623,54 @@ fn charges_are_kept_per_plugin(tc: hegel::TestCase) {
         let record = store.run(&outcome.run.0).await.unwrap().unwrap();
         assert_eq!(record.cost_usd, 0.5 + charged, "within the run's total");
         assert_eq!(outcome.usage.cost.total, 0.5 + charged);
+    });
+}
+
+/// What a plugin publishes is reported and recorded alike: the
+/// subscriber sees each body, after `RunStart`, and the store has the
+/// same bodies in the same order.
+#[hegel::test(test_cases = 30)]
+fn published_bodies_are_reported_and_recorded(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    let bodies: Vec<Value> = tc
+        .draw(gs::vecs(gs::integers::<u32>()).max_size(5))
+        .into_iter()
+        .map(|n| json!({ "n": n }))
+        .collect();
+    block_on(async {
+        let model = ScriptedModel::new().turn(|t| t.text("done"));
+        let probe = Probe {
+            publish: bodies.clone(),
+            ..Probe::named("publisher")
+        };
+        let store = Store::memory().await.unwrap();
+        let mut run = Agent::new(model).plugin(probe).start("go", &store);
+        let mut events = Vec::new();
+        {
+            use futures_util::StreamExt;
+            let mut stream = run.events();
+            while let Some(event) = stream.next().await {
+                events.push(event);
+            }
+        }
+        let outcome = run.outcome().await.unwrap();
+        assert_grammar(&events);
+        let reported: Vec<Value> = events
+            .into_iter()
+            .filter_map(|event| match event {
+                RunEvent::PluginReport { body, .. } => Some(body),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reported, bodies);
+        let recorded: Vec<Value> = store
+            .records(&outcome.run.0, "publisher")
+            .await
+            .unwrap()
+            .iter()
+            .map(|body| serde_json::from_str(body).unwrap())
+            .collect();
+        assert_eq!(recorded, bodies);
     });
 }
 

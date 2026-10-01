@@ -447,10 +447,7 @@ async fn prune_output(
     };
     let mut report = serde_json::to_value(&stats).expect("stats serialize");
     report["kind"] = "output".into();
-    ctx.report(report.clone());
-    // History reads it back; a failed write loses only what the card
-    // says.
-    let _ = ctx.record(&report).await;
+    let _ = ctx.publish(&report).await;
     Ok(pruned.then_some(text))
 }
 
@@ -556,11 +553,11 @@ impl FastCompactionRun {
             decisions: self.ledger.decisions().cloned().collect(),
             stats,
         };
-        // Interfaces show the ledger; the rewrite stores it for forks.
+        // Published for interfaces; the rewrite also stores it for forks.
         let mut report =
             serde_json::to_value(&details).expect("details serialize");
         report["kind"] = "ledger".into();
-        ctx.report(report);
+        let _ = ctx.publish(&report).await;
         Ok(Some(Rewrite {
             messages,
             details: serde_json::to_value(details).expect("details serialize"),

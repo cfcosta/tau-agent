@@ -669,8 +669,7 @@ impl Plugin for Reasoning {
                 choice.runs_at =
                     plan.reasoning.map(|effort| effort.as_str().to_owned());
                 let body = serde_json::to_value(&choice).unwrap_or_default();
-                ctx.report(body.clone());
-                let _ = ctx.record(&body).await;
+                let _ = ctx.publish(&body).await;
             }
             Err(error) => {
                 plan.reasoning = previous;
@@ -681,8 +680,7 @@ impl Plugin for Reasoning {
                     "message": format!("Jev could not score the task: {error}"),
                     "runs_at": previous.map(ReasoningEffort::as_str),
                 });
-                ctx.report(body.clone());
-                let _ = ctx.record(&body).await;
+                let _ = ctx.publish(&body).await;
             }
         }
         Ok(Box::new(steps))
@@ -725,8 +723,7 @@ impl PluginRun for Steps {
                 choice.turn = Some(view.turn);
                 choice.runs_at = runs_at.map(|effort| effort.as_str().into());
                 let body = serde_json::to_value(&choice).unwrap_or_default();
-                ctx.report(body.clone());
-                let _ = ctx.record(&body).await;
+                let _ = ctx.publish(&body).await;
                 Ok(chosen.filter(|effort| Some(*effort) != view.effort))
             }
             Err(error) => {
@@ -737,8 +734,7 @@ impl PluginRun for Steps {
                     "step": step,
                     "turn": view.turn,
                 });
-                ctx.report(body.clone());
-                let _ = ctx.record(&body).await;
+                let _ = ctx.publish(&body).await;
                 Ok(None)
             }
         }

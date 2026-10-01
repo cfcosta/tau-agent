@@ -228,23 +228,19 @@ impl Checks {
         };
         let mut body = serde_json::to_value(&check).unwrap_or_default();
         body["kind"] = "checked".into();
-        ctx.report(body.clone());
-        let _ = ctx.record(&body).await;
+        let _ = ctx.publish(&body).await;
         Ok(scores)
     }
 
     /// Reports and records a check Jev could not answer: history shows it,
     /// and the Constitution screen counts it.
     async fn failed(&self, body: Value, ctx: &PluginCtx) {
-        ctx.report(body.clone());
-        let _ = ctx.record(&body).await;
+        let _ = ctx.publish(&body).await;
     }
 
     async fn tell(&self, verdict: &Verdict, ctx: &PluginCtx) {
         let body = serde_json::to_value(verdict).unwrap_or_default();
-        ctx.report(body.clone());
-        // History reads it back; a failed write loses only the review.
-        let _ = ctx.record(&body).await;
+        let _ = ctx.publish(&body).await;
     }
 }
 

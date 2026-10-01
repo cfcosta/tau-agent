@@ -572,6 +572,15 @@ impl PluginCtx {
             .collect()
     }
 
+    /// Reports `body` and records it with the run, in one call: what an
+    /// interface shows of a plugin, live and from history alike (ADR
+    /// 0017). The report goes out even when the record cannot be stored;
+    /// the error says the record is missing.
+    pub async fn publish(&self, body: &Value) -> Result<(), StoreError> {
+        self.report(body.clone());
+        self.record(body).await
+    }
+
     /// Stores a record for this plugin with the run. The model never sees
     /// it. Forks of the run get it back in [`RunPlan::records`].
     pub async fn record(&self, body: &Value) -> Result<(), StoreError> {
