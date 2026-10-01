@@ -2071,7 +2071,7 @@ fn token(
                                     t,
                                 ))
                                 .on_click(cx.listener(|ws, _, _, cx| {
-                                    ws.submit_token_from_button(cx)
+                                    ws.submit_token(cx)
                                 })),
                         )
                         .child(
@@ -2327,7 +2327,7 @@ fn model_waiting(
                         .hover(|style| style.bg(t.raised))
                         .child("Finish")
                         .on_click(cx.listener(|ws, _, _, cx| {
-                            ws.submit_chatgpt_callback_from_button(cx)
+                            ws.submit_chatgpt_callback(cx)
                         })),
                 ),
         );
@@ -3076,9 +3076,9 @@ fn ready(
                             IconSize::LARGE,
                             look.on_light,
                         ))
-                        .on_click(cx.listener(|ws, _, _, cx| {
-                            ws.start_first_run_from_button(cx)
-                        })),
+                        .on_click(
+                            cx.listener(|ws, _, _, cx| ws.start_first_run(cx)),
+                        ),
                 ),
         );
     let composer = if composing.changed() && !motion.reduce {
