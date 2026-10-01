@@ -213,6 +213,40 @@ fn progress_sent_before_the_result_arrives_before_it(tc: TestCase) {
     });
 }
 
+/// A connection that reads as connected already has its tools counted
+/// in its generation, which the plugin's tool list is cached by: a
+/// caller that waited for the connect never reads the list from before.
+/// A thread watches the status as closely as it can while the connection
+/// connects again and again.
+#[tokio::test(flavor = "multi_thread")]
+async fn connected_comes_after_the_tools_it_lists() {
+    for _ in 0..200 {
+        let fixture = Fixture::new(false);
+        fixture.gate(false);
+        let connection = connect(&fixture, 60.0);
+        let before = connection.generation();
+        let watcher = {
+            let connection = connection.clone();
+            std::thread::spawn(move || {
+                loop {
+                    let state = connection.status().state;
+                    if state == State::Connected {
+                        return connection.generation();
+                    }
+                    assert_eq!(state, State::Connecting);
+                    std::hint::spin_loop();
+                }
+            })
+        };
+        fixture.gate(true);
+        let seen = tokio::task::spawn_blocking(move || watcher.join().unwrap())
+            .await
+            .unwrap();
+        assert!(seen > before, "connected at generation {seen}");
+        connection.shutdown().await;
+    }
+}
+
 /// The run's token cancels the request, and the server hears of it.
 #[tokio::test(flavor = "multi_thread")]
 async fn cancel_tells_the_server() {

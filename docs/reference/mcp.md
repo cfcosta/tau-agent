@@ -843,7 +843,10 @@ From the design above, as first written:
   reconnects, a call that is not retried. As a property: however many
   progress notifications a server sends right before its result, on
   calls side by side, each call gets all of its own, in order, before
-  it returns. Over a child process, the
+  it returns. Watched from another thread over 200 connects, a
+  connection that reads as connected already counts its tools in its
+  generation, so a run that waited never sees the tool list from
+  before. Over a child process, the
   test binary run as a stdio server: a call, and closing ends the
   server and a process it started. A local HTTP server answering 503
   gets three tries; one answering 404, one.

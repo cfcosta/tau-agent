@@ -743,8 +743,11 @@ impl Connection {
                 inner.prompts = lists.prompts;
                 inner.session = Some(session.clone());
                 drop(inner);
-                self.set_status(State::Connected, None);
+                // The generation first: whoever sees `Connected` (a run
+                // waiting in `ready`) must not read the tools cached for
+                // the generation before.
                 self.changed();
+                self.set_status(State::Connected, None);
                 tokio::spawn(watch_session(
                     Arc::downgrade(&self),
                     session,
