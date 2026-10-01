@@ -415,12 +415,7 @@ impl Host {
     /// The repository `run` works in: as this session started it, or as
     /// the store recorded it.
     pub(super) fn slot_of_run(&self, run: &RunId) -> anyhow::Result<RepoSlot> {
-        let known = self
-            .run_repos
-            .lock()
-            .expect("not poisoned")
-            .get(run)
-            .cloned();
+        let known = self.session_of(run).repo;
         let name = known.or_else(|| {
             self.runtime.block_on(stored_repo(&self.store, &run.0))
         });

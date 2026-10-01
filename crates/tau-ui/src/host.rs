@@ -179,8 +179,8 @@ pub struct Host {
     /// ones stay here, unlisted, for their runs.
     repos: Arc<Mutex<Vec<RepoSlot>>>,
     list: Arc<Mutex<RepoList>>,
-    /// The repository each run of this session works in.
-    run_repos: Arc<Mutex<HashMap<RunId, String>>>,
+    /// What the host knows of each run of this session.
+    sessions: Arc<Mutex<HashMap<RunId, SessionRun>>>,
     /// Repositories taking in new commits now.
     updating: Arc<Mutex<Vec<String>>>,
     /// What the latest update found.
@@ -189,11 +189,8 @@ pub struct Host {
     drafts: Mutex<HashMap<RunId, PullRequest>>,
     /// Pull requests opened from runs, for pushing their later turns.
     prs: Arc<Mutex<HashMap<RunId, OpenPr>>>,
+    /// How to steer and cancel each run going on.
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
-    /// The workspace each run of this session works in.
-    workspaces: Arc<Mutex<HashMap<RunId, String>>>,
-    /// The model each run of this session runs on.
-    choices: Arc<Mutex<HashMap<RunId, ModelChoice>>>,
     /// Runs whose `RunEnd` went by while their outcome is still being
     /// stored: they stop in a moment.
     ending: Arc<Mutex<HashSet<RunId>>>,
@@ -207,6 +204,15 @@ pub struct Host {
     /// end until [`Self::attach`] takes it.
     pushes: mpsc::UnboundedSender<tau_ui_plugin::Push>,
     pushed: Mutex<Option<mpsc::UnboundedReceiver<tau_ui_plugin::Push>>>,
+}
+
+/// What the host knows of one run of this session: the repository it
+/// works in, its workspace, and the model it runs on.
+#[derive(Debug, Clone, Default)]
+struct SessionRun {
+    repo: Option<String>,
+    workspace: Option<String>,
+    choice: Option<ModelChoice>,
 }
 
 mod attach;
@@ -268,6 +274,26 @@ fn identity() -> Identity {
 }
 
 impl Host {
+    /// What the host knows of `run` this session.
+    fn session_of(&self, run: &RunId) -> SessionRun {
+        let sessions = self.sessions.lock().expect("not poisoned");
+        sessions.get(run).cloned().unwrap_or_default()
+    }
+
+    /// Changes what the host knows of `run` this session.
+    fn session<R>(
+        &self,
+        run: &RunId,
+        f: impl FnOnce(&mut SessionRun) -> R,
+    ) -> R {
+        f(self
+            .sessions
+            .lock()
+            .expect("not poisoned")
+            .entry(run.clone())
+            .or_default())
+    }
+
     /// Opens the store and the project and builds the agent. Returns the
     /// receiving end of the event channel for [`Host::attach`].
     pub fn new(
@@ -345,19 +371,17 @@ impl Host {
             jev_meter: Arc::default(),
             memory_search: tau_memory::ui::Search::Keywords,
             store,
-            choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
             config,
             repos: Arc::default(),
             list: Arc::new(Mutex::new(list)),
-            run_repos: Arc::default(),
+            sessions: Arc::default(),
             updating: Arc::default(),
             last_update: Arc::default(),
             drafts: Mutex::default(),
             prs: Arc::default(),
             ending: Arc::default(),
             runs: Arc::default(),
-            workspaces: Arc::default(),
             events,
             hosted: Vec::new(),
             pushes,
@@ -431,12 +455,7 @@ impl Host {
 
     /// The workspace `run` works in, if it started in this session.
     pub fn workspace(&self, run: &RunId) -> Option<PathBuf> {
-        let name = self
-            .workspaces
-            .lock()
-            .expect("not poisoned")
-            .get(run)?
-            .clone();
+        let name = self.session_of(run).workspace?;
         Some(
             self.slot_of_run(run)
                 .ok()?
@@ -841,12 +860,7 @@ impl Host {
         let repo = self.slot_of_run(run)?;
         // The workspace its last turn worked in, which still has its
         // files.
-        let known = self
-            .workspaces
-            .lock()
-            .expect("not poisoned")
-            .get(run)
-            .cloned();
+        let known = self.session_of(run).workspace;
         // A main chat works in the repository's own checkout, the
         // default workspace, not one of its own.
         let main = self.is_main(run);
@@ -927,22 +941,18 @@ impl Host {
         repo: &str,
     ) -> RunId {
         let id = run.id();
-        self.run_repos
-            .lock()
-            .expect("not poisoned")
-            .insert(id.clone(), repo.to_owned());
-        self.choices
-            .lock()
-            .expect("not poisoned")
-            .insert(id.clone(), choice.clone());
+        self.sessions.lock().expect("not poisoned").insert(
+            id.clone(),
+            SessionRun {
+                repo: Some(repo.to_owned()),
+                workspace: Some(workspace),
+                choice: Some(choice.clone()),
+            },
+        );
         self.runs
             .lock()
             .expect("not poisoned")
             .insert(id.clone(), run.control());
-        self.workspaces
-            .lock()
-            .expect("not poisoned")
-            .insert(id.clone(), workspace);
         let events = self.events.clone();
         let runs = self.runs.clone();
         let ending = self.ending.clone();
@@ -965,15 +975,9 @@ impl Host {
     }
 
     fn view(&self, id: RunId, prompt: &str, repo: &RepoSlot) -> RunView {
-        let choice = self
-            .choices
-            .lock()
-            .expect("not poisoned")
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| {
-                ModelChoice::new(self.config.default_model(), Effort::Auto)
-            });
+        let choice = self.session_of(&id).choice.unwrap_or_else(|| {
+            ModelChoice::new(self.config.default_model(), Effort::Auto)
+        });
         let mut view = RunView::new(
             id,
             crate::titles::placeholder(prompt),
@@ -996,12 +1000,7 @@ impl Host {
             window: find(&choice.model).map(|model| model.context_window),
             ..ContextWindow::default()
         };
-        let workspace = self
-            .workspaces
-            .lock()
-            .expect("not poisoned")
-            .get(&view.id)
-            .cloned();
+        let workspace = self.session_of(&view.id).workspace;
         view.plan = vec![
             PlanField {
                 name: "model".into(),

@@ -56,15 +56,10 @@ pub(super) fn title_in_background(
     let Some(client) = host.client.lock().expect("not poisoned").clone() else {
         return;
     };
-    let model = host
-        .choices
-        .lock()
-        .expect("not poisoned")
-        .get(run)
-        .map_or_else(
-            || host.config.default_model(),
-            |choice| choice.model.clone(),
-        );
+    let model = host.session_of(run).choice.map_or_else(
+        || host.config.default_model(),
+        |choice| choice.model.clone(),
+    );
     let job = {
         let (writer, run, prompt) =
             (host.clone(), run.clone(), prompt.to_owned());

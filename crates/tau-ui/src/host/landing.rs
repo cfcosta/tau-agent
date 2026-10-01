@@ -169,7 +169,7 @@ impl Host {
         // The child's changes live on the parent's stack now.
         plan.project.forget_workspace(&plan.child_workspace)?;
         plan.project.remove_bookmark(&bookmark(child))?;
-        self.workspaces.lock().expect("not poisoned").remove(child);
+        self.session(child, |run| run.workspace.take());
         Ok(landing)
     }
 
@@ -181,15 +181,9 @@ impl Host {
         run: &RunId,
         prompt: &str,
     ) -> anyhow::Result<()> {
-        let choice = self
-            .choices
-            .lock()
-            .expect("not poisoned")
-            .get(run)
-            .cloned()
-            .unwrap_or_else(|| {
-                ModelChoice::new(self.config.default_model(), Effort::Auto)
-            });
+        let choice = self.session_of(run).choice.unwrap_or_else(|| {
+            ModelChoice::new(self.config.default_model(), Effort::Auto)
+        });
         self.resume(run, prompt, &choice)
     }
 
@@ -231,10 +225,7 @@ impl Host {
             project.abandon_between(&keep, &head)?;
         }
         let workspace = self
-            .workspaces
-            .lock()
-            .expect("not poisoned")
-            .remove(child)
+            .session(child, |run| run.workspace.take())
             .or(self.link(child, None)?.map(|(_, link)| link.workspace));
         if let Some(name) = workspace {
             project.forget_workspace(&name)?;
@@ -268,12 +259,7 @@ impl Host {
         }
         let project = self.slot_of_run(child)?.project()?;
         let workspace_of = |run: &RunId| -> anyhow::Result<String> {
-            let known = self
-                .workspaces
-                .lock()
-                .expect("not poisoned")
-                .get(run)
-                .cloned();
+            let known = self.session_of(run).workspace;
             match known {
                 Some(name) => Ok(name),
                 None => self
@@ -288,10 +274,9 @@ impl Host {
         let parent_workspace = match workspace_of(&parent) {
             // A main chat works in the repository's own checkout.
             _ if self.is_main(&parent) => {
-                self.workspaces
-                    .lock()
-                    .expect("not poisoned")
-                    .insert(parent.clone(), DEFAULT_WORKSPACE.to_owned());
+                self.session(&parent, |run| {
+                    run.workspace = Some(DEFAULT_WORKSPACE.to_owned())
+                });
                 DEFAULT_WORKSPACE.to_owned()
             }
             Ok(name) => {
