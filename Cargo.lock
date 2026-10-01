@@ -9262,6 +9262,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-ui-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui-pre",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-store",
+ "tau-ui-kit",
+ "tokio",
+]
+
+[[package]]
 name = "tau-vcs"
 version = "0.1.0"
 dependencies = [

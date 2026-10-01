@@ -1,0 +1,338 @@
+//! What a plugin's UI reaches as it draws: its data, the run it draws
+//! for, and a [`Handle`] back to the interface for what a click asks.
+
+use std::{collections::BTreeMap, rc::Rc};
+
+use gpui::{App, Entity};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tau_agent::tool::RunId;
+use tau_ui_kit::{assets::Icon, theme::Tone};
+
+use crate::UiPlugin;
+
+/// A run, as a contribution or a page sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunInfo {
+    pub id: RunId,
+    /// The repository it works in.
+    pub repo: String,
+    /// Whether it is going now.
+    pub live: bool,
+    /// Its title.
+    pub title: String,
+}
+
+/// A page to open: a plugin's page and its parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Link {
+    /// The plugin whose page it is; `None` is the plugin making the link.
+    pub plugin: Option<String>,
+    pub page: String,
+    pub params: BTreeMap<String, String>,
+}
+
+impl Link {
+    /// The page `page` of the plugin making the link.
+    pub fn page(page: impl Into<String>) -> Self {
+        Self {
+            plugin: None,
+            page: page.into(),
+            params: BTreeMap::new(),
+        }
+    }
+
+    /// The page `page` of `plugin`.
+    pub fn to(plugin: impl Into<String>, page: impl Into<String>) -> Self {
+        Self {
+            plugin: Some(plugin.into()),
+            ..Self::page(page)
+        }
+    }
+
+    pub fn param(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        self.params.insert(name.into(), value.into());
+        self
+    }
+
+    /// This link, made by `plugin` when it names no plugin.
+    pub fn from(mut self, plugin: &str) -> Self {
+        self.plugin.get_or_insert_with(|| plugin.to_owned());
+        self
+    }
+}
+
+/// An entry in the interface's navigation: the sidebar, the phone's
+/// lists, and search.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NavEntry {
+    pub label: String,
+    pub icon: Icon,
+    /// Small print beside the label: `12 notes`.
+    pub detail: Option<String>,
+    /// A count that wants attention: reviews waiting.
+    pub badge: Option<(String, Tone)>,
+    pub to: Link,
+}
+
+impl NavEntry {
+    pub fn new(label: impl Into<String>, icon: Icon, to: Link) -> Self {
+        Self {
+            label: label.into(),
+            icon,
+            detail: None,
+            badge: None,
+            to,
+        }
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    pub fn badge(mut self, badge: Option<(String, Tone)>) -> Self {
+        self.badge = badge;
+        self
+    }
+}
+
+/// A plugin's line in a run's plugin list: what it is doing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginStatus {
+    pub name: String,
+    pub state: String,
+    pub tone: Tone,
+}
+
+/// A field of a run's plan, and who set it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanField {
+    pub name: String,
+    pub value: String,
+    pub set_by: Option<String>,
+}
+
+/// What a plugin's UI asks of the interface.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Request {
+    /// The plugin's host half carries it out (`UiPlugin::act`).
+    Act(Value),
+    Navigate(Link),
+    Alert {
+        title: String,
+        message: String,
+    },
+    /// Saves the plugin's settings.
+    Settings(Value),
+    /// Folds `body` into the run's state now, and stores it as the
+    /// plugin's record with the run: a change the interface makes
+    /// (pause a goal).
+    Record {
+        run: RunId,
+        body: Value,
+    },
+    /// Sends `text` to a run going on.
+    Steer {
+        run: RunId,
+        text: String,
+    },
+    /// Sends `text` as the next message: to `run`, or as a new run.
+    Send {
+        run: Option<RunId>,
+        text: String,
+    },
+    /// Puts `text` in the composer.
+    Composer(String),
+    /// Draws the interface again.
+    Refresh,
+}
+
+/// Where a [`Handle`]'s requests go: the interface, which carries out
+/// what `plugin` asked.
+pub type Sink = Rc<dyn Fn(&'static str, Request, &mut App)>;
+
+/// A plugin's way back to the interface from an event handler.
+#[derive(Clone)]
+pub struct Handle {
+    plugin: &'static str,
+    sink: Sink,
+}
+
+impl Handle {
+    pub fn new(plugin: &'static str, sink: Sink) -> Self {
+        Self { plugin, sink }
+    }
+
+    /// The plugin the handle speaks for.
+    pub fn plugin(&self) -> &'static str {
+        self.plugin
+    }
+
+    pub fn request(&self, request: Request, cx: &mut App) {
+        (self.sink)(self.plugin, request, cx);
+    }
+
+    /// Asks the plugin's host half to carry out `action`.
+    pub fn act(&self, action: impl Serialize, cx: &mut App) {
+        let action = serde_json::to_value(action).unwrap_or_default();
+        self.request(Request::Act(action), cx);
+    }
+
+    pub fn navigate(&self, link: Link, cx: &mut App) {
+        self.request(Request::Navigate(link.from(self.plugin)), cx);
+    }
+
+    pub fn alert(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        cx: &mut App,
+    ) {
+        self.request(
+            Request::Alert {
+                title: title.into(),
+                message: message.into(),
+            },
+            cx,
+        );
+    }
+
+    pub fn save_settings(&self, settings: &impl Serialize, cx: &mut App) {
+        let settings = serde_json::to_value(settings).unwrap_or_default();
+        self.request(Request::Settings(settings), cx);
+    }
+
+    pub fn record(&self, run: &RunId, body: impl Serialize, cx: &mut App) {
+        let body = serde_json::to_value(body).unwrap_or_default();
+        self.request(
+            Request::Record {
+                run: run.clone(),
+                body,
+            },
+            cx,
+        );
+    }
+
+    pub fn steer(&self, run: &RunId, text: impl Into<String>, cx: &mut App) {
+        self.request(
+            Request::Steer {
+                run: run.clone(),
+                text: text.into(),
+            },
+            cx,
+        );
+    }
+
+    pub fn send(
+        &self,
+        run: Option<&RunId>,
+        text: impl Into<String>,
+        cx: &mut App,
+    ) {
+        self.request(
+            Request::Send {
+                run: run.cloned(),
+                text: text.into(),
+            },
+            cx,
+        );
+    }
+
+    pub fn composer(&self, text: impl Into<String>, cx: &mut App) {
+        self.request(Request::Composer(text.into()), cx);
+    }
+
+    pub fn refresh(&self, cx: &mut App) {
+        self.request(Request::Refresh, cx);
+    }
+}
+
+/// What a contribution, a page or a command reaches as it runs.
+pub struct ViewCx<'a, P: UiPlugin> {
+    pub plugin: &'a P,
+    /// The plugin's state for this window: drafts, open tabs. Update it
+    /// in a handler, then [`Handle::refresh`].
+    pub ui: Entity<P::Ui>,
+    /// The plugin's state in the run drawn, when there is one.
+    pub state: Option<&'a P::State>,
+    pub data: &'a P::Data,
+    pub settings: &'a P::Settings,
+    /// The plugin's data for each repository, by name.
+    pub repos: &'a BTreeMap<String, P::RepoData>,
+    /// The run drawn, when there is one.
+    pub run: Option<&'a RunInfo>,
+    /// A page's parameters; empty elsewhere.
+    pub params: &'a BTreeMap<String, String>,
+    /// Whether the window has the phone's layout.
+    pub compact: bool,
+    /// Whether a TypeSafe key is saved, so plugins that ask Jev run.
+    pub jev: bool,
+    pub handle: Handle,
+    runs: &'a dyn Fn() -> Vec<(RunInfo, Value)>,
+    pub cx: &'a mut App,
+}
+
+impl<'a, P: UiPlugin> ViewCx<'a, P> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        plugin: &'a P,
+        ui: Entity<P::Ui>,
+        state: Option<&'a P::State>,
+        data: &'a P::Data,
+        settings: &'a P::Settings,
+        repos: &'a BTreeMap<String, P::RepoData>,
+        run: Option<&'a RunInfo>,
+        params: &'a BTreeMap<String, String>,
+        compact: bool,
+        jev: bool,
+        handle: Handle,
+        runs: &'a dyn Fn() -> Vec<(RunInfo, Value)>,
+        cx: &'a mut App,
+    ) -> Self {
+        Self {
+            plugin,
+            ui,
+            state,
+            data,
+            settings,
+            repos,
+            run,
+            params,
+            compact,
+            jev,
+            handle,
+            runs,
+            cx,
+        }
+    }
+
+    /// Every run the interface has, with the plugin's state in it.
+    pub fn runs(&self) -> Vec<(RunInfo, P::State)> {
+        (self.runs)()
+            .into_iter()
+            .map(|(run, state)| {
+                (run, serde_json::from_value(state).unwrap_or_default())
+            })
+            .collect()
+    }
+
+    /// The page's parameter `name`, or nothing.
+    pub fn param(&self, name: &str) -> Option<&str> {
+        self.params.get(name).map(String::as_str)
+    }
+
+    /// The theme.
+    pub fn theme(&self) -> &tau_ui_kit::theme::Theme {
+        tau_ui_kit::theme::theme(self.cx)
+    }
+
+    /// Reads the plugin's window state.
+    pub fn read_ui(&self) -> &P::Ui {
+        self.ui.read(self.cx)
+    }
+}

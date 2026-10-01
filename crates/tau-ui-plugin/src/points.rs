@@ -1,0 +1,112 @@
+//! The extension points `tau-ui` declares, and the context each gives
+//! its contributions. A plugin contributes to them in its manifest.
+
+use crate::{
+    manifest::{Point, PointCx},
+    view::{NavEntry, PlanField, PluginStatus, RunInfo},
+};
+
+/// No context: the app as a whole.
+#[derive(Debug, Clone, Default)]
+pub struct AtApp;
+
+impl PointCx for AtApp {}
+
+/// A repository.
+#[derive(Debug, Clone)]
+pub struct AtRepo {
+    pub repo: String,
+}
+
+impl PointCx for AtRepo {}
+
+/// A run.
+#[derive(Debug, Clone)]
+pub struct AtRun {
+    pub run: RunInfo,
+}
+
+impl PointCx for AtRun {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+}
+
+/// One of the plugin's anchors in a run's transcript.
+#[derive(Debug, Clone)]
+pub struct AtAnchor {
+    pub run: RunInfo,
+    pub key: String,
+    /// The anchor's place among the transcript's items, for element ids.
+    pub index: usize,
+}
+
+impl PointCx for AtAnchor {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+}
+
+/// A tool call's card, with the anchors the plugin attached to it.
+#[derive(Debug, Clone)]
+pub struct AtCard {
+    pub run: RunInfo,
+    pub call_id: String,
+    pub tool: String,
+    /// The plugin's anchors on the card, in the order they came.
+    pub keys: Vec<String>,
+}
+
+impl PointCx for AtCard {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+}
+
+/// An item in a run's transcript, at a plugin's anchor.
+pub const TRANSCRIPT: Point<AtAnchor> = Point::new("tau.run.transcript");
+/// Beside a tool card's title.
+pub const CARD_BADGE: Point<AtCard> = Point::new("tau.run.card.badge");
+/// Under a tool card's body.
+pub const CARD_BODY: Point<AtCard> = Point::new("tau.run.card.body");
+/// Above a run's transcript.
+pub const RUN_BANNER: Point<AtRun> = Point::new("tau.run.banner");
+/// A section of the run inspector.
+pub const INSPECTOR: Point<AtRun> = Point::new("tau.run.inspector");
+/// The plugin's line in the run's plugin list.
+pub const STATUS: Point<AtRun, PluginStatus> = Point::new("tau.run.status");
+/// A field of the run's plan.
+pub const PLAN: Point<AtRun, PlanField> = Point::new("tau.run.plan");
+/// Where on the context meter the plugin steps in, as a share of the
+/// window.
+pub const CONTEXT_TRIGGER: Point<AtRun, f32> =
+    Point::new("tau.run.context.trigger");
+/// Small print on a run's row in the sidebar: a goal's `2/10`.
+pub const RUN_BADGE: Point<AtRun, String> = Point::new("tau.sidebar.run.badge");
+/// The sidebar's own entries, above the repositories.
+pub const SIDEBAR: Point<AtApp, NavEntry> = Point::new("tau.sidebar");
+/// Entries under each repository in the sidebar and the phone's Runs
+/// list.
+pub const SIDEBAR_REPO: Point<AtRepo, NavEntry> =
+    Point::new("tau.sidebar.repo");
+/// A section of the Models screen.
+pub const MODELS: Point<AtApp> = Point::new("tau.models.section");
+/// Hits search offers besides the navigation's entries.
+pub const SEARCH: Point<AtApp, NavEntry> = Point::new("tau.search");
+
+/// Every point `tau-ui` declares.
+pub const ALL: [&str; 13] = [
+    TRANSCRIPT.name,
+    CARD_BADGE.name,
+    CARD_BODY.name,
+    RUN_BANNER.name,
+    INSPECTOR.name,
+    STATUS.name,
+    PLAN.name,
+    CONTEXT_TRIGGER.name,
+    RUN_BADGE.name,
+    SIDEBAR.name,
+    SIDEBAR_REPO.name,
+    MODELS.name,
+    SEARCH.name,
+];
