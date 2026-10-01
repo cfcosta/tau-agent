@@ -20,6 +20,19 @@ android {
         }
     }
 
+    // A debug key committed with the project, so every build, from the
+    // dev shell or from `nix build .#tau-phone-apk`, signs with the same
+    // key and installs over the last one. It is public: never sign a
+    // release with it.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
