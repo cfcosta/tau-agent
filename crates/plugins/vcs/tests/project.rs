@@ -433,6 +433,32 @@ fn a_shallow_checkout_imports_and_updates() {
     assert_eq!(project.parent_of(&next).unwrap(), Some(head));
 }
 
+/// The user checks out another branch in the checkout a project came
+/// from, and commits there. An update brings the commit, but trunk stays
+/// on the branch it followed: a checkout's `HEAD` is what is checked out
+/// in it, not its default branch.
+#[test]
+fn an_update_from_a_checkout_keeps_trunks_branch() {
+    let src = tempfile::tempdir().unwrap();
+    let first = source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    git(src.path(), &["checkout", "--quiet", "-b", "feature"]);
+    let feature = commit(src.path(), "b.txt");
+
+    let updated = project.update(UpdateFrom::Checkout(src.path())).unwrap();
+    assert!(!updated.changed());
+    assert_eq!(project.default_branch().as_deref(), Some("main"));
+    assert_eq!(project.trunk_name().unwrap(), "main");
+    assert_eq!(project.trunk().unwrap(), first);
+    assert_eq!(project.bookmark("feature").unwrap(), Some(feature));
+}
+
 #[test]
 fn files_and_parents_are_read_at_a_commit() {
     let src = tempfile::tempdir().unwrap();

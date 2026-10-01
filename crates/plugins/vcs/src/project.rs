@@ -149,7 +149,8 @@ impl Project {
 
     /// Brings in what changed at the source since the project was made
     /// or last updated: new commits, and branches where the source has
-    /// them now. Runs keep their workspaces and commits; new runs start
+    /// them now. Trunk follows a remote's or a bare repository's new
+    /// default branch, but not a checkout's checked-out branch. Runs keep their workspaces and commits; new runs start
     /// from the new trunk. Returns the trunk before and after.
     pub fn update(&self, from: UpdateFrom<'_>) -> Result<Updated, VcsError> {
         let before = self.trunk()?;
@@ -862,6 +863,7 @@ fn copy_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
         copy_tree(&git_dir.join("objects"), &into.join("objects"), true)?;
         copy_tree(&git_dir.join("refs"), &into.join("refs"), false)?;
         copy_files(&git_dir, into)?;
+        copy_head(&git_dir, into)?;
         let config =
             std::fs::read_to_string(git_dir.join("config")).unwrap_or_default();
         std::fs::write(into.join("config"), bare_config(&config))?;
@@ -878,7 +880,10 @@ fn copy_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
 
 /// Brings a copy made by [`copy_git_store`] up to date with its source:
 /// the objects it lacks (object files never change, so the ones it has
-/// are kept), and the source's branches, tags and `HEAD`.
+/// are kept), and the source's branches and tags. A checkout's `HEAD`
+/// names the branch checked out in it, not its default one, so the
+/// copy keeps the `HEAD` it had from the import; a bare repository's is
+/// its default branch, and comes along.
 fn update_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
     let git_dir = git_dir(source)
         .ok_or_else(|| VcsError::NoLongerGitRepo(source.to_owned()))?;
@@ -893,7 +898,11 @@ fn update_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
             }
             copy_tree(&git_dir.join("refs").join(refs), &target, false)?;
         }
-        copy_files(&git_dir, into)
+        copy_files(&git_dir, into)?;
+        if git_dir == source {
+            copy_head(&git_dir, into)?;
+        }
+        Ok(())
     })()
     .map_err(|error| VcsError::UpdateGitStore {
         path: source.to_owned(),
@@ -901,13 +910,13 @@ fn update_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
     })
 }
 
-/// Copies the files beside the refs that say what the refs are: `HEAD`,
-/// the packed refs, and `shallow`, the commits of a shallow clone whose
+/// Copies the files beside the refs that say what the refs are: the
+/// packed refs, and `shallow`, the commits of a shallow clone whose
 /// parents it lacks. One the source does not have goes from the copy:
 /// a stale `shallow` would cut history short, and stale packed refs
 /// bring back branches.
 fn copy_files(git_dir: &Path, into: &Path) -> std::io::Result<()> {
-    for file in ["packed-refs", "HEAD", "shallow"] {
+    for file in ["packed-refs", "shallow"] {
         let from = git_dir.join(file);
         if from.is_file() {
             std::fs::copy(&from, into.join(file))?;
@@ -916,6 +925,11 @@ fn copy_files(git_dir: &Path, into: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Copies the source's `HEAD`: the branch trunk follows.
+fn copy_head(git_dir: &Path, into: &Path) -> std::io::Result<()> {
+    std::fs::copy(git_dir.join("HEAD"), into.join("HEAD")).map(drop)
 }
 
 /// Links (or copies) the files under `from` that `into` lacks.

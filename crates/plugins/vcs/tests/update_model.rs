@@ -170,6 +170,11 @@ struct Machine {
     commits: usize,
     /// The source's branches as the last import or update saw them.
     imported: BTreeMap<String, String>,
+    /// The branch trunk follows, as the copy's `HEAD` names it: the
+    /// source's at the import, and a bare source's or a remote's after
+    /// each update. A checkout's `HEAD` is its checked-out branch, which
+    /// an update leaves alone.
+    head: Option<String>,
     /// Bookmarks the main chat moved since upstream last moved them:
     /// where it put them.
     local: BTreeMap<String, String>,
@@ -256,6 +261,7 @@ impl Machine {
             main,
             commits: 0,
             imported: BTreeMap::new(),
+            head: None,
             local: BTreeMap::new(),
             own: Vec::new(),
             base: ROOT.to_owned(),
@@ -264,6 +270,7 @@ impl Machine {
             dirty: false,
         };
         machine.imported = machine.branches();
+        machine.head = head_branch(&machine.source_git());
         machine.trunk = machine.want_trunk().1;
         machine.check_mirror();
         machine
@@ -302,7 +309,7 @@ impl Machine {
     /// `HEAD`'s branch or `main`.
     fn want_trunk(&self) -> (String, String) {
         let bookmarks = self.want_bookmarks();
-        let head = head_branch(&self.source_git());
+        let head = self.head.clone();
         head.iter()
             .cloned()
             .chain(["main", "master", "trunk"].map(String::from))
@@ -332,7 +339,7 @@ impl Machine {
         );
         assert_eq!(
             self.project.default_branch(),
-            head_branch(&source),
+            self.head,
             "the default branch"
         );
         let got: BTreeMap<String, Option<String>> = self
@@ -533,7 +540,12 @@ impl Machine {
         // upstream leaves it; once upstream moves or deletes it too, it
         // takes upstream's side.
         let now = self.branches();
-        let head = head_branch(&self.source_git());
+        if matches!(self.kind, Kind::Bare | Kind::Remote) {
+            self.head = head_branch(&self.source_git());
+        } else if self.head != head_branch(&self.source_git()) {
+            tc.event("an update from a checkout on another branch");
+        }
+        let head = self.head.clone();
         for (name, id) in std::mem::take(&mut self.local) {
             let base = self.imported.get(&name);
             let new = now.get(&name);

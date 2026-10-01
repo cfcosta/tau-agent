@@ -3,7 +3,8 @@
 //! drawn `git` commands (commits, branches made, moved, deleted and
 //! checked out, a detached `HEAD`, packed refs and objects), imported,
 //! changed again and updated from. The oracle is `git` itself: the
-//! source's branches and `HEAD` as `git` reports them.
+//! source's branches and `HEAD` as `git` reports them, with trunk on
+//! the branch `HEAD` named at the import.
 
 use std::{collections::BTreeMap, path::Path, process::Command};
 
@@ -163,12 +164,12 @@ impl Source {
         }
     }
 
-    /// The trunk `vcs.md` promises: `HEAD`'s branch, else `main`,
-    /// `master` or `trunk`, else the root commit.
-    fn trunk(&self) -> String {
+    /// The trunk `vcs.md` promises: the branch `head` names (the
+    /// source's `HEAD` at the import), else `main`, `master` or `trunk`,
+    /// else the root commit.
+    fn trunk(&self, head: Option<String>) -> String {
         let branches = self.branches();
-        self.head_branch()
-            .into_iter()
+        head.into_iter()
             .chain(["main", "master", "trunk"].map(String::from))
             .find_map(|name| branches.get(&name).cloned())
             .unwrap_or_else(|| ROOT.to_owned())
@@ -176,8 +177,9 @@ impl Source {
 }
 
 /// The project holds the source's branches as bookmarks, on the same
-/// commits, and its trunk is the one the reference promises.
-fn check(project: &Project, source: &Source) {
+/// commits, and its trunk is the one the reference promises, on the
+/// branch `head` names.
+fn check(project: &Project, source: &Source, head: Option<String>) {
     let branches = source.branches();
     let bookmarks: BTreeMap<String, String> = project
         .bookmarks("")
@@ -193,8 +195,12 @@ fn check(project: &Project, source: &Source) {
         bookmarks, branches,
         "bookmarks against the source's branches"
     );
-    assert_eq!(project.trunk().unwrap(), source.trunk(), "trunk");
-    assert_eq!(project.default_branch(), source.head_branch());
+    assert_eq!(
+        project.trunk().unwrap(),
+        source.trunk(head.clone()),
+        "trunk"
+    );
+    assert_eq!(project.default_branch(), head);
     // Every branch's files are readable at its commit.
     for id in branches.values() {
         let want = git(&source.dir, &["show", &format!("{id}:f.txt")]);
@@ -232,7 +238,7 @@ fn a_project_mirrors_its_source(tc: TestCase) {
     }
     if source.head_branch().is_none() {
         tc.event("an import with a detached HEAD");
-    } else if source.trunk() != ROOT
+    } else if source.trunk(source.head_branch()) != ROOT
         && !source
             .branches()
             .contains_key(&source.head_branch().unwrap())
@@ -246,7 +252,10 @@ fn a_project_mirrors_its_source(tc: TestCase) {
         Identity::default(),
     )
     .unwrap();
-    check(&project, &source);
+    // The branch trunk follows: the one `HEAD` named at the import. An
+    // update leaves it, whatever the checkout has checked out since.
+    let head = source.head_branch();
+    check(&project, &source, head.clone());
 
     // A run works meanwhile, on the trunk as it was.
     let trunk = project.trunk().unwrap();
@@ -262,12 +271,16 @@ fn a_project_mirrors_its_source(tc: TestCase) {
     }
     let updated = project.update(UpdateFrom::Checkout(&source.dir)).unwrap();
     assert_eq!(updated.before, trunk);
-    assert_eq!(updated.after, source.trunk());
-    assert_eq!(updated.changed(), trunk != source.trunk());
+    let want = source.trunk(head.clone());
+    assert_eq!(updated.after, want);
+    assert_eq!(updated.changed(), trunk != want);
     if updated.changed() {
         tc.event("an update moves the trunk");
     }
-    check(&project, &source);
+    if source.head_branch() != head {
+        tc.event("an update from a checkout on another branch");
+    }
+    check(&project, &source, head.clone());
 
     // The run is as it was.
     assert_eq!(
@@ -305,5 +318,5 @@ fn a_project_mirrors_its_source(tc: TestCase) {
         Identity::default(),
     )
     .unwrap();
-    check(&again, &source);
+    check(&again, &source, head);
 }

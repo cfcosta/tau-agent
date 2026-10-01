@@ -299,11 +299,13 @@ the user's checkout.
 - `update(from)` brings in what changed at the source since the import
   or the last update: from the checkout (`UpdateFrom::Checkout`) or
   from a remote (`UpdateFrom::Remote`, a fetch through gix). The
-  copy's branches, tags and `HEAD` become the source's: branches and
-  tags the source deleted go, and trunk follows a new default branch.
-  It returns trunk before and after (`Updated`). Runs keep their
+  copy's branches and tags become the source's: those the source
+  deleted go. A remote's or a bare repository's `HEAD` comes too, so
+  trunk follows a new default branch. A checkout's does not: it names
+  the branch checked out there, so trunk stays on the branch the
+  import's `HEAD` named. It returns trunk before and after (`Updated`). Runs keep their
   workspaces and commits.
-- `trunk()` is the commit new runs start from: the branch the clone's
+- `trunk()` is the commit new runs start from: the branch the copy's
   `HEAD` names, else `main`, `master` or `trunk`, else the root commit.
 - `add_workspace(name, base)` makes `runs/<name>` on a new empty commit
   on top of `base` and checks out its files. `forget_workspace(name)`
