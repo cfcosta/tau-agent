@@ -1,8 +1,9 @@
 # MCP servers (`tau-mcp`)
 
-- Status: built in `crates/plugins/mcp` (`tau-mcp`), except its
-  interface: the crate exports the agent plugin, not yet a `UiPlugin`
-  ([0017](../decisions/0017-plugins-bring-their-ui.md)). Decided in
+- Status: built in `crates/plugins/mcp` (`tau-mcp`), with its
+  interface: `McpUi`, a `UiPlugin`
+  ([0017](../decisions/0017-plugins-bring-their-ui.md)) that tau-ui
+  registers ("The interface"). Decided in
   [0018](../decisions/0018-codemode-and-mcp.md). Where the build
   differs from the first design, this page says so; the differences
   are listed in "Deviations".
@@ -91,7 +92,9 @@ The common `mcpServers` shape:
 ## Connections
 
 - **Owned by the agent.** The plugin holds one connection per enabled
-  server, shared by every run, and closes them when it is dropped.
+  server, shared by every run, and closes them when it is dropped. In
+  tau-ui the host keeps the plugin, one per repository ("The
+  interface").
 - **Started in the background** when the plugin is built. The plugin
   does not wait for them, except as below.
 - **States:** `connecting`, `connected`, `disconnected`, `failed`,
@@ -174,7 +177,8 @@ result does not depend on order. A server's namespace is
   `idempotentHint`, `openWorldHint`) are kept for the constitution and
   the interface: `McpTool::annotations()` (and `McpPlugin::tool(name)`
   to find the tool), and every call's `details`,
-  `{ server, tool, annotations }`.
+  `{ server, tool, annotations, structuredContent? }`, the last when the
+  result has one of at most 20 KB as JSON, for the call's card.
 - **Execution mode:** `Parallel`.
 - **Progress** notifications become `ToolUpdate`s: the message and
   `(progress/total)` as text, `{ progress, total, message }` as
@@ -227,6 +231,91 @@ is listed, connected or not. The block is fixed for the run. pi
 appends a new block when servers change mid-session; tau shows the
 change from the next run.
 
+## The interface
+
+`McpUi` (`src/ui/`) is the plugin with its UI. tau-ui registers it
+before tau-codemode, whose `start` lists the run's tools after tau-mcp
+added the direct ones.
+
+### On the host
+
+- **One plugin per scope.** A scope is a repository (the user's file,
+  the settings and its `.tau/mcp.json`, with its directory as the
+  servers' root and `cwd`), or the user's servers alone. The host keeps
+  an `McpPlugin` per scope, built the first time a run in the
+  repository starts, or Connect on the page asks for it. Until then the
+  page lists the servers as configured, "not started". A repository
+  with no enabled, approved server adds nothing to its runs.
+- **Shared by runs.** Each run gets a wrapper (`RunServers`) that hands
+  the scope's plugin's `start` and tool source to the run, so every run
+  in a repository uses the same connections.
+- **Rebuilt when the servers change.** Each time a scope is used (a run
+  starts, the catalog is drawn, an action runs) its servers are read
+  again: the user's file from tau's config directory, the settings,
+  the repository's file. When the merged servers, errors or pending
+  approvals differ from what its plugin was built from, the plugin is
+  built again and its servers connect again; runs going on keep the
+  old connections, which close when the last of them ends. Files are
+  not watched: an edit by hand shows the next time the scope is used.
+  A change to the settings rebuilds every built scope it changes, so a
+  new server restarts the others of each repository.
+- **Closed with the host.** Dropping the host shuts down every built
+  scope's connections, runs going on included.
+- **Settings.** The host half reads and saves the plugin's settings
+  through `HostCx::settings` and `HostCx::save_settings`, and the user's
+  file from `HostCx::config_dir`.
+
+### The Servers page
+
+`Link::page("servers").param("repo", name)`: a repository's servers,
+or, without a repository, the user's and the settings' alone.
+
+- **Each server:** its name; where it comes from (user file, settings,
+  repository file); how it is reached, the command and arguments or the
+  URL, with variables and headers by name only, since their values may
+  hold tokens; its exposure; its state and last error (`not started`
+  before the scope's plugin is built, `disabled` when turned off); its
+  description; and its tools, each with its exposure, its name as tools
+  call it, and badges for its hints (read-only, destructive,
+  idempotent, open world).
+- **Waiting for approval:** each repository server not yet approved,
+  with its whole entry as tau prints it, and Approve.
+- **Skipped entries**, each with where and why.
+- **Actions**, sent to the host half as JSON (`Act`):
+  - `approve { repo, server, hash }` saves `hash` in
+    `approvedRepoServers`, only if it is the hash of the entry pending
+    now: an entry that changed since the page showed it is refused;
+  - `add { name, entry }` adds a server to the settings: refused for a
+    name the user's file has (valid entry or not), one already added, a
+    name whose namespace another takes, or an entry that does not parse.
+    The entry is saved as tau prints it, defaults left out;
+  - `edit { name, entry }`, `remove { name }` and
+    `enable { name, enabled }`, for the servers the page added only;
+  - `reconnect { repo, server }` builds the scope's plugin if it was
+    not, and connects `server`, or every server, again.
+    The editor checks a new server as the host does before it sends it,
+    and says why it will not; removing asks twice.
+- **The sidebar:** under each repository, "MCP", with its servers
+  counted and a badge for the approvals waiting. The Plugins screen
+  links to the page.
+
+### Elsewhere
+
+- **Catalog:** "MCP servers: 3 servers · 2 connected · 1 needs
+  approval", counting servers by name across the user's and every
+  repository's, connected where any scope connected them; "Connects to
+  MCP servers and adds their tools" without any.
+- **A run's plugin list:** its repository's servers in the same words,
+  in amber while an approval waits, in red when a server failed;
+  nothing for a repository without servers.
+- **Tool cards:** a card for every `mcp__` tool: the server and the
+  tool (from the call's details once it ended, else from the
+  repository's servers), its hints as badges, the arguments, and the
+  result: `structuredContent` as pretty JSON when the details carry it,
+  else the text, at most 40 lines. A failed call is red with the
+  result's first line. Calls a codemode script made are rows of its
+  card, as tau-ui folds nested calls there.
+
 ## The crate
 
 - `config`: `McpConfig::parse`/`to_json`, `merge`, `Sources::load`
@@ -239,6 +328,9 @@ change from the next run.
   `instructions`, `call`, `settled`, `shutdown`), `State`, `Status`,
   `ToolInfo`, `Annotations`, `CallFailure`, `Environment`. Only its
   private `client` module touches rmcp.
+- `ui`: `McpUi`, its `Host`, the page's data (`Servers`, `ServerRow`,
+  `ToolRow`, `PendingRow`), `Act` and `apply` (what an action does to
+  the settings), `server_entry`, `summary`; `ui::page` and `ui::card`.
 - `tool::McpTool`; `McpPlugin` and `McpPluginBuilder`:
 
 ```rust
@@ -265,8 +357,14 @@ server after the files and settings: an in-process one through
 
 From the design above, as first written:
 
-- **The page is not built.** Approvals, pending servers, errors and
-  states are in `McpPlugin`'s API for it.
+- **One plugin per repository.** The design had the agent own the
+  connections; tau-ui's host keeps one plugin per repository instead,
+  so a user server runs once for each repository that started it.
+- **No file watching.** The files are read again whenever a scope is
+  used, not watched.
+- **Details carry the structured result**, at most 20 KB of it as
+  JSON, for the card: tau-ui keeps a call's text and details, not its
+  structured output.
 - **A legacy fallback rmcp lacks:** a second connection with
   `initialize` for servers that know `server/discover` but offer only
   2025-11-25.
@@ -306,6 +404,22 @@ From the design above, as first written:
 - **The server list, as a property:** at most 4,096 characters,
   descriptions at most 250, kept servers in order, the overflow count
   right.
+- **The interface** (`tests/ui.rs`): as properties, whatever the page
+  asks in whatever order, the settings' servers are a model's (a new
+  name the user's file and other namespaces leave free; edits only to
+  the page's own; every entry parses; the settings survive saving);
+  and an approval holds for the hash of the entry shown, which reading
+  the file again, laid out otherwise, does not change, while any other
+  hash is refused and a changed entry waits again. Against a host over
+  temporary directories: approving through `act` saves the hash shown;
+  the page refuses a name the user's file has and edits, turns off and
+  removes its own; a repository keeps its plugin until its servers
+  change, in the settings or in the file; Connect starts a repository's
+  servers. In gpui's test app: the editor sends only what it may; the
+  page draws on a computer and a phone, with the editor open; the
+  sidebar and the run's line count servers and approvals; the card
+  names the server and shows the structured result or the text. And
+  the design test.
 - **In the loop**, with `ScriptedModel`: direct tools are declared and
   called by the model; codemode tools are not declared and a tool calls
   them through the loop (Codemode's scripts are its own crate's

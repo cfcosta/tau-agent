@@ -358,7 +358,9 @@ the sketch above in these places:
 - **Services.** `RunCtx` and `HostCx` carry a typemap of services: the
   metered Jev, how memory searches, and `TurnHooks`, through which a
   plugin hears each turn's commit in the run's workspace (memory marks
-  notes stale with it).
+  notes stale with it). `HostCx` also reaches the plugins' saved
+  settings, which a host half reads and saves when an action changes
+  them (tau-mcp's approvals), and tau's config directory.
 - **Actions.** A plugin's UI asks through a `Handle`: `act` (its host
   half, answered through `reply`), `record` (fold and store a change
   the interface makes), `navigate`, `send`, `steer`, `composer`,

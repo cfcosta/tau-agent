@@ -19,7 +19,7 @@ tau-agent/
 │       ├── compaction/       # tau-compaction: summarizing compaction
 │       ├── fast-compaction/  # tau-fast-compaction: Jev-driven pruning of tool history
 │       ├── jev/              # tau-jev: TypeSafe's Jev client, for plugins
-│       ├── mcp/              # tau-mcp: MCP servers' tools (rmcp)
+│       ├── mcp/              # tau-mcp: MCP servers' tools (rmcp), the Servers page
 │       └── tools/            # tau-tools: read, bash, edit, write, grep, find, ls
 └── docs/
 ```
@@ -79,6 +79,10 @@ Agent::start(input, &store)
   - Only provider streams are dropped inside `select!`.
 - **Hooks and event subscribers are awaited in order.** A slow
   subscriber applies backpressure to its run and to no other run.
+- **MCP servers belong to the host, not to a run.** tau-mcp keeps one
+  plugin per repository on the host, whose connections every run in the
+  repository shares; they close when the host goes
+  ([mcp.md](reference/mcp.md)).
 - **Store access:**
   - all writes go through one writer connection;
   - reads use a read-only pool;
