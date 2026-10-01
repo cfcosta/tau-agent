@@ -64,8 +64,8 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
     write a query that is arbitrarily expensive.
 - **Snapshot first.** Every tool snapshots the working copy before it
   reads or writes. The snapshot is its own operation, marked as a
-  snapshot, and only happens when files changed. A call refused after
-  its snapshot keeps it.
+  snapshot, and only happens when files changed. It stands when the
+  tool then fails or refuses.
 - **The working copy only.** The write tools change only the
   working-copy change (`@`) of this workspace, and they only add new
   changes on top of it.

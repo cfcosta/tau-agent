@@ -2,7 +2,11 @@
 //! the same repository (`docs/reference/vcs.md`, "Tools", "Scoping
 //! rules", "A repository's main chat").
 
-use std::{path::Path, process::Command, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Arc,
+};
 
 use serde_json::{Value, json};
 use tau_agent::{
@@ -11,7 +15,14 @@ use tau_agent::{
 };
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
-use tau_vcs::{DEFAULT_WORKSPACE, Identity, Project, Vcs, VcsPlugin};
+use tau_vcs::{
+    DEFAULT_WORKSPACE,
+    Identity,
+    Project,
+    UpdateFrom,
+    Vcs,
+    VcsPlugin,
+};
 use tokio_util::sync::CancellationToken;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -136,4 +147,51 @@ fn undo_refuses_a_landing() {
     let landing = block_on(main.vcs.land(head, name, true)).unwrap();
     assert_refused(main.call("vcs_undo", json!({})));
     assert_eq!(project.trunk().unwrap(), landing.head);
+}
+
+/// A chat whose `@` holds a conflict, after a catch-up rebased it: the
+/// project, the chat, and the chat's workspace directory.
+fn a_chat_in_conflict() -> (tempfile::TempDir, Project, Workspace, PathBuf) {
+    let (home, project, main) = project();
+    let name = project.trunk_name().unwrap();
+    std::fs::write(
+        project.workspace_dir(DEFAULT_WORKSPACE).join("b.txt"),
+        "b\n",
+    )
+    .unwrap();
+    let (_, committed) = main.ok("vcs_commit", json!({ "message": "Add b" }));
+    block_on(main.vcs.end_turn(name.clone(), None)).unwrap();
+    let head = committed["committed"]["commit_id"].as_str().unwrap();
+    let chat = Workspace::new(project.add_workspace("chat", head).unwrap());
+    let dir = project.workspace_dir("chat");
+    // Upstream changes `a.txt`, and the main chat catches up, while the
+    // chat changes it too.
+    let src = home.path().join("src");
+    std::fs::write(src.join("a.txt"), "three\n").unwrap();
+    git(&src, &["commit", "--quiet", "-am", "upstream"]);
+    project.update(UpdateFrom::Checkout(&src)).unwrap();
+    let trunk = project.trunk().unwrap();
+    block_on(main.vcs.move_onto(trunk, name, true)).unwrap();
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    let (_, status) = chat.ok("vcs_status", json!({}));
+    assert_eq!(status["conflicts"], json!(["a.txt"]));
+    (home, project, chat, dir)
+}
+
+/// A tool that fails after its snapshot keeps the snapshot: the next
+/// tool sees the files as they are. A `vcs_undo` the catch-up made
+/// refuse used to leave the working copy's record behind, so the next
+/// tool took the snapshot's own changes for edits made since and applied
+/// them again: `a.txt`, resolved by hand, came back as a conflict.
+#[test]
+fn a_refused_tool_keeps_its_snapshot() {
+    let (_home, _project, chat, dir) = a_chat_in_conflict();
+    std::fs::write(dir.join("a.txt"), "resolved\n").unwrap();
+    assert_refused(chat.call("vcs_undo", json!({})));
+    let (_, status) = chat.ok("vcs_status", json!({}));
+    assert_eq!(status["conflicts"], json!([]));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "resolved\n"
+    );
 }
