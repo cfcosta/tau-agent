@@ -273,7 +273,7 @@ impl tau_ui_plugin::RunCx for Quiet<'_> {
     fn rewrite(&mut self, _key: &str) {}
 
     fn attach(&mut self, call_id: &str, _key: &str) -> bool {
-        self.0.tool(call_id).is_some()
+        self.0.card_of(call_id).is_some()
     }
 
     fn cards(&self) -> Vec<tau_ui_plugin::CardInfo> {
@@ -303,9 +303,11 @@ impl tau_ui_plugin::RunCx for Folding<'_> {
         });
     }
 
+    /// A nested call's anchor lands on the card of the model's call it
+    /// came from.
     fn attach(&mut self, call_id: &str, key: &str) -> bool {
         let plugin = self.plugin.to_owned();
-        let Some(card) = self.view.tool_mut(call_id) else {
+        let Some(card) = self.view.card_of_mut(call_id) else {
             return false;
         };
         let anchor = (plugin, key.to_owned());
@@ -371,13 +373,23 @@ impl tau_ui_plugin::RunCx for Folding<'_> {
     }
 }
 
-/// Marks what `plugin` decided about the call `call_id` on its card.
+/// Marks what `plugin` decided about the call `call_id` on its card. A
+/// nested call's mark goes on its outermost card's data, for its row,
+/// and leaves the card's own state alone (`tau_ui_plugin::RunCx`).
 fn mark_card(
     view: &mut RunView,
     plugin: &str,
     call_id: &str,
     mark: CardMark,
 ) -> bool {
+    if view.tool(call_id).is_none() {
+        let Some(card) = view.card_of_mut(call_id) else {
+            return false;
+        };
+        std::sync::Arc::make_mut(&mut card.data)
+            .mark_nested(call_id, plugin, mark);
+        return true;
+    }
     let Some(card) = view.tool_mut(call_id) else {
         return false;
     };
@@ -1081,6 +1093,35 @@ impl RunView {
         })
     }
 
+    /// The card a call shows on: its own, or, for a call a tool made
+    /// through the loop (`<parent>/<n>`, at any depth), the card of the
+    /// model's call it came from. Nested calls never reach the
+    /// transcript, so they never get a card of their own.
+    pub fn card_of(&self, call_id: &str) -> Option<&ToolCard> {
+        self.items.iter().find_map(|item| match item {
+            Item::Tool(card)
+                if card.call_id == call_id
+                    || tau_ui_plugin::nested_under(call_id, &card.call_id) =>
+            {
+                Some(&**card)
+            }
+            _ => None,
+        })
+    }
+
+    /// [`Self::card_of`], to change.
+    pub fn card_of_mut(&mut self, call_id: &str) -> Option<&mut ToolCard> {
+        self.items.iter_mut().find_map(|item| match item {
+            Item::Tool(card)
+                if card.call_id == call_id
+                    || tau_ui_plugin::nested_under(call_id, &card.call_id) =>
+            {
+                Some(&mut **card)
+            }
+            _ => None,
+        })
+    }
+
     /// Folds one run event into the view. Events of other runs are
     /// ignored, except a child's start and end, which update
     /// [`RunView::children`].
@@ -1112,6 +1153,44 @@ impl RunView {
                 }
             }
             RunEvent::ToolCallDelta { .. } => {}
+            // A call a tool made through the loop: it folds into the
+            // card of the model's call it came from, and gets none of
+            // its own (ADR 0018).
+            RunEvent::ToolStart {
+                call_id,
+                tool,
+                args,
+                parent: Some(parent),
+                ..
+            } => {
+                if let Some(card) = self.card_of_mut(parent) {
+                    std::sync::Arc::make_mut(&mut card.data)
+                        .nested_start(call_id, parent, tool, args);
+                }
+            }
+            RunEvent::ToolUpdate {
+                call_id,
+                partial,
+                parent: Some(_),
+                ..
+            } => {
+                if let Some(card) = self.card_of_mut(call_id) {
+                    std::sync::Arc::make_mut(&mut card.data)
+                        .nested_update(call_id, partial);
+                }
+            }
+            RunEvent::ToolEnd {
+                call_id,
+                output,
+                is_error,
+                parent: Some(_),
+                ..
+            } => {
+                if let Some(card) = self.card_of_mut(call_id) {
+                    std::sync::Arc::make_mut(&mut card.data)
+                        .nested_end(call_id, output, *is_error);
+                }
+            }
             RunEvent::ToolStart {
                 call_id,
                 tool,
@@ -1238,6 +1317,26 @@ impl RunView {
             RunEvent::TurnStart { turn, .. } => {
                 ("TurnStart", format!("turn {turn}"))
             }
+            // A call a tool made is listed apart from the model's own.
+            RunEvent::ToolStart {
+                call_id,
+                tool,
+                args,
+                parent: Some(_),
+                ..
+            } => (
+                "NestedStart",
+                format!("{call_id} {tool} {}", summarize_args(args)),
+            ),
+            RunEvent::ToolEnd {
+                call_id,
+                is_error,
+                parent: Some(_),
+                ..
+            } => (
+                "NestedEnd",
+                format!("{call_id} {}", if *is_error { "error" } else { "ok" }),
+            ),
             RunEvent::ToolStart { tool, args, .. } => {
                 ("ToolStart", format!("{tool} {}", summarize_args(args)))
             }
@@ -1460,11 +1559,15 @@ fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
         .and_then(|details| details.get("summary"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    std::sync::Arc::make_mut(&mut card.data).result = Some(CallResult {
+    let data = std::sync::Arc::make_mut(&mut card.data);
+    data.result = Some(CallResult {
         text: text.clone(),
         details: output.details.clone(),
         error: is_error,
     });
+    // What its nested calls left is in its result now, as in a stored
+    // run.
+    data.end();
     // The tool's plugin says more of the result when it draws the card.
     card.state = if is_error {
         ToolState::Failed(first_line(&text))
@@ -1881,6 +1984,194 @@ mod tests {
             body: serde_json::json!({"kind": "blocked"}),
         });
         assert_eq!(view.items.len(), before);
+    }
+
+    /// A call a tool makes through the loop, at any depth, makes no card:
+    /// whatever its events, the transcript holds the model's calls only,
+    /// in order, and each nested call shows on the card of the model's
+    /// call it came from while that call runs, as it went.
+    #[hegel::test(test_cases = 200)]
+    fn nested_calls_make_no_cards(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        // (top-level card it falls under, depth 1 or 2, error?)
+        let calls: Vec<(u8, bool, bool)> = tc.draw(
+            gs::vecs(hegel::tuples!(
+                gs::integers::<u8>().max_value(2),
+                gs::booleans(),
+                gs::booleans(),
+            ))
+            .max_size(12),
+        );
+        let ended: bool = tc.draw(gs::booleans());
+        let mut view = view();
+        for top in 0..3 {
+            view.apply(&RunEvent::ToolStart {
+                run: run(),
+                call_id: format!("c{top}"),
+                tool: "codemode".into(),
+                args: json!({"code": "return 1"}),
+                parent: None,
+            });
+        }
+        let mut expected: Vec<Vec<(String, String, Option<bool>)>> =
+            vec![Vec::new(); 3];
+        for (n, (top, deep, error)) in calls.iter().enumerate() {
+            let top = format!("c{top}");
+            let parent = match (
+                deep,
+                expected[top[1..].parse::<usize>().unwrap()].first(),
+            ) {
+                (true, Some((first, _, _))) => first.clone(),
+                _ => top.clone(),
+            };
+            let id = format!("{parent}/{n}");
+            view.apply(&RunEvent::ToolStart {
+                run: run(),
+                call_id: id.clone(),
+                tool: "read".into(),
+                args: json!({"path": format!("f{n}")}),
+                parent: Some(parent.clone()),
+            });
+            view.apply(&RunEvent::ToolUpdate {
+                run: run(),
+                call_id: id.clone(),
+                partial: Arc::new(ToolOutput::text("so far")),
+                parent: Some(parent.clone()),
+            });
+            if n % 2 == 0 {
+                view.apply(&RunEvent::ToolEnd {
+                    run: run(),
+                    call_id: id.clone(),
+                    output: Arc::new(ToolOutput::text(format!("out {n}"))),
+                    is_error: *error,
+                    parent: Some(parent.clone()),
+                });
+            }
+            let i: usize = top[1..].parse().unwrap();
+            expected[i].push((id, parent, (n % 2 == 0).then_some(*error)));
+        }
+        if ended {
+            view.apply(&RunEvent::ToolEnd {
+                run: run(),
+                call_id: "c0".into(),
+                output: Arc::new(ToolOutput::text("done")),
+                is_error: false,
+                parent: None,
+            });
+        }
+        let cards: Vec<&ToolCard> = view
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Tool(card) => Some(&**card),
+                _ => None,
+            })
+            .collect();
+        let ids: Vec<&str> =
+            cards.iter().map(|card| card.call_id.as_str()).collect();
+        assert_eq!(ids, ["c0", "c1", "c2"]);
+        for (i, card) in cards.iter().enumerate() {
+            let nested: Vec<(String, String, Option<bool>)> = card
+                .data
+                .nested
+                .iter()
+                .map(|call| {
+                    assert_eq!(call.updates, 1);
+                    assert_eq!(call.partial.as_deref(), Some("so far"));
+                    (
+                        call.id.clone(),
+                        call.parent.clone(),
+                        call.result.as_ref().map(|result| result.error),
+                    )
+                })
+                .collect();
+            if ended && i == 0 {
+                // Its result is the record now, as in a stored run.
+                assert!(nested.is_empty());
+                assert_eq!(
+                    card.state,
+                    ToolState::Done {
+                        summary: Some("1 line".into())
+                    }
+                );
+            } else {
+                assert_eq!(nested, expected[i]);
+                assert_eq!(card.state, ToolState::Running);
+            }
+        }
+        // The Events tab lists them apart from the model's calls.
+        let tool_starts = view
+            .log
+            .iter()
+            .filter(|line| line.kind == "ToolStart")
+            .count();
+        let nested_starts = view
+            .log
+            .iter()
+            .filter(|line| line.kind == "NestedStart")
+            .count();
+        assert_eq!((tool_starts, nested_starts), (3, calls.len()));
+    }
+
+    /// A plugin's verdict on a nested call marks its row on the card it
+    /// shows on, not the card: the script may catch the refusal. Its
+    /// anchor lands on that card; a context rewrite cannot drop it.
+    #[test]
+    fn a_nested_calls_verdict_marks_its_row() {
+        let mut view = view();
+        view.apply(&RunEvent::ToolStart {
+            run: run(),
+            call_id: "c1".into(),
+            tool: "codemode".into(),
+            args: json!({"code": "tools.bash({ command = 'rm -rf /' })"}),
+            parent: None,
+        });
+        view.apply(&RunEvent::ToolStart {
+            run: run(),
+            call_id: "c1/1".into(),
+            tool: "bash".into(),
+            args: json!({"command": "rm -rf /"}),
+            parent: Some("c1".into()),
+        });
+        view.apply(&RunEvent::PluginReport {
+            run: run(),
+            plugin: tau_constitution::NAME.into(),
+            body: json!({
+                "kind": "blocked", "rule": "R1", "text": "No rm.",
+                "score": 0.95, "call_id": "c1/1", "tool": "bash",
+                "reason": "rule R1"
+            }),
+        });
+        let card = view.tool("c1").unwrap();
+        assert_eq!(card.state, ToolState::Running);
+        let marks: Vec<_> = card.data.marks_of("c1/1").collect();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].plugin, tau_constitution::NAME);
+        assert!(matches!(marks[0].mark, CardMark::Blocked { .. }));
+        assert!(
+            card.anchors
+                .contains(&(tau_constitution::NAME.into(), "c1/1".into()))
+        );
+        {
+            use tau_ui_plugin::RunCx as _;
+            let mut folding = Folding {
+                view: &mut view,
+                plugin: tau_fast_compaction::NAME,
+            };
+            assert!(!folding.dropped("c1/1", Dropped::Result));
+        }
+        assert_eq!(view.tool("c1").unwrap().dropped, None);
+        // The script ends: the mark stays, as history places it again.
+        view.apply(&RunEvent::ToolEnd {
+            run: run(),
+            call_id: "c1".into(),
+            output: Arc::new(ToolOutput::text("Script completed")),
+            is_error: false,
+            parent: None,
+        });
+        let card = view.tool("c1").unwrap();
+        assert!(card.data.nested.is_empty());
+        assert_eq!(card.data.marks_of("c1/1").count(), 1);
     }
 
     /// An amount shows three decimals exactly when it reads under a

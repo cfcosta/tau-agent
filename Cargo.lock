@@ -9529,6 +9529,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tau-agent",
+ "tau-ai",
  "tau-store",
  "tau-ui-kit",
  "tokio",

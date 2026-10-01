@@ -537,6 +537,7 @@ fn event_log(run: &RunView, t: &Theme) -> Div {
     let color = |kind: &str| match kind {
         "ToolStart" | "Retry" | "Continued" => t.accent,
         "ToolEnd" | "RunStart" => t.green,
+        "NestedStart" | "NestedEnd" => t.muted,
         "Usage" | "Rewrite" => t.blue,
         "PluginError" => t.red,
         _ => t.text_soft,
