@@ -37,6 +37,7 @@ tau-tools = { workspace = true, features = ["terminal"] }
 tau-terminal.workspace = true
 tau-vcs.workspace = true
 tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
 futures-util.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 reqwest.workspace = true

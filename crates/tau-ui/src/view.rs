@@ -69,6 +69,10 @@ pub struct RunView {
     pub constitution: ConstitutionStats,
     /// The conversation's goal, from tau-goal's reports and records.
     pub goal: Option<tau_goal::Goal>,
+    /// Each plugin's state in the run, as its fold leaves it, by plugin
+    /// name (ADR 0017).
+    #[serde(default)]
+    pub plugin_states: std::collections::BTreeMap<String, Value>,
     /// Whether tau-goal runs with the run as it goes now, and checks its
     /// goal: there was a TypeSafe key when it started, and it is not a
     /// sub-agent. A stored run is checked again only once it goes on.
@@ -261,6 +265,12 @@ pub enum Item {
     Thinking(String),
     Tool(ToolCard),
     Plugin(PluginNote),
+    /// A plugin's anchor: the plugin draws what goes here, at the
+    /// transcript's point (ADR 0017).
+    Anchor {
+        plugin: String,
+        key: String,
+    },
     /// A child run's changes landed on this run (ADR 0009).
     Landed(LandedCard),
     /// A fork of this run finished and waits to land or be dropped.
@@ -359,6 +369,10 @@ pub struct ToolCard {
     pub cut: Option<Box<OutputCut>>,
     /// Characters the call's arguments and result take in the context.
     pub size: usize,
+    /// Plugins' anchors on the card, as `(plugin, key)`, in the order
+    /// they came: what a plugin draws at the card's points.
+    #[serde(default)]
+    pub anchors: Vec<(String, String)>,
 }
 
 /// A result fast compaction pruned as it arrived: the lines the model
@@ -661,13 +675,60 @@ pub struct Proposal {
 }
 
 pub use tau_ui_kit::theme::Tone;
+pub use tau_ui_plugin::{PlanField, PluginStatus};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlanField {
-    pub name: String,
-    pub value: String,
-    /// The plugin that set it.
-    pub set_by: Option<String>,
+/// A run as a plugin's fold reaches it: one plugin's anchors go in.
+struct Folding<'a> {
+    view: &'a mut RunView,
+    plugin: &'a str,
+}
+
+impl tau_ui_plugin::RunCx for Folding<'_> {
+    fn transcript(&mut self, key: &str) {
+        self.view.items.push(Item::Anchor {
+            plugin: self.plugin.to_owned(),
+            key: key.to_owned(),
+        });
+    }
+
+    fn attach(&mut self, call_id: &str, key: &str) -> bool {
+        let plugin = self.plugin.to_owned();
+        let Some(card) = self.view.tool_mut(call_id) else {
+            return false;
+        };
+        let anchor = (plugin, key.to_owned());
+        if !card.anchors.contains(&anchor) {
+            card.anchors.push(anchor);
+        }
+        true
+    }
+
+    fn cards(&self) -> Vec<tau_ui_plugin::CardInfo> {
+        let mut turn = 1;
+        let mut cards = Vec::new();
+        for item in &self.view.items {
+            match item {
+                Item::TurnEnd { turn: ended } => turn = ended + 1,
+                Item::Tool(card) => cards.push(tau_ui_plugin::CardInfo {
+                    call_id: card.call_id.clone(),
+                    tool: card.tool.clone(),
+                    summary: card.summary.clone(),
+                    size: card.size,
+                    turn,
+                }),
+                _ => {}
+            }
+        }
+        cards
+    }
+
+    fn last_text(&self) -> Option<String> {
+        self.view.last_text().map(str::to_owned)
+    }
+
+    fn turn(&self) -> u32 {
+        self.view.turn
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -765,13 +826,6 @@ impl ContextParts {
             results,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginStatus {
-    pub name: String,
-    pub state: String,
-    pub tone: Tone,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -929,6 +983,7 @@ impl RunView {
             constitution: ConstitutionStats::default(),
             goal: None,
             goal_checks: false,
+            plugin_states: Default::default(),
             pending_rewrite: None,
         }
     }
@@ -1119,6 +1174,7 @@ impl RunView {
                                 checks: Vec::new(),
                                 pruned: None,
                                 cut: None,
+                                anchors: Vec::new(),
                                 size: 0,
                             }))
                         }
@@ -1202,6 +1258,29 @@ impl RunView {
     }
 
     /// The last thing the model said, if anything.
+    /// Folds a body `plugin` published (or the host stored for it) into
+    /// the plugin's state in the run, through the plugin's own fold. A
+    /// plugin the registry does not have folds nothing.
+    pub fn fold(&mut self, plugin: &str, body: &Value) {
+        let Some(erased) = crate::plugins::registry().get(plugin) else {
+            return;
+        };
+        let mut state =
+            self.plugin_states.remove(plugin).unwrap_or(Value::Null);
+        erased.apply(&mut state, body, &mut Folding { view: self, plugin });
+        self.plugin_states.insert(plugin.to_owned(), state);
+    }
+
+    /// The run, as a plugin's UI sees it.
+    pub fn info(&self) -> tau_ui_plugin::RunInfo {
+        tau_ui_plugin::RunInfo {
+            id: self.id.clone(),
+            repo: self.repo.clone(),
+            live: self.status.is_live(),
+            title: self.title.clone(),
+        }
+    }
+
     pub fn last_text(&self) -> Option<&str> {
         self.items.iter().rev().find_map(|item| match item {
             Item::Text(text) => Some(text.as_str()),
@@ -1454,6 +1533,7 @@ impl RunView {
                 checks: Vec::new(),
                 pruned: None,
                 cut: None,
+                anchors: Vec::new(),
                 size: 0,
             })),
             RunEvent::ToolUpdate {
@@ -1791,6 +1871,11 @@ impl RunView {
     /// they are about, or note what it did with the final answer; other
     /// plugins' reports only reach the event log.
     pub fn report(&mut self, plugin: &str, body: &Value) {
+        // A plugin with its UI folds what it published itself.
+        if crate::plugins::registry().get(plugin).is_some() {
+            self.fold(plugin, body);
+            return;
+        }
         use tau_constitution::{Verdict, VerdictKind};
         if plugin == tau_reasoning::NAME {
             self.reasoning_report(body);
@@ -3684,6 +3769,7 @@ mod tests {
             checks: Vec::new(),
             pruned: None,
             cut: None,
+            anchors: Vec::new(),
             size: 0,
         };
         let args = card.args.to_string().len();

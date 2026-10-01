@@ -22,7 +22,7 @@ use std::{
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use gpui::{App, Entity};
+use gpui::{App, AppContext as _, Entity};
 use serde::{Deserialize, Serialize};
 use tau_agent::{
     agent::{Agent, Checkpoint, RunControl},
@@ -561,7 +561,17 @@ pub struct Host {
     /// The user's model choices, as loaded and last saved.
     settings: Arc<Mutex<ModelSettings>>,
     events: mpsc::UnboundedSender<RunEvent>,
+    /// The plugins with their UI, each with its state on this host (ADR
+    /// 0017).
+    hosted: Vec<hosted::Hosted>,
+    /// What plugins' host halves tell the interface, and its receiving
+    /// end until [`Self::attach`] takes it.
+    pushes: mpsc::UnboundedSender<tau_ui_plugin::Push>,
+    pushed: Mutex<Option<mpsc::UnboundedReceiver<tau_ui_plugin::Push>>>,
 }
+
+#[path = "host_plugins.rs"]
+mod hosted;
 
 const MAX_TURNS: u32 = 50;
 
@@ -695,9 +705,10 @@ impl Host {
         config: HostConfig,
     ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
+        let (pushes, pushed) = mpsc::unbounded_channel();
         let settings = load_settings(&config.settings, &config.default_model());
         let list = RepoList::load(&config.repo_list);
-        let host = Self {
+        let mut host = Self {
             runtime,
             base: Mutex::new(agent),
             account: Mutex::new(Some(config.account.clone())),
@@ -723,7 +734,11 @@ impl Host {
             runs: Arc::default(),
             workspaces: Arc::default(),
             events,
+            hosted: Vec::new(),
+            pushes,
+            pushed: Mutex::new(Some(pushed)),
         };
+        host.host_plugins();
         (host, receiver)
     }
 
@@ -1166,6 +1181,7 @@ impl Host {
                 seams: vec![Seam::Tools],
                 spend: 0.0,
                 screen: None,
+                page: None,
             },
             PluginInfo {
                 name: "tau-vcs".into(),
@@ -1175,6 +1191,7 @@ impl Host {
                 seams: vec![Seam::Tools],
                 spend: 0.0,
                 screen: None,
+                page: None,
             },
             PluginInfo {
                 name: "workspace".into(),
@@ -1184,6 +1201,7 @@ impl Host {
                 seams: vec![Seam::Start],
                 spend: 0.0,
                 screen: None,
+                page: None,
             },
         ];
         let jev = self.jev().is_some();
@@ -1196,6 +1214,7 @@ impl Host {
             seams: vec![Seam::Start],
             spend: 0.0,
             screen: Some(PluginScreen::Plan),
+            page: None,
         });
         plugins.push(PluginInfo {
             name: tau_fast_compaction::NAME.into(),
@@ -1207,6 +1226,7 @@ impl Host {
             seams: vec![Seam::Start, Seam::Rewrite],
             spend: 0.0,
             screen: Some(PluginScreen::Ledger),
+            page: None,
         });
         plugins.push(PluginInfo {
             name: "tau-compaction".into(),
@@ -1215,6 +1235,7 @@ impl Host {
             seams: vec![Seam::Start, Seam::Rewrite],
             spend: 0.0,
             screen: None,
+            page: None,
         });
         let source = self.access_label();
         let slots = self.repos.lock().expect("not poisoned").clone();
@@ -1251,6 +1272,7 @@ impl Host {
                 repo.main =
                     listed.main.as_deref().map(|main| RunId(main.into()));
                 repo.constitution = self.repo_constitution(slot);
+                repo.plugins = self.registered_repo_data(slot);
                 repo.constitution.history =
                     history.remove(&listed.name).unwrap_or_default();
                 repo.memory = self.memories.catalog(&self.memory_dir(slot));
@@ -1271,6 +1293,7 @@ impl Host {
             seams: vec![Seam::BeforeTool, Seam::BeforeStop],
             spend: 0.0,
             screen: Some(PluginScreen::Constitution),
+            page: None,
         });
         plugins.push(PluginInfo {
             name: tau_goal::NAME.into(),
@@ -1281,6 +1304,7 @@ impl Host {
             seams: vec![Seam::Start, Seam::AfterTool, Seam::BeforeStop],
             spend: 0.0,
             screen: None,
+            page: None,
         });
         plugins.push(PluginInfo {
             name: tau_memory::plugin::NAME.into(),
@@ -1295,7 +1319,12 @@ impl Host {
             ],
             spend: 0.0,
             screen: Some(PluginScreen::Memory),
+            page: None,
         });
+        // The plugins with their UI, with their data and settings.
+        let (registered, plugin_data, plugin_settings) =
+            self.registered_catalog();
+        plugins.extend(registered);
         // What each plugin cost over the runs of the last 30 days.
         let spend = self
             .runtime
@@ -1308,6 +1337,8 @@ impl Host {
                 .map_or(0.0, |(_, usd)| *usd);
         }
         Catalog {
+            plugin_data,
+            plugin_settings,
             agent: "coder".into(),
             agent_source: Some(source.to_owned()),
             plugins,
@@ -1369,19 +1400,31 @@ impl Host {
             let reasoning =
                 self.settings.lock().expect("not poisoned").reasoning;
             let archive_dir = self.archive_dir(repo);
+            let registered = self.registered(repo);
             let repo = repo.name.clone();
-            move |choice: &ModelChoice| {
-                for_model(
-                    base.clone(),
+            move |choice: &ModelChoice, kind: tau_ui_plugin::RunKind| {
+                registered(
+                    for_model(
+                        base.clone(),
+                        choice,
+                        jev.clone(),
+                        reasoning,
+                        &archive_dir,
+                        &repo,
+                    ),
+                    kind,
                     choice,
-                    jev.clone(),
-                    reasoning,
-                    &archive_dir,
-                    &repo,
                 )
             }
         };
-        let agent = for_model(choice);
+        let agent = for_model(
+            choice,
+            if main {
+                tau_ui_plugin::RunKind::Main
+            } else {
+                tau_ui_plugin::RunKind::Chat
+            },
+        );
         // The repository's rules, checked with Jev when there is a key.
         // Rules that cannot be read fail the run: they are never skipped.
         let constitution = match jev {
@@ -1440,7 +1483,11 @@ impl Host {
                 &models,
                 move |child, asked| {
                     let choice = child_choice(&caller, asked)?;
-                    Ok(on_workspace(for_model(&choice), child, false))
+                    Ok(on_workspace(
+                        for_model(&choice, tau_ui_plugin::RunKind::SubAgent),
+                        child,
+                        false,
+                    ))
                 },
             )
         };
@@ -2361,6 +2408,11 @@ impl Host {
         view.push_user(prompt);
         // A run started now has tau-goal only with a key.
         view.goal_checks = self.jev().is_some();
+        // What plugins say as it starts.
+        let run = self.run_ctx(tau_ui_plugin::RunKind::Chat, repo, &choice);
+        for (plugin, body) in self.starting(&run) {
+            view.fold(&plugin, &body);
+        }
         view.limits = ViewLimits {
             max_turns: Some(MAX_TURNS),
             ..ViewLimits::default()
@@ -2787,6 +2839,55 @@ impl Host {
                         });
                     }
                 }
+                WorkspaceEvent::PluginAct { plugin, action } => {
+                    // Off the UI thread: an action may ask Jev, or the
+                    // store.
+                    let (host, plugin, action) =
+                        (handler.clone(), plugin.clone(), action.clone());
+                    let task = cx.background_spawn({
+                        let plugin = plugin.clone();
+                        async move { host.plugin_act(&plugin, action) }
+                    });
+                    let workspace = workspace.downgrade();
+                    cx.spawn(async move |cx| {
+                        let done = task.await;
+                        let _ = workspace.update(cx, |ws, cx| match done {
+                            Ok(Some(reply)) => ws.apply(
+                                HostUpdate::PluginReply { plugin, reply },
+                                cx,
+                            ),
+                            Ok(None) => {}
+                            Err(error) => ws.apply(
+                                HostUpdate::alert(
+                                    format!("{plugin} could not do that"),
+                                    format!("{error:#}"),
+                                ),
+                                cx,
+                            ),
+                        });
+                    })
+                    .detach();
+                }
+                WorkspaceEvent::PluginSettings { plugin, settings } => {
+                    let saved =
+                        handler.save_plugin_settings(plugin, settings.clone());
+                    let catalog = handler.catalog();
+                    workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::catalog(catalog), cx);
+                        if let Err(error) = saved {
+                            ws.apply(HostUpdate::alert(format!("Could not save {plugin}'s settings"), format!("{error:#}")), cx);
+                        }
+                    });
+                }
+                WorkspaceEvent::PluginRecord { run, plugin, body } => {
+                    if let Err(error) =
+                        handler.store_plugin_record(run, plugin, body)
+                    {
+                        workspace.update(cx, |ws, cx| {
+                            ws.apply(HostUpdate::alert(format!("Could not save what {plugin} changed"), format!("{error:#}")), cx);
+                        });
+                    }
+                }
                 WorkspaceEvent::Reviewed { run, call_id } => {
                     if let Err(error) = handler.set_reviewed(run, call_id) {
                         eprintln!("tau-ui: cannot save the review: {error:#}");
@@ -2805,8 +2906,12 @@ impl Host {
                     match handler.resume(run, prompt, model) {
                         Ok(()) => {
                             let checks = handler.checks_goals();
+                            let starting = handler.starting_of(run, model);
                             workspace.update(cx, |ws, cx| {
-                                ws.apply(HostUpdate::GoalChecks { run: run.clone(), checks }, cx)
+                                ws.apply(HostUpdate::GoalChecks { run: run.clone(), checks }, cx);
+                                for (plugin, body) in starting {
+                                    ws.apply(HostUpdate::PluginFold { run: run.clone(), plugin, body }, cx);
+                                }
                             });
                         }
                         Err(error) => workspace.update(cx, |ws, cx| {
@@ -2925,6 +3030,23 @@ impl Host {
             },
         )
         .detach();
+        // What plugins' host halves tell the interface.
+        if let Some(mut pushed) =
+            host.pushed.lock().expect("not poisoned").take()
+        {
+            let (host, workspace) = (host.clone(), workspace.downgrade());
+            cx.spawn(async move |cx| {
+                while let Some(push) = pushed.recv().await {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return;
+                    };
+                    cx.update(|cx| {
+                        hosted::apply_push(&host, push, &workspace, cx)
+                    });
+                }
+            })
+            .detach();
+        }
         let workspace = workspace.downgrade();
         cx.spawn(async move |cx| {
             while let Some(event) = events.recv().await {
@@ -3770,7 +3892,8 @@ async fn stored_view(
                 if plugin == tau_reasoning::NAME
                     || plugin == tau_constitution::NAME
                     || plugin == tau_goal::NAME
-                    || plugin == LANDING_RECORD =>
+                    || plugin == LANDING_RECORD
+                    || crate::plugins::registry().get(&plugin).is_some() =>
             {
                 serde_json::from_str(&body)
                     .ok()

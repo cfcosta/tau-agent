@@ -74,6 +74,25 @@ pub enum HostUpdate {
     },
     /// A run asked to go on could not.
     ResumeFailed(RunId),
+    /// A body a plugin's host half stored with a run: the run's view
+    /// folds it, as if the run had published it.
+    PluginRecord {
+        run: RunId,
+        plugin: String,
+        body: serde_json::Value,
+    },
+    /// A body to fold into a run's view without storing it: what a plugin
+    /// says as the run starts or goes on.
+    PluginFold {
+        run: RunId,
+        plugin: String,
+        body: serde_json::Value,
+    },
+    /// What a plugin's host half answered its UI.
+    PluginReply {
+        plugin: String,
+        reply: serde_json::Value,
+    },
     /// A run's goal as tau-goal's stored records leave it, where what the
     /// interface showed could not be saved.
     GoalRecords {

@@ -1506,14 +1506,14 @@ fn a_reviewed_call_leaves_the_queue_for_good(cx: &mut TestAppContext) {
 #[gpui::test]
 fn search_finds_runs_repositories_and_actions(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_demo(cx);
-    workspace.read_with(&cx, |ws, _| {
+    workspace.update(&mut cx, |ws, cx| {
         use tau_ui::search::Pick;
-        let hits = ws.search_hits("rerank");
+        let hits = ws.search_hits("rerank", cx);
         assert_eq!(hits[0].label, "rerank-latency");
         assert_eq!(hits[0].detail, "chat in docbert");
         // Every word must match.
-        assert!(ws.search_hits("rerank homelab").is_empty());
-        let hits = ws.search_hits("homelab");
+        assert!(ws.search_hits("rerank homelab", cx).is_empty());
+        let hits = ws.search_hits("homelab", cx);
         assert!(
             hits.iter()
                 .any(|hit| hit.pick == Pick::Repo("homelab.nix".into()))
@@ -1522,10 +1522,10 @@ fn search_finds_runs_repositories_and_actions(cx: &mut TestAppContext) {
             hits.iter()
                 .any(|hit| hit.pick == Pick::NewRunIn("homelab.nix".into()))
         );
-        let hits = ws.search_hits("history");
+        let hits = ws.search_hits("history", cx);
         assert_eq!(hits[0].pick, Pick::Screen(Route::History));
         // Nothing typed: repositories and things to do.
-        assert!(!ws.search_hits("").is_empty());
+        assert!(!ws.search_hits("", cx).is_empty());
     });
     // Ctrl K, a query, Enter: the conversation opens.
     cx.simulate_keystrokes("ctrl-k");

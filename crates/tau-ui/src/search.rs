@@ -50,7 +50,7 @@ pub struct Hit {
 impl Workspace {
     /// What `query` matches, best first: conversations, then
     /// repositories, then things to do. Every word must match.
-    pub fn search_hits(&self, query: &str) -> Vec<Hit> {
+    pub fn search_hits(&self, query: &str, cx: &mut gpui::App) -> Vec<Hit> {
         let query = query.trim().to_lowercase();
         let words: Vec<&str> = query.split_whitespace().collect();
         let matches = |text: &str| {
@@ -131,6 +131,64 @@ impl Workspace {
                 ]
             })
             .collect();
+        // Where plugins lead: under each repository, everywhere, and
+        // what they add to search.
+        for repo in &self.catalog.repos {
+            let entries = self.contributions(
+                tau_ui_plugin::points::SIDEBAR_REPO,
+                &tau_ui_plugin::points::AtRepo {
+                    repo: repo.name.clone(),
+                },
+                cx,
+            );
+            actions.extend(entries.into_iter().filter_map(|entry| {
+                Some(Hit {
+                    label: format!(
+                        "{} {}",
+                        repo.name,
+                        entry.label.to_lowercase()
+                    ),
+                    detail: "screen".into(),
+                    glyph: entry.icon,
+                    pick: Pick::Screen(self.link_route(&entry.to, None).map(
+                        |route| match route {
+                            Route::Plugin {
+                                plugin,
+                                page,
+                                mut params,
+                            } => {
+                                params
+                                    .entry("repo".into())
+                                    .or_insert_with(|| repo.name.clone());
+                                Route::Plugin {
+                                    plugin,
+                                    page,
+                                    params,
+                                }
+                            }
+                            route => route,
+                        },
+                    )?),
+                })
+            }));
+        }
+        let everywhere = [
+            tau_ui_plugin::points::SIDEBAR,
+            tau_ui_plugin::points::SEARCH,
+        ]
+        .into_iter()
+        .flat_map(|point| {
+            self.contributions(point, &tau_ui_plugin::points::AtApp, cx)
+        })
+        .collect::<Vec<_>>();
+        actions.extend(everywhere.into_iter().filter_map(|entry| {
+            Some(Hit {
+                label: entry.label.clone(),
+                detail: "screen".into(),
+                glyph: entry.icon,
+                pick: Pick::Screen(self.link_route(&entry.to, None)?),
+            })
+        }));
         actions.extend([
             screen("History", Icon::History, Route::History),
             screen("Plugins", Icon::Plug, Route::Plugins),
@@ -207,7 +265,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let query = self.search.read(cx).text().to_owned();
-        if let Some(hit) = self.search_hits(&query).into_iter().next() {
+        if let Some(hit) = self.search_hits(&query, cx).into_iter().next() {
             self.pick(hit.pick, window, cx);
         }
     }
@@ -219,7 +277,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let query = self.search.read(cx).text().to_owned();
-        let hits = self.search_hits(&query);
+        let hits = self.search_hits(&query, cx);
         let rows: Vec<AnyElement> = hits
             .into_iter()
             .enumerate()

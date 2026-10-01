@@ -43,6 +43,12 @@ pub enum Route {
     Models,
     /// Allow phones, pair one, and see those paired.
     Phones,
+    /// A plugin's page (ADR 0017).
+    Plugin {
+        plugin: String,
+        page: String,
+        params: std::collections::BTreeMap<String, String>,
+    },
 }
 
 /// The phone's bottom tabs.
@@ -97,6 +103,9 @@ impl Route {
             Self::Memory { repo, .. } | Self::Constitution { repo, .. } => {
                 Some(repo)
             }
+            Self::Plugin { params, .. } => {
+                params.get("repo").map(String::as_str)
+            }
             _ => None,
         }
     }
@@ -128,6 +137,8 @@ impl Route {
             Self::PullRequest(_) => "Pull request",
             Self::Models => "Models",
             Self::Phones => "Phones",
+            // The page names itself; see `Workspace::route_title`.
+            Self::Plugin { .. } => "",
         }
     }
 

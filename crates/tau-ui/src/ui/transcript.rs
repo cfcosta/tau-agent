@@ -137,6 +137,25 @@ fn item_view(
             plugin_note(ws, run, kept, index, note, t, compact, cx)
                 .into_any_element()
         }
+        Item::Anchor { plugin, key } => {
+            let at = tau_ui_plugin::points::AtAnchor {
+                run: run.info(),
+                key: key.clone(),
+                index,
+            };
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(sp(2.))
+                .children(ws.contributions_of(
+                    plugin,
+                    tau_ui_plugin::points::TRANSCRIPT,
+                    &at,
+                    cx,
+                ))
+                .into_any_element()
+        }
         Item::Landed(card) => {
             log_card::landed(card, t, compact, cx).into_any_element()
         }
@@ -471,6 +490,42 @@ fn tool(
                 | ToolBody::Listing(_)
         );
     let open = !folds || ws.card_open(&run.id, &card.call_id);
+    // What plugins draw on the card, each given its own anchors on it.
+    let at_card = |plugin: &str| tau_ui_plugin::points::AtCard {
+        run: run.info(),
+        call_id: card.call_id.clone(),
+        tool: card.tool.clone(),
+        keys: card
+            .anchors
+            .iter()
+            .filter(|(by, _)| by == plugin)
+            .map(|(_, key)| key.clone())
+            .collect(),
+    };
+    let names: Vec<String> = crate::plugins::registry()
+        .plugins()
+        .map(|plugin| plugin.name().to_owned())
+        .collect();
+    let contexts: Vec<(String, tau_ui_plugin::points::AtCard)> = names
+        .into_iter()
+        .map(|name| {
+            let at = at_card(&name);
+            (name, at)
+        })
+        .collect();
+    let context_of = |plugin: &str| {
+        contexts
+            .iter()
+            .find(|(name, _)| name == plugin)
+            .map(|(_, at)| at)
+    };
+    let badges = ws.contributions_with(
+        tau_ui_plugin::points::CARD_BADGE,
+        context_of,
+        cx,
+    );
+    let extras =
+        ws.contributions_with(tau_ui_plugin::points::CARD_BODY, context_of, cx);
     let header = div()
         .id(SharedString::from(format!("tool-{}", card.call_id)))
         .flex()
@@ -532,6 +587,7 @@ fn tool(
             )
         })
         .children(review)
+        .children(badges)
         .when(folds, |row| {
             let run_id = run.id.clone();
             let call_id = card.call_id.clone();
@@ -687,6 +743,7 @@ fn tool(
         }))
         .children(body)
         .children(cut)
+        .children(extras)
 }
 
 /// A finished fork, waiting in its parent's chat: what it is, and Land

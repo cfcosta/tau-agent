@@ -7,7 +7,7 @@ use crate::{
     assets::Icon,
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
     ui::{self, Material as _, dot, heading, icon, mono, rich, transcript},
-    view::{Item, NoteBody, PluginNote, RunView},
+    view::{Item, NoteBody, PluginNote},
     workspace::Workspace,
 };
 
@@ -160,7 +160,7 @@ pub fn render(
         .gap(sp(3.5))
         .when(!compact, |side| side.w(px(346.)).flex_shrink_0())
         .child(heading("RunPlan after start", t))
-        .child(plan_table(run, t));
+        .child(plan_table(&ws.run_plan(run, cx), t));
 
     let main = div()
         .flex_1()
@@ -302,8 +302,8 @@ fn chart(
 }
 
 /// The plan as a bordered table: name, value, and who set it.
-fn plan_table(run: &RunView, t: &Theme) -> Div {
-    ui::card(t).children(run.plan.iter().map(|field| {
+fn plan_table(plan: &[crate::view::PlanField], t: &Theme) -> Div {
+    ui::card(t).children(plan.iter().map(|field| {
         div()
             .flex()
             .gap(sp(3.))

@@ -235,6 +235,9 @@ impl Workspace {
             self.slash_selected = 0;
             return self.run_command(command, window, cx);
         }
+        if self.run_plugin_command(text, cx) {
+            return true;
+        }
         if let Some(command) = tau_goal::Command::parse(text) {
             // Limits typed with the command win over the popover's.
             let typed =

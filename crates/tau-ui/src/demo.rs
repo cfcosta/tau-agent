@@ -1336,6 +1336,7 @@ pub fn catalog() -> Catalog {
         seams: seams.to_vec(),
         spend,
         screen,
+        page: None,
     };
     let link = |to: &str, why: &str| Link {
         to: to.into(),
@@ -1365,6 +1366,8 @@ pub fn catalog() -> Catalog {
             block,
         };
     Catalog {
+        plugin_data: Default::default(),
+        plugin_settings: Default::default(),
         agent: "coder".into(),
         agent_source: Some("src/agents.rs:14".into()),
         plugins: vec![
@@ -1389,6 +1392,7 @@ pub fn catalog() -> Catalog {
         repos: vec![
             Repo {
                 name: "tau-agent".into(),
+                plugins: Default::default(),
                 path: "~/Code/cfcosta/tau-agent".into(),
                 main: Some(run_id()),
                 memory: tau_agent_memory(&note, &link),
@@ -1396,6 +1400,7 @@ pub fn catalog() -> Catalog {
             },
             Repo {
                 name: "docbert".into(),
+                plugins: Default::default(),
                 path: "~/Code/cfcosta/docbert".into(),
                 main: Some(RunId(Arc::from("docbert-main"))),
                 memory: Memory {
@@ -1427,6 +1432,7 @@ pub fn catalog() -> Catalog {
             },
             Repo {
                 name: "homelab.nix".into(),
+                plugins: Default::default(),
                 path: "~/Code/cfcosta/homelab.nix".into(),
                 main: Some(RunId(Arc::from("homelab-main"))),
                 memory: Memory {

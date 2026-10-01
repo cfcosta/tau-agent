@@ -224,6 +224,12 @@ pub fn render(
         .child(ui::card(t).children(defaults))
         .child(heading("Reasoning on auto", t))
         .child(reasoning)
+        // What plugins add to the screen: their settings.
+        .children(ws.contributions(
+            tau_ui_plugin::points::MODELS,
+            &tau_ui_plugin::points::AtApp,
+            cx,
+        ))
         .child(heading("In the picker", t))
         .child(ui::card(t).child(header).children(rows));
     let side = div()

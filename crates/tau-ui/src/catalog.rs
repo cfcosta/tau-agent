@@ -38,6 +38,13 @@ pub struct Catalog {
     pub update: Option<String>,
     /// The models the picker offers, and the user's choices about them.
     pub models: crate::models::Models,
+    /// Each plugin's data across repositories, as JSON, by plugin
+    /// (`UiPlugin::data`).
+    #[serde(default)]
+    pub plugin_data: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Each plugin's settings, as JSON, by plugin.
+    #[serde(default)]
+    pub plugin_settings: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl Catalog {
@@ -64,6 +71,10 @@ pub struct Repo {
     pub main: Option<tau_agent::tool::RunId>,
     pub memory: Memory,
     pub constitution: Constitution,
+    /// Each plugin's data for the repository, as JSON, by plugin
+    /// (`UiPlugin::repo_data`).
+    #[serde(default)]
+    pub plugins: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl Repo {
@@ -99,41 +110,7 @@ pub enum ProjectStatus {
     Failed(String),
 }
 
-/// The seams a plugin can use, in the order the loop reaches them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Seam {
-    Start,
-    Tools,
-    BeforeTool,
-    AfterTool,
-    Rewrite,
-    BeforeStop,
-    Finish,
-}
-
-impl Seam {
-    pub const ALL: [Self; 7] = [
-        Self::Start,
-        Self::Tools,
-        Self::BeforeTool,
-        Self::AfterTool,
-        Self::Rewrite,
-        Self::BeforeStop,
-        Self::Finish,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Start => "start",
-            Self::Tools => "tools",
-            Self::BeforeTool => "before_tool",
-            Self::AfterTool => "after_tool",
-            Self::Rewrite => "rewrite",
-            Self::BeforeStop => "before_stop",
-            Self::Finish => "finish",
-        }
-    }
-}
+pub use tau_ui_plugin::Seam;
 
 /// Which screen explains a plugin's work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +131,10 @@ pub struct PluginInfo {
     /// What the plugin cost over the store's recent window.
     pub spend: f64,
     pub screen: Option<PluginScreen>,
+    /// The page that explains its work, for a plugin with its UI (ADR
+    /// 0017).
+    #[serde(default)]
+    pub page: Option<tau_ui_plugin::Link>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

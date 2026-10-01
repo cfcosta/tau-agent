@@ -23,7 +23,9 @@ pub struct RunInfo {
     pub title: String,
 }
 
-/// A page to open: a plugin's page and its parameters.
+/// A page to open: a plugin's page and its parameters. A parameter
+/// left empty is the one at hand where the link is followed: `run` the
+/// run in view, `repo` the repository selected.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Link {
     /// The plugin whose page it is; `None` is the plugin making the link.

@@ -38,7 +38,7 @@ pub fn render(
         .into_any_element();
     };
     let window = run.context.window.unwrap_or(before.max(1));
-    let trigger = run.context.trigger;
+    let trigger = ws.context_trigger(run, cx);
     let meter = |label: &'static str, used: u64, fill| {
         div()
             .flex()

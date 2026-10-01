@@ -1,0 +1,394 @@
+//! The plugins tau-ui has, each with its UI (ADR 0017), and how the
+//! workspace draws them: what they contribute at its points, their
+//! pages, and what their handles ask.
+
+use std::{collections::BTreeMap, rc::Rc, sync::LazyLock};
+
+use gpui::{AnyElement, App, Context};
+use serde_json::Value;
+use tau_ui_plugin::{
+    Env,
+    ErasedPlugin,
+    Handle,
+    Point,
+    PointCx,
+    Registry,
+    Request,
+    RunInfo,
+    points,
+};
+
+use crate::{
+    view::RunView,
+    workspace::{Workspace, WorkspaceEvent},
+};
+
+/// Every plugin, in the order the host adds them to a run's agent.
+pub fn registry() -> &'static Registry {
+    static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
+    &REGISTRY
+}
+
+/// The points tau-ui declares.
+pub const DECLARED: [&str; points::ALL.len()] = points::ALL;
+
+/// A requests queue a plugin's handle fills, drained after the event
+/// that filled it: a handle may ask from inside the workspace's own
+/// update.
+pub(crate) type Requests = Rc<std::cell::RefCell<Vec<(&'static str, Request)>>>;
+
+impl Workspace {
+    /// The handle `plugin`'s UI asks the workspace through.
+    pub(crate) fn plugin_handle(&self, plugin: &'static str) -> Handle {
+        let queue = self.plugin_requests.clone();
+        let workspace = self.weak.clone();
+        Handle::new(
+            plugin,
+            Rc::new(move |plugin, request, cx: &mut App| {
+                queue.borrow_mut().push((plugin, request));
+                let workspace = workspace.clone();
+                cx.defer(move |cx| {
+                    let _ = workspace
+                        .update(cx, |ws, cx| ws.drain_plugin_requests(cx));
+                });
+            }),
+        )
+    }
+
+    /// Carries out what plugins' handles asked.
+    pub(crate) fn drain_plugin_requests(&mut self, cx: &mut Context<Self>) {
+        let requests: Vec<_> =
+            self.plugin_requests.borrow_mut().drain(..).collect();
+        for (plugin, request) in requests {
+            self.plugin_request(plugin, request, cx);
+        }
+    }
+
+    fn plugin_request(
+        &mut self,
+        plugin: &'static str,
+        request: Request,
+        cx: &mut Context<Self>,
+    ) {
+        match request {
+            Request::Act(action) => cx.emit(WorkspaceEvent::PluginAct {
+                plugin: plugin.to_owned(),
+                action,
+            }),
+            Request::Navigate(link) => {
+                let link = link.from(plugin);
+                self.navigate(
+                    crate::route::Route::Plugin {
+                        plugin: link.plugin.unwrap_or_default(),
+                        page: link.page,
+                        params: link.params,
+                    },
+                    cx,
+                );
+            }
+            Request::Alert { title, message } => {
+                self.show_alert(title, message, cx);
+            }
+            Request::Settings(settings) => {
+                self.catalog
+                    .plugin_settings
+                    .insert(plugin.to_owned(), settings.clone());
+                cx.emit(WorkspaceEvent::PluginSettings {
+                    plugin: plugin.to_owned(),
+                    settings,
+                });
+            }
+            Request::Record { run, body } => {
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| view.id == run)
+                {
+                    view.fold(plugin, &body);
+                }
+                cx.emit(WorkspaceEvent::PluginRecord {
+                    run,
+                    plugin: plugin.to_owned(),
+                    body,
+                });
+            }
+            Request::Steer { run, text } => {
+                cx.emit(WorkspaceEvent::Steer { run, text });
+            }
+            Request::Send { run, text } => match run {
+                Some(run) => self.resume_run(&run, text, cx),
+                None => self.send(text, cx),
+            },
+            Request::Composer(text) => {
+                self.composer
+                    .update(cx, |input, cx| input.set_text(text, cx));
+            }
+            Request::Refresh => {}
+        }
+        cx.notify();
+    }
+
+    /// What a plugin's answer to an action says, for its UI.
+    pub fn plugin_reply(
+        &mut self,
+        plugin: &str,
+        reply: Value,
+        cx: &mut Context<Self>,
+    ) {
+        if let (Some(erased), Some(ui)) =
+            (registry().get(plugin), self.plugin_ui.get(plugin))
+        {
+            erased.reply(ui.clone(), reply, cx);
+        }
+        cx.notify();
+    }
+
+    /// Runs `f` with what `plugin` draws from: its values, the run when
+    /// there is one, and the page's parameters.
+    pub(crate) fn with_plugin<R>(
+        &self,
+        plugin: &dyn ErasedPlugin,
+        run: Option<&RunView>,
+        params: &BTreeMap<String, String>,
+        cx: &mut App,
+        f: impl FnOnce(&dyn ErasedPlugin, Env<'_>) -> R,
+    ) -> Option<R> {
+        let name = plugin.name();
+        let ui = self.plugin_ui.get(name)?.clone();
+        let info = run.map(RunView::info);
+        let null = Value::Null;
+        let state = run.and_then(|run| run.plugin_states.get(name));
+        let data = self.catalog.plugin_data.get(name).unwrap_or(&null);
+        let settings = self.catalog.plugin_settings.get(name).unwrap_or(&null);
+        let repos: BTreeMap<String, Value> = self
+            .catalog
+            .repos
+            .iter()
+            .filter_map(|repo| {
+                Some((repo.name.clone(), repo.plugins.get(name)?.clone()))
+            })
+            .collect();
+        let runs = || -> Vec<(RunInfo, Value)> {
+            self.runs
+                .iter()
+                .map(|run| {
+                    (
+                        run.info(),
+                        run.plugin_states
+                            .get(name)
+                            .cloned()
+                            .unwrap_or(Value::Null),
+                    )
+                })
+                .collect()
+        };
+        let env = Env {
+            ui,
+            state: state.or(run.map(|_| &null)),
+            data,
+            settings,
+            repos: &repos,
+            run: info.as_ref(),
+            params,
+            compact: self.compact(),
+            jev: self.catalog.models.access.jev,
+            handle: self.plugin_handle(name),
+            runs: &runs,
+            cx,
+        };
+        Some(f(plugin, env))
+    }
+
+    /// What plugins contribute at `point`, in order: by each
+    /// contribution's order, then the registry's.
+    pub fn contributions<Cx: PointCx, Out: 'static>(
+        &self,
+        point: Point<Cx, Out>,
+        at: &Cx,
+        cx: &mut App,
+    ) -> Vec<Out> {
+        self.contributions_with(point, |_| Some(at), cx)
+    }
+
+    /// What `plugin` alone contributes at `point`: at one of its anchors.
+    pub fn contributions_of<Cx: PointCx, Out: 'static>(
+        &self,
+        plugin: &str,
+        point: Point<Cx, Out>,
+        at: &Cx,
+        cx: &mut App,
+    ) -> Vec<Out> {
+        self.contributions_with(
+            point,
+            |name| (name == plugin).then_some(at),
+            cx,
+        )
+    }
+
+    /// What plugins contribute at `point`, each with the context `at`
+    /// gives it (none skips the plugin), in order.
+    pub fn contributions_with<'c, Cx: PointCx, Out: 'static>(
+        &self,
+        point: Point<Cx, Out>,
+        at: impl Fn(&str) -> Option<&'c Cx>,
+        cx: &mut App,
+    ) -> Vec<Out> {
+        let empty = BTreeMap::new();
+        let mut found: Vec<(i32, usize, Out)> = Vec::new();
+        for (n, plugin) in registry().plugins().enumerate() {
+            let Some(at) = at(plugin.name()) else {
+                continue;
+            };
+            let run = at.run().and_then(|info| {
+                self.runs.iter().find(|run| run.id == info.id)
+            });
+            let outs = self
+                .with_plugin(plugin.as_ref(), run, &empty, cx, |plugin, env| {
+                    plugin.contribute(point.name, at, env)
+                })
+                .unwrap_or_default();
+            for (order, out) in outs {
+                if let Ok(out) = out.downcast::<Out>() {
+                    found.push((order, n, *out));
+                }
+            }
+        }
+        found.sort_by_key(|(order, n, _)| (*order, *n));
+        found.into_iter().map(|(_, _, out)| out).collect()
+    }
+
+    /// `plugin`'s page `page`, drawn with `params`.
+    pub(crate) fn plugin_page(
+        &self,
+        plugin: &str,
+        page: &str,
+        params: &BTreeMap<String, String>,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let erased = registry().get(plugin)?;
+        let run = params.get("run").and_then(|id| {
+            self.runs.iter().find(|run| &*run.id.0 == id.as_str())
+        });
+        self.with_plugin(erased.as_ref(), run, params, cx, |plugin, env| {
+            plugin.draw_page(page, env)
+        })
+        .flatten()
+    }
+
+    /// The title of `plugin`'s page `page`.
+    pub(crate) fn plugin_page_title(
+        &self,
+        plugin: &str,
+        page: &str,
+        params: &BTreeMap<String, String>,
+        cx: &mut App,
+    ) -> Option<String> {
+        let erased = registry().get(plugin)?;
+        let run = params.get("run").and_then(|id| {
+            self.runs.iter().find(|run| &*run.id.0 == id.as_str())
+        });
+        self.with_plugin(erased.as_ref(), run, params, cx, |plugin, env| {
+            plugin.page_title(page, env)
+        })
+        .flatten()
+    }
+
+    /// Each plugin's line in `run`'s plugin list: what a plugin with its
+    /// UI says (`STATUS`), and the host's lines for the others.
+    pub fn run_statuses(
+        &self,
+        run: &RunView,
+        cx: &mut App,
+    ) -> Vec<crate::view::PluginStatus> {
+        let from = self.contributions(
+            points::STATUS,
+            &points::AtRun { run: run.info() },
+            cx,
+        );
+        run.plugins
+            .iter()
+            .filter(|line| !from.iter().any(|status| status.name == line.name))
+            .cloned()
+            .chain(from.iter().cloned())
+            .collect()
+    }
+
+    /// `run`'s plan: the host's fields, with what plugins set (`PLAN`)
+    /// in place of a field of the same name.
+    pub fn run_plan(
+        &self,
+        run: &RunView,
+        cx: &mut App,
+    ) -> Vec<crate::view::PlanField> {
+        let from = self.contributions(
+            points::PLAN,
+            &points::AtRun { run: run.info() },
+            cx,
+        );
+        let mut plan = run.plan.clone();
+        for field in from {
+            match plan.iter_mut().find(|own| own.name == field.name) {
+                Some(own) => *own = field,
+                None => plan.push(field),
+            }
+        }
+        plan
+    }
+
+    /// Where the first context plugin steps in, as a share of `run`'s
+    /// window.
+    pub fn context_trigger(&self, run: &RunView, cx: &mut App) -> Option<f32> {
+        let from = self.contributions(
+            points::CONTEXT_TRIGGER,
+            &points::AtRun { run: run.info() },
+            cx,
+        );
+        run.context
+            .trigger
+            .into_iter()
+            .chain(from)
+            .min_by(|a, b| a.total_cmp(b))
+    }
+
+    /// Small print plugins put on `run`'s row in the sidebar.
+    pub fn run_badges(&self, run: &RunView, cx: &mut App) -> Vec<String> {
+        self.contributions(
+            points::RUN_BADGE,
+            &points::AtRun { run: run.info() },
+            cx,
+        )
+    }
+
+    /// Runs `text` as a plugin's slash command (`/name args`), on the run
+    /// open, if a plugin has the command; says whether one did.
+    pub(crate) fn run_plugin_command(
+        &mut self,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(rest) = text.trim_start().strip_prefix('/') else {
+            return false;
+        };
+        let (name, args) =
+            rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+        let Some(plugin) = registry().plugins().find(|plugin| {
+            plugin.commands().iter().any(|command| command.name == name)
+        }) else {
+            return false;
+        };
+        let run = self
+            .current()
+            .filter(|_| self.route != crate::route::Route::NewRun)
+            .cloned();
+        let params = BTreeMap::new();
+        let ran = self
+            .with_plugin(
+                plugin.as_ref(),
+                run.as_ref(),
+                &params,
+                cx,
+                |plugin, env| plugin.run_command(name, args.trim(), env),
+            )
+            .unwrap_or(false);
+        cx.notify();
+        ran
+    }
+}

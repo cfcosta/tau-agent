@@ -158,6 +158,8 @@ pub struct ModelSettings {
     pub hidden: Vec<String>,
     /// How tau-reasoning picks the effort of runs on auto.
     pub reasoning: ReasoningSettings,
+    /// Each plugin's settings, as it saves them, by plugin (ADR 0017).
+    pub plugins: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for ModelSettings {
@@ -166,6 +168,7 @@ impl Default for ModelSettings {
             defaults: vec![("coder".into(), ModelChoice::default())],
             hidden: Vec::new(),
             reasoning: ReasoningSettings::default(),
+            plugins: Default::default(),
         }
     }
 }

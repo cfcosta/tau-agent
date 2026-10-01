@@ -86,7 +86,7 @@ pub fn title_bar(
                     .and_then(|id| ws.run(id))
                     .map(|run| run.title.clone()),
             );
-            crumbs.push(route.title().to_owned());
+            crumbs.push(ws.route_title(cx));
         }
     }
     let last = crumbs.len() - 1;
@@ -288,6 +288,61 @@ pub fn sidebar(
                     ws.navigate(route.clone(), cx)
                 }))
         }))
+        .children({
+            // What plugins list everywhere.
+            let entries = ws.contributions(
+                tau_ui_plugin::points::SIDEBAR,
+                &tau_ui_plugin::points::AtApp,
+                cx,
+            );
+            entries
+                .into_iter()
+                .enumerate()
+                .map(|(n, entry)| {
+                    nav_entry_row(
+                        ws,
+                        entry,
+                        SharedString::from(format!("nav-everywhere-{n}")),
+                        t,
+                        cx,
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+}
+
+/// A plugin's navigation entry as a sidebar row, active while its page
+/// is open.
+fn nav_entry_row(
+    ws: &Workspace,
+    entry: tau_ui_plugin::NavEntry,
+    id: SharedString,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> gpui::Stateful<Div> {
+    let route = ws.link_route(&entry.to, None);
+    let active = route.as_ref() == Some(&ws.route);
+    nav_row(
+        entry.icon,
+        &entry.label,
+        entry.detail.clone().unwrap_or_default().into(),
+        active,
+        t,
+    )
+    .when_some(entry.badge.clone(), |row, (count, tone)| {
+        row.child(
+            mono(count, Type::MICRO, t.bg)
+                .px(sp(1.5))
+                .rounded(radius::BOX)
+                .bg(t.tone(tone)),
+        )
+    })
+    .id(id)
+    .when_some(route, |row, route| {
+        row.on_click(
+            cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
+        )
+    })
 }
 
 /// A sidebar section's heading, with an action at its end.
@@ -518,6 +573,21 @@ fn repo_group(
                 cx.listener(move |ws, _, _, cx| ws.open_constitution(&name, cx))
             }),
         );
+    // What plugins list under the repository.
+    let entries = ws.contributions(
+        tau_ui_plugin::points::SIDEBAR_REPO,
+        &tau_ui_plugin::points::AtRepo { repo: name.clone() },
+        cx,
+    );
+    for (n, entry) in entries.into_iter().enumerate() {
+        body = body.child(nav_entry_row(
+            ws,
+            entry,
+            SharedString::from(format!("nav-{name}-{n}")),
+            t,
+            cx,
+        ));
+    }
     for (n, run) in rows.runs.iter().enumerate() {
         // The first run is the main chat, when there is one.
         let limit = if n == 0 { rows.main_children } else { None };
@@ -1011,7 +1081,7 @@ pub fn phone_header(
             .note(id)
             .map_or("Memory".to_owned(), |note| note.title.clone()),
         Route::Home => "Runs".to_owned(),
-        route => route.title().to_owned(),
+        _ => ws.route_title(cx),
     };
     div()
         .h(px(56.))
@@ -1186,6 +1256,42 @@ fn phone_group(
                 }),
             ),
         );
+    // What plugins list under the repository.
+    let entries = ws.contributions(
+        tau_ui_plugin::points::SIDEBAR_REPO,
+        &tau_ui_plugin::points::AtRepo { repo: name.clone() },
+        cx,
+    );
+    let mut chips = chips;
+    for (n, entry) in entries.into_iter().enumerate() {
+        let Some(route) = ws.link_route(&entry.to, None) else {
+            continue;
+        };
+        chips = chips.child(
+            div()
+                .id(SharedString::from(format!("phone-nav-{n}")))
+                .flex()
+                .items_center()
+                .gap(sp(1.5))
+                .px(sp(3.))
+                .py(sp(2.))
+                .rounded(radius::BOX)
+                .key(t)
+                .typeset(Type::SMALL)
+                .cursor_pointer()
+                .child(icon(entry.icon, IconSize::BASE, t.text_soft))
+                .child(entry.label.clone())
+                .children(
+                    entry
+                        .detail
+                        .clone()
+                        .map(|detail| mono(detail, Type::SMALL, t.dim)),
+                )
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.navigate(route.clone(), cx)
+                })),
+        );
+    }
     let mut group = group.child(chips);
     for (n, run) in rows.runs.iter().enumerate() {
         group = group.child(phone_run_row(ws, run, t, cx));

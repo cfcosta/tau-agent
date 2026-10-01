@@ -28,11 +28,16 @@ use crate::{
 
 /// The run's state in a line: its status and turn, and the model with
 /// its reasoning effort. Heads the panel.
-pub fn header(run: &RunView, t: &Theme) -> Div {
+pub fn header(
+    ws: &Workspace,
+    run: &RunView,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
     let (color, label) = status_look(&run.status, t);
-    let effort = run
-        .plan
-        .iter()
+    let effort = ws
+        .run_plan(run, cx)
+        .into_iter()
         .find(|field| field.name == "reasoning")
         .map(|field| field.value.clone());
     let model = match effort {
@@ -76,14 +81,26 @@ pub fn content(
     } else {
         body
     };
-    let body = body.child(context(run, t, cx));
+    let body = body.child(context(ws, run, t, cx));
+    // What plugins add to the inspector.
+    let body = body.children(ws.contributions(
+        tau_ui_plugin::points::INSPECTOR,
+        &tau_ui_plugin::points::AtRun { run: run.info() },
+        cx,
+    ));
     let body = run_section(ws, run, body, t, cx);
     plugins_section(ws, run, body, t, cx)
 }
 
 /// The context window: how full it is, what fills it, where pruning
 /// starts, and what pruning did.
-fn context(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> Div {
+fn context(
+    ws: &Workspace,
+    run: &RunView,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let trigger = ws.context_trigger(run, cx);
     let ledger_route = Route::Ledger(run.id.clone());
     let has_rewrite = run.last_rewrite().is_some();
     let context = &run.context;
@@ -111,7 +128,7 @@ fn context(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         );
     };
     let share = context.used as f32 / window as f32;
-    let over_trigger = context.trigger.is_some_and(|trigger| share >= trigger);
+    let over_trigger = trigger.is_some_and(|trigger| share >= trigger);
     let parts = run.context_parts().unwrap_or_default();
     let segments = [
         ("Instructions, tools, other", parts.fixed, t.slate),
@@ -139,7 +156,7 @@ fn context(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> Div {
                     ),
                 ),
         )
-        .when_some(context.trigger, |track, trigger| {
+        .when_some(trigger, |track, trigger| {
             track.child(
                 div()
                     .absolute()
@@ -180,7 +197,7 @@ fn context(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         }
     }
     let mut note = String::new();
-    if let Some(trigger) = context.trigger {
+    if let Some(trigger) = trigger {
         if over_trigger {
             note.push_str(&format!(
                 "Past {:.0}%: pruning runs after this turn.",
@@ -370,7 +387,9 @@ fn run_details(
         }
         _ => body,
     };
-    let plan = run.plan.iter().map(|field| {
+    let fields = ws.run_plan(run, cx);
+    let shown = !fields.is_empty();
+    let plan = fields.into_iter().map(|field| {
         let value = div()
             .flex()
             .flex_col()
@@ -393,7 +412,7 @@ fn run_details(
             });
         (SharedString::from(field.name.clone()), value)
     });
-    body.when(!run.plan.is_empty(), |body| {
+    body.when(shown, |body| {
         body.child(
             div()
                 .flex()
@@ -465,11 +484,12 @@ fn plugins_section(
             format!("{count} ({})", list.join(", "))
         }
     };
-    if run.plugins.is_empty() && rules.is_empty() {
+    let statuses = ws.run_statuses(run, cx);
+    if statuses.is_empty() && rules.is_empty() {
         return body;
     }
     body.child(heading("Plugins", t))
-        .child(plugin_states(ws, run, t, cx))
+        .child(plugin_states(ws, run, &statuses, t, cx))
         .child(
             div()
                 .typeset(Type::CAPTION)
@@ -547,6 +567,7 @@ fn plugins_section(
 fn plugin_states(
     ws: &Workspace,
     run: &RunView,
+    statuses: &[crate::view::PluginStatus],
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
@@ -557,7 +578,7 @@ fn plugin_states(
         .border_color(t.border)
         .rounded(radius::BOX)
         .overflow_hidden()
-        .children(run.plugins.iter().map(|plugin| {
+        .children(statuses.iter().map(|plugin| {
             let route = ws.plugin_route_named(&plugin.name, &run.id);
             div()
                 .id(SharedString::from(format!("status-{}", plugin.name)))

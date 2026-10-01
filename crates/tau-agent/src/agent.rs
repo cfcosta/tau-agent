@@ -304,6 +304,14 @@ impl Agent {
         })
     }
 
+    /// [`Self::plugin`], for a plugin chosen at run time.
+    pub fn boxed_plugin(self, plugin: Box<dyn Plugin>) -> Self {
+        self.with(|a| {
+            a.tools.extend(plugin.tools());
+            a.plugins.push(Arc::from(plugin));
+        })
+    }
+
     pub fn limits(self, limits: Limits) -> Self {
         self.with(|a| a.limits = limits)
     }

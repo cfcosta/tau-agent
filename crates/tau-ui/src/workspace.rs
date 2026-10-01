@@ -208,6 +208,23 @@ pub enum WorkspaceEvent {
     JevKey {
         key: Option<String>,
     },
+    /// A plugin's UI asks its host half to carry out `action`.
+    PluginAct {
+        plugin: String,
+        action: serde_json::Value,
+    },
+    /// Save a plugin's settings.
+    PluginSettings {
+        plugin: String,
+        settings: serde_json::Value,
+    },
+    /// Store `body` as `plugin`'s record with `run`: the interface folded
+    /// it already.
+    PluginRecord {
+        run: RunId,
+        plugin: String,
+        body: serde_json::Value,
+    },
     /// Close the conversation: it leaves the sidebar (History keeps it),
     /// and stops if it is going. A message to it opens it again.
     CloseRun {
@@ -555,6 +572,12 @@ pub struct Workspace {
     /// their columns to it.
     width: gpui::Pixels,
     _subscriptions: Vec<Subscription>,
+    /// The workspace itself, for plugins' handles.
+    pub(crate) weak: gpui::WeakEntity<Workspace>,
+    /// Each plugin's window state, by plugin (ADR 0017).
+    pub(crate) plugin_ui: HashMap<String, gpui::AnyEntity>,
+    /// What plugins' handles asked, to carry out after the event.
+    pub(crate) plugin_requests: crate::plugins::Requests,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -793,6 +816,12 @@ impl Workspace {
             rules_tab: Default::default(),
             rule_menu: None,
             resetting_rules: None,
+            weak: cx.weak_entity(),
+            plugin_ui: crate::plugins::registry()
+                .plugins()
+                .map(|plugin| (plugin.name().to_owned(), plugin.new_ui(cx)))
+                .collect(),
+            plugin_requests: Default::default(),
             adding_jev_key: false,
             jev_key,
             slash_selected: 0,
@@ -957,6 +986,18 @@ impl Workspace {
                 self.set_branch_code(&main, &fork, code, cx)
             }
             HostUpdate::ResumeFailed(run) => self.resume_failed(&run, cx),
+            HostUpdate::PluginRecord { run, plugin, body }
+            | HostUpdate::PluginFold { run, plugin, body } => {
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| view.id == run)
+                {
+                    view.fold(&plugin, &body);
+                }
+                cx.notify();
+            }
+            HostUpdate::PluginReply { plugin, reply } => {
+                self.plugin_reply(&plugin, reply, cx);
+            }
             HostUpdate::GoalRecords { run, records } => {
                 if let Some(view) =
                     self.runs.iter_mut().find(|view| view.id == run)
@@ -1215,6 +1256,26 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The current screen's name, for the title bar and the phone's
+    /// header: a plugin's page names itself.
+    pub(crate) fn route_title(&self, cx: &mut App) -> String {
+        match &self.route {
+            Route::Plugin {
+                plugin,
+                page,
+                params,
+            } => self
+                .plugin_page_title(plugin, page, params, cx)
+                .unwrap_or_else(|| page.clone()),
+            route => route.title().to_owned(),
+        }
+    }
+
+    /// Whether the window has the phone's layout.
+    pub(crate) fn compact(&self) -> bool {
+        self.phone_preview || self.width < PHONE_MAX
+    }
+
     // Navigation.
 
     /// Opens a screen, remembering the current one for [`Self::back`].
@@ -1319,6 +1380,10 @@ impl Workspace {
 
     /// The screen that explains a plugin's work, for the current run.
     pub fn plugin_route(&self, plugin: &PluginInfo) -> Option<Route> {
+        if let Some(link) = &plugin.page {
+            let link = link.clone().from(&plugin.name);
+            return self.link_route(&link, None);
+        }
         let run = self.current.clone();
         match plugin.screen? {
             PluginScreen::Plan => run.map(Route::Plan),
@@ -1341,9 +1406,39 @@ impl Workspace {
         }
     }
 
+    /// The route a plugin's link opens, its empty parameters filled from
+    /// what is at hand: `run`, else the current run, and the selected
+    /// repository.
+    pub fn link_route(
+        &self,
+        link: &tau_ui_plugin::Link,
+        run: Option<&RunId>,
+    ) -> Option<Route> {
+        let mut params = link.params.clone();
+        for (name, value) in &mut params {
+            if !value.is_empty() {
+                continue;
+            }
+            *value = match name.as_str() {
+                "run" => run.or(self.current.as_ref())?.0.to_string(),
+                "repo" => self.selected_repo()?.to_owned(),
+                _ => continue,
+            };
+        }
+        Some(Route::Plugin {
+            plugin: link.plugin.clone()?,
+            page: link.page.clone(),
+            params,
+        })
+    }
+
     /// The screen for a plugin by name, about one run.
     pub fn plugin_route_named(&self, name: &str, run: &RunId) -> Option<Route> {
         let plugin = self.catalog.plugins.iter().find(|p| p.name == name)?;
+        if let Some(link) = &plugin.page {
+            let link = link.clone().from(&plugin.name);
+            return self.link_route(&link, Some(run));
+        }
         match plugin.screen? {
             PluginScreen::Plan => Some(Route::Plan(run.clone())),
             PluginScreen::Ledger => self
@@ -3531,7 +3626,9 @@ impl Workspace {
                     .px(sp(4.))
                     .border_b_1()
                     .border_color(t.border)
-                    .children(run.map(|run| inspector::header(run, t))),
+                    .children(
+                        run.map(|run| inspector::header(self, run, t, cx)),
+                    ),
             )
             .child(
                 div()
@@ -3565,6 +3662,20 @@ impl Workspace {
                 screen.children(
                     self.current().and_then(|run| self.goal_banner(run, t, cx)),
                 )
+            })
+            .when(self.route != Route::NewRun, |screen| {
+                // What plugins put above the transcript.
+                let banners = self
+                    .current()
+                    .map(|run| {
+                        self.contributions(
+                            tau_ui_plugin::points::RUN_BANNER,
+                            &tau_ui_plugin::points::AtRun { run: run.info() },
+                            cx,
+                        )
+                    })
+                    .unwrap_or_default();
+                screen.children(banners)
             })
             .child(self.transcript(compact, t, cx))
             .child(self.composer(compact, t, cx))
@@ -3615,6 +3726,20 @@ impl Workspace {
             }
             Route::Models => screens::models::render(self, compact, t, cx),
             Route::Phones => screens::phones::render(self, compact, t, cx),
+            Route::Plugin {
+                plugin,
+                page,
+                params,
+            } => self.plugin_page(plugin, page, params, cx).unwrap_or_else(
+                || {
+                    ui::screen(
+                        "plugin-page",
+                        compact,
+                        ui::empty("This page's plugin is not here.", t),
+                    )
+                    .into_any_element()
+                },
+            ),
         }
     }
 
@@ -3768,7 +3893,7 @@ impl Workspace {
                                 .bg(t.border_strong),
                         ),
                     )
-                    .child(inspector::header(run, t))
+                    .child(inspector::header(self, run, t, cx))
                     .child(
                         div()
                             .id("sheet-body")

@@ -62,6 +62,7 @@ pub mod phone_server;
 pub mod phones;
 pub mod picker;
 pub mod plan_usage;
+pub mod plugins;
 pub mod pull_request;
 pub mod remote;
 pub mod repos;
