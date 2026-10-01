@@ -15,9 +15,11 @@ tau-agent/
 │   ├── terminal/     # tau-terminal: libghostty-vt terminal, PTY command runner,
 │   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
 │   └── plugins/
+│       ├── codemode/         # tau-codemode: Luau scripts that call tools and Jev
 │       ├── compaction/       # tau-compaction: summarizing compaction
 │       ├── fast-compaction/  # tau-fast-compaction: Jev-driven pruning of tool history
 │       ├── jev/              # tau-jev: TypeSafe's Jev client, for plugins
+│       ├── mcp/              # tau-mcp: MCP servers' tools (rmcp)
 │       └── tools/            # tau-tools: read, bash, edit, write, grep, find, ls
 └── docs/
 ```

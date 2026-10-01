@@ -676,12 +676,89 @@ Built: `crates/plugins/goal`. Its reference is [goal.md](goal.md).
    plugins cost from these, not from the costs plugins put in their
    reports.
 
+## Nested calls
+
+Not built yet. Decided in
+[0018](../decisions/0018-codemode-and-mcp.md), for `tau-codemode` and
+`tau-mcp`.
+
+```rust
+pub enum Exposure {
+    /// Declared to the model, and callable from tools. The default.
+    Direct,
+    /// Callable from tools only: never declared, so it costs nothing
+    /// against the delta rule.
+    Nested,
+    /// Declared to the model, never callable from tools (`codemode`).
+    ModelOnly,
+}
+
+pub trait AgentTool {
+    // ...
+    fn exposure(&self) -> Exposure { Exposure::Direct }
+    /// The JSON schema of `ToolOutput::structured`, if the tool fills it.
+    fn output_schema(&self) -> Option<&Value> { None }
+}
+
+pub struct ToolOutput {
+    pub content: Vec<InputBlock>,
+    pub details: Option<Value>,
+    /// What a calling tool gets instead of the text; the model never
+    /// sees it.
+    pub structured: Option<Value>,
+}
+
+/// Tools that come and go while runs go on, resolved by name at call
+/// time: an MCP server's tools.
+#[async_trait]
+pub trait ToolSource: Send + Sync + 'static {
+    fn tools(&self) -> Vec<Arc<dyn AgentTool>>;
+    fn namespaces(&self) -> Vec<Namespace>;
+    /// Waits until the namespaces are ready, or all of them for `None`.
+    async fn ready(&self, namespaces: Option<&[String]>, cancel: &CancellationToken);
+}
+
+impl ToolCtx {
+    /// Every tool this call could call: the run's `Direct` and `Nested`
+    /// tools and the sources' tools.
+    pub fn catalog(&self) -> Catalog;
+    /// Calls a tool through the loop, as `<this call's id>/<n>`.
+    pub async fn call(&self, name: &str, args: Value)
+        -> Result<ToolOutput, ToolError>;
+    /// The `PluginCtx` of the plugin that added this tool, for the run.
+    pub fn plugin(&self) -> Option<&PluginCtx>;
+}
+
+impl RunPlan {
+    /// Adds a tool for this run only: tau-mcp's direct tools.
+    pub fn add_tool(&mut self, tool: Arc<dyn AgentTool>);
+    /// The run's tools, the agent's and the ones added so far.
+    pub fn tools(&self) -> &[Arc<dyn AgentTool>];
+}
+```
+
+- `Plugin::tool_source()` returns the plugin's `ToolSource`, if any.
+  Its tools must be `Nested`; a `Direct` one goes through `add_tool`.
+- **Through the loop.** `ToolCtx::call` sends the call to the run's
+  loop, which treats it as it treats a model's call: lookup, argument
+  repair, validation, `before_tool` and `after_tool_result` for every
+  plugin, `ToolStart`, `ToolUpdate` and `ToolEnd` with
+  `parent: Some(<the calling call's id>)`. The loop polls nested calls
+  in the same `select!` as the batch, so a plugin is still called one
+  call at a time. A `Sequential` tool's nested calls run one at a time.
+- **Not in the transcript.** The result goes back to the caller only.
+  `ToolResultView::message` is the turn that made the outer call.
+- **Cancel.** A nested call gets the run's token. Ending the outer call
+  cancels the nested calls it left running.
+- **Not callable:** `ModelOnly` tools, unknown names, and any call once
+  the outer call has ended. Each fails with a message, as an unknown
+  tool does today.
+
 ## Open questions
 
 - Should `finish` be awaited before the outcome returns, or run in the
   background? Awaiting is predictable but adds, for example, memory
   distillation to the latency of every run.
-- Should plugins be able to add tools per run (from `start`), or only
-  per agent? Per-run tools would cost nothing against the delta rule,
-  since tools are fixed within a run. But they make an agent's surface
-  harder to see.
+- ~~Should plugins be able to add tools per run?~~ Yes, from `start`
+  (`RunPlan::add_tool`), decided in
+  [0018](../decisions/0018-codemode-and-mcp.md); see "Nested calls".
