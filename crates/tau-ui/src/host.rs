@@ -42,6 +42,7 @@ use tau_ai::{
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools::{path::Root, plugin::CodingTools};
+use tau_ui_plugin::{Services, TurnCommit, TurnHooks};
 use tau_vcs::{
     ChangeKind,
     DEFAULT_WORKSPACE,
@@ -60,17 +61,8 @@ use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
     accounts::{self, Credentials},
-    catalog::{
-        Catalog,
-        PluginInfo,
-        PluginScreen,
-        ProjectStatus,
-        Repo,
-        Seam,
-        StoreInfo,
-    },
+    catalog::{Catalog, PluginInfo, ProjectStatus, Repo, Seam, StoreInfo},
     github,
-    memory::{Memories, stale_on_turn},
     models::{
         AccessInfo,
         DEFAULT_MODEL,
@@ -483,8 +475,9 @@ pub struct Host {
     jev: Option<Arc<dyn tau_jev::Jev>>,
     /// What every plugin's Jev requests did this session.
     jev_meter: Arc<Mutex<crate::metered::Meter>>,
-    /// Each repository's notes and the user's, shared by every run.
-    memories: Arc<Memories>,
+    /// How tau-memory searches notes: by meaning in the app, by keywords
+    /// in tests, where no model is loaded.
+    memory_search: tau_memory::ui::Search,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -595,7 +588,8 @@ impl Host {
         host.client = Mutex::new(Some(client));
         // The app searches memory with docbert's model; hosts built
         // elsewhere, as in tests, by keywords alone.
-        host.memories = Arc::new(Memories::semantic());
+        host.memory_search = tau_memory::ui::Search::Semantic;
+        host.host_plugins();
         // Importing clones can take a while; the window opens first.
         let listed: Vec<Listed> = host
             .list
@@ -668,7 +662,7 @@ impl Host {
             github: github::Api::default(),
             jev: None,
             jev_meter: Arc::default(),
-            memories: Arc::new(Memories::keywords()),
+            memory_search: tau_memory::ui::Search::Keywords,
             store,
             choices: Arc::default(),
             settings: Arc::new(Mutex::new(settings)),
@@ -1064,7 +1058,6 @@ impl Host {
                 description: "read bash edit write grep find ls".into(),
                 seams: vec![Seam::Tools],
                 spend: 0.0,
-                screen: None,
                 page: None,
             },
             PluginInfo {
@@ -1074,7 +1067,6 @@ impl Host {
                     .into(),
                 seams: vec![Seam::Tools],
                 spend: 0.0,
-                screen: None,
                 page: None,
             },
             PluginInfo {
@@ -1084,7 +1076,6 @@ impl Host {
                     .into(),
                 seams: vec![Seam::Start],
                 spend: 0.0,
-                screen: None,
                 page: None,
             },
         ];
@@ -1122,25 +1113,9 @@ impl Host {
                 repo.main =
                     listed.main.as_deref().map(|main| RunId(main.into()));
                 repo.plugins = self.registered_repo_data(slot);
-                repo.memory = self.memories.catalog(&self.memory_dir(slot));
                 Some(repo)
             })
             .collect();
-        plugins.push(PluginInfo {
-            name: tau_memory::plugin::NAME.into(),
-            description: "Linked notes each repository's runs keep, and \
-                          yours across them; searched at the start of a run"
-                .into(),
-            seams: vec![
-                Seam::Start,
-                Seam::Tools,
-                Seam::AfterTool,
-                Seam::Rewrite,
-            ],
-            spend: 0.0,
-            screen: Some(PluginScreen::Memory),
-            page: None,
-        });
         // The plugins with their UI, with their data and settings.
         let (registered, plugin_data, plugin_settings) =
             self.registered_catalog();
@@ -1218,22 +1193,24 @@ impl Host {
         // after theirs, and context compaction goes by the run's model.
         let registered = self.registered(repo);
         let agent = for_model(choice);
-        let memory = self.memory_plugin(repo);
         let project = repo.project()?;
         // A run and its sub-agents work the same way, each in its own
-        // workspace: tools and memory. Only the run itself can delegate,
-        // so sub-agents do not nest.
-        let on_workspace = {
-            let memory = memory.clone();
-            // `lands`: the run proposes its own landing with `vcs_land`
-            // (ADR 0014). Sub-agents land as they return, without it.
-            move |agent: Agent, workspace: RunWorkspace, lands: bool| {
-                // Notes about the files a turn changed may be stale.
-                let workspace = match &memory {
-                    Some(memory) => {
-                        workspace.on_turn(stale_on_turn(memory.clone()))
-                    }
-                    None => workspace,
+        // workspace: tools, then what plugins add, which hear each turn's
+        // commit. Only the run itself can delegate, so sub-agents do not
+        // nest.
+        // `lands`: the run proposes its own landing with `vcs_land`
+        // (ADR 0014). Sub-agents land as they return, without it.
+        let on_workspace =
+            |agent: Agent, workspace: RunWorkspace, lands: bool| {
+                let hooks = TurnHooks::default();
+                let workspace = {
+                    let hooks = hooks.clone();
+                    workspace.on_turn(move |turn| {
+                        hooks.turned(&TurnCommit {
+                            change_id: turn.change_id.clone(),
+                            paths: turn.paths.clone(),
+                        })
+                    })
                 };
                 let vcs = VcsPlugin::new(workspace.vcs().clone());
                 let vcs = if lands { vcs.landing() } else { vcs };
@@ -1241,9 +1218,8 @@ impl Host {
                     .plugin(CodingTools::new(Root::new(workspace.dir())))
                     .plugin(vcs)
                     .plugin(workspace);
-                with_plugin(agent, memory.clone())
-            }
-        };
+                (agent, Services::default().with(hooks))
+            };
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
         // A main chat commits on trunk: it has nothing to land.
         let workspace = if main {
@@ -1252,7 +1228,6 @@ impl Host {
             workspace
         };
         let delegate = {
-            let on_workspace = on_workspace.clone();
             let registered = registered.clone();
             let caller = choice.clone();
             let models: Vec<String> =
@@ -1263,23 +1238,26 @@ impl Host {
                 &models,
                 move |child, asked| {
                     let choice = child_choice(&caller, asked)?;
+                    let (agent, services) =
+                        on_workspace(for_model(&choice), child, false);
                     registered(
-                        on_workspace(for_model(&choice), child, false),
+                        agent,
                         tau_ui_plugin::RunKind::SubAgent,
                         &choice,
+                        services,
                     )
                     .map_err(|error| format!("{error:#}").into())
                 },
             )
         };
         let agent = if main { agent.tool(delegate) } else { agent };
-        let agent = on_workspace(agent, workspace, !main);
+        let (agent, services) = on_workspace(agent, workspace, !main);
         let kind = if main {
             tau_ui_plugin::RunKind::Main
         } else {
             tau_ui_plugin::RunKind::Chat
         };
-        Ok((registered(agent, kind, choice)?, name))
+        Ok((registered(agent, kind, choice, services)?, name))
     }
 
     /// Jev, when there is a TypeSafe key (or one given for tests).
@@ -1312,35 +1290,6 @@ impl Host {
             spent: meter.spent,
             failed: meter.failed,
         })
-    }
-
-    /// Where a repository's memory notes are kept: in tau's directory for
-    /// it, beside its constitution, out of the repository's history.
-    fn memory_dir(&self, repo: &RepoSlot) -> PathBuf {
-        self.config.project_dir_of(&repo.path).join("memory")
-    }
-
-    /// Where the user's notes, shared by every repository, are kept.
-    fn user_memory_dir(&self) -> PathBuf {
-        self.config
-            .repos
-            .parent()
-            .unwrap_or(&self.config.repos)
-            .join("memory")
-    }
-
-    /// The memory plugin for a run in `repo`, or none when its notes
-    /// cannot be opened: the run goes on without memory.
-    fn memory_plugin(
-        &self,
-        repo: &RepoSlot,
-    ) -> Option<tau_memory::MemoryPlugin> {
-        self.memories
-            .plugin(&self.memory_dir(repo), &self.user_memory_dir())
-            .inspect_err(|error| {
-                eprintln!("tau-ui: memory is off for this run: {error:#}");
-            })
-            .ok()
     }
 
     /// The ChatGPT account runs reach models with, if any.
@@ -2120,20 +2069,6 @@ impl Host {
                 tone: Tone::Quiet,
             });
         }
-        view.plugins.push(PluginStatus {
-            name: tau_memory::plugin::NAME.into(),
-            state: match self
-                .memories
-                .catalog(&self.memory_dir(repo))
-                .notes
-                .len()
-            {
-                0 => "no notes yet".into(),
-                1 => "1 note".into(),
-                n => format!("{n} notes"),
-            },
-            tone: Tone::Quiet,
-        });
         view
     }
 
@@ -3182,17 +3117,6 @@ fn tests_passed(answer: &str) -> Option<String> {
             .starts_with("passed")
             .then(|| format!("{count} tests passed"))
     })
-}
-
-/// `agent` with `plugin`, if there is one.
-fn with_plugin(
-    agent: Agent,
-    plugin: Option<impl tau_agent::plugin::Plugin>,
-) -> Agent {
-    match plugin {
-        Some(plugin) => agent.plugin(plugin),
-        None => agent,
-    }
 }
 
 /// Asks GitHub about an opened pull request's checks until they are

@@ -461,22 +461,6 @@ pub struct PluginNote {
     /// Cost, latency or confidence, in small print.
     pub detail: Option<String>,
     pub tone: Tone,
-    pub body: NoteBody,
-}
-
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub enum NoteBody {
-    #[default]
-    None,
-    Chips(Vec<String>),
-    /// Notes a plugin suggests keeping.
-    Proposals(Vec<Proposal>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Proposal {
-    pub title: String,
-    pub detail: String,
 }
 
 pub use tau_ui_kit::theme::Tone;
@@ -1258,20 +1242,6 @@ impl RunView {
         })
     }
 
-    /// Notes a plugin suggested keeping.
-    pub fn proposals(&self) -> impl Iterator<Item = &Proposal> {
-        self.items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Plugin(PluginNote {
-                    body: NoteBody::Proposals(proposals),
-                    ..
-                }) => Some(proposals.iter()),
-                _ => None,
-            })
-            .flatten()
-    }
-
     /// Applies any update. Unknown call ids are ignored: the card may
     /// belong to a run the view has not seen start.
     pub fn update(&mut self, update: RunUpdate) {
@@ -1474,7 +1444,6 @@ impl RunView {
                 text: format!("held the stop: {message}"),
                 detail: Some("before_stop".into()),
                 tone: Tone::Warn,
-                body: NoteBody::None,
             }),
             RunEvent::PluginCharged { usage, .. } => {
                 self.usage.plugin_cost += usage.cost.total;
@@ -1486,7 +1455,6 @@ impl RunView {
                 text: message.clone(),
                 detail: Some("error".into()),
                 tone: Tone::Danger,
-                body: NoteBody::None,
             }),
             RunEvent::RunEnd { stop, cost, .. } => {
                 self.usage.cost = self.cost_before + cost;

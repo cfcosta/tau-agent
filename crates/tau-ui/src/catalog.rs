@@ -1,11 +1,9 @@
 //! What the workspace shows beyond single runs: the agent's plugins, the
-//! repositories with their memory notes and constitutions, and the
-//! store. The host fills it from its agents and plugin crates;
-//! [`crate::demo`] has an example.
+//! repositories with each plugin's data for them, and the store. The
+//! host fills it from its agents and plugin crates; [`crate::demo`] has
+//! an example.
 
 use serde::{Deserialize, Serialize};
-
-use crate::view::Proposal;
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Catalog {
@@ -65,7 +63,6 @@ pub struct Repo {
     /// cannot be closed.
     #[serde(default)]
     pub main: Option<tau_agent::tool::RunId>,
-    pub memory: Memory,
     /// Each plugin's data for the repository, as JSON, by plugin
     /// (`UiPlugin::repo_data`).
     #[serde(default)]
@@ -107,14 +104,6 @@ pub enum ProjectStatus {
 
 pub use tau_ui_plugin::Seam;
 
-/// Which screen explains a plugin's work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PluginScreen {
-    /// The run plan: what `start` decided.
-    Plan,
-    Memory,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginInfo {
     pub name: String,
@@ -122,7 +111,6 @@ pub struct PluginInfo {
     pub seams: Vec<Seam>,
     /// What the plugin cost over the store's recent window.
     pub spend: f64,
-    pub screen: Option<PluginScreen>,
     /// The page that explains its work, for a plugin with its UI (ADR
     /// 0017).
     #[serde(default)]
@@ -141,85 +129,6 @@ pub struct JevStats {
     pub latency_p50_ms: u32,
     /// Requests that got no answer.
     pub failed: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct Memory {
-    /// The notes directory.
-    pub path: String,
-    pub collection: String,
-    pub notes: Vec<Note>,
-}
-
-impl Memory {
-    pub fn note(&self, id: &str) -> Option<&Note> {
-        self.notes.iter().find(|note| note.id == id)
-    }
-
-    pub fn by_title(&self, title: &str) -> Option<&Note> {
-        self.notes.iter().find(|note| note.title == title)
-    }
-
-    /// Notes that link to `id`, with why.
-    pub fn backlinks<'a>(
-        &'a self,
-        id: &'a str,
-    ) -> impl Iterator<Item = (&'a Note, &'a str)> {
-        self.notes.iter().filter_map(move |note| {
-            note.links
-                .iter()
-                .find(|link| link.to == id)
-                .map(|link| (note, link.why.as_str()))
-        })
-    }
-
-    /// Adds a suggested note, keeping the id unique.
-    pub fn keep(&mut self, proposal: &Proposal, from_run: &str) -> String {
-        let id = format!("n-{:04}", 1000 + self.notes.len());
-        self.notes.insert(
-            0,
-            Note {
-                id: id.clone(),
-                title: proposal.title.clone(),
-                body: vec![proposal.detail.clone()],
-                links: Vec::new(),
-                paths: Vec::new(),
-                written_by: format!("kept from {from_run}"),
-                edited: "just now".into(),
-                used_by_runs: 0,
-            },
-        );
-        id
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Note {
-    pub id: String,
-    pub title: String,
-    /// Paragraphs, with `code` in backticks.
-    pub body: Vec<String>,
-    pub links: Vec<Link>,
-    /// Files the note is about.
-    pub paths: Vec<String>,
-    pub written_by: String,
-    pub edited: String,
-    /// How many runs got the note at start.
-    pub used_by_runs: u32,
-}
-
-impl Note {
-    /// The first sentence, for lists.
-    pub fn snippet(&self) -> &str {
-        let first = self.body.first().map(String::as_str).unwrap_or("");
-        first.split_inclusive(". ").next().unwrap_or(first)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Link {
-    pub to: String,
-    pub why: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

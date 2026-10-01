@@ -6,8 +6,8 @@ use tau_agent::tool::RunId;
 use crate::{
     assets::Icon,
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, dot, heading, icon, mono, rich, transcript},
-    view::{Item, NoteBody, PluginNote},
+    ui::{self, dot, heading, icon, mono, rich},
+    view::{Item, PluginNote},
     workspace::Workspace,
 };
 
@@ -40,37 +40,24 @@ pub fn render(
         _ => None,
     });
 
-    let steps = notes.iter().enumerate().map(|(index, note)| {
-        let body = match &note.body {
-            NoteBody::Chips(chips) => Some(
-                transcript::chips_view(ws, chips, index, t, cx)
-                    .into_any_element(),
-            ),
-            _ => None,
-        };
+    let steps = notes.iter().map(|note| {
         step(
             t.green,
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(3.))
-                .pb(sp(4.5))
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(sp(2.5))
-                        .child(mono(note.plugin.clone(), Type::SMALL, t.text))
-                        .child(
-                            div().text_color(t.muted).child(note.text.clone()),
-                        )
-                        .child(div().flex_1())
-                        .children(note.detail.clone().map(|detail| {
-                            mono(detail, Type::CAPTION, t.muted)
-                        })),
-                )
-                .children(body),
+            div().flex().flex_col().gap(sp(3.)).pb(sp(4.5)).child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(sp(2.5))
+                    .child(mono(note.plugin.clone(), Type::SMALL, t.text))
+                    .child(div().text_color(t.muted).child(note.text.clone()))
+                    .child(div().flex_1())
+                    .children(
+                        note.detail
+                            .clone()
+                            .map(|detail| mono(detail, Type::CAPTION, t.muted)),
+                    ),
+            ),
             true,
             t,
         )

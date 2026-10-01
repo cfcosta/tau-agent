@@ -2178,7 +2178,10 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
             .find(|repo| repo.name == REPO)
             .expect("the repository is listed")
             .clone();
-        repo.memory
+        serde_json::from_value::<tau_memory::ui::Notebook>(
+            repo.plugins[tau_memory::plugin::NAME].clone(),
+        )
+        .unwrap()
     };
     assert!(memory_of(&host).notes.is_empty());
     assert!(

@@ -20,11 +20,6 @@ pub enum Route {
     Plugins,
     /// What each plugin's `start` decided for a run.
     Plan(RunId),
-    /// A repository's notes.
-    Memory {
-        repo: String,
-        note: Option<String>,
-    },
     /// Onboarding: GitHub, a model, repositories, the first run.
     Setup(SetupStep),
     /// A phone pairing with the tau on a computer, or failing to reach
@@ -92,7 +87,6 @@ impl Route {
     /// The repository a screen is about, if it names one.
     pub fn repo(&self) -> Option<&str> {
         match self {
-            Self::Memory { repo, .. } => Some(repo),
             Self::Plugin { params, .. } => {
                 params.get("repo").map(String::as_str)
             }
@@ -119,7 +113,6 @@ impl Route {
             Self::History => "History",
             Self::Plugins => "Plugins",
             Self::Plan(_) => "Run plan",
-            Self::Memory { .. } => "Memory",
             Self::Setup(step) => step.title(),
             Self::Pair(step) => step.title(),
             Self::PullRequest(_) => "Pull request",
@@ -164,9 +157,10 @@ mod tests {
         let run = RunId(Arc::from("r"));
         assert_eq!(Route::Plan(run.clone()).run(), Some(&run));
         assert_eq!(Route::Plan(run.clone()).tab(), Tab::Runs);
-        let memory = Route::Memory {
-            repo: "docbert".into(),
-            note: None,
+        let memory = Route::Plugin {
+            plugin: "tau-memory".into(),
+            page: "notes".into(),
+            params: [("repo".to_owned(), "docbert".to_owned())].into(),
         };
         assert!(!memory.is_top_level());
         assert_eq!(memory.tab(), Tab::Runs);

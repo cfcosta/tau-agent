@@ -39,7 +39,7 @@ use tau_vcs::Landing;
 
 use crate::{
     assets::Icon,
-    catalog::{Catalog, PluginInfo, PluginScreen},
+    catalog::{Catalog, PluginInfo},
     input::{InputEvent, TextInput},
     models::{ModelChoice, ModelSettings, USAGE_SETTINGS_URL},
     pairing::{PairRequest, PairStep, Pairing, PairingUpdate, Progress},
@@ -87,7 +87,6 @@ use crate::{
         LandedCard,
         LandingRecord,
         Origin,
-        Proposal,
         RunStatus,
         RunUpdate,
         RunView,
@@ -212,11 +211,6 @@ pub enum WorkspaceEvent {
     /// Drop this child run: abandon its own changes and close it.
     DropChild {
         run: RunId,
-    },
-    /// Keep a note a memory plugin suggested.
-    KeepNote {
-        run: RunId,
-        title: String,
     },
     /// Run a query against the store.
     Query {
@@ -362,7 +356,6 @@ pub struct Workspace {
     /// The search palette, and what is typed in it.
     pub(crate) searching: bool,
     pub(crate) search: Entity<TextInput>,
-    pub(crate) memory_search: Entity<TextInput>,
     /// Whether the side panel shows the event log open.
     events_open: bool,
     sheet_open: bool,
@@ -398,8 +391,6 @@ pub struct Workspace {
     /// Whether the last layout showed the inspector, for placing the
     /// model picker beside it.
     inspector_shown: bool,
-    /// Notes kept, per run, by title.
-    pub(crate) kept: HashMap<RunId, HashSet<String>>,
     /// Plugin notes opened to show their detail, as `(run, item index)`.
     /// Notes start closed.
     pub(crate) open_notes: HashSet<(RunId, usize)>,
@@ -527,7 +518,6 @@ impl Workspace {
         let history_filter = cx.new(|cx| {
             TextInput::new("Filter by run, repository, model or stop", cx)
         });
-        let memory_search = cx.new(|cx| TextInput::new("Search notes", cx));
         let search = cx.new(|cx| {
             TextInput::new("Search runs, repositories, actions", cx)
                 .keep_on_submit()
@@ -581,7 +571,6 @@ impl Workspace {
             cx.observe(&composer, |ws, _, cx| ws.composer_changed(cx)),
             // Filters apply as you type.
             cx.observe(&history_filter, |_, _, cx| cx.notify()),
-            cx.observe(&memory_search, |_, _, cx| cx.notify()),
             cx.observe(&model_search, |_, _, cx| cx.notify()),
             cx.observe(&repo_filter, |_, _, cx| cx.notify()),
             // Onboarding's loops pause while the window is in the
@@ -645,7 +634,6 @@ impl Workspace {
             searching: false,
             search,
             attachments: Vec::new(),
-            memory_search,
             events_open: false,
             sheet_open: false,
             queued: HashMap::new(),
@@ -662,7 +650,6 @@ impl Workspace {
             model_search,
             run_models: HashMap::new(),
             inspector_shown: false,
-            kept: HashMap::new(),
             open_notes: HashSet::new(),
             open_cards: HashSet::new(),
             terms: Default::default(),
@@ -1251,18 +1238,8 @@ impl Workspace {
 
     /// The screen that explains a plugin's work, for the current run.
     pub fn plugin_route(&self, plugin: &PluginInfo) -> Option<Route> {
-        if let Some(link) = &plugin.page {
-            let link = link.clone().from(&plugin.name);
-            return self.link_route(&link, None);
-        }
-        let run = self.current.clone();
-        match plugin.screen? {
-            PluginScreen::Plan => run.map(Route::Plan),
-            PluginScreen::Memory => Some(Route::Memory {
-                repo: self.selected_repo()?.to_owned(),
-                note: None,
-            }),
-        }
+        let link = plugin.page.clone()?.from(&plugin.name);
+        self.link_route(&link, None)
     }
 
     /// The route a plugin's link opens, its empty parameters filled from
@@ -1294,30 +1271,8 @@ impl Workspace {
     /// The screen for a plugin by name, about one run.
     pub fn plugin_route_named(&self, name: &str, run: &RunId) -> Option<Route> {
         let plugin = self.catalog.plugins.iter().find(|p| p.name == name)?;
-        if let Some(link) = &plugin.page {
-            let link = link.clone().from(&plugin.name);
-            return self.link_route(&link, Some(run));
-        }
-        match plugin.screen? {
-            PluginScreen::Plan => Some(Route::Plan(run.clone())),
-            _ => self.plugin_route(plugin),
-        }
-    }
-
-    /// Suggested notes nobody kept yet, with their run.
-    pub fn pending_proposals(
-        &self,
-    ) -> impl Iterator<Item = (&RunId, &Proposal)> {
-        self.runs.iter().flat_map(move |run| {
-            run.proposals()
-                .filter(move |proposal| {
-                    !self
-                        .kept
-                        .get(&run.id)
-                        .is_some_and(|kept| kept.contains(&proposal.title))
-                })
-                .map(move |proposal| (&run.id, proposal))
-        })
+        let link = plugin.page.clone()?.from(&plugin.name);
+        self.link_route(&link, Some(run))
     }
 
     // What the user asks for.
@@ -1420,36 +1375,6 @@ impl Workspace {
         self.picked_changes
             .get(&(run.clone(), call_id.to_owned()))
             .map(String::as_str)
-    }
-
-    pub fn keep_note(
-        &mut self,
-        run: &RunId,
-        title: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let proposal = self.run(run).and_then(|view| {
-            view.proposals().find(|p| p.title == title).cloned()
-        });
-        let (from, repo) =
-            self.run(run).map_or_else(Default::default, |view| {
-                (view.title.clone(), self.repo_of(view).to_owned())
-            });
-        // The note goes to the memory of the run's repository.
-        if let Some(proposal) = proposal
-            && let Some(repo) = self.catalog.repo_mut(&repo)
-        {
-            repo.memory.keep(&proposal, &from);
-        }
-        self.kept
-            .entry(run.clone())
-            .or_default()
-            .insert(title.to_owned());
-        cx.emit(WorkspaceEvent::KeepNote {
-            run: run.clone(),
-            title: title.to_owned(),
-        });
-        cx.notify();
     }
 
     /// Asks what landing `run` on its parent would do (ADR 0014).
@@ -3503,14 +3428,6 @@ impl Workspace {
             Route::Plan(run) => {
                 screens::plan::render(self, run, compact, t, cx)
             }
-            Route::Memory { repo, note } => screens::memory::render(
-                self,
-                repo,
-                note.as_deref(),
-                compact,
-                t,
-                cx,
-            ),
             Route::Setup(_) | Route::Pair(_) | Route::PullRequest(_) => {
                 self.focused(compact, t, cx)
             }

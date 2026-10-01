@@ -27,7 +27,7 @@ pub mod services;
 pub mod view;
 
 use gpui::Context;
-pub use host::{HostCx, Push, RepoCtx, RunCtx, RunKind};
+pub use host::{HostCx, Push, RepoCtx, RunCtx, RunKind, TurnCommit, TurnHooks};
 pub use manifest::{Manifest, Page, Point, PointCx, SlashCommand};
 pub use registry::{Env, ErasedPlugin, Registry};
 pub use run::{CardInfo, CardMark, Dropped, OutputCut, RunCx};

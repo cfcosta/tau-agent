@@ -698,21 +698,28 @@ fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
         ws.open_memory("docbert", cx);
         assert_eq!(
             ws.route(),
-            &Route::Memory {
-                repo: "docbert".into(),
-                note: None
+            &Route::Plugin {
+                plugin: tau_memory::plugin::NAME.into(),
+                page: "notes".into(),
+                params: [("repo".to_owned(), "docbert".to_owned())].into(),
             }
         );
         assert_eq!(ws.selected_repo(), Some("docbert"));
-        assert_eq!(ws.repo_named("docbert").memory.notes.len(), 3);
-        assert_eq!(ws.repo_named("tau-agent").memory.notes.len(), 8);
+        let notes = |ws: &Workspace, repo: &str| {
+            ws.repo_named(repo)
+                .plugins
+                .get(tau_memory::plugin::NAME)
+                .map_or(0, |book| book["notes"].as_array().map_or(0, Vec::len))
+        };
+        assert_eq!(notes(ws, "docbert"), 3);
+        assert_eq!(notes(ws, "tau-agent"), 8);
         let rules: tau_constitution::ui::Rules = serde_json::from_value(
             ws.repo_named("homelab.nix").plugins[tau_constitution::NAME]
                 .clone(),
         )
         .unwrap();
         assert!(rules.rules.is_empty());
-        assert!(ws.repo_named("not listed").memory.notes.is_empty());
+        assert_eq!(notes(ws, "not listed"), 0);
     });
 }
 
@@ -720,13 +727,7 @@ fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
 fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update_in(&mut cx, |ws, _, cx| {
-        ws.navigate(
-            Route::Memory {
-                repo: "docbert".into(),
-                note: None,
-            },
-            cx,
-        );
+        ws.open_memory("docbert", cx);
     });
     workspace.update(&mut cx, |ws, cx| {
         ws.add_repo(tau_ui::catalog::Repo::new("dotfiles", "~/dotfiles"), cx);
@@ -747,24 +748,6 @@ fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
     assert!(events.borrow().contains(&WorkspaceEvent::HideRepo {
         repo: "docbert".into()
     }));
-}
-
-#[gpui::test]
-fn a_kept_note_goes_to_its_runs_repository(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        let run = demo::run_id();
-        for (_, update) in demo::script() {
-            ws.update_run(&run, update, cx);
-        }
-        let (_, proposal) =
-            ws.pending_proposals().next().expect("a suggestion");
-        let title = proposal.title.clone();
-        let before = ws.repo_named("tau-agent").memory.notes.len();
-        ws.keep_note(&run, &title, cx);
-        assert_eq!(ws.repo_named("tau-agent").memory.notes.len(), before + 1);
-        assert_eq!(ws.repo_named("docbert").memory.notes.len(), 3);
-    });
 }
 
 #[gpui::test]

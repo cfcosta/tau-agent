@@ -1,7 +1,5 @@
 //! The chat: messages, tool cards, and what plugins say in between.
 
-use std::collections::HashSet;
-
 use gpui::{
     AnyElement,
     Context,
@@ -18,7 +16,6 @@ use gpui::{
 
 use super::{
     Material as _,
-    button,
     diff_card,
     icon,
     link,
@@ -33,14 +30,12 @@ use super::{
 use crate::{
     assets::Icon,
     route::Route,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::components::ButtonKind,
+    theme::{Design as _, IconSize, Theme, Type, radius, sp},
     view::{
         DiffKind,
         DiffLine,
         Dropped,
         Item,
-        NoteBody,
         PluginNote,
         RunView,
         ToolBody,
@@ -79,8 +74,6 @@ pub fn item(
     let Some(item) = run.items.get(index) else {
         return div().into_any_element();
     };
-    let empty = HashSet::new();
-    let kept = ws.kept.get(&run.id).unwrap_or(&empty);
     // What an item can take: the transcript less its sides.
     let room = ws.transcript_width().map(|width| width - side * 2.);
     div()
@@ -88,7 +81,7 @@ pub fn item(
         .pt(if index == 0 { edge } else { sp(3.) })
         .when(index + 1 == run.items.len(), |item| item.pb(edge))
         .child(item_view(
-            ws, run, kept, index, item, t, compact, room, window, cx,
+            ws, run, index, item, t, compact, room, window, cx,
         ))
         .into_any_element()
 }
@@ -97,7 +90,6 @@ pub fn item(
 fn item_view(
     ws: &Workspace,
     run: &RunView,
-    kept: &HashSet<String>,
     index: usize,
     item: &Item,
     t: &Theme,
@@ -142,8 +134,7 @@ fn item_view(
             tool(ws, run, card, t, compact, cx).into_any_element()
         }
         Item::Plugin(note) => {
-            plugin_note(ws, run, kept, index, note, t, compact, cx)
-                .into_any_element()
+            plugin_note(ws, run, index, note, t, compact, cx).into_any_element()
         }
         Item::Anchor { plugin, key } => {
             let at = tau_ui_plugin::points::AtAnchor {
@@ -926,7 +917,6 @@ pub fn output(lines: &[String], t: &Theme) -> Div {
 fn plugin_note(
     ws: &Workspace,
     run: &RunView,
-    kept: &HashSet<String>,
     index: usize,
     note: &PluginNote,
     t: &Theme,
@@ -995,80 +985,6 @@ fn plugin_note(
             },
         );
 
-    let body: Option<AnyElement> = match &note.body {
-        NoteBody::None => None,
-        NoteBody::Chips(chips) => {
-            Some(chips_view(ws, chips, index, t, cx).into_any_element())
-        }
-        NoteBody::Proposals(proposals) => Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(2.))
-                .children(proposals.iter().enumerate().map(|(n, proposal)| {
-                    let is_kept = kept.contains(&proposal.title);
-                    let run_id = run.id.clone();
-                    let title = proposal.title.clone();
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(sp(2.5))
-                        .px(sp(3.))
-                        .py(sp(2.5))
-                        .border_1()
-                        .border_color(t.border)
-                        .rounded(radius::BOX)
-                        .raised(t)
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(sp(0.75))
-                                .flex_1()
-                                .min_w(px(180.))
-                                .child(
-                                    div()
-                                        .font_weight(weight::EMPHASIS)
-                                        .child(proposal.title.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .typeset(Type::CAPTION)
-                                        .text_color(t.muted)
-                                        .child(proposal.detail.clone()),
-                                ),
-                        )
-                        .child(if is_kept {
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(sp(1.5))
-                                .typeset(Type::CAPTION)
-                                .text_color(t.green)
-                                .child(icon(
-                                    Icon::Check,
-                                    IconSize::COMPACT,
-                                    t.green,
-                                ))
-                                .child("Kept")
-                                .into_any_element()
-                        } else {
-                            div()
-                                .id(SharedString::from(format!(
-                                    "keep-{index}-{n}"
-                                )))
-                                .child(button("Keep", ButtonKind::Primary, t))
-                                .on_click(cx.listener(move |ws, _, _, cx| {
-                                    ws.keep_note(&run_id, &title, cx)
-                                }))
-                                .into_any_element()
-                        })
-                }))
-                .into_any_element(),
-        ),
-    };
-
     div()
         .flex()
         .flex_col()
@@ -1089,53 +1005,6 @@ fn plugin_note(
                     .child(rich(&note.text, t.text_soft, t)),
             )
         })
-        .when_some(body.filter(|_| open), |card, body| {
-            let indent = match (compact, folds) {
-                (true, _) => 0.,
-                (false, true) => 12.,
-                (false, false) => 7.,
-            };
-            card.child(div().pl(sp(indent)).child(body))
-        })
-}
-
-/// Memory note titles; the ones memory holds open the note.
-pub fn chips_view(
-    ws: &Workspace,
-    chips: &[String],
-    index: usize,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    // Notes come from the memory of the open run's repository.
-    let repo = ws.current().map_or("", |run| ws.repo_of(run));
-    div().flex().flex_wrap().gap(sp(1.5)).children(
-        chips.iter().enumerate().map(|(n, chip)| {
-            let route = ws.repo_named(repo).memory.by_title(chip).map(|note| {
-                Route::Memory {
-                    repo: repo.to_owned(),
-                    note: Some(note.id.clone()),
-                }
-            });
-            div()
-                .id(SharedString::from(format!("chip-{index}-{n}")))
-                .px(sp(2.25))
-                .py(sp(0.75))
-                .rounded(radius::CARD)
-                .border_1()
-                .border_color(t.border)
-                .typeset(Type::CAPTION)
-                .text_color(t.text_soft)
-                .child(chip.clone())
-                .when_some(route, |chip, route| {
-                    chip.cursor_pointer()
-                        .hover(|style| style.border_color(t.blue))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.navigate(route.clone(), cx)
-                        }))
-                })
-        }),
-    )
 }
 
 /// A rewrite no plugin draws: who rewrote the context, and what it

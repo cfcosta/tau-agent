@@ -44,6 +44,44 @@ pub struct RunCtx {
     pub services: Services,
 }
 
+/// What a run's turn left in its workspace: its commit, and the paths
+/// it changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnCommit {
+    pub change_id: String,
+    pub paths: Vec<String>,
+}
+
+/// What hears each turn's commit in a run's workspace. The host puts one
+/// in a run's services ([`RunCtx::services`]) when the run has a
+/// workspace, and calls it after each turn.
+#[derive(Clone, Default)]
+pub struct TurnHooks(Arc<std::sync::Mutex<Vec<TurnHook>>>);
+
+type TurnHook = Arc<dyn Fn(&TurnCommit) + Send + Sync>;
+
+impl TurnHooks {
+    /// Calls `hook` with each turn's commit from now on.
+    pub fn on_turn(&self, hook: impl Fn(&TurnCommit) + Send + Sync + 'static) {
+        self.0.lock().expect("not poisoned").push(Arc::new(hook));
+    }
+
+    /// Tells every hook that a turn ended with `commit`.
+    pub fn turned(&self, commit: &TurnCommit) {
+        let hooks = self.0.lock().expect("not poisoned").clone();
+        for hook in hooks {
+            hook(commit);
+        }
+    }
+}
+
+impl std::fmt::Debug for TurnHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let hooks = self.0.lock().expect("not poisoned").len();
+        write!(f, "TurnHooks({hooks})")
+    }
+}
+
 /// What the host tells the interface after a plugin acted.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Push {
@@ -166,5 +204,43 @@ impl HostCx {
             title: title.into(),
             message: message.into(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    /// A hook hears every commit after it was added, in order, and none
+    /// before.
+    #[hegel::test(test_cases = 100)]
+    fn a_hook_hears_the_turns_after_it(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        // Each step adds a hook (`true`) or ends a turn (`false`).
+        let steps: Vec<bool> = tc.draw(gs::vecs(gs::booleans()).max_size(12));
+        let hooks = TurnHooks::default();
+        let heard: Arc<Mutex<Vec<(usize, String)>>> = Arc::default();
+        let mut expected = Vec::new();
+        let mut added = 0;
+        for (n, adds) in steps.iter().enumerate() {
+            if *adds {
+                let (heard, hook) = (heard.clone(), added);
+                hooks.on_turn(move |commit| {
+                    heard.lock().unwrap().push((hook, commit.change_id.clone()))
+                });
+                added += 1;
+            } else {
+                let change_id = format!("c{n}");
+                expected
+                    .extend((0..added).map(|hook| (hook, change_id.clone())));
+                hooks.turned(&TurnCommit {
+                    change_id,
+                    paths: Vec::new(),
+                });
+            }
+        }
+        assert_eq!(*heard.lock().unwrap(), expected);
     }
 }

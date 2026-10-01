@@ -16,6 +16,8 @@ name = "tau-memory-eval"
 required-features = ["docbert"]
 
 [dependencies]
+anyhow.workspace = true
+gpui = { package = "gpui-pre", version = "=0.3.7" }
 candle-core = { workspace = true, optional = true }
 docbert-pylate = { workspace = true, optional = true }
 async-trait.workspace = true
@@ -29,6 +31,9 @@ schemars.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 tokio-util.workspace = true
 toml.workspace = true
+# Its UI (ADR 0017).
+tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true

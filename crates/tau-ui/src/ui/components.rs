@@ -7,34 +7,14 @@ pub use tau_ui_kit::components::*;
 use crate::{
     assets::Icon,
     catalog::Repo,
-    theme::{Design as _, Theme, Type, radius, sp, weight},
+    theme::{Design as _, Theme, Type, sp, weight},
     workspace::Workspace,
 };
 
 /// A repository's mark: its letter on its color, 20 px in the sidebar
 /// and 26 px on a phone.
 pub fn repo_mark(repo: &Repo, size: f32, t: &Theme) -> Div {
-    mono(
-        repo.letter(),
-        if size > 22. { Type::SMALL } else { Type::MICRO },
-        t.bg,
-    )
-    .size(px(size))
-    .flex_shrink_0()
-    .flex()
-    .items_center()
-    .justify_center()
-    .rounded(if size > 22. {
-        radius::CONTROL
-    } else {
-        radius::TAG
-    })
-    .bg(t.mark(&repo.name))
-    .shadow(vec![
-        shade(0., 1., 0., gpui::white().opacity(0.35)).inset(),
-        shade(0., 1., 2., t.depth.shade),
-    ])
-    .font_weight(weight::EMPHASIS)
+    tau_ui_kit::components::repo_mark(&repo.name, size, t)
 }
 
 /// The phone's header on a task screen: back, and the title.

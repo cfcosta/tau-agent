@@ -103,23 +103,12 @@ impl Workspace {
             .iter()
             .flat_map(|repo| {
                 let name = repo.name.clone();
-                [
-                    Hit {
-                        label: format!("New run in {name}"),
-                        detail: "action".into(),
-                        glyph: Icon::Plus,
-                        pick: Pick::NewRunIn(name.clone()),
-                    },
-                    Hit {
-                        label: format!("{name} memory"),
-                        detail: "screen".into(),
-                        glyph: Icon::Memory,
-                        pick: Pick::Screen(Route::Memory {
-                            repo: name.clone(),
-                            note: None,
-                        }),
-                    },
-                ]
+                [Hit {
+                    label: format!("New run in {name}"),
+                    detail: "action".into(),
+                    glyph: Icon::Plus,
+                    pick: Pick::NewRunIn(name),
+                }]
             })
             .collect();
         // Where plugins lead: under each repository, everywhere, and

@@ -170,7 +170,8 @@ pub fn title_bar(
 }
 
 /// The desktop sidebar: a new run in the selected repository, the
-/// repositories as a tree (each with its memory, constitution and runs),
+/// repositories as a tree (each with what plugins list under it, and its
+/// runs),
 /// then what is the same everywhere.
 pub fn sidebar(
     ws: &Workspace,
@@ -395,8 +396,8 @@ fn nav_row(
         })
 }
 
-/// A repository in the sidebar's tree: its row, then, when open, its
-/// memory, constitution and runs.
+/// A repository in the sidebar's tree: its row, then, when open, what
+/// plugins list under it, and its runs.
 fn repo_group(
     ws: &Workspace,
     rows: RepoRows<'_>,
@@ -507,9 +508,6 @@ fn repo_group(
         return group;
     }
 
-    let repo = rows.repo;
-    let memory_active =
-        matches!(&ws.route, Route::Memory { repo: r, .. } if *r == name);
     let current = ws.current().map(|run| run.id.clone());
     let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
 
@@ -522,21 +520,7 @@ fn repo_group(
         .pt(sp(0.5))
         .pb(sp(1.5))
         .border_l_1()
-        .border_color(t.border)
-        .child(
-            nav_row(
-                Icon::Memory,
-                "Memory",
-                format!("{} notes", repo.memory.notes.len()).into(),
-                memory_active,
-                t,
-            )
-            .id(SharedString::from(format!("memory-{name}")))
-            .on_click({
-                let name = name.clone();
-                cx.listener(move |ws, _, _, cx| ws.open_memory(&name, cx))
-            }),
-        );
+        .border_color(t.border);
     // What plugins list under the repository.
     let entries = ws.contributions(
         tau_ui_plugin::points::SIDEBAR_REPO,
@@ -1033,14 +1017,6 @@ pub fn phone_header(
     cx: &mut Context<Workspace>,
 ) -> Div {
     let title = match &ws.route {
-        Route::Memory {
-            repo,
-            note: Some(id),
-        } => ws
-            .repo_named(repo)
-            .memory
-            .note(id)
-            .map_or("Memory".to_owned(), |note| note.title.clone()),
         Route::Home => "Runs".to_owned(),
         _ => ws.route_title(cx),
     };
@@ -1079,8 +1055,8 @@ pub fn phone_header(
         })
 }
 
-/// The phone's home: runs grouped by repository, each group with its
-/// memory and rules.
+/// The phone's home: runs grouped by repository, each group with what
+/// plugins list under it.
 pub fn phone_run_list(
     ws: &Workspace,
     t: &Theme,
@@ -1169,41 +1145,13 @@ fn phone_group(
     if !rows.open {
         return group;
     }
-    let chip = |id: &'static str, glyph: Icon, label: &str, count: usize| {
-        div()
-            .id(id)
-            .flex()
-            .items_center()
-            .gap(sp(1.5))
-            .px(sp(3.))
-            .py(sp(2.))
-            .rounded(radius::BOX)
-            .key(t)
-            .typeset(Type::SMALL)
-            .cursor_pointer()
-            .child(icon(glyph, IconSize::BASE, t.text_soft))
-            .child(label.to_owned())
-            .child(mono(count.to_string(), Type::SMALL, t.dim))
-    };
-    let memory = name.clone();
     let chips = div()
         .flex()
         .gap(sp(2.))
         .px(sp(4.))
         .py(sp(2.5))
         .border_b_1()
-        .border_color(t.border)
-        .child(
-            chip(
-                "phone-memory",
-                Icon::Memory,
-                "Memory",
-                rows.repo.memory.notes.len(),
-            )
-            .on_click(
-                cx.listener(move |ws, _, _, cx| ws.open_memory(&memory, cx)),
-            ),
-        );
+        .border_color(t.border);
     // What plugins list under the repository.
     let entries = ws.contributions(
         tau_ui_plugin::points::SIDEBAR_REPO,

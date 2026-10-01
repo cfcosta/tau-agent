@@ -239,7 +239,7 @@ impl Plugin for MemoryPlugin {
     async fn start(
         &self,
         plan: &mut RunPlan,
-        _ctx: &PluginCtx,
+        ctx: &PluginCtx,
     ) -> Result<Box<dyn PluginRun>, PluginError> {
         let scopes = &self.scopes;
         let repo = Scopes::with(&scopes.repo, |m| {
@@ -263,6 +263,21 @@ impl Plugin for MemoryPlugin {
             user.as_deref(),
             &hits,
         ));
+        // What it found, for interfaces: after the message the run
+        // started on.
+        if !hits.is_empty() {
+            let notes: Vec<Value> = hits
+                .iter()
+                .map(|hit| json!({ "id": hit.id, "title": hit.title }))
+                .collect();
+            let body = json!({ "kind": "recalled", "notes": notes });
+            let _ = ctx
+                .publish(&tau_ui_plugin::placed(
+                    body,
+                    tau_ui_plugin::PLACE_MESSAGE,
+                ))
+                .await;
+        }
         Ok(Box::new(MemoryRun {
             plugin: self.clone(),
             model: plan.model().to_owned(),

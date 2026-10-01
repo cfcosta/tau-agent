@@ -266,11 +266,13 @@ impl Workspace {
         self.start_new_run(window, cx);
     }
 
+    /// Opens `repo`'s notes.
     pub fn open_memory(&mut self, repo: &str, cx: &mut Context<Self>) {
         self.navigate(
-            Route::Memory {
-                repo: repo.to_owned(),
-                note: None,
+            Route::Plugin {
+                plugin: tau_memory::plugin::NAME.into(),
+                page: "notes".into(),
+                params: [("repo".to_owned(), repo.to_owned())].into(),
             },
             cx,
         );

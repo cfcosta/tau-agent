@@ -1134,6 +1134,36 @@ pub fn qr_code(text: &str, size: f32) -> Option<Div> {
     )
 }
 
+/// A repository's mark: its letter on its color, 20 px in the sidebar
+/// and 26 px on a phone.
+pub fn repo_mark(name: &str, size: f32, t: &Theme) -> Div {
+    let letter = name
+        .chars()
+        .find(|c| c.is_alphanumeric())
+        .map_or("?".into(), |c| c.to_lowercase().to_string());
+    mono(
+        letter,
+        if size > 22. { Type::SMALL } else { Type::MICRO },
+        t.bg,
+    )
+    .size(px(size))
+    .flex_shrink_0()
+    .flex()
+    .items_center()
+    .justify_center()
+    .rounded(if size > 22. {
+        radius::CONTROL
+    } else {
+        radius::TAG
+    })
+    .bg(t.mark(name))
+    .shadow(vec![
+        shade(0., 1., 0., gpui::white().opacity(0.35)).inset(),
+        shade(0., 1., 2., t.depth.shade),
+    ])
+    .font_weight(weight::EMPHASIS)
+}
+
 /// What a plugin's note in a transcript says in its header.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NoteHead {

@@ -3,7 +3,6 @@
 
 pub mod compare;
 pub mod history;
-pub mod memory;
 pub mod models;
 pub mod pairing;
 pub mod phones;

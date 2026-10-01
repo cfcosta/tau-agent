@@ -12,22 +12,12 @@ use tau_agent::{
 };
 use tau_ai::message::{Usage, UsageCost};
 use tau_constitution::ui::{Act as RulesAct, RuleInfo, Rules};
+use tau_memory::ui::{LinkView as Link, NoteView as Note, Notebook as Memory};
 
 use crate::{
     Workspace,
     WorkspaceEvent,
-    catalog::{
-        Catalog,
-        JevStats,
-        Link,
-        Memory,
-        Note,
-        PluginInfo,
-        PluginScreen,
-        Repo,
-        Seam,
-        StoreInfo,
-    },
+    catalog::{Catalog, JevStats, PluginInfo, Repo, Seam, StoreInfo},
     models::{AccountState, ChatGptAccount},
     pairing::{
         Computer,
@@ -56,12 +46,9 @@ use crate::{
         FileKind,
         FileStat,
         Limits,
-        NoteBody,
         Origin,
         PlanField,
-        PluginNote,
         PluginStatus,
-        Proposal,
         RunStatus,
         RunUpdate,
         RunView,
@@ -648,9 +635,10 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
     Some(match name {
         "run" => Route::Run(run_id()),
         "history" => Route::History,
-        "memory" => Route::Memory {
-            repo: "tau-agent".into(),
-            note: None,
+        "memory" => Route::Plugin {
+            plugin: tau_memory::plugin::NAME.into(),
+            page: "notes".into(),
+            params: [("repo".to_owned(), "tau-agent".to_owned())].into(),
         },
         "plugins" => Route::Plugins,
         "constitution" => Route::Plugin {
@@ -1293,18 +1281,18 @@ pub fn branch_code() -> BranchCode {
 
 /// The plugins, notes, rules and store the demo workspace shows.
 pub fn catalog() -> Catalog {
-    let plugin = |name: &str,
-                  description: &str,
-                  seams: &[Seam],
-                  spend: f64,
-                  screen: Option<PluginScreen>| PluginInfo {
-        name: name.into(),
-        description: description.into(),
-        seams: seams.to_vec(),
-        spend,
-        screen,
-        page: None,
-    };
+    let plugin =
+        |name: &str,
+         description: &str,
+         seams: &[Seam],
+         spend: f64,
+         page: Option<tau_ui_plugin::Link>| PluginInfo {
+            name: name.into(),
+            description: description.into(),
+            seams: seams.to_vec(),
+            spend,
+            page,
+        };
     let link = |to: &str, why: &str| Link {
         to: to.into(),
         why: why.into(),
@@ -1314,7 +1302,7 @@ pub fn catalog() -> Catalog {
                 body: &[&str],
                 links: Vec<Link>,
                 paths: &[&str],
-                used: u32| Note {
+                _used: u32| Note {
         id: id.into(),
         title: title.into(),
         body: body.iter().map(|p| (*p).to_owned()).collect(),
@@ -1322,7 +1310,6 @@ pub fn catalog() -> Catalog {
         paths: paths.iter().map(|p| (*p).to_owned()).collect(),
         written_by: "coder · lane-audit".into(),
         edited: "Sep 26".into(),
-        used_by_runs: used,
     };
     let rule =
         |id: &str, text: &str, on: &[&str], review: f64, block: f64| RuleInfo {
@@ -1342,7 +1329,7 @@ pub fn catalog() -> Catalog {
                 page: Some(tau_ui_plugin::Link::page("choices").param("run", "")),
                 ..plugin(tau_reasoning::NAME, "Scores the job and picks the reasoning effort", &[Seam::Start], 0.004, None)
             },
-            plugin("tau-memory", "Zettelkasten notes on docbert", &[Seam::Start, Seam::Tools, Seam::Finish], 0.212, Some(PluginScreen::Memory)),
+            plugin(tau_memory::plugin::NAME, "Zettelkasten notes on docbert", &[Seam::Start, Seam::Tools, Seam::Finish], 0.212, Some(tau_ui_plugin::Link::page("notes").param("repo", ""))),
             PluginInfo {
                 page: Some(tau_ui_plugin::Link::page("rules").param("repo", "")),
                 ..plugin(tau_constitution::NAME, "6 rules on edit, write, bash and the final answer", &[Seam::BeforeTool, Seam::BeforeStop], 0.031, None)
@@ -1368,27 +1355,17 @@ pub fn catalog() -> Catalog {
         repos: vec![
             Repo {
                 name: "tau-agent".into(),
-                plugins: rules_data(tau_agent_rules(&rule)),
+                plugins: repo_data(
+                    tau_agent_memory(&note, &link),
+                    tau_agent_rules(&rule)),
                 path: "~/Code/cfcosta/tau-agent".into(),
                 main: Some(run_id()),
-                memory: tau_agent_memory(&note, &link),
             },
             Repo {
                 name: "docbert".into(),
-                plugins: rules_data(Rules {
-                    max_holds: 3,
-                    rules: vec![
-                        rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
-                        rule("D2", "Search results keep their scores; never sort them away.", &["edit.newText"], 0.40, 0.85),
-                        rule("D3", "The final answer names the tests that ran.", &["final answer"], 0.40, 0.75),
-                    ],
-                    ..Rules::default()
-                }),
-                path: "~/Code/cfcosta/docbert".into(),
-                main: Some(RunId(Arc::from("docbert-main"))),
-                memory: Memory {
+                plugins: repo_data(
+                    Memory {
                     path: "~/.tau/memory/docbert".into(),
-                    collection: "docbert-memory".into(),
                     notes: vec![
                         note("d-0102", "Scanned pages have no text layer", &[
                             "PDFs made from scans come in with empty pages. Run OCR on a page only when it has no text layer, so born-digital PDFs stay fast.",
@@ -1401,19 +1378,30 @@ pub fn catalog() -> Catalog {
                         ], vec![], &["src/search/bm25.rs"], 2),
                     ],
                 },
+                    Rules {
+                    max_holds: 3,
+                    rules: vec![
+                        rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
+                        rule("D2", "Search results keep their scores; never sort them away.", &["edit.newText"], 0.40, 0.85),
+                        rule("D3", "The final answer names the tests that ran.", &["final answer"], 0.40, 0.75),
+                    ],
+                    ..Rules::default()
+                }),
+                path: "~/Code/cfcosta/docbert".into(),
+                main: Some(RunId(Arc::from("docbert-main"))),
             },
             Repo {
                 name: "homelab.nix".into(),
-                plugins: rules_data(Rules::default()),
-                path: "~/Code/cfcosta/homelab.nix".into(),
-                main: Some(RunId(Arc::from("homelab-main"))),
-                memory: Memory {
+                plugins: repo_data(
+                    Memory {
                     path: "~/.tau/memory/homelab.nix".into(),
-                    collection: "homelab-memory".into(),
                     notes: vec![note("h-0007", "Backups run from a systemd timer", &[
                         "`restic` runs from `backup.timer` at 03:00, never from cron, so a missed run catches up on boot.",
                     ], vec![], &["hosts/nas/backup.nix"], 1)],
                 },
+                    Rules::default()),
+                path: "~/Code/cfcosta/homelab.nix".into(),
+                main: Some(RunId(Arc::from("homelab-main"))),
             },
         ],
         open_repos: vec!["tau-agent".into()],
@@ -1524,6 +1512,20 @@ fn demo_rules_act(catalog: &mut Catalog, act: RulesAct) {
 
 type RuleFn<'a> = &'a dyn Fn(&str, &str, &[&str], f64, f64) -> RuleInfo;
 
+/// A repository's plugin data: `notes` as its memory, and `rules` as its
+/// constitution.
+fn repo_data(
+    notes: Memory,
+    rules: Rules,
+) -> std::collections::BTreeMap<String, serde_json::Value> {
+    let mut data = rules_data(rules);
+    data.insert(
+        tau_memory::plugin::NAME.to_owned(),
+        serde_json::to_value(notes).unwrap_or_default(),
+    );
+    data
+}
+
 /// A repository's plugin data with `rules` as its constitution.
 fn rules_data(
     rules: Rules,
@@ -1539,7 +1541,6 @@ fn rules_data(
 fn tau_agent_memory(note: NoteFn<'_>, link: LinkFn<'_>) -> Memory {
     Memory {
         path: "~/.tau/memory".into(),
-        collection: "tau-memory".into(),
         notes: vec![
             note(
                 "n-0417",
@@ -2007,10 +2008,6 @@ impl Script {
     ) {
         self.start_tool(id, tool, args);
         self.end_tool(millis, id, output);
-    }
-
-    fn note(&mut self, millis: u64, note: PluginNote) {
-        self.at(millis, RunUpdate::Note(note));
     }
 }
 
@@ -2631,19 +2628,17 @@ pub fn script() -> Vec<Step> {
             ],
         }),
     );
-    s.note(
-        400,
-        PluginNote {
-            plugin: "tau-memory".into(),
-            text: "added 3 notes to the context".into(),
-            detail: Some("hybrid search · 21 ms".into()),
-            tone: Tone::Info,
-            body: NoteBody::Chips(vec![
-                "Retry policy honors server hints".into(),
-                "429 vs 503 in the Responses API".into(),
-                "Tests use the fake OpenAI server".into(),
-            ]),
-        },
+    // tau-memory found notes for the task as the run started.
+    s.report(
+        tau_memory::plugin::NAME,
+        json!({
+            "kind": "recalled",
+            "notes": [
+                { "id": "n-0388", "title": "Retry policy honors server hints" },
+                { "id": "n-0390", "title": "429 vs 503 in the Responses API" },
+                { "id": "n-0205", "title": "Tests use the fake OpenAI server" },
+            ],
+        }),
     );
     s.at(
         0,
@@ -3062,28 +3057,15 @@ pub fn script() -> Vec<Step> {
     );
 
     // tau-memory distills in `finish`, after the run is stored.
-    s.note(
-        900,
-        PluginNote {
-            plugin: "tau-memory".into(),
-            text: "suggests 2 notes from this run".into(),
-            detail: Some("finish · distilled with gpt-5.5 · $0.012".into()),
-            tone: Tone::Info,
-            body: NoteBody::Proposals(vec![
-                Proposal {
-                    title: "retry-after can be an HTTP date".into(),
-                    detail: "Links to Retry policy honors server hints. From \
-                         turn 7."
-                        .into(),
-                },
-                Proposal {
-                    title: "Proxies send malformed retry-after".into(),
-                    detail: "Links to 429 vs 503 in the Responses API. From \
-                         turn 5."
-                        .into(),
-                },
-            ]),
-        },
+    s.report(
+        tau_memory::plugin::NAME,
+        json!({
+            "kind": "saved",
+            "calls": [
+                { "tool": "memory_write", "details": {} },
+                { "tool": "memory_write", "details": {} },
+            ],
+        }),
     );
     s.at(
         0,
@@ -3182,8 +3164,14 @@ mod tests {
     #[test]
     fn catalog_links_point_at_notes_of_their_repository() {
         let catalog = catalog();
+        let notes = |repo: &Repo| -> Memory {
+            serde_json::from_value(
+                repo.plugins[tau_memory::plugin::NAME].clone(),
+            )
+            .unwrap()
+        };
         for repo in &catalog.repos {
-            let memory = &repo.memory;
+            let memory = &notes(repo);
             for note in &memory.notes {
                 for link in &note.links {
                     assert!(
@@ -3196,8 +3184,8 @@ mod tests {
                 }
             }
         }
-        let tau = catalog.repo("tau-agent").unwrap();
-        assert!(tau.memory.backlinks("n-0417").count() >= 2);
+        let tau = notes(catalog.repo("tau-agent").unwrap());
+        assert!(tau.backlinks("n-0417").count() >= 2);
     }
 
     #[test]
@@ -3227,7 +3215,9 @@ mod tests {
                 .iter()
                 .any(|item| matches!(item, Item::Rewrite { .. }))
         );
-        assert!(matches!(view.items.last(), Some(Item::Plugin(_))));
+        assert!(
+            matches!(view.items.last(), Some(Item::Anchor { plugin, .. }) if plugin == tau_memory::plugin::NAME)
+        );
         // The ledger lists every call before the rewrite, which it
         // names, and marks the cards it pruned.
         let rewrite = view
@@ -3274,6 +3264,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reasoning.plan.as_deref(), Some("high"));
-        assert_eq!(view.proposals().count(), 2);
+        let memory: tau_memory::ui::State = serde_json::from_value(
+            view.plugin_states[tau_memory::plugin::NAME].clone(),
+        )
+        .unwrap();
+        assert!(
+            memory
+                .marks
+                .values()
+                .any(|mark| *mark == tau_memory::ui::Mark::Saved(2))
+        );
     }
 }

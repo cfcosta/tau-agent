@@ -34,6 +34,9 @@ pub fn registry() -> &'static Registry {
             .with(tau_compaction::ui::CompactionUi)
             // The repository's rules check what the tools do; a goal's
             // hold of a stop comes after theirs.
+            // Notes for what the tools do, and the repository's rules to
+            // check it.
+            .with(tau_memory::ui::MemoryUi)
             .with(tau_constitution::ui::ConstitutionUi)
             .with(tau_goal::GoalUi)
     });

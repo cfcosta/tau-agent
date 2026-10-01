@@ -13,6 +13,7 @@ pub mod plugin;
 pub mod recall;
 pub mod safety;
 pub mod store;
+pub mod ui;
 
 pub use memory::Memory;
 pub use plugin::{MemoryPlugin, Scopes};

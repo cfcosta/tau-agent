@@ -7,9 +7,8 @@
 //!
 //! - **In:** every [`RunEvent`](tau_agent::event::RunEvent) a run streams
 //!   goes to [`Workspace::apply_event`]. What plugins decide but no event
-//!   carries yet (the chosen reasoning effort, a blocked call's rule, the
-//!   notes memory suggests) goes to [`Workspace::update_run`] as a
-//!   [`RunUpdate`](view::RunUpdate).
+//!   carries yet (a run's plan, a call's state) goes to
+//!   [`Workspace::update_run`] as a [`RunUpdate`](view::RunUpdate).
 //! - **Out:** the workspace emits a [`WorkspaceEvent`] when the user
 //!   starts, steers, cancels or forks a run. Subscribe to it and call the
 //!   matching `Agent` or `Run` method.
@@ -52,7 +51,6 @@ pub mod demo;
 pub mod github;
 pub mod host;
 pub mod listing;
-pub mod memory;
 pub mod metered;
 pub mod models;
 pub mod motion;

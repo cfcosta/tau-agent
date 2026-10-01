@@ -47,7 +47,7 @@ impl Host {
 
     /// What every plugin reaches of this host now.
     pub(super) fn host_cx(&self) -> HostCx {
-        let mut services = Services::default();
+        let mut services = Services::default().with(self.memory_search);
         if let Some(jev) = self.jev() {
             services = services.with(jev);
         }
@@ -119,12 +119,13 @@ impl Host {
     }
 
     /// What adds each plugin's agent plugins, in the registry's order, to
-    /// an agent in `repo`: the run's, or a sub-agent's, on its model. A
-    /// plugin that cannot build its own fails the run.
+    /// an agent in `repo`: the run's, or a sub-agent's, on its model, with
+    /// what its workspace offers (`services`). A plugin that cannot build
+    /// its own fails the run.
     pub(super) fn registered(
         &self,
         repo: &RepoSlot,
-    ) -> impl Fn(Agent, RunKind, &ModelChoice) -> anyhow::Result<Agent>
+    ) -> impl Fn(Agent, RunKind, &ModelChoice, Services) -> anyhow::Result<Agent>
     + Clone
     + Send
     + Sync
@@ -138,8 +139,10 @@ impl Host {
             .collect();
         let jev = self.jev();
         let repo = self.repo_ctx(repo);
-        move |agent: Agent, kind: RunKind, choice: &ModelChoice| {
-            let mut services = Services::default();
+        move |agent: Agent,
+              kind: RunKind,
+              choice: &ModelChoice,
+              mut services: Services| {
             if let Some(jev) = &jev {
                 services = services.with(jev.clone());
             }
@@ -201,7 +204,6 @@ impl Host {
                 description: info.description,
                 seams: info.seams,
                 spend: info.spend,
-                screen: None,
                 page: info.page,
             });
             data.insert(name.clone(), hosted.plugin.data(&hosted.state, &cx));

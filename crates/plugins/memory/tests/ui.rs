@@ -1,4 +1,4 @@
-//! Memory in the app: the Memory screen's view of a scope's notes, how
+//! tau-memory's UI: the notes page's view of a scope's notes, how
 //! long ago a note was edited, and stale marks from turns' commits
 //! bounded by when the notes were written.
 
@@ -14,9 +14,9 @@ use tau_memory::{
     index::Bm25,
     memory::{Draft, WriteError},
     note::{By, Link, LinkType, NoteType, Source},
+    ui::{Memories, Search, ago, notebook as catalog, now, stale_on_turn},
 };
-use tau_ui::memory::{Memories, ago, catalog, now, stale_on_turn};
-use tau_vcs::TurnSnapshot;
+use tau_ui_plugin::TurnCommit;
 
 const TITLES: [&str; 5] = [
     "lanes drain in order",
@@ -221,11 +221,9 @@ fn ago_names_the_largest_whole_unit(tc: TestCase) {
     assert_eq!(ago(then, then + long), "just now", "a future time is now");
 }
 
-fn commit(paths: &[&str]) -> TurnSnapshot {
-    TurnSnapshot {
-        commit_id: "0".repeat(40),
+fn commit(paths: &[&str]) -> TurnCommit {
+    TurnCommit {
         change_id: "k".repeat(32),
-        head: "1".repeat(40),
         paths: paths.iter().map(|path| (*path).to_owned()).collect(),
     }
 }
@@ -266,7 +264,7 @@ fn stale(memories: &Memories, dir: &Path, id: &str) -> bool {
 fn commits_mark_only_notes_older_than_their_turn() {
     let data = tempfile::tempdir().unwrap();
     let (repo, user) = (data.path().join("repo"), data.path().join("user"));
-    let memories = Memories::keywords();
+    let memories = Memories::new(Search::Keywords);
     let plugin = memories.plugin(&repo, &user).unwrap();
     let scope = memories.scope(&repo).unwrap();
     scope
@@ -311,7 +309,7 @@ fn commits_mark_only_notes_older_than_their_turn() {
 #[test]
 fn a_scope_opens_once() {
     let data = tempfile::tempdir().unwrap();
-    let memories = Memories::keywords();
+    let memories = Memories::new(Search::Keywords);
     let a = memories.scope(data.path()).unwrap();
     let b = memories.scope(data.path()).unwrap();
     assert!(std::sync::Arc::ptr_eq(&a, &b));
@@ -319,5 +317,85 @@ fn a_scope_opens_once() {
         .unwrap()
         .write(about("shared", "src/a.rs"), now())
         .unwrap();
-    assert_eq!(memories.catalog(data.path()).notes.len(), 1);
+    assert_eq!(memories.notebook(data.path()).notes.len(), 1);
+}
+
+/// What memory's fold makes of its records: a note for each recall,
+/// save and failure, in order, and its line from what it said as the run
+/// started.
+#[hegel::test(test_cases = 100)]
+fn the_fold_notes_what_memory_did(tc: TestCase) {
+    use serde_json::json;
+    use tau_memory::ui::{Mark, State};
+    struct Anchors(Vec<String>);
+    impl tau_ui_plugin::RunCx for Anchors {
+        fn transcript(&mut self, key: &str) {
+            self.0.push(key.to_owned());
+        }
+        fn attach(&mut self, _: &str, _: &str) -> bool {
+            false
+        }
+        fn mark(&mut self, _: &str, _: tau_ui_plugin::CardMark) -> bool {
+            false
+        }
+        fn dropped(&mut self, _: &str, _: tau_ui_plugin::Dropped) -> bool {
+            false
+        }
+        fn cut(&mut self, _: &str, _: tau_ui_plugin::OutputCut) -> bool {
+            false
+        }
+        fn rewrite(&mut self, _: &str) {}
+        fn cards(&self) -> Vec<tau_ui_plugin::CardInfo> {
+            Vec::new()
+        }
+        fn last_text(&self) -> Option<String> {
+            None
+        }
+        fn turn(&self) -> u32 {
+            0
+        }
+    }
+    let kinds: Vec<u8> =
+        tc.draw(gs::vecs(gs::integers::<u8>().max_value(3)).max_size(8));
+    let mut state = State::default();
+    let mut anchors = Anchors(Vec::new());
+    let mut expected = Vec::new();
+    let mut notes = None;
+    for (n, kind) in kinds.iter().enumerate() {
+        let body = match kind {
+            0 => {
+                notes = Some(n);
+                json!({ "kind": "starting", "notes": n })
+            }
+            1 => {
+                expected.push(Mark::Recalled(vec![("n-1".into(), "a".into())]));
+                json!({ "kind": "recalled", "notes": [{ "id": "n-1", "title": "a" }] })
+            }
+            2 => {
+                expected.push(Mark::Saved(n));
+                json!({ "kind": "saved", "calls": vec![json!({}); n] })
+            }
+            _ => {
+                expected.push(Mark::Failed("offline".into()));
+                json!({ "kind": "error", "message": "offline" })
+            }
+        };
+        state.apply(&body, &mut anchors);
+    }
+    let marks: Vec<Mark> = anchors
+        .0
+        .iter()
+        .map(|key| state.marks[key].clone())
+        .collect();
+    assert_eq!(marks, expected);
+    assert_eq!(state.notes, notes);
+    assert_eq!(state.status().is_some(), notes.is_some());
+}
+
+/// The UI takes its look from the kit.
+#[test]
+fn only_the_kit_holds_design_values() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+    let found = tau_ui_kit::design::check(&src, &[]);
+    assert!(found.is_empty(), "{}", found.join("\n"));
 }

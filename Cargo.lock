@@ -9027,10 +9027,12 @@ dependencies = [
 name = "tau-memory"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "candle-core",
  "docbert-pylate",
  "futures-util",
+ "gpui-pre",
  "hegeltest",
  "regex",
  "schemars",
@@ -9040,6 +9042,8 @@ dependencies = [
  "tau-ai",
  "tau-store",
  "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
