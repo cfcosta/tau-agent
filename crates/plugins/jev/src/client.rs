@@ -4,7 +4,7 @@ use std::{fmt, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use serde_json::json;
-use tau_ai::retry::{RetryPolicy, jitter};
+use tau_ai::retry::{RetryPolicy, jitter, parse_retry_after};
 use tokio_rustls::rustls::{ClientConfig, RootCertStore, crypto::ring};
 
 use crate::{DEFAULT_MODEL, Jev, JevError, Request, Response, SYSTEM_ONE_URL};
@@ -110,13 +110,13 @@ impl TypeSafe {
         self
     }
 
-    /// One attempt. An error with a delay may be retried, after that
-    /// delay at the earliest (the server's `retry-after`). Transport
-    /// errors leave the URL out, since it could be private.
+    /// One attempt. An error with `Some` may be retried, no sooner than
+    /// the server's `retry-after` when it sent one. Transport errors
+    /// leave the URL out, since it could be private.
     async fn attempt(
         &self,
         body: &str,
-    ) -> Result<Response, (JevError, Option<Duration>)> {
+    ) -> Result<Response, (JevError, Option<Option<Duration>>)> {
         let response = self
             .http
             .post(&self.url)
@@ -135,8 +135,7 @@ impl TypeSafe {
                     .headers()
                     .get("retry-after")
                     .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.trim().parse::<u64>().ok())
-                    .map_or(Duration::ZERO, Duration::from_secs)
+                    .and_then(|value| parse_retry_after("retry-after", value))
             });
             return Err((JevError::Status(status), retry_after));
         }
@@ -162,8 +161,11 @@ impl Jev for TypeSafe {
             match self.attempt(&body).await {
                 Ok(response) => return Ok(response),
                 Err((_, Some(retry_after))) if self.retry.allows(attempts) => {
-                    let delay =
-                        self.retry.delay(attempts, jitter()).max(retry_after);
+                    let delay = self.retry.delay_with_hint(
+                        attempts,
+                        jitter(),
+                        retry_after,
+                    );
                     attempts += 1;
                     tokio::time::sleep(delay).await;
                 }

@@ -334,10 +334,10 @@ fn allows_permits_exactly_max_attempts(tc: TestCase) {
     assert_eq!(count, policy.max_attempts as usize);
 }
 
-/// A server-provided `Retry-After` hint is honoured verbatim, capped at
-/// `max_delay`, and ignores the sampled jitter entirely.
+/// A server-provided `Retry-After` hint is the least the backoff waits,
+/// and `max_delay` the most.
 #[hegel::test(test_cases = 500)]
-fn hint_caps_at_max_delay(tc: TestCase) {
+fn a_hint_bounds_the_backoff_from_below(tc: TestCase) {
     let policy = tc.draw(generators::retry_policy());
     let attempt = tc.draw(gs::integers::<u32>().min_value(1).max_value(1000));
     let jitter = tc.draw(
@@ -353,7 +353,13 @@ fn hint_caps_at_max_delay(tc: TestCase) {
 
     let delay = policy.delay_with_hint(attempt, jitter, Some(hint));
 
-    assert_eq!(delay, hint.min(policy.max_delay));
+    assert_eq!(
+        delay,
+        policy
+            .delay(attempt, jitter)
+            .max(hint)
+            .min(policy.max_delay)
+    );
 }
 
 /// The `code`s `classify` knows, with their class.

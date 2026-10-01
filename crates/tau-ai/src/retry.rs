@@ -308,19 +308,18 @@ impl RetryPolicy {
         attempts_made < self.max_attempts
     }
 
-    /// Like [`Self::delay`], but honours a server-provided `Retry-After`
-    /// hint when present: the delay is then `min(retry_after,
-    /// max_delay)`, and `jitter` is ignored, since the server already
-    /// told us how long to wait.
+    /// Like [`Self::delay`], but at least a server-provided `Retry-After`
+    /// hint when present, and never past `max_delay`.
     pub fn delay_with_hint(
         &self,
         attempt: u32,
         jitter: f64,
         retry_after: Option<Duration>,
     ) -> Duration {
+        let delay = self.delay(attempt, jitter);
         match retry_after {
-            Some(hint) => hint.min(self.max_delay),
-            None => self.delay(attempt, jitter),
+            Some(hint) => delay.max(hint).min(self.max_delay),
+            None => delay,
         }
     }
 }
