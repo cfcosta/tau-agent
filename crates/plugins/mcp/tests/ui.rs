@@ -5,6 +5,8 @@
 //! sidebar draw what the host says; and the UI keeps to the design
 //! language.
 
+mod common;
+
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -49,7 +51,7 @@ use tau_mcp::{
         StdioConfig,
         Transport,
     },
-    connection::Annotations,
+    connection::{Annotations, PromptArgument, ResourceInfo, TemplateInfo},
     ui::{
         self,
         Act,
@@ -57,6 +59,8 @@ use tau_mcp::{
         Host,
         McpUi,
         PendingRow,
+        PromptRow,
+        Reply,
         ServerRow,
         Servers,
         ToolRow,
@@ -542,6 +546,14 @@ impl Fixture {
         McpUi
             .act(self.host(), serde_json::to_value(act).unwrap(), &self.cx)
             .map(drop)
+    }
+
+    fn reply(&self, act: Act) -> Reply {
+        let reply = McpUi
+            .act(self.host(), serde_json::to_value(act).unwrap(), &self.cx)
+            .unwrap()
+            .expect("a reply");
+        serde_json::from_value(reply).unwrap()
     }
 
     fn settings(&self) -> Settings {
@@ -1046,6 +1058,37 @@ fn servers() -> Servers {
                         },
                     },
                 ],
+                resources: vec![ResourceInfo {
+                    uri: "git://log".into(),
+                    name: "log".into(),
+                    title: Some("The log".into()),
+                    description: Some("Recent commits.".into()),
+                    mime_type: Some("text/plain".into()),
+                    size: None,
+                }],
+                templates: vec![TemplateInfo {
+                    uri_template: "git://show/{rev}".into(),
+                    name: "show".into(),
+                    ..TemplateInfo::default()
+                }],
+                prompts: vec![PromptRow {
+                    command: "mcp__git__commit_message".into(),
+                    name: "commit_message".into(),
+                    title: None,
+                    description: Some("Writes a commit message.".into()),
+                    arguments: vec![
+                        PromptArgument {
+                            name: "changes".into(),
+                            description: None,
+                            required: true,
+                        },
+                        PromptArgument {
+                            name: "style".into(),
+                            description: None,
+                            required: false,
+                        },
+                    ],
+                }],
                 entry: Some(
                     json!({ "command": "uvx", "args": ["mcp-server-git"] }),
                 ),
@@ -1089,9 +1132,24 @@ fn with_view<R>(
     compact: bool,
     f: impl FnOnce(&mut ViewCx<'_, McpUi>) -> R,
 ) -> R {
+    let handle = Handle::new(NAME, Rc::new(|_, _, _: &mut App| {}));
+    with_view_handle(cx, ui, repos, params, run, compact, handle, f)
+}
+
+/// [`with_view`] with the handle the view asks through.
+#[allow(clippy::too_many_arguments)]
+fn with_view_handle<R>(
+    cx: &mut TestAppContext,
+    ui: &Entity<Ui>,
+    repos: &BTreeMap<String, Servers>,
+    params: &BTreeMap<String, String>,
+    run: Option<&RunInfo>,
+    compact: bool,
+    handle: Handle,
+    f: impl FnOnce(&mut ViewCx<'_, McpUi>) -> R,
+) -> R {
     let list = Vec::new;
     let cards = |_: &RunId| Vec::new();
-    let handle = Handle::new(NAME, Rc::new(|_, _, _: &mut App| {}));
     let data = Servers::default();
     let settings = Settings::default();
     cx.update(|cx| {
@@ -1363,4 +1421,159 @@ fn only_the_kit_holds_design_values() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let found = tau_ui_kit::design::check(&src, &[]);
     assert!(found.is_empty(), "{}", found.join("\n"));
+}
+
+/// A repository's prompts are the composer's commands there, with their
+/// arguments; outside it, the user's servers' are. Running one checks
+/// its arguments first: a mistake says so and puts the command back;
+/// otherwise the host is asked, and its answer fills the composer, or
+/// says why not and puts the command back.
+#[gpui::test]
+fn prompts_are_commands_that_fill_the_composer(cx: &mut TestAppContext) {
+    let registry = tau_ui_plugin::Registry::new().with(McpUi);
+    let plugin = registry.get(NAME).unwrap();
+    let repo = serde_json::to_value(servers()).unwrap();
+    let empty = serde_json::to_value(Servers::default()).unwrap();
+    let commands = plugin.commands(tau_ui_plugin::CommandsAt {
+        data: &empty,
+        repo: Some(("r", &repo)),
+    });
+    let prompt = commands
+        .iter()
+        .find(|command| command.name == "mcp__git__commit_message")
+        .expect("the prompt's command");
+    assert_eq!(prompt.args, "changes=… [style=…]");
+    assert_eq!(prompt.hint, "Writes a commit message.");
+    assert!(
+        plugin
+            .commands(tau_ui_plugin::CommandsAt {
+                data: &empty,
+                repo: None,
+            })
+            .is_empty()
+    );
+
+    let (ui, asked) = window_ui(cx);
+    let repos = BTreeMap::from([("r".to_owned(), servers())]);
+    let handle = {
+        let sink = asked.clone();
+        Handle::new(
+            NAME,
+            Rc::new(move |_, request, _: &mut App| {
+                sink.borrow_mut().push(request)
+            }),
+        )
+    };
+    let params = BTreeMap::new();
+    with_view_handle(cx, &ui, &repos, &params, None, false, handle, |view| {
+        ui::run_prompt(
+            "mcp__git__commit_message",
+            "style=short",
+            Some("r"),
+            view,
+        );
+        ui::run_prompt(
+            "mcp__git__commit_message",
+            "changes=\"a fix\"",
+            Some("r"),
+            view,
+        );
+    });
+    let asked_now: Vec<Request> = asked.borrow_mut().drain(..).collect();
+    assert!(matches!(
+        &asked_now[0],
+        Request::Alert { message, .. } if message.starts_with(
+            "/mcp__git__commit_message needs the argument `changes`."
+        )
+    ));
+    assert_eq!(
+        asked_now[1],
+        Request::Composer("/mcp__git__commit_message style=short".into())
+    );
+    assert_eq!(
+        serde_json::from_value::<Act>(match &asked_now[2] {
+            Request::Act(action) => action.clone(),
+            other => panic!("not an act: {other:?}"),
+        })
+        .unwrap(),
+        Act::Prompt {
+            repo: Some("r".into()),
+            command: "mcp__git__commit_message".into(),
+            arguments: "changes=\"a fix\"".into(),
+        }
+    );
+
+    let reply = |reply: Reply| serde_json::to_value(reply).unwrap();
+    ui.update(cx, |ui, cx| {
+        McpUi.reply(
+            ui,
+            reply(Reply::Prompt {
+                text: "Fix it.".into(),
+            }),
+            cx,
+        );
+        McpUi.reply(
+            ui,
+            reply(Reply::PromptFailed {
+                error: "the server failed".into(),
+                command: "/mcp__git__commit_message changes=x".into(),
+            }),
+            cx,
+        );
+    });
+    let asked_now: Vec<Request> = asked.borrow_mut().drain(..).collect();
+    assert_eq!(asked_now[0], Request::Composer("Fix it.".into()));
+    assert!(matches!(
+        &asked_now[1],
+        Request::Alert { message, .. } if message == "the server failed"
+    ));
+    assert_eq!(
+        asked_now[2],
+        Request::Composer("/mcp__git__commit_message changes=x".into())
+    );
+}
+
+/// Against an in-process server on the host: the page lists its
+/// resources, templates and prompts once connected, and the host gets a
+/// prompt with arguments for the composer, or says why it cannot.
+#[test]
+fn the_host_gets_prompts_and_lists_what_servers_offer() {
+    let fixture = Fixture::new(None, None);
+    let server = common::State::with_features(false);
+    fixture.host().set_servers(vec![ServerConfig::new(
+        "srv",
+        Transport::Stream(server.dial()),
+    )]);
+    let greet = |arguments: &str| Act::Prompt {
+        repo: Some("r".into()),
+        command: "mcp__srv__greet".into(),
+        arguments: arguments.into(),
+    };
+    assert_eq!(
+        fixture.reply(greet("name=Ada style='with a wave'")),
+        Reply::Prompt {
+            text: "Say hello to Ada, with a wave.".into()
+        }
+    );
+    assert_eq!(
+        fixture.reply(greet("style=shy")),
+        Reply::PromptFailed {
+            error: "/mcp__srv__greet needs the argument `name`. Usage: \
+                    /mcp__srv__greet name=<name> [style=<style>]"
+                .into(),
+            command: "/mcp__srv__greet style=shy".into(),
+        }
+    );
+    let data = fixture.repo_data();
+    let row = &data.servers[0];
+    assert_eq!(row.resources.len(), 4);
+    assert_eq!(row.templates.len(), 1);
+    assert_eq!(
+        row.prompts
+            .iter()
+            .map(|prompt| prompt.command.as_str())
+            .collect::<Vec<_>>(),
+        ["mcp__srv__greet", "mcp__srv__summary"]
+    );
+    assert_eq!(data.commands().len(), 2);
 }

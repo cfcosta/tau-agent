@@ -1,7 +1,9 @@
 //! tau-mcp's UI (ADR 0017): the Servers page, where servers are added,
-//! edited, approved and reconnected; the cards of MCP tools; its row
-//! under each repository in the sidebar; and its line in a run's plugin
-//! list.
+//! edited, approved and reconnected, with their tools, resources,
+//! templates and prompts; the cards of MCP tools; its row under each
+//! repository in the sidebar; its line in a run's plugin list; and the
+//! servers' prompts as composer commands, `/mcp__<server>__<prompt>
+//! key=value ...`, whose messages the host fetches into the composer.
 //!
 //! ## On the host
 //!
@@ -60,6 +62,7 @@ use tau_ui_plugin::{
     Handle,
     HostCx,
     Link,
+    ListedCommand,
     Manifest,
     NavEntry,
     Page,
@@ -92,8 +95,16 @@ use crate::{
         repo_key,
         valid_name,
     },
-    connection::{Annotations, Connection, Environment},
+    connection::{
+        Annotations,
+        Connection,
+        Environment,
+        PromptArgument,
+        ResourceInfo,
+        TemplateInfo,
+    },
     pool::Pool,
+    prompts::{arguments_hint, check_arguments, parse_arguments},
 };
 
 /// tau-mcp with its UI.
@@ -460,8 +471,49 @@ pub struct ServerRow {
     pub off: Option<Off>,
     pub error: Option<String>,
     pub tools: Vec<ToolRow>,
+    /// Its resources and templates, but MCP apps', and its prompts, as
+    /// last listed.
+    pub resources: Vec<ResourceInfo>,
+    pub templates: Vec<TemplateInfo>,
+    pub prompts: Vec<PromptRow>,
     /// The entry, as the page edits it: only a settings server's.
     pub entry: Option<Value>,
+}
+
+/// One of a server's prompts, and the composer command that gets it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptRow {
+    /// Without the slash: `mcp__<server>__<prompt>`.
+    pub command: String,
+    /// As the server lists it.
+    pub name: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub arguments: Vec<PromptArgument>,
+}
+
+impl PromptRow {
+    pub fn info(&self) -> crate::connection::PromptInfo {
+        crate::connection::PromptInfo {
+            name: self.name.clone(),
+            title: self.title.clone(),
+            description: self.description.clone(),
+            arguments: self.arguments.clone(),
+        }
+    }
+
+    /// What the composer's menu says it does.
+    pub fn hint(&self, server: &str) -> String {
+        self.description
+            .as_deref()
+            .or(self.title.as_deref())
+            .and_then(|text| text.lines().next())
+            .map_or_else(
+                || format!("MCP prompt {} from {server}", self.name),
+                str::to_owned,
+            )
+    }
 }
 
 /// One of a server's tools.
@@ -509,6 +561,33 @@ pub struct Servers {
 }
 
 impl Servers {
+    /// The prompt whose command is `command`, with its server.
+    pub fn prompt(&self, command: &str) -> Option<(&ServerRow, &PromptRow)> {
+        self.servers.iter().find_map(|server| {
+            server
+                .prompts
+                .iter()
+                .find(|prompt| prompt.command == command)
+                .map(|prompt| (server, prompt))
+        })
+    }
+
+    /// Every prompt of a server that is on, as a composer command.
+    pub fn commands(&self) -> Vec<ListedCommand> {
+        self.servers
+            .iter()
+            .filter(|server| server.enabled)
+            .flat_map(|server| {
+                server.prompts.iter().map(|prompt| ListedCommand {
+                    name: prompt.command.clone(),
+                    hint: prompt.hint(&server.name),
+                    args: arguments_hint(&prompt.info()),
+                    icon: Icon::Plug,
+                })
+            })
+            .collect()
+    }
+
     pub fn connected(&self) -> usize {
         self.servers
             .iter()
@@ -612,6 +691,7 @@ fn servers_view(
     repo: Option<&Path>,
 ) -> Servers {
     let tools = plugin.tools();
+    let prompts = plugin.prompts();
     let servers = sources
         .servers
         .iter()
@@ -622,6 +702,21 @@ fn servers_view(
                 .find(|c| c.name() == config.name && c.started());
             let status = connection.map(|connection| connection.status());
             let listed = connection.map(|c| c.tools()).unwrap_or_default();
+            let resources =
+                connection.map(|c| c.resources()).unwrap_or_default();
+            let templates =
+                connection.map(|c| c.templates()).unwrap_or_default();
+            let prompts: Vec<PromptRow> = prompts
+                .iter()
+                .filter(|prompt| prompt.connection.name() == config.name)
+                .map(|prompt| PromptRow {
+                    command: prompt.command.clone(),
+                    name: prompt.info.name.clone(),
+                    title: prompt.info.title.clone(),
+                    description: prompt.info.description.clone(),
+                    arguments: prompt.info.arguments.clone(),
+                })
+                .collect();
             ServerRow {
                 name: config.name.clone(),
                 defined: Defined::of(*origin),
@@ -658,6 +753,9 @@ fn servers_view(
                         tool: info.name,
                     })
                     .collect(),
+                resources,
+                templates,
+                prompts,
                 entry: (*origin == Origin::Settings)
                     .then(|| settings.servers.get(&config.name).cloned())
                     .flatten(),
@@ -719,6 +817,66 @@ pub enum Act {
         repo: Option<String>,
         server: Option<String>,
     },
+    /// Gets the prompt whose command is `command`, in `repo` (or the
+    /// user's servers alone), with the `key=value` pairs of `arguments`.
+    /// The answer is a [`Reply`].
+    Prompt {
+        #[serde(default)]
+        repo: Option<String>,
+        command: String,
+        #[serde(default)]
+        arguments: String,
+    },
+}
+
+/// What the host half answers the page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "reply")]
+pub enum Reply {
+    /// The prompt's messages, for the composer.
+    Prompt { text: String },
+    /// Why the prompt could not be had, and the command as it was
+    /// written, for the composer to hold again.
+    PromptFailed { error: String, command: String },
+}
+
+/// How long the host waits for a prompt, at most: a connect and the
+/// server's own timeout fit in it.
+pub const PROMPT_WAIT: std::time::Duration =
+    std::time::Duration::from_secs(120);
+
+impl Host {
+    /// Gets the prompt whose command is `command` in `repo`'s scope, and
+    /// waits for it on the host's runtime.
+    pub fn prompt(
+        &self,
+        repo: Option<&Path>,
+        settings: &Settings,
+        command: &str,
+        arguments: &str,
+    ) -> Result<String, String> {
+        let plugin = self.plugin(repo, settings);
+        let (command, arguments) = (command.to_owned(), arguments.to_owned());
+        let (sender, answer) = std::sync::mpsc::channel();
+        self.runtime.spawn(async move {
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let got = tokio::time::timeout(
+                PROMPT_WAIT,
+                plugin.get_prompt(&command, &arguments, &cancel),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(format!(
+                    "/{command} gave no answer in {} s",
+                    PROMPT_WAIT.as_secs()
+                ))
+            });
+            let _ = sender.send(got);
+        });
+        answer
+            .recv()
+            .unwrap_or_else(|_| Err("the host stopped".to_owned()))
+    }
 }
 
 /// The entry for a server named `name`, checked as the files are and
@@ -816,7 +974,7 @@ pub fn apply(
             }
             next.disabled.set(repo_key, name, !enabled);
         }
-        Act::Reconnect { .. } => {}
+        Act::Reconnect { .. } | Act::Prompt { .. } => {}
     }
     Ok(next)
 }
@@ -1000,6 +1158,31 @@ impl UiPlugin for McpUi {
         let act: Act = serde_json::from_value(action)?;
         let settings: Settings = cx.settings(NAME);
         match &act {
+            Act::Prompt {
+                repo: name,
+                command,
+                arguments,
+            } => {
+                let checkout = match name {
+                    Some(name) => Some(repo(cx, name)?.checkout.clone()),
+                    None => None,
+                };
+                let reply = match host.prompt(
+                    checkout.as_deref(),
+                    &settings,
+                    command,
+                    arguments,
+                ) {
+                    Ok(text) => Reply::Prompt { text },
+                    Err(error) => Reply::PromptFailed {
+                        error,
+                        command: format!("/{command} {arguments}")
+                            .trim_end()
+                            .to_owned(),
+                    },
+                };
+                return Ok(Some(serde_json::to_value(reply)?));
+            }
             Act::Reconnect { repo: name, server } => {
                 let checkout = match name {
                     Some(name) => Some(repo(cx, name)?.checkout.clone()),
@@ -1047,6 +1230,19 @@ impl UiPlugin for McpUi {
 
     fn apply(&self, _state: &mut (), _body: &Value, _run: &mut dyn RunCx) {}
 
+    /// A prompt goes to the composer; one that failed says why and puts
+    /// the command back.
+    fn reply(
+        &self,
+        ui: &mut page::Ui,
+        reply: Value,
+        cx: &mut Context<page::Ui>,
+    ) {
+        if let Ok(reply) = serde_json::from_value::<Reply>(reply) {
+            ui.answered(reply, cx);
+        }
+    }
+
     fn new_ui(&self, handle: Handle, cx: &mut Context<page::Ui>) -> page::Ui {
         let name = cx.new(|cx| TextInput::new("linear", cx).keep_on_submit());
         let entry = cx.new(|cx| {
@@ -1071,6 +1267,48 @@ impl UiPlugin for McpUi {
             .contribute(points::SIDEBAR_REPO, sidebar)
             .contribute(points::CARD, card::card)
             .contribute(points::STATUS, status)
+            .listed_commands(commands, run_prompt)
+    }
+}
+
+/// The prompts of the servers where the composer is, as commands: the
+/// repository's, or the user's alone outside one.
+pub fn commands(data: &Servers, repo: Option<&Servers>) -> Vec<ListedCommand> {
+    repo.unwrap_or(data).commands()
+}
+
+/// `/mcp__<server>__<prompt> key=value ...`: checks the arguments here,
+/// then asks the host for the prompt, whose messages fill the composer.
+/// A mistake says what is wrong and leaves the command to fix.
+pub fn run_prompt(
+    command: &str,
+    arguments: &str,
+    repo: Option<&str>,
+    view: &mut ViewCx<'_, McpUi>,
+) {
+    let servers = repo
+        .and_then(|repo| view.repos.get(repo))
+        .unwrap_or(view.data);
+    let written = format!("/{command} {arguments}");
+    let checked = servers.prompt(command).map(|(_, prompt)| {
+        parse_arguments(arguments)
+            .and_then(|pairs| check_arguments(command, &prompt.info(), &pairs))
+    });
+    match checked {
+        Some(Err(error)) => {
+            view.handle.alert("The prompt needs fixing", error, view.cx);
+            view.handle.composer(written, view.cx);
+        }
+        _ => view.handle.act(
+            Act::Prompt {
+                repo: repo
+                    .filter(|repo| view.repos.contains_key(*repo))
+                    .map(str::to_owned),
+                command: command.to_owned(),
+                arguments: arguments.to_owned(),
+            },
+            view.cx,
+        ),
     }
 }
 

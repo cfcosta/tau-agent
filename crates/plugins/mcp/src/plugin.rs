@@ -296,18 +296,30 @@ impl McpPlugin {
     }
 
     /// Gets the prompt whose command is `command` with the `key=value`
-    /// pairs of `arguments`, and gives its messages as text.
+    /// pairs of `arguments`, and gives its messages as text. A command
+    /// not listed waits for the servers still connecting first.
     pub async fn get_prompt(
         &self,
         command: &str,
         arguments: &str,
         cancel: &CancellationToken,
     ) -> Result<String, String> {
-        let prompt = self
-            .prompts()
-            .into_iter()
-            .find(|prompt| prompt.command == command)
-            .ok_or_else(|| format!("No MCP prompt /{command} here."))?;
+        let find = || {
+            self.prompts()
+                .into_iter()
+                .find(|prompt| prompt.command == command)
+        };
+        // Right after the servers start, their prompts may not be listed
+        // yet.
+        let prompt = match find() {
+            Some(prompt) => prompt,
+            None => {
+                join_all(self.shared.enabled().map(|c| c.settled(cancel)))
+                    .await;
+                find()
+                    .ok_or_else(|| format!("No MCP prompt /{command} here."))?
+            }
+        };
         prompt.get(arguments, cancel).await
     }
 

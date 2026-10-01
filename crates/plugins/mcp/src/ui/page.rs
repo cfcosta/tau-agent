@@ -75,6 +75,18 @@ impl Ui {
         }
     }
 
+    /// What the host answered a prompt: its messages fill the composer;
+    /// a failure says why and puts the command back to fix.
+    pub(super) fn answered(&self, reply: super::Reply, cx: &mut Context<Self>) {
+        match reply {
+            super::Reply::Prompt { text } => self.handle.composer(text, cx),
+            super::Reply::PromptFailed { error, command } => {
+                self.handle.alert("The prompt could not be had", error, cx);
+                self.handle.composer(command, cx);
+            }
+        }
+    }
+
     fn changed(&self, cx: &mut Context<Self>) {
         cx.notify();
         self.handle.refresh(cx);
@@ -617,6 +629,7 @@ fn server_card(
                     ),
             )
         })
+        .when(has_more(server), |card| card.child(offers(server, t)))
         .when(compact, |card| {
             card.child(
                 div().flex().flex_wrap().child(server_actions_compact(
@@ -771,6 +784,154 @@ pub fn hint_badge(hint: &'static str, t: &Theme) -> Div {
         "read-only" => ui::badge(hint, t.green, t.border),
         _ => ui::badge(hint, t.muted, t.border),
     }
+}
+
+/// The most rows of each list a server's card shows; the rest are
+/// counted.
+pub const LIST_ROWS: usize = 20;
+
+/// Whether the server offers resources, templates or prompts.
+fn has_more(server: &ServerRow) -> bool {
+    !server.resources.is_empty()
+        || !server.templates.is_empty()
+        || !server.prompts.is_empty()
+}
+
+/// A server's resources, resource templates and prompts: how many of
+/// each, and the first [`LIST_ROWS`] of each.
+fn offers(server: &ServerRow, t: &Theme) -> Div {
+    let resources = server.resources.iter().map(|resource| {
+        let mut about = vec![
+            resource
+                .title
+                .clone()
+                .unwrap_or_else(|| resource.name.clone()),
+        ];
+        if let Some(mime) = &resource.mime_type {
+            about.push(mime.clone());
+        }
+        listed_row(
+            resource.uri.clone(),
+            about.join(" · "),
+            resource.description.clone(),
+            t,
+        )
+    });
+    let templates = server.templates.iter().map(|template| {
+        listed_row(
+            template.uri_template.clone(),
+            template
+                .title
+                .clone()
+                .unwrap_or_else(|| template.name.clone()),
+            template.description.clone(),
+            t,
+        )
+    });
+    let prompts = server.prompts.iter().map(|prompt| {
+        listed_row(
+            format!("/{}", prompt.command),
+            crate::prompts::arguments_hint(&prompt.info()),
+            prompt.description.clone().or_else(|| prompt.title.clone()),
+            t,
+        )
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(2.))
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(sp(1.5))
+                .child(count_badge("resources", server.resources.len(), t))
+                .child(count_badge("templates", server.templates.len(), t))
+                .child(count_badge("prompts", server.prompts.len(), t)),
+        )
+        .when(!server.resources.is_empty(), |list| {
+            list.child(section(
+                "Resources",
+                server.resources.len(),
+                resources,
+                t,
+            ))
+        })
+        .when(!server.templates.is_empty(), |list| {
+            list.child(section(
+                "Resource templates",
+                server.templates.len(),
+                templates,
+                t,
+            ))
+        })
+        .when(!server.prompts.is_empty(), |list| {
+            list.child(section("Prompts", server.prompts.len(), prompts, t))
+        })
+}
+
+/// `4 resources`, quiet when there are none.
+fn count_badge(what: &str, count: usize, t: &Theme) -> Div {
+    let color = if count == 0 { t.dim } else { t.muted };
+    ui::badge(format!("{count} {what}"), color, t.border)
+}
+
+/// A list under its heading and count, cut at [`LIST_ROWS`].
+fn section(
+    title: &str,
+    count: usize,
+    rows: impl Iterator<Item = Div>,
+    t: &Theme,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .child(heading(&format!("{title} · {count}"), t))
+        .children(rows.take(LIST_ROWS))
+        .when(count > LIST_ROWS, |list| {
+            list.child(mono(
+                format!("… {} more", count - LIST_ROWS),
+                Type::MICRO,
+                t.dim,
+            ))
+        })
+}
+
+/// One resource, template or prompt: what names it, what is said of it
+/// beside, and its description's first line.
+fn listed_row(
+    name: String,
+    beside: String,
+    description: Option<String>,
+    t: &Theme,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .py(sp(1.))
+        .border_b_1()
+        .border_color(t.border)
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(sp(2.))
+                .child(mono(name, Type::CAPTION, t.blue))
+                .when(!beside.is_empty(), |row| {
+                    row.child(mono(beside, Type::MICRO, t.dim))
+                }),
+        )
+        .when_some(description, |row, description| {
+            row.child(
+                mono(
+                    description.lines().next().unwrap_or_default().to_owned(),
+                    Type::MICRO,
+                    t.muted,
+                )
+                .truncate(),
+            )
+        })
 }
 
 /// One of a server's tools: its name, exposure and hints.
