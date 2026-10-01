@@ -13,7 +13,7 @@
 //! .#android`), from the repository's root:
 //!
 //! ```text
-//! cargo ndk -t arm64-v8a -P 26 -o crates/tau-phone/android/app/src/main/jniLibs \
+//! cargo ndk -t arm64-v8a -P 31 -o crates/tau-phone/android/app/src/main/jniLibs \
 //!     build -p tau-phone --release
 //! gradle -p crates/tau-phone/android assembleDebug
 //! ```

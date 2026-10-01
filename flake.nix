@@ -62,7 +62,7 @@
               };
               # What gpui-pre-mobile's Gradle project asks for: compileSdk
               # 34 and Android Gradle Plugin 9 (build tools 36). The NDK
-              # links the Rust library (minSdk 26).
+              # links the Rust library (minSdk 31: Android 12).
               androidSdk =
                 (androidPkgs.androidenv.composeAndroidPackages {
                   platformVersions = [

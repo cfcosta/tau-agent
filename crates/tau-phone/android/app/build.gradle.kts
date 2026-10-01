@@ -8,8 +8,10 @@ android {
 
     defaultConfig {
         applicationId = "dev.cfcosta.tau"
-        // Vulkan is there from API 26 on.
-        minSdk = 26
+        // Android 12 (API 31) and later: libc exports
+        // `android_get_device_api_level`, which gpui-mobile calls, only
+        // from API 29, and tau supports Android 12 on.
+        minSdk = 31
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"

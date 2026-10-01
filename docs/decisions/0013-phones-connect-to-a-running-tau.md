@@ -97,6 +97,9 @@ A phone is another interface on the same host.
 - **Android first:** it builds from this Linux machine with the NDK,
   and installs as an APK without a store. iOS follows on the same code
   once Android works, with a Mac for its build.
+- **Android 12 and later** (API 31, decided 2026-10-01). gpui-mobile
+  calls `android_get_device_api_level`, which libc exports only from
+  API 29, so the library would not load on Android 8 or 9.
 
 ## Alternatives considered
 
