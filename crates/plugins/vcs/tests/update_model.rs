@@ -14,14 +14,12 @@
 //! where it put it until upstream moves it too, and trunk then takes
 //! upstream's.
 //!
-//! Two cases the reference leaves open are pinned as ignored tests at
-//! the end, and the model steps around them: the main chat does not
-//! catch up once upstream dropped what it stands on, and a bookmark it
-//! moved that upstream then moved or deleted, not trunk's, may keep two
-//! targets.
+//! One case is pinned as an ignored test at the end, and the model
+//! steps around it: the main chat does not catch up once upstream
+//! dropped what it stands on.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -175,9 +173,6 @@ struct Machine {
     /// Bookmarks the main chat moved since upstream last moved them:
     /// where it put them.
     local: BTreeMap<String, String>,
-    /// Bookmarks left with two targets: the main chat moved them, and
-    /// upstream moved or deleted them, and they are not trunk's.
-    conflicted: BTreeSet<String>,
     /// The main chat's own commits, oldest first. None is pushed, so
     /// upstream never has them.
     own: Vec<Own>,
@@ -262,7 +257,6 @@ impl Machine {
             commits: 0,
             imported: BTreeMap::new(),
             local: BTreeMap::new(),
-            conflicted: BTreeSet::new(),
             own: Vec::new(),
             base: ROOT.to_owned(),
             trunk: ROOT.to_owned(),
@@ -298,9 +292,6 @@ impl Machine {
             .collect();
         for (name, id) in &self.local {
             want.insert(name.clone(), Some(id.clone()));
-        }
-        for name in &self.conflicted {
-            want.insert(name.clone(), None);
         }
         want
     }
@@ -538,9 +529,9 @@ impl Machine {
             tc.event("an update with nothing new");
         }
 
-        // jj's import: a bookmark the main chat moved stays where it put
-        // it while upstream leaves it; once upstream moves it too, trunk's
-        // takes upstream's, and any other keeps both targets.
+        // A bookmark the main chat moved stays where it put it while
+        // upstream leaves it; once upstream moves or deletes it too, it
+        // takes upstream's side.
         let now = self.branches();
         let head = head_branch(&self.source_git());
         for (name, id) in std::mem::take(&mut self.local) {
@@ -550,35 +541,9 @@ impl Machine {
                 self.local.insert(name, id);
             } else if new != Some(&id) {
                 tc.event("an update under the main chat's commits");
-                self.conflicted.insert(name);
-            }
-        }
-        // Trunk's bookmark takes upstream's side: the first of the
-        // default branch, `main`, `master` and `trunk` that is a
-        // bookmark.
-        let trunk_name = head
-            .iter()
-            .cloned()
-            .chain(["main", "master", "trunk"].map(String::from))
-            .find(|name| {
-                now.contains_key(name)
-                    || self.local.contains_key(name)
-                    || self.conflicted.contains(name)
-            });
-        if let Some(name) = trunk_name
-            && now.contains_key(&name)
-            && self.conflicted.remove(&name)
-        {
-            tc.event("trunk takes upstream's side");
-        }
-        // A conflicted bookmark upstream no longer has, or not trunk's.
-        // These are questions: see
-        // `a_bookmark_the_main_chat_moved_keeps_two_targets`.
-        for name in &self.conflicted {
-            if !now.contains_key(name) {
-                tc.event("a moved bookmark upstream deleted stays conflicted");
-            } else {
-                tc.event("a moved bookmark that is not trunk stays conflicted");
+                if new.is_none() {
+                    tc.event("upstream deleted a bookmark the main chat moved");
+                }
             }
         }
         self.imported = now;
@@ -680,28 +645,10 @@ impl Machine {
         }
         let head = moved.head.clone();
         if self.imported.get(&name) != Some(&head) && head != ROOT {
-            self.conflicted.remove(&name);
             self.local.insert(name, head.clone());
         }
         self.trunk = head;
         assert_eq!(self.project.trunk().unwrap(), self.trunk);
-        // jj settles a bookmark with two targets once one of them
-        // descends from the other, as the catch-up's rewrite of the main
-        // chat's side can make it. Which side wins is not the
-        // reference's to say: the model takes the project's word.
-        for name in std::mem::take(&mut self.conflicted) {
-            match self.project.bookmark(&name).unwrap() {
-                None => {
-                    self.conflicted.insert(name);
-                }
-                Some(id) => {
-                    tc.event("a catch-up settles a conflicted bookmark");
-                    if self.imported.get(&name) != Some(&id) {
-                        self.local.insert(name, id);
-                    }
-                }
-            }
-        }
         // A chat on a commit the catch-up rewrote moves with it.
         for i in 0..self.chats.len() {
             let now = self.now(&self.chats[i].change_id);
@@ -804,7 +751,6 @@ impl Machine {
             file,
         });
         self.local.insert(name.clone(), committed.commit_id.clone());
-        self.conflicted.remove(&name);
         self.trunk = committed.commit_id;
         tc.event("the main chat commits");
     }
@@ -943,25 +889,13 @@ fn a_catch_up_brings_back_what_upstream_dropped() {
 }
 
 /// The main chat commits on `main`, and upstream renames `main` to
-/// `trunk`. The update makes `trunk` the trunk, but leaves `main` with
-/// two targets, the main chat's commit and none, for good: upstream
-/// will never move it again, and `take_upstream_trunk`
-/// (`project.rs`) only settles the bookmark that is trunk's now. The
-/// same happens when upstream deletes the branch.
-///
-/// The reference is silent on bookmarks the main chat moved that stop
-/// being trunk's. Options:
-///
-/// 1. Take upstream's side for every bookmark left with two targets,
-///    deleting it when upstream did. The main chat's commits stay
-///    reachable from its `@`, and its next catch-up moves them onto the
-///    new trunk.
-/// 2. Keep the conflict, and show it, for the person to settle.
-///
-/// Option 1 matches what an update does for trunk.
+/// `trunk`. The update makes `trunk` the trunk, and `main`, which the
+/// main chat moved and upstream deleted, goes too: an update takes
+/// upstream's side for every bookmark it leaves with two targets. The
+/// main chat's commit stays on its `@`, and its catch-up moves it onto
+/// the new trunk.
 #[test]
-#[ignore = "bug: a bookmark the main chat moved keeps two targets"]
-fn a_bookmark_the_main_chat_moved_keeps_two_targets() {
+fn a_bookmark_the_main_chat_moved_takes_upstreams_side() {
     let (_home, work, project, main) = caught_up();
     let dir = project.workspace_dir(DEFAULT_WORKSPACE);
     std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();

@@ -435,7 +435,9 @@ the main chat, which moves trunk.
 
 Trunk can move without it, when an update brings commits from GitHub.
 When the main chat has moved trunk too, `Project::update` takes
-upstream's trunk. Before each of its turns, and before a chat lands on
+upstream's trunk. So it does for any bookmark of the source's that it
+leaves with two targets: one the main chat moved, then upstream moved,
+renamed or deleted, goes where upstream has it, or goes. Before each of its turns, and before a chat lands on
 it, the host moves its workspace onto trunk's head (`Vcs::move_onto`):
 its commits that upstream lacks go on top, keeping their change ids,
 and so does its work in `@`. Its next commit moves trunk forward rather

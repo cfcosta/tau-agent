@@ -12,7 +12,7 @@
 //! call them off the async executor.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -162,6 +162,7 @@ impl Project {
         }
         let repo = self.load()?;
         let mut tx = repo.start_transaction();
+        let upstream = upstream_names(tx.repo().view());
         let options = GitImportOptions {
             abandon_unreachable_commits: false,
             record_synthetic_predecessors: false,
@@ -169,7 +170,7 @@ impl Project {
         };
         block_on(import_refs(tx.repo_mut(), &options))
             .map_err(VcsError::ImportBranches)?;
-        self.take_upstream_trunk(&mut tx);
+        take_upstream(&mut tx, upstream);
         block_on(tx.commit("tau: update"))?;
         Ok(Updated {
             before,
@@ -277,35 +278,6 @@ impl Project {
 
     /// Trunk's bookmark and the commit it names: the default branch, else
     /// `main`, `master` or `trunk`.
-    /// Points trunk's bookmark at upstream's trunk when an update left it
-    /// with two targets: the main chat moves trunk here (ADR 0015) while
-    /// upstream moves it there. The main chat's commits go onto
-    /// upstream's when it catches up (`Vcs::move_onto`).
-    fn take_upstream_trunk(&self, tx: &mut jj_lib::transaction::Transaction) {
-        let names = self
-            .default_branch()
-            .into_iter()
-            .chain(["main", "master", "trunk"].map(str::to_owned));
-        for name in names {
-            let name = RefName::new(&name);
-            let view = tx.repo().view();
-            let local = view.get_local_bookmark(name);
-            if local.is_absent() {
-                continue;
-            }
-            let upstream = &view
-                .get_remote_bookmark(
-                    name.to_remote_symbol(REMOTE_NAME_FOR_LOCAL_GIT_REPO),
-                )
-                .target;
-            if local.has_conflict() && upstream.as_normal().is_some() {
-                let upstream = upstream.clone();
-                tx.repo_mut().set_local_bookmark_target(name, upstream);
-            }
-            return;
-        }
-    }
-
     fn trunk_bookmark(
         &self,
         repo: &ReadonlyRepo,
@@ -800,6 +772,41 @@ fn split_files(text: &str, changes: Vec<FileChange>) -> Vec<FileDiff> {
             }
         })
         .collect()
+}
+
+/// The bookmarks the source has, as the last import left them.
+fn upstream_names(view: &jj_lib::view::View) -> HashSet<String> {
+    view.remote_bookmarks(REMOTE_NAME_FOR_LOCAL_GIT_REPO)
+        .map(|(name, _)| name.as_str().to_owned())
+        .collect()
+}
+
+/// Points every bookmark of the source's that an update left with two
+/// targets where the source has it now, and deletes it when the source
+/// deleted it. The main chat moves trunk here (ADR 0015) while upstream
+/// moves it there, or renames or deletes the branch. The main chat's
+/// commits stay on its `@`, and go onto trunk when it catches up
+/// (`Vcs::move_onto`). `before` is the source's bookmarks before the
+/// import.
+fn take_upstream(
+    tx: &mut jj_lib::transaction::Transaction,
+    before: HashSet<String>,
+) {
+    let names = before.into_iter().chain(upstream_names(tx.repo().view()));
+    for name in names.collect::<HashSet<_>>() {
+        let name = RefName::new(&name);
+        let view = tx.repo().view();
+        if !view.get_local_bookmark(name).has_conflict() {
+            continue;
+        }
+        let upstream = view
+            .get_remote_bookmark(
+                name.to_remote_symbol(REMOTE_NAME_FOR_LOCAL_GIT_REPO),
+            )
+            .target
+            .clone();
+        tx.repo_mut().set_local_bookmark_target(name, upstream);
+    }
 }
 
 /// The visible commit `commit`'s change names now: itself, or what it
