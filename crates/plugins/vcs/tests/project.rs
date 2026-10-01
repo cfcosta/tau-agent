@@ -450,6 +450,78 @@ fn a_first_turn_that_commits_still_changed_files() {
     });
 }
 
+/// A fork whose turn's parent changed since starts on the files merged
+/// onto the parent as it is now; its first turn, which only reads,
+/// changed nothing.
+#[test]
+fn a_forks_first_turn_is_told_from_its_start() {
+    let src = tempfile::tempdir().unwrap();
+    source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let store = Store::memory().await.unwrap();
+        let first =
+            RunWorkspace::new(project.clone(), "first", Identity::default())
+                .unwrap();
+        // Turn 1 commits an empty change; turn 2 takes it back into `@`
+        // and writes, and the run commits that at its end.
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("vcs_commit", json!({ "message": "feat: x" }))
+            })
+            .turn(|t| {
+                t.tool_call("vcs_undo", json!({}))
+                    .tool_call("write", write("a.txt", "one\n"))
+            })
+            .turn(|t| t.text("done"))
+            .turn(|t| t.text("still done"))
+            .turn(|t| t.text("feat: a"));
+        let outcome = agent(llm.clone(), &first)
+            .plugin(VcsPlugin::new(first.vcs().clone()))
+            .run("commit, undo, write", &store)
+            .await
+            .unwrap();
+        llm.assert_exhausted();
+        let turns =
+            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
+
+        let fork =
+            RunWorkspace::new(project.clone(), "fork", Identity::default())
+                .unwrap();
+        let fork_llm = ScriptedModel::new()
+            .turn(|t| t.tool_call("read", json!({ "path": "README.md" })))
+            .turn(|t| t.text("forked"));
+        let forked = agent(fork_llm, &fork)
+            .fork(&Checkpoint::at(outcome.run.clone(), turns[0].0))
+            .start("go on", &store)
+            .outcome()
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(fork.dir().join("a.txt")).unwrap(),
+            "one\n",
+            "the fork starts on its parent as it is now"
+        );
+        let own: Vec<bool> =
+            links(&store.plugin_entries(&forked.run.0, PLUGIN).await.unwrap())
+                .into_iter()
+                .filter(|(_, link)| link.workspace == "fork")
+                .map(|(_, link)| link.changed)
+                .collect();
+        assert_eq!(own, [false, false]);
+    });
+}
+
 /// Turns are snapshots, not commits (ADR 0014): the run's work stays in
 /// `@` until the model commits, or until the end, when what is left is
 /// committed with a message the model writes. A fork starts from a

@@ -246,7 +246,8 @@ impl Plugin for RunWorkspace {
         let name = self.name.clone();
         let base = self.base.clone();
         // `@` as the run starts: what its first turn changed is told
-        // from it, unless the run goes on from a turn's snapshot.
+        // from it. A fork's `@` holds its turn's files, merged onto the
+        // parent as it is now, which the fork's own turn did not change.
         let start = tokio::task::spawn_blocking(move || {
             match (inherited, base) {
                 (Some(link), _) if link.snapshot => project
@@ -268,7 +269,7 @@ impl Plugin for RunWorkspace {
             project.workspace_head(&name)
         })
         .await??;
-        let since = inherited_snapshot.or(start);
+        let since = start.or(inherited_snapshot);
         Ok(Box::new(Turns {
             vcs: self.vcs.clone(),
             name: self.name.clone(),
