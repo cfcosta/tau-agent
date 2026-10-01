@@ -1,8 +1,12 @@
 //! What a plugin reaches on the machine that runs agents: the run it is
 //! built for ([`RunCtx`]), and the host's services ([`HostCx`]).
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tau_agent::tool::RunId;
 use tau_store::{Entry, Store, TurnUsage};
@@ -79,6 +83,75 @@ impl std::fmt::Debug for TurnHooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let hooks = self.0.lock().expect("not poisoned").len();
         write!(f, "TurnHooks({hooks})")
+    }
+}
+
+/// tau's configuration directory, `~/.config/tau`: files the user
+/// writes by hand, such as tau-mcp's `mcp.json`. A host service
+/// ([`HostCx::config_dir`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigDir(pub PathBuf);
+
+type ReadSettings = Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>;
+type SaveSettings =
+    Arc<dyn Fn(&str, Value) -> anyhow::Result<()> + Send + Sync>;
+
+/// The plugins' saved settings, as the host keeps them: what a plugin's
+/// host half reads and saves its own settings through, when an action
+/// changes them ([`HostCx::settings`], [`HostCx::save_settings`]). A
+/// host service.
+#[derive(Clone)]
+pub struct SavedSettings {
+    read: ReadSettings,
+    save: SaveSettings,
+}
+
+impl SavedSettings {
+    /// `read` gives a plugin's saved settings, if it has any; `save`
+    /// replaces them, by plugin name.
+    pub fn new(
+        read: impl Fn(&str) -> Option<Value> + Send + Sync + 'static,
+        save: impl Fn(&str, Value) -> anyhow::Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            read: Arc::new(read),
+            save: Arc::new(save),
+        }
+    }
+
+    /// Settings kept in memory only: for tests, and hosts that save
+    /// nothing.
+    pub fn in_memory() -> Self {
+        let saved: Arc<
+            std::sync::Mutex<std::collections::BTreeMap<String, Value>>,
+        > = Arc::default();
+        let read = saved.clone();
+        Self::new(
+            move |plugin| {
+                read.lock().expect("not poisoned").get(plugin).cloned()
+            },
+            move |plugin, value| {
+                saved
+                    .lock()
+                    .expect("not poisoned")
+                    .insert(plugin.to_owned(), value);
+                Ok(())
+            },
+        )
+    }
+
+    pub fn read(&self, plugin: &str) -> Option<Value> {
+        (self.read)(plugin)
+    }
+
+    pub fn save(&self, plugin: &str, value: Value) -> anyhow::Result<()> {
+        (self.save)(plugin, value)
+    }
+}
+
+impl std::fmt::Debug for SavedSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SavedSettings")
     }
 }
 
@@ -194,6 +267,38 @@ impl HostCx {
         Ok(())
     }
 
+    /// tau's configuration directory, when the host says where it is.
+    pub fn config_dir(&self) -> Option<&Path> {
+        self.services.get::<ConfigDir>().map(|dir| dir.0.as_path())
+    }
+
+    /// `plugin`'s saved settings, or their default when it has none, or
+    /// they no longer read as `T`.
+    pub fn settings<T: DeserializeOwned + Default>(&self, plugin: &str) -> T {
+        self.services
+            .get::<SavedSettings>()
+            .and_then(|saved| saved.read(plugin))
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
+    /// Saves `settings` as `plugin`'s, as its page would, and asks the
+    /// interface to draw the catalog again, which carries them. Runs
+    /// started from now on take them.
+    pub fn save_settings(
+        &self,
+        plugin: &str,
+        settings: &impl Serialize,
+    ) -> anyhow::Result<()> {
+        let saved = self
+            .services
+            .get::<SavedSettings>()
+            .ok_or_else(|| anyhow::anyhow!("This host saves no settings"))?;
+        saved.save(plugin, serde_json::to_value(settings)?)?;
+        self.refresh();
+        Ok(())
+    }
+
     /// Asks the interface to draw the catalog again.
     pub fn refresh(&self) {
         (self.push)(Push::Catalog);
@@ -242,5 +347,51 @@ mod tests {
             }
         }
         assert_eq!(*heard.lock().unwrap(), expected);
+    }
+
+    /// A host half's settings come back as it saved them, by plugin; one
+    /// with none, or with settings of another shape, reads the default;
+    /// and each save asks the interface for the catalog again.
+    #[hegel::test(test_cases = 50)]
+    fn saved_settings_come_back_by_plugin(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let saves: Vec<(bool, Vec<u32>)> = tc.draw(
+            gs::vecs(hegel::tuples!(
+                gs::booleans(),
+                gs::vecs(gs::integers::<u32>()).max_size(4),
+            ))
+            .max_size(6),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let store = runtime.block_on(Store::memory()).unwrap();
+        let pushes: Arc<Mutex<Vec<Push>>> = Arc::default();
+        let heard = pushes.clone();
+        let cx = HostCx::new(
+            store,
+            runtime.handle().clone(),
+            Services::default()
+                .with(SavedSettings::in_memory())
+                .with(ConfigDir(PathBuf::from("/config/tau"))),
+            PathBuf::from("/data/tau"),
+            Vec::new(),
+            Arc::new(move |push| heard.lock().unwrap().push(push)),
+        );
+        let mut expected: [Vec<u32>; 2] = Default::default();
+        for (second, value) in &saves {
+            let plugin = if *second { "b" } else { "a" };
+            cx.save_settings(plugin, value).unwrap();
+            expected[usize::from(*second)] = value.clone();
+        }
+        assert_eq!(cx.settings::<Vec<u32>>("a"), expected[0]);
+        assert_eq!(cx.settings::<Vec<u32>>("b"), expected[1]);
+        assert_eq!(cx.settings::<Vec<u32>>("c"), Vec::<u32>::new());
+        // Another shape is the default, not an error.
+        cx.save_settings("c", &"text").unwrap();
+        assert_eq!(cx.settings::<Vec<u32>>("c"), Vec::<u32>::new());
+        assert_eq!(pushes.lock().unwrap().len(), saves.len() + 1);
+        assert_eq!(cx.config_dir(), Some(Path::new("/config/tau")));
     }
 }

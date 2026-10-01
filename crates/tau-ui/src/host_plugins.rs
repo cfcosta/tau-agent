@@ -5,12 +5,14 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 use tau_ui_plugin::{
+    ConfigDir,
     ErasedPlugin,
     HostCx,
     Push,
     RepoCtx,
     RunCtx,
     RunKind,
+    SavedSettings,
     Services,
     registry::HostState,
 };
@@ -47,7 +49,27 @@ impl Host {
 
     /// What every plugin reaches of this host now.
     pub(super) fn host_cx(&self) -> HostCx {
-        let mut services = Services::default().with(self.memory_search);
+        let (settings, path) =
+            (self.settings.clone(), self.config.settings.clone());
+        let read = settings.clone();
+        let saved = SavedSettings::new(
+            move |plugin| {
+                read.lock()
+                    .expect("not poisoned")
+                    .plugins
+                    .get(plugin)
+                    .cloned()
+            },
+            move |plugin, value| {
+                let mut settings = settings.lock().expect("not poisoned");
+                settings.plugins.insert(plugin.to_owned(), value);
+                write_settings(&path, &settings)
+            },
+        );
+        let mut services = Services::default()
+            .with(self.memory_search)
+            .with(saved)
+            .with(ConfigDir(self.config.credentials.dir.clone()));
         if let Some(jev) = self.jev() {
             services = services.with(jev);
         }

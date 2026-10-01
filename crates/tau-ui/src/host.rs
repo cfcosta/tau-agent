@@ -176,6 +176,18 @@ impl HostConfig {
     }
 }
 
+/// Writes `settings` to `path`, making its directory.
+pub(crate) fn write_settings(
+    path: &Path,
+    settings: &ModelSettings,
+) -> anyhow::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(settings)?)?;
+    Ok(())
+}
+
 fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
@@ -1371,15 +1383,9 @@ impl Host {
 
     /// Keeps and saves the user's model choices.
     pub fn save_settings(&self, settings: ModelSettings) -> anyhow::Result<()> {
-        *self.settings.lock().expect("not poisoned") = settings.clone();
-        if let Some(dir) = self.config.settings.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(
-            &self.config.settings,
-            serde_json::to_string_pretty(&settings)?,
-        )?;
-        Ok(())
+        let mut saved = self.settings.lock().expect("not poisoned");
+        *saved = settings;
+        write_settings(&self.config.settings, &saved)
     }
 
     /// Starts a chat in `repo`, which must be listed: a fork of the

@@ -27,7 +27,17 @@ pub mod services;
 pub mod view;
 
 use gpui::Context;
-pub use host::{HostCx, Push, RepoCtx, RunCtx, RunKind, TurnCommit, TurnHooks};
+pub use host::{
+    ConfigDir,
+    HostCx,
+    Push,
+    RepoCtx,
+    RunCtx,
+    RunKind,
+    SavedSettings,
+    TurnCommit,
+    TurnHooks,
+};
 pub use manifest::{Manifest, Page, Point, PointCx, SlashCommand};
 pub use registry::{Env, ErasedPlugin, Registry};
 pub use run::{
