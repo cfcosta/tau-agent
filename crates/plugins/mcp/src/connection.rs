@@ -25,7 +25,14 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    client::{CallError, ConnectError, Endpoint, Session, SessionEvent},
+    client::{
+        CallError,
+        ConnectError,
+        Endpoint,
+        Features,
+        Session,
+        SessionEvent,
+    },
     config::{
         EnvLookup,
         Origin,
@@ -110,6 +117,58 @@ pub struct ToolInfo {
     pub input_schema: Value,
     pub output_schema: Option<Value>,
     pub annotations: Annotations,
+}
+
+/// A resource as its server lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ResourceInfo {
+    pub uri: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+/// A resource template as its server lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TemplateInfo {
+    pub uri_template: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+/// A prompt as its server lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptInfo {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub arguments: Vec<PromptArgument>,
+}
+
+/// One of a prompt's arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptArgument {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub required: bool,
 }
 
 /// A progress notification for a call.
@@ -257,8 +316,38 @@ struct Inner {
     /// The last tools listed; kept while disconnected, so a call to one
     /// connects again.
     tools: Vec<ToolInfo>,
+    /// What the server offers besides tools, and the lists of it; kept
+    /// while disconnected, like the tools.
+    features: Features,
+    resources: Vec<ResourceInfo>,
+    templates: Vec<TemplateInfo>,
+    prompts: Vec<PromptInfo>,
     instructions: Option<String>,
     connecting: bool,
+}
+
+/// What a connect lists: tools always, resources, templates and prompts
+/// when the server offers them.
+struct Lists {
+    tools: Vec<ToolInfo>,
+    resources: Vec<ResourceInfo>,
+    templates: Vec<TemplateInfo>,
+    prompts: Vec<PromptInfo>,
+}
+
+/// A read-only request: reading a resource or getting a prompt.
+enum ReadOnly<'a> {
+    Resource(&'a str),
+    Prompt(&'a str, serde_json::Map<String, Value>),
+}
+
+impl ReadOnly<'_> {
+    fn what(&self) -> String {
+        match self {
+            Self::Resource(uri) => format!("the read of {uri}"),
+            Self::Prompt(name, _) => format!("the prompt {name}"),
+        }
+    }
 }
 
 /// One server's connection.
@@ -367,6 +456,43 @@ impl Connection {
             .any(|info| info.name == tool)
     }
 
+    /// Whether the server offers resources.
+    pub fn offers_resources(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .features
+            .resources
+    }
+
+    /// Whether the server offers prompts.
+    pub fn offers_prompts(&self) -> bool {
+        self.inner.lock().expect("connection lock").features.prompts
+    }
+
+    /// The resources last listed, but MCP apps' (`ui://`).
+    pub fn resources(&self) -> Vec<ResourceInfo> {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .resources
+            .clone()
+    }
+
+    /// The resource templates last listed, but MCP apps'.
+    pub fn templates(&self) -> Vec<TemplateInfo> {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .templates
+            .clone()
+    }
+
+    /// The prompts last listed.
+    pub fn prompts(&self) -> Vec<PromptInfo> {
+        self.inner.lock().expect("connection lock").prompts.clone()
+    }
+
     /// Whether it ever started connecting.
     pub fn started(&self) -> bool {
         self.started.load(Ordering::SeqCst)
@@ -414,9 +540,13 @@ impl Connection {
             return;
         }
         match outcome {
-            Ok((session, tools, events)) => {
+            Ok((session, lists, events)) => {
                 inner.instructions = session.instructions().map(str::to_owned);
-                inner.tools = tools;
+                inner.features = session.features();
+                inner.tools = lists.tools;
+                inner.resources = lists.resources;
+                inner.templates = lists.templates;
+                inner.prompts = lists.prompts;
                 inner.session = Some(session.clone());
                 drop(inner);
                 self.set_status(State::Connected, None);
@@ -435,15 +565,11 @@ impl Connection {
     }
 
     /// Connects, retrying an HTTP server's transient errors, and lists
-    /// the tools.
+    /// the tools, and the resources, templates and prompts it offers.
     async fn open(
         &self,
     ) -> Result<
-        (
-            Arc<Session>,
-            Vec<ToolInfo>,
-            mpsc::UnboundedReceiver<SessionEvent>,
-        ),
+        (Arc<Session>, Lists, mpsc::UnboundedReceiver<SessionEvent>),
         String,
     > {
         let endpoint = self.environment.endpoint(&self.config)?;
@@ -470,13 +596,27 @@ impl Connection {
                 Err(error) => return Err(error.message),
             }
         };
-        match session.list_tools().await {
-            Ok(tools) => Ok((session, tools, events)),
+        let tools = match session.list_tools().await {
+            Ok(tools) => tools,
             Err(error) => {
                 session.close().await;
-                Err(error)
+                return Err(error);
             }
-        }
+        };
+        // A list that fails leaves it empty: the tools still work.
+        let (resources, templates) =
+            list_resources(&self.config.name, &session).await;
+        let prompts = list_prompts(&self.config.name, &session).await;
+        Ok((
+            session,
+            Lists {
+                tools,
+                resources,
+                templates,
+                prompts,
+            },
+            events,
+        ))
     }
 
     /// A live session, connecting first when there is none. Waits for a
@@ -591,6 +731,99 @@ impl Connection {
         })
     }
 
+    /// Reads the resource `uri` and returns its `ReadResourceResult` as
+    /// JSON. Read-only, so a connection that drops under it is connected
+    /// again and the read sent once more.
+    pub async fn read_resource(
+        self: &Arc<Self>,
+        uri: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Value, String> {
+        self.read_only(ReadOnly::Resource(uri), cancel).await
+    }
+
+    /// Gets the prompt `name` with `arguments` and returns its
+    /// `GetPromptResult` as JSON. Read-only: tried twice, as
+    /// [`Self::read_resource`].
+    pub async fn get_prompt(
+        self: &Arc<Self>,
+        name: &str,
+        arguments: serde_json::Map<String, Value>,
+        cancel: &CancellationToken,
+    ) -> Result<Value, String> {
+        self.read_only(ReadOnly::Prompt(name, arguments), cancel)
+            .await
+    }
+
+    async fn read_only(
+        self: &Arc<Self>,
+        request: ReadOnly<'_>,
+        cancel: &CancellationToken,
+    ) -> Result<Value, String> {
+        let server = self.config.name.clone();
+        let timeout = self.config.timeout();
+        let mut tries = 0;
+        loop {
+            tries += 1;
+            let session = self.session(cancel).await.map_err(|error| {
+                if cancel.is_cancelled() {
+                    format!("{} was cancelled", request.what())
+                } else {
+                    format!("MCP server {server} is not connected: {error}")
+                }
+            })?;
+            let features = session.features();
+            let result = match &request {
+                ReadOnly::Resource(uri) => {
+                    if !features.resources {
+                        return Err(format!(
+                            "MCP server {server} does not offer resources"
+                        ));
+                    }
+                    session.read_resource(uri, timeout, cancel).await
+                }
+                ReadOnly::Prompt(name, arguments) => {
+                    if !features.prompts {
+                        return Err(format!(
+                            "MCP server {server} does not offer prompts"
+                        ));
+                    }
+                    session
+                        .get_prompt(name, arguments.clone(), timeout, cancel)
+                        .await
+                }
+            };
+            match result {
+                Ok(value) => return Ok(value),
+                Err(CallError::Disconnected) => {
+                    self.lost(&session);
+                    if tries >= 2 {
+                        return Err(format!(
+                            "MCP server {server} closed the connection during {}",
+                            request.what()
+                        ));
+                    }
+                }
+                Err(CallError::Timeout(after)) => {
+                    return Err(format!(
+                        "MCP server {server} gave no answer to {} in {} s",
+                        request.what(),
+                        after.as_secs_f64()
+                    ));
+                }
+                Err(CallError::Cancelled) => {
+                    return Err(format!("{} was cancelled", request.what()));
+                }
+                Err(CallError::Protocol(message)) => {
+                    return Err(format!(
+                        "MCP server {server} failed {}: {message}",
+                        request.what()
+                    ));
+                }
+            }
+        }
+    }
+
     /// Waits until the connection is not connecting, or `cancel`.
     pub async fn settled(&self, cancel: &CancellationToken) {
         let mut status = self.status.subscribe();
@@ -650,6 +883,88 @@ impl Connection {
     }
 }
 
+impl Connection {
+    /// Lists the resources and templates again, after the server said
+    /// they changed.
+    async fn relist_resources(&self, session: &Arc<Session>) {
+        let (resources, templates) =
+            list_resources(&self.config.name, session).await;
+        self.update(session, |inner| {
+            inner.resources = resources;
+            inner.templates = templates;
+        });
+    }
+
+    /// Lists the prompts again, after the server said they changed.
+    async fn relist_prompts(&self, session: &Arc<Session>) {
+        let prompts = list_prompts(&self.config.name, session).await;
+        self.update(session, |inner| inner.prompts = prompts);
+    }
+
+    /// Applies `change` if `session` is still the connection's.
+    fn update(&self, session: &Arc<Session>, change: impl FnOnce(&mut Inner)) {
+        let mut inner = self.inner.lock().expect("connection lock");
+        if inner
+            .session
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, session))
+        {
+            change(&mut inner);
+            drop(inner);
+            self.changed();
+        }
+    }
+}
+
+/// The server's resources and templates, but MCP apps', when it offers
+/// resources; empty when it does not, or when listing fails.
+async fn list_resources(
+    server: &str,
+    session: &Session,
+) -> (Vec<ResourceInfo>, Vec<TemplateInfo>) {
+    if !session.features().resources {
+        return (Vec::new(), Vec::new());
+    }
+    let resources = session.list_resources().await.unwrap_or_else(|error| {
+        tracing::warn!(target: "tau_mcp::server", server, "{error}");
+        Vec::new()
+    });
+    // A server may offer resources without templates.
+    let templates = session.list_templates().await.unwrap_or_else(|error| {
+        tracing::debug!(target: "tau_mcp::server", server, "{error}");
+        Vec::new()
+    });
+    (
+        resources
+            .into_iter()
+            .filter(|r| {
+                !crate::resources::is_app(&r.uri, r.mime_type.as_deref())
+            })
+            .collect(),
+        templates
+            .into_iter()
+            .filter(|t| {
+                !crate::resources::is_app(
+                    &t.uri_template,
+                    t.mime_type.as_deref(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// The server's prompts when it offers them; empty when it does not, or
+/// when listing fails.
+async fn list_prompts(server: &str, session: &Session) -> Vec<PromptInfo> {
+    if !session.features().prompts {
+        return Vec::new();
+    }
+    session.list_prompts().await.unwrap_or_else(|error| {
+        tracing::warn!(target: "tau_mcp::server", server, "{error}");
+        Vec::new()
+    })
+}
+
 /// Follows a session's events for as long as its connection lives.
 async fn watch_session(
     connection: Weak<Connection>,
@@ -662,6 +977,12 @@ async fn watch_session(
         };
         match event {
             SessionEvent::ToolsChanged => connection.relist(&session).await,
+            SessionEvent::ResourcesChanged => {
+                connection.relist_resources(&session).await
+            }
+            SessionEvent::PromptsChanged => {
+                connection.relist_prompts(&session).await
+            }
             SessionEvent::Closed => {
                 connection.lost(&session);
                 return;

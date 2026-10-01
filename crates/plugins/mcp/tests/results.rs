@@ -115,9 +115,13 @@ fn content_blocks_for_the_model() {
     assert_eq!(texts[0], "hello");
     assert_eq!(
         texts[1],
-        "[Resource file:///a \"A file\" (text/plain, 12): The a file.]"
+        "[Resource file:///a \"A file\" (text/plain, 12): The a file. Read it with \
+         read_mcp_resource (server \"s\")]"
     );
-    assert_eq!(texts[2], "[Resource file:///b \"b\"]");
+    assert_eq!(
+        texts[2],
+        "[Resource file:///b \"b\". Read it with read_mcp_resource (server \"s\")]"
+    );
     assert_eq!(texts[3], "embedded");
     let saved = texts[4]
         .strip_prefix("[Resource file:///z (application/zip) saved to ")

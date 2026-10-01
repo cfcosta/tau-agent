@@ -142,7 +142,7 @@ pub fn map_result(
 
     let mut items: Vec<InputBlock> = blocks
         .iter()
-        .map(|block| content_block(block, spill))
+        .map(|block| content_block(server, block, spill))
         .collect();
     if items.is_empty()
         && let Some(value) = result.get("structuredContent")
@@ -166,7 +166,7 @@ pub fn map_result(
     }
 }
 
-fn text_block(text: impl Into<String>) -> InputBlock {
+pub(crate) fn text_block(text: impl Into<String>) -> InputBlock {
     InputBlock::Text(TextContent {
         text: text.into(),
         text_signature: None,
@@ -178,7 +178,7 @@ fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 /// One content block for the model.
-fn content_block(block: &Value, spill: &Spill) -> InputBlock {
+fn content_block(server: &str, block: &Value, spill: &Spill) -> InputBlock {
     match str_field(block, "type") {
         Some("text") => {
             text_block(str_field(block, "text").unwrap_or_default())
@@ -201,7 +201,7 @@ fn content_block(block: &Value, spill: &Spill) -> InputBlock {
                 Err(error) => format!("[Audio ({mime}): {error}]"),
             })
         }
-        Some("resource_link") => text_block(resource_link(block)),
+        Some("resource_link") => text_block(resource_link(server, block)),
         Some("resource") => {
             let resource = block.get("resource").unwrap_or(&Value::Null);
             let uri = str_field(resource, "uri").unwrap_or_default();
@@ -224,10 +224,11 @@ fn content_block(block: &Value, spill: &Spill) -> InputBlock {
     }
 }
 
-/// `[Resource <uri> "<title>" (<mime>, <size>): <description>]`, each
-/// part left out when the link does not have it. The title is the
-/// link's `title`, else its `name`.
-pub fn resource_link(block: &Value) -> String {
+/// `[Resource <uri> "<title>" (<mime>, <size>): <description>. Read it
+/// with read_mcp_resource (server "<server>")]`, each part left out when
+/// the link does not have it. The title is the link's `title`, else its
+/// `name`.
+pub fn resource_link(server: &str, block: &Value) -> String {
     let mut text =
         format!("[Resource {}", str_field(block, "uri").unwrap_or_default());
     if let Some(title) =
@@ -246,10 +247,53 @@ pub fn resource_link(block: &Value) -> String {
         text.push_str(&format!(" ({})", about.join(", ")));
     }
     if let Some(description) = str_field(block, "description") {
-        text.push_str(&format!(": {description}"));
+        text.push_str(&format!(": {}", description.trim_end_matches('.')));
     }
-    text.push(']');
+    text.push_str(&format!(
+        ". Read it with read_mcp_resource (server \"{server}\")]"
+    ));
     text
+}
+
+/// What a `ReadResourceResult`'s `contents` become for the model: text as
+/// text, images as images, other binary saved to a spill file and named
+/// by its path, the text cut past [`TEXT_LIMIT`] as a call's is. MCP
+/// apps' contents are left out ([`crate::resources::is_app`]).
+pub fn resource_contents(contents: &[Value], spill: &Spill) -> Vec<InputBlock> {
+    let items = contents
+        .iter()
+        .filter(|content| {
+            !crate::resources::is_app(
+                str_field(content, "uri").unwrap_or_default(),
+                str_field(content, "mimeType"),
+            )
+        })
+        .map(|content| {
+            let uri = str_field(content, "uri").unwrap_or_default();
+            if let Some(text) = str_field(content, "text") {
+                return text_block(text);
+            }
+            let mime = str_field(content, "mimeType")
+                .unwrap_or("application/octet-stream");
+            let blob = str_field(content, "blob");
+            if mime.starts_with("image/")
+                && let Some(data) = blob
+            {
+                return InputBlock::Image(ImageContent {
+                    data: data.trim().to_owned(),
+                    mime_type: mime.to_owned(),
+                });
+            }
+            text_block(match save(blob, mime, spill) {
+                Ok(path) => format!(
+                    "[Resource {uri} ({mime}) saved to {}]",
+                    path.display()
+                ),
+                Err(error) => format!("[Resource {uri} ({mime}): {error}]"),
+            })
+        })
+        .collect();
+    limit_text(items, spill)
 }
 
 /// Decodes base64 `data` and writes it to a spill file.

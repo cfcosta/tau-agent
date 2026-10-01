@@ -33,6 +33,8 @@ use rmcp::{
         ClientCapabilities,
         ClientConfig,
         ClientRequest,
+        GetPromptRequest,
+        GetPromptRequestParams,
         Implementation,
         JsonObject,
         ListRootsResult,
@@ -41,6 +43,8 @@ use rmcp::{
         ProgressNotificationParam,
         ProgressToken,
         ProtocolVersion,
+        ReadResourceRequest,
+        ReadResourceRequestParams,
         Root,
         ServerNotification,
         ServerResult,
@@ -78,7 +82,15 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::Dial,
-    connection::{Annotations, Progress, ToolInfo},
+    connection::{
+        Annotations,
+        Progress,
+        PromptArgument,
+        PromptInfo,
+        ResourceInfo,
+        TemplateInfo,
+        ToolInfo,
+    },
 };
 
 /// How long the process group of a closed stdio server has between
@@ -113,6 +125,10 @@ impl Endpoint {
 pub(crate) enum SessionEvent {
     /// The server's tools changed: list them again.
     ToolsChanged,
+    /// Its resources or resource templates changed.
+    ResourcesChanged,
+    /// Its prompts changed.
+    PromptsChanged,
     /// The connection ended.
     Closed,
 }
@@ -192,6 +208,20 @@ impl ClientHandler for Handler {
         let _ = self.events.send(SessionEvent::ToolsChanged);
     }
 
+    async fn on_resource_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) {
+        let _ = self.events.send(SessionEvent::ResourcesChanged);
+    }
+
+    async fn on_prompt_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) {
+        let _ = self.events.send(SessionEvent::PromptsChanged);
+    }
+
     async fn on_logging_message(
         &self,
         params: LoggingMessageNotificationParam,
@@ -252,6 +282,14 @@ pub(crate) struct Session {
     done: watch::Receiver<bool>,
     routes: Routes,
     instructions: Option<String>,
+    features: Features,
+}
+
+/// What a server offers besides tools, from its capabilities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Features {
+    pub resources: bool,
+    pub prompts: bool,
 }
 
 impl Session {
@@ -319,15 +357,33 @@ impl Session {
             .as_ref()
             .and_then(|info| info.instructions.clone())
             .filter(|text| !text.trim().is_empty());
-        let subscribes = info.as_ref().is_some_and(|info| {
+        let capabilities = info.as_ref().map(|info| &info.capabilities);
+        let features = Features {
+            resources: capabilities.is_some_and(|c| c.resources.is_some()),
+            prompts: capabilities.is_some_and(|c| c.prompts.is_some()),
+        };
+        // On 2026-07-28 list changes come only through
+        // `subscriptions/listen`, for the lists the server says change.
+        let listens = info.as_ref().is_some_and(|info| {
             info.protocol_version >= ProtocolVersion::V_2026_07_28
-                && info
-                    .capabilities
-                    .tools
-                    .as_ref()
-                    .and_then(|tools| tools.list_changed)
-                    .unwrap_or(false)
         });
+        let changes = Changes {
+            tools: listens
+                && capabilities
+                    .and_then(|c| c.tools.as_ref())
+                    .and_then(|tools| tools.list_changed)
+                    .unwrap_or(false),
+            resources: listens
+                && capabilities
+                    .and_then(|c| c.resources.as_ref())
+                    .and_then(|resources| resources.list_changed)
+                    .unwrap_or(false),
+            prompts: listens
+                && capabilities
+                    .and_then(|c| c.prompts.as_ref())
+                    .and_then(|prompts| prompts.list_changed)
+                    .unwrap_or(false),
+        };
         let stop = service.cancellation_token();
         let (done_tx, done) = watch::channel(false);
         tokio::spawn(async move {
@@ -338,8 +394,8 @@ impl Session {
             let _ = done_tx.send(true);
             let _ = events.send(SessionEvent::Closed);
         });
-        if subscribes {
-            tokio::spawn(watch_tool_list(peer.clone(), list_events));
+        if changes.any() {
+            tokio::spawn(watch_lists(peer.clone(), changes, list_events));
         }
         Ok(Self {
             peer,
@@ -347,12 +403,18 @@ impl Session {
             done,
             routes,
             instructions,
+            features,
         })
     }
 
     /// The server's instructions, if it gave any.
     pub fn instructions(&self) -> Option<&str> {
         self.instructions.as_deref()
+    }
+
+    /// What the server offers besides tools.
+    pub fn features(&self) -> Features {
+        self.features
     }
 
     /// Whether the connection has ended.
@@ -396,6 +458,155 @@ impl Session {
                 }
             })
             .collect())
+    }
+
+    /// Every resource, every page of `resources/list`.
+    pub async fn list_resources(&self) -> Result<Vec<ResourceInfo>, String> {
+        let resources =
+            self.peer.list_all_resources().await.map_err(|error| {
+                format!("cannot list the resources: {error}")
+            })?;
+        Ok(resources
+            .iter()
+            .filter_map(|resource| serde_json::to_value(resource).ok())
+            .map(|value| ResourceInfo {
+                uri: text(&value, "uri").unwrap_or_default(),
+                name: text(&value, "name").unwrap_or_default(),
+                title: text(&value, "title"),
+                description: text(&value, "description"),
+                mime_type: text(&value, "mimeType"),
+                size: value.get("size").and_then(Value::as_u64),
+            })
+            .collect())
+    }
+
+    /// Every resource template, every page of
+    /// `resources/templates/list`.
+    pub async fn list_templates(&self) -> Result<Vec<TemplateInfo>, String> {
+        let templates =
+            self.peer
+                .list_all_resource_templates()
+                .await
+                .map_err(|error| {
+                    format!("cannot list the resource templates: {error}")
+                })?;
+        Ok(templates
+            .iter()
+            .filter_map(|template| serde_json::to_value(template).ok())
+            .map(|value| TemplateInfo {
+                uri_template: text(&value, "uriTemplate").unwrap_or_default(),
+                name: text(&value, "name").unwrap_or_default(),
+                title: text(&value, "title"),
+                description: text(&value, "description"),
+                mime_type: text(&value, "mimeType"),
+            })
+            .collect())
+    }
+
+    /// Every prompt, every page of `prompts/list`.
+    pub async fn list_prompts(&self) -> Result<Vec<PromptInfo>, String> {
+        let prompts = self
+            .peer
+            .list_all_prompts()
+            .await
+            .map_err(|error| format!("cannot list the prompts: {error}"))?;
+        Ok(prompts
+            .iter()
+            .filter_map(|prompt| serde_json::to_value(prompt).ok())
+            .map(|value| PromptInfo {
+                name: text(&value, "name").unwrap_or_default(),
+                title: text(&value, "title"),
+                description: text(&value, "description"),
+                arguments: value
+                    .get("arguments")
+                    .and_then(Value::as_array)
+                    .map(|arguments| {
+                        arguments
+                            .iter()
+                            .map(|argument| PromptArgument {
+                                name: text(argument, "name")
+                                    .unwrap_or_default(),
+                                description: text(argument, "description"),
+                                required: argument
+                                    .get("required")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    /// `resources/read` of `uri`: its `ReadResourceResult` as JSON.
+    pub async fn read_resource(
+        &self,
+        uri: &str,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<Value, CallError> {
+        let request = ClientRequest::ReadResourceRequest(
+            ReadResourceRequest::new(ReadResourceRequestParams::new(uri)),
+        );
+        match self.request(request, timeout, cancel).await? {
+            ServerResult::ReadResourceResult(result) => {
+                serde_json::to_value(&result)
+                    .map_err(|error| CallError::Protocol(error.to_string()))
+            }
+            other => Err(unexpected(&other, "the resource")),
+        }
+    }
+
+    /// `prompts/get` of `name` with `arguments`: its `GetPromptResult` as
+    /// JSON.
+    pub async fn get_prompt(
+        &self,
+        name: &str,
+        arguments: JsonObject,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<Value, CallError> {
+        let mut params = GetPromptRequestParams::new(name);
+        params.arguments = Some(arguments);
+        let request =
+            ClientRequest::GetPromptRequest(GetPromptRequest::new(params));
+        match self.request(request, timeout, cancel).await? {
+            ServerResult::GetPromptResult(result) => {
+                serde_json::to_value(&result)
+                    .map_err(|error| CallError::Protocol(error.to_string()))
+            }
+            other => Err(unexpected(&other, "the prompt")),
+        }
+    }
+
+    /// Sends `request` and waits up to `timeout` for its answer, or until
+    /// `cancel`, which tells the server.
+    async fn request(
+        &self,
+        request: ClientRequest,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<ServerResult, CallError> {
+        let options = PeerRequestOptions::with_timeout(timeout);
+        let handle = self
+            .peer
+            .send_cancellable_request(request, options)
+            .await
+            .map_err(call_error)?;
+        let id = handle.id.clone();
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                let notice = CancelledNotificationParam::new(
+                    Some(id),
+                    Some("cancelled by tau".to_owned()),
+                );
+                let _ = self.peer.notify_cancelled(notice).await;
+                Err(CallError::Cancelled)
+            }
+            response = handle.await_response() => response.map_err(call_error),
+        }
     }
 
     /// Calls `tool` and returns its `CallToolResult` as JSON. `timeout`
@@ -623,23 +834,55 @@ fn call_error(error: ServiceError) -> CallError {
     }
 }
 
+/// The lists whose changes a session listens for.
+#[derive(Debug, Clone, Copy)]
+struct Changes {
+    tools: bool,
+    resources: bool,
+    prompts: bool,
+}
+
+impl Changes {
+    fn any(self) -> bool {
+        self.tools || self.resources || self.prompts
+    }
+}
+
 /// On the 2026-07-28 protocol, list changes come through
 /// `subscriptions/listen`; on older ones, as plain notifications to the
 /// handler.
-async fn watch_tool_list(
+async fn watch_lists(
     peer: Peer<RoleClient>,
+    changes: Changes,
     events: mpsc::UnboundedSender<SessionEvent>,
 ) {
-    let filter = SubscriptionFilter::builder().tools_list_changed().build();
-    let Ok(mut subscription) = peer.listen(filter).await else {
+    let mut filter = SubscriptionFilter::builder();
+    if changes.tools {
+        filter = filter.tools_list_changed();
+    }
+    if changes.resources {
+        filter = filter.resources_list_changed();
+    }
+    if changes.prompts {
+        filter = filter.prompts_list_changed();
+    }
+    let Ok(mut subscription) = peer.listen(filter.build()).await else {
         return;
     };
     while let Ok(Some(notification)) = subscription.next().await {
-        if matches!(
-            notification,
-            ServerNotification::ToolListChangedNotification(_)
-        ) && events.send(SessionEvent::ToolsChanged).is_err()
-        {
+        let event = match notification {
+            ServerNotification::ToolListChangedNotification(_) => {
+                SessionEvent::ToolsChanged
+            }
+            ServerNotification::ResourceListChangedNotification(_) => {
+                SessionEvent::ResourcesChanged
+            }
+            ServerNotification::PromptListChangedNotification(_) => {
+                SessionEvent::PromptsChanged
+            }
+            _ => continue,
+        };
+        if events.send(event).is_err() {
             return;
         }
     }
@@ -674,6 +917,21 @@ async fn end_group(group: i32) {
     }
     // SAFETY: as above.
     unsafe { libc::kill(-group, libc::SIGKILL) };
+}
+
+/// The error for an answer that is not the one asked for.
+fn unexpected(result: &ServerResult, what: &str) -> CallError {
+    CallError::Protocol(match result {
+        ServerResult::InputRequiredResult(_) => {
+            "the server asked for input, which tau cannot give".to_owned()
+        }
+        _ => format!("the server's answer is not {what}"),
+    })
+}
+
+/// The string field `key` of `value`.
+fn text(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
 /// What a failed connect says.

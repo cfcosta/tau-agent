@@ -28,6 +28,7 @@ use crate::{
     },
     connection::{Connection, Environment, State},
     names::tool_names,
+    resources::{self, Kind, ResourceTool},
     results::Spill,
     tool::McpTool,
 };
@@ -168,6 +169,10 @@ impl McpPluginBuilder {
 /// - Every tool that is not `hidden` is in the plugin's tool source, as
 ///   `Nested`, so Codemode scripts call it, and reach a server that
 ///   connected after the run started.
+/// - Servers' resources are read through three tools of the plugin's
+///   ([`crate::resources`]), as exposed as the widest server that offers
+///   resources: added in `start` when that one is `direct`, in the tool
+///   source as `Nested` whenever there is one.
 /// - The connections are the agent's: shared by every run, and closed
 ///   once nothing holds them (the plugin dropped, and the runs that used
 ///   them ended), or by [`McpPlugin::shutdown`].
@@ -268,6 +273,19 @@ impl McpPlugin {
             .cloned()
     }
 
+    /// The resource tools as the servers offer resources now: none when
+    /// no server that is not hidden does, else all three, `Nested`. Their
+    /// exposure is [`McpPlugin::resource_exposure`].
+    pub fn resource_tools(&self) -> Vec<Arc<ResourceTool>> {
+        self.shared.resource_tools()
+    }
+
+    /// The resource tools' exposure: the widest among the servers that
+    /// offer resources, `None` without any ([`resources::exposure`]).
+    pub fn resource_exposure(&self) -> Option<Exposure> {
+        self.shared.resource_exposure()
+    }
+
     /// The `<mcp_servers>` block as a run would get it now.
     pub fn servers_block(&self) -> Option<String> {
         self.shared.servers_block()
@@ -336,6 +354,35 @@ impl Shared {
         let tools = Arc::new(tools);
         *cache = Some((key, tools.clone()));
         tools
+    }
+
+    fn resource_exposure(&self) -> Option<Exposure> {
+        resources::exposure(
+            self.enabled()
+                .map(|c| (c.config().exposure, c.offers_resources())),
+        )
+    }
+
+    fn resource_tools(&self) -> Vec<Arc<ResourceTool>> {
+        if self.resource_exposure().is_none() {
+            return Vec::new();
+        }
+        let connections: Vec<Arc<Connection>> = self
+            .enabled()
+            .filter(|c| c.config().exposure != Exposure::Hidden)
+            .cloned()
+            .collect();
+        Kind::ALL
+            .into_iter()
+            .map(|kind| {
+                Arc::new(ResourceTool::new(
+                    kind,
+                    connections.clone(),
+                    ToolExposure::Nested,
+                    self.spill.clone(),
+                ))
+            })
+            .collect()
     }
 
     /// A server's description: its entry's, else the first line of its
@@ -460,10 +507,16 @@ struct Source(Arc<Shared>);
 #[async_trait]
 impl ToolSource for Source {
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
+        let resource_tools = self.0.resource_tools();
         self.0
             .tools()
             .iter()
             .map(|tool| tool.clone() as Arc<dyn AgentTool>)
+            .chain(
+                resource_tools
+                    .into_iter()
+                    .map(|tool| tool as Arc<dyn AgentTool>),
+            )
             .collect()
     }
 
@@ -544,6 +597,11 @@ impl Plugin for McpPlugin {
         self.shared.wait_for_direct(&ctx.cancel).await;
         for tool in self.shared.tools().iter() {
             if tool.configured_exposure() == Exposure::Direct {
+                plan.add_tool(Arc::new(tool.exposed(ToolExposure::Direct)));
+            }
+        }
+        if self.shared.resource_exposure() == Some(Exposure::Direct) {
+            for tool in self.shared.resource_tools() {
                 plan.add_tool(Arc::new(tool.exposed(ToolExposure::Direct)));
             }
         }

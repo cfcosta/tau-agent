@@ -523,3 +523,147 @@ fn the_server_list_fits_its_limits(tc: TestCase) {
         None => assert_eq!(kept.len(), servers.len()),
     }
 }
+
+/// A direct server with resources declares the resource tools, and the
+/// model lists and reads its resources.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_model_reads_a_resource() {
+    let fixture = Fixture::with_features(false);
+    let plugin = plugin(&fixture, |_| {});
+    let store = Store::memory().await.unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("list_mcp_resources", json!({})))
+        .turn(|t| {
+            t.tool_call(
+                "read_mcp_resource",
+                json!({"server": "srv", "uri": "file:///notes.txt"}),
+            )
+        })
+        .turn(|t| {
+            t.tool_call(
+                "list_mcp_resource_templates",
+                json!({"server": "nope"}),
+            )
+        })
+        .turn(|t| t.text("done"));
+    let agent = Agent::new(llm.clone()).plugin(plugin.clone());
+    run(&agent, &store).await;
+
+    let tools = declared(&llm, 0);
+    for name in [
+        "list_mcp_resources",
+        "list_mcp_resource_templates",
+        "read_mcp_resource",
+    ] {
+        assert!(tools.contains(&name.to_owned()), "{tools:?}");
+    }
+    let (listed, failed) = last_result(&llm, 1);
+    assert!(!failed);
+    let listed: Value = serde_json::from_str(&listed).unwrap();
+    assert_eq!(
+        listed["resources"][0],
+        json!({"server": "srv", "uri": "file:///notes.txt", "name": "notes", "title": "Notes", "mimeType": "text/plain"})
+    );
+    assert!(!listed.to_string().contains("ui://"));
+    assert_eq!(
+        last_result(&llm, 2),
+        ("Remember the milk.".to_owned(), false)
+    );
+    assert_eq!(
+        last_result(&llm, 3),
+        (
+            "Unknown MCP server `nope`; servers with resources: srv".to_owned(),
+            true
+        )
+    );
+    plugin.shutdown().await;
+}
+
+/// With only codemode servers offering resources, the resource tools are
+/// `Nested`: not declared, called from tools, with `{ server, uri,
+/// contents }` for scripts.
+#[tokio::test(flavor = "multi_thread")]
+async fn codemode_servers_make_the_resource_tools_nested() {
+    let fixture = Fixture::with_features(false);
+    let plugin =
+        plugin(&fixture, |config| config.exposure = Exposure::Codemode);
+    let store = Store::memory().await.unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "caller",
+                json!({
+                    "name": "read_mcp_resource",
+                    "args": {"server": "srv", "uri": "file:///notes.txt"},
+                    "wait": ["mcp__srv"]
+                }),
+            )
+        })
+        .turn(|t| t.text("done"));
+    let agent = Agent::new(llm.clone()).tool(Caller).plugin(plugin.clone());
+    run(&agent, &store).await;
+
+    assert_eq!(declared(&llm, 0), ["caller"]);
+    assert_eq!(plugin.resource_exposure(), Some(Exposure::Codemode));
+    let (nested, failed) = last_result(&llm, 1);
+    assert!(!failed);
+    let nested: Value = serde_json::from_str(&nested).unwrap();
+    assert_eq!(nested["result"]["ok"], json!("Remember the milk."));
+    assert_eq!(
+        nested["result"]["structured"],
+        json!({
+            "server": "srv",
+            "uri": "file:///notes.txt",
+            "contents": [{"uri": "file:///notes.txt", "mimeType": "text/plain", "text": "Remember the milk."}]
+        })
+    );
+    for name in ["list_mcp_resources", "read_mcp_resource"] {
+        assert!(
+            nested["tools"].as_array().unwrap().contains(&json!(name)),
+            "{nested}"
+        );
+    }
+    plugin.shutdown().await;
+}
+
+/// Without a server that offers resources, or with only hidden ones,
+/// there are no resource tools.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_resource_tools_without_servers_that_offer_them() {
+    let plain = Fixture::new(false);
+    let hidden = Fixture::with_features(false);
+    let plugin = McpPlugin::builder()
+        .env(Arc::new(|_| None))
+        .home(None)
+        .server(ServerConfig::new("plain", Transport::Stream(plain.dial())))
+        .server({
+            let mut config =
+                ServerConfig::new("secret", Transport::Stream(hidden.dial()));
+            config.exposure = Exposure::Hidden;
+            config
+        })
+        .startup_wait(Duration::from_secs(5))
+        .build();
+    let store = Store::memory().await.unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "caller",
+                json!({"name": "list_mcp_resources", "args": {}, "wait": ["plain", "secret"]}),
+            )
+        })
+        .turn(|t| t.text("done"));
+    let agent = Agent::new(llm.clone()).tool(Caller).plugin(plugin.clone());
+    run(&agent, &store).await;
+
+    assert!(!declared(&llm, 0).iter().any(|t| t.contains("resource")));
+    let (result, _) = last_result(&llm, 1);
+    let result: Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(
+        result["result"]["err"],
+        json!("Tool list_mcp_resources not found")
+    );
+    assert_eq!(plugin.resource_exposure(), None);
+    assert!(plugin.resource_tools().is_empty());
+    plugin.shutdown().await;
+}
