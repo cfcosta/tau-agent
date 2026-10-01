@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
+    limits::Limits,
     tool::{AgentTool, ToolCtx, ToolError, ToolOutput},
 };
 use tau_ai::responses::request::ReasoningEffort;
@@ -572,5 +573,58 @@ fn a_call_can_pick_its_model_and_effort() {
                 ChildModel::default(),
             ]
         );
+    });
+}
+
+/// A sub-agent stopped by a limit has its work committed at its end, as
+/// any run at a limit does, and then dropped by `delegate`, which counts
+/// the limit as a failure.
+///
+/// `RunWorkspace::finish` commits what a run at a limit left in `@`, so
+/// that no work is lost (ADR 0014). `SubAgent::ask` turns any stop but
+/// `Stop` into an error, and `Delegate::call` abandons the sub-agent's
+/// changes on any error, the commit `finish` just made among them. The
+/// caller gets `delegate ended with Limit(Turns) before finishing` and
+/// none of the work; the operation log alone keeps it.
+///
+/// Fix options:
+/// - land a sub-agent stopped by a limit like one that finished, with a
+///   note that it was cut short, since its work is committed;
+/// - keep dropping it, and say in `docs/reference/vcs.md` ("Delegating to
+///   a sub-agent", step 5) that a limit counts as a failure.
+///
+/// The first matches what `RunWorkspace` does with a run at a limit, and
+/// is the recommendation; it is a decision for the user.
+#[test]
+#[ignore = "bug: a sub-agent stopped by a limit has its committed work dropped"]
+fn a_sub_agent_at_a_limit_lands_its_work() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| t.tool_call("delegate", json!({ "task": "write" })))
+            .turn(|t| t.text("done"));
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let outcome = delegating(llm.clone(), &parent, |workspace| {
+            let script = ScriptedModel::new()
+                .turn(|t| {
+                    t.tool_call("write", write("child.txt"))
+                        .tool_call("vcs_commit", commit("feat: child"))
+                })
+                .turn(|t| t.text("never asked"));
+            Ok(coder(script, &workspace).limits(Limits {
+                max_turns: Some(1),
+                ..Limits::default()
+            }))
+        })
+        .run("delegate a write", &store)
+        .await
+        .unwrap();
+        assert_eq!(outcome.text, "done");
+        let result = format!("{:?}", llm.requests()[1].transcript);
+        assert!(parent.dir().join("child.txt").exists(), "{result}");
     });
 }
