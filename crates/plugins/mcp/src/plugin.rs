@@ -28,6 +28,7 @@ use crate::{
     },
     connection::{Connection, Environment, State},
     names::tool_names,
+    prompts,
     resources::{self, Kind, ResourceTool},
     results::Spill,
     tool::McpTool,
@@ -284,6 +285,30 @@ impl McpPlugin {
     /// offer resources, `None` without any ([`resources::exposure`]).
     pub fn resource_exposure(&self) -> Option<Exposure> {
         self.shared.resource_exposure()
+    }
+
+    /// Every prompt the servers that are on offer now, with the command
+    /// that gets it.
+    pub fn prompts(&self) -> Vec<prompts::Prompt> {
+        let enabled: Vec<Arc<Connection>> =
+            self.shared.enabled().cloned().collect();
+        prompts::prompts(&enabled)
+    }
+
+    /// Gets the prompt whose command is `command` with the `key=value`
+    /// pairs of `arguments`, and gives its messages as text.
+    pub async fn get_prompt(
+        &self,
+        command: &str,
+        arguments: &str,
+        cancel: &CancellationToken,
+    ) -> Result<String, String> {
+        let prompt = self
+            .prompts()
+            .into_iter()
+            .find(|prompt| prompt.command == command)
+            .ok_or_else(|| format!("No MCP prompt /{command} here."))?;
+        prompt.get(arguments, cancel).await
     }
 
     /// The `<mcp_servers>` block as a run would get it now.
