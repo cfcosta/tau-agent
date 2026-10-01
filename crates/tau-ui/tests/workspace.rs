@@ -1296,6 +1296,82 @@ fn the_constitution_counts_its_runs_and_lists_what_waits(
     });
 }
 
+/// The Constitution screen sets what Jev's failures do and how many
+/// answers go back, within bounds, and removes unreadable rules only
+/// once confirmed.
+#[gpui::test]
+fn the_constitution_settings_and_reset(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let settings = |events: &[WorkspaceEvent]| -> Vec<(bool, u32)> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                WorkspaceEvent::ConstitutionSettings {
+                    blocks_unchecked,
+                    max_holds,
+                    ..
+                } => Some((*blocks_unchecked, *max_holds)),
+                _ => None,
+            })
+            .collect()
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(
+            Route::Constitution {
+                repo: "tau-agent".into(),
+                rule: None,
+            },
+            cx,
+        );
+        ws.set_blocks_unchecked("tau-agent", true, cx);
+        // From 3: down past 0, then up past the most.
+        for _ in 0..5 {
+            ws.nudge_max_holds("tau-agent", -1, cx);
+        }
+        for _ in 0..15 {
+            ws.nudge_max_holds("tau-agent", 1, cx);
+        }
+    });
+    cx.run_until_parked();
+    let saved = settings(&events.borrow());
+    assert_eq!(saved[0], (true, 3));
+    assert_eq!(saved[5], (true, 0), "never below none");
+    assert_eq!(
+        saved.last(),
+        Some(&(true, tau_ui::rule_editor::MAX_HOLDS)),
+        "never past the most"
+    );
+    // Rules that cannot be read: removed only once confirmed.
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.repos[0].constitution.error =
+            Some("R1: review is past block".into());
+        let repo = catalog.repos[0].name.clone();
+        ws.set_catalog(catalog, cx);
+        ws.navigate(
+            Route::Constitution {
+                repo: repo.clone(),
+                rule: None,
+            },
+            cx,
+        );
+        ws.ask_reset_rules(Some(&repo), cx);
+    });
+    cx.run_until_parked();
+    let resets = |events: &[WorkspaceEvent]| {
+        events
+            .iter()
+            .filter(|event| matches!(event, WorkspaceEvent::ResetRules { .. }))
+            .count()
+    };
+    assert_eq!(resets(&events.borrow()), 0, "asking is not removing");
+    workspace.update(&mut cx, |ws, cx| {
+        let repo = ws.catalog().repos[0].name.clone();
+        ws.reset_rules(&repo, cx);
+    });
+    assert_eq!(resets(&events.borrow()), 1);
+}
+
 #[gpui::test]
 fn the_typesafe_key_is_asked_for_and_forgotten(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);

@@ -41,9 +41,10 @@ pub fn render(
         .flex_col()
         .gap(sp(4.5))
         .child(header(repo, empty, compact, t, cx))
-        .when_some(broken(&constitution, repo, t), |screen, banner| {
-            screen.child(banner)
-        })
+        .when_some(
+            broken(ws, &constitution, repo, jev, t, cx),
+            |screen, banner| screen.child(banner),
+        )
         .when(!jev && constitution.error.is_none(), |screen| {
             screen.child(no_key(compact, t, cx))
         })
@@ -74,6 +75,9 @@ pub fn render(
                         review(ws, repo, &constitution, compact, t, cx)
                             .into_any_element()
                     }
+                })
+                .when(ws.rules_tab() == RulesTab::Rules, |screen| {
+                    screen.child(settings(repo, &constitution, t, cx))
                 })
                 .when(ws.rules_tab() == RulesTab::Rules && !compact, |screen| {
                     screen.child(legend(t))
@@ -152,9 +156,72 @@ fn header(
         })
 }
 
-/// Rules that cannot be read from the store: why, and what it means.
-fn broken(constitution: &Constitution, repo: &str, t: &Theme) -> Option<Div> {
+/// Rules that cannot be read from the store: why, what it means, and
+/// the way out: removing them, once confirmed.
+fn broken(
+    ws: &Workspace,
+    constitution: &Constitution,
+    repo: &str,
+    jev: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Option<Div> {
     let error = constitution.error.clone()?;
+    // Without a key no run checks rules, so none fails on them yet.
+    let title = if jev {
+        format!(
+            "The rules for {repo} can't be read, so runs in {repo} fail at start"
+        )
+    } else {
+        format!(
+            "The rules for {repo} can't be read: once a TypeSafe key is \
+             added, runs in {repo} fail at start until they can"
+        )
+    };
+    let confirming = ws.resetting_rules.as_deref() == Some(repo);
+    let (ask, remove) = (repo.to_owned(), repo.to_owned());
+    let actions =
+        div()
+            .flex()
+            .items_center()
+            .gap(sp(2.))
+            .when(!confirming, |row| {
+                row.child(
+                    div()
+                        .id("reset-rules")
+                        .child(ui::button(
+                            "Remove these rules",
+                            ButtonKind::Danger,
+                            t,
+                        ))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.ask_reset_rules(Some(&ask), cx)
+                        })),
+                )
+            })
+            .when(confirming, |row| {
+                row.child(ui::text(
+                    "This deletes them for good, so you can write them again.",
+                    Type::SMALL,
+                    t.text_soft,
+                ))
+                .child(
+                    div()
+                        .id("reset-rules-confirm")
+                        .child(ui::button("Delete", ButtonKind::Danger, t))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.reset_rules(&remove, cx)
+                        })),
+                )
+                .child(
+                    div()
+                        .id("reset-rules-keep")
+                        .child(ui::button("Keep", ButtonKind::Secondary, t))
+                        .on_click(cx.listener(|ws, _, _, cx| {
+                            ws.ask_reset_rules(None, cx)
+                        })),
+                )
+            });
     Some(
         div()
             .flex()
@@ -172,12 +239,131 @@ fn broken(constitution: &Constitution, repo: &str, t: &Theme) -> Option<Div> {
                     .flex()
                     .flex_col()
                     .gap(sp(2.))
-                    .child(div().font_weight(weight::STRONG).child(format!(
-                        "The rules for {repo} can't be read, so runs in {repo} fail at start"
-                    )))
-                    .child(ui::text(error, Type::SMALL, t.text_soft)),
+                    .child(div().font_weight(weight::STRONG).child(title))
+                    .child(ui::text(error, Type::SMALL, t.text_soft))
+                    .child(actions),
             ),
     )
+}
+
+/// How the checks behave beyond each rule: what happens when Jev cannot
+/// answer, and how many times an answer may go back.
+fn settings(
+    repo: &str,
+    constitution: &Constitution,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let row = || {
+        div()
+            .flex()
+            .items_center()
+            .gap(sp(4.))
+            .px(sp(4.))
+            .py(sp(3.))
+            .border_b_1()
+            .border_color(t.border)
+    };
+    let what = |name: &str, caption: String| {
+        div()
+            .flex_1()
+            .min_w(px(0.))
+            .flex()
+            .flex_col()
+            .gap(sp(0.75))
+            .child(name.to_owned())
+            .child(ui::text(caption, Type::CAPTION, t.muted))
+    };
+    let segment = |label: &'static str, on: bool, blocks: bool| {
+        let repo = repo.to_owned();
+        div()
+            .id(SharedString::from(format!("on-error-{label}")))
+            .h(px(28.))
+            .px(sp(3.))
+            .flex()
+            .items_center()
+            .rounded(radius::CONTROL)
+            .typeset(Type::CAPTION)
+            .cursor_pointer()
+            .text_color(if on { t.text } else { t.muted })
+            .when(on, |segment| segment.key(t))
+            .child(label)
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                ws.set_blocks_unchecked(&repo, blocks, cx)
+            }))
+    };
+    let blocks = constitution.blocks_unchecked;
+    let step = |label: &'static str, delta: i32, id: &'static str| {
+        let repo = repo.to_owned();
+        div()
+            .id(id)
+            .child(ui::button(label, ButtonKind::Secondary, t))
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                ws.nudge_max_holds(&repo, delta, cx)
+            }))
+    };
+    let holds = constitution.max_holds;
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(2.))
+        .child(heading("Settings", t))
+        .child(
+            ui::card(t)
+                .child(
+                    row()
+                        .child(what(
+                            "When Jev can't answer",
+                            if blocks {
+                                "Calls it could not check are refused, and \
+                                 answers sent back while holds are left."
+                                    .into()
+                            } else {
+                                "Calls it could not check run, and answers \
+                                 stand; each is noted."
+                                    .into()
+                            },
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .gap(sp(0.5))
+                                .p(sp(0.5))
+                                .rounded(radius::BOX)
+                                .well(t)
+                                .child(segment("Let through", !blocks, false))
+                                .child(segment("Refuse", blocks, true)),
+                        ),
+                )
+                .child(
+                    row()
+                        .child(what(
+                            "Answers sent back per run",
+                            match holds {
+                                0 => "A final answer that breaks a rule \
+                                      stands, flagged."
+                                    .into(),
+                                n => format!(
+                                    "Up to {n}; past that, an answer that \
+                                     breaks a rule stands, flagged."
+                                ),
+                            },
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(sp(2.))
+                                .child(step("−", -1, "max-holds-less"))
+                                .child(mono(
+                                    holds.to_string(),
+                                    Type::BODY,
+                                    t.text,
+                                ))
+                                .child(step("+", 1, "max-holds-more")),
+                        ),
+                ),
+        )
 }
 
 /// Without a TypeSafe key nothing is checked: say so, and where to fix it.

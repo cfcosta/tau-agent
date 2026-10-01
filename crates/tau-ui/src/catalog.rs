@@ -251,7 +251,11 @@ pub struct Link {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Constitution {
     pub rules: Vec<Rule>,
-    pub max_continuations: u32,
+    /// How many times one run's final answer may be sent back.
+    pub max_holds: u32,
+    /// What Jev cannot answer is refused (`on_error = "block"`), not
+    /// let through.
+    pub blocks_unchecked: bool,
     /// Why the rules could not be read from the store, if they could
     /// not: runs fail until they can.
     pub error: Option<String>,

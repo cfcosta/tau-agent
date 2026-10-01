@@ -78,8 +78,15 @@ whether it was sent back (`held`).
   - **Review:** flagged calls and answers, with the rule and the score
     against its thresholds; Looks fine takes one off the queue. Next to
     it, what the rules handled on their own.
+  - **Settings:** what happens when Jev cannot answer (Let through, or
+    Refuse: `on_error`), and how many times one run's answer may be
+    sent back (`max_holds`, 0 to 10). Saved like the rules, and read at
+    the next check.
   - **Rules that cannot be read** from the store: why, and that runs in
-    the repository fail at start until they can.
+    the repository fail at start until they can (once there is a
+    TypeSafe key; without one nothing is checked). No edit can fix
+    them, so the banner offers to remove them, once confirmed
+    (`Host::reset_rules`), to start again.
 - Checks need a TypeSafe key, added on the Models screen and kept in
   tau's config directory (`typesafe-key`), readable only by the user.
   Without one, runs are not checked and the screen says so.

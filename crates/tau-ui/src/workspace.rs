@@ -193,6 +193,17 @@ pub enum WorkspaceEvent {
         repo: String,
         id: String,
     },
+    /// The constitution's settings: whether what Jev cannot answer is
+    /// refused, and how many times an answer may be sent back.
+    ConstitutionSettings {
+        repo: String,
+        blocks_unchecked: bool,
+        max_holds: u32,
+    },
+    /// Replace a constitution that cannot be read with an empty one.
+    ResetRules {
+        repo: String,
+    },
     /// Save the TypeSafe key tau-constitution checks with, or forget it.
     JevKey {
         key: Option<String>,
@@ -505,6 +516,9 @@ pub struct Workspace {
     pub(crate) rule_draft: Option<crate::rule_editor::RuleDraft>,
     pub(crate) rules_tab: crate::rule_editor::RulesTab,
     pub(crate) rule_menu: Option<String>,
+    /// The repository whose unreadable rules the user asked to remove,
+    /// waiting for them to confirm.
+    pub(crate) resetting_rules: Option<String>,
     /// The dialog that asks for the TypeSafe key, with its field.
     pub(crate) adding_jev_key: bool,
     pub(crate) jev_key: Entity<TextInput>,
@@ -778,6 +792,7 @@ impl Workspace {
             rule_draft: None,
             rules_tab: Default::default(),
             rule_menu: None,
+            resetting_rules: None,
             adding_jev_key: false,
             jev_key,
             slash_selected: 0,

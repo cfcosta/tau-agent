@@ -1167,6 +1167,87 @@ fn a_finished_run_goes_on_in_its_workspace() {
     assert_eq!(prompts, ["write a.txt", "now b.txt"]);
 }
 
+/// A stored constitution that cannot be read can be removed from the
+/// UI, which no edit could do, and its settings are saved like its
+/// rules.
+#[test]
+fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("runs.db");
+    let (host, _events) =
+        host_with_store(ScriptedModel::new(), dir.path(), &db);
+    let key = host
+        .project_of(REPO)
+        .unwrap()
+        .root()
+        .canonicalize()
+        .unwrap()
+        .display()
+        .to_string();
+    let store = || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let store = runtime.block_on(Store::open(&db)).unwrap();
+        (runtime, store)
+    };
+    // Flagged past where it blocks: it does not check.
+    let (runtime, written) = store();
+    runtime
+        .block_on(written.save_constitution(
+            &key,
+            &tau_store::StoredConstitution {
+                on_error: "allow".into(),
+                max_holds: 3,
+                rules: vec![tau_store::StoredRule {
+                    id: "R1".into(),
+                    text: "Name the tests.".into(),
+                    targets: vec!["final answer".into()],
+                    review: 0.9,
+                    block: 0.2,
+                }],
+            },
+        ))
+        .unwrap();
+    let constitution = || host.catalog().repos[0].constitution.clone();
+    assert!(constitution().error.is_some());
+    let add = |host: &Host| {
+        host.edit_rules(REPO, |rules| {
+            rules
+                .add("No unwrap.", &["write.content".into()], 0.5, 0.8)
+                .map(drop)
+        })
+    };
+    assert!(
+        add(&host).is_err(),
+        "no edit gets past rules that cannot be read"
+    );
+
+    host.reset_rules(REPO).unwrap();
+    let reset = constitution();
+    assert_eq!((reset.error, reset.rules.len()), (None, 0));
+    add(&host).unwrap();
+    assert_eq!(constitution().rules.len(), 1);
+
+    host.edit_rules(REPO, |rules| {
+        rules.on_error = tau_constitution::OnError::Block;
+        rules.max_holds = 5;
+        Ok(())
+    })
+    .unwrap();
+    let saved = constitution();
+    assert!(saved.blocks_unchecked);
+    assert_eq!(saved.max_holds, 5);
+    let (runtime, read) = store();
+    let stored = runtime
+        .block_on(tau_constitution::Constitution::load(&read, &key))
+        .unwrap();
+    assert_eq!(stored.on_error, tau_constitution::OnError::Block);
+    assert_eq!((stored.max_holds, stored.rules.len()), (5, 1));
+}
+
 #[test]
 fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     let dir = tempfile::tempdir().unwrap();

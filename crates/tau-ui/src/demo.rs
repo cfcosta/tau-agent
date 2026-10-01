@@ -1415,7 +1415,8 @@ pub fn catalog() -> Catalog {
                     ],
                 },
                 constitution: Constitution {
-                    max_continuations: 3,
+                    max_holds: 3,
+                    blocks_unchecked: false,
                     error: None,
                     rules: vec![
                         rule("D1", "Never rebuild the whole index to fix one document.", &["bash.command"], 0.30, 0.70),
@@ -1559,7 +1560,8 @@ fn tau_agent_memory(note: NoteFn<'_>, link: LinkFn<'_>) -> Memory {
 /// tau-agent's rules.
 fn tau_agent_rules(rule: RuleFn<'_>) -> Constitution {
     Constitution {
-        max_continuations: 3,
+        max_holds: 3,
+        blocks_unchecked: false,
         error: None,
         rules: vec![
             rule(

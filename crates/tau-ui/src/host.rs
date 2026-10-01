@@ -1549,7 +1549,9 @@ impl Host {
                     block: rule.block as f32,
                 })
                 .collect(),
-            max_continuations: loaded.max_holds,
+            max_holds: loaded.max_holds,
+            blocks_unchecked: loaded.on_error
+                == tau_constitution::OnError::Block,
             error,
         }
     }
@@ -1572,6 +1574,26 @@ impl Host {
             constitution.save(&self.store, &Self::constitution_key(&slot)),
         )?;
         live.set(constitution);
+        Ok(())
+    }
+
+    /// Replaces a repository's stored constitution with an empty one:
+    /// the way out when the stored one cannot be read, which no edit can
+    /// fix. Runs going on check with no rules from their next tool call.
+    pub fn reset_rules(&self, repo: &str) -> anyhow::Result<()> {
+        let slot = self
+            .slot(repo)
+            .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
+        let key = Self::constitution_key(&slot);
+        let fresh = Constitution::default();
+        self.runtime.block_on(fresh.save(&self.store, &key))?;
+        let mut open = self.constitutions.lock().expect("not poisoned");
+        match open.get(&key) {
+            Some(live) => live.set(fresh),
+            None => {
+                open.insert(key, Live::new(fresh));
+            }
+        }
         Ok(())
     }
 
@@ -2600,6 +2622,38 @@ impl Host {
                             .update(cx, |ws, cx| ws.apply(HostUpdate::QueryResult(result), cx));
                     })
                     .detach();
+                }
+                WorkspaceEvent::ConstitutionSettings {
+                    repo,
+                    blocks_unchecked,
+                    max_holds,
+                } => {
+                    let saved = handler.edit_rules(repo, |rules| {
+                        rules.on_error = if *blocks_unchecked {
+                            tau_constitution::OnError::Block
+                        } else {
+                            tau_constitution::OnError::Allow
+                        };
+                        rules.max_holds = *max_holds;
+                        Ok(())
+                    });
+                    let catalog = handler.catalog();
+                    workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::catalog(catalog), cx);
+                        if let Err(error) = saved {
+                            ws.apply(HostUpdate::alert("Could not save the constitution", format!("{error:#}")), cx);
+                        }
+                    });
+                }
+                WorkspaceEvent::ResetRules { repo } => {
+                    let reset = handler.reset_rules(repo);
+                    let catalog = handler.catalog();
+                    workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::catalog(catalog), cx);
+                        if let Err(error) = reset {
+                            ws.apply(HostUpdate::alert("Could not remove the rules", format!("{error:#}")), cx);
+                        }
+                    });
                 }
                 WorkspaceEvent::RemoveRule { repo, id } => {
                     let removed = handler.edit_rules(repo, |rules| {

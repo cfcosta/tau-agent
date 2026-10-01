@@ -112,6 +112,10 @@ pub enum RulesTab {
     Review,
 }
 
+/// The most times the Constitution screen lets one run's answer be sent
+/// back.
+pub const MAX_HOLDS: u32 = 10;
+
 /// What a repository's runs say about its constitution.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RulesStats {
@@ -410,6 +414,76 @@ impl Workspace {
             }
         }
         (calls, answers)
+    }
+
+    /// Sets what tau-constitution does with what Jev cannot answer in
+    /// `repo`: refuse it, or let it through.
+    pub fn set_blocks_unchecked(
+        &mut self,
+        repo: &str,
+        blocks: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let max_holds = self.repo_named(repo).constitution.max_holds;
+        self.save_constitution_settings(repo, blocks, max_holds, cx);
+    }
+
+    /// Changes how many times one run's answer may be sent back in
+    /// `repo`, by `delta`, from 0 to [`MAX_HOLDS`].
+    pub fn nudge_max_holds(
+        &mut self,
+        repo: &str,
+        delta: i32,
+        cx: &mut Context<Self>,
+    ) {
+        let constitution = &self.repo_named(repo).constitution;
+        let max_holds = constitution
+            .max_holds
+            .saturating_add_signed(delta)
+            .min(MAX_HOLDS);
+        let blocks = constitution.blocks_unchecked;
+        self.save_constitution_settings(repo, blocks, max_holds, cx);
+    }
+
+    fn save_constitution_settings(
+        &mut self,
+        repo: &str,
+        blocks_unchecked: bool,
+        max_holds: u32,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(repo) =
+            self.catalog.repos.iter_mut().find(|r| r.name == repo)
+        {
+            repo.constitution.blocks_unchecked = blocks_unchecked;
+            repo.constitution.max_holds = max_holds;
+        }
+        cx.emit(WorkspaceEvent::ConstitutionSettings {
+            repo: repo.to_owned(),
+            blocks_unchecked,
+            max_holds,
+        });
+        cx.notify();
+    }
+
+    /// Asks to remove `repo`'s unreadable rules; the banner asks to
+    /// confirm. `None` takes the question back.
+    pub fn ask_reset_rules(
+        &mut self,
+        repo: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        self.resetting_rules = repo.map(str::to_owned);
+        cx.notify();
+    }
+
+    /// Removes `repo`'s unreadable rules, as confirmed.
+    pub fn reset_rules(&mut self, repo: &str, cx: &mut Context<Self>) {
+        self.resetting_rules = None;
+        cx.emit(WorkspaceEvent::ResetRules {
+            repo: repo.to_owned(),
+        });
+        cx.notify();
     }
 
     pub fn rules_tab(&self) -> RulesTab {
