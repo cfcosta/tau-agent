@@ -36,6 +36,16 @@ impl RunCx for Anchors {
         false
     }
 
+    fn dropped(&mut self, _: &str, _: tau_ui_plugin::Dropped) -> bool {
+        false
+    }
+
+    fn cut(&mut self, _: &str, _: tau_ui_plugin::OutputCut) -> bool {
+        false
+    }
+
+    fn rewrite(&mut self, _: &str) {}
+
     fn cards(&self) -> Vec<CardInfo> {
         Vec::new()
     }

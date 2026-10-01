@@ -1374,14 +1374,6 @@ impl Workspace {
                 repo: self.selected_repo()?.to_owned(),
                 rule: None,
             }),
-            PluginScreen::Ledger => {
-                // The current run's ledger, or the latest run that has one.
-                let has = |run: &RunView| run.last_rewrite().is_some();
-                self.current()
-                    .filter(|run| has(run))
-                    .or_else(|| self.runs.iter().find(|run| has(run)))
-                    .map(|run| Route::Ledger(run.id.clone()))
-            }
         }
     }
 
@@ -1420,10 +1412,6 @@ impl Workspace {
         }
         match plugin.screen? {
             PluginScreen::Plan => Some(Route::Plan(run.clone())),
-            PluginScreen::Ledger => self
-                .run(run)
-                .filter(|run| run.last_rewrite().is_some())
-                .map(|run| Route::Ledger(run.id.clone())),
             _ => self.plugin_route(plugin),
         }
     }
@@ -3688,9 +3676,6 @@ impl Workspace {
                     t,
                     cx,
                 )
-            }
-            Route::Ledger(run) => {
-                screens::ledger::render(self, run, compact, t, cx)
             }
             Route::Setup(_) | Route::Pair(_) | Route::PullRequest(_) => {
                 self.focused(compact, t, cx)

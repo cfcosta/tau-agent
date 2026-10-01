@@ -46,6 +46,7 @@
 //!   deduplicated, sorted result without a separate sort step.
 
 mod plugin;
+pub mod ui;
 
 use std::{collections::BTreeSet, ops::Range};
 

@@ -21,6 +21,9 @@ pub struct RunInfo {
     pub live: bool,
     /// Its title.
     pub title: String,
+    /// The tokens in its context, and its model's window when known.
+    pub context: u64,
+    pub window: Option<u64>,
 }
 
 /// A page to open: a plugin's page and its parameters. A parameter

@@ -21,7 +21,6 @@ use super::{
     bar,
     button,
     diff_card,
-    dot,
     icon,
     link,
     listing_card,
@@ -40,10 +39,10 @@ use crate::{
     view::{
         DiffKind,
         DiffLine,
+        Dropped,
         Item,
         NoteBody,
         PluginNote,
-        Pruned,
         RunView,
         ToolBody,
         ToolCard,
@@ -173,22 +172,31 @@ fn item_view(
             fork_ready(ws, run, fork, t, compact, cx).into_any_element()
         }
         Item::Tau(text) => tau_message(text, t).into_any_element(),
+        // The plugin that named its rewrite draws it.
         Item::Rewrite {
             plugin,
-            tokens_before,
-            tokens_after,
-            detail,
-        } => rewrite(
-            run,
-            plugin,
-            *tokens_before,
-            *tokens_after,
-            detail.as_deref(),
-            t,
-            compact,
-            cx,
-        )
-        .into_any_element(),
+            tokens,
+            key,
+        } => key
+            .as_ref()
+            .and_then(|key| {
+                ws.contributions_of(
+                    plugin,
+                    tau_ui_plugin::points::REWRITE,
+                    &tau_ui_plugin::points::AtRewrite {
+                        run: run.info(),
+                        key: key.clone(),
+                        tokens: *tokens,
+                        index,
+                    },
+                    cx,
+                )
+                .into_iter()
+                .next()
+            })
+            .unwrap_or_else(|| {
+                rewrite(plugin, *tokens, t, compact).into_any_element()
+            }),
         Item::Retry {
             attempt,
             delay,
@@ -402,17 +410,7 @@ fn tool(
         }
         _ => border,
     };
-    let dropped = matches!(
-        card.pruned,
-        Some(Pruned::ResultDropped | Pruned::CallDropped)
-    );
-    // A pruned call shows its size from the ledger: what pruning weighed.
-    let ledger_size = card.pruned.and_then(|_| {
-        run.ledger
-            .iter()
-            .find(|entry| entry.call_id == card.call_id)
-            .map(|entry| tokens(entry.tokens))
-    });
+    let dropped = card.dropped.is_some();
     let summary = match &card.body {
         ToolBody::Files(diff) if !dropped => diff_card::files_summary(diff, t),
         ToolBody::Commit(diff) if !dropped => {
@@ -428,7 +426,7 @@ fn tool(
             .flex_1()
             .min_w(px(0.))
             .truncate()
-            .when(card.pruned == Some(Pruned::CallDropped), |s| {
+            .when(card.dropped == Some(Dropped::Call), |s| {
                 s.line_through().text_color(t.muted)
             }),
     };
@@ -527,30 +525,7 @@ fn tool(
         .when(!compact && !card.checks.is_empty(), |row| {
             row.child(mono(card.checks.join(" · "), Type::MICRO, t.dim))
         })
-        .child(match &ledger_size {
-            Some(size) => {
-                mono(size.clone(), Type::MICRO, t.dim).into_any_element()
-            }
-            None => state_label(card, t).into_any_element(),
-        })
-        .when_some(card.pruned, |row, pruned| {
-            row.child(
-                div()
-                    .flex_shrink_0()
-                    .px(sp(1.5))
-                    .py(sp(0.25))
-                    .border_1()
-                    .border_color(t.border_strong)
-                    .rounded(radius::SMALL)
-                    .typeset(Type::MICRO)
-                    .text_color(if pruned == Pruned::Kept {
-                        t.muted
-                    } else {
-                        t.dim
-                    })
-                    .child(pruned.label()),
-            )
-        })
+        .child(state_label(card, t))
         .children(review)
         .children(badges)
         .when(folds, |row| {
@@ -1297,92 +1272,49 @@ pub fn chips_view(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+/// A rewrite no plugin draws: who rewrote the context, and what it
+/// saved when the run saw it.
 fn rewrite(
-    run: &RunView,
     plugin: &str,
-    before: u64,
-    after: u64,
-    detail: Option<&str>,
+    tokens_seen: Option<(u64, u64)>,
     t: &Theme,
     compact: bool,
-    cx: &mut Context<Workspace>,
 ) -> Div {
-    let route = Route::Ledger(run.id.clone());
-    let saved = before.saturating_sub(after);
     let line = || div().flex_1().h(px(1.)).bg(t.blue_border);
+    let what = match tokens_seen {
+        Some((before, after)) => format!(
+            "rewrote the context: {} to {}",
+            tokens(before),
+            tokens(after)
+        ),
+        None => "rewrote the context".to_owned(),
+    };
     div()
         .flex()
-        .flex_col()
-        .gap(sp(1.5))
+        .items_center()
+        .gap(sp(3.))
         .py(sp(1.))
+        .child(line())
         .child(
             div()
                 .flex()
+                .flex_wrap()
                 .items_center()
-                .gap(sp(3.))
-                .child(line())
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(sp(2.))
-                        .px(sp(3.))
-                        .py(sp(1.5))
-                        .rounded(radius::BUBBLE)
-                        .border_1()
-                        .border_dashed()
-                        .border_color(t.blue_border)
-                        .bg(t.blue_soft)
-                        .child(icon(Icon::Plug, IconSize::COMPACT, t.blue))
-                        .when(!compact, |pill| {
-                            pill.child(mono(
-                                plugin.to_owned(),
-                                Type::CAPTION,
-                                t.blue,
-                            ))
-                        })
-                        .child(div().text_color(t.text_soft).child(format!(
-                            "pruned {} tokens: {} to {}",
-                            tokens(saved),
-                            tokens(before),
-                            tokens(after)
-                        )))
-                        .when_some(
-                            detail.filter(|_| !compact),
-                            |pill, detail| {
-                                pill.child(mono(
-                                    detail.to_owned(),
-                                    Type::MICRO,
-                                    t.dim,
-                                ))
-                            },
-                        )
-                        .child(
-                            div()
-                                .id("open-ledger")
-                                .child(link("Ledger", t))
-                                .on_click(cx.listener(move |ws, _, _, cx| {
-                                    ws.navigate(route.clone(), cx)
-                                })),
-                        ),
-                )
-                .child(line()),
+                .gap(sp(2.))
+                .px(sp(3.))
+                .py(sp(1.5))
+                .rounded(radius::BUBBLE)
+                .border_1()
+                .border_dashed()
+                .border_color(t.blue_border)
+                .bg(t.blue_soft)
+                .child(icon(Icon::Plug, IconSize::COMPACT, t.blue))
+                .when(!compact, |pill| {
+                    pill.child(mono(plugin.to_owned(), Type::CAPTION, t.blue))
+                })
+                .child(div().text_color(t.text_soft).child(what)),
         )
-        .child(
-            div()
-                .flex()
-                .justify_center()
-                .gap(sp(1.5))
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
-                .child(dot(t.blue_border, 4.))
-                .child(
-                    "The next request resends the pruned transcript once, \
-                     then turns are deltas again.",
-                ),
-        )
+        .child(line())
 }
 
 #[cfg(test)]

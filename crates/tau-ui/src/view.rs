@@ -55,8 +55,6 @@ pub struct RunView {
     pub origin: Origin,
     /// When it started, as the run list shows it.
     pub started: String,
-    /// The latest context pruning's decision for each tool call.
-    pub ledger: Vec<LedgerEntry>,
     /// The last run events, newest last, for the Events tab.
     pub log: Vec<LogLine>,
     /// What the chat cost before its latest message: each start of a
@@ -68,9 +66,10 @@ pub struct RunView {
     /// name (ADR 0017).
     #[serde(default)]
     pub plugin_states: std::collections::BTreeMap<String, Value>,
-    /// What the pruning plugin said about its pass, for the rewrite it
-    /// explains, which comes right after.
-    pending_rewrite: Option<String>,
+    /// What each plugin named the context rewrite it is about to make
+    /// ([`tau_ui_plugin::RunCx::rewrite`]).
+    #[serde(default)]
+    pending_rewrites: std::collections::BTreeMap<String, String>,
 }
 
 /// tau-constitution's work in one run, from its reports.
@@ -195,41 +194,6 @@ impl Origin {
     }
 }
 
-/// One tool call as context pruning judged it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LedgerEntry {
-    pub call_id: String,
-    pub turn: u32,
-    pub tool: String,
-    pub input: String,
-    /// Tokens the call and its result take.
-    pub tokens: u64,
-    /// The probability that knowing the call still matters.
-    pub matters: Option<f32>,
-    /// The probability that its full output must stay verbatim.
-    pub verbatim: Option<f32>,
-    pub decision: Decision,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Decision {
-    Pinned,
-    Keep,
-    DropResult,
-    DropCall,
-}
-
-impl Decision {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Pinned => "pinned",
-            Self::Keep => "keep",
-            Self::DropResult => "drop result",
-            Self::DropCall => "drop call",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RunStatus {
     /// Plugins are preparing the run; the session is not open yet.
@@ -269,12 +233,12 @@ pub enum Item {
     /// A message tau sent to start a turn itself: resolving what a
     /// landing left in conflict (ADR 0014).
     Tau(String),
-    /// A plugin rewrote the context.
+    /// A plugin rewrote the context: the tokens before and after, when
+    /// the run saw it, and what the plugin named it, to draw it.
     Rewrite {
         plugin: String,
-        tokens_before: u64,
-        tokens_after: u64,
-        detail: Option<String>,
+        tokens: Option<(u64, u64)>,
+        key: Option<String>,
     },
     Retry {
         attempt: u32,
@@ -351,9 +315,9 @@ pub struct ToolCard {
     pub from_plugin: Option<String>,
     /// Rule scores that passed, shown quietly next to the result.
     pub checks: Vec<String>,
-    /// What context pruning did to this call, if anything.
-    pub pruned: Option<Pruned>,
-    /// What output pruning cut from the call's result, when it did.
+    /// What a context rewrite left of the call, when it dropped some.
+    pub dropped: Option<Dropped>,
+    /// What a plugin cut from the call's result, when it did.
     /// Boxed: most cards have none, and it is the card's largest part.
     pub cut: Option<Box<OutputCut>>,
     /// Characters the call's arguments and result take in the context.
@@ -362,33 +326,6 @@ pub struct ToolCard {
     /// they came: what a plugin draws at the card's points.
     #[serde(default)]
     pub anchors: Vec<(String, String)>,
-}
-
-/// A result fast compaction pruned as it arrived: the lines the model
-/// saw of the whole output, and the file holding the whole of it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OutputCut {
-    pub kept: usize,
-    pub lines: usize,
-    pub archive: String,
-    /// Estimated tokens of the whole output, and of what the model saw.
-    pub tokens_before: u64,
-    pub tokens_after: u64,
-    /// What asking Jev about it cost, in US dollars.
-    pub cost: f64,
-}
-
-impl OutputCut {
-    /// `kept 212 of 4,810 lines · 12k → 900 tokens`.
-    pub fn label(&self) -> String {
-        format!(
-            "kept {} of {} lines · {} → {} tokens",
-            grouped(self.kept),
-            grouped(self.lines),
-            tokens(self.tokens_before),
-            tokens(self.tokens_after)
-        )
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -411,23 +348,6 @@ pub enum ToolState {
         rule: String,
         score: String,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Pruned {
-    Kept,
-    ResultDropped,
-    CallDropped,
-}
-
-impl Pruned {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Kept => "kept",
-            Self::ResultDropped => "result dropped",
-            Self::CallDropped => "call dropped",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -654,14 +574,30 @@ pub struct Proposal {
 }
 
 pub use tau_ui_kit::theme::Tone;
-pub use tau_ui_plugin::{PlanField, PluginStatus};
+pub use tau_ui_plugin::{Dropped, OutputCut, PlanField, PluginStatus};
 
 /// A run a fold reaches without placing anchors: the anchors of what it
 /// restates are in the transcript already, or belong to another run.
-struct Quiet<'a>(&'a RunView);
+struct Quiet<'a>(&'a mut RunView);
 
 impl tau_ui_plugin::RunCx for Quiet<'_> {
     fn transcript(&mut self, _key: &str) {}
+
+    fn dropped(&mut self, call_id: &str, dropped: Dropped) -> bool {
+        self.0
+            .tool_mut(call_id)
+            .map(|card| card.dropped = Some(dropped))
+            .is_some()
+    }
+
+    fn cut(&mut self, call_id: &str, cut: OutputCut) -> bool {
+        self.0
+            .tool_mut(call_id)
+            .map(|card| card.cut = Some(Box::new(cut)))
+            .is_some()
+    }
+
+    fn rewrite(&mut self, _key: &str) {}
 
     fn attach(&mut self, call_id: &str, _key: &str) -> bool {
         self.0.tool(call_id).is_some()
@@ -704,6 +640,45 @@ impl tau_ui_plugin::RunCx for Folding<'_> {
             card.anchors.push(anchor);
         }
         true
+    }
+
+    fn dropped(&mut self, call_id: &str, dropped: Dropped) -> bool {
+        self.view
+            .tool_mut(call_id)
+            .map(|card| card.dropped = Some(dropped))
+            .is_some()
+    }
+
+    fn cut(&mut self, call_id: &str, cut: OutputCut) -> bool {
+        self.view
+            .tool_mut(call_id)
+            .map(|card| card.cut = Some(Box::new(cut)))
+            .is_some()
+    }
+
+    /// History placed the rewrite before its details were folded; live,
+    /// the plugin names it before making it.
+    fn rewrite(&mut self, key: &str) {
+        let plugin = self.plugin;
+        let placed =
+            self.view
+                .items
+                .iter_mut()
+                .rev()
+                .find_map(|item| match item {
+                    Item::Rewrite {
+                        plugin: by, key, ..
+                    } if by == plugin => Some(key),
+                    _ => None,
+                });
+        match placed {
+            Some(unnamed @ None) => *unnamed = Some(key.to_owned()),
+            _ => {
+                self.view
+                    .pending_rewrites
+                    .insert(plugin.to_owned(), key.to_owned());
+            }
+        }
     }
 
     fn cards(&self) -> Vec<tau_ui_plugin::CardInfo> {
@@ -762,8 +737,6 @@ pub struct Totals {
 pub struct ContextWindow {
     pub used: u64,
     pub window: Option<u64>,
-    /// Share of the window where the first context plugin steps in.
-    pub trigger: Option<f32>,
     /// The size before the last rewrite, while it is worth showing.
     pub before: Option<u64>,
 }
@@ -793,7 +766,9 @@ impl ContextParts {
             .iter()
             .rposition(|item| {
                 matches!(item, Item::Rewrite { plugin, .. }
-                    if plugin != tau_fast_compaction::NAME)
+                    if !crate::plugins::registry()
+                        .get(plugin)
+                        .is_some_and(|plugin| plugin.rewrites_keep_transcript()))
             })
             .map_or(0, |at| at + 1);
         let tokens = |chars: usize| chars.div_ceil(4) as u64;
@@ -805,11 +780,9 @@ impl ContextParts {
                 }
                 Item::Tool(card) => {
                     let args = card.args.to_string().len();
-                    match card.pruned {
-                        Some(Pruned::CallDropped) => {}
-                        Some(Pruned::ResultDropped) => {
-                            conversation += tokens(args)
-                        }
+                    match card.dropped {
+                        Some(Dropped::Call) => {}
+                        Some(Dropped::Result) => conversation += tokens(args),
                         _ => {
                             conversation += tokens(args);
                             results += tokens(card.size.saturating_sub(args));
@@ -935,8 +908,6 @@ pub enum RunUpdate {
         call_id: String,
         plugin: String,
     },
-    /// The pruning plugin's decisions, replacing the last ledger.
-    Ledger(Vec<LedgerEntry>),
 }
 
 impl From<RunEvent> for RunUpdate {
@@ -955,7 +926,7 @@ pub enum Stored {
         body: Value,
     },
     /// A context rewrite: what the stored transcript starts with after
-    /// one, and the plugin's details (fast-compaction's ledger).
+    /// one, and the details the plugin gave it.
     Rewrite {
         plugin: String,
         body: Value,
@@ -986,12 +957,11 @@ impl RunView {
             children: Vec::new(),
             origin: Origin::Root,
             started: String::new(),
-            ledger: Vec::new(),
             log: Vec::new(),
             cost_before: 0.0,
             constitution: ConstitutionStats::default(),
             plugin_states: Default::default(),
-            pending_rewrite: None,
+            pending_rewrites: Default::default(),
         }
     }
 
@@ -1026,8 +996,9 @@ impl RunView {
         timeline: &[Stored],
     ) -> Self {
         let mut view = Self::new(id, title, agent, model);
-        // The ledger marks the cards that follow it, so it comes last.
-        let mut ledger: Option<&Value> = None;
+        // A rewrite's details mark the cards that follow it, so they come
+        // last.
+        let mut rewrites: Vec<(&str, &Value)> = Vec::new();
         let mut starting: Vec<(&str, &Value)> = Vec::new();
         let mut during: Vec<(&str, &Value)> = Vec::new();
         // Whether the turn the records in `during` belong to has begun.
@@ -1039,21 +1010,14 @@ impl RunView {
         };
         for entry in timeline {
             match entry {
-                Stored::Rewrite { plugin, body }
-                    if plugin == tau_fast_compaction::NAME =>
-                {
-                    let chars = |key: &str| {
-                        body["stats"][key].as_u64().unwrap_or(0).div_ceil(4)
-                    };
+                Stored::Rewrite { plugin, body } => {
                     view.items.push(Item::Rewrite {
                         plugin: plugin.clone(),
-                        tokens_before: chars("chars_before"),
-                        tokens_after: chars("chars_after"),
-                        detail: None,
+                        tokens: None,
+                        key: None,
                     });
-                    ledger = Some(body);
+                    rewrites.push((plugin, body));
                 }
-                Stored::Rewrite { .. } => {}
                 // What a plugin published as the run started shows after
                 // the message it started on; what it says shows now,
                 // where it was stored.
@@ -1111,17 +1075,11 @@ impl RunView {
         for (plugin, body) in starting {
             view.report(plugin, body);
         }
-        if let Some(body) = ledger {
-            view.ledger_report(body);
-            let detail = view.pending_rewrite.take();
-            if let Some(Item::Rewrite { detail: shown, .. }) =
-                view.items.iter_mut().find(|item| {
-                    matches!(item, Item::Rewrite { plugin, .. }
-                        if plugin == tau_fast_compaction::NAME)
-                })
-            {
-                *shown = detail;
-            }
+        for (plugin, details) in rewrites {
+            view.fold(
+                plugin,
+                &serde_json::json!({ tau_ui_plugin::REWRITE: details }),
+            );
         }
         view.end_stored_turn();
         view
@@ -1171,7 +1129,7 @@ impl RunView {
                                 body: ToolBody::None,
                                 from_plugin: None,
                                 checks: Vec::new(),
-                                pruned: None,
+                                dropped: None,
                                 cut: None,
                                 anchors: Vec::new(),
                                 size: 0,
@@ -1296,6 +1254,8 @@ impl RunView {
             repo: self.repo.clone(),
             live: self.status.is_live(),
             title: self.title.clone(),
+            context: self.context.used,
+            window: self.context.window,
         }
     }
 
@@ -1340,40 +1300,6 @@ impl RunView {
     pub fn context_parts(&self) -> Option<ContextParts> {
         (self.context.used > 0)
             .then(|| ContextParts::estimate(&self.items, self.context.used))
-    }
-
-    /// Outputs fast-compaction pruned as they arrived, and the tokens
-    /// that saved.
-    pub fn output_savings(&self) -> (usize, u64) {
-        self.items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Tool(card) => card.cut.as_ref(),
-                _ => None,
-            })
-            .fold((0, 0), |(outputs, saved), cut| {
-                (
-                    outputs + 1,
-                    saved + cut.tokens_before.saturating_sub(cut.tokens_after),
-                )
-            })
-    }
-
-    pub fn last_rewrite(&self) -> Option<(&str, u64, u64, Option<&str>)> {
-        self.items.iter().rev().find_map(|item| match item {
-            Item::Rewrite {
-                plugin,
-                tokens_before,
-                tokens_after,
-                detail,
-            } => Some((
-                plugin.as_str(),
-                *tokens_before,
-                *tokens_after,
-                detail.as_deref(),
-            )),
-            _ => None,
-        })
     }
 
     /// Tool calls a plugin blocked or flagged.
@@ -1429,17 +1355,6 @@ impl RunView {
                     card.from_plugin = Some(plugin);
                 }
             }
-            RunUpdate::Ledger(ledger) => {
-                for entry in &ledger {
-                    let pruned = match entry.decision {
-                        Decision::Pinned | Decision::Keep => Pruned::Kept,
-                        Decision::DropResult => Pruned::ResultDropped,
-                        Decision::DropCall => Pruned::CallDropped,
-                    };
-                    self.mark_pruned(&entry.call_id, pruned);
-                }
-                self.ledger = ledger;
-            }
         }
     }
 
@@ -1466,12 +1381,6 @@ impl RunView {
     pub fn mark_tool(&mut self, call_id: &str, state: ToolState) -> bool {
         self.tool_mut(call_id)
             .map(|card| card.state = state)
-            .is_some()
-    }
-
-    pub fn mark_pruned(&mut self, call_id: &str, pruned: Pruned) -> bool {
-        self.tool_mut(call_id)
-            .map(|card| card.pruned = Some(pruned))
             .is_some()
     }
 
@@ -1534,7 +1443,7 @@ impl RunView {
                 body: ToolBody::None,
                 from_plugin: None,
                 checks: Vec::new(),
-                pruned: None,
+                dropped: None,
                 cut: None,
                 anchors: Vec::new(),
                 size: 0,
@@ -1603,9 +1512,8 @@ impl RunView {
                 self.context.used = *tokens_after;
                 self.items.push(Item::Rewrite {
                     plugin: plugin.to_string(),
-                    tokens_before: *tokens_before,
-                    tokens_after: *tokens_after,
-                    detail: self.pending_rewrite.take(),
+                    tokens: Some((*tokens_before, *tokens_after)),
+                    key: self.pending_rewrites.remove(&**plugin),
                 });
             }
             RunEvent::Retry {
@@ -1881,14 +1789,6 @@ impl RunView {
             return;
         }
         use tau_constitution::{Verdict, VerdictKind};
-        if plugin == tau_fast_compaction::NAME {
-            if body["kind"] == "output" {
-                self.output_report(body);
-            } else {
-                self.ledger_report(body);
-            }
-            return;
-        }
         if plugin != tau_constitution::NAME {
             return;
         }
@@ -1988,128 +1888,6 @@ impl RunView {
             tone,
             body: NoteBody::None,
         });
-    }
-
-    /// Output pruning's report on one call: when it replaced the result,
-    /// the call's card says what it kept and where the whole output is.
-    fn output_report(&mut self, body: &Value) {
-        let Ok(stats) = serde_json::from_value::<
-            tau_fast_compaction::OutputStats,
-        >(body.clone()) else {
-            return;
-        };
-        let Some(archive) = stats.archive.filter(|_| stats.pruned) else {
-            return;
-        };
-        if let Some(card) = self.tool_mut(&stats.call_id) {
-            card.cut = Some(Box::new(OutputCut {
-                kept: stats.lines.saturating_sub(stats.dropped_lines),
-                lines: stats.lines,
-                archive,
-                tokens_before: stats.tokens_before as u64,
-                tokens_after: stats.tokens_after as u64,
-                cost: stats.cost,
-            }));
-        }
-    }
-
-    /// The pruning plugin's ledger: each tool call in the run, with what
-    /// it decided (recent calls it never judged are pinned).
-    fn ledger_report(&mut self, body: &Value) {
-        use tau_fast_compaction::{Action, Details};
-        let Ok(details) = serde_json::from_value::<Details>(body.clone())
-        else {
-            return;
-        };
-        let cost = details.stats.cost;
-        let mut turn = 1;
-        let mut entries = Vec::new();
-        // Calls the ledger dropped from a stored transcript have no card
-        // left; they still show, first, as they came first.
-        for decision in details.decisions.iter().filter(|decision| {
-            !self.items.iter().any(|item| {
-                matches!(item, Item::Tool(card) if card.call_id == decision.call_id)
-            })
-        }) {
-            entries.push(LedgerEntry {
-                call_id: decision.call_id.clone(),
-                turn: 0,
-                tool: decision.tool.clone(),
-                input: String::new(),
-                tokens: 0,
-                matters: Some(decision.keep_call as f32),
-                verbatim: Some(decision.keep_result as f32),
-                decision: match decision.action {
-                    Action::Keep => Decision::Keep,
-                    Action::DropResult => Decision::DropResult,
-                    Action::DropCall => Decision::DropCall,
-                },
-            });
-        }
-        for item in &self.items {
-            match item {
-                Item::TurnEnd { turn: ended } => turn = ended + 1,
-                Item::Tool(card) => {
-                    let decided = details
-                        .decisions
-                        .iter()
-                        .find(|decision| decision.call_id == card.call_id);
-                    entries.push(LedgerEntry {
-                        call_id: card.call_id.clone(),
-                        turn,
-                        tool: card.tool.clone(),
-                        input: card.summary.clone(),
-                        tokens: (card.size / 4) as u64,
-                        matters: decided.map(|d| d.keep_call as f32),
-                        verbatim: decided.map(|d| d.keep_result as f32),
-                        decision: match decided.map(|d| d.action) {
-                            None => Decision::Pinned,
-                            Some(Action::Keep) => Decision::Keep,
-                            Some(Action::DropResult) => Decision::DropResult,
-                            Some(Action::DropCall) => Decision::DropCall,
-                        },
-                    });
-                }
-                _ => {}
-            }
-        }
-        let stats = &details.stats;
-        let count = |n: usize, one: &str, many: &str| {
-            format!("{n} {}", if n == 1 { one } else { many })
-        };
-        let mut detail = format!(
-            "{} judged in {} · {} cut, {} dropped · −{:.0}% · Jev read {} \
-             tokens of history, {}",
-            count(stats.calls - stats.pinned, "call", "calls"),
-            count(stats.requests, "Jev request", "Jev requests"),
-            count(stats.results_dropped, "result", "results"),
-            count(stats.calls_dropped, "call", "calls"),
-            stats.reduction_ratio * 100.0,
-            tokens(stats.state_tokens as u64),
-            stats.state_stage,
-        );
-        if cost > 0.0 {
-            detail.push_str(&format!(" · {}", fine_usd(cost)));
-        }
-        self.pending_rewrite = Some(detail);
-        let state = format!(
-            "{} pruned · −{:.0}%",
-            stats.results_dropped + stats.calls_dropped,
-            stats.reduction_ratio * 100.0
-        );
-        match self
-            .plugins
-            .iter_mut()
-            .find(|status| status.name == tau_fast_compaction::NAME)
-        {
-            Some(status) => status.state = state,
-            None => self.plugins.push(PluginStatus {
-                name: tau_fast_compaction::NAME.into(),
-                state,
-                tone: Tone::Quiet,
-            }),
-        }
-        self.update(RunUpdate::Ledger(entries));
     }
 
     /// The run's plugin list says what the constitution did so far.
@@ -2363,6 +2141,7 @@ mod tests {
 
     use serde_json::json;
     use tau_ai::message::{Usage, UsageCost};
+    use tau_fast_compaction::ui::Decision;
 
     use super::*;
 
@@ -2429,6 +2208,14 @@ mod tests {
         })
     }
 
+    /// fast-compaction's state in `view`, as its fold leaves it.
+    fn pruning(view: &RunView) -> tau_fast_compaction::ui::State {
+        view.plugin_states
+            .get(tau_fast_compaction::NAME)
+            .map(|state| serde_json::from_value(state.clone()).unwrap())
+            .unwrap_or_default()
+    }
+
     #[test]
     fn a_pruned_output_shows_on_its_card() {
         let mut view = view();
@@ -2455,9 +2242,9 @@ mod tests {
         let cut = card.cut.clone().unwrap();
         assert_eq!(cut.label(), "kept 212 of 4,810 lines · 12k → 900 tokens");
         assert_eq!(cut.archive, "/data/tau/repos/app/archive/tau-output-1.txt");
-        // Neither the ledger nor the card's context pruning changed.
-        assert!(view.ledger.is_empty());
-        assert_eq!(card.pruned, None);
+        // Neither the ledger nor the card's context changed.
+        assert!(pruning(&view).ledger.is_empty());
+        assert_eq!(card.dropped, None);
 
         // Jev looked, but the result stayed: nothing to say on the card.
         let mut view = self::view();
@@ -2582,37 +2369,36 @@ mod tests {
             tokens_before: 2000,
             tokens_after: 1100,
         });
-        assert_eq!(view.ledger.len(), 2);
-        let first = &view.ledger[0];
+        let state = pruning(&view);
+        assert_eq!(state.ledger.len(), 2);
+        let first = &state.ledger[0];
         assert_eq!((first.turn, first.decision), (1, Decision::DropResult));
         assert!(first.tokens > 900, "{}", first.tokens);
         assert_eq!(first.matters, Some(0.9));
-        assert_eq!(view.ledger[1].decision, Decision::Pinned);
-        assert_eq!(view.ledger[1].turn, 2);
-        let cards: Vec<Option<Pruned>> = view
+        assert_eq!(state.ledger[1].decision, Decision::Pinned);
+        assert_eq!(state.ledger[1].turn, 2);
+        let cards: Vec<(Option<Dropped>, usize)> = view
             .items
             .iter()
             .filter_map(|item| match item {
-                Item::Tool(card) => Some(card.pruned),
+                Item::Tool(card) => Some((card.dropped, card.anchors.len())),
                 _ => None,
             })
             .collect();
-        assert_eq!(cards, [Some(Pruned::ResultDropped), Some(Pruned::Kept)]);
-        let Some(Item::Rewrite { detail, .. }) = view.items.last() else {
-            panic!("a rewrite")
+        // Both cards carry the pass's mark; the dropped one is out.
+        assert_eq!(cards, [(Some(Dropped::Result), 1), (None, 1)]);
+        let Some(Item::Rewrite {
+            key: Some(key),
+            tokens,
+            ..
+        }) = view.items.last()
+        else {
+            panic!("a rewrite, named")
         };
-        assert!(
-            detail
-                .as_deref()
-                .unwrap()
-                .contains("1 result cut, 0 calls dropped"),
-            "{detail:?}"
-        );
-        assert!(
-            view.plugins
-                .iter()
-                .any(|status| status.state == "1 pruned · −46%")
-        );
+        assert_eq!(*tokens, Some((2000, 1100)));
+        let detail = &state.passes[key].detail;
+        assert!(detail.contains("1 result cut, 0 calls dropped"), "{detail}");
+        assert_eq!(state.status().as_deref(), Some("1 pruned · −46%"));
     }
 
     #[test]
@@ -3132,14 +2918,24 @@ mod tests {
                 Stored::Message(result("t3")),
             ],
         );
-        let (plugin, before, after, detail) = view.last_rewrite().unwrap();
-        assert_eq!(
-            (plugin, before, after),
-            (tau_fast_compaction::NAME, 10_000, 2_000)
+        let Some(Item::Rewrite {
+            plugin,
+            tokens: None,
+            key: Some(key),
+        }) = view.items.first()
+        else {
+            panic!("the rewrite first, named: {:?}", view.items.first())
+        };
+        assert_eq!(plugin, tau_fast_compaction::NAME);
+        let state = pruning(&view);
+        let pass = &state.passes[key];
+        assert_eq!((pass.before, pass.after), (10_000, 2_000));
+        assert!(
+            pass.detail.ends_with(", whole · $0.0002"),
+            "{}",
+            pass.detail
         );
-        let detail = detail.unwrap();
-        assert!(detail.ends_with(", whole · $0.0002"), "{detail}");
-        let decisions: Vec<(&str, Decision)> = view
+        let decisions: Vec<(&str, Decision)> = state
             .ledger
             .iter()
             .map(|entry| (entry.call_id.as_str(), entry.decision))
@@ -3153,8 +2949,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            view.tool("t2").and_then(|card| card.pruned),
-            Some(Pruned::ResultDropped)
+            view.tool("t2").and_then(|card| card.dropped),
+            Some(Dropped::Result)
         );
     }
 
@@ -3222,7 +3018,7 @@ mod tests {
             body: ToolBody::None,
             from_plugin: None,
             checks: Vec::new(),
-            pruned: None,
+            dropped: None,
             cut: None,
             anchors: Vec::new(),
             size: 0,
@@ -3237,17 +3033,16 @@ mod tests {
         assert_eq!(parts.fixed + parts.conversation + parts.results, 5_000);
 
         // A dropped result counts only its call.
-        card.pruned = Some(Pruned::ResultDropped);
+        card.dropped = Some(Dropped::Result);
         view.items[2] = Item::Tool(Box::new(card));
         assert_eq!(view.context_parts().unwrap().results, 0);
 
         // A summary replaced what came before it; an estimate over the
         // count is scaled down to it.
         view.items.push(Item::Rewrite {
-            plugin: "tau-compaction".into(),
-            tokens_before: 5_000,
-            tokens_after: 100,
-            detail: None,
+            plugin: tau_compaction::NAME.into(),
+            tokens: Some((5_000, 100)),
+            key: None,
         });
         view.items.push(Item::Text("z".repeat(800)));
         view.context.used = 100;

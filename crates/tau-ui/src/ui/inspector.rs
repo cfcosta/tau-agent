@@ -22,7 +22,7 @@ use crate::{
     assets::Icon,
     route::Route,
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
-    view::{ChildKind, Item, Pruned, RunStatus, RunView, tokens, usd},
+    view::{ChildKind, Dropped, Item, RunStatus, RunView, tokens, usd},
     workspace::Workspace,
 };
 
@@ -87,8 +87,8 @@ pub fn content(
     plugins_section(ws, run, body, t, cx)
 }
 
-/// The context window: how full it is, what fills it, where pruning
-/// starts, and what pruning did.
+/// The context window: how full it is, what fills it, where a plugin
+/// steps in, and what rewrites dropped; then what plugins add.
 fn context(
     ws: &Workspace,
     run: &RunView,
@@ -96,31 +96,29 @@ fn context(
     cx: &mut Context<Workspace>,
 ) -> Div {
     let trigger = ws.context_trigger(run, cx);
-    let ledger_route = Route::Ledger(run.id.clone());
-    let has_rewrite = run.last_rewrite().is_some();
     let context = &run.context;
-    let heading_row = div()
+    let extras = ws.contributions(
+        tau_ui_plugin::points::CONTEXT,
+        &tau_ui_plugin::points::AtRun { run: run.info() },
+        cx,
+    );
+    let section = div()
         .flex()
-        .items_center()
-        .child(heading("Context", t).flex_1())
-        .when(has_rewrite, |row| {
-            row.child(
-                div()
-                    .id("open-ledger-panel")
-                    .child(link("Ledger", t))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.navigate(ledger_route.clone(), cx)
-                    })),
-            )
-        });
-    let section = div().flex().flex_col().gap(sp(3.)).child(heading_row);
+        .flex_col()
+        .gap(sp(3.))
+        .child(heading("Context", t));
     let Some(window) = context.window else {
-        return section.child(
-            div()
-                .typeset(Type::SMALL)
-                .text_color(t.muted)
-                .child(format!("{} tokens in context", tokens(context.used))),
-        );
+        return section
+            .child(
+                div()
+                    .typeset(Type::SMALL)
+                    .text_color(t.muted)
+                    .child(format!(
+                        "{} tokens in context",
+                        tokens(context.used)
+                    )),
+            )
+            .children(extras);
     };
     let share = context.used as f32 / window as f32;
     let over_trigger = trigger.is_some_and(|trigger| share >= trigger);
@@ -180,13 +178,12 @@ fn context(
                     .child(div().flex_1().child(*name))
                     .child(mono(tokens(*used), Type::CAPTION, t.text_soft))
             }));
-    let (mut kept, mut results, mut calls) = (0, 0, 0);
+    let (mut results, mut calls) = (0, 0);
     for item in &run.items {
         if let Item::Tool(card) = item {
-            match card.pruned {
-                Some(Pruned::Kept) => kept += 1,
-                Some(Pruned::ResultDropped) => results += 1,
-                Some(Pruned::CallDropped) => calls += 1,
+            match card.dropped {
+                Some(Dropped::Result) => results += 1,
+                Some(Dropped::Call) => calls += 1,
                 None => {}
             }
         }
@@ -195,26 +192,26 @@ fn context(
     if let Some(trigger) = trigger {
         if over_trigger {
             note.push_str(&format!(
-                "Past {:.0}%: pruning runs after this turn.",
+                "Past {:.0}%: the context is rewritten after this turn.",
                 trigger * 100.
             ));
         } else {
             note.push_str(&format!(
-                "Pruning starts at {:.0}%.",
+                "Rewriting starts at {:.0}%.",
                 trigger * 100.
             ));
         }
     }
     if let Some(before) = context.before {
         note.push_str(&format!(
-            " Last pruned from {} to {}.",
+            " Last rewritten from {} to {}.",
             tokens(before),
             tokens(context.used)
         ));
     }
-    if kept + results + calls > 0 {
+    if results + calls > 0 {
         note.push_str(&format!(
-            " {kept} kept, {results} results and {calls} calls dropped."
+            " {results} results and {calls} calls dropped."
         ));
     }
     let used_color = if over_trigger { t.accent } else { t.text };
@@ -248,6 +245,7 @@ fn context(
                     .child(note.trim().to_owned()),
             )
         })
+        .children(extras)
 }
 
 /// The run's own limits as tiles, and its outcome, plan and children.

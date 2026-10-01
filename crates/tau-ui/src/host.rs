@@ -39,7 +39,6 @@ use tau_ai::{
     model::find,
     refusal::Refusal,
 };
-use tau_compaction::Compaction;
 use tau_constitution::{Constitution, ConstitutionPlugin, Live, RuleError};
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
@@ -301,39 +300,13 @@ pub const REPO_PLUGIN: &str = "repo";
 pub const MAIN_TITLE: &str = "main";
 
 /// `base` on `choice`: its model and effort (auto leaves it to a
-/// plugin, such as tau-reasoning), and compaction by the model's window,
-/// pruning with Jev first when there is a key.
-fn for_model(
-    base: Agent,
-    choice: &ModelChoice,
-    jev: Option<Arc<dyn tau_jev::Jev>>,
-    archive_dir: &Path,
-    repo: &str,
-) -> Agent {
+/// plugin, such as tau-reasoning).
+fn for_model(base: Agent, choice: &ModelChoice, repo: &str) -> Agent {
     let mut agent = base.model(&choice.model);
     if let Some(effort) = choice.effort.reasoning() {
         agent = agent.reasoning(effort);
     }
-    // Compaction steps in by the run's own model's window.
-    let mut compaction = Compaction::default();
-    if let Some(model) = find(&choice.model) {
-        compaction = compaction.context_window(model.context_window);
-    }
-    // Pruning with Jev first, when there is a key: it is cheaper than
-    // a summary, and summarizing follows when pruning cannot help.
-    if let Some(jev) = &jev {
-        let settings = tau_fast_compaction::Settings {
-            context_window: find(&choice.model)
-                .map(|model| model.context_window),
-            archive_dir: archive_dir.to_owned(),
-            ..tau_fast_compaction::Settings::default()
-        };
-        agent = agent.plugin(
-            tau_fast_compaction::FastCompaction::shared(jev.clone())
-                .settings(settings),
-        );
-    }
-    agent.plugin(compaction).plugin(RepoTag(repo.to_owned()))
+    agent.plugin(RepoTag(repo.to_owned()))
 }
 
 /// The model and effort a sub-agent runs on: what its call asked for,
@@ -1171,28 +1144,6 @@ impl Host {
                 page: None,
             },
         ];
-        let jev = self.jev().is_some();
-        plugins.push(PluginInfo {
-            name: tau_fast_compaction::NAME.into(),
-            description: needs_jev(
-                jev,
-                "Prunes large bash outputs as they arrive, and stale tool \
-                 history",
-            ),
-            seams: vec![Seam::Start, Seam::Rewrite],
-            spend: 0.0,
-            screen: Some(PluginScreen::Ledger),
-            page: None,
-        });
-        plugins.push(PluginInfo {
-            name: "tau-compaction".into(),
-            description: "Summarizes the context when it nears the window"
-                .into(),
-            seams: vec![Seam::Start, Seam::Rewrite],
-            spend: 0.0,
-            screen: None,
-            page: None,
-        });
         let source = self.access_label();
         let slots = self.repos.lock().expect("not poisoned").clone();
         let list = self.list.lock().expect("not poisoned").clone();
@@ -1237,6 +1188,7 @@ impl Host {
             .collect();
         let rules: usize =
             repos.iter().map(|repo| repo.constitution.rules.len()).sum();
+        let jev = self.jev().is_some();
         plugins.push(PluginInfo {
             name: tau_constitution::NAME.into(),
             description: if jev {
@@ -1337,25 +1289,16 @@ impl Host {
             );
         }
         let jev = self.jev();
-        // What hangs on the model: its effort, and compaction by its
-        // window. A sub-agent can run on another model than its caller.
+        // What hangs on the model: its effort. A sub-agent can run on
+        // another model than its caller.
         let for_model = {
             let base = self.base.lock().expect("not poisoned").clone();
-            let jev = jev.clone();
-            let archive_dir = self.archive_dir(repo);
             let repo = repo.name.clone();
-            move |choice: &ModelChoice| {
-                for_model(
-                    base.clone(),
-                    choice,
-                    jev.clone(),
-                    &archive_dir,
-                    &repo,
-                )
-            }
+            move |choice: &ModelChoice| for_model(base.clone(), choice, &repo)
         };
         // The plugins with their UI, after the rest: tau-goal's hold of a
-        // stop comes after the constitution's.
+        // stop comes after the constitution's, and context compaction
+        // goes by the run's model.
         let registered = self.registered(repo);
         let agent = for_model(choice);
         // The repository's rules, checked with Jev when there is a key.
@@ -1462,21 +1405,6 @@ impl Host {
             spent: meter.spent,
             failed: meter.failed,
         })
-    }
-
-    /// Where fast compaction archives what it prunes, for the model to
-    /// read back: in tau's directory for the repository, only the user
-    /// can open it, so archives outlive the temporary directory's
-    /// cleanups and stay private. Made on first use; one that cannot be
-    /// made fails only the archiving, which leaves the output whole.
-    fn archive_dir(&self, repo: &RepoSlot) -> PathBuf {
-        use std::os::unix::fs::DirBuilderExt as _;
-        let dir = self.config.project_dir_of(&repo.path).join("archive");
-        let _ = std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&dir);
-        dir
     }
 
     /// Where a repository's memory notes are kept: in tau's directory for
@@ -2377,11 +2305,6 @@ impl Host {
         };
         view.context = ContextWindow {
             window: find(&choice.model).map(|model| model.context_window),
-            // Where fast-compaction steps in, when there is a key.
-            trigger: self.jev().is_some().then(|| {
-                (tau_fast_compaction::Settings::default().compact_at_percent
-                    / 100.0) as f32
-            }),
             ..ContextWindow::default()
         };
         let workspace = self
@@ -2421,7 +2344,7 @@ impl Host {
         let rules = self
             .constitution(repo)
             .map_or(0, |live| live.get().rules.len());
-        let [pruning, constitution] = jev_statuses(jev, rules);
+        let constitution = constitution_status(jev, rules);
         view.plugins = vec![PluginStatus {
             name: "tau-tools".into(),
             state: "7 tools".into(),
@@ -2434,12 +2357,6 @@ impl Host {
                 tone: Tone::Quiet,
             });
         }
-        view.plugins.push(pruning);
-        view.plugins.push(PluginStatus {
-            name: "tau-compaction".into(),
-            state: "watching the window".into(),
-            tone: Tone::Quiet,
-        });
         view.plugins.push(PluginStatus {
             name: tau_memory::plugin::NAME.into(),
             state: match self
@@ -3842,23 +3759,10 @@ async fn stored_view(
                     .ok()
                     .map(|body| Stored::Record { plugin, body })
             }
-            // fast-compaction's rewrite carries its ledger.
-            Entry::Context { plugin, body }
-                if plugin == tau_fast_compaction::NAME =>
-            {
-                serde_json::from_str(&body)
-                    .ok()
-                    .map(|body| Stored::Rewrite { plugin, body })
-            }
-            // What output pruning cut, for the call's card.
-            Entry::Plugin { plugin, body }
-                if plugin == tau_fast_compaction::NAME =>
-            {
-                serde_json::from_str::<serde_json::Value>(&body)
-                    .ok()
-                    .filter(|body| body["kind"] == "output")
-                    .map(|body| Stored::Record { plugin, body })
-            }
+            // A rewrite carries its plugin's details.
+            Entry::Context { plugin, body } => serde_json::from_str(&body)
+                .ok()
+                .map(|body| Stored::Rewrite { plugin, body }),
             _ => None,
         })
         .collect();
@@ -4014,37 +3918,19 @@ fn needs_jev(jev: bool, what: &str) -> String {
     }
 }
 
-/// What a run's plugins that ask Jev say as it starts, for those that
-/// do not say it themselves yet: fast-compaction and tau-constitution.
-/// Each is there with or without a key, so a run without one says they
-/// are off. (tau-goal says so only when there is a goal; see
-/// `RunView::goal`.)
-fn jev_statuses(jev: bool, rules: usize) -> [PluginStatus; 2] {
-    const OFF: &str = "off · no TypeSafe key";
-    let status = |name: &str, state: String| PluginStatus {
-        name: name.into(),
-        state,
+/// What tau-constitution says as a run starts: off without a key, else
+/// how many rules it watches.
+fn constitution_status(jev: bool, rules: usize) -> PluginStatus {
+    PluginStatus {
+        name: tau_constitution::NAME.into(),
+        state: match (jev, rules) {
+            (false, _) => tau_ui_plugin::NO_KEY.into(),
+            (true, 0) => "no rules".into(),
+            (true, 1) => "watching 1 rule".into(),
+            (true, n) => format!("watching {n} rules"),
+        },
         tone: Tone::Quiet,
-    };
-    [
-        status(
-            tau_fast_compaction::NAME,
-            if jev {
-                "pruning large outputs · watching the window".into()
-            } else {
-                OFF.into()
-            },
-        ),
-        status(
-            tau_constitution::NAME,
-            match (jev, rules) {
-                (false, _) => OFF.into(),
-                (true, 0) => "no rules".into(),
-                (true, 1) => "watching 1 rule".into(),
-                (true, n) => format!("watching {n} rules"),
-            },
-        ),
-    ]
+    }
 }
 
 /// The days of runs the Plugins screen's spend covers.
@@ -4276,31 +4162,18 @@ pub fn branch_slug(prompt: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Each plugin that asks Jev says how it stands as a run starts:
-    /// off without a key; on, the constitution counts its rules.
+    /// tau-constitution says how it stands as a run starts: off
+    /// without a key; on, it counts its rules.
     #[hegel::test(test_cases = 200)]
-    fn jev_plugins_say_whether_they_are_on(tc: hegel::TestCase) {
+    fn the_constitution_says_whether_it_is_on(tc: hegel::TestCase) {
         use hegel::generators as gs;
         let jev = tc.draw(gs::booleans());
         let rules = tc.draw(gs::integers::<usize>().max_value(20));
-        let statuses = jev_statuses(jev, rules);
-        let names: Vec<&str> =
-            statuses.iter().map(|status| status.name.as_str()).collect();
-        assert_eq!(names, [tau_fast_compaction::NAME, tau_constitution::NAME]);
-        let off = |status: &PluginStatus| status.state.starts_with("off");
-        let [pruning, constitution] = &statuses;
-        assert_eq!(off(pruning), !jev);
-        assert_eq!(off(constitution), !jev);
-        if !jev {
-            for status in [pruning, constitution] {
-                assert_eq!(status.state, "off · no TypeSafe key");
-            }
-        }
+        let status = constitution_status(jev, rules);
+        assert_eq!(status.name, tau_constitution::NAME);
+        assert_eq!(status.state == tau_ui_plugin::NO_KEY, !jev);
         if jev && rules > 0 {
-            assert!(
-                constitution.state.contains(&rules.to_string()),
-                "{constitution:?}"
-            );
+            assert!(status.state.contains(&rules.to_string()), "{status:?}");
         }
     }
 

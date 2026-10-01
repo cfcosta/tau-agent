@@ -30,7 +30,7 @@ use gpui::App;
 pub use host::{HostCx, Push, RepoCtx, RunCtx, RunKind};
 pub use manifest::{Manifest, Page, Point, PointCx, SlashCommand};
 pub use registry::{Env, ErasedPlugin, Registry};
-pub use run::{CardInfo, RunCx};
+pub use run::{CardInfo, Dropped, OutputCut, RunCx};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 pub use services::Services;
@@ -62,6 +62,11 @@ pub use view::{
 pub const PLACE: &str = "place";
 pub const PLACE_NOW: &str = "now";
 pub const PLACE_MESSAGE: &str = "message";
+
+/// A run's history starts at its last context rewrite, and holds the
+/// details the plugin gave it (`Rewrite::details`). Once the transcript
+/// after it is in place, the plugin folds them as `{ "rewrite": details }`.
+pub const REWRITE: &str = "rewrite";
 
 /// `body`, placed in history at `place` ([`PLACE`]).
 pub fn placed(mut body: Value, place: &str) -> Value {
@@ -218,6 +223,13 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
 
     /// What [`Self::act`] answered.
     fn reply(&self, _ui: &mut Self::Ui, _reply: Value) {}
+
+    /// Whether its context rewrites keep the transcript, marking what
+    /// they drop ([`RunCx::dropped`]), rather than replace it with
+    /// something new (a summary).
+    fn rewrites_keep_transcript(&self) -> bool {
+        false
+    }
 
     /// What a run on `prompt` is about, when the plugin reads it as its
     /// own command: for the run's title.

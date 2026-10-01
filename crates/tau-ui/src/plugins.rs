@@ -28,6 +28,10 @@ pub fn registry() -> &'static Registry {
     static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
         Registry::new()
             .with(tau_reasoning::ReasoningPlugin)
+            // Pruning first: it is cheaper than a summary, and summarizing
+            // follows when pruning cannot help.
+            .with(tau_fast_compaction::ui::FastCompactionUi)
+            .with(tau_compaction::ui::CompactionUi)
             .with(tau_goal::GoalUi)
     });
     &REGISTRY
@@ -367,11 +371,7 @@ impl Workspace {
             &points::AtRun { run: run.info() },
             cx,
         );
-        run.context
-            .trigger
-            .into_iter()
-            .chain(from)
-            .min_by(|a, b| a.total_cmp(b))
+        from.into_iter().min_by(|a, b| a.total_cmp(b))
     }
 
     /// What plugins add to `run`'s row in the sidebar.

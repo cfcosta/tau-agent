@@ -62,6 +62,24 @@ impl PointCx for AtAnchor {
     }
 }
 
+/// One of the plugin's context rewrites in a run's transcript.
+#[derive(Debug, Clone)]
+pub struct AtRewrite {
+    pub run: RunInfo,
+    /// What the plugin named it ([`crate::RunCx::rewrite`]).
+    pub key: String,
+    /// The context's tokens before and after it, when the run saw it.
+    pub tokens: Option<(u64, u64)>,
+    /// Its place among the transcript's items, for element ids.
+    pub index: usize,
+}
+
+impl PointCx for AtRewrite {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+}
+
 /// A tool call's card, with the anchors the plugin attached to it.
 #[derive(Debug, Clone)]
 pub struct AtCard {
@@ -80,6 +98,10 @@ impl PointCx for AtCard {
 
 /// An item in a run's transcript, at a plugin's anchor.
 pub const TRANSCRIPT: Point<AtAnchor> = Point::new("tau.run.transcript");
+/// One of the plugin's context rewrites, drawn whole.
+pub const REWRITE: Point<AtRewrite> = Point::new("tau.run.rewrite");
+/// Under the inspector's context meter.
+pub const CONTEXT: Point<AtRun> = Point::new("tau.run.context");
 /// Beside a tool card's title.
 pub const CARD_BADGE: Point<AtCard> = Point::new("tau.run.card.badge");
 /// Under a tool card's body.
@@ -117,8 +139,10 @@ pub const PLAN_STEPS: Point<AtRun> = Point::new("tau.run.plan.steps");
 pub const PICKER_AUTO: Point<AtApp, String> = Point::new("tau.picker.auto");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 16] = [
+pub const ALL: [&str; 18] = [
     TRANSCRIPT.name,
+    REWRITE.name,
+    CONTEXT.name,
     CARD_BADGE.name,
     CARD_BODY.name,
     RUN_BANNER.name,

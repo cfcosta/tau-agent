@@ -125,6 +125,7 @@ pub trait ErasedPlugin: Send + Sync {
     /// What a run on `prompt` is about, when the plugin reads it as its
     /// own: `/goal the tests pass` is about the tests passing.
     fn read_prompt(&self, prompt: &str) -> Option<String>;
+    fn rewrites_keep_transcript(&self) -> bool;
 }
 
 struct Typed<P: UiPlugin> {
@@ -361,6 +362,10 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
     fn read_prompt(&self, prompt: &str) -> Option<String> {
         self.plugin.read_prompt(prompt)
     }
+
+    fn rewrites_keep_transcript(&self) -> bool {
+        self.plugin.rewrites_keep_transcript()
+    }
 }
 
 /// The plugins an interface has, in the order they were added: the
@@ -527,6 +532,16 @@ mod tests {
         fn attach(&mut self, _: &str, _: &str) -> bool {
             false
         }
+
+        fn dropped(&mut self, _: &str, _: crate::Dropped) -> bool {
+            false
+        }
+
+        fn cut(&mut self, _: &str, _: crate::OutputCut) -> bool {
+            false
+        }
+
+        fn rewrite(&mut self, _: &str) {}
 
         fn cards(&self) -> Vec<CardInfo> {
             Vec::new()

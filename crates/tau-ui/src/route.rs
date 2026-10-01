@@ -30,8 +30,6 @@ pub enum Route {
         repo: String,
         rule: Option<String>,
     },
-    /// A run's pruning ledger.
-    Ledger(RunId),
     /// Onboarding: GitHub, a model, repositories, the first run.
     Setup(SetupStep),
     /// A phone pairing with the tau on a computer, or failing to reach
@@ -88,10 +86,9 @@ impl Route {
     /// The run a screen is about, if any.
     pub fn run(&self) -> Option<&RunId> {
         match self {
-            Self::Run(run)
-            | Self::Plan(run)
-            | Self::Ledger(run)
-            | Self::PullRequest(run) => Some(run),
+            Self::Run(run) | Self::Plan(run) | Self::PullRequest(run) => {
+                Some(run)
+            }
             Self::Compare { main, .. } => Some(main),
             _ => None,
         }
@@ -131,7 +128,6 @@ impl Route {
             Self::Plan(_) => "Run plan",
             Self::Memory { .. } => "Memory",
             Self::Constitution { .. } => "Constitution",
-            Self::Ledger(_) => "Context ledger",
             Self::Setup(step) => step.title(),
             Self::Pair(step) => step.title(),
             Self::PullRequest(_) => "Pull request",
@@ -174,7 +170,7 @@ mod tests {
     #[test]
     fn run_screens_know_their_run() {
         let run = RunId(Arc::from("r"));
-        assert_eq!(Route::Ledger(run.clone()).run(), Some(&run));
+        assert_eq!(Route::Plan(run.clone()).run(), Some(&run));
         assert_eq!(Route::Plan(run.clone()).tab(), Tab::Runs);
         let memory = Route::Memory {
             repo: "docbert".into(),

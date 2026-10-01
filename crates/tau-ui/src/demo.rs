@@ -92,9 +92,13 @@ pub fn retry_after() -> RunView {
     view.context = ContextWindow {
         used: 0,
         window: Some(272_000),
-        trigger: Some(0.6),
         before: None,
     };
+    // fast-compaction runs with it, and steps in at 60%.
+    view.fold(
+        tau_fast_compaction::NAME,
+        &json!({ "kind": "starting", "on": true }),
+    );
     view.plugins = plugins(["waiting", "waiting", "watching edits", "idle"]);
     view
 }
@@ -659,7 +663,11 @@ pub fn route(name: &str) -> Option<crate::route::Route> {
             fork: fork_id(),
         },
         "plan" => Route::Plan(run_id()),
-        "ledger" => Route::Ledger(run_id()),
+        "ledger" => Route::Plugin {
+            plugin: tau_fast_compaction::NAME.into(),
+            page: "ledger".into(),
+            params: [("run".to_owned(), run_id().0.to_string())].into(),
+        },
         "welcome" | "setup" => Route::Setup(SetupStep::Welcome),
         "github" => Route::Setup(SetupStep::GitHub),
         "token" => Route::Setup(SetupStep::Token),
@@ -1380,8 +1388,11 @@ pub fn catalog() -> Catalog {
             },
             plugin("tau-memory", "Zettelkasten notes on docbert", &[Seam::Start, Seam::Tools, Seam::Finish], 0.212, Some(PluginScreen::Memory)),
             plugin("tau-constitution", "6 rules on edit, write, bash and the final answer", &[Seam::BeforeTool, Seam::BeforeStop], 0.031, Some(PluginScreen::Constitution)),
-            plugin(tau_fast_compaction::NAME, "Prunes large bash outputs as they arrive, and stale tool history, with Jev", &[Seam::Start, Seam::Rewrite], 0.046, Some(PluginScreen::Ledger)),
-            plugin("tau-compaction", "Summarizes when pruning is not enough", &[Seam::Start, Seam::Rewrite], 0.061, Some(PluginScreen::Ledger)),
+            PluginInfo {
+                page: Some(tau_ui_plugin::Link::page("ledger").param("run", "")),
+                ..plugin(tau_fast_compaction::NAME, "Prunes large bash outputs as they arrive, and stale tool history, with Jev", &[Seam::Start, Seam::Rewrite], 0.046, None)
+            },
+            plugin(tau_compaction::NAME, "Summarizes when pruning is not enough", &[Seam::Start, Seam::Rewrite], 0.061, None),
             plugin(tau_goal::NAME, "Keeps a conversation going until its /goal holds, with Jev", &[Seam::Start, Seam::AfterTool, Seam::BeforeStop], 0.009, None),
             plugin("tau-tools", "read bash edit write grep find ls", &[Seam::Tools], 0.0, None),
         ],
@@ -3164,8 +3175,8 @@ mod tests {
                 .any(|item| matches!(item, Item::Rewrite { .. }))
         );
         assert!(matches!(view.items.last(), Some(Item::Plugin(_))));
-        // The ledger lists every call before the rewrite, and marks the
-        // cards it pruned.
+        // The ledger lists every call before the rewrite, which it
+        // names, and marks the cards it pruned.
         let rewrite = view
             .items
             .iter()
@@ -3175,22 +3186,25 @@ mod tests {
             .iter()
             .filter(|item| matches!(item, Item::Tool(_)))
             .count();
-        assert_eq!(view.ledger.len(), calls);
+        let pruning: tau_fast_compaction::ui::State = serde_json::from_value(
+            view.plugin_states[tau_fast_compaction::NAME].clone(),
+        )
+        .unwrap();
+        assert_eq!(pruning.ledger.len(), calls);
+        let Item::Rewrite { key: Some(key), .. } = &view.items[rewrite] else {
+            panic!("the rewrite is named");
+        };
         assert!(
-            view.last_rewrite()
-                .and_then(|(_, _, _, detail)| detail)
-                .is_some_and(|detail| detail.contains("$0.0011")),
+            pruning.passes[key].detail.contains("$0.0011"),
             "the pass's cost"
         );
         assert_eq!(
-            view.tool("c8").and_then(|card| card.pruned),
-            Some(crate::view::Pruned::ResultDropped)
+            view.tool("c8").and_then(|card| card.dropped),
+            Some(crate::view::Dropped::Result)
         );
         // The test run output pruning cut stays, with its terminal.
-        assert_eq!(
-            view.tool("c7").and_then(|card| card.pruned),
-            Some(crate::view::Pruned::Kept)
-        );
+        assert_eq!(view.tool("c7").and_then(|card| card.dropped), None);
+        assert!(view.tool("c7").is_some_and(|card| card.cut.is_some()));
         assert!(matches!(
             view.tool("c7").map(|card| &card.body),
             Some(crate::view::ToolBody::Terminal(_))

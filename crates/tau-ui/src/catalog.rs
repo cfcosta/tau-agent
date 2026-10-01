@@ -119,8 +119,6 @@ pub enum PluginScreen {
     Plan,
     Memory,
     Constitution,
-    /// The pruning ledger.
-    Ledger,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -8921,8 +8921,10 @@ dependencies = [
 name = "tau-compaction"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
+ "gpui-pre",
  "hegeltest",
  "schemars",
  "serde",
@@ -8931,6 +8933,8 @@ dependencies = [
  "tau-ai",
  "tau-store",
  "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -8959,8 +8963,10 @@ dependencies = [
 name = "tau-fast-compaction"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
+ "gpui-pre",
  "hegeltest",
  "serde",
  "serde_json",
@@ -8970,6 +8976,8 @@ dependencies = [
  "tau-jev",
  "tau-store",
  "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "thiserror 2.0.21",
  "tokio",
 ]

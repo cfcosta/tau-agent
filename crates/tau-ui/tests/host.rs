@@ -1511,8 +1511,12 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     let mut view = host
         .start("build it", &ModelChoice::default(), REPO)
         .unwrap();
-    // With a key, pruning steps in at 60% of the window.
-    assert_eq!(view.context.trigger, Some(0.6));
+    // With a key, pruning runs with it.
+    let pruning: tau_fast_compaction::ui::State = serde_json::from_value(
+        view.plugin_states[tau_fast_compaction::NAME].clone(),
+    )
+    .unwrap();
+    assert_eq!(pruning.on, Some(true));
     for event in until_end(&mut events) {
         view.apply(&event);
     }
@@ -1541,14 +1545,12 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     assert_eq!(mode(archive.parent().unwrap()), 0o700);
     let whole = std::fs::read_to_string(archive).unwrap();
     assert!(whole.contains(":: line 600\n"));
-    assert!(
-        view.plugins
-            .iter()
-            .any(|plugin| plugin.name == tau_fast_compaction::NAME
-                && plugin.state.contains("large outputs")),
-        "{:?}",
-        view.plugins
-    );
+    let pruning: tau_fast_compaction::ui::State = serde_json::from_value(
+        view.plugin_states[tau_fast_compaction::NAME].clone(),
+    )
+    .unwrap();
+    assert_eq!(pruning.outputs, 1);
+    assert!(pruning.status().unwrap().contains("large outputs"));
 
     let history = host.history().unwrap();
     assert_eq!(cut_of(&history[0]), Some(cut));
