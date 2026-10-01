@@ -24,6 +24,7 @@ tau-ai.workspace = true
 tau-codemode.workspace = true
 tau-compaction.workspace = true
 tau-constitution.workspace = true
+tau-ask.workspace = true
 tau-goal.workspace = true
 tau-jev.workspace = true
 tau-mcp.workspace = true

@@ -43,6 +43,9 @@ pub fn registry() -> &'static Registry {
             .with(tau_memory::ui::MemoryUi)
             .with(tau_constitution::ui::ConstitutionUi)
             .with(tau_goal::GoalUi)
+            // Questions the agent asks the person, answered in the
+            // composer's place.
+            .with(tau_ask::AskUi)
             // MCP servers' tools: their direct ones are added to the run's
             // plan in tau-mcp's `start`, so it comes before Codemode.
             .with(tau_mcp::McpUi)
