@@ -204,6 +204,13 @@ impl ToolCtx {
         }
     }
 
+    /// The id of the call being run: the model's call id, or
+    /// `<parent>/<n>` for a nested call. The calls this one makes with
+    /// [`Self::call`] are `<this id>/<n>`.
+    pub fn call_id(&self) -> &str {
+        &self.updates.call_id
+    }
+
     /// The run's [`PluginCtx`] of the plugin that added this tool, by
     /// `Plugin::tools`, `RunPlan::add_tool` or its `ToolSource`; `None`
     /// for the agent's own tools and outside a run.

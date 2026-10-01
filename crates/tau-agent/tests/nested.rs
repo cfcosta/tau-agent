@@ -748,6 +748,7 @@ fn ending_the_caller_ends_its_nested_calls() {
             ]
         );
         let ctx = kept.lock().unwrap().clone().unwrap();
+        assert_eq!(ctx.call_id(), FIRST);
         let late = ctx.call("echo", json!({"text": "late"})).await;
         assert_eq!(late.unwrap_err().to_string(), ENDED);
     });

@@ -753,6 +753,8 @@ impl ToolCtx {
         -> Result<ToolOutput, ToolError>;
     /// The `PluginCtx` of the plugin that added this tool, for the run.
     pub fn plugin(&self) -> Option<&PluginCtx>;
+    /// This call's id: the model's call id, or `<parent>/<n>`.
+    pub fn call_id(&self) -> &str;
 }
 
 impl Catalog {
