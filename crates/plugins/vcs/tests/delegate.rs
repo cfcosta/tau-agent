@@ -510,7 +510,10 @@ fn a_landing_names_only_the_conflicts_it_brought() {
     });
 }
 
-/// Counts the calls running at once, and the most it saw.
+/// Counts the calls running at once, and the most it saw. Each call
+/// waits until four run at once, or five seconds pass: the sub-agents'
+/// workspaces are made one at a time, under the repository's lock, so
+/// they reach the call at different times.
 #[derive(Clone, Default)]
 struct Gauge {
     now: Arc<Mutex<(usize, usize)>>,
@@ -541,7 +544,7 @@ impl AgentTool for Gauge {
         }
         // Wait for four to run at once, so they overlap however slowly
         // they start; the calls past them never see four.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while self.now.lock().unwrap().0 < 4
             && tokio::time::Instant::now() < deadline
         {

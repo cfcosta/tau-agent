@@ -29,6 +29,7 @@ pub mod delegate;
 mod diff;
 pub mod error;
 mod land;
+mod lock;
 mod ops;
 pub mod plugin;
 pub mod project;

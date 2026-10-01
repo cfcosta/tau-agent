@@ -26,7 +26,7 @@ use jj_lib::{
 use pollster::block_on;
 use serde::{Deserialize, Serialize};
 
-use crate::{error::VcsError, vcs::Worker};
+use crate::{error::VcsError, lock::lock_repo, vcs::Worker};
 
 /// The operation attribute naming the tool that wrote an operation.
 pub(crate) const TOOL_ATTRIBUTE: &str = "tau.vcs.tool";
@@ -68,6 +68,7 @@ pub struct TooLarge {
 /// returns the repo at head.
 pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
     let workspace = worker.workspace()?;
+    let _repo = lock_repo(workspace.repo_path())?;
     let name = workspace.workspace_name().to_owned();
     let loader = workspace.repo_loader().clone();
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
@@ -85,6 +86,7 @@ pub(crate) fn mutate<T>(
     edit: impl FnOnce(&mut Transaction, &Commit) -> Result<T, VcsError>,
 ) -> Result<(Snapshot, T), VcsError> {
     let workspace = worker.workspace()?;
+    let _repo = lock_repo(workspace.repo_path())?;
     let name = workspace.workspace_name().to_owned();
     let loader = workspace.repo_loader().clone();
     let mut locked = block_on(workspace.start_working_copy_mutation())?;

@@ -153,6 +153,7 @@ impl Project {
     /// default branch, but not a checkout's checked-out branch. Runs keep their workspaces and commits; new runs start
     /// from the new trunk. Returns the trunk before and after.
     pub fn update(&self, from: UpdateFrom<'_>) -> Result<Updated, VcsError> {
+        let _repo = self.lock()?;
         let before = self.trunk()?;
         let git_dir = self.inner.root.join(GIT);
         match from {
@@ -350,6 +351,7 @@ impl Project {
             path: dir.clone(),
             source,
         })?;
+        let lock = self.lock()?;
         let main = self.main()?;
         let repo = block_on(main.repo_loader().load_at_head())?;
         let (mut workspace, repo) =
@@ -400,6 +402,7 @@ impl Project {
         let repo = block_on(tx.commit(format!("tau: add workspace {name}")))?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
+        drop(lock);
         Vcs::open(dir, self.inner.identity.clone())
     }
 
@@ -500,6 +503,7 @@ impl Project {
         use futures_util::StreamExt as _;
         use jj_lib::revset::ResolvedRevsetExpression;
 
+        let _repo = self.lock()?;
         let repo = self.load()?;
         let id = |hex: &str| {
             CommitId::try_from_hex(hex)
@@ -556,6 +560,7 @@ impl Project {
     /// Removes the local bookmark `name`, if there is one. The commits it
     /// named stay.
     pub fn remove_bookmark(&self, name: &str) -> Result<(), VcsError> {
+        let _repo = self.lock()?;
         let repo = self.load()?;
         let name = RefName::new(name);
         if repo.view().get_local_bookmark(name).is_absent() {
@@ -586,6 +591,7 @@ impl Project {
             path: dir.clone(),
             source,
         })?;
+        let lock = self.lock()?;
         let main = self.main()?;
         let repo = block_on(main.repo_loader().load_at_head())?;
         let (mut workspace, repo) =
@@ -607,6 +613,7 @@ impl Project {
         let repo = block_on(tx.commit(format!("tau: add workspace {name}")))?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
+        drop(lock);
         Vcs::open(dir, self.inner.identity.clone())
     }
 
@@ -617,6 +624,7 @@ impl Project {
         if name == DEFAULT_WORKSPACE {
             return Ok(());
         }
+        let lock = self.lock()?;
         let repo = self.load()?;
         let name_buf = WorkspaceNameBuf::from(name);
         if repo.view().get_wc_commit_id(&name_buf).is_some() {
@@ -625,6 +633,7 @@ impl Project {
             block_on(tx.repo_mut().rebase_descendants())?;
             block_on(tx.commit(format!("tau: forget workspace {name}")))?;
         }
+        drop(lock);
         let dir = self.workspace_dir(name);
         if dir.exists() {
             std::fs::remove_dir_all(&dir).map_err(|source| {
@@ -683,6 +692,15 @@ impl Project {
             root: self.inner.root.clone(),
             source,
         })
+    }
+
+    /// The repository's lock, which every write takes
+    /// (`crate::lock`). Reads load the repository at its newest
+    /// operation and need none.
+    fn lock(&self) -> Result<jj_lib::lock::FileLock, VcsError> {
+        crate::lock::lock_repo(
+            &self.inner.root.join(MAIN).join(".jj").join("repo"),
+        )
     }
 
     fn load(&self) -> Result<Arc<ReadonlyRepo>, VcsError> {

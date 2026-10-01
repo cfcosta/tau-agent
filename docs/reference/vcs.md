@@ -53,6 +53,18 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
   clone is dropped.
 - All tools are `ExecutionMode::Sequential`. A batch of calls runs in
   order, so `vcs_commit` and then `vcs_log` in one turn see each other.
+- Every operation that writes to a repository takes the repository's
+  lock first, and holds it until the operation is written and the
+  files are checked out: each tool's snapshot and transaction, and
+  each `Project` write (`update`, `add_workspace`,
+  `add_workspace_from_snapshot`, `forget_workspace`, `abandon_between`,
+  `remove_bookmark`). Runs work in workspaces of one repository from
+  threads of their own, and two operations that started from the same
+  one would fork jj's operation log: a commit two of them rewrote
+  would be divergent, and a bookmark two of them moved conflicted.
+  Under the lock they happen one after another. The lock is
+  `.jj/repo/tau.lock`, held with `flock`, so it holds between threads
+  and between processes. Reads take no lock.
 
 ## Scoping rules
 
@@ -87,10 +99,12 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
   first moves the files to the rewritten commit, as jj's
   `workspace update-stale` does, with what was edited on disk since the
   last snapshot merged on top, as a rebase would: an edit to a file the
-  rewrite changed too becomes a conflict. When a concurrent operation
-  forked the operation log instead, the tools fail with
-  `The working copy is stale: ...` and ask for the user to update the
-  workspace.
+  rewrite changed too becomes a conflict. tau-vcs never forks the
+  operation log itself (see "Threading"). Another program can, as a
+  `jj` command run by hand can; when that leaves the working copy on an
+  operation the repository's head does not descend from, the tools
+  fail with `The working copy is stale: ...` and ask for the user to
+  update the workspace.
 
 ## Results
 

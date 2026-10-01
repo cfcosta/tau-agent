@@ -88,6 +88,8 @@ pub enum VcsError {
          commit. Ask the user to update the workspace."
     )]
     Stale,
+    #[error("Cannot lock the repository: {0}")]
+    Lock(#[source] jj_lib::lock::FileLockError),
     #[error(
         "`{0}` is not a change id or a commit id. Pass an id (or a unique \
          prefix) from vcs_log or vcs_status; revsets are not accepted."
