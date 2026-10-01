@@ -363,6 +363,7 @@ also run in the nightly tier and under `cargo mutants`.
 | Strict schema rewrite: every object in the output has all properties required and `additionalProperties: false`                                                        | Invariant    |
 | Strict schema rewrite is idempotent                                                                                                                                    | Algebraic    |
 | A value valid under the original schema, with missing optional fields set to `null`, is valid under the strict schema                                                  | Metamorphic  |
+| A schema with a string `format` has a strict form exactly when OpenAI's strict mode takes the format, and a strict form holds no other                                 | Invariant    |
 | Coercion leaves a value that already validates unchanged                                                                                                               | Invariant    |
 | Coercion is idempotent                                                                                                                                                 | Algebraic    |
 | A number, a boolean or a one-element array gives the same result as its string or scalar form after coercion                                                           | Metamorphic  |

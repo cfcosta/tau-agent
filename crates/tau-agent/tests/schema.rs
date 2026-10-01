@@ -14,6 +14,7 @@ use hegel::{TestCase, extras::serde_json as json_gs, generators as gs};
 use serde_json::{Map, Value, json};
 use tau_agent::schema::{
     NotStrict,
+    STRICT_FORMATS,
     inline_refs,
     strip_nulls_for_optional,
     to_strict,
@@ -729,4 +730,104 @@ fn an_object_without_properties_gets_an_empty_map() {
             "additionalProperties": false,
         })
     );
+}
+
+/// Every `format` a schema holds, wherever it sits.
+fn formats(schema: &Value, out: &mut Vec<Value>) {
+    match schema {
+        Value::Object(obj) => {
+            for (key, value) in obj {
+                if key == "format" {
+                    out.push(value.clone());
+                }
+                // `properties` maps names to schemas: a property named
+                // `format` is not a keyword.
+                if key == "properties"
+                    && let Some(properties) = value.as_object()
+                {
+                    for property in properties.values() {
+                        formats(property, out);
+                    }
+                } else {
+                    formats(value, out);
+                }
+            }
+        }
+        Value::Array(values) => values.iter().for_each(|v| formats(v, out)),
+        _ => {}
+    }
+}
+
+/// A strict-convertible schema with a string property carrying `format`
+/// converts exactly when OpenAI's strict mode takes that format, and a
+/// strict form never holds a format it refuses (as `uri`, which MCP
+/// servers' URL arguments use and which failed every request that
+/// declared such a tool). The property sits directly, or as an `anyOf`
+/// variant. On an integer, any format converts: OpenAI checks only a
+/// string's, and schemars gives integers `uint8` and the like.
+#[hegel::test(test_cases = 300)]
+fn strict_form_holds_only_formats_openai_takes(tc: TestCase) {
+    let schema = tc.draw(generators::strict_schema(3));
+    let refused = [
+        "uri",
+        "uri-reference",
+        "iri",
+        "regex",
+        "json-pointer",
+        "idn-email",
+        "byte",
+        "int64",
+    ];
+    let format: String = tc.draw(hegel::one_of!(
+        gs::sampled_from(
+            STRICT_FORMATS
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+        ),
+        gs::sampled_from(
+            refused.iter().map(|f| f.to_string()).collect::<Vec<_>>()
+        ),
+        gs::text().max_size(12),
+    ));
+    let string = tc.draw(gs::booleans());
+    let kind = if string { "string" } else { "integer" };
+    let mut property = json!({"type": kind, "format": format});
+    if tc.draw(gs::booleans()) {
+        property = json!({"anyOf": [property, {"type": "integer"}]});
+    }
+    let mut with_format = schema.clone();
+    with_format
+        .as_object_mut()
+        .expect("the root is an object")
+        .entry("properties")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .expect("properties is a map")
+        .insert("formatted".to_owned(), property);
+
+    let supported = !string || STRICT_FORMATS.contains(&format.as_str());
+    match to_strict(&with_format) {
+        Ok(strict) => {
+            assert!(supported, "format {format:?} kept strict: {strict}");
+            let mut found = Vec::new();
+            formats(&strict, &mut found);
+            if !string {
+                return;
+            }
+            assert!(
+                found.iter().all(|f| f
+                    .as_str()
+                    .is_some_and(|f| STRICT_FORMATS.contains(&f))),
+                "{found:?}"
+            );
+        }
+        Err(error) => {
+            assert!(!supported, "format {format:?} refused: {error}");
+            assert_eq!(
+                error.reason(),
+                format!("format {} is unsupported", json!(format))
+            );
+        }
+    }
 }

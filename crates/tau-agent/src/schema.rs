@@ -36,8 +36,8 @@
 //! Not every schema can be rewritten this way. A schema that uses a
 //! keyword strict mode does not support (`allOf`, `oneOf`, a
 //! schema-valued `additionalProperties`, a tuple `items`, a `$ref` that
-//! cannot be inlined, ...) is rejected with [`NotStrict`] rather than
-//! silently reinterpreted.
+//! cannot be inlined, a `format` outside [`STRICT_FORMATS`], ...) is
+//! rejected with [`NotStrict`] rather than silently reinterpreted.
 
 use serde_json::{Map, Value};
 
@@ -63,6 +63,30 @@ const UNSUPPORTED_KEYS: &[&str] = &[
     "if",
     "then",
     "else",
+];
+
+/// The string `format`s OpenAI's strict mode accepts, on a node whose
+/// value may be a string; it does not check a number's or an integer's
+/// (schemars' `uint8`, `double`). A tool whose
+/// schema has any other (`uri`, as MCP servers' Zod schemas give a URL
+/// argument) is refused with `invalid_function_parameters`, and the
+/// whole request with it, so [`to_strict`] rejects it and the tool goes
+/// without strict mode, which takes any `format`.
+///
+/// Source: OpenAI's structured outputs guide, checked against the
+/// ChatGPT route on 2026-10-01: these nine pass on a string; `uri`,
+/// `uri-reference`, `iri`, `regex`, `json-pointer`, `idn-email`, `byte`
+/// and `int64` fail; any format passes on an integer, number or boolean.
+pub const STRICT_FORMATS: &[&str] = &[
+    "date-time",
+    "time",
+    "date",
+    "duration",
+    "email",
+    "hostname",
+    "ipv4",
+    "ipv6",
+    "uuid",
 ];
 
 /// Why a schema could not be rewritten into OpenAI's strict form.
@@ -137,6 +161,25 @@ fn make_strict_node(schema: &Value) -> Result<Value, NotStrict> {
                 "{key} schemas are unsupported"
             )));
         }
+    }
+
+    // OpenAI checks `format` only where the value may be a string:
+    // schemars' `uint8` on an integer passes.
+    let may_be_string = match obj.get("type") {
+        None => true,
+        Some(Value::String(kind)) => kind == "string",
+        Some(Value::Array(kinds)) => {
+            kinds.iter().any(|kind| kind.as_str() == Some("string"))
+        }
+        Some(_) => false,
+    };
+    if may_be_string
+        && let Some(format) = obj.get("format")
+        && !format
+            .as_str()
+            .is_some_and(|format| STRICT_FORMATS.contains(&format))
+    {
+        return Err(NotStrict::new(format!("format {format} is unsupported")));
     }
 
     if let Some(any_of) = obj.get("anyOf").cloned() {
