@@ -1373,11 +1373,12 @@ pub fn catalog() -> Catalog {
             plugin("tau-constitution", "6 rules on edit, write, bash and the final answer", &[Seam::BeforeTool, Seam::BeforeStop], 0.031, Some(PluginScreen::Constitution)),
             plugin(tau_fast_compaction::NAME, "Prunes large bash outputs as they arrive, and stale tool history, with Jev", &[Seam::Start, Seam::Rewrite], 0.046, Some(PluginScreen::Ledger)),
             plugin("tau-compaction", "Summarizes when pruning is not enough", &[Seam::Start, Seam::Rewrite], 0.061, Some(PluginScreen::Ledger)),
+            plugin(tau_goal::NAME, "Keeps a conversation going until its /goal holds, with Jev", &[Seam::Start, Seam::AfterTool, Seam::BeforeStop], 0.009, None),
             plugin("tau-tools", "read bash edit write grep find ls", &[Seam::Tools], 0.0, None),
         ],
         jev: Some(JevStats {
             model: "Jev 1.13".into(),
-            key_env: "TYPESAFE_API_KEY".into(),
+            key_env: "typesafe-key, set on Models".into(),
             price: "$0.042 / M input".into(),
             requests: 412,
             input_tokens: 1_940_000,
