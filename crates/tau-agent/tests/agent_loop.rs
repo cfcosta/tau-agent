@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
     event::{LimitKind, RunEvent, StopReason},
-    hook::{Decision, HookCtx, RunHook, ToolCall},
     limits::Limits,
+    plugin::{Decision, Plugin, PluginCtx, PluginRun, RunPlan, ToolCall},
     runner::{CANCELLED, TRUNCATED},
     tool::{AgentTool, ExecutionMode, ToolCtx, ToolOutput},
 };
@@ -115,9 +115,24 @@ impl AgentTool for Probe {
 struct Recorder(Arc<Mutex<Vec<RunEvent>>>);
 
 #[async_trait]
-impl RunHook for Recorder {
-    async fn on_event(&self, event: &RunEvent) {
+impl PluginRun for Recorder {
+    async fn on_event(&mut self, event: &RunEvent, _ctx: &PluginCtx) {
         self.0.lock().unwrap().push(event.clone());
+    }
+}
+
+#[async_trait]
+impl Plugin for Recorder {
+    fn name(&self) -> &str {
+        "recorder"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(self.clone()))
     }
 }
 
@@ -244,7 +259,7 @@ fn loop_over_generated_scripts_body(tc: TestCase) {
         let agent = Agent::new(llm.clone())
             .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
             .tool(Probe::new("serial", ExecutionMode::Sequential, log.clone()))
-            .hook(recorder.clone())
+            .plugin(recorder.clone())
             .clock(counter_clock());
         let run = agent.start("go", &store);
         let id = run.id();
@@ -704,13 +719,14 @@ fn control_steers_and_cancels_while_events_are_read() {
 /// run; an erroring hook blocks; changed arguments are validated again.
 #[test]
 fn before_tool_hooks() {
+    #[derive(Clone)]
     struct Block(&'static str, Arc<Mutex<Vec<&'static str>>>);
     #[async_trait]
-    impl RunHook for Block {
+    impl PluginRun for Block {
         async fn before_tool(
-            &self,
+            &mut self,
             call: &mut ToolCall,
-            _: &HookCtx,
+            _ctx: &PluginCtx,
         ) -> Result<Decision, PluginError> {
             self.1.lock().unwrap().push(self.0);
             match (self.0, call.args["ms"].as_u64()) {
@@ -722,6 +738,21 @@ fn before_tool_hooks() {
                 }
                 _ => Ok(Decision::Allow),
             }
+        }
+    }
+
+    #[async_trait]
+    impl Plugin for Block {
+        fn name(&self) -> &str {
+            self.0
+        }
+
+        async fn start(
+            &self,
+            _plan: &mut RunPlan,
+            _ctx: &PluginCtx,
+        ) -> Result<Box<dyn PluginRun>, PluginError> {
+            Ok(Box::new(self.clone()))
         }
     }
     let llm = ScriptedModel::new()
@@ -738,9 +769,9 @@ fn before_tool_hooks() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let agent = Agent::new(llm)
             .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
-            .hook(Block("blocker", seen.clone()))
-            .hook(Block("breaker", seen.clone()))
-            .hook(Block("mangler", seen.clone()));
+            .plugin(Block("blocker", seen.clone()))
+            .plugin(Block("breaker", seen.clone()))
+            .plugin(Block("mangler", seen.clone()));
         let run = agent.start("go", &store);
         let id = run.id();
         run.outcome().await.unwrap();
@@ -832,7 +863,7 @@ fn a_failure_with_output_keeps_its_details() {
         let recorder = Recorder::default();
         let run = Agent::new(llm)
             .tool(FailsWithOutput(json!({"type": "object"})))
-            .hook(recorder.clone())
+            .plugin(recorder.clone())
             .start("go", &store);
         let id = run.id();
         run.outcome().await.unwrap();
@@ -909,18 +940,34 @@ fn turn_limit_ends_the_run() {
 /// the slow run finishes only once it opens.
 #[test]
 fn slow_hook_holds_only_its_run() {
+    #[derive(Clone)]
     struct Gate(Arc<tokio::sync::Semaphore>);
     #[async_trait]
-    impl RunHook for Gate {
-        async fn on_event(&self, _: &RunEvent) {
+    impl PluginRun for Gate {
+        async fn on_event(&mut self, _: &RunEvent, _ctx: &PluginCtx) {
             let _permit = self.0.acquire().await.unwrap();
+        }
+    }
+
+    #[async_trait]
+    impl Plugin for Gate {
+        fn name(&self) -> &str {
+            "gate"
+        }
+
+        async fn start(
+            &self,
+            _plan: &mut RunPlan,
+            _ctx: &PluginCtx,
+        ) -> Result<Box<dyn PluginRun>, PluginError> {
+            Ok(Box::new(self.clone()))
         }
     }
     block_on(async {
         let store = Store::memory().await.unwrap();
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let slow = Agent::new(ScriptedModel::new().turn(|t| t.text("slow")))
-            .hook(Gate(gate.clone()))
+            .plugin(Gate(gate.clone()))
             .start("go", &store);
         let fast = Agent::new(ScriptedModel::new().turn(|t| t.text("fast")))
             .run("go", &store)

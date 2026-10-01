@@ -1,6 +1,6 @@
 //! `Agent` and `Run` (`docs/reference/api.md`).
 //!
-//! An [`Agent`] is a value: a model, instructions, tools, hooks and
+//! An [`Agent`] is a value: a model, instructions, tools, plugins and
 //! limits, immutable once built and cheap to clone. [`Agent::start`]
 //! starts a [`Run`], one execution with its own event stream, steering
 //! and cancellation.
@@ -36,9 +36,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     event::{RunEvent, StopReason},
-    hook::RunHook,
     limits::Limits,
-    plugin::{Hooked, Plugin, RunPlan, RunShared},
+    plugin::{Plugin, RunPlan, RunShared},
     runner::{ActivePlugin, Clock, LoopTool, Runner, Toolbox, system_clock},
     schema::to_strict,
     tool::{AgentTool, RunId, ToolCtx, ToolError, ToolOutput, ToolSource},
@@ -212,7 +211,7 @@ struct AgentInner {
     reasoning: Option<ReasoningEffort>,
     /// Each tool, with the index of the plugin that added it.
     tools: Vec<(Arc<dyn AgentTool>, Option<usize>)>,
-    /// Plugins and hooks, in registration order.
+    /// Plugins, in registration order.
     plugins: Vec<Arc<dyn Plugin>>,
     /// The plugins' tool sources, with each plugin's index.
     sources: Vec<(Arc<dyn ToolSource>, usize)>,
@@ -295,12 +294,6 @@ impl Agent {
         tools: impl IntoIterator<Item = Arc<dyn AgentTool>>,
     ) -> Self {
         self.with(|a| a.tools.extend(tools.into_iter().map(|t| (t, None))))
-    }
-
-    /// Adds a hook. It runs in registration order among the plugins,
-    /// and every run shares it.
-    pub fn hook(self, hook: impl RunHook) -> Self {
-        self.with(|a| a.plugins.push(Arc::new(Hooked(Arc::new(hook)))))
     }
 
     /// Adds a plugin (`docs/reference/plugins.md`): its tools join the

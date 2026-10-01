@@ -10,8 +10,14 @@ use std::{path::Path, sync::Arc};
 use async_trait::async_trait;
 use serde_json::Value;
 use tau_agent::{
-    hook::ToolCall,
-    plugin::{Plugin, PluginCtx, PluginError, PluginRun, RunPlan},
+    plugin::{
+        Plugin,
+        PluginCtx,
+        PluginError,
+        PluginRun,
+        RunPlan,
+        ToolResultView,
+    },
     tool::{AgentTool, ToolOutput},
 };
 
@@ -118,29 +124,31 @@ struct MarkListings(Vcs);
 
 #[async_trait]
 impl PluginRun for MarkListings {
-    async fn after_tool(
+    async fn after_tool_result(
         &mut self,
-        call: &ToolCall,
+        view: &ToolResultView<'_>,
         output: &mut ToolOutput,
         _ctx: &PluginCtx,
-    ) {
+    ) -> Result<(), PluginError> {
+        let call = view.call;
         if call.name != LS {
-            return;
+            return Ok(());
         }
         let Some(details) = output.details.as_mut() else {
-            return;
+            return Ok(());
         };
         let Some(dir) = details.get("dir").and_then(Value::as_str) else {
-            return;
+            return Ok(());
         };
         let Some(prefix) = repo_path(self.0.root(), Path::new(dir)) else {
-            return;
+            return Ok(());
         };
         // A listing without marks beats a failed call.
         let Ok(changes) = self.0.changes().await else {
-            return;
+            return Ok(());
         };
         mark(details, &prefix, &changes);
+        Ok(())
     }
 }
 

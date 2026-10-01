@@ -6,7 +6,7 @@
 tau-agent/
 ├── crates/
 │   ├── tau-ai/       # types, events, Responses conversion, WebSocket pool, retry, cost
-│   ├── tau-agent/    # Agent, Run, loop, AgentTool + RunHook, plugins, typed results,
+│   ├── tau-agent/    # Agent, Run, loop, AgentTool + Plugin, typed results,
 │   │                 # limits, sub-agents, forks, context estimate
 │   ├── tau-store/    # SQLite via sqlx: runs, messages, fork transcripts, migrations
 │   ├── tau-testing/  # ScriptedModel, recorded-stream replay
@@ -52,7 +52,7 @@ Agent::start(input, &store)
             ├─ transcript: kept in memory; fork ancestors loaded once at start
             ├─ body = session fields (built once) + InputCache(transcript)
             ├─ lane.create(body)                     # delta rule: suffix + previous_response_id
-            │    └─ response.* events → AssistantEvent stream → RunEvent (hooks awaited)
+            │    └─ response.* events → AssistantEvent stream → RunEvent (plugins awaited)
             ├─ tool calls? prepare sequentially → execute in parallel → results in source order
             ├─ store.append_turn(messages, usage)    # one write transaction
             ├─ limits / cancel / steering checks
@@ -79,7 +79,7 @@ Agent::start(input, &store)
   - Tool futures are not dropped to cancel them. Each tool receives the
     run's token and observes it itself.
   - Only provider streams are dropped inside `select!`.
-- **Hooks and event subscribers are awaited in order.** A slow
+- **Plugins and event subscribers are awaited in order.** A slow
   subscriber applies backpressure to its run and to no other run.
 - **MCP servers belong to the host, not to a run.** tau-mcp keeps one
   plugin per repository on the host, whose connections every run in the
@@ -143,7 +143,7 @@ the request stays identical. So:
 | `openai-codex-responses.ts` WebSocket cache        | `tau-ai::ws` (plan endpoint, one lane per connection)              |
 | `pi-agent-core` `Agent` / `agentLoop`              | `tau-agent::Agent` / `Run`                                         |
 | `AgentTool.execute(id, params, signal, onUpdate)`  | `AgentTool::call(args, ToolCtx { cancel, updates })`               |
-| `beforeToolCall` / `afterToolCall` / listeners     | `RunHook`                                                          |
+| `beforeToolCall` / `afterToolCall` / listeners     | `PluginRun` (`before_tool` / `after_tool_result` / `on_event`)     |
 | steering queue                                     | `Run::steer`                                                       |
 | follow-up queue                                    | not ported (start another run)                                     |
 | JSONL session tree                                 | `runs` + `messages` tables; forks via `parent_run_id` / `fork_seq` |

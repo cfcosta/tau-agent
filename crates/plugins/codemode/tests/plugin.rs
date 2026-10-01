@@ -12,8 +12,7 @@ use tau_agent::{
     agent::Agent,
     error::{PluginError, ToolError},
     event::RunEvent,
-    hook::{Decision, HookCtx, RunHook, ToolCall},
-    plugin::Plugin,
+    plugin::{Decision, Plugin, PluginCtx, PluginRun, RunPlan, ToolCall},
     tool::{
         AgentTool,
         ExecutionMode,
@@ -127,11 +126,11 @@ struct Recorder {
 }
 
 #[async_trait]
-impl RunHook for Recorder {
+impl PluginRun for Recorder {
     async fn before_tool(
-        &self,
+        &mut self,
         call: &mut ToolCall,
-        _ctx: &HookCtx,
+        _ctx: &PluginCtx,
     ) -> Result<Decision, PluginError> {
         if Some(call.name.as_str()) == self.block && call.parent.is_some() {
             return Ok(Decision::Block(format!("{} is blocked", call.name)));
@@ -139,8 +138,23 @@ impl RunHook for Recorder {
         Ok(Decision::Allow)
     }
 
-    async fn on_event(&self, event: &RunEvent) {
+    async fn on_event(&mut self, event: &RunEvent, _ctx: &PluginCtx) {
         self.events.lock().unwrap().push(event.clone());
+    }
+}
+
+#[async_trait]
+impl Plugin for Recorder {
+    fn name(&self) -> &str {
+        "recorder"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(self.clone()))
     }
 }
 
@@ -223,7 +237,7 @@ return table.concat(out, ",") .. a .. b
 "#]))
         .tool(Echo::new("echo"))
         .plugin(Codemode::new(None))
-        .hook(recorder.clone());
+        .plugin(recorder.clone());
         let outcome = agent.run("go", &store).await.unwrap();
 
         let result = only_result(&store, &outcome.run.0).await;
@@ -298,7 +312,7 @@ fn before_tool_blocks_a_nested_call() {
         ]))
         .tool(echo)
         .plugin(Codemode::new(None))
-        .hook(Recorder {
+        .plugin(Recorder {
             block: Some("echo"),
             ..Recorder::default()
         });
@@ -384,7 +398,7 @@ fn jev_requests_reach_the_run_as_updates() {
         ]))
         .tool(Echo::new("echo"))
         .plugin(Codemode::new(Some(Arc::new(FakeJev::nouls(|_| 0.25)))))
-        .hook(recorder.clone());
+        .plugin(recorder.clone());
         agent.run("go", &store).await.unwrap();
 
         let events = recorder.events.lock().unwrap().clone();

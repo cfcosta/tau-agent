@@ -62,23 +62,23 @@ tau-testing = { git = "https://github.com/cfcosta/tau-agent" }
 ```
 
 You also need a tokio runtime, and usually `serde`, `schemars` (typed
-output and tools) and `async-trait` (custom tools and hooks).
+output and tools) and `async-trait` (custom tools and plugins).
 
 The workspace uses Rust edition 2024 and pins a nightly toolchain. No
 database is needed at build time: the sqlx query metadata is committed.
 
-| Crate         | What it gives you                                                               |
-| ------------- | ------------------------------------------------------------------------------- |
-| `tau-agent`   | `Agent`, `Run`, the loop, tools, hooks, limits, typed output, forks, sub-agents |
-| `tau-ai`      | The `OpenAi` client, messages, models and pricing, the `Llm` trait              |
-| `tau-store`   | `Store`: SQLite storage for runs, transcripts and costs                         |
-| `tau-tools`   | Optional coding tools, all rooted at one directory                              |
-| `tau-vcs`     | Optional version-control tools on one jj workspace, backed by jj-lib            |
-| `tau-testing` | `ScriptedModel` and `block_on` for deterministic tests                          |
+| Crate         | What it gives you                                                                 |
+| ------------- | --------------------------------------------------------------------------------- |
+| `tau-agent`   | `Agent`, `Run`, the loop, tools, plugins, limits, typed output, forks, sub-agents |
+| `tau-ai`      | The `OpenAi` client, messages, models and pricing, the `Llm` trait                |
+| `tau-store`   | `Store`: SQLite storage for runs, transcripts and costs                           |
+| `tau-tools`   | Optional coding tools, all rooted at one directory                                |
+| `tau-vcs`     | Optional version-control tools on one jj workspace, backed by jj-lib              |
+| `tau-testing` | `ScriptedModel` and `block_on` for deterministic tests                            |
 
 ## Core concepts
 
-- **`Agent`** describes what to run: model, instructions, tools, hooks
+- **`Agent`** describes what to run: model, instructions, tools, plugins
   and limits. It is cheap to clone and holds no state, so one agent can
   run many times, concurrently.
 - **`Run`** is one execution of an agent. It streams events, accepts
@@ -247,22 +247,36 @@ For hand-written schemas, implement `AgentTool` directly. Its
 `execution_mode` can return `ExecutionMode::Sequential` to keep a batch
 of calls from running in parallel.
 
-### Hooks
+### Plugins
 
-A `RunHook` sees every tool call and every event. Hooks run in the order
-they were added, and each is awaited.
+A `Plugin` is shared by an agent's runs. For each run, `start` returns a
+`PluginRun` that holds that run's state and sees every tool call and
+every event. Plugins run in the order they were added, and each is
+awaited.
 
 ```rust
-use tau_agent::{
-    hook::{Decision, HookCtx, RunHook, ToolCall},
-    plugin::PluginError,
+use tau_agent::plugin::{
+    Decision, Plugin, PluginCtx, PluginError, PluginRun, RunPlan, ToolCall,
 };
 
 struct NoRm;
 
 #[async_trait]
-impl RunHook for NoRm {
-    async fn before_tool(&self, call: &mut ToolCall, _ctx: &HookCtx) -> Result<Decision, PluginError> {
+impl Plugin for NoRm {
+    fn name(&self) -> &str {
+        "no-rm"
+    }
+
+    async fn start(&self, _plan: &mut RunPlan, _ctx: &PluginCtx) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(NoRmRun))
+    }
+}
+
+struct NoRmRun;
+
+#[async_trait]
+impl PluginRun for NoRmRun {
+    async fn before_tool(&mut self, call: &mut ToolCall, _ctx: &PluginCtx) -> Result<Decision, PluginError> {
         let command = call.args["command"].as_str().unwrap_or("");
         if call.name == "bash" && command.contains("rm -rf") {
             return Ok(Decision::Block("rm -rf is not allowed".into()));
@@ -271,12 +285,12 @@ impl RunHook for NoRm {
     }
 }
 
-let agent = agent.hook(NoRm);
+let agent = agent.plugin(NoRm);
 ```
 
 - `before_tool` can change the arguments (they are validated again) or
-  block the call. A hook that returns `Err` blocks the call too.
-- `after_tool` can change the tool's output.
+  block the call. A plugin that returns `Err` blocks the call too.
+- `after_tool_result` can change the tool's output.
 - `on_event` sees each `RunEvent` in order.
 
 ### Sub-agents
@@ -371,7 +385,7 @@ Unix-only. The search tools run in-process: no `rg` or `fd` binary is
 needed.
 
 The root sets where relative paths go. It is not a sandbox: absolute
-paths and `bash` can reach the rest of the machine. Use a hook to limit
+paths and `bash` can reach the rest of the machine. Use a plugin to limit
 what the tools may do.
 
 ### Testing your agents

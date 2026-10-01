@@ -21,7 +21,7 @@ pi, a note says so.
       transcript, and `text.format` if the run is typed. Send it on the
       run's lane.
    3. Stream the response. Each `AssistantEvent` is wrapped as a
-      `RunEvent::Message*` and delivered to hooks and subscribers, in
+      `RunEvent::Message*` and delivered to plugins and subscribers, in
       order and awaited.
    4. Stop reason `error` or `aborted`: emit `TurnEnd` and `RunEnd`,
       then finish the run with that stop reason. Retryable errors are
@@ -57,13 +57,13 @@ pi, a note says so.
   2. Run `prepare_arguments`, if the tool defines it.
   3. Run the coercion pass, then JSON-schema validation. A failure
      yields an error result carrying the validation message.
-  4. Run the `before_tool` hooks in registration order:
-     - the first hook that blocks wins;
-     - a hook that returns an error also blocks the call;
+  4. Run the plugins' `before_tool` seams in registration order:
+     - the first plugin that blocks wins;
+     - a plugin that returns an error also blocks the call;
      - mutated arguments are validated again. **Deliberate difference
        from pi:** pi runs mutated arguments without validating them again,
        and a test pins that (`agent-loop.test.ts:480`). tau-agent
-       validates them, so a hook cannot pass the tool arguments that
+       validates them, so a plugin cannot pass the tool arguments that
        the tool's schema rejects.
 - **Execution is parallel** across the prepared calls. A tool whose
   `execution_mode()` is `Sequential` makes the whole batch sequential.
@@ -80,8 +80,8 @@ pi, a note says so.
   `ToolError::Output` carries a whole output instead: the result is
   that output, content and `details`, with `is_error = true` (a failed
   `bash` command keeps its terminal this way).
-- **After each tool:** `after_tool` hooks may patch the output field by
-  field.
+- **After each tool:** the plugins' `after_tool_result` seams may patch
+  the output field by field.
 - **Updates after completion:** a tool that sends updates after its
   future has resolved has those updates ignored.
 - **Nested calls:** a running tool can call another with
@@ -89,8 +89,9 @@ pi, a note says so.
   in the same `select!`, and prepares it as above (lookup among the
   tools callable from tools, repair, validation, `before_tool`), then
   runs it next to the batch's calls. Its events carry the caller's id
-  as `parent`, and its id is `<parent>/<n>`. `after_tool` runs on it,
-  and its result goes back to the caller, never into the transcript.
+  as `parent`, and its id is `<parent>/<n>`. `after_tool_result` runs
+  on it, and its result goes back to the caller, never into the
+  transcript.
   The batch ends once every call and every nested call has ended. See
   [plugins.md](plugins.md), "Nested calls".
 

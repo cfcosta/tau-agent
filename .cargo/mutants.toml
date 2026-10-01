@@ -158,19 +158,15 @@ exclude_re = [
   'bash\.rs:419:.*replace > with >= in Accumulator::snapshot',
 
   # The default bodies of `Plugin::tools` and the `PluginRun` seams that
-  # return nothing (`after_tool`, `on_event`, `finish`) already do
-  # nothing: replacing them with `vec![]` or `()` is the same code.
+  # return nothing (`on_event`, `finish`) already do nothing: replacing
+  # them with `vec![]` or `()` is the same code. So is the default
+  # `after_tool_result`, which already returns `Ok(())`.
   'plugin\.rs:.*replace Plugin::tools -> Vec<Arc<dyn AgentTool>> with vec!\[\]',
-  'plugin\.rs:.*replace PluginRun::(after_tool|on_event|finish) with \(\)',
+  'plugin\.rs:.*replace PluginRun::(on_event|finish) with \(\)',
+  'plugin\.rs:.*replace PluginRun::after_tool_result -> Result<\(\), PluginError> with Ok\(\(\)\)',
   # Likewise the default `rewrite_context`, which already returns
   # `Ok(None)`.
   'plugin\.rs:.*replace PluginRun::rewrite_context -> anyhow::Result<Option<Rewrite>> with Ok\(None\)',
-
-  # `Hooked::name` ("hook") names the plugin a `RunHook` runs as. A name
-  # only shows in `PluginError` and `Continued` events, rewrites and
-  # records, and a hook reaches none of them: `RunHook` has no
-  # `before_stop`, `rewrite_context` or `record`. No run can observe it.
-  'plugin\.rs:.*replace <impl Plugin for Hooked>::name -> &str with',
 
   # run_task starts `last_seq` at -1, "nothing stored". It is only read
   # when the run ends, and by then the run has stored its input (seq 0)

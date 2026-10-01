@@ -26,8 +26,14 @@ use serde_json::{Value, json};
 use tau_agent::{
     error::PluginError,
     event::RunEvent,
-    hook::ToolCall,
-    plugin::{Plugin, PluginCtx, PluginRun, RunPlan, StopDecision},
+    plugin::{
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        RunPlan,
+        StopDecision,
+        ToolResultView,
+    },
     tool::ToolOutput,
 };
 use tau_ai::message::{AssistantBlock, AssistantMessage, InputBlock};
@@ -476,12 +482,13 @@ impl Pursuit {
 
 #[async_trait]
 impl PluginRun for Pursuit {
-    async fn after_tool(
+    async fn after_tool_result(
         &mut self,
-        call: &ToolCall,
+        view: &ToolResultView<'_>,
         output: &mut ToolOutput,
         _ctx: &PluginCtx,
-    ) {
+    ) -> Result<(), PluginError> {
+        let call = view.call;
         let text: String = output
             .content
             .iter()
@@ -499,6 +506,7 @@ impl PluginRun for Pursuit {
         if self.evidence.len() > EVIDENCE {
             self.evidence.pop_front();
         }
+        Ok(())
     }
 
     async fn on_event(&mut self, event: &RunEvent, _ctx: &PluginCtx) {

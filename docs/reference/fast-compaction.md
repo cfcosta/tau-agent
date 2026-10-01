@@ -148,7 +148,7 @@ and is reported as a `PluginError` event. The run goes on.
 
 - Every Jev request is charged to the run (`PluginCtx::charge`),
   including the answered ones of a pruning that then failed.
-- Pruning at `after_tool` changes only the result being added, so the
+- Pruning at `after_tool_result` changes only the result being added, so the
   next request is still a delta
   ([openai-websocket.md](openai-websocket.md)): no resend.
 - The requests for one output are sent together, so a pruned call takes

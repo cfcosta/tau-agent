@@ -76,9 +76,8 @@ pub trait Plugin: Send + Sync + 'static {
 ```
 
 `Agent::plugin(p)` adds `p.tools()` to the agent, keeps
-`p.tool_source()`, and keeps `p`.
-`Agent::hook(h)` stays: a `RunHook` becomes a plugin whose runs share
-the one hook.
+`p.tool_source()`, and keeps `p`. It is the only way to extend an
+agent.
 
 ### `RunPlan`: the only place settings change
 
@@ -118,24 +117,17 @@ only what it uses. The loop calls plugins in registration order.
 ```rust
 #[async_trait]
 pub trait PluginRun: Send {
-    /// `RunHook::before_tool`: may change the arguments (validated
-    /// again) or block the call. The first block wins.
+    /// May change the arguments (validated again) or block the call.
+    /// An error blocks the call too. The first block wins.
     async fn before_tool(&mut self, call: &mut ToolCall, ctx: &PluginCtx)
         -> Result<Decision, PluginError> { Ok(Decision::Allow) }
 
-    /// `RunHook::after_tool`: may change the output.
-    async fn after_tool(&mut self, call: &ToolCall, output: &mut ToolOutput,
-        ctx: &PluginCtx) {}
-
-    /// `after_tool` with a view: the call, whether it failed, the
-    /// transcript before its turn and the assistant message that made
-    /// it. The loop calls this one; by default it calls `after_tool`.
-    /// An error is reported as a `PluginError`.
+    /// May change the output. The view holds the call (`view.call`),
+    /// whether it failed, the transcript before its turn and the
+    /// assistant message that made it. An error is reported as a
+    /// `PluginError`.
     async fn after_tool_result(&mut self, view: &ToolResultView<'_>,
-        output: &mut ToolOutput, ctx: &PluginCtx) -> Result<(), PluginError> {
-        self.after_tool(view.call, output, ctx).await;
-        Ok(())
-    }
+        output: &mut ToolOutput, ctx: &PluginCtx) -> Result<(), PluginError> { Ok(()) }
 
     /// Every run event, in order.
     async fn on_event(&mut self, event: &RunEvent, ctx: &PluginCtx) {}
@@ -304,7 +296,7 @@ start run
   └─ loop
        ├─ before_request (each)          → the turn's effort
        ├─ respond                        (overflow → rewrite_context(Overflow), retry once)
-       ├─ tool calls: before_tool → run → after_tool
+       ├─ tool calls: before_tool → run → after_tool_result
        ├─ store the turn
        ├─ no calls? before_stop (each) → Continue(text) adds a user message
        ├─ limits / cancel / steering
@@ -313,8 +305,7 @@ start run
   └─ PluginRun::finish (each)
 ```
 
-`on_event` sees every event throughout, as `RunHook::on_event` does
-today.
+`on_event` sees every event throughout.
 
 ## The shared Jev client: `tau-jev`
 
@@ -650,9 +641,9 @@ Built: `crates/plugins/fast-compaction`. Its reference is
 
 Built: `crates/plugins/goal`. Its reference is [goal.md](goal.md).
 
-- **Seams:** `start` (a `/goal` input sets the goal), `after_tool` (the
-  latest results, as evidence), `on_event` (what the turns cost), and
-  `before_stop` (the check).
+- **Seams:** `start` (a `/goal` input sets the goal),
+  `after_tool_result` (the latest results, as evidence), `on_event`
+  (what the turns cost), and `before_stop` (the check).
 - **How:** one `Noul` per stop: does the goal hold, judged from the
   model's last answer and its recent tool results. Not yet sends the
   model back with the goal, within the goal's continuations and budget.
@@ -663,8 +654,9 @@ Built: `crates/plugins/goal`. Its reference is [goal.md](goal.md).
 ## What changed in tau-agent
 
 1. `Plugin`, `PluginRun`, `PluginCtx`, `RunPlan`, `ContextView`,
-   `Rewrite` and `StopDecision` in a new `tau_agent::plugin` module.
-   `RunHook` becomes a thin adapter onto it.
+   `Rewrite` and `StopDecision` in a new `tau_agent::plugin` module,
+   with `ToolCall` and `Decision`. `RunHook` and `Agent::hook` are
+   gone: plugins are the only extension.
 2. `Agent` builds each run's settings from its `RunPlan`, not from the
    agent directly.
 3. Compaction moves behind `rewrite_context`, into its own crate,
@@ -690,7 +682,7 @@ Built: `crates/plugins/goal`. Its reference is [goal.md](goal.md).
    reports.
 8. Tools call tools: `ToolCtx::call` and `catalog`, `Exposure`,
    `ToolOutput::structured`, `ToolSource`, `RunPlan::add_tool` and
-   `ToolCtx::plugin` (see "Nested calls"). Tool events and the hooks'
+   `ToolCtx::plugin` (see "Nested calls"). Tool events and the plugins'
    `ToolCall` gain `parent`.
 
 ## Nested calls
@@ -778,7 +770,7 @@ impl RunPlan {
     pub fn tools(&self) -> &[Arc<dyn AgentTool>];
 }
 
-pub struct ToolCall {        // what hooks see, in `tau_agent::hook`
+pub struct ToolCall {        // what plugins see, in `tau_agent::plugin`
     pub id: String,
     pub name: String,
     pub args: Value,

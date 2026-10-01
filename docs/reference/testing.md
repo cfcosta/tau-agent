@@ -94,7 +94,7 @@ Neither runs in CI; run them before and after a change on the hot path.
 | Model     | Stateful components: WebSocket pool and lanes, the store, the agent loop               | `#[hegel::state_machine]` against a simple in-memory model       |
 | Transport | The `ws::io` driver: pool, lanes and recovery over a WebSocket                         | turmoil simulation with `FakeOpenAi`; Hegel draws the faults     |
 | Replay    | `tau-ai` event processing against recorded `response.*` streams                        | fixtures under `crates/tau-ai/tests/fixtures/`                   |
-| Scripted  | Workflow behaviour: typed results, sub-agents, forks, limits, hooks                    | `ScriptedModel` + `Store::memory()`, generated scripts           |
+| Scripted  | Workflow behaviour: typed results, sub-agents, forks, limits, plugins                  | `ScriptedModel` + `Store::memory()`, generated scripts           |
 | Live      | Request shapes and continuation against the real endpoint                              | `--features live`; nightly, never in the Check tier              |
 | API shape | Misuse of the public API does not compile                                              | `trybuild` compile-fail cases                                    |
 | Mutation  | Strength of the tests on the delta rule, the loop and the store                        | `cargo mutants`                                                  |
@@ -367,7 +367,7 @@ also run in the nightly tier and under `cargo mutants`.
 | Coercion leaves a value that already validates unchanged                                                                                                               | Invariant    |
 | Coercion is idempotent                                                                                                                                                 | Algebraic    |
 | A number, a boolean or a one-element array gives the same result as its string or scalar form after coercion                                                           | Metamorphic  |
-| `before_tool` hooks: the result equals a left fold over the hooks in which the first `Block` or error wins                                                             | Model        |
+| `before_tool` plugins: the result equals a left fold over the plugins in which the first `Block` or error wins                                                         | Model        |
 | **Loop, over generated scripts** (tool calls, tool results that succeed, fail or take time, steering, cancel at any point):                                            | Model        |
 | · every tool call in the transcript has exactly one result, including after a cancel                                                                                   |              |
 | · result messages are in source order; `ToolStart` is in source order; `ToolEnd` is in completion order                                                                |              |

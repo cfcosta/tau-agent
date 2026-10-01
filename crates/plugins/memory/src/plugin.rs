@@ -23,6 +23,7 @@ use tau_agent::{
         PluginRun,
         Rewrite,
         RunPlan,
+        ToolResultView,
     },
     tool::{AgentTool, ToolCtx, ToolOutput, TypedTool, typed},
 };
@@ -334,17 +335,18 @@ const EDITS: [&str; 2] = ["edit", "write"];
 
 #[async_trait]
 impl PluginRun for MemoryRun {
-    async fn after_tool(
+    async fn after_tool_result(
         &mut self,
-        call: &tau_agent::hook::ToolCall,
+        view: &ToolResultView<'_>,
         _output: &mut ToolOutput,
         ctx: &PluginCtx,
-    ) {
+    ) -> Result<(), PluginError> {
+        let call = view.call;
         if !EDITS.contains(&call.name.as_str()) {
-            return;
+            return Ok(());
         }
         let Some(path) = call.args.get("path").and_then(Value::as_str) else {
-            return;
+            return Ok(());
         };
         let why = format!("{path} was edited after this note was written");
         let now = self.plugin.now();
@@ -357,6 +359,7 @@ impl PluginRun for MemoryRun {
                 )
                 .await;
         }
+        Ok(())
     }
 
     async fn rewritten(

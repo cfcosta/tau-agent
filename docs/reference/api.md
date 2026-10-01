@@ -37,7 +37,6 @@ impl Agent {
     pub fn reasoning(self, effort: ReasoningEffort) -> Self;
     pub fn tool(self, t: impl AgentTool) -> Self;
     pub fn tools(self, ts: impl IntoIterator<Item = Arc<dyn AgentTool>>) -> Self;  // e.g. tau_tools::coding_tools(&root)
-    pub fn hook(self, h: impl RunHook) -> Self;
     pub fn plugin(self, p: impl Plugin) -> Self;      // e.g. tau_compaction::Compaction, tau_tools::plugin::CodingTools
     pub fn limits(self, l: Limits) -> Self;
     pub fn retry(self, p: RetryPolicy) -> Self;       // 3 attempts, 2 s base
@@ -116,7 +115,7 @@ pub trait AgentTool: Send + Sync + 'static {
 
 pub struct ToolOutput {
     pub content: Vec<InputBlock>,     // what the model sees
-    pub details: Option<Value>,       // for interfaces and hooks
+    pub details: Option<Value>,       // for interfaces and plugins
     pub structured: Option<Value>,    // for a calling tool
 }
 
@@ -140,20 +139,19 @@ and a `String` or `&str` message into it; anything else goes in with
 `ToolError::output(ToolOutput)` fails with a whole output: its text is
 the error the model reads, and its `details` stay on the result, as
 `bash` does for a command that exits non-zero.
-Plugins and hooks return a `PluginError` the same way, which also
+Plugins return a `PluginError` the same way, which also
 converts store errors and `PluginCtx::ask`'s `AskError`; the loop
 reports it as `RunEvent::PluginError`, with its chain of sources.
 
-## Hooks
+## Plugins
+
+An agent is extended only through `Plugin` and `PluginRun`, in
+`tau_agent::plugin` ([`plugins.md`](plugins.md)). The tool call a plugin
+sees and its answer live there too:
 
 ```rust
-#[async_trait]
-pub trait RunHook: Send + Sync + 'static {
-    // An error blocks the call, as a Block does.
-    async fn before_tool(&self, call: &mut ToolCall, ctx: &HookCtx) -> Result<Decision, PluginError> { Ok(Decision::Allow) }
-    async fn after_tool(&self, call: &ToolCall, out: &mut ToolOutput, ctx: &HookCtx) {}
-    async fn on_event(&self, ev: &RunEvent) {}          // awaited in order
-}
+pub struct ToolCall { pub id: String, pub name: String, pub args: Value, pub parent: Option<String> }
+pub enum Decision { Allow, Block(String) }   // a Block's reason is the result the model sees
 ```
 
 ## Limits
@@ -241,13 +239,21 @@ let attempts = ["minimal fix", "fix plus regression test", "refactor clock injec
 let results = futures::future::join_all(attempts).await;
 ```
 
-### Guard hook and test
+### Guard plugin and test
 
 ```rust
 struct NoProdWrites;
 #[async_trait]
-impl RunHook for NoProdWrites {
-    async fn before_tool(&self, call: &mut ToolCall, _: &HookCtx) -> Result<Decision, PluginError> {
+impl Plugin for NoProdWrites {
+    fn name(&self) -> &str { "no-prod-writes" }
+    async fn start(&self, _: &mut RunPlan, _: &PluginCtx) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(NoProdWritesRun))
+    }
+}
+struct NoProdWritesRun;
+#[async_trait]
+impl PluginRun for NoProdWritesRun {
+    async fn before_tool(&mut self, call: &mut ToolCall, _: &PluginCtx) -> Result<Decision, PluginError> {
         let prod = call.args["command"].as_str().is_some_and(|c| c.contains("--env prod"));
         if call.name == "bash" && prod { return Ok(Decision::Block("no production commands".into())); }
         Ok(Decision::Allow)
@@ -260,7 +266,7 @@ async fn triage_opens_one_ticket() {
         .turn(|t| t.tool_call("create_ticket", json!({"title": "Crash on start", "body": "…"})))
         .turn(|t| t.text("Opened one ticket."));
     let tracker = FakeTracker::default();
-    let agent = Agent::new(llm).tool(typed(CreateTicket(tracker.clone()))).hook(NoProdWrites);
+    let agent = Agent::new(llm).tool(typed(CreateTicket(tracker.clone()))).plugin(NoProdWrites);
     agent.run("Triage: …", &Store::memory().await.unwrap()).await.unwrap();
     assert_eq!(tracker.created().len(), 1);
 }

@@ -8,15 +8,17 @@ use serde_json::{Value, json};
 use tau_agent::{
     agent::{Agent, AgentError},
     event::{LimitKind, RunEvent, StopReason},
-    hook::{Decision, ToolCall},
     limits::Limits,
     plugin::{
+        Decision,
         FinishedRun,
         Plugin,
         PluginCtx,
         PluginRun,
         RunPlan,
         StopDecision,
+        ToolCall,
+        ToolResultView,
     },
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
@@ -157,15 +159,16 @@ impl PluginRun for ProbeRun {
         Ok(Decision::Allow)
     }
 
-    async fn after_tool(
+    async fn after_tool_result(
         &mut self,
-        _call: &ToolCall,
+        _view: &ToolResultView<'_>,
         output: &mut ToolOutput,
         _ctx: &PluginCtx,
-    ) {
+    ) -> Result<(), PluginError> {
         if let Some(InputBlock::Text(text)) = output.content.first_mut() {
             text.text.push_str(&format!(" [{}]", self.probe.name));
         }
+        Ok(())
     }
 
     async fn before_stop(
@@ -1127,38 +1130,6 @@ fn usage_charged_at_finish_is_stored() {
         assert_eq!(outcome.usage.cost.total, 0.75);
         let record = store.run(&outcome.run.0).await.unwrap().unwrap();
         assert_eq!(record.cost_usd, 0.75);
-    });
-}
-
-/// A hook's `after_tool` still changes the output the model sees: hooks
-/// run through the plugin seams.
-#[test]
-fn a_hook_changes_tool_output() {
-    struct Tag;
-
-    #[async_trait]
-    impl tau_agent::hook::RunHook for Tag {
-        async fn after_tool(
-            &self,
-            _call: &ToolCall,
-            output: &mut ToolOutput,
-            _ctx: &tau_agent::hook::HookCtx,
-        ) {
-            *output = ToolOutput::text("tagged");
-        }
-    }
-
-    block_on(async {
-        let model = ScriptedModel::new()
-            .turn(|t| t.tool_call("echo", json!({"text": "x"})))
-            .turn(|t| t.text("done"));
-        let agent = Agent::new(model.clone()).tool(Echo::new()).hook(Tag);
-        let store = Store::memory().await.unwrap();
-        agent.run("go", &store).await.unwrap();
-        assert_eq!(
-            tool_result_text(&model.requests()[1].transcript[2]),
-            "tagged"
-        );
     });
 }
 

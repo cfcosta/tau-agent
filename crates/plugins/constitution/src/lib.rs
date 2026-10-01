@@ -34,8 +34,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tau_agent::{
     error::PluginError,
-    hook::{Decision, ToolCall},
-    plugin::{Plugin, PluginCtx, PluginRun, RunPlan, StopDecision},
+    plugin::{
+        Decision,
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        RunPlan,
+        StopDecision,
+        ToolCall,
+    },
 };
 use tau_ai::message::{AssistantBlock, AssistantMessage};
 use tau_jev::{Jev, NoulCriteria, Question, Request};

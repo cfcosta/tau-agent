@@ -18,10 +18,8 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use serde_json::Value;
 use tau_ai::{
-    event::{Accumulator, AssistantEvent},
     llm::{Llm, LlmError},
     message::{AssistantMessage, Message, Timestamp, Usage},
     responses::request::{ReasoningEffort, Settings},
@@ -33,11 +31,34 @@ use tokio_util::sync::CancellationToken;
 pub use crate::error::PluginError;
 use crate::{
     event::{RunEvent, StopReason},
-    hook::{Decision, HookCtx, RunHook, ToolCall},
-    runner::Clock,
+    runner::{
+        Clock,
+        respond::{self, Reading, Streamed},
+    },
     tool::{AgentTool, RunId, ToolOutput, ToolSource},
     validation::ArgumentSchema,
 };
+
+/// A tool call as plugins see it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub args: Value,
+    /// For a nested call (`ToolCtx::call`), the id of the call that made
+    /// it. Nested calls never reach the transcript, so a plugin that
+    /// keeps a ledger of the transcript's calls skips them.
+    pub parent: Option<String>,
+}
+
+/// Whether a tool call may run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Decision {
+    Allow,
+    /// Refuses the call; the reason becomes the error result the model
+    /// sees.
+    Block(String),
+}
 
 /// An extension of an agent. Added with `Agent::plugin`.
 #[async_trait]
@@ -88,29 +109,17 @@ pub trait PluginRun: Send {
         Ok(Decision::Allow)
     }
 
-    /// Runs after a tool call, and may change its output.
-    async fn after_tool(
-        &mut self,
-        call: &ToolCall,
-        output: &mut ToolOutput,
-        ctx: &PluginCtx,
-    ) {
-        let _ = (call, output, ctx);
-    }
-
     /// Runs after a tool call, with whether it failed and what the model
     /// had seen when it made the call, and may change its output. An
     /// error is reported as `RunEvent::PluginError`, and the output goes
-    /// on as the plugin left it. The loop calls this one; by default it
-    /// calls [`after_tool`](Self::after_tool), so a plugin implements
-    /// whichever it needs.
+    /// on as the plugin left it.
     async fn after_tool_result(
         &mut self,
         view: &ToolResultView<'_>,
         output: &mut ToolOutput,
         ctx: &PluginCtx,
     ) -> Result<(), PluginError> {
-        self.after_tool(view.call, output, ctx).await;
+        let _ = (view, output, ctx);
         Ok(())
     }
 
@@ -592,27 +601,17 @@ impl PluginCtx {
         let mut session = self.llm.open(settings).await?;
         let mut attempts = 1;
         loop {
-            let mut stream = session.respond(input, self.now());
-            let mut accumulator = Accumulator::new();
-            let mut class = Class::Fatal;
-            loop {
-                let event = tokio::select! {
-                    biased;
-                    _ = self.cancel.cancelled() => {
-                        return Err(AskError::Cancelled);
-                    }
-                    event = stream.next() => event,
-                };
-                let Some(event) = event else { break };
-                if let AssistantEvent::Error { class: failed, .. } = &event {
-                    class = *failed;
-                }
-                if accumulator.push(event).is_err() {
+            let stream = session.respond(input, self.now());
+            let (message, class) = match Reading::new(stream)
+                .read_all(&self.cancel)
+                .await
+            {
+                Streamed::Finished(message, class) => (message, class),
+                Streamed::Cancelled(_) => return Err(AskError::Cancelled),
+                Streamed::BrokeGrammar(_) => {
                     return Err(AskError::BrokeGrammar);
                 }
-            }
-            let Ok(message) = accumulator.finish() else {
-                return Err(AskError::NoTerminal);
+                Streamed::NoTerminal(_) => return Err(AskError::NoTerminal),
             };
             self.charge(&message.usage);
             if class != Class::Retryable || !self.retry.allows(attempts) {
@@ -620,12 +619,8 @@ impl PluginCtx {
             }
             let delay = self.retry.delay(attempts, jitter());
             attempts += 1;
-            tokio::select! {
-                biased;
-                _ = self.cancel.cancelled() => {
-                    return Err(AskError::Cancelled);
-                }
-                _ = tokio::time::sleep(delay) => {}
+            if !respond::wait(&self.cancel, delay).await {
+                return Err(AskError::Cancelled);
             }
         }
     }
@@ -702,55 +697,4 @@ pub enum AskError {
     BrokeGrammar,
     #[error("the response ended without a terminal event")]
     NoTerminal,
-}
-
-/// A [`RunHook`] as a plugin: every run shares the one hook.
-pub(crate) struct Hooked(pub Arc<dyn RunHook>);
-
-#[async_trait]
-impl Plugin for Hooked {
-    fn name(&self) -> &str {
-        "hook"
-    }
-
-    async fn start(
-        &self,
-        _plan: &mut RunPlan,
-        _ctx: &PluginCtx,
-    ) -> Result<Box<dyn PluginRun>, PluginError> {
-        Ok(Box::new(HookedRun(self.0.clone())))
-    }
-}
-
-struct HookedRun(Arc<dyn RunHook>);
-
-fn hook_ctx(ctx: &PluginCtx) -> HookCtx {
-    HookCtx {
-        run: ctx.run.clone(),
-        parent: ctx.parent.clone(),
-    }
-}
-
-#[async_trait]
-impl PluginRun for HookedRun {
-    async fn before_tool(
-        &mut self,
-        call: &mut ToolCall,
-        ctx: &PluginCtx,
-    ) -> Result<Decision, PluginError> {
-        self.0.before_tool(call, &hook_ctx(ctx)).await
-    }
-
-    async fn after_tool(
-        &mut self,
-        call: &ToolCall,
-        output: &mut ToolOutput,
-        ctx: &PluginCtx,
-    ) {
-        self.0.after_tool(call, output, &hook_ctx(ctx)).await
-    }
-
-    async fn on_event(&mut self, event: &RunEvent, _ctx: &PluginCtx) {
-        self.0.on_event(event).await
-    }
 }

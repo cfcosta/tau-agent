@@ -16,8 +16,15 @@ use tau_agent::{
     agent::Agent,
     error::{PluginError, ToolError},
     event::RunEvent,
-    hook::{Decision, HookCtx, RunHook, ToolCall},
-    plugin::{Plugin, PluginCtx, PluginRun, RunPlan},
+    plugin::{
+        Decision,
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        RunPlan,
+        ToolCall,
+        ToolResultView,
+    },
     tool::{
         AgentTool,
         ENDED,
@@ -273,11 +280,11 @@ struct Recorder {
 }
 
 #[async_trait]
-impl RunHook for Recorder {
+impl PluginRun for Recorder {
     async fn before_tool(
-        &self,
+        &mut self,
         call: &mut ToolCall,
-        _ctx: &HookCtx,
+        _ctx: &PluginCtx,
     ) -> Result<Decision, PluginError> {
         self.before.lock().unwrap().push((
             call.id.clone(),
@@ -290,20 +297,37 @@ impl RunHook for Recorder {
         Ok(Decision::Allow)
     }
 
-    async fn after_tool(
-        &self,
-        call: &ToolCall,
+    async fn after_tool_result(
+        &mut self,
+        view: &ToolResultView<'_>,
         _output: &mut ToolOutput,
-        _ctx: &HookCtx,
-    ) {
+        _ctx: &PluginCtx,
+    ) -> Result<(), PluginError> {
+        let call = view.call;
         self.after
             .lock()
             .unwrap()
             .push((call.id.clone(), call.parent.clone()));
+        Ok(())
     }
 
-    async fn on_event(&self, event: &RunEvent) {
+    async fn on_event(&mut self, event: &RunEvent, _ctx: &PluginCtx) {
         self.events.lock().unwrap().push(event.clone());
+    }
+}
+
+#[async_trait]
+impl Plugin for Recorder {
+    fn name(&self) -> &str {
+        "recorder"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(self.clone()))
     }
 }
 
@@ -380,7 +404,7 @@ fn a_tool_calls_another_through_the_loop() {
         let agent = Agent::new(llm.clone())
             .tool(Caller::default())
             .tool(Echo::new("echo"))
-            .hook(recorder.clone());
+            .plugin(recorder.clone());
         let run = agent.start("go", &store);
         let id = run.id();
         run.outcome().await.unwrap();
@@ -450,7 +474,7 @@ fn before_tool_blocks_a_nested_call() {
         })))
         .tool(Caller::default())
         .tool(echo)
-        .hook(recorder.clone());
+        .plugin(recorder.clone());
         let run = agent.start("go", &store);
         let id = run.id();
         run.outcome().await.unwrap();
@@ -732,7 +756,7 @@ fn ending_the_caller_ends_its_nested_calls() {
         })))
         .tool(caller)
         .tool(echo)
-        .hook(recorder.clone());
+        .plugin(recorder.clone());
         agent.run("go", &store).await.unwrap();
 
         let ran = log.lock().unwrap().clone();
@@ -816,7 +840,7 @@ fn nested_calls_are_numbered_in_order(tc: hegel::TestCase) {
         })
         .tool(Echo::new("echo"))
         .tool(Echo::new("hidden").exposure(Exposure::Nested))
-        .hook(recorder.clone());
+        .plugin(recorder.clone());
         let run = agent.start("go", &store);
         let id = run.id();
         run.outcome().await.unwrap();
