@@ -1,6 +1,8 @@
 # 0007: An optional GPUI interface, outside the library
 
-- Status: proposed
+- Status: proposed. Amended by
+  [0017](0017-plugins-bring-their-ui.md): plugins draw their own part of
+  the interface, through `tau-ui-plugin` and `tau-ui-kit`, not `tau-ui`.
 - Date: 2026-09-28
 
 ## Context

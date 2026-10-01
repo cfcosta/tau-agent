@@ -1,6 +1,8 @@
 # 0006: Plugins live under crates/plugins
 
-- Status: accepted
+- Status: accepted. Amended by
+  [0017](0017-plugins-bring-their-ui.md): a plugin crate exports its UI
+  with its agent plugin, and has no headless form.
 - Date: 2026-09-28
 
 ## Context

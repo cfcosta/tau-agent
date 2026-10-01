@@ -29,7 +29,9 @@ Dependency direction:
   ([0010](decisions/0010-terminal-rendering.md)).
 - Plugins, under `crates/plugins/`, depend on `tau-agent` (and
   `tau-ai` for message types). Core crates never depend on a plugin
-  ([0006](decisions/0006-plugin-crates.md)).
+  ([0006](decisions/0006-plugin-crates.md)). Each plugin brings its own
+  UI through `tau-ui-plugin`, and has no headless form
+  ([0017](decisions/0017-plugins-bring-their-ui.md); not built yet).
 
 ## Data flow for one turn
 
