@@ -15,6 +15,8 @@ tau-agent/
 │   ├── terminal/     # tau-terminal: libghostty-vt terminal, PTY command runner,
 │   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
 │   └── plugins/
+│       ├── ask/              # tau-ask: the agent asks the person; the panel in the
+│       │                     # composer's place (ADR 0019)
 │       ├── codemode/         # tau-codemode: Luau scripts that call tools and Jev
 │       ├── compaction/       # tau-compaction: summarizing compaction
 │       ├── fast-compaction/  # tau-fast-compaction: Jev-driven pruning of tool history
