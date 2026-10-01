@@ -177,6 +177,11 @@ impl Workspace {
                 self.navigate(crate::route::Route::Run(run), cx)
             }
             Request::AskJevKey => self.ask_for_jev_key_later(cx),
+            Request::Focus(handle) => {
+                self.plugin_focus = Some(handle);
+                cx.notify();
+            }
+            Request::Cancel(run) => cx.emit(WorkspaceEvent::Cancel { run }),
         }
         cx.notify();
     }

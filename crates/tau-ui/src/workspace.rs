@@ -481,6 +481,12 @@ pub struct Workspace {
     pub(crate) plugin_ui: HashMap<String, gpui::AnyEntity>,
     /// What plugins' handles asked, to carry out after the event.
     pub(crate) plugin_requests: crate::plugins::Requests,
+    /// What a plugin asked to give the keys to, as the window draws.
+    pub(crate) plugin_focus: Option<gpui::FocusHandle>,
+    /// Whether a plugin drew in the composer's place last frame, and
+    /// whether the composer takes the keys back now that none does.
+    composer_replaced: std::cell::Cell<bool>,
+    composer_back: std::cell::Cell<bool>,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -686,6 +692,9 @@ impl Workspace {
                     .collect()
             },
             plugin_requests,
+            plugin_focus: None,
+            composer_replaced: std::cell::Cell::new(false),
+            composer_back: std::cell::Cell::new(false),
             adding_jev_key: false,
             jev_key,
             slash_selected: 0,
@@ -2783,6 +2792,19 @@ impl Workspace {
     /// Takes the focus back from an overlay's field once the overlay is
     /// gone. Left on a field no longer drawn, keys would reach nothing,
     /// not even ctrl+k to open search again.
+    /// Gives the keys where a plugin asked, unless the person is writing
+    /// in the composer.
+    fn plugin_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let composer = self.composer.read(cx);
+        let writing = composer.focus_handle(cx).is_focused(window)
+            && !composer.text().trim().is_empty();
+        if let Some(handle) = self.plugin_focus.take()
+            && !writing
+        {
+            handle.focus(window, cx);
+        }
+    }
+
     fn release_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let stranded = (!self.searching
             && self.search.read(cx).focus_handle(cx).is_focused(window))
@@ -3327,10 +3349,12 @@ impl Workspace {
                 screen.children(banners)
             })
             .child(self.transcript(compact, t, cx))
-            .child(
+            .child({
                 // A plugin that needs the person's input more than a
-                // message draws in the composer's place.
-                self.current()
+                // message draws in the composer's place; once none does,
+                // the composer takes the keys back.
+                let instead = self
+                    .current()
                     .filter(|_| self.route != Route::NewRun)
                     .and_then(|run| {
                         let at =
@@ -3342,11 +3366,16 @@ impl Workspace {
                         )
                         .into_iter()
                         .next()
-                    })
-                    .unwrap_or_else(|| {
-                        self.composer(compact, t, cx).into_any_element()
-                    }),
-            )
+                    });
+                if self.composer_replaced.replace(instead.is_some())
+                    && instead.is_none()
+                {
+                    self.composer_back.set(true);
+                }
+                instead.unwrap_or_else(|| {
+                    self.composer(compact, t, cx).into_any_element()
+                })
+            })
     }
 
     /// Any screen but a run's.
@@ -3637,6 +3666,7 @@ impl Render for Workspace {
     ) -> impl IntoElement {
         self.sync_transcript();
         self.release_focus(window, cx);
+        self.plugin_focus(window, cx);
         if let Route::Setup(step) = self.route {
             screens::setup::observe(self, step, window, cx);
         }
@@ -3655,6 +3685,11 @@ impl Render for Workspace {
         } else {
             self.desktop(width >= NARROW_MAX, &t, cx)
         };
+        // Drawing found nothing in the composer's place where something
+        // was: the composer takes the keys back.
+        if self.composer_back.take() {
+            self.composer.read(cx).focus_handle(cx).focus(window, cx);
+        }
         // A dialog covers the app, wherever the app is drawn.
         let body = div()
             .relative()

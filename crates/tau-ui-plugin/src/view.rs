@@ -179,6 +179,12 @@ pub enum Request {
     OpenRun(RunId),
     /// Asks for the TypeSafe key plugins that ask Jev need.
     AskJevKey,
+    /// Gives the keys to `handle`, an element the plugin draws, as the
+    /// window draws next: a panel that takes the composer's place. Not
+    /// while the person is writing in the composer.
+    Focus(gpui::FocusHandle),
+    /// Cancels a run going on, as its Cancel button does.
+    Cancel(RunId),
 }
 
 /// Where a [`Handle`]'s requests go: the interface, which carries out
@@ -290,6 +296,15 @@ impl Handle {
 
     pub fn ask_jev_key(&self, cx: &mut App) {
         self.request(Request::AskJevKey, cx);
+    }
+
+    /// Gives the keys to `handle` as the window draws next.
+    pub fn focus(&self, handle: &gpui::FocusHandle, cx: &mut App) {
+        self.request(Request::Focus(handle.clone()), cx);
+    }
+
+    pub fn cancel(&self, run: &RunId, cx: &mut App) {
+        self.request(Request::Cancel(run.clone()), cx);
     }
 }
 

@@ -369,7 +369,9 @@ the sketch above in these places:
   half, answered through `reply`, which gets the UI's context to ask
   for more), `record` (fold and store a change
   the interface makes), `navigate`, `send`, `steer`, `composer`,
-  `alert`, `open_run`, `ask_jev_key` and `refresh`.
+  `alert`, `open_run`, `ask_jev_key`, `refresh`, `focus` (give the
+  keys to an element the plugin draws, as the window draws next) and
+  `cancel` (a run going on).
 - **What stays in tau-ui.** The Plan screen, generic plugin notes for
   `Continued` and `PluginError` from plugins without a UI, and the
   landing cards of ADR 0009, which draw changes with tau-vcs's pieces.
