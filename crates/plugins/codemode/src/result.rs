@@ -44,6 +44,17 @@ impl CallStatus {
             Self::Cancelled => "cancelled",
         }
     }
+
+    /// The status [`Self::as_str`] names.
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text {
+            "running" => Self::Running,
+            "ok" => Self::Ok,
+            "error" => Self::Error,
+            "cancelled" => Self::Cancelled,
+            _ => return None,
+        })
+    }
 }
 
 /// One nested call: a tool call, or a Jev request (`jev.noul`, ...).
@@ -162,13 +173,14 @@ impl Outcome {
         Some(format!("Script error:\n{}\n\n{summary}", failure.head()))
     }
 
-    /// The details: `{ calls, complete, store, usage }`.
+    /// The details: `{ calls, complete, store, usage, wall_ms }`.
     pub fn details(&self) -> Value {
         json!({
             "calls": self.calls.iter().map(CallRow::to_json).collect::<Vec<_>>(),
             "complete": self.calls_total <= self.calls.len(),
             "store": self.store.as_ref().map(Writes::to_json),
             "usage": self.usage,
+            "wall_ms": self.wall.as_millis() as u64,
         })
     }
 

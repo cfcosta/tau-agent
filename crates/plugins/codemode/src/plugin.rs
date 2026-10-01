@@ -224,13 +224,12 @@ impl AgentTool for CodemodeTool {
         let mut content: Vec<InputBlock> =
             rendered.content.into_iter().map(block).collect();
         if let Some(writes) = outcome.store.filter(|writes| !writes.is_empty())
+            && let Err(error) = plugin.publish(&writes.to_record()).await
         {
-            if let Err(error) = plugin.publish(&writes.to_record()).await {
-                is_error = true;
-                content.push(text_block(format!(
-                    "The script's store writes could not be kept: {error}"
-                )));
-            }
+            is_error = true;
+            content.push(text_block(format!(
+                "The script's store writes could not be kept: {error}"
+            )));
         }
         let output = ToolOutput {
             content,

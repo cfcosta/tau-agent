@@ -15,6 +15,8 @@
 //!   that fit the run's context; [`description`] is the tool's text.
 //! - [`store`] folds the store's records and keeps a script's writes.
 //! - [`Codemode`] is the plugin, and [`CodemodeTool`] its tool.
+//! - [`CodemodeUi`] is the plugin with its UI (ADR 0017): its card, its
+//!   store in the inspector, and its entry on the Plugins screen.
 
 pub mod description;
 mod engine;
@@ -27,6 +29,7 @@ pub mod result;
 pub mod search;
 pub mod signature;
 pub mod store;
+pub mod ui;
 pub mod value;
 
 pub use engine::{
@@ -43,3 +46,4 @@ pub use plugin::{Codemode, CodemodeTool, PLUGIN};
 pub use result::{CallRow, CallStatus, Failure, Item, Outcome, Rendered};
 pub use signature::describe;
 pub use tokio_util::sync::CancellationToken;
+pub use ui::CodemodeUi;

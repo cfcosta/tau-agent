@@ -9101,18 +9101,23 @@ dependencies = [
 name = "tau-codemode"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.23.1",
  "futures-util",
  "getrandom 0.4.3",
+ "gpui-pre",
  "hegeltest",
  "mlua",
+ "serde",
  "serde_json",
  "tau-agent",
  "tau-ai",
  "tau-jev",
  "tau-store",
  "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "tokio",
  "tokio-util",
 ]
