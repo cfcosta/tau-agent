@@ -4,8 +4,9 @@
 //! [`crate::demo`] has an example.
 
 use serde::{Deserialize, Serialize};
+use tau_agent::tool::RunId;
 
-use crate::view::Proposal;
+use crate::view::{ConstitutionStats, Proposal};
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Catalog {
@@ -259,6 +260,10 @@ pub struct Constitution {
     /// Why the rules could not be read from the store, if they could
     /// not: runs fail until they can.
     pub error: Option<String>,
+    /// What the checks did in each stored run of the repository that has
+    /// any, from the plugin's records: the Constitution screen counts
+    /// runs no longer loaded with these.
+    pub history: Vec<(RunId, ConstitutionStats)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

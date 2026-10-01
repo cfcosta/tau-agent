@@ -11,7 +11,7 @@ use tau_agent::tool::RunId;
 use tau_constitution::{Trial, rules::Target};
 
 use crate::{
-    view::{Item, ToolState},
+    view::{ConstitutionStats, Item, ToolState},
     workspace::{Workspace, WorkspaceEvent},
 };
 
@@ -133,6 +133,51 @@ pub struct RulesStats {
     pub cost: f64,
     /// Per rule: blocked, flagged, held.
     pub per_rule: HashMap<String, (usize, usize, usize)>,
+}
+
+impl RulesStats {
+    /// What the checks did over a repository's runs: `loaded`, each run
+    /// the workspace has with what it saw, and `history`, what the store
+    /// says of each checked run. A loaded run counts as loaded, which is
+    /// as current as it gets; a stored one only when it is not loaded.
+    /// The review queue (`waiting`) is the workspace's to count.
+    pub fn of(
+        loaded: &[(&RunId, &ConstitutionStats)],
+        history: &[(RunId, ConstitutionStats)],
+    ) -> Self {
+        let mut stats = RulesStats::default();
+        let stored = history
+            .iter()
+            .filter(|(run, _)| !loaded.iter().any(|(id, _)| *id == run))
+            .map(|(_, checks)| checks);
+        for checks in loaded.iter().map(|(_, checks)| *checks).chain(stored) {
+            stats.runs += 1;
+            stats.checked += checks.calls + checks.answers;
+            stats.failed += checks.failed;
+            stats.blocked += checks.blocked.len();
+            stats.flagged += checks.flagged.len();
+            stats.cost += checks.cost;
+            if !checks.held.is_empty() {
+                stats.held_runs += 1;
+            }
+            for (list, slot) in [
+                (&checks.blocked, 0),
+                (&checks.flagged, 1),
+                (&checks.held, 2),
+            ] {
+                for rule in list {
+                    let counts =
+                        stats.per_rule.entry(rule.clone()).or_default();
+                    match slot {
+                        0 => counts.0 += 1,
+                        1 => counts.1 += 1,
+                        _ => counts.2 += 1,
+                    }
+                }
+            }
+        }
+        stats
+    }
 }
 
 /// A flagged call or answer that waits for a person.
@@ -506,34 +551,14 @@ impl Workspace {
 
     /// What `repo`'s runs say about its constitution.
     pub fn rules_stats(&self, repo: &str) -> RulesStats {
-        let mut stats = RulesStats::default();
-        for run in self.runs.iter().filter(|run| self.repo_of(run) == repo) {
-            let checks = &run.constitution;
-            stats.runs += 1;
-            stats.checked += checks.calls + checks.answers;
-            stats.failed += checks.failed;
-            stats.blocked += checks.blocked.len();
-            stats.flagged += checks.flagged.len();
-            stats.cost += checks.cost;
-            if !checks.held.is_empty() {
-                stats.held_runs += 1;
-            }
-            for (list, slot) in [
-                (&checks.blocked, 0),
-                (&checks.flagged, 1),
-                (&checks.held, 2),
-            ] {
-                for rule in list {
-                    let counts =
-                        stats.per_rule.entry(rule.clone()).or_default();
-                    match slot {
-                        0 => counts.0 += 1,
-                        1 => counts.1 += 1,
-                        _ => counts.2 += 1,
-                    }
-                }
-            }
-        }
+        let loaded: Vec<(&RunId, &ConstitutionStats)> = self
+            .runs
+            .iter()
+            .filter(|run| self.repo_of(run) == repo)
+            .map(|run| (&run.id, &run.constitution))
+            .collect();
+        let history = &self.repo_named(repo).constitution.history;
+        let mut stats = RulesStats::of(&loaded, history);
         stats.waiting = self.review_items(repo).len();
         stats
     }
@@ -640,4 +665,72 @@ impl Workspace {
 /// A threshold to two places, so steps of 0.05 do not drift.
 fn round(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
+}
+
+#[cfg(test)]
+mod tests {
+    use hegel::generators as gs;
+    use serde_json::json;
+
+    use super::*;
+
+    /// One of tau-constitution's records: a check of a call or the
+    /// answer, a verdict, or a failure.
+    #[hegel::composite]
+    fn record(tc: &hegel::TestCase) -> Value {
+        let rule = tc.draw(gs::sampled_from(vec!["R1", "R2", "R3"]));
+        let call = tc.draw(gs::booleans());
+        match tc.draw(gs::integers::<u8>().max_value(4)) {
+            0 => json!({
+                "kind": "checked",
+                "call_id": call.then_some("c1"),
+                "scores": [{"rule": rule, "score": 0.5}],
+                // Multiples of 1/1024, so sums are exact.
+                "cost": f64::from(tc.draw(gs::integers::<u32>().max_value(64)))
+                    / 1024.0,
+            }),
+            1 => {
+                json!({"kind": "blocked", "rule": rule, "text": "", "score": 0.9})
+            }
+            2 => {
+                json!({"kind": "flagged", "rule": rule, "text": "", "score": 0.5})
+            }
+            3 => json!({
+                "kind": "held", "rule": rule, "text": "", "score": 0.9,
+                "hold": 1, "max_holds": 3,
+            }),
+            _ => json!({"kind": "error", "message": "offline"}),
+        }
+    }
+
+    /// Which runs are loaded does not change what the screen counts: a
+    /// stored run counts the same as when it is loaded with the same
+    /// records, and once whichever way.
+    #[hegel::test(test_cases = 200)]
+    fn loading_a_run_does_not_change_the_totals(tc: hegel::TestCase) {
+        let runs: Vec<(RunId, ConstitutionStats)> = (0..tc
+            .draw(gs::integers::<usize>().max_value(5)))
+            .map(|n| {
+                let mut stats = ConstitutionStats::default();
+                for body in tc.draw(gs::vecs(record()).max_size(6)) {
+                    stats.add(&body);
+                }
+                (RunId(format!("run-{n}").into()), stats)
+            })
+            .collect();
+        let loaded: Vec<bool> =
+            runs.iter().map(|_| tc.draw(gs::booleans())).collect();
+        let some: Vec<(&RunId, &ConstitutionStats)> = runs
+            .iter()
+            .zip(&loaded)
+            .filter(|(_, loaded)| **loaded)
+            .map(|((run, stats), _)| (run, stats))
+            .collect();
+        let all: Vec<(&RunId, &ConstitutionStats)> =
+            runs.iter().map(|(run, stats)| (run, stats)).collect();
+        let stored = RulesStats::of(&[], &runs);
+        assert_eq!(RulesStats::of(&some, &runs), stored);
+        assert_eq!(RulesStats::of(&all, &[]), stored);
+        assert_eq!(stored.runs, runs.len());
+    }
 }

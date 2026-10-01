@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT run_id AS \"run!: String\", body AS \"body!: String\"\n               FROM messages\n               WHERE kind = 'plugin' AND plugin = ?1\n               ORDER BY run_id, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "run!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "run_id"
+          }
+        }
+      },
+      {
+        "name": "body!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "body"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "8150a6252079e086a8870007af2219a01d4642dfbe63ff31287b4044d57f0cd2"
+}

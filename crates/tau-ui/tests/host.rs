@@ -1371,6 +1371,16 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
         "a place that names nothing is refused"
     );
 
+    // The store's history counts the run, loaded or not.
+    let history = host.catalog().repos[0].constitution.history.clone();
+    assert_eq!(history.len(), 1);
+    let (run, checks) = &history[0];
+    assert_eq!(run, &view.id);
+    assert_eq!(
+        (checks.calls, checks.blocked.as_slice()),
+        (1, ["R1".to_owned()].as_slice())
+    );
+
     // Removing a rule saves it.
     host.edit_rules(REPO, |rules| {
         rules.remove("R1");

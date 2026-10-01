@@ -1221,6 +1221,7 @@ impl Host {
             }
             (None, None, None) => ProjectStatus::Unknown,
         };
+        let mut history = self.constitution_history();
         // In the list's order, which adding a repository again keeps.
         let repos: Vec<Repo> = list
             .repos
@@ -1234,6 +1235,8 @@ impl Host {
                 repo.main =
                     listed.main.as_deref().map(|main| RunId(main.into()));
                 repo.constitution = self.repo_constitution(slot);
+                repo.constitution.history =
+                    history.remove(&listed.name).unwrap_or_default();
                 repo.memory = self.memories.catalog(&self.memory_dir(slot));
                 Some(repo)
             })
@@ -1553,7 +1556,55 @@ impl Host {
             blocks_unchecked: loaded.on_error
                 == tau_constitution::OnError::Block,
             error,
+            history: Vec::new(),
         }
+    }
+
+    /// What the constitution did in each stored run, by repository: its
+    /// records, counted the way a run's view counts them.
+    fn constitution_history(
+        &self,
+    ) -> HashMap<String, Vec<(RunId, crate::view::ConstitutionStats)>> {
+        let (records, repos) = self.runtime.block_on(async {
+            (
+                self.store
+                    .plugin_entries_everywhere(tau_constitution::NAME)
+                    .await,
+                self.store.plugin_entries_everywhere(REPO_PLUGIN).await,
+            )
+        });
+        let (Ok(records), Ok(repos)) = (records, repos) else {
+            return HashMap::new();
+        };
+        let repo_of: HashMap<String, String> = repos
+            .into_iter()
+            .filter_map(|(run, body)| {
+                let body: serde_json::Value =
+                    serde_json::from_str(&body).ok()?;
+                Some((run, body.get("repo")?.as_str()?.to_owned()))
+            })
+            .collect();
+        let mut history: HashMap<
+            String,
+            Vec<(RunId, crate::view::ConstitutionStats)>,
+        > = HashMap::new();
+        for (run, body) in records {
+            let (Some(repo), Ok(body)) = (
+                repo_of.get(&run),
+                serde_json::from_str::<serde_json::Value>(&body),
+            ) else {
+                continue;
+            };
+            let runs = history.entry(repo.clone()).or_default();
+            // Records come by run, so a run's are together.
+            if runs.last().is_none_or(|(last, _)| *last.0 != *run) {
+                runs.push((RunId(run.into()), Default::default()));
+            }
+            if let Some((_, stats)) = runs.last_mut() {
+                stats.add(&body);
+            }
+        }
+        history
     }
 
     /// Changes a repository's constitution with `edit`, which checks

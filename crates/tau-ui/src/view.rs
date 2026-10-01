@@ -107,6 +107,32 @@ pub struct FlaggedAnswer {
 }
 
 impl ConstitutionStats {
+    /// Counts one of tau-constitution's report or record bodies: a
+    /// check, a verdict or a failure. Flagged answers' text is the
+    /// view's to add, from the transcript.
+    pub fn add(&mut self, body: &Value) {
+        use tau_constitution::{Check, Verdict, VerdictKind};
+        if body["kind"] == "error" {
+            self.failed += 1;
+        } else if let Some(check) = Check::parse(body) {
+            match check.call_id {
+                Some(_) => self.calls += 1,
+                None => self.answers += 1,
+            }
+            self.questions += check.scores.len() as u32;
+            self.cost += check.cost;
+        } else if let Some(verdict) = Verdict::parse(body) {
+            match verdict.kind {
+                VerdictKind::Blocked => self.blocked.push(verdict.rule),
+                VerdictKind::Flagged => self.flagged.push(verdict.rule),
+                VerdictKind::Held => {
+                    self.held.push(verdict.rule);
+                    self.max_holds = verdict.max_holds.or(self.max_holds);
+                }
+            }
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.calls == 0 && self.answers == 0
     }
@@ -1736,8 +1762,8 @@ impl RunView {
         if plugin != tau_constitution::NAME {
             return;
         }
+        self.constitution.add(body);
         if body["kind"] == "error" {
-            self.constitution.failed += 1;
             // What `on_error` did with what it could not check.
             let call = body["call_id"].is_string();
             let detail = match (body["on_error"].as_str(), call) {
@@ -1758,13 +1784,6 @@ impl RunView {
             return;
         }
         if let Some(check) = tau_constitution::Check::parse(body) {
-            let stats = &mut self.constitution;
-            match check.call_id {
-                Some(_) => stats.calls += 1,
-                None => stats.answers += 1,
-            }
-            stats.questions += check.scores.len() as u32;
-            stats.cost += check.cost;
             // Every score shows on the call's card, passed or not.
             if let Some(call_id) = &check.call_id
                 && let Some(card) = self.tool_mut(call_id)
@@ -1789,15 +1808,6 @@ impl RunView {
                 score: verdict.score,
                 answer,
             });
-        }
-        let stats = &mut self.constitution;
-        match verdict.kind {
-            VerdictKind::Blocked => stats.blocked.push(verdict.rule.clone()),
-            VerdictKind::Flagged => stats.flagged.push(verdict.rule.clone()),
-            VerdictKind::Held => {
-                stats.held.push(verdict.rule.clone());
-                stats.max_holds = verdict.max_holds.or(stats.max_holds);
-            }
         }
         self.sync_constitution_status();
         let score = format!("{:.2}", verdict.score);

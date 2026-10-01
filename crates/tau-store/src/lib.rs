@@ -944,6 +944,25 @@ impl Store {
         Ok(rows.into_iter().map(|row| (row.seq, row.body)).collect())
     }
 
+    /// `plugin`'s records in every run, each in the run that stored it
+    /// (not inherited), as `(run, body)`: by run, oldest first within
+    /// one. For what a plugin did across a store's history.
+    pub async fn plugin_entries_everywhere(
+        &self,
+        plugin: &str,
+    ) -> Result<Vec<(String, String)>> {
+        let rows = sqlx::query!(
+            r#"SELECT run_id AS "run!: String", body AS "body!: String"
+               FROM messages
+               WHERE kind = 'plugin' AND plugin = ?1
+               ORDER BY run_id, seq"#,
+            plugin
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        Ok(rows.into_iter().map(|row| (row.run, row.body)).collect())
+    }
+
     /// Runs and cost per agent in a workflow.
     pub async fn workflow_cost(
         &self,

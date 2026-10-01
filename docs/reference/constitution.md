@@ -68,7 +68,10 @@ whether it was sent back (`held`).
   applies from the next tool call, in runs already going too.
 - The Constitution screen:
   - **Rules:** each rule's places, strictness and what it did in the
-    repository's runs.
+    repository's runs: the runs loaded in the UI as they go, and every
+    other stored run from the plugin's records
+    (`Store::plugin_entries_everywhere`), counted the same way
+    (`ConstitutionStats::add`).
   - **Editor:** writes and edits a rule, with places picked from a list
     (or any `tool.field`), Lenient / Balanced / Strict thresholds
     (flag/block at 0.5/0.9, 0.3/0.8, 0.2/0.6) or steps of 0.05, and

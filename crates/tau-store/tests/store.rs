@@ -473,6 +473,21 @@ impl StoreMachine {
                     model.records(id, plugin),
                     "{plugin} records of {id}"
                 );
+                // Everywhere, a run's own entries are its part.
+                let own: Vec<String> = store
+                    .plugin_entries_everywhere(plugin)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .filter(|(run, _)| run == id)
+                    .map(|(_, body)| body)
+                    .collect();
+                let entries: Vec<String> = model
+                    .plugin_entries(id, plugin)
+                    .into_iter()
+                    .map(|(_, body)| body)
+                    .collect();
+                assert_eq!(own, entries, "{plugin} everywhere, in {id}");
                 assert_eq!(
                     store.plugin_entries(id, plugin).await.unwrap(),
                     model.plugin_entries(id, plugin),
