@@ -4,17 +4,20 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use tau_agent::tool::{AgentTool, Exposure, ToolCtx, ToolError, ToolOutput};
+use tau_agent::{
+    output::Spill,
+    tool::{AgentTool, Exposure, ToolCtx, ToolError, ToolOutput},
+};
 
 use crate::{
     connection::{Annotations, CallFailure, Connection, Progress, ToolInfo},
-    results::{Spill, map_result},
+    results::map_result,
 };
 
 /// The most bytes of a result's `structuredContent`, as JSON, a call's
-/// `details` keep for its card: as much text as the model gets. Past it,
+/// `details` keep for its card: about as much text as the model gets. Past it,
 /// the card shows the text; scripts get the whole value either way.
-pub const DETAILS_STRUCTURED_LIMIT: usize = crate::results::TEXT_LIMIT;
+pub const DETAILS_STRUCTURED_LIMIT: usize = 20 * 1024;
 
 /// An MCP server's tool. Its name is `mcp__<server>__<tool>`
 /// ([`crate::names`]); calls go through the server's [`Connection`],

@@ -30,11 +30,8 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -43,6 +40,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tau_agent::{
     error::ToolError,
+    output::Spill,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tokio::{
@@ -498,18 +496,8 @@ impl Accumulator {
         if self.spill.is_some() {
             return;
         }
-        let path = self.spill_dir.join(spill_filename());
-        // Readable by its owner only, and never an existing file: the
-        // directory is shared.
-        let file = {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&path)
-        };
-        if let Ok(mut file) = file {
+        let file = Spill::new(&self.spill_dir, "tau-bash").create("log");
+        if let Ok((path, mut file)) = file {
             use std::io::Write;
             let _ = file.write_all(&self.raw_buffer);
             self.raw_buffer.clear();
@@ -605,20 +593,6 @@ impl Accumulator {
         }
         self.tail = self.tail[start..].to_owned();
     }
-}
-
-/// A file name unique enough for a temp file: `tau-bash-<hex>.log`
-/// (`docs/reference/tools.md`, "bash", "Output").
-fn spill_filename() -> String {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let pid = u128::from(std::process::id());
-    let mixed = nanos ^ (pid << 64) ^ u128::from(counter);
-    format!("tau-bash-{mixed:016x}.log")
 }
 
 /// `text`, then `status` on its own paragraph; just `status` if `text`
@@ -987,25 +961,6 @@ mod tests {
         assert_eq!(snapshot.content, "");
         assert_eq!(snapshot.by, Some(Limit::Lines));
         assert!(snapshot.last_line_partial);
-    }
-
-    /// The spill file name has the documented shape,
-    /// `tau-bash-<hex>.log` (`docs/reference/tools.md`, "bash",
-    /// "Output"), and is different every time.
-    #[test]
-    fn spill_filename_has_the_documented_shape_and_is_unique() {
-        let a = spill_filename();
-        let b = spill_filename();
-        for name in [&a, &b] {
-            assert!(name.starts_with("tau-bash-"), "{name}");
-            assert!(name.ends_with(".log"), "{name}");
-            let hex = &name["tau-bash-".len()..name.len() - ".log".len()];
-            assert!(
-                !hex.is_empty() && hex.chars().all(|c| c.is_ascii_hexdigit()),
-                "{name}"
-            );
-        }
-        assert_ne!(a, b);
     }
 
     /// `truncated` (via `snapshot().by`) is strict: exactly at either

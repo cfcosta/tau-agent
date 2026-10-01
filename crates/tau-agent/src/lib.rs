@@ -6,6 +6,7 @@ pub mod context;
 pub mod error;
 pub mod event;
 pub mod limits;
+pub mod output;
 pub mod plugin;
 pub mod runner;
 pub mod schema;

@@ -14,19 +14,22 @@ use std::sync::{Arc, OnceLock};
 use async_trait::async_trait;
 use futures_util::future::join_all;
 use serde_json::{Value, json};
-use tau_agent::tool::{
-    AgentTool,
-    Exposure as ToolExposure,
-    ToolCtx,
-    ToolError,
-    ToolOutput,
+use tau_agent::{
+    output::Spill,
+    tool::{
+        AgentTool,
+        Exposure as ToolExposure,
+        ToolCtx,
+        ToolError,
+        ToolOutput,
+    },
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::Exposure,
     connection::{Connection, State},
-    results::{Spill, TEXT_LIMIT, resource_contents, text_block, truncate},
+    results::{resource_contents, text_block, truncate},
 };
 
 /// Lists servers' resources.
@@ -316,7 +319,7 @@ impl ResourceTool {
         let value = json!({ key: items });
         let text = serde_json::to_string_pretty(&value).unwrap_or_default();
         Ok(ToolOutput {
-            content: vec![text_block(truncate(&text, TEXT_LIMIT, &self.spill))],
+            content: vec![text_block(truncate(&text, &self.spill))],
             details: None,
             structured: Some(value),
         })

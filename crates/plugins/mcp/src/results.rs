@@ -1,105 +1,36 @@
 //! What a call's `CallToolResult` becomes (`docs/reference/mcp.md`,
-//! "Results"): content for the model, cut at 20 KB, and the whole
+//! "Results"): content for the model, cut at 5,000 tokens, and the whole
 //! result, never cut, for scripts.
 //!
 //! The result arrives as JSON (the wire's `CallToolResult`), so nothing
 //! here depends on the MCP client's types.
 
-use std::{
-    fs::OpenOptions,
-    io::{self, Write},
-    os::unix::fs::OpenOptionsExt,
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 use base64::Engine;
 use serde_json::{Map, Value, json};
-use tau_agent::tool::ToolOutput;
+use tau_agent::{
+    output::{Spill, estimate_tokens, truncated},
+    tool::ToolOutput,
+};
 use tau_ai::message::{ImageContent, InputBlock, TextContent};
 
-use crate::config::hex;
+/// The most text the model gets from one call, in tokens (about
+/// 20 KB). Past it, the text is cut in the middle.
+pub const TEXT_TOKENS: u64 = 5_000;
 
-/// The most text the model gets from one call, in bytes. Past it, the
-/// text is cut in the middle.
-pub const TEXT_LIMIT: usize = 20 * 1024;
-
-/// Where results too large or too binary for the model are written:
-/// `$TMPDIR` by default.
-#[derive(Debug, Clone)]
-pub struct Spill {
-    dir: PathBuf,
+/// Where the spill files of results too large or too binary for the
+/// model go: `$TMPDIR`.
+pub fn temp_spill() -> Spill {
+    Spill::temp("tau-mcp")
 }
 
-impl Default for Spill {
-    fn default() -> Self {
-        Self::new(std::env::temp_dir())
-    }
-}
-
-impl Spill {
-    pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
-    }
-
-    /// Writes `bytes` to a new file `tau-mcp-<hex>.<extension>`, readable
-    /// by its owner only.
-    pub fn write(&self, bytes: &[u8], extension: &str) -> io::Result<PathBuf> {
-        let mut id = [0u8; 8];
-        getrandom::fill(&mut id).map_err(io::Error::other)?;
-        let path = self.dir.join(format!("tau-mcp-{}.{extension}", hex(&id)));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)?;
-        file.write_all(bytes)?;
-        Ok(path)
-    }
-}
-
-/// Where to cut `text` so at most `limit` bytes are kept: a prefix of at
-/// most half the limit and a suffix of the rest, both at char
-/// boundaries. `None` when the whole text fits.
-pub fn cut_middle(text: &str, limit: usize) -> Option<(&str, &str)> {
-    if text.len() <= limit {
-        return None;
-    }
-    let mut head = limit / 2;
-    while !text.is_char_boundary(head) {
-        head -= 1;
-    }
-    let mut tail = text.len() - (limit - head);
-    while !text.is_char_boundary(tail) {
-        tail += 1;
-    }
-    Some((&text[..head], &text[tail..]))
-}
-
-/// Tokens, as Codemode counts them: chars / 4, rounded up.
-fn tokens(text: &str) -> usize {
-    text.chars().count().div_ceil(4)
-}
-
-/// `text`, cut in the middle past `limit` bytes in Codemode's format,
-/// with the full text written to a spill file.
-pub fn truncate(text: &str, limit: usize, spill: &Spill) -> String {
-    let Some((head, tail)) = cut_middle(text, limit) else {
-        return text.to_owned();
-    };
-    let omitted = &text[head.len()..text.len() - tail.len()];
-    let saved = match spill.write(text.as_bytes(), "txt") {
-        Ok(path) => format!(
-            "[Full output: {} (read it with offset/limit)]",
-            path.display()
-        ),
-        Err(error) => format!("[The full output could not be saved: {error}]"),
-    };
-    format!(
-        "Warning: truncated output (original token count: {})\nTotal output lines: {}\n\n{head}…{} tokens truncated…{tail}\n\n{saved}",
-        tokens(text),
-        text.lines().count(),
-        tokens(omitted),
-    )
+/// `text`, cut in the middle past [`TEXT_TOKENS`], with the whole text
+/// written to a spill file.
+pub fn truncate(text: &str, spill: &Spill) -> String {
+    truncated(text, TEXT_TOKENS, |full| {
+        spill.write(full.as_bytes(), "txt")
+    })
 }
 
 /// The text a call that failed without any says.
@@ -257,7 +188,7 @@ pub fn resource_link(server: &str, block: &Value) -> String {
 
 /// What a `ReadResourceResult`'s `contents` become for the model: text as
 /// text, images as images, other binary saved to a spill file and named
-/// by its path, the text cut past [`TEXT_LIMIT`] as a call's is. MCP
+/// by its path, the text cut past [`TEXT_TOKENS`] as a call's is. MCP
 /// apps' contents are left out ([`crate::resources::is_app`]).
 pub fn resource_contents(contents: &[Value], spill: &Spill) -> Vec<InputBlock> {
     let items = contents
@@ -329,16 +260,16 @@ fn extension(mime: &str) -> &'static str {
 }
 
 /// Keeps text blocks as they are while their text fits; past
-/// [`TEXT_LIMIT`], merges them into one cut block, first, images after.
+/// [`TEXT_TOKENS`], merges them into one cut block, first, images after.
 fn limit_text(items: Vec<InputBlock>, spill: &Spill) -> Vec<InputBlock> {
-    let total: usize = items
+    let total: u64 = items
         .iter()
         .map(|item| match item {
-            InputBlock::Text(text) => text.text.len(),
+            InputBlock::Text(text) => estimate_tokens(&text.text),
             InputBlock::Image(_) => 0,
         })
         .sum();
-    if total <= TEXT_LIMIT {
+    if total <= TEXT_TOKENS {
         return items;
     }
     let mut texts = Vec::new();
@@ -350,7 +281,7 @@ fn limit_text(items: Vec<InputBlock>, spill: &Spill) -> Vec<InputBlock> {
         }
     }
     let joined = texts.join("\n");
-    let mut out = vec![text_block(truncate(&joined, TEXT_LIMIT, spill))];
+    let mut out = vec![text_block(truncate(&joined, spill))];
     out.extend(images);
     out
 }

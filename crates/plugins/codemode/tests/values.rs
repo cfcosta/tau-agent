@@ -1,17 +1,13 @@
-//! JSON values in Luau, and the output budget.
+//! JSON values in Luau.
 //!
 //! | Property | Oracle |
 //! | --- | --- |
 //! | JSON → Lua → JSON is the identity (numbers as doubles) | round trip |
-//! | a cut keeps a prefix and a suffix within budget | algebraic |
 
-use hegel::{TestCase, generators as gs};
+use hegel::TestCase;
 use mlua::Lua;
 use serde_json::{Map, Value, json};
-use tau_codemode::{
-    result::{Cut, cut, tokens},
-    value,
-};
+use tau_codemode::value;
 
 /// What a JSON value is once its numbers are Luau doubles.
 fn as_doubles(value: &Value) -> Value {
@@ -51,33 +47,5 @@ fn empty_arrays_and_nulls_survive() {
         let back = value::from_lua(&lua, &value::to_lua(&lua, &json).unwrap())
             .unwrap();
         assert_eq!(back, json);
-    }
-}
-
-#[hegel::test]
-fn truncation_keeps_a_prefix_and_a_suffix_within_budget(tc: TestCase) {
-    let text: String = tc.draw(gs::text().max_size(400));
-    let max: u64 = tc.draw(gs::integers::<u64>().max_value(120));
-    match cut(&text, max) {
-        Cut::Whole => assert!(tokens(&text) <= max),
-        Cut::Cut {
-            head,
-            tail,
-            original_tokens,
-            removed_tokens,
-        } => {
-            assert!(tokens(&text) > max);
-            assert_eq!(original_tokens, tokens(&text));
-            assert!(text.starts_with(head));
-            assert!(text.ends_with(tail));
-            let head_chars = head.chars().count();
-            let tail_chars = tail.chars().count();
-            assert!((head_chars + tail_chars) as u64 <= max * 4);
-            // Half the kept characters from each end.
-            assert!(tail_chars - head_chars <= 1);
-            assert!(head.len() + tail.len() <= text.len());
-            let middle = &text[head.len()..text.len() - tail.len()];
-            assert_eq!(removed_tokens, tokens(middle));
-        }
     }
 }

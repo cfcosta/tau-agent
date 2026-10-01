@@ -109,18 +109,15 @@ exclude_re = [
   # `should_spill`'s result.
   'replace \+= with \*= in Accumulator::append',
 
-  # spill_filename: the exact formula mixing the nanosecond clock, the
+  # output::unique: the exact formula mixing the nanosecond clock, the
   # pid and the atomic counter into one number is not part of the
-  # documented contract (`docs/reference/tools.md`, "bash", "Output":
-  # `tau-bash-<hex>.log`) -- only that the name matches that shape and
-  # is unique enough in practice, which
-  # `spill_filename_has_the_documented_shape_and_is_unique` checks.
-  # Swapping `^` for `|` or `&`, or `<<` for `>>`, still combines two
-  # values that change on every call (the clock and the counter) into
-  # one that does too, so it cannot make the name collide any more than
-  # the original formula could.
-  'replace \^ with . in spill_filename',
-  'replace << with >> in spill_filename',
+  # contract -- only that spill files get new names, which
+  # `spill_files_are_new_private_and_named` checks (and `create_new`
+  # enforces). Swapping `^` for `|` or `&`, or `<<` for `>>`, still
+  # combines two values that change on every call (the clock and the
+  # counter) into one that does too.
+  'replace \^ with . in unique',
+  'replace << with >> in unique',
 
   # Accumulator::trim_tail, `if start > 0` (bash.rs:546; not the `==`
   # and `<` mutants there, which `trim_tail_lands_on_the_next_char_

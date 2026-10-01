@@ -23,7 +23,7 @@ use tau_mcp::{
     config::{Exposure, Origin, ServerConfig, Transport},
     connection::{Connection, Environment, State},
     resources::{exposure, is_app},
-    results::{Spill, resource_contents},
+    results::resource_contents,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -240,7 +240,7 @@ async fn gets_prompts_with_arguments() {
 #[test]
 fn contents_for_the_model() {
     let dir = tempfile::tempdir().unwrap();
-    let spill = Spill::new(dir.path());
+    let spill = tau_agent::output::Spill::new(dir.path(), "tau-mcp");
     let encode =
         |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
     let contents = [

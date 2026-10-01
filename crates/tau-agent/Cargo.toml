@@ -26,6 +26,7 @@ tau-ai.workspace = true
 tau-store.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 hegeltest.workspace = true
 sqlx.workspace = true
 tau-testing.workspace = true

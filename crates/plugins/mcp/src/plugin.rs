@@ -11,6 +11,7 @@ use std::{
 use async_trait::async_trait;
 use futures_util::future::join_all;
 use tau_agent::{
+    output::Spill,
     plugin::{Plugin, PluginCtx, PluginError, PluginRun, RunPlan},
     tool::{AgentTool, Exposure as ToolExposure, Namespace, ToolSource},
 };
@@ -31,7 +32,7 @@ use crate::{
     names::tool_names,
     prompts,
     resources::{self, Kind, ResourceTool},
-    results::Spill,
+    results::temp_spill,
     tool::McpTool,
 };
 
@@ -117,7 +118,7 @@ impl McpPluginBuilder {
 
     /// Where long or binary results are written; `$TMPDIR` by default.
     pub fn spill_dir(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.spill = Spill::new(dir);
+        self.spill = Spill::new(dir, "tau-mcp");
         self
     }
 
@@ -210,7 +211,7 @@ impl McpPlugin {
             home: None,
             servers: Vec::new(),
             startup_wait: STARTUP_WAIT,
-            spill: Spill::default(),
+            spill: temp_spill(),
         }
     }
 
@@ -227,7 +228,7 @@ impl McpPlugin {
                 errors,
                 pending,
                 startup_wait: STARTUP_WAIT,
-                spill: Spill::default(),
+                spill: temp_spill(),
                 tools: Mutex::default(),
             }),
         }

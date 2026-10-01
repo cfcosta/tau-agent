@@ -446,10 +446,11 @@ result does not depend on order. A server's namespace is
     saved to a 0600 file `$TMPDIR/tau-mcp-<hex>.<ext>`, as
     `[Resource <uri> (<mime>) saved to <path>]`; audio the same way;
   - with no content blocks, `structuredContent` as pretty JSON;
-  - text over 20 KB (20,480 bytes, all text blocks together) merged
-    into one block and cut in the middle, at most half kept from the
-    start, at UTF-8 boundaries, in Codemode's format, the full text
-    written to `$TMPDIR/tau-mcp-<hex>.txt`; images follow it;
+  - text over 5,000 tokens (about 20 KB, four characters a token, all
+    text blocks together) merged into one block and cut in the middle,
+    half kept from each end, at character boundaries, in Codemode's
+    format (`tau_agent::output`), the full text written to
+    `$TMPDIR/tau-mcp-<hex>.txt`; images follow it;
   - `isError` makes the call fail; with no text, it says
     `MCP tool <server>/<tool> returned an error`.
 - **For scripts:** `ToolOutput::structured` holds the whole
@@ -480,11 +481,11 @@ server's.
   connecting, and connects a named one that dropped or failed. An
   unknown server fails, naming those that offer resources; a named one
   that does not offer them, or is not connected, fails saying so. The
-  text is cut at 20 KB as a call's is.
+  text is cut at 5,000 tokens as a call's is.
 - **Reading** sends `resources/read`, tried twice as above. Its
   contents: text as text; an `image/*` blob as an image; any other blob
   saved to a 0600 file in the spill directory, as
-  `[Resource <uri> (<mime>) saved to <path>]`; the text cut at 20 KB.
+  `[Resource <uri> (<mime>) saved to <path>]`; the text cut at 5,000 tokens.
   Scripts get the contents whole.
 - **MCP apps** are left out everywhere: a resource or template whose
   URI starts `ui://` or whose type is `text/html;profile=mcp-app` (case
@@ -834,8 +835,9 @@ From the design above, as first written:
 - **Names, as properties:** every name matches `^[A-Za-z0-9_]{1,64}$`;
   distinct (server, tool) pairs get distinct names; the names do not
   depend on the order tools are listed.
-- **Results, as properties:** the 20 KB cut keeps a prefix and a suffix
-  at char boundaries within the limit; text under it is unchanged.
+- **Results, as properties:** the cut is `tau_agent::output`'s, whose
+  tests keep a prefix and a suffix within the budget and the whole text
+  in the spill file; text under it is unchanged.
 - **Against a server:** an in-process rmcp server (rmcp's `server`
   feature in dev-dependencies) over a duplex stream, on 2026-07-28 and
   on 2025-11-25: listing every page, calling, structured content,

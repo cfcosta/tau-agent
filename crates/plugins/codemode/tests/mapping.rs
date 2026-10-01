@@ -62,7 +62,7 @@ hegel::pretty_print_as_debug!(Ending);
 
 /// The script gets the structured output exactly when the tool has an
 /// output schema and the output carries one, whether the call failed
-/// or not; else a success's text blocks, joined and without images;
+/// or not; else a success's text blocks, one a line, without images;
 /// else an error with the text the loop's error shows.
 #[hegel::test(test_cases = 300)]
 fn a_result_maps_to_one_script_value(tc: hegel::TestCase) {
@@ -81,7 +81,8 @@ fn a_result_maps_to_one_script_value(tc: hegel::TestCase) {
             Block::Text(text) => Some(text.as_str()),
             Block::Image => None,
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .join("\n");
     let message: String = tc.draw(gs::text().max_size(16));
     let result = match ending {
         Ending::Ok => Ok(output(&blocks, structured.clone())),
