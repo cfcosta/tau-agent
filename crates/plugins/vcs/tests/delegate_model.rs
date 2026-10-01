@@ -17,7 +17,8 @@
 //!   land on the caller in the order they finish, each rebased as jj
 //!   rebases, keeping its change id; a failed one lands nothing;
 //! - each result is the sub-agent's answer and `landing_note`'s line,
-//!   naming the paths in conflict in the caller's new head;
+//!   naming the paths in conflict in the caller's new head that were not
+//!   before the landing;
 //! - the caller links each landed change, in order and from its
 //!   sub-agent, before its turn's snapshot;
 //! - afterwards only the caller's workspace and bookmark are left;
@@ -729,6 +730,7 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                         "sub-agent {i}'s leftover was described from {question:?}"
                     );
                 }
+                let held_before = conflicts(&head_tree);
                 let mut parent = base.clone();
                 for (desc, tree) in commits {
                     let new = rebase_tree(&head_tree, &parent, tree);
@@ -736,9 +738,18 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                     parent = tree.clone();
                     head_tree = new;
                 }
-                let landed = conflicts(&head_tree);
+                // The note names only the conflicts this landing brought.
+                let all = conflicts(&head_tree);
+                let landed: Vec<String> = all
+                    .iter()
+                    .filter(|path| !held_before.contains(path))
+                    .cloned()
+                    .collect();
                 if !landed.is_empty() {
                     tc.event("a landing conflicts");
+                }
+                if landed.len() < all.len() {
+                    tc.event("a landing on a head already in conflict");
                 }
                 let answer = if *held {
                     format!("still answer {i}")
@@ -751,6 +762,7 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                     "sub-agent {i}'s result"
                 );
                 assert_eq!(details["run"], json!(run));
+                assert_eq!(details["conflicts"], json!(landed));
                 let landing = &details["landing"];
                 assert_eq!(landing["changes"].as_array().unwrap().len(), commits.len());
                 // Its landed changes, oldest first, as the caller links them.

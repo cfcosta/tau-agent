@@ -460,9 +460,11 @@ digits>`, so that no process reuses one an earlier one left, starts
 4. As each finishes, its changes land on the caller with `Vcs::land`,
    one landing at a time, in the order they finish. The first cannot
    conflict. A later one whose changes clash with an earlier one's
-   lands its conflicts, and its result names the conflicted files for
-   the caller to resolve. The tool's text is the sub-agent's answer and
-   a line on what landed; its details hold `run` and the `landing`.
+   lands its conflicts, and its result names the files this landing
+   left in conflict, not those the caller's head held already, for the
+   caller to resolve. The tool's text is the sub-agent's answer and a
+   line on what landed; its details hold `run`, the `landing`, and the
+   `conflicts` it brought.
 5. When it fails, or the caller is cancelled before it lands, its
    changes are abandoned and the caller gets the error.
 6. Either way the sub-agent closes: its workspace is forgotten and its

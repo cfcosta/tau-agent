@@ -451,6 +451,64 @@ fn a_clashing_sub_agent_lands_its_conflict() {
     });
 }
 
+/// A landing names only the conflicts it brought: after a batch left
+/// `shared.txt` in conflict, a later sub-agent that writes another file
+/// lands clean, and its note says so.
+#[test]
+fn a_landing_names_only_the_conflicts_it_brought() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("delegate", json!({ "task": "one" }))
+                    .tool_call("delegate", json!({ "task": "two" }))
+            })
+            .turn(|t| t.tool_call("delegate", json!({ "task": "other" })))
+            .turn(|t| t.text("done"));
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let scripts = [
+            ("shared.txt", "one\n"),
+            ("shared.txt", "two\n"),
+            ("other.txt", "other\n"),
+        ]
+        .into_iter()
+        .map(|(path, content)| {
+            ScriptedModel::new()
+                .turn(move |t| {
+                    t.tool_call(
+                        "write",
+                        json!({ "path": path, "content": content }),
+                    )
+                })
+                .turn(|t| t.tool_call("vcs_commit", commit("feat: part")))
+                .turn(|t| t.text("written"))
+        })
+        .collect();
+        let outcome =
+            delegating_to(llm.clone(), &parent, Arc::new(Mutex::new(scripts)))
+                .run("clash, then add", &store)
+                .await
+                .unwrap();
+        assert_eq!(outcome.text, "done");
+        let batch = format!("{:?}", llm.requests()[1].transcript);
+        assert_eq!(
+            batch.matches("with conflicts in shared.txt").count(),
+            1,
+            "{batch}"
+        );
+        let last = llm.requests()[2].transcript.last().cloned().unwrap();
+        let last = format!("{last:?}");
+        assert!(
+            last.contains("[Its 1 change landed on top of yours.]"),
+            "{last}"
+        );
+    });
+}
+
 /// Counts the calls running at once, and the most it saw.
 #[derive(Clone, Default)]
 struct Gauge {

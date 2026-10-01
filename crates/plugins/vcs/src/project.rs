@@ -488,6 +488,17 @@ impl Project {
             .map(|id| id.hex()))
     }
 
+    /// The paths `commit` (a full commit id in hex) holds in conflict, in
+    /// path order.
+    pub fn conflicts(&self, commit: &str) -> Result<Vec<String>, VcsError> {
+        let repo = self.load()?;
+        Ok(self::commit(&repo, commit)?
+            .tree()
+            .conflicts()
+            .map(|(path, _)| path.as_internal_file_string().to_owned())
+            .collect())
+    }
+
     /// Whether `ancestor` is `descendant` or one of its ancestors. Both
     /// are full commit ids in hex.
     pub fn is_ancestor(
