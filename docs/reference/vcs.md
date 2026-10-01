@@ -230,7 +230,9 @@ A changed path is a `FileChange`:
   before that one.
 - It refuses when the newest operation that is not a snapshot was not
   made by these tools in this workspace. For example, the user's own
-  `jj` commands, another workspace, or the initial repository setup.
+  `jj` commands, another workspace, the initial repository setup, or
+  what the host does in this workspace: a turn's checkpoint, a
+  catch-up with trunk (`Vcs::move_onto`) or a landing (`Vcs::land`).
   So a run never undoes work that it did not do.
 - The undo records `tau.vcs.undo = <operation id>` on its own
   operation.

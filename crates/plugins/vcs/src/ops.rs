@@ -776,6 +776,10 @@ fn carry_edits(
     Ok(())
 }
 
+/// The `tau.vcs.tool` values of the model's write tools: the
+/// operations `vcs_undo` may undo.
+const UNDOABLE: [&str; 5] = ["describe", "commit", "new", "restore", "undo"];
+
 /// The newest operation `vcs_undo` may undo: made by these tools in
 /// this workspace, skipping snapshots and operations already undone.
 fn undoable(
@@ -800,13 +804,15 @@ fn undoable(
             op = parent.clone();
             continue;
         }
-        // A turn's checkpoint is the host's: undoing it would hide the
-        // commit its turn links to.
+        // Only the model's own tools: what the host writes in this
+        // workspace (a turn's checkpoint, a catch-up with trunk, a
+        // landing) is the host's, and undoing it would move commits the
+        // host links to, or that other runs stand on.
         let ours = metadata.workspace_name.as_deref() == Some(name)
             && metadata
                 .attributes
                 .get(TOOL_ATTRIBUTE)
-                .is_some_and(|tool| tool != CHECKPOINT);
+                .is_some_and(|tool| UNDOABLE.contains(&tool.as_str()));
         if !ours {
             return Err(VcsError::NotOurs(metadata.description.clone()));
         }
