@@ -679,8 +679,11 @@ impl Machine {
     /// when another workspace's operation rewrote its `@`, the files move
     /// to the rewritten tree first, with what was edited since the last
     /// snapshot merged on top, as a rebase would
-    /// (`session::snapshot_locked`). Returns the files before the edits
-    /// and after, each as the tool reads them.
+    /// (`session::snapshot_locked`). Returns the files as jj last saw
+    /// them (its last snapshot or checkout, which a `write` with no tool
+    /// after it leaves behind) and after the edits, each as the tool
+    /// reads them: a conflict jj wrote without markers is settled against
+    /// what jj saw (`settle`).
     fn edit_then_freshen(
         &mut self,
         tc: &TestCase,
@@ -689,17 +692,16 @@ impl Machine {
     ) -> (Tree, Tree) {
         let dir = self.project.workspace_dir(&self.runs[run].name);
         let r = &mut self.runs[run];
-        let was = r.wc.clone();
-        let tree = write_edits(tc, &dir, &was, edits);
+        let tree = write_edits(tc, &dir, &r.wc.clone(), edits);
         let Some(stale) = r.stale.take() else {
-            return (was, tree);
+            return (r.seen.clone(), tree);
         };
         tc.event("a stale workspace catches up");
         if tree != r.seen {
             tc.event("edits on a stale workspace merge onto the rewrite");
         }
-        let fresh = |disk: &Tree| rebase_tree(&stale, &r.seen, disk);
-        (fresh(&was), fresh(&tree))
+        // jj now sees the rewritten tree.
+        (stale.clone(), rebase_tree(&stale, &r.seen, &tree))
     }
 
     /// A turn in `run`: `edits` to its files, then a commit of all of
@@ -1132,7 +1134,6 @@ impl Machine {
             false,
         ))
         .unwrap();
-        let r = &self.runs[MAIN];
         assert_eq!(self.disk(MAIN), files, "a preview changed files");
         assert_eq!(
             self.project.trunk().unwrap(),
@@ -1140,6 +1141,22 @@ impl Machine {
             "a preview moved trunk"
         );
         assert_eq!(self.wc_parent(MAIN), wc, "a preview moved @");
+        // The preview snapshotted `@`: settle what that made of the
+        // conflicts jj wrote without markers, as a turn's commit does. A
+        // `write` of exactly the text jj wrote for one keeps the conflict
+        // (`a_turn_keeps_a_conflict_it_did_not_touch`), and the catch-up
+        // then reports it.
+        let snapshot = self
+            .project
+            .workspace_head(DEFAULT_WORKSPACE)
+            .unwrap()
+            .unwrap();
+        let conflicted = self.jj_conflicts(&snapshot);
+        let r = &mut self.runs[MAIN];
+        let was = r.seen.clone();
+        settle(tc, &was, &mut r.wc, &conflicted);
+        r.seen = r.wc.clone();
+        let r = &self.runs[MAIN];
         let moved =
             block_on(r.vcs.move_onto(trunk_id, r.bookmark.clone(), true))
                 .unwrap();
