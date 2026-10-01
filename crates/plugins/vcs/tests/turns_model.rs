@@ -243,7 +243,7 @@ impl Model {
         AtTurn {
             wc: self.wc.clone(),
             parent: self.parent_tree(),
-            parent_change: self.stack.last().cloned(),
+            stack: self.stack.clone(),
         }
     }
 
@@ -337,8 +337,63 @@ impl Model {
 struct AtTurn {
     wc: Change,
     parent: Tree,
-    /// `@`'s parent, unless it is trunk.
-    parent_change: Option<Change>,
+    /// The changes under `@`, oldest first.
+    stack: Vec<Change>,
+}
+
+/// One path of a three-way merge, `None` when it conflicts.
+fn merge(
+    now: Option<&'static str>,
+    then: Option<&'static str>,
+    turn: Option<&'static str>,
+) -> Option<Option<&'static str>> {
+    if then == turn {
+        Some(now)
+    } else if then == now || now == turn {
+        Some(turn)
+    } else {
+        None
+    }
+}
+
+/// Where a fork at the turn `at` starts, by the reference: the tree of
+/// its parent as it is now, and its files, the turn's work merged onto
+/// that parent. The turn's parent is followed by change id, except into
+/// the run's `@` (an undo took it back), where the fork goes one change
+/// down. `None` when the merge conflicts.
+fn fork_base(model: &Model, at: &AtTurn) -> Option<(Tree, Tree)> {
+    let tree_of = |stack: &[Change]| {
+        stack
+            .last()
+            .map(|c| c.tree.clone())
+            .unwrap_or_else(trunk_tree)
+    };
+    let (then, now) = match at.stack.last() {
+        None => (trunk_tree(), trunk_tree()),
+        Some(parent) if parent.id == model.wc.id => (
+            tree_of(&at.stack[..at.stack.len() - 1]),
+            model.parent_tree(),
+        ),
+        Some(parent) => {
+            let now = model
+                .stack
+                .iter()
+                .find(|c| c.id == parent.id)
+                .map(|c| c.tree.clone())
+                .unwrap_or_else(|| parent.tree.clone());
+            (parent.tree.clone(), now)
+        }
+    };
+    let mut files = Tree::new();
+    for path in PATHS {
+        let value = |tree: &Tree| tree.get(path).copied();
+        if let Some(value) =
+            merge(value(&now), value(&then), value(&at.wc.tree))?
+        {
+            files.insert(path, value);
+        }
+    }
+    Some((now, files))
 }
 
 /// Drives the drawn turns through the model, and scripts them.
@@ -539,22 +594,20 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
         let k = tc.draw(gs::integers::<usize>().max_value(linked.len() - 1));
         let (seq, _) = linked[k].clone();
         let base = &at[k];
-        // A fork follows its turn's parent by change id. Once `vcs_undo`
-        // took that change back into `@`, the fork lands on what the run
-        // did with it since, or on the run's own `@`: see
-        // `a_fork_whose_parent_was_undone_shares_the_runs_working_copy`.
-        if let Some(parent) = &base.parent_change
-            && !model
-                .stack
-                .iter()
-                .any(|c| c.id == parent.id && c.tree == parent.tree)
-        {
-            tc.event("the fork's parent was undone since");
-            return;
+        if at[k].stack.last().is_some_and(|p| p.id == model.wc.id) {
+            tc.event("the fork's parent is the run's @ again");
         }
-        let mut want = base.wc.tree.clone();
+        let Some((parent_now, start)) = fork_base(&model, base) else {
+            // jj would hold the conflict; the model has no terms for it.
+            tc.event("the fork's start conflicts");
+            return;
+        };
+        if parent_now != base.parent {
+            tc.event("the fork's parent changed since its turn");
+        }
+        let mut want = start.clone();
         want.extend(fork_writes.iter().copied());
-        let dirty = want != base.parent;
+        let dirty = want != parent_now;
         let mut fork_llm = ScriptedModel::new()
             .turn(|t| t.tool_call("read", json!({ "path": "a.txt" })));
         if !fork_writes.is_empty() {
@@ -592,7 +645,7 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
                 .collect();
         assert_eq!(
             at_commit(&project, &own[0].commit_id),
-            base.wc.tree,
+            start,
             "the fork starts on turn {}'s files",
             k + 1
         );
@@ -600,7 +653,7 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
             project.parent_of(&own[0].commit_id).unwrap().unwrap();
         assert_eq!(
             at_commit(&project, &fork_parent),
-            base.parent,
+            parent_now,
             "the fork starts on turn {}'s parent",
             k + 1
         );
@@ -633,37 +686,15 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
 }
 
 /// A fork at a turn whose parent change the run took back with
-/// `vcs_undo` starts on the run's own working copy, and the run's later
-/// edits reach it.
+/// `vcs_undo` does not stand on the run's working copy.
 ///
-/// Turn 1 commits (`vcs_commit`), so its snapshot is a new `@` on the
-/// commit `X`. Turn 2 undoes the commit: `X` is `@` again, under the same
-/// change id, and the described commit is hidden.
-/// `Project::add_workspace_from_snapshot` follows the snapshot's parent
-/// by change id (`visible` in `src/project.rs`), finds the run's `@`, and
-/// starts the fork's change on it. When the run snapshots an edit, jj
-/// rewrites `@` and rebases its descendants, the fork's change among
-/// them, so the fork's next tool call moves its files onto the run's
-/// edit. With edits after the undo that the run then committed, the fork
-/// starts with those later files merged in instead.
-///
-/// Fix options:
-/// - follow the parent's change only to a commit no workspace has as its
-///   working copy, and otherwise start the fork on the parent's own
-///   parent with the turn's files, uncommitted (the undone commit's
-///   description is lost to the fork);
-/// - follow the parent only when the commit it moved to descends from a
-///   rewrite of it, not from an undo (the operation log tells them
-///   apart), and otherwise start on the snapshot's parent as it was,
-///   which jj then shows as a divergent change;
-/// - store, with each snapshot link, the parent's commit id and follow
-///   the change only through restacks the run's own links record.
-///
-/// The first keeps forks apart with no divergence, and is the
-/// recommendation.
+/// Turn 1 commits, so its snapshot is a new `@` on the commit `X`. Turn 2
+/// undoes the commit: `X` is the run's `@` again, under the same change
+/// id. Following `X` by change id would start the fork on the run's `@`,
+/// and jj would rebase the fork onto every edit the run makes. The fork
+/// starts on `X`'s parent instead, with the turn's files.
 #[test]
-#[ignore = "bug: a fork follows its turn's parent into the run's own @ after vcs_undo"]
-fn a_fork_whose_parent_was_undone_shares_the_runs_working_copy() {
+fn a_fork_whose_parent_was_undone_stays_apart() {
     let home = tempfile::tempdir().unwrap();
     let project = project(home.path());
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -699,6 +730,12 @@ fn a_fork_whose_parent_was_undone_shares_the_runs_working_copy() {
             .await
             .unwrap();
 
+        let wc = project.workspace_head("fork").unwrap().unwrap();
+        assert_eq!(
+            project.parent_of(&wc).unwrap(),
+            Some(project.trunk().unwrap()),
+            "the fork starts on trunk"
+        );
         std::fs::write(first.dir().join("a.txt"), "two\n").unwrap();
         first.vcs().working_copy().await.unwrap();
         fork.vcs().working_copy().await.unwrap();

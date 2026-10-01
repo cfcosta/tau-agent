@@ -360,8 +360,10 @@ impl Project {
     /// another run's `@` (ADR 0014): a new change with the snapshot's
     /// files, uncommitted, on the snapshot's parent as it is now. A
     /// landing may have restacked that parent since; its new files and
-    /// the turn's work are then merged. Opens the workspace as it is if
-    /// it exists already.
+    /// the turn's work are then merged. When the parent's change is a
+    /// workspace's working copy now (a run undid the commit), the fork
+    /// starts on that parent's parent instead, with the turn's files.
+    /// Opens the workspace as it is if it exists already.
     pub fn add_workspace_from_snapshot(
         &self,
         name: &str,
@@ -388,9 +390,21 @@ impl Project {
             .map_err(VcsError::AddWorkspace)?;
         let turn = commit(&repo, snapshot)?;
         let then = turn.parent_ids().first().ok_or(VcsError::NoParent)?;
-        let then = repo.store().get_commit(then)?;
-        let now =
+        let mut then = repo.store().get_commit(then)?;
+        let mut now =
             visible(repo.as_ref(), &then)?.unwrap_or_else(|| then.clone());
+        // An undo can take the parent's change back into a run's `@`. The
+        // fork must not stand on another workspace's working copy, so it
+        // starts on that parent's parent, with the turn's files: the
+        // undone commit's description is not the fork's.
+        let working_copies: Vec<&CommitId> =
+            repo.view().wc_commit_ids().values().collect();
+        if working_copies.contains(&now.id()) {
+            let up = then.parent_ids().first().ok_or(VcsError::NoParent)?;
+            then = repo.store().get_commit(up)?;
+            let up = now.parent_ids().first().ok_or(VcsError::NoParent)?;
+            now = repo.store().get_commit(up)?;
+        }
         let tree = if now.id() == then.id() {
             turn.tree()
         } else {

@@ -354,7 +354,11 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   turn, and `Project::add_workspace_from_snapshot` starts it on a new
   change holding the snapshot's files, uncommitted, on the snapshot's
   parent as it is now: if a landing restacked that parent since, its
-  new files and the turn's work are merged.
+  new files and the turn's work are merged. A fork never stands on
+  another workspace's working copy: when the parent's change is one now
+  (the run undid that commit with `vcs_undo`), the fork starts on that
+  parent's parent, with the turn's files merged as above, and the undone
+  commit's description is not the fork's.
 - `Project::stack(head)` lists a run's commits, oldest first: what
   `head` has that trunk lacks. Pull requests push those, one GitHub
   commit per commit, with the model's message.
