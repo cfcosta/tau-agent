@@ -9,12 +9,14 @@
 //!   reads.
 //! - [`signature`] renders tools as Luau signatures and picks those
 //!   that fit the run's context; [`description`] is the tool's text.
+//! - [`search`] ranks tools for `search_tools` with BM25.
 
 pub mod description;
 pub mod host;
 pub mod image;
 pub mod options;
 pub mod result;
+pub mod search;
 pub mod signature;
 pub mod store;
 pub mod value;
