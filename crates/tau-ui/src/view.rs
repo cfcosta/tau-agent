@@ -2204,8 +2204,8 @@ impl RunView {
                     (
                         "the goal is met".to_owned(),
                         format!(
-                            "check {} · p {:.2} · the run stops",
-                            check.n, check.p
+                            "check {} · turn {} · p {:.2} · the run stops",
+                            check.n, check.turn, check.p
                         ),
                         Tone::Good,
                     )
@@ -2217,8 +2217,8 @@ impl RunView {
                     (
                         "the goal is not met yet".to_owned(),
                         format!(
-                            "check {} · p {:.2} · {next}",
-                            check.n, check.p
+                            "check {} · turn {} · p {:.2} · {next}",
+                            check.n, check.turn, check.p
                         ),
                         Tone::Warn,
                     )
@@ -2703,6 +2703,22 @@ mod tests {
         assert_eq!(goal.status, Status::Met);
         assert_eq!(goal.continuations, 1);
         assert_eq!(view.usage.plugin_cost, 0.0, "reports charge nothing");
+        // Each check's note names the turn it checked.
+        let details: Vec<&str> = view
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Plugin(note) => note.detail.as_deref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            details,
+            [
+                "check 1 · turn 1 · p 0.10 · continuing 1 of 3",
+                "check 2 · turn 2 · p 0.90 · the run stops"
+            ]
+        );
         let status = view
             .plugins
             .iter()
