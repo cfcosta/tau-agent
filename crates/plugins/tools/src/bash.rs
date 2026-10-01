@@ -499,7 +499,17 @@ impl Accumulator {
             return;
         }
         let path = self.spill_dir.join(spill_filename());
-        if let Ok(mut file) = std::fs::File::create(&path) {
+        // Readable by its owner only, and never an existing file: the
+        // directory is shared.
+        let file = {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+        };
+        if let Ok(mut file) = file {
             use std::io::Write;
             let _ = file.write_all(&self.raw_buffer);
             self.raw_buffer.clear();
@@ -945,6 +955,19 @@ mod tests {
             neither.spill_path().is_none(),
             "within every limit must not spill"
         );
+    }
+
+    /// The spill file lives in a shared directory, so only its owner
+    /// may read it.
+    #[test]
+    fn the_spill_file_is_readable_by_its_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let mut acc = Accumulator::new(1, 1_000_000, dir.path());
+        acc.append(b"a\nb\n");
+        let path = acc.spill_path().expect("over the line limit spills");
+        let mode = std::fs::metadata(path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     /// Regression: bytes that decode to more than the byte limit are

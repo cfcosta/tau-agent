@@ -320,13 +320,23 @@ pub fn truncated(
     )
 }
 
-/// Writes `text` to `$TMPDIR/tau-codemode-<hex>.txt`.
+/// Writes `text` to a new `$TMPDIR/tau-codemode-<hex>.txt`, readable by
+/// its owner only.
 pub fn spill(text: &str) -> Result<PathBuf, String> {
     let mut bytes = [0u8; 8];
     getrandom::fill(&mut bytes).map_err(|error| error.to_string())?;
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     let path = std::env::temp_dir().join(format!("tau-codemode-{hex}.txt"));
-    std::fs::write(&path, text).map_err(|error| error.to_string())?;
+    let write = || {
+        use std::{io::Write as _, os::unix::fs::OpenOptionsExt as _};
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?
+            .write_all(text.as_bytes())
+    };
+    write().map_err(|error| error.to_string())?;
     Ok(path)
 }
 
