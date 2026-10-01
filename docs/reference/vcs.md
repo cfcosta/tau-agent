@@ -477,6 +477,15 @@ its own commits go on top, keeping their change ids, and so does its
 work in `@`; commits upstream dropped do not come back. Its next commit moves trunk forward rather
 than aside.
 
+An update can also land while the main chat's turn runs. So when an
+update has moved a run's bookmark (it names upstream's commit, as
+`<bookmark>@git` does, which a run's own commits never do) to a commit
+the run's newest commit does not have, `commit_all`, `end_turn` and
+`Vcs::land` first move the run's changes, up to `@`, onto it, as a
+catch-up does, in the same operation: trunk moves forward, never aside.
+And `move_onto` goes onto that commit instead of the one it was given
+when the update came after the caller read trunk.
+
 ## Delegating to a sub-agent
 
 `Delegate` is the `delegate` tool (`{ task, model?, effort? }`): a run

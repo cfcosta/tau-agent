@@ -587,6 +587,8 @@ impl Model {
             HostAct::Idle => {}
             HostAct::Update(value) => {
                 self.up = value;
+                // Behind unless the main chat's action went after the
+                // update; which went first is not known.
                 self.behind = true;
             }
             HostAct::Fork => {
@@ -783,12 +785,7 @@ fn draw_round(
     if m.chats.len() < MAX_CHATS {
         hosts.push(HostAct::Fork);
     }
-    // An update that goes first, before the main chat's commit,
-    // catch-up or landing in the same round, has trunk moved aside:
-    // `an_update_during_a_main_chat_turn_moves_trunk_aside`.
-    if matches!(main, MainAct::Idle | MainAct::Drop(_)) {
-        hosts.push(HostAct::Update(value()));
-    }
+    hosts.push(HostAct::Update(value()));
     let host = tc.draw(gs::sampled_from(hosts));
 
     let busy = match main {
@@ -861,6 +858,15 @@ fn events(
     match (main, host) {
         (MainAct::Drop(_), HostAct::Update(_)) => {
             tc.event("an update races a drop")
+        }
+        (MainAct::Turn { .. }, HostAct::Update(_)) => {
+            tc.event("an update races a main chat turn")
+        }
+        (MainAct::CatchUp, HostAct::Update(_)) => {
+            tc.event("an update races a catch-up")
+        }
+        (MainAct::Land(_), HostAct::Update(_)) => {
+            tc.event("an update races a landing")
         }
         (MainAct::Land(_), HostAct::Fork) => {
             tc.event("a new chat races a landing")
@@ -1039,43 +1045,59 @@ fn a_catch_up_racing_a_chat_turn_keeps_the_chats_work() {
     }
 }
 
-/// An update while the main chat's turn runs moves trunk aside: the
-/// turn's commit points trunk at the main chat's new commit, which does
-/// not have upstream's, and upstream's commit is no longer on trunk.
+/// An update while the main chat's turn runs keeps upstream's commit on
+/// trunk: the turn's commit, its snapshot and a landing on the main chat
+/// catch it up first, and a catch-up that read trunk before the update
+/// goes onto upstream's newest commit.
 ///
-/// No race is needed. The host catches the main chat up before its turn
-/// (`Host::resume`), but `update_repo` can run while the turn does. Then
-/// `commit_all` (and `end_turn`, through `ops::point_bookmark`) sets
-/// trunk's bookmark to the main chat's head unconditionally. The
-/// reference says the main chat's "next commit moves trunk forward
-/// rather than aside", which holds only when nothing moved trunk since
-/// the catch-up. The next catch-up has nothing to do (trunk is the main
-/// chat's head), new chats start without upstream's commits, and they
-/// come back only when upstream moves again and the update finds trunk
-/// conflicted.
-///
-/// Fix options:
-/// - The main chat's checkpoints move trunk only forward: when trunk is
-///   no longer an ancestor of the new head, rebase the run's changes
-///   onto it first (a catch-up inside the commit), or leave trunk and
-///   let the next catch-up do it.
-/// - The host does not update a repository while its main chat runs, or
-///   holds the update until the turn ends.
+/// The host catches the main chat up before its turn (`Host::resume`),
+/// but `update_repo` can run while the turn does. `commit_all` and
+/// `end_turn` pointed trunk at the main chat's head whatever trunk named
+/// then, so trunk moved aside and lost upstream's commit. Now they move
+/// the run onto trunk first (`land::follow_bookmark`), and `move_onto`
+/// goes onto the bookmark when it moved on from the commit it was given.
 #[test]
-#[ignore = "bug: an update during a main chat turn moves trunk aside"]
-fn an_update_during_a_main_chat_turn_moves_trunk_aside() {
+fn an_update_during_a_main_chat_turn_keeps_upstream_on_trunk() {
+    // The turn commits, or leaves its work in `@`.
+    for commit in [true, false] {
+        let repo = Repo::new();
+        write(&repo.main_dir(), "main.txt", Some("x\n"));
+        let up = repo.push_upstream(Some("x\n"));
+        repo.project
+            .update(UpdateFrom::Checkout(&repo.src()))
+            .unwrap();
+        let name = repo.trunk_name.clone();
+        if commit {
+            block_on(repo.main.commit_all("main turn", name)).unwrap();
+        } else {
+            block_on(repo.main.end_turn(name, None)).unwrap();
+        }
+        let trunk = repo.project.trunk().unwrap();
+        assert!(
+            repo.project.is_ancestor(&up, &trunk).unwrap(),
+            "trunk lacks upstream's commit"
+        );
+        assert_eq!(read(&repo.main_dir(), "up.txt").as_deref(), Some("x\n"));
+        assert_eq!(read(&repo.main_dir(), "main.txt").as_deref(), Some("x\n"));
+    }
+    // The host's catch-up read trunk before the update, and the main
+    // chat had moved trunk with a commit of its own: upstream's commit is
+    // beside it, not after it.
     let repo = Repo::new();
     write(&repo.main_dir(), "main.txt", Some("x\n"));
+    block_on(repo.main.commit_all("main turn", repo.trunk_name.clone()))
+        .unwrap();
+    let before = repo.project.trunk().unwrap();
     let up = repo.push_upstream(Some("x\n"));
     repo.project
         .update(UpdateFrom::Checkout(&repo.src()))
         .unwrap();
-    block_on(repo.main.commit_all("main turn", repo.trunk_name.clone()))
+    block_on(repo.main.move_onto(before, repo.trunk_name.clone(), true))
         .unwrap();
     let trunk = repo.project.trunk().unwrap();
     assert!(
         repo.project.is_ancestor(&up, &trunk).unwrap(),
-        "trunk lacks upstream's commit"
+        "the catch-up moved trunk back"
     );
 }
 

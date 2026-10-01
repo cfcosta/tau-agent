@@ -500,7 +500,18 @@ pub(crate) fn commit_all(
     bookmark: &str,
 ) -> Result<Committed, VcsError> {
     let name = workspace_name(worker)?;
+    let record = crate::land::MovedOnto::load(worker)?;
+    let mut followed = None;
     let (_, committed) = session::mutate(worker, CHECKPOINT, |tx, wc| {
+        let (wc, onto) = crate::land::follow_bookmark(
+            tx,
+            wc,
+            &name,
+            bookmark,
+            record.last(),
+        )?;
+        followed = onto;
+        let wc = &wc;
         let committed = if block_on(wc.is_empty(tx.repo()))? {
             let parent = wc.parent_ids().first().ok_or(VcsError::NoParent)?;
             let parent = tx.repo().store().get_commit(parent)?;
@@ -529,7 +540,7 @@ pub(crate) fn commit_all(
                 repo.rewrite_commit(wc).set_description(text.clone())
             })?;
             block_on(tx.repo_mut().rebase_descendants())?;
-            block_on(tx.repo_mut().check_out(name, &committed))?;
+            block_on(tx.repo_mut().check_out(name.clone(), &committed))?;
             Committed {
                 commit_id: committed.id().hex(),
                 change_id: committed.change_id().reverse_hex(),
@@ -540,6 +551,7 @@ pub(crate) fn commit_all(
         point_bookmark(tx, bookmark, &committed.commit_id, !committed.changed)?;
         Ok(committed)
     })?;
+    record.save(followed.as_ref())?;
     Ok(committed)
 }
 
@@ -590,7 +602,18 @@ pub(crate) fn end_turn(
     since: Option<&str>,
 ) -> Result<TurnSnapshot, VcsError> {
     let name = workspace_name(worker)?;
+    let record = crate::land::MovedOnto::load(worker)?;
+    let mut followed = None;
     let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, wc| {
+        let (wc, onto) = crate::land::follow_bookmark(
+            tx,
+            wc,
+            &name,
+            bookmark,
+            record.last(),
+        )?;
+        followed = onto;
+        let wc = &wc;
         let head = wc.parent_ids().first().ok_or(VcsError::NoParent)?.clone();
         let before = match since.and_then(CommitId::try_from_hex) {
             Some(id) => {
@@ -618,6 +641,7 @@ pub(crate) fn end_turn(
             paths,
         })
     })?;
+    record.save(followed.as_ref())?;
     Ok(turn)
 }
 
