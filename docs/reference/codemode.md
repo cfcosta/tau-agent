@@ -238,7 +238,8 @@ b` appends each value that is not `nil`. A return value JSON cannot
 - Each request's usage is charged to the run
   (`PluginCtx::charge`), so it counts toward the run's limits and the
   plugin's cost. The call rows in `details` carry it; their ids are
-  `<parent>/jev/<n>`, apart from the tools' `<parent>/<n>`.
+  `<parent>/jev/<n>`, apart from the tools' `<parent>/<n>`. Each
+  request is reported while it runs (see "Events").
 - A failed request raises a Lua error with the error's text.
 
 ### Discovery
@@ -394,7 +395,16 @@ Each nested call has `ToolStart` and `ToolEnd` with
 `<parent>/<n>`, numbered from 1 in the order the loop receives the
 calls. Its updates are `ToolUpdate`s under its own id, with the same
 `parent`. The interface puts them inside the codemode card, live.
-Jev requests make no events: their rows show once the script ends.
+
+A Jev request is not a call through the loop, so it makes no events
+of its own. The codemode call reports it instead, as its own
+`ToolUpdate`s (`parent: None`, no content): one when the request
+starts and one when it ends, before the call's `ToolEnd`. Their
+details are `{ "jev": <row>, "after": n }` (`tau_codemode::live`):
+the row as `details.calls` would list it then (`running` until it
+ends), and `n`, the tool calls the script had started before it,
+which places it among them. A request past the rows' cap is not
+reported, as it is not listed.
 
 ## The interface
 
@@ -421,7 +431,13 @@ it after the other plugins: a plugin that adds tools in its `start`
 - **Rows, live and stored.** While the script runs, its rows come
   from the nested calls tau-ui folds into the card's `CallData`
   (`plugins.md`, "In tau-ui"): only the script's own calls, with the
-  same argument and error cuts as `details.calls`. Once it ends they
+  same argument and error cuts as `details.calls`; and its Jev rows
+  from the call's updates (`CallData::updates`), the latest of each
+  standing, each after the `n` tool calls its update names. Rows are
+  placed by their ids and by `n`, not by when their events came, so
+  the nested calls' events and the call's updates may interleave any
+  way. The header counts the calls so far and adds what Jev has cost
+  so far. Once it ends they
   come from `details.calls`, which is all a stored run has, and
   tau-ui has dropped the live rows: a live card and a stored one draw
   the same thing. Verdicts come from `CallData::nested_marks` in both.
@@ -454,11 +470,13 @@ holds for every input:
 - **In the loop** (`tau-testing::ScriptedModel`): a codemode call
   makes one transcript result however many nested calls it makes; a
   plugin's `before_tool` blocks a nested call; Jev's usage reaches the
-  run's total; the store holds across runs and follows forks.
-- **Interface** (`tests/ui.rs`): for any generated script, its calls
-  in turn or in `parallel_settled`, failing or not, the rows folded
-  from its calls as tau-ui folds events equal the rows its details
-  list; the output and failure read back from the result; the store
+  run's total; a Jev request reaches the run as the call's updates,
+  before its end; the store holds across runs and follows forks.
+- **Interface** (`tests/ui.rs`): for any generated script, its tool
+  calls and Jev requests in turn or in `parallel_settled`, failing or
+  not, the rows folded from its nested calls' events and its updates
+  as tau-ui folds them, merged in any order that keeps each channel's
+  own, equal the rows its details list; the output and failure read back from the result; the store
   state equals the plugin's fold; the card in gpui's test app. tau-ui's
   view tests check that nested events make no cards, whatever their
   depth.

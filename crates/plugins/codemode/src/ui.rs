@@ -6,7 +6,8 @@
 //! A card's calls come from one of two places, and agree:
 //!
 //! - while the script runs, from the nested calls tau-ui folds into the
-//!   card's [`CallData::nested`] from run events;
+//!   card's [`CallData::nested`] from run events, and from the Jev rows
+//!   the call reports in its updates ([`CallData::updates`]);
 //! - once it ends, from its result's `details.calls`, the only record a
 //!   stored run has. tau-ui empties the live rows then, so a live card
 //!   and a stored one draw the same thing by construction.
@@ -49,6 +50,7 @@ use crate::{
     Codemode,
     PLUGIN,
     description::NAME,
+    live::JevUpdate,
     result::{MAX_ARGS_CHARS, MAX_ERROR_CHARS, preview},
     store::{Snapshot, Writes},
 };
@@ -105,12 +107,23 @@ pub struct Calls {
     pub complete: bool,
 }
 
-/// The calls the script `call_id` has made so far, from the nested
-/// calls tau-ui folds into its card. Only its own calls: a call one of
-/// them made is that call's business. Jev requests make no run events,
-/// so they show once the script ends.
+/// The calls the script `call_id` has made so far, in the order they
+/// started, as its result's `details.calls` will list them:
+///
+/// - its tool calls, from the nested calls tau-ui folds into its card.
+///   Only its own: a call one of them made is that call's business;
+/// - its Jev requests, which make no run events, from the updates the
+///   call reported ([`JevUpdate`]), the latest of each standing. Each
+///   goes after the tool calls started before it.
+///
+/// The order events and updates came in does not matter: rows are
+/// placed by their ids and by what the updates say.
 pub fn live_rows(call_id: &str, data: &CallData) -> Vec<Row> {
-    data.nested
+    let prefix = format!("{call_id}/");
+    // (tool calls before it, 0 for a tool call and 1 for Jev, its
+    // number), with the number of a tool call its own place.
+    let mut keyed: Vec<((usize, u8, usize), Row)> = data
+        .nested
         .iter()
         .filter(|call| call.parent == call_id)
         .map(|call| {
@@ -122,7 +135,12 @@ pub fn live_rows(call_id: &str, data: &CallData) -> Vec<Row> {
                 ),
                 Some(_) => (CallStatus::Ok, None),
             };
-            Row {
+            let n = call
+                .id
+                .strip_prefix(&prefix)
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(usize::MAX);
+            let row = Row {
                 id: call.id.clone(),
                 name: call.tool.clone(),
                 args: preview(&call.args.to_string(), MAX_ARGS_CHARS),
@@ -131,9 +149,51 @@ pub fn live_rows(call_id: &str, data: &CallData) -> Vec<Row> {
                 error,
                 cost: None,
                 marks: Vec::new(),
-            }
+            };
+            ((n, 0, 0), row)
         })
-        .collect()
+        .collect();
+    let mut jev: Vec<((usize, u8, usize), Row)> = Vec::new();
+    for update in data.updates.iter().filter_map(JevUpdate::from_details) {
+        let Some(mut row) = row_of(&update.row) else {
+            continue;
+        };
+        if row.status == CallStatus::Running {
+            row.ms = None;
+        }
+        let n = row
+            .id
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_prefix("jev/"))
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(usize::MAX);
+        match jev.iter_mut().find(|(_, kept)| kept.id == row.id) {
+            Some(kept) => *kept = ((update.after, 1, n), row),
+            None => jev.push(((update.after, 1, n), row)),
+        }
+    }
+    keyed.extend(jev);
+    // Stable: calls whose ids say nothing keep the order they came in.
+    keyed.sort_by_key(|(key, _)| *key);
+    keyed.into_iter().map(|(_, row)| row).collect()
+}
+
+/// A row of `details.calls`.
+fn row_of(row: &Value) -> Option<Row> {
+    Some(Row {
+        id: row.get("id")?.as_str()?.to_owned(),
+        name: row.get("name")?.as_str()?.to_owned(),
+        args: row
+            .get("args")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        status: CallStatus::parse(row.get("status")?.as_str()?)?,
+        ms: row.get("ms").and_then(Value::as_u64),
+        error: row.get("error").and_then(Value::as_str).map(str::to_owned),
+        cost: row.get("cost").and_then(Value::as_f64),
+        marks: Vec::new(),
+    })
 }
 
 /// The calls a finished script's `details` list, or `None` when they
@@ -143,25 +203,7 @@ pub fn stored_rows(details: &Value) -> Option<Calls> {
         .get("calls")?
         .as_array()?
         .iter()
-        .filter_map(|row| {
-            Some(Row {
-                id: row.get("id")?.as_str()?.to_owned(),
-                name: row.get("name")?.as_str()?.to_owned(),
-                args: row
-                    .get("args")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                status: CallStatus::parse(row.get("status")?.as_str()?)?,
-                ms: row.get("ms").and_then(Value::as_u64),
-                error: row
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                cost: row.get("cost").and_then(Value::as_f64),
-                marks: Vec::new(),
-            })
-        })
+        .filter_map(row_of)
         .collect();
     Some(Calls {
         rows,
@@ -245,7 +287,9 @@ pub fn cost(details: &Value) -> f64 {
     details["usage"]["cost"]["total"].as_f64().unwrap_or(0.0)
 }
 
-/// The header's line: `3 calls · 1.2 s · $0.0004`.
+/// The header's line: `3 calls · 1.2 s · $0.0004`. While the script
+/// runs (no details yet), the calls so far and what its Jev requests
+/// have cost so far.
 pub fn label(calls: &Calls, details: Option<&Value>) -> String {
     let n = calls.rows.len();
     let mut parts = vec![match (n, calls.complete) {
@@ -258,6 +302,11 @@ pub fn label(calls: &Calls, details: Option<&Value>) -> String {
             parts.push(format!("{:.1} s", ms as f64 / 1000.0));
         }
         let cost = cost(details);
+        if cost > 0.0 {
+            parts.push(fine_usd(cost));
+        }
+    } else {
+        let cost: f64 = calls.rows.iter().filter_map(|row| row.cost).sum();
         if cost > 0.0 {
             parts.push(fine_usd(cost));
         }

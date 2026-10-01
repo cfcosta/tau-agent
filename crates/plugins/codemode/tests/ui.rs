@@ -28,6 +28,7 @@ use tau_codemode::{
     store::{self, Writes},
     ui::{self, CodemodeUi, Row, State},
 };
+use tau_jev::{Jev, fake::FakeJev};
 use tau_ui_plugin::{
     CallData,
     CallResult,
@@ -41,14 +42,62 @@ use tau_ui_plugin::{
 
 const CALL: &str = "call_1";
 
-/// A host whose calls fold into a card's data as tau-ui folds their
-/// events: a start, then an end with the output the loop reports.
+/// What tau-ui folds into a card while its script runs, in the order
+/// the script made it: a nested call's start or end, from run events,
+/// or one of the call's own updates.
+#[derive(Debug, Clone)]
+enum Folded {
+    Start(ToolCall),
+    End(String, ToolOutput, bool),
+    Update(Value),
+}
+
+impl Folded {
+    /// Folds it into `data` as tau-ui's run view does.
+    fn apply(&self, data: &mut CallData) {
+        match self {
+            Self::Start(call) => {
+                data.nested_start(&call.id, CALL, &call.name, &call.args)
+            }
+            Self::End(id, output, error) => data.nested_end(id, output, *error),
+            Self::Update(details) => data.updates.push(details.clone()),
+        }
+    }
+}
+
+/// A host that keeps what tau-ui would fold for its calls: each call's
+/// start, then its end with the output the loop reports; and the
+/// script's updates, its Jev rows.
 ///
 /// - `echo` returns its arguments;
-/// - `fail` fails with its `msg`.
-#[derive(Default)]
+/// - `fail` fails with its `msg`;
+/// - `jev.noul` answers 0.5, and a question `bad` gets 1.5, which is out
+///   of range.
 struct CardHost {
-    data: Mutex<CallData>,
+    folded: Mutex<Vec<Folded>>,
+    jev: Arc<dyn Jev>,
+}
+
+impl Default for CardHost {
+    fn default() -> Self {
+        Self {
+            folded: Mutex::default(),
+            jev: Arc::new(FakeJev::nouls(|question| {
+                if question == "bad" { 1.5 } else { 0.5 }
+            })),
+        }
+    }
+}
+
+impl CardHost {
+    /// The card's data with everything folded in the order it came.
+    fn data(&self) -> CallData {
+        let mut data = CallData::default();
+        for folded in self.folded.lock().unwrap().iter() {
+            folded.apply(&mut data);
+        }
+        data
+    }
 }
 
 fn tool(name: &str) -> ToolEntry {
@@ -69,10 +118,10 @@ impl Host for CardHost {
     }
 
     async fn call_tool(&self, call: ToolCall) -> Result<Value, String> {
-        self.data
+        self.folded
             .lock()
             .unwrap()
-            .nested_start(&call.id, CALL, &call.name, &call.args);
+            .push(Folded::Start(call.clone()));
         let (output, result) = match call.name.as_str() {
             "fail" => {
                 let msg = call.args["msg"].as_str().unwrap_or("").to_owned();
@@ -83,12 +132,20 @@ impl Host for CardHost {
                 Ok(call.args.clone()),
             ),
         };
-        self.data.lock().unwrap().nested_end(
-            &call.id,
-            &output,
+        self.folded.lock().unwrap().push(Folded::End(
+            call.id.clone(),
+            output,
             result.is_err(),
-        );
+        ));
         result
+    }
+
+    fn jev(&self) -> Option<Arc<dyn Jev>> {
+        Some(self.jev.clone())
+    }
+
+    fn update(&self, details: Value) {
+        self.folded.lock().unwrap().push(Folded::Update(details));
     }
 }
 
@@ -139,38 +196,63 @@ fn result_text(outcome: &Outcome) -> (String, Value) {
     (text, rendered.details)
 }
 
-/// Whatever calls a script makes, in turn or at once, failing or not,
-/// the rows its card draws from the run's events while it runs are the
-/// rows its result's details list once it ends, which is all a stored
-/// run has; and the card reads the script's output and failure back
-/// from the result.
-#[hegel::test(test_cases = 60)]
+/// One call a generated script makes.
+#[derive(Debug, Clone, hegel::DefaultGenerator)]
+enum Call {
+    /// `echo`, with its argument.
+    Echo(String),
+    /// `fail`, with its message.
+    Fail(String),
+    /// `jev.noul`; a bad one gets an answer out of range and raises.
+    Jev(bool),
+}
+
+impl Call {
+    fn luau(&self) -> String {
+        match self {
+            Self::Echo(text) => {
+                format!(
+                    "function() return tools.echo({{ s = \"{text}\" }}) end"
+                )
+            }
+            Self::Fail(text) => {
+                format!(
+                    "function() return tools.fail({{ msg = \"{text}\" }}) end"
+                )
+            }
+            Self::Jev(bad) => format!(
+                "function() return jev.noul({{ state = 1, question = \"{}\" }}) end",
+                if *bad { "bad" } else { "ok" }
+            ),
+        }
+    }
+}
+
+/// Whatever calls a script makes, tools and Jev, in turn or at once,
+/// failing or not, the rows its card draws while it runs are the rows
+/// its result's details list once it ends, which is all a stored run
+/// has; and the card reads the script's output and failure back from
+/// the result.
+///
+/// The nested calls' events and the call's own updates reach tau-ui on
+/// two channels, so they may interleave any way: each keeps its own
+/// order, and the rows are the same for every interleaving.
+#[hegel::test(test_cases = 80)]
 fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
-    // (fails?, text): echo's argument, or fail's message.
-    let calls: Vec<(bool, String)> = tc.draw(
-        gs::vecs(hegel::tuples!(
-            gs::booleans(),
-            gs::text().alphabet("abc xyz").max_size(700),
-        ))
-        .max_size(8),
+    let text = || gs::text().alphabet("abc xyz").max_size(700);
+    let calls: Vec<Call> = tc.draw(
+        gs::vecs(gs::default::<Call>().echo(text()).fail(text())).max_size(8),
     );
     let at_once: bool = tc.draw(gs::booleans());
     let output: String = tc.draw(gs::text().alphabet("abc").max_size(20));
     let raise: bool = tc.draw(gs::booleans());
-    let call = |(fails, text): &(bool, String)| {
-        if *fails {
-            format!("function() return tools.fail({{ msg = \"{text}\" }}) end")
-        } else {
-            format!("function() return tools.echo({{ s = \"{text}\" }}) end")
-        }
-    };
     let mut code = String::new();
     if at_once && !calls.is_empty() {
-        let fs: Vec<String> = calls.iter().map(call).collect();
+        let fs: Vec<String> = calls.iter().map(Call::luau).collect();
         code.push_str(&format!("parallel_settled({})\n", fs.join(", ")));
     } else {
-        for c in &calls {
-            code.push_str(&format!("pcall({})\n", call(c)));
+        for call in &calls {
+            code.push_str(&format!("pcall({})\n", call.luau()));
         }
     }
     code.push_str(&format!("text(\"{output}\")\n"));
@@ -179,18 +261,51 @@ fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
     }
     let host = Arc::new(CardHost::default());
     let outcome = block_on(script(&host, &code));
-    let mut data = host.data.lock().unwrap().clone();
-    data.args = json!({ "code": code });
+    let (text, details) = result_text(&outcome);
+    let stored = ui::stored_rows(&details).unwrap();
+    assert_eq!(stored.rows.len(), calls.len());
+
+    // The two channels, each in its order, merged as drawn.
+    let folded = host.folded.lock().unwrap().clone();
+    let (mut updates, mut events): (Vec<Folded>, Vec<Folded>) = folded
+        .into_iter()
+        .partition(|folded| matches!(folded, Folded::Update(_)));
+    let picks: Vec<bool> = tc.draw(
+        gs::vecs(gs::booleans())
+            .min_size(updates.len() + events.len())
+            .max_size(updates.len() + events.len()),
+    );
+    updates.reverse();
+    events.reverse();
+    let mut data = CallData {
+        args: json!({ "code": code }),
+        ..CallData::default()
+    };
+    for pick in picks {
+        let next = match pick {
+            true => updates.pop().or_else(|| events.pop()),
+            false => events.pop().or_else(|| updates.pop()),
+        };
+        next.expect("one per pick").apply(&mut data);
+    }
     let live = ui::calls(CALL, &data);
     assert!(
         live.rows
             .iter()
             .all(|row| row.status != CallStatus::Running)
     );
-    let (text, details) = result_text(&outcome);
-    let stored = ui::stored_rows(&details).unwrap();
     assert_eq!(timeless(&live.rows), timeless(&stored.rows));
-    assert_eq!(live.rows.len(), calls.len());
+    // In the order they came, too.
+    let mut in_order = host.data();
+    in_order.args = data.args.clone();
+    assert_eq!(
+        timeless(&ui::calls(CALL, &in_order).rows),
+        timeless(&stored.rows)
+    );
+    // Jev's cost shows while it runs, as it will once it ended.
+    let jev_cost: f64 = live.rows.iter().filter_map(|row| row.cost).sum();
+    assert_eq!(jev_cost > 0.0, ui::label(&live, None).contains('$'));
+
     // The call ends: the card draws from its result, as from history.
     data.result = Some(CallResult {
         text: text.clone(),
@@ -206,6 +321,45 @@ fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
         outcome.failure.as_ref().map(|failure| failure.head())
     );
     assert_eq!(said.error.is_some(), raise);
+}
+
+/// A Jev request shows on the card as soon as it starts, before any
+/// tool call the script makes after it, and its row updates in place
+/// when it ends.
+#[test]
+fn a_jev_request_shows_while_it_runs() {
+    let host = Arc::new(CardHost::default());
+    let code = "pcall(function() return jev.noul({ state = 1, question = 'ok' }) end)\n\
+                tools.echo({ s = 'a' })\n\
+                jev.noul({ state = 2, question = 'ok' })";
+    block_on(script(&host, code));
+    let folded = host.folded.lock().unwrap().clone();
+    // Only the first update: the request has started, nothing else.
+    let mut data = CallData::default();
+    folded[0].apply(&mut data);
+    let rows = ui::calls(CALL, &data).rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].id.as_str(), rows[0].name.as_str(), rows[0].status),
+        ("call_1/jev/1", "jev.noul", CallStatus::Running)
+    );
+    // Everything: the rows in the order the script made the calls.
+    let data = host.data();
+    let rows = ui::calls(CALL, &data).rows;
+    let names: Vec<(&str, CallStatus)> = rows
+        .iter()
+        .map(|row| (row.id.as_str(), row.status))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("call_1/jev/1", CallStatus::Ok),
+            ("call_1/1", CallStatus::Ok),
+            ("call_1/jev/2", CallStatus::Ok),
+        ]
+    );
+    assert!(rows[0].cost.is_some_and(|cost| cost > 0.0));
+    assert_eq!(data.updates.len(), 4, "a start and an end for each");
 }
 
 /// A call that fails before its script runs says only why.

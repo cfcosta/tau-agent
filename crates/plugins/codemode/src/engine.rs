@@ -51,6 +51,7 @@ use crate::{
     host::{Host, Namespace, ToolCall, ToolEntry},
     image,
     jev,
+    live::JevUpdate,
     options::Source,
     result::{
         CallRow,
@@ -411,10 +412,13 @@ impl State {
         Ok(())
     }
 
-    /// Starts a row; `jev` rows have their own numbering.
+    /// Starts a row; `jev` rows have their own numbering. A Jev row is
+    /// reported to the host as it starts and as it ends ([`JevUpdate`]):
+    /// its request makes no run events, unlike a tool call.
     fn begin(&self, name: &str, args: &Value, is_jev: bool) -> CallGuard<'_> {
         let mut calls = self.calls.lock().expect("not poisoned");
         calls.total += 1;
+        let after = calls.tools;
         let id = if is_jev {
             calls.jev += 1;
             format!("{}/jev/{}", self.call_id, calls.jev)
@@ -435,12 +439,21 @@ impl State {
             calls.started.push(Instant::now());
             calls.rows.len() - 1
         });
-        CallGuard {
+        let update = row
+            .filter(|_| is_jev)
+            .map(|row| JevUpdate::new(&calls.rows[row], after));
+        drop(calls);
+        let guard = CallGuard {
             state: self,
             row,
             id,
+            jev_after: is_jev.then_some(after),
             done: false,
+        };
+        if let Some(update) = update {
+            self.host.update(update.to_details());
         }
+        guard
     }
 
     fn finish(
@@ -485,6 +498,9 @@ struct CallGuard<'a> {
     state: &'a State,
     row: Option<usize>,
     id: String,
+    /// For a Jev row, the tool calls started before it: its row is
+    /// reported to the host when it ends.
+    jev_after: Option<usize>,
     done: bool,
 }
 
@@ -515,6 +531,11 @@ impl CallGuard<'_> {
         row.ms = ms;
         row.error = error.map(|e| preview(e, MAX_ERROR_CHARS));
         row.cost = cost;
+        let update = self.jev_after.map(|after| JevUpdate::new(row, after));
+        drop(calls);
+        if let Some(update) = update {
+            self.state.host.update(update.to_details());
+        }
     }
 }
 

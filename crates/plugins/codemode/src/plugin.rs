@@ -442,4 +442,13 @@ impl Host for LoopHost {
     fn charge(&self, usage: &Usage) {
         self.plugin.charge(usage);
     }
+
+    /// A partial result with no content: the details are for the card.
+    fn update(&self, details: Value) {
+        self.ctx.updates.send(ToolOutput {
+            content: Vec::new(),
+            details: Some(details),
+            structured: None,
+        });
+    }
 }

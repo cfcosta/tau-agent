@@ -371,6 +371,59 @@ fn jev_usage_reaches_the_run() {
     });
 }
 
+/// A Jev request makes no run events of its own: the codemode call
+/// reports its row in its own updates, as it starts and as it ends,
+/// before the call ends, so the card shows it live.
+#[test]
+fn jev_requests_reach_the_run_as_updates() {
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let recorder = Recorder::default();
+        let agent = Agent::new(model(&[
+            "tools.echo({ text = 'a' })\nreturn jev.noul({ state = 1, question = 'odd?' }).probability",
+        ]))
+        .tool(Echo::new("echo"))
+        .plugin(Codemode::new(Some(Arc::new(FakeJev::nouls(|_| 0.25)))))
+        .hook(recorder.clone());
+        agent.run("go", &store).await.unwrap();
+
+        let events = recorder.events.lock().unwrap().clone();
+        let updates: Vec<(usize, tau_codemode::live::JevUpdate)> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(at, event)| match event {
+                RunEvent::ToolUpdate {
+                    call_id,
+                    partial,
+                    parent: None,
+                    ..
+                } if call_id == FIRST => Some((
+                    at,
+                    tau_codemode::live::JevUpdate::from_details(
+                        partial.details.as_ref()?,
+                    )?,
+                )),
+                _ => None,
+            })
+            .collect();
+        let statuses: Vec<(&str, usize)> = updates
+            .iter()
+            .map(|(_, update)| {
+                (update.row["status"].as_str().unwrap(), update.after)
+            })
+            .collect();
+        assert_eq!(statuses, [("running", 1), ("ok", 1)]);
+        assert_eq!(updates[0].1.row["id"], format!("{FIRST}/jev/1"));
+        let end = events
+            .iter()
+            .position(|event| {
+                matches!(event, RunEvent::ToolEnd { call_id, .. } if call_id == FIRST)
+            })
+            .unwrap();
+        assert!(updates.iter().all(|(at, _)| *at < end));
+    });
+}
+
 /// Without a Jev, `jev` is nil and the description says so.
 #[test]
 fn without_jev_the_global_is_nil() {

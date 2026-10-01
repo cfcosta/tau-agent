@@ -74,4 +74,9 @@ pub trait Host: Send + Sync + 'static {
 
     /// Charges one Jev request's usage to the run.
     fn charge(&self, _usage: &Usage) {}
+
+    /// Reports what the script is doing while it runs, as the details
+    /// of a partial result ([`crate::live`]): the plugin sends them as
+    /// the codemode call's `ToolUpdate`s.
+    fn update(&self, _details: Value) {}
 }

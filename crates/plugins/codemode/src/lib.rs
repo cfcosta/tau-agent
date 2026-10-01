@@ -13,6 +13,8 @@
 //! - [`Outcome::render`] turns it into the result the model reads.
 //! - [`signature`] renders tools as Luau signatures and picks those
 //!   that fit the run's context; [`description`] is the tool's text.
+//! - [`live`] is what a call reports while its script runs: its Jev
+//!   requests, which make no run events of their own.
 //! - [`store`] folds the store's records and keeps a script's writes.
 //! - [`Codemode`] is the plugin, and [`CodemodeTool`] its tool.
 //! - [`CodemodeUi`] is the plugin with its UI (ADR 0017): its card, its
@@ -23,6 +25,7 @@ mod engine;
 pub mod host;
 pub mod image;
 pub mod jev;
+pub mod live;
 pub mod options;
 pub mod plugin;
 pub mod result;
