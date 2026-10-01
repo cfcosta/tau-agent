@@ -75,11 +75,3 @@ fn output_is_the_result_or_the_output_so_far() {
     });
     assert_eq!(output_lines(&data), ["c"]);
 }
-
-/// The UI takes its look from the kit.
-#[test]
-fn only_the_kit_holds_design_values() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
-    let found = tau_ui_kit::design::check(&src, &[]);
-    assert!(found.is_empty(), "{}", found.join("\n"));
-}

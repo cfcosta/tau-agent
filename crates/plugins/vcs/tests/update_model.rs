@@ -18,11 +18,10 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use hegel::{Generator as _, TestCase, generators as gs};
-use tau_testing::block_on;
+use tau_testing::{block_on, git::git};
 use tau_vcs::{
     DEFAULT_WORKSPACE,
     Identity,
@@ -37,25 +36,6 @@ const BRANCHES: [&str; 5] = ["main", "master", "trunk", "feature", "feat/x"];
 const TAGS: [&str; 2] = ["v1", "v2"];
 /// jj's root commit, in a Git-backed repository.
 const ROOT: &str = "0000000000000000000000000000000000000000";
-
-fn run_git(dir: &Path, args: &[&str]) -> std::process::Output {
-    Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main", "-c", "gc.auto=0"])
-        .args(["-c", "protocol.file.allow=always"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap()
-}
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = run_git(dir, args);
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
 
 /// The refs under `prefix` in the repository at `dir`, by short name.
 fn refs(dir: &Path, prefix: &str) -> BTreeMap<String, String> {
@@ -388,9 +368,12 @@ impl Machine {
             return false;
         }
         let store = self.project.root().join("git");
-        run_git(&store, &["merge-base", "--is-ancestor", ancestor, of])
-            .status
-            .success()
+        tau_testing::git::output(
+            &store,
+            &["merge-base", "--is-ancestor", ancestor, of],
+        )
+        .status
+        .success()
     }
 
     /// Whether upstream dropped what the main chat stands on: the trunk
@@ -429,7 +412,7 @@ impl Machine {
                 tc.event("upstream amends");
             }
             Op::Reset
-                if run_git(
+                if tau_testing::git::output(
                     &work,
                     &["rev-parse", "--verify", "-q", "HEAD~1"],
                 )

@@ -22,15 +22,7 @@ use tau_agent::{
 };
 use tau_ai::message::Message;
 use tau_store::{Entry, Status, Store};
-use tau_testing::scripted::ScriptedModel;
-
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(future)
-}
+use tau_testing::{block_on_io, scripted::ScriptedModel};
 
 static CASE: AtomicUsize = AtomicUsize::new(0);
 
@@ -134,7 +126,7 @@ fn a_failed_turn_write_leaves_no_partial_turn(tc: TestCase) {
         t.tool_call("sabotage", json!({})).usage(1_000, 100)
     });
     let (path, dir) = database();
-    block_on(async {
+    block_on_io(async {
         let store = Store::open(&path).await.unwrap();
         let schema = json!({"type": "object"});
         let agent = Agent::new(llm).tool(Echo(schema.clone())).tool(Sabotage {

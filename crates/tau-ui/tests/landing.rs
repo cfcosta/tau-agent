@@ -4,12 +4,12 @@
 //! trunk, so landing on it moves main; a landing that conflicts starts
 //! the main chat's turn to resolve it, and its commit moves main too.
 
-use std::{path::Path, process::Command, time::Duration};
+use std::time::Duration;
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use tau_agent::tool::RunId;
-use tau_testing::scripted::ScriptedModel;
+use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     Workspace,
     accounts::Credentials,
@@ -20,19 +20,6 @@ use tau_ui::{
     workspace::LandingState,
 };
 use tau_vcs::{Identity, Project};
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .expect("git runs");
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-}
 
 /// Runs GPUI until `done` holds, while runs work on the host's threads.
 fn until(

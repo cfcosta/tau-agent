@@ -2,53 +2,13 @@
 //! "Delegating to a sub-agent"), in a test binary of its own: a fresh
 //! process, as tau is after a restart.
 
-use std::{path::Path, process::Command};
+mod common;
 
+use common::{coder, project_with};
 use serde_json::json;
-use tau_agent::agent::Agent;
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
-use tau_tools::{path::Root, plugin::CodingTools};
-use tau_vcs::{
-    Delegate,
-    Identity,
-    Project,
-    RunWorkspace,
-    VcsPlugin,
-    delegate::ChildModel,
-};
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-}
-
-fn project(home: &Path) -> Project {
-    let src = home.join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    git(&src, &["init", "--quiet"]);
-    std::fs::write(src.join("README.md"), "hello\n").unwrap();
-    git(&src, &["add", "README.md"]);
-    git(&src, &["commit", "--quiet", "-m", "first"]);
-    Project::import(src.to_str().unwrap(), home.join("p"), Identity::default())
-        .unwrap()
-}
-
-fn coder(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
-    Agent::new(llm)
-        .name("coder")
-        .plugin(CodingTools::new(Root::new(workspace.dir())))
-        .plugin(VcsPlugin::new(workspace.vcs().clone()))
-        .plugin(workspace.clone())
-}
+use tau_vcs::{Delegate, Identity, RunWorkspace, delegate::ChildModel};
 
 /// A sub-agent workspace left behind by an earlier process, as a crash
 /// in the middle of a delegation leaves it, stays apart from the next
@@ -58,7 +18,7 @@ fn coder(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
 #[test]
 fn a_sub_agent_starts_on_its_caller_after_a_restart() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -94,7 +54,7 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
                 .unwrap();
         let named = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = named.clone();
-        let agent = coder(llm, &parent).tool(Delegate::new(
+        let agent = coder(llm, &parent, true).tool(Delegate::new(
             parent.clone(),
             Identity::default(),
             &[],
@@ -112,7 +72,7 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
                         )
                     })
                     .turn(|t| t.text("written"));
-                Ok(coder(script, &workspace))
+                Ok(coder(script, &workspace, true))
             },
         ));
         let outcome = agent.run("work, then delegate", &store).await.unwrap();

@@ -17,7 +17,7 @@ use tau_agent::{
     error::{PluginError, ToolError},
     event::RunEvent,
     plugin::{ContextView, Plugin, PluginCtx, PluginRun, Rewrite, RunPlan},
-    tool::{ToolCtx, ToolOutput, ToolUpdates, TypedTool, typed},
+    tool::{ToolCtx, ToolOutput, TypedTool, typed},
 };
 use tau_ai::message::{Message, UserContent};
 use tau_memory::{
@@ -29,21 +29,7 @@ use tau_memory::{
     note::{By, Link, LinkType, NoteType, Source},
 };
 use tau_store::Store;
-use tau_testing::scripted::ScriptedModel;
-
-thread_local! {
-    /// The test's runtime: the store needs I/O, and the memory tools a
-    /// blocking pool.
-    static RUNTIME: tokio::runtime::Runtime =
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-}
-
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    RUNTIME.with(|runtime| runtime.block_on(future))
-}
+use tau_testing::{block_on_io, scripted::ScriptedModel};
 
 fn scopes(dir: &std::path::Path, user: bool) -> Scopes {
     let open =
@@ -63,14 +49,6 @@ fn draft(kind: NoteType, title: &str, body: &str) -> Draft {
         supersedes: None,
         source: Source::new(By::User),
     }
-}
-
-fn tool_ctx() -> ToolCtx {
-    ToolCtx::new(
-        tokio_util::sync::CancellationToken::new(),
-        ToolUpdates::detached(),
-        tau_agent::tool::RunId("run".into()),
-    )
 }
 
 fn text_of(output: &ToolOutput) -> String {
@@ -151,7 +129,7 @@ fn a_note_written_through_the_tools_reads_back(tc: TestCase) {
     let scope = tc.draw(gs::sampled_from(vec!["repository", "user"]));
     let kind =
         tc.draw(gs::sampled_from(vec!["fact", "gotcha", "decision", "case"]));
-    block_on(async {
+    block_on_io(async {
         let written = tool("memory_write")
             .call(
                 json!({
@@ -161,7 +139,7 @@ fn a_note_written_through_the_tools_reads_back(tc: TestCase) {
                     "body": body,
                     "scope": scope,
                 }),
-                tool_ctx(),
+                ToolCtx::detached(),
             )
             .await;
         // Text that reads as an instruction is refused; nothing else is.
@@ -172,7 +150,7 @@ fn a_note_written_through_the_tools_reads_back(tc: TestCase) {
         let id = written.details.unwrap()["id"].as_str().unwrap().to_owned();
         assert_eq!(id.starts_with("user:"), scope == "user");
         let read = tool("memory_read")
-            .call(json!({ "id": id }), tool_ctx())
+            .call(json!({ "id": id }), ToolCtx::detached())
             .await
             .unwrap();
         let (clean, _) = tau_memory::safety::redact(body.trim_end());
@@ -182,7 +160,7 @@ fn a_note_written_through_the_tools_reads_back(tc: TestCase) {
             text_of(&read)
         );
         let found = tool("memory_search")
-            .call(json!({ "query": word }), tool_ctx())
+            .call(json!({ "query": word }), ToolCtx::detached())
             .await
             .unwrap();
         assert_eq!(found.details.unwrap()["ids"][0], json!(id));
@@ -212,7 +190,7 @@ fn a_run_starts_with_the_index_and_the_notes_for_its_task() {
     }
     let model = ScriptedModel::new().turn(|t| t.text("done"));
     let agent = Agent::new(model.clone()).plugin(MemoryPlugin::new(scopes));
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         agent
             .run("fix the retry after parsing", &store)
@@ -304,7 +282,7 @@ fn compaction_gives_memory_one_request_over_what_it_drops() {
     let agent = Agent::new(model.clone())
         .plugin(Compactor)
         .plugin(MemoryPlugin::new(scopes.clone()));
-    let events: Vec<RunEvent> = block_on(async {
+    let events: Vec<RunEvent> = block_on_io(async {
         let store = Store::memory().await.unwrap();
         let mut run = agent.start("why do lanes stall", &store);
         run.steer("keep going");
@@ -407,7 +385,7 @@ fn editing_a_file_marks_the_notes_about_it() {
     let agent = Agent::new(model)
         .tool(typed(Edit))
         .plugin(MemoryPlugin::new(scopes.clone()));
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         agent.run("change retry", &store).await.unwrap();
     });
@@ -442,7 +420,7 @@ fn consolidation_runs_only_when_turned_on() {
         }
         let agent = Agent::new(model.clone())
             .plugin(MemoryPlugin::new(scopes.clone()).consolidate(on));
-        block_on(async {
+        block_on_io(async {
             let store = Store::memory().await.unwrap();
             agent.run("fix the flaky lane test", &store).await.unwrap();
         });
@@ -462,9 +440,9 @@ fn an_unknown_type_is_refused_with_its_name() {
     let plugin = MemoryPlugin::new(scopes(dir.path(), false));
     let tools = plugin.tools();
     let write = tools.iter().find(|t| t.name() == "memory_write").unwrap();
-    let error = block_on(write.call(
+    let error = block_on_io(write.call(
         json!({"type": "todo", "title": "t", "description": "d", "body": "b"}),
-        tool_ctx(),
+        ToolCtx::detached(),
     ))
     .unwrap_err();
     assert!(error.to_string().contains("\"todo\" is not a note type"));

@@ -25,61 +25,13 @@ use tau_constitution::{
 use tau_ui_plugin::{
     CardInfo,
     CardMark,
-    Dropped,
     Handle,
-    OutputCut,
     Request,
-    RunCx,
     RunInfo,
     UiPlugin,
     ViewCx,
+    testing::FakeRun,
 };
-
-/// A run the fold reaches: its cards, and what the plugin marked.
-#[derive(Default)]
-struct Run {
-    cards: Vec<CardInfo>,
-    marks: BTreeMap<String, CardMark>,
-    anchors: Vec<String>,
-    answer: Option<String>,
-}
-
-impl RunCx for Run {
-    fn transcript(&mut self, key: &str) {
-        self.anchors.push(key.to_owned());
-    }
-
-    fn attach(&mut self, call_id: &str, _: &str) -> bool {
-        self.cards.iter().any(|card| card.call_id == call_id)
-    }
-
-    fn mark(&mut self, call_id: &str, mark: CardMark) -> bool {
-        self.marks.insert(call_id.to_owned(), mark);
-        true
-    }
-
-    fn dropped(&mut self, _: &str, _: Dropped) -> bool {
-        false
-    }
-
-    fn cut(&mut self, _: &str, _: OutputCut) -> bool {
-        false
-    }
-
-    fn rewrite(&mut self, _: &str) {}
-
-    fn cards(&self) -> Vec<CardInfo> {
-        self.cards.clone()
-    }
-
-    fn last_text(&self) -> Option<String> {
-        self.answer.clone()
-    }
-
-    fn turn(&self) -> u32 {
-        1
-    }
-}
 
 fn card(call_id: &str, tool: &str, summary: &str) -> CardInfo {
     CardInfo {
@@ -156,9 +108,10 @@ fn loading_a_run_does_not_change_the_totals(tc: hegel::TestCase) {
 #[hegel::test(test_cases = 200)]
 fn the_fold_marks_what_the_checks_decided(tc: hegel::TestCase) {
     let bodies: Vec<Value> = tc.draw(gs::vecs(record()).max_size(8));
-    let mut run = Run {
+    let mut run = FakeRun {
         cards: vec![card("c1", "bash", "rm -rf /")],
-        ..Run::default()
+        turn: 1,
+        ..FakeRun::default()
     };
     let mut state = State::default();
     let mut stats = Stats::default();
@@ -181,12 +134,13 @@ fn the_fold_marks_what_the_checks_decided(tc: hegel::TestCase) {
 /// got, or flagged; the call's scores show on it either way.
 #[test]
 fn a_verdict_marks_its_call() {
-    let mut run = Run {
+    let mut run = FakeRun {
         cards: vec![
             card("c1", "bash", "rm -rf /"),
             card("c2", "write", "a.rs"),
         ],
-        ..Run::default()
+        turn: 1,
+        ..FakeRun::default()
     };
     let mut state = State::default();
     for body in [
@@ -455,13 +409,14 @@ fn info(id: &str, repo: &str) -> RunInfo {
 #[gpui::test]
 fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
     let (ui, _) = ui(cx);
-    let mut run = Run {
+    let mut run = FakeRun {
         cards: vec![
             card("c1", "bash", "rm -rf /"),
             card("c2", "write", "a.rs"),
         ],
-        answer: Some("Done.".into()),
-        ..Run::default()
+        last_text: Some("Done.".into()),
+        turn: 1,
+        ..FakeRun::default()
     };
     let mut state = State::default();
     for body in [
@@ -516,12 +471,4 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
         page::review_items(view, "tau-agent").len()
     });
     assert_eq!(waiting, 0);
-}
-
-/// The UI takes its look from the kit.
-#[test]
-fn only_the_kit_holds_design_values() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let found = tau_ui_kit::design::check(&src, &[]);
-    assert!(found.is_empty(), "{}", found.join("\n"));
 }

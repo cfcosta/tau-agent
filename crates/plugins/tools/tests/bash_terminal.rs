@@ -18,7 +18,6 @@ use tau_tools::{
     bash::{Accumulator, Bash},
     path::Root,
 };
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 fn text_of(output: &ToolOutput) -> &str {
@@ -79,12 +78,8 @@ impl Called {
 }
 
 async fn call(bash: &Bash, args: Value, cancel: CancellationToken) -> Called {
-    let (sender, mut receiver) = mpsc::unbounded_channel();
-    let ctx = ToolCtx::new(
-        cancel,
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    );
+    let (updates, mut receiver) = ToolUpdates::channel("call_1");
+    let ctx = ToolCtx::new(cancel, updates, RunId("run_1".into()));
     let result = bash.call(args, ctx).await;
     let mut updates = Vec::new();
     while let Ok((_, update)) = receiver.try_recv() {

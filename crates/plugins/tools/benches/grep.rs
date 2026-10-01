@@ -16,9 +16,8 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use tau_agent::tool::{AgentTool, RunId, ToolCtx, ToolUpdates};
+use tau_agent::tool::{AgentTool, ToolCtx};
 use tau_tools::{grep::Grep, path::Root};
-use tokio_util::sync::CancellationToken;
 
 const WORDS: &[&str] = &[
     "the",
@@ -90,15 +89,6 @@ fn generate(root: &Path, files: usize, file_kb: usize) {
     fs::write(root.join(".gitignore"), "target/\n").unwrap();
 }
 
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        CancellationToken::new(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
-}
-
 fn main() {
     let files = env("FILES", 4000);
     let file_kb = env("FILE_KB", 32);
@@ -135,7 +125,9 @@ fn main() {
         let mut times: Vec<Duration> = (0..=iters)
             .map(|_| {
                 let started = Instant::now();
-                runtime.block_on(tool.call(args.clone(), ctx())).unwrap();
+                runtime
+                    .block_on(tool.call(args.clone(), ToolCtx::detached()))
+                    .unwrap();
                 started.elapsed()
             })
             .skip(1)

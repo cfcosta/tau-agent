@@ -5,27 +5,13 @@ use std::sync::Arc;
 
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
-use tau_agent::tool::{AgentTool, RunId, ToolCtx, ToolUpdates};
+use tau_agent::tool::{AgentTool, ToolCtx};
 use tau_tools::{ABORTED, path::Root, write::Write};
 
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        Default::default(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
-}
-
 fn cancelled_ctx() -> ToolCtx {
-    let token = tokio_util::sync::CancellationToken::new();
-    token.cancel();
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        token,
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
+    let ctx = ToolCtx::detached();
+    ctx.cancel.cancel();
+    ctx
 }
 
 fn new_write(dir: &std::path::Path) -> Write {
@@ -41,9 +27,10 @@ fn write_round_trips_the_content(tc: TestCase) {
     let dir = tempfile::tempdir().unwrap();
     let write = new_write(dir.path());
 
-    let output = tau_testing::block_on(
-        write.call(json!({"path": "f.txt", "content": content}), ctx()),
-    )
+    let output = tau_testing::block_on(write.call(
+        json!({"path": "f.txt", "content": content}),
+        ToolCtx::detached(),
+    ))
     .unwrap();
 
     assert_eq!(
@@ -63,9 +50,10 @@ fn write_round_trips_the_content(tc: TestCase) {
 fn write_creates_parent_directories() {
     let dir = tempfile::tempdir().unwrap();
     let write = new_write(dir.path());
-    let output = tau_testing::block_on(
-        write.call(json!({"path": "a/b/c.txt", "content": "hi"}), ctx()),
-    )
+    let output = tau_testing::block_on(write.call(
+        json!({"path": "a/b/c.txt", "content": "hi"}),
+        ToolCtx::detached(),
+    ))
     .unwrap();
     assert!(output.content.iter().any(|_| true));
     assert_eq!(
@@ -82,9 +70,10 @@ fn write_overwrites_existing_content() {
     let file = dir.path().join("f.txt");
     std::fs::write(&file, "old content, much longer than the new one").unwrap();
     let write = new_write(dir.path());
-    tau_testing::block_on(
-        write.call(json!({"path": "f.txt", "content": "new"}), ctx()),
-    )
+    tau_testing::block_on(write.call(
+        json!({"path": "f.txt", "content": "new"}),
+        ToolCtx::detached(),
+    ))
     .unwrap();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
 }
@@ -124,7 +113,10 @@ fn concurrent_writes_never_interleave(tc: TestCase) {
             let content = content.clone();
             tasks.push(tokio::spawn(async move {
                 write
-                    .call(json!({"path": "f.txt", "content": content}), ctx())
+                    .call(
+                        json!({"path": "f.txt", "content": content}),
+                        ToolCtx::detached(),
+                    )
                     .await
             }));
         }

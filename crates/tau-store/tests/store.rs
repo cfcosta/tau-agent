@@ -26,14 +26,7 @@ use tau_store::{
     TurnUsage,
     WriterStats,
 };
-
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(future)
-}
+use tau_testing::block_on_io;
 
 #[derive(Debug, Clone)]
 struct ModelRun {
@@ -602,7 +595,7 @@ fn store_matches_model_nightly(tc: TestCase) {
 /// migrations only once.
 #[test]
 fn file_store_survives_reopen() {
-    block_on(async {
+    block_on_io(async {
         let dir = std::env::temp_dir()
             .join(format!("tau-store-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -648,7 +641,7 @@ fn file_store_survives_reopen() {
 /// Unknown runs are reported, not silently ignored.
 #[test]
 fn unknown_runs_are_errors() {
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         assert!(matches!(
             store.finish_run("x", Status::Done, None, None).await,
@@ -665,7 +658,7 @@ fn unknown_runs_are_errors() {
 /// ones still add up exactly.
 #[test]
 fn large_token_counts_add_exactly() {
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         store
             .create_run(&NewRun {
@@ -709,7 +702,7 @@ fn new_run(id: &str) -> NewRun<'_> {
 /// longest wait is one of the waits, so it never exceeds their total.
 #[test]
 fn writes_are_counted_across_clones() {
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         assert_eq!(store.writer_stats(), WriterStats::default());
         let clone = store.clone();
@@ -736,7 +729,7 @@ fn writes_are_counted_across_clones() {
 #[test]
 fn waiting_for_the_write_lock_is_measured() {
     use sqlx::Connection;
-    block_on(async {
+    block_on_io(async {
         let dir = std::env::temp_dir()
             .join(format!("tau-store-wait-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -777,7 +770,7 @@ fn waiting_for_the_write_lock_is_measured() {
 /// became of them; a fork is not one.
 #[test]
 fn subagents_are_found_by_their_parent() {
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         for (id, kind) in [
             ("a", RunKind::Root),
@@ -838,7 +831,7 @@ fn subagents_are_found_by_their_parent() {
 /// History lists root runs and forks, newest first, without sub-agents.
 #[test]
 fn recent_runs_skip_subagents() {
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         for (id, kind) in [
             ("a", RunKind::Root),
@@ -888,7 +881,7 @@ fn recent_runs_skip_subagents() {
 /// A plugin's own records come back with their `seq`, to fork at.
 #[test]
 fn plugin_entries_carry_their_seq() {
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         store
             .create_run(&NewRun {
@@ -935,7 +928,7 @@ fn plugin_entries_carry_their_seq() {
 /// A typed query reads, and only reads.
 #[test]
 fn typed_queries_only_read() {
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         for id in ["a", "b", "c"] {
             store.create_run(&new_run(id)).await.unwrap();

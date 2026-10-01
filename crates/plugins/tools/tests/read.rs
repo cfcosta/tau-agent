@@ -9,7 +9,7 @@ use image::{DynamicImage, ImageFormat, RgbImage};
 use serde_json::{Value, json};
 use tau_agent::{
     error::ToolError,
-    tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolUpdates},
+    tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::message::InputBlock;
 use tau_tools::{
@@ -20,15 +20,6 @@ use tau_tools::{
 };
 use tokio_util::sync::CancellationToken;
 
-fn ctx(cancel: CancellationToken) -> ToolCtx {
-    let (sender, _) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        cancel,
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run".into()),
-    )
-}
-
 /// Calls `read` on a normal runtime: it does blocking I/O on the
 /// blocking pool, which paused time would treat as idle.
 fn call(root: &Root, args: Value) -> Result<ToolOutput, ToolError> {
@@ -36,9 +27,10 @@ fn call(root: &Root, args: Value) -> Result<ToolOutput, ToolError> {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(
-            Read::new(root.clone()).call(args, ctx(CancellationToken::new())),
-        )
+        .block_on(Read::new(root.clone()).call(
+            args,
+            ToolCtx::detached().cancelled_by(CancellationToken::new()),
+        ))
 }
 
 fn text_of(output: &ToolOutput) -> String {
@@ -233,10 +225,10 @@ fn a_cancelled_read_is_aborted() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(
-            Read::new(Root::new(dir.path()))
-                .call(json!({"path": "f.txt"}), ctx(cancel)),
-        )
+        .block_on(Read::new(Root::new(dir.path())).call(
+            json!({"path": "f.txt"}),
+            ToolCtx::detached().cancelled_by(cancel),
+        ))
         .unwrap_err();
     assert_eq!(error.to_string(), "Operation aborted");
 }

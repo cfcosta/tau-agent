@@ -2,18 +2,19 @@
 //! imported into a project, a workspace per run, a commit per turn, and
 //! a fork that starts from one turn's code.
 
+mod common;
+
 use std::{
     path::Path,
-    process::Command,
     sync::{Arc, Mutex},
 };
 
+use common::{coder, links};
 use hegel::{Generator as _, TestCase, generators as gs};
 use serde_json::json;
-use tau_agent::agent::{Agent, Checkpoint};
+use tau_agent::agent::Checkpoint;
 use tau_store::Store;
-use tau_testing::{block_on, scripted::ScriptedModel};
-use tau_tools::{path::Root, plugin::CodingTools};
+use tau_testing::{block_on, git::git, scripted::ScriptedModel};
 use tau_vcs::{
     DEFAULT_WORKSPACE,
     Identity,
@@ -26,27 +27,6 @@ use tau_vcs::{
     clone_bare,
     run_workspace::{PLUGIN, bookmark},
 };
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args([
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "init.defaultBranch=main",
-        ])
-        .args(args)
-        .current_dir(dir)
-        // Keep the user's settings (signing, hooks) out of the fixture.
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .expect("git runs");
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
 
 /// A Git repository with one commit on `main`, and that commit's id.
 fn source(dir: &Path) -> String {
@@ -505,20 +485,6 @@ fn write(path: &str, content: &str) -> serde_json::Value {
     json!({ "path": path, "content": content })
 }
 
-fn links(entries: &[(i64, String)]) -> Vec<(i64, Link)> {
-    entries
-        .iter()
-        .filter_map(|(seq, body)| Link::parse(body).map(|link| (*seq, link)))
-        .collect()
-}
-
-fn agent(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
-    Agent::new(llm)
-        .name("coder")
-        .plugin(CodingTools::new(Root::new(workspace.dir())))
-        .plugin(workspace.clone())
-}
-
 /// A first turn that writes a file and commits it changed that file:
 /// what it changed is told from `@` as the run started, not from the
 /// commit the turn left `@` on.
@@ -553,7 +519,7 @@ fn a_first_turn_that_commits_still_changed_files() {
                     .tool_call("vcs_commit", json!({ "message": "feat: b" }))
             })
             .turn(|t| t.text("done"));
-        let outcome = agent(llm.clone(), &first)
+        let outcome = coder(llm.clone(), &first, false)
             .plugin(VcsPlugin::new(first.vcs().clone()))
             .run("write b.txt and commit it", &store)
             .await
@@ -608,7 +574,7 @@ fn a_turn_that_undoes_a_commit_keeps_its_paths() {
             .turn(|t| t.text("done"))
             .turn(|t| t.text("still done"))
             .turn(|t| t.text("feat: empty the readme"));
-        let outcome = agent(llm.clone(), &first)
+        let outcome = coder(llm.clone(), &first, false)
             .plugin(VcsPlugin::new(first.vcs().clone()))
             .run("commit, then edit and undo", &store)
             .await
@@ -663,7 +629,7 @@ fn a_forks_first_turn_is_told_from_its_start() {
             .turn(|t| t.text("done"))
             .turn(|t| t.text("still done"))
             .turn(|t| t.text("feat: a"));
-        let outcome = agent(llm.clone(), &first)
+        let outcome = coder(llm.clone(), &first, false)
             .plugin(VcsPlugin::new(first.vcs().clone()))
             .run("commit, undo, write", &store)
             .await
@@ -678,7 +644,7 @@ fn a_forks_first_turn_is_told_from_its_start() {
         let fork_llm = ScriptedModel::new()
             .turn(|t| t.tool_call("read", json!({ "path": "README.md" })))
             .turn(|t| t.text("forked"));
-        let forked = agent(fork_llm, &fork)
+        let forked = coder(fork_llm, &fork, false)
             .fork(&Checkpoint::at(outcome.run.clone(), turns[0].0))
             .start("go on", &store)
             .outcome()
@@ -741,7 +707,7 @@ fn turns_are_snapshots_and_forks_start_from_one() {
             // model then writes the message tau commits with.
             .turn(|t| t.text("still done"))
             .turn(|t| t.text("feat: write a.txt"));
-        let outcome = agent(llm.clone(), &first)
+        let outcome = coder(llm.clone(), &first, false)
             .run("write a.txt twice", &store)
             .await
             .unwrap();
@@ -806,7 +772,7 @@ fn turns_are_snapshots_and_forks_start_from_one() {
             .turn(|t| t.text("forked"))
             .turn(|t| t.text("still forked"))
             .turn(|t| t.text("feat: keep turn 1"));
-        let forked = agent(llm.clone(), &fork)
+        let forked = coder(llm.clone(), &fork, false)
             .fork(&Checkpoint::at(outcome.run.clone(), seq))
             .start("what does a.txt say?", &store)
             .outcome()

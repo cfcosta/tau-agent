@@ -8,20 +8,10 @@ use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     plugin::Plugin,
-    tool::{AgentTool, RunId, ToolCtx, ToolUpdates},
+    tool::{AgentTool, ToolCtx},
 };
 use tau_testing::block_on;
 use tau_vcs::{Identity, Vcs, VcsPlugin};
-use tokio_util::sync::CancellationToken;
-
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        CancellationToken::new(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
-}
 
 struct Repo {
     dir: tempfile::TempDir,
@@ -44,7 +34,7 @@ impl Repo {
 
     fn call(&self, name: &str, args: Value) -> Result<Value, String> {
         let tool = self.tools.iter().find(|t| t.name() == name).unwrap();
-        block_on(tool.call(args, ctx()))
+        block_on(tool.call(args, ToolCtx::detached()))
             .map(|output| output.details.unwrap_or(Value::Null))
             .map_err(|err| err.to_string())
     }

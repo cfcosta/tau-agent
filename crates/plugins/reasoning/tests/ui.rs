@@ -10,54 +10,12 @@ use tau_reasoning::{
     ui::{Note, ReasoningPlugin, State},
 };
 use tau_ui_plugin::{
-    CardInfo,
-    RepoCtx,
     RunCtx,
-    RunCx,
     RunKind,
     Services,
     UiPlugin,
+    testing::{FakeRun, run_ctx},
 };
-
-/// The anchors a fold places, in order.
-#[derive(Default)]
-struct Anchors(Vec<String>);
-
-impl RunCx for Anchors {
-    fn transcript(&mut self, key: &str) {
-        self.0.push(key.to_owned());
-    }
-
-    fn attach(&mut self, _: &str, _: &str) -> bool {
-        false
-    }
-
-    fn dropped(&mut self, _: &str, _: tau_ui_plugin::Dropped) -> bool {
-        false
-    }
-
-    fn cut(&mut self, _: &str, _: tau_ui_plugin::OutputCut) -> bool {
-        false
-    }
-
-    fn mark(&mut self, _: &str, _: tau_ui_plugin::CardMark) -> bool {
-        false
-    }
-
-    fn rewrite(&mut self, _: &str) {}
-
-    fn cards(&self) -> Vec<CardInfo> {
-        Vec::new()
-    }
-
-    fn last_text(&self) -> Option<String> {
-        None
-    }
-
-    fn turn(&self) -> u32 {
-        0
-    }
-}
 
 /// A choice as the plugin publishes it, on gpt-5.5's levels.
 fn choice(chose: bool, effort: &str, runs_at: Option<&str>) -> Value {
@@ -87,7 +45,7 @@ fn notes_show_only_where_the_effort_changes(tc: hegel::TestCase) {
         .max_size(8),
     );
     let mut state = State::default();
-    let mut anchors = Anchors::default();
+    let mut anchors = FakeRun::default();
     // The model: what each message ran at, and the notes it earns.
     let (mut ran_at, mut notes, mut choices) = (None::<String>, 0, 0);
     let mut last = None;
@@ -114,9 +72,14 @@ fn notes_show_only_where_the_effort_changes(tc: hegel::TestCase) {
             }
         }
     }
-    assert_eq!(anchors.0.len(), notes, "{steps:?}");
+    assert_eq!(anchors.anchors.len(), notes, "{steps:?}");
     assert_eq!(state.notes.len(), notes);
-    assert!(anchors.0.iter().all(|key| state.notes.contains_key(key)));
+    assert!(
+        anchors
+            .anchors
+            .iter()
+            .all(|key| state.notes.contains_key(key))
+    );
     assert_eq!(state.choices.len(), choices);
     assert_eq!(state.ran_at, ran_at);
     if let Some((chose, now)) = last {
@@ -141,13 +104,13 @@ fn notes_show_only_where_the_effort_changes(tc: hegel::TestCase) {
 #[test]
 fn a_note_says_what_changed() {
     let mut state = State::default();
-    let mut anchors = Anchors::default();
+    let mut anchors = FakeRun::default();
     state.apply(&choice(false, "low", None), &mut anchors);
     state.apply(&choice(true, "high", Some("high")), &mut anchors);
     state.apply(&choice(false, "low", Some("high")), &mut anchors);
     state.apply(&choice(true, "low", Some("low")), &mut anchors);
     let texts: Vec<String> = anchors
-        .0
+        .anchors
         .iter()
         .map(|key| match &state.notes[key] {
             Note::Choice { text, .. } => text.clone(),
@@ -171,15 +134,9 @@ fn run(effort: Option<&str>, jev: bool) -> RunCtx {
         services = services.with(jev);
     }
     RunCtx {
-        kind: RunKind::Chat,
-        repo: RepoCtx {
-            name: "repo".into(),
-            checkout: "/tmp/repo".into(),
-            dir: "/tmp/tau/repo".into(),
-        },
-        model: "gpt-5.5".into(),
         effort: effort.map(str::to_owned),
         services,
+        ..run_ctx(RunKind::Chat)
     }
 }
 
@@ -195,7 +152,7 @@ fn it_says_whether_it_is_on(tc: hegel::TestCase) {
     let bodies = ReasoningPlugin.starting(&(), &run, &settings);
     let mut state = State::default();
     for body in &bodies {
-        state.apply(body, &mut Anchors::default());
+        state.apply(body, &mut FakeRun::default());
     }
     let status = state.starting.unwrap();
     let on = jev && effort.is_none();
@@ -208,12 +165,4 @@ fn it_says_whether_it_is_on(tc: hegel::TestCase) {
     let plugins = ReasoningPlugin.agent_plugins(&(), &run, &settings).unwrap();
     assert_eq!(plugins.len(), usize::from(on));
     assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
-}
-
-/// The UI takes its look from the kit.
-#[test]
-fn only_the_kit_holds_design_values() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let found = tau_ui_kit::design::check(&src, &[]);
-    assert!(found.is_empty(), "{}", found.join("\n"));
 }

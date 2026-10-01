@@ -143,12 +143,14 @@ impl ToolUpdates {
         Self::new("detached".into(), sender)
     }
 
-    /// An update sink for tests of tools outside the loop.
-    pub fn for_tests(
+    /// An update sink for the call `call_id` whose updates come out of
+    /// the returned receiver: for watching a tool's partial output
+    /// outside the loop.
+    pub fn channel(
         call_id: &str,
-        sender: mpsc::UnboundedSender<(Arc<str>, ToolOutput)>,
-    ) -> Self {
-        Self::new(call_id.into(), sender)
+    ) -> (Self, mpsc::UnboundedReceiver<(Arc<str>, ToolOutput)>) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        (Self::new(call_id.into(), sender), receiver)
     }
 
     /// Reports partial output. Returns false if it was ignored.
@@ -202,6 +204,23 @@ impl ToolCtx {
             plugin: None,
             nesting: None,
         }
+    }
+
+    /// A context for calling a tool outside a run whose updates nobody
+    /// reads, as a plugin calling its own tools or a test does.
+    pub fn detached() -> Self {
+        Self::new(
+            CancellationToken::new(),
+            ToolUpdates::detached(),
+            RunId("detached".into()),
+        )
+    }
+
+    /// This context, cancelled by `cancel`.
+    #[must_use]
+    pub fn cancelled_by(mut self, cancel: CancellationToken) -> Self {
+        self.cancel = cancel;
+        self
     }
 
     /// The id of the call being run: the model's call id, or

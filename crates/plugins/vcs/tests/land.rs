@@ -1,43 +1,15 @@
 //! Landing a child run on its parent (ADR 0009): the child's changes
 //! restack onto the parent's newest commit, keeping their change ids.
 
-use std::{path::Path, process::Command};
+mod common;
+
+use std::path::Path;
 
 use tau_vcs::{DEFAULT_WORKSPACE, Identity, Project, Vcs, VcsError};
 
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args([
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "init.defaultBranch=main",
-        ])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
-
 /// A project with one commit on `main`: `a.txt` holding `a`.
 fn project(home: &Path) -> (Project, String) {
-    let src = home.join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    git(&src, &["init", "--quiet"]);
-    std::fs::write(src.join("a.txt"), "a\n").unwrap();
-    git(&src, &["add", "a.txt"]);
-    git(&src, &["commit", "--quiet", "-m", "first"]);
-    let project = Project::import(
-        src.to_str().unwrap(),
-        home.join("p"),
-        Identity::default(),
-    )
-    .unwrap();
+    let project = common::project_with(home, &[("a.txt", "a\n")]);
     let trunk = project.trunk().unwrap();
     (project, trunk)
 }

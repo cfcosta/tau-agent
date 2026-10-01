@@ -4,7 +4,7 @@
 
 mod support;
 
-use std::{path::Path, process::Command, time::Duration};
+use std::{path::Path, time::Duration};
 
 use tau_agent::{
     agent::Agent,
@@ -12,7 +12,7 @@ use tau_agent::{
 };
 use tau_constitution::ui::Act;
 use tau_store::Store;
-use tau_testing::scripted::ScriptedModel;
+use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
     github::{Api, Token},
@@ -420,19 +420,6 @@ fn a_run_can_be_cancelled_from_the_ui() {
         })
         .collect();
     assert_eq!(ends, [StopReason::Cancelled]);
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .expect("git runs");
-    assert!(output.status.success(), "git {args:?}: {output:?}");
 }
 
 /// Sends `prompt` to the repository's main chat, the top-level run the

@@ -475,11 +475,8 @@ async fn distill(
         {
             fields.insert("by".into(), json!(by_name(by)));
         }
-        let tool_ctx = ToolCtx::new(
-            tokio_util::sync::CancellationToken::new(),
-            tau_agent::tool::ToolUpdates::detached(),
-            ctx.run.clone(),
-        );
+        let mut tool_ctx = ToolCtx::detached();
+        tool_ctx.run = ctx.run.clone();
         match tool.call(args, tool_ctx).await {
             Ok(output) => saved
                 .push(json!({ "tool": call.name, "details": output.details })),

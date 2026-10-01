@@ -19,21 +19,8 @@ use jj_lib::{
 };
 use pollster::block_on;
 use serde_json::{Value, json};
-use tau_agent::{
-    plugin::Plugin,
-    tool::{RunId, ToolCtx, ToolUpdates},
-};
+use tau_agent::{plugin::Plugin, tool::ToolCtx};
 use tau_vcs::{Identity, Vcs, VcsPlugin};
-use tokio_util::sync::CancellationToken;
-
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        CancellationToken::new(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
-}
 
 /// Puts `main` on the commit `hex`, and writes a second commit with the
 /// same change id on the root commit, so the change is divergent.
@@ -77,7 +64,9 @@ fn a_change_carries_its_bookmarks_and_divergence() {
     let tools = VcsPlugin::new(vcs).tools();
     let call = |name: &str, args: Value| {
         let tool = tools.iter().find(|tool| tool.name() == name).unwrap();
-        let output = tau_testing::block_on(tool.call(args, ctx())).expect(name);
+        let output =
+            tau_testing::block_on(tool.call(args, ToolCtx::detached()))
+                .expect(name);
         let text = output
             .content
             .iter()

@@ -35,21 +35,23 @@
 //! resolves exactly when its trivial merge of whole files does, and
 //! every conflict jj writes has markers.
 
+mod common;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    process::Command,
     sync::Arc,
 };
 
+use common::merge::*;
 use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     plugin::Plugin,
-    tool::{AgentTool, RunId, ToolCtx, ToolUpdates},
+    tool::{AgentTool, ToolCtx},
 };
 use tau_ai::message::InputBlock;
-use tau_testing::block_on;
+use tau_testing::{block_on, git::git};
 use tau_vcs::{
     DEFAULT_WORKSPACE,
     Identity,
@@ -58,30 +60,6 @@ use tau_vcs::{
     Vcs,
     VcsPlugin,
 };
-use tokio_util::sync::CancellationToken;
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
-
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        CancellationToken::new(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
-}
 
 /// One workspace's handle and its tools.
 struct Workspace {
@@ -102,7 +80,7 @@ impl Workspace {
             .iter()
             .find(|tool| tool.name() == name)
             .unwrap_or_else(|| panic!("no tool {name}"));
-        block_on(tool.call(args, ctx()))
+        block_on(tool.call(args, ToolCtx::detached()))
             .map(|output| {
                 let text = match &output.content[0] {
                     InputBlock::Text(text) => text.text.clone(),
@@ -124,18 +102,7 @@ impl Workspace {
 /// chat, caught up with trunk as the host has it before its first turn.
 fn project() -> (tempfile::TempDir, Project, Workspace) {
     let home = tempfile::tempdir().unwrap();
-    let src = home.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    git(&src, &["init", "--quiet"]);
-    std::fs::write(src.join("a.txt"), "one\n").unwrap();
-    git(&src, &["add", "."]);
-    git(&src, &["commit", "--quiet", "-m", "first"]);
-    let project = Project::import(
-        src.to_str().unwrap(),
-        home.path().join("p"),
-        Identity::default(),
-    )
-    .unwrap();
+    let project = common::project(home.path());
     let dir = project.workspace_dir(DEFAULT_WORKSPACE);
     let vcs = Vcs::open(&dir, Identity::default()).unwrap();
     let trunk = project.trunk().unwrap();
@@ -158,86 +125,6 @@ const VALUES: [&str; 3] = ["one\n", "two\n", "three\n"];
 const RESTORE_PATHS: [&str; 5] = ["a.txt", "b.txt", "dir/c.txt", "dir", "."];
 /// The most chats that come and go in one case.
 const MAX_CHATS: usize = 3;
-
-/// A file's contents; `None` is no file.
-type Val = Option<&'static str>;
-
-/// A path's value in a tree: jj's merge terms, counted (+1 for each
-/// add, -1 for each remove, zeros dropped). One value counted once is a
-/// resolved file; anything else is a conflict.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Term(BTreeMap<Val, i32>);
-
-impl Term {
-    fn resolved(value: Val) -> Self {
-        Self(BTreeMap::from([(value, 1)]))
-    }
-
-    fn value(&self) -> Option<Val> {
-        match self.0.iter().collect::<Vec<_>>().as_slice() {
-            [(value, 1)] => Some(**value),
-            _ => None,
-        }
-    }
-
-    /// `old`, rebased from `base` onto `onto`: jj's `onto + old - base`,
-    /// resolved as `trivial_merge` does with `same-change = accept`.
-    fn rebase(onto: &Term, base: &Term, old: &Term) -> Term {
-        let mut counts = onto.0.clone();
-        for (value, n) in &old.0 {
-            *counts.entry(*value).or_default() += n;
-        }
-        for (value, n) in &base.0 {
-            *counts.entry(*value).or_default() -= n;
-        }
-        counts.retain(|_, n| *n != 0);
-        let positive: Vec<Val> = counts
-            .iter()
-            .filter(|(_, n)| **n > 0)
-            .map(|(value, _)| *value)
-            .collect();
-        match (counts.len(), positive.as_slice()) {
-            (1, [value]) | (2, [value]) => Term::resolved(*value),
-            _ => Term(counts),
-        }
-    }
-}
-
-/// Path to value; a path missing is no file.
-type Tree = BTreeMap<&'static str, Term>;
-
-fn get(tree: &Tree, path: &'static str) -> Term {
-    tree.get(path)
-        .cloned()
-        .unwrap_or_else(|| Term::resolved(None))
-}
-
-fn set(tree: &mut Tree, path: &'static str, term: Term) {
-    if term == Term::resolved(None) {
-        tree.remove(path);
-    } else {
-        tree.insert(path, term);
-    }
-}
-
-fn rebase_tree(onto: &Tree, base: &Tree, old: &Tree) -> Tree {
-    let mut tree = Tree::new();
-    for path in PATHS {
-        set(
-            &mut tree,
-            path,
-            Term::rebase(&get(onto, path), &get(base, path), &get(old, path)),
-        );
-    }
-    tree
-}
-
-fn conflicts(tree: &Tree) -> Vec<String> {
-    tree.iter()
-        .filter(|(_, term)| term.value().is_none())
-        .map(|(path, _)| (*path).to_owned())
-        .collect()
-}
 
 /// `(path, kind)` for every path that differs from `from` to `to`, in
 /// path order, as the tools list changes.

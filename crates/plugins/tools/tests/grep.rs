@@ -7,7 +7,7 @@ use regex::RegexBuilder;
 use serde_json::json;
 use tau_agent::{
     error::ToolError,
-    tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolUpdates},
+    tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
@@ -16,16 +16,6 @@ use tau_tools::{
     path::Root,
     truncate::{MAX_BYTES, format_size, truncate_head},
 };
-use tokio_util::sync::CancellationToken;
-
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        CancellationToken::new(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
-}
 
 fn text_of(output: &ToolOutput) -> &str {
     match &output.content[0] {
@@ -37,7 +27,7 @@ fn text_of(output: &ToolOutput) -> &str {
 fn call(root: &Root, args: serde_json::Value) -> Result<String, ToolError> {
     block_on(async {
         Grep::new(root.clone())
-            .call(args, ctx())
+            .call(args, ToolCtx::detached())
             .await
             .map(|out| text_of(&out).to_owned())
     })

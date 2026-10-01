@@ -7,28 +7,14 @@ use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     error::ToolError,
-    tool::{AgentTool, RunId, ToolCtx, ToolUpdates},
+    tool::{AgentTool, ToolCtx},
 };
 use tau_tools::{ABORTED, edit::Edit, path::Root};
 
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        Default::default(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
-}
-
 fn cancelled_ctx() -> ToolCtx {
-    let token = tokio_util::sync::CancellationToken::new();
-    token.cancel();
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        token,
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
+    let ctx = ToolCtx::detached();
+    ctx.cancel.cancel();
+    ctx
 }
 
 fn new_edit(dir: &std::path::Path) -> Edit {
@@ -40,7 +26,7 @@ fn call(
     args: Value,
 ) -> Result<tau_agent::tool::ToolOutput, ToolError> {
     let args = edit.prepare_arguments(args);
-    tau_testing::block_on(edit.call(args, ctx()))
+    tau_testing::block_on(edit.call(args, ToolCtx::detached()))
 }
 
 /// A naive reference: splices each `(old, new)` pair into `original` at
@@ -743,9 +729,9 @@ fn concurrent_edits_all_land(tc: TestCase) {
                 "path": path,
                 "edits": [{"oldText": format!("PLACEHOLDER_{i}\n"), "newText": format!("REPLACED_{i}\n")}],
             }));
-            tasks.push(tokio::spawn(
-                async move { edit.call(args, ctx()).await },
-            ));
+            tasks.push(tokio::spawn(async move {
+                edit.call(args, ToolCtx::detached()).await
+            }));
         }
         for task in tasks {
             task.await.unwrap().unwrap();

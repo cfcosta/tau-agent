@@ -10,14 +10,7 @@ use hegel::{
     generators::{Generator as _, PrintableGenerator},
 };
 use tau_store::{Store, StoredConstitution, StoredRule};
-
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(future)
-}
+use tau_testing::block_on_io;
 
 fn constitution() -> impl PrintableGenerator<StoredConstitution> {
     // StoredConstitution is tau's own type, so its drawn values print through Debug.
@@ -61,7 +54,7 @@ fn constitution_unprinted(tc: &TestCase) -> StoredConstitution {
 
 #[hegel::test(test_cases = 100)]
 fn a_constitution_reads_back_as_last_saved(tc: TestCase) {
-    block_on(async {
+    block_on_io(async {
         let store = Store::memory().await.unwrap();
         let mut saved: BTreeMap<&str, StoredConstitution> = BTreeMap::new();
         for _ in 0..tc.draw(gs::integers::<usize>().max_value(8)) {

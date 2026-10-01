@@ -8,19 +8,13 @@ use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     plugin::Plugin,
-    tool::{AgentTool, RunId, ToolCtx, ToolUpdates},
+    tool::{AgentTool, ToolCtx},
 };
 use tau_testing::block_on;
 use tau_vcs::{Identity, MAX_NEW_FILE_SIZE, Vcs, VcsPlugin};
-use tokio_util::sync::CancellationToken;
 
 fn status(tools: &[Arc<dyn AgentTool>]) -> Value {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    let ctx = ToolCtx::new(
-        CancellationToken::new(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    );
+    let ctx = ToolCtx::detached();
     let tool = tools.iter().find(|t| t.name() == "vcs_status").unwrap();
     block_on(tool.call(json!({}), ctx))
         .unwrap()

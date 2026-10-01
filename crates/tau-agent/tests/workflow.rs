@@ -18,15 +18,7 @@ use tau_agent::{
     event::{LimitKind, RunEvent, StopReason},
     limits::Limits,
     schema::to_strict,
-    tool::{
-        AgentTool,
-        RunId,
-        ToolCtx,
-        ToolOutput,
-        ToolUpdates,
-        TypedTool,
-        typed,
-    },
+    tool::{AgentTool, RunId, ToolCtx, ToolOutput, TypedTool, typed},
 };
 use tau_ai::message::{AssistantBlock, Message, UserContent};
 use tau_store::{RunKind, Status, Store};
@@ -736,12 +728,7 @@ fn a_sub_agent_tool_outside_a_run_fails() {
     assert_eq!(tool.parameters()["required"], json!(["input"]));
     assert!(format!("{tool:?}").contains("research"));
     block_on(async {
-        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-        let ctx = ToolCtx::new(
-            Default::default(),
-            ToolUpdates::for_tests("call_1", sender),
-            RunId("run_1".into()),
-        );
+        let ctx = ToolCtx::detached();
         let error = tool.call(json!({"input": "a"}), ctx).await.unwrap_err();
         assert!(
             error.to_string().contains("only be called from a run"),

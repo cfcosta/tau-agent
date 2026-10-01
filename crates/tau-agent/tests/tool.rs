@@ -12,7 +12,6 @@ use tau_agent::{
         RunId,
         ToolCtx,
         ToolOutput,
-        ToolUpdates,
         TypedTool,
         typed,
     },
@@ -46,15 +45,6 @@ impl TypedTool for Search {
     }
 }
 
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        Default::default(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
-}
-
 /// A typed tool exposes its name, description and a schema generated
 /// from its argument type, and runs with parsed arguments.
 #[test]
@@ -75,13 +65,17 @@ fn typed_tool_adapts() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
-    let output = runtime
-        .block_on(tool.call(json!({"query": "tokio", "limit": 3}), ctx()))
-        .unwrap();
+    let output =
+        runtime
+            .block_on(tool.call(
+                json!({"query": "tokio", "limit": 3}),
+                ToolCtx::detached(),
+            ))
+            .unwrap();
     assert_eq!(output, ToolOutput::text("tokio:3"));
     // Arguments that do not match the type are an error, not a panic.
     let error = runtime
-        .block_on(tool.call(json!({"query": 5}), ctx()))
+        .block_on(tool.call(json!({"query": 5}), ToolCtx::detached()))
         .unwrap_err();
     assert!(error.to_string().contains("invalid type"), "{error}");
 }

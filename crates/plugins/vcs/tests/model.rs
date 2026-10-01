@@ -24,12 +24,11 @@ use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     plugin::Plugin,
-    tool::{AgentTool, RunId, ToolCtx, ToolUpdates},
+    tool::{AgentTool, ToolCtx},
 };
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
 use tau_vcs::{Identity, Vcs, VcsPlugin};
-use tokio_util::sync::CancellationToken;
 
 /// The files a test touches: nested, so a directory can be restored as
 /// a whole, and one name that is not ASCII.
@@ -94,15 +93,6 @@ struct Machine {
     /// last tool call; [`Machine::disk`] is the files now.
     wc: Change,
     ops: Vec<Op>,
-}
-
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        CancellationToken::new(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
 }
 
 /// A description as jj stores it: trailing whitespace trimmed, one final
@@ -237,7 +227,7 @@ impl Machine {
             .iter()
             .find(|tool| tool.name() == name)
             .unwrap_or_else(|| panic!("no tool {name}"));
-        block_on(tool.call(args, ctx()))
+        block_on(tool.call(args, ToolCtx::detached()))
             .map(|output| {
                 let text = match &output.content[0] {
                     InputBlock::Text(text) => text.text.clone(),

@@ -6,29 +6,15 @@
 //! source's branches and `HEAD` as `git` reports them, with trunk on
 //! the branch `HEAD` named at the import.
 
-use std::{collections::BTreeMap, path::Path, process::Command};
+use std::collections::BTreeMap;
 
 use hegel::{Generator as _, TestCase, generators as gs};
-use tau_testing::block_on;
+use tau_testing::{block_on, git::git};
 use tau_vcs::{Identity, Project, UpdateFrom};
 
 const BRANCHES: [&str; 5] = ["main", "master", "trunk", "feature", "feat/x"];
 /// jj's root commit, in a Git-backed repository.
 const ROOT: &str = "0000000000000000000000000000000000000000";
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main", "-c", "gc.auto=0"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
 
 /// Something done to the source.
 #[derive(Debug, Clone, hegel::PrettyPrintable)]
@@ -101,14 +87,12 @@ impl Source {
     }
 
     fn has_head(&self) -> bool {
-        Command::new("git")
-            .args(["rev-parse", "--verify", "--quiet", "HEAD"])
-            .current_dir(&self.dir)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .output()
-            .unwrap()
-            .status
-            .success()
+        tau_testing::git::output(
+            &self.dir,
+            &["rev-parse", "--verify", "--quiet", "HEAD"],
+        )
+        .status
+        .success()
     }
 
     /// Does `op`, when it makes sense in the source as it is.

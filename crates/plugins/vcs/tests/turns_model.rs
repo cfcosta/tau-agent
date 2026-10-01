@@ -23,28 +23,25 @@
 //! - a fork at a turn starts on exactly that turn's files, on that turn's
 //!   parent, and the two runs never see each other's edits.
 
+mod common;
+
 use std::{
     collections::BTreeMap,
     path::Path,
-    process::Command,
     sync::{Arc, Mutex},
 };
 
+use common::{coder, links, project};
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
-use tau_agent::{
-    agent::{Agent, Checkpoint},
-    limits::Limits,
-};
+use tau_agent::{agent::Checkpoint, limits::Limits};
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
-use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
     Identity,
     Link,
     Project,
     RunWorkspace,
-    VcsPlugin,
     run_workspace::{PLUGIN, bookmark},
 };
 
@@ -57,39 +54,6 @@ type Tree = BTreeMap<&'static str, &'static str>;
 
 fn trunk_tree() -> Tree {
     Tree::from([("a.txt", "one\n")])
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-}
-
-/// A project whose trunk holds `a.txt`: `one`.
-fn project(home: &Path) -> Project {
-    let src = home.join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    git(&src, &["init", "--quiet"]);
-    std::fs::write(src.join("a.txt"), "one\n").unwrap();
-    git(&src, &["add", "a.txt"]);
-    git(&src, &["commit", "--quiet", "-m", "first"]);
-    Project::import(src.to_str().unwrap(), home.join("p"), Identity::default())
-        .unwrap()
-}
-
-fn agent(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
-    Agent::new(llm)
-        .name("coder")
-        .plugin(CodingTools::new(Root::new(workspace.dir())))
-        .plugin(VcsPlugin::new(workspace.vcs().clone()))
-        .plugin(workspace.clone())
 }
 
 fn value(text: &[u8]) -> &'static str {
@@ -125,13 +89,6 @@ fn changed_paths(from: &Tree, to: &Tree) -> Vec<String> {
         .iter()
         .filter(|path| from.get(*path) != to.get(*path))
         .map(|path| (*path).to_owned())
-        .collect()
-}
-
-fn links(entries: &[(i64, String)]) -> Vec<(i64, Link)> {
-    entries
-        .iter()
-        .filter_map(|(seq, body)| Link::parse(body).map(|link| (*seq, link)))
         .collect()
 }
 
@@ -516,7 +473,7 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
                     let heard = heard.clone();
                     move |turn| heard.lock().unwrap().push(turn.paths.clone())
                 });
-        let mut runner = agent(llm.clone(), &first);
+        let mut runner = coder(llm.clone(), &first, true);
         if end == End::Limit {
             runner = runner.limits(Limits {
                 max_turns: Some(turns.len() as u32),
@@ -652,7 +609,7 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
         let fork =
             RunWorkspace::new(project.clone(), "fork", Identity::default())
                 .unwrap();
-        let forked = agent(fork_llm, &fork)
+        let forked = coder(fork_llm, &fork, true)
             .fork(&Checkpoint::at(outcome.run.clone(), seq))
             .start("go on", &store)
             .outcome()
@@ -733,7 +690,7 @@ fn a_fork_whose_parent_was_undone_stays_apart() {
             })
             .turn(|t| t.tool_call("vcs_undo", json!({})))
             .turn(|t| t.text("done"));
-        let outcome = agent(llm.clone(), &first)
+        let outcome = coder(llm.clone(), &first, true)
             .run("commit, then undo", &store)
             .await
             .unwrap();
@@ -744,7 +701,7 @@ fn a_fork_whose_parent_was_undone_stays_apart() {
             RunWorkspace::new(project.clone(), "fork", Identity::default())
                 .unwrap();
         let fork_llm = ScriptedModel::new().turn(|t| t.text("forked"));
-        agent(fork_llm, &fork)
+        coder(fork_llm, &fork, true)
             .fork(&Checkpoint::at(outcome.run.clone(), linked[0].0))
             .start("go on", &store)
             .outcome()
@@ -802,7 +759,7 @@ fn a_turn_that_recommits_an_undone_commit_keeps_its_paths() {
                     .tool_call("vcs_commit", json!({ "message": "feat: x" }))
             })
             .turn(|t| t.text("done"));
-        agent(llm.clone(), &first)
+        coder(llm.clone(), &first, true)
             .run("commit, undo, write, commit", &store)
             .await
             .unwrap();

@@ -9436,6 +9436,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "tau-testing",
  "thiserror 2.0.21",
  "tokio",
 ]

@@ -6,12 +6,11 @@ use std::{path::Path, sync::Arc};
 use serde_json::{Value, json};
 use tau_agent::{
     plugin::Plugin,
-    tool::{AgentTool, ExecutionMode, RunId, ToolCtx, ToolUpdates},
+    tool::{AgentTool, ExecutionMode, ToolCtx},
 };
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
 use tau_vcs::{Identity, Vcs, VcsPlugin};
-use tokio_util::sync::CancellationToken;
 
 struct Repo {
     dir: tempfile::TempDir,
@@ -47,7 +46,7 @@ impl Repo {
             .iter()
             .find(|tool| tool.name() == name)
             .unwrap_or_else(|| panic!("no tool {name}"));
-        block_on(tool.call(args, ctx()))
+        block_on(tool.call(args, ToolCtx::detached()))
             .map(|output| {
                 let text = match &output.content[0] {
                     InputBlock::Text(text) => text.text.clone(),
@@ -62,15 +61,6 @@ impl Repo {
         self.call(name, args)
             .unwrap_or_else(|err| panic!("{name} failed: {err}"))
     }
-}
-
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        CancellationToken::new(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
 }
 
 /// The plugin offers the nine tools, read ones first, all sequential;
@@ -567,7 +557,7 @@ fn open_an_existing_repository() {
     let vcs = Vcs::open(repo.path(), Identity::default()).unwrap();
     let tools = VcsPlugin::new(vcs).tools();
     let log = tools.iter().find(|tool| tool.name() == "vcs_log").unwrap();
-    let output = block_on(log.call(json!({}), ctx())).unwrap();
+    let output = block_on(log.call(json!({}), ToolCtx::detached())).unwrap();
     let details = output.details.unwrap();
     assert_eq!(details["changes"][1]["description"], json!("Add a\n"));
 }
@@ -581,7 +571,7 @@ fn cancelled_before_starting() {
         .iter()
         .find(|tool| tool.name() == "vcs_status")
         .unwrap();
-    let ctx = ctx();
+    let ctx = ToolCtx::detached();
     ctx.cancel.cancel();
     let err = block_on(tool.call(json!({}), ctx)).unwrap_err();
     assert_eq!(err.to_string(), tau_vcs::ABORTED);

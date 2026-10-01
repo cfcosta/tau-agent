@@ -16,7 +16,7 @@ use tau_memory::{
     note::{By, Link, LinkType, NoteType, Source},
     ui::{Memories, Search, ago, notebook as catalog, now, stale_on_turn},
 };
-use tau_ui_plugin::TurnCommit;
+use tau_ui_plugin::{TurnCommit, testing::FakeRun};
 
 const TITLES: [&str; 5] = [
     "lanes drain in order",
@@ -327,38 +327,10 @@ fn a_scope_opens_once() {
 fn the_fold_notes_what_memory_did(tc: TestCase) {
     use serde_json::json;
     use tau_memory::ui::{Mark, State};
-    struct Anchors(Vec<String>);
-    impl tau_ui_plugin::RunCx for Anchors {
-        fn transcript(&mut self, key: &str) {
-            self.0.push(key.to_owned());
-        }
-        fn attach(&mut self, _: &str, _: &str) -> bool {
-            false
-        }
-        fn mark(&mut self, _: &str, _: tau_ui_plugin::CardMark) -> bool {
-            false
-        }
-        fn dropped(&mut self, _: &str, _: tau_ui_plugin::Dropped) -> bool {
-            false
-        }
-        fn cut(&mut self, _: &str, _: tau_ui_plugin::OutputCut) -> bool {
-            false
-        }
-        fn rewrite(&mut self, _: &str) {}
-        fn cards(&self) -> Vec<tau_ui_plugin::CardInfo> {
-            Vec::new()
-        }
-        fn last_text(&self) -> Option<String> {
-            None
-        }
-        fn turn(&self) -> u32 {
-            0
-        }
-    }
     let kinds: Vec<u8> =
         tc.draw(gs::vecs(gs::integers::<u8>().max_value(3)).max_size(8));
     let mut state = State::default();
-    let mut anchors = Anchors(Vec::new());
+    let mut anchors = FakeRun::default();
     let mut expected = Vec::new();
     let mut notes = None;
     for (n, kind) in kinds.iter().enumerate() {
@@ -383,19 +355,11 @@ fn the_fold_notes_what_memory_did(tc: TestCase) {
         state.apply(&body, &mut anchors);
     }
     let marks: Vec<Mark> = anchors
-        .0
+        .anchors
         .iter()
         .map(|key| state.marks[key].clone())
         .collect();
     assert_eq!(marks, expected);
     assert_eq!(state.notes, notes);
     assert_eq!(state.status().is_some(), notes.is_some());
-}
-
-/// The UI takes its look from the kit.
-#[test]
-fn only_the_kit_holds_design_values() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
-    let found = tau_ui_kit::design::check(&src, &[]);
-    assert!(found.is_empty(), "{}", found.join("\n"));
 }

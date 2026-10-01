@@ -40,119 +40,21 @@
 //! File contents are one line or empty, so jj's line merge of a file
 //! resolves exactly when its trivial merge of whole files does.
 
+mod common;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
-    process::Command,
 };
 
+use common::merge::*;
 use hegel::{TestCase, generators as gs};
-use tau_testing::block_on;
+use tau_testing::{block_on, git::git};
 use tau_vcs::{DEFAULT_WORKSPACE, Identity, Link, Project, UpdateFrom, Vcs};
 
 const PATHS: [&str; 3] = ["a.txt", "c.txt", "dir/b.txt"];
 const VALUES: [&str; 4] = ["", "one\n", "two\n", "three\n"];
 const MAX_RUNS: usize = 6;
-
-/// A file's contents; `None` is no file.
-type Val = Option<&'static str>;
-
-/// A path's value in a tree: jj's merge terms, counted (+1 for each
-/// add, -1 for each remove, zeros dropped). One value counted once is a
-/// resolved file; anything else is a conflict.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Term(BTreeMap<Val, i32>);
-
-impl Term {
-    fn resolved(value: Val) -> Self {
-        Self(BTreeMap::from([(value, 1)]))
-    }
-
-    fn value(&self) -> Option<Val> {
-        match self.0.iter().collect::<Vec<_>>().as_slice() {
-            [(value, 1)] => Some(**value),
-            _ => None,
-        }
-    }
-
-    /// What jj writes to disk for a conflict: its sides merged with a
-    /// missing file read as empty, when that resolves; `None` when the
-    /// file gets conflict markers.
-    fn materialized(&self) -> Option<Val> {
-        let mut counts: BTreeMap<&str, i32> = BTreeMap::new();
-        for (value, n) in &self.0 {
-            *counts.entry(value.unwrap_or("")).or_default() += n;
-        }
-        counts.retain(|_, n| *n != 0);
-        let positive: Vec<&str> = counts
-            .iter()
-            .filter(|(_, n)| **n > 0)
-            .map(|(value, _)| *value)
-            .collect();
-        match (counts.len(), positive.as_slice()) {
-            (1, [value]) | (2, [value]) => Some(Some(*value)),
-            _ => None,
-        }
-    }
-
-    /// `old`, rebased from `base` onto `onto`: jj's `onto + old - base`,
-    /// resolved as `trivial_merge` does with `same-change = accept`.
-    fn rebase(onto: &Term, base: &Term, old: &Term) -> Term {
-        let mut counts = onto.0.clone();
-        for (value, n) in &old.0 {
-            *counts.entry(*value).or_default() += n;
-        }
-        for (value, n) in &base.0 {
-            *counts.entry(*value).or_default() -= n;
-        }
-        counts.retain(|_, n| *n != 0);
-        let positive: Vec<Val> = counts
-            .iter()
-            .filter(|(_, n)| **n > 0)
-            .map(|(value, _)| *value)
-            .collect();
-        match (counts.len(), positive.as_slice()) {
-            (1, [value]) | (2, [value]) => Term::resolved(*value),
-            _ => Term(counts),
-        }
-    }
-}
-
-/// Path to value; a path missing is no file.
-type Tree = BTreeMap<&'static str, Term>;
-
-fn get(tree: &Tree, path: &'static str) -> Term {
-    tree.get(path)
-        .cloned()
-        .unwrap_or_else(|| Term::resolved(None))
-}
-
-fn set(tree: &mut Tree, path: &'static str, term: Term) {
-    if term == Term::resolved(None) {
-        tree.remove(path);
-    } else {
-        tree.insert(path, term);
-    }
-}
-
-fn rebase_tree(onto: &Tree, base: &Tree, old: &Tree) -> Tree {
-    let mut tree = Tree::new();
-    for path in PATHS {
-        set(
-            &mut tree,
-            path,
-            Term::rebase(&get(onto, path), &get(base, path), &get(old, path)),
-        );
-    }
-    tree
-}
-
-fn conflicts(tree: &Tree) -> Vec<String> {
-    tree.iter()
-        .filter(|(_, term)| term.value().is_none())
-        .map(|(path, _)| (*path).to_owned())
-        .collect()
-}
 
 #[derive(Debug, Clone)]
 struct Commit {
@@ -227,20 +129,6 @@ struct Machine {
 
 /// The main chat.
 const MAIN: usize = 0;
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
 
 impl Machine {
     fn new() -> Self {

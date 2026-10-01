@@ -6,14 +6,16 @@
 //! (ADR 0014); what the run leaves uncommitted is committed at the end,
 //! with a message its model writes.
 
-use std::{collections::BTreeMap, path::Path, process::Command};
+mod common;
 
+use std::{collections::BTreeMap, path::Path};
+
+use common::{coder, links, project};
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
-use tau_agent::agent::{Agent, Checkpoint};
+use tau_agent::agent::Checkpoint;
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
-use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
     Identity,
     Link,
@@ -26,38 +28,6 @@ const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
 const VALUES: [&str; 4] = ["", "one\n", "two\n", "three\n"];
 
 type Tree = BTreeMap<&'static str, &'static str>;
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-}
-
-/// A project whose trunk holds `a.txt`: `one`.
-fn project(home: &Path) -> Project {
-    let src = home.join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    git(&src, &["init", "--quiet"]);
-    std::fs::write(src.join("a.txt"), "one\n").unwrap();
-    git(&src, &["add", "a.txt"]);
-    git(&src, &["commit", "--quiet", "-m", "first"]);
-    Project::import(src.to_str().unwrap(), home.join("p"), Identity::default())
-        .unwrap()
-}
-
-fn agent(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
-    Agent::new(llm)
-        .name("coder")
-        .plugin(CodingTools::new(Root::new(workspace.dir())))
-        .plugin(workspace.clone())
-}
 
 /// A script: each drawn turn writes its files (or only reads, when it
 /// has none), and a last turn answers. A run that would stop with
@@ -114,13 +84,6 @@ fn at_commit(project: &Project, commit: &str) -> Tree {
         .collect()
 }
 
-fn links(entries: &[(i64, String)]) -> Vec<(i64, Link)> {
-    entries
-        .iter()
-        .filter_map(|(seq, body)| Link::parse(body).map(|link| (*seq, link)))
-        .collect()
-}
-
 #[hegel::composite]
 fn turn(tc: &TestCase) -> Vec<(&'static str, &'static str)> {
     tc.draw(
@@ -169,7 +132,7 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
             RunWorkspace::new(project.clone(), "first", Identity::default())
                 .unwrap();
         let llm = script(&turns, dirty);
-        let outcome = agent(llm.clone(), &first)
+        let outcome = coder(llm.clone(), &first, false)
             .run("write", &store)
             .await
             .unwrap();
@@ -223,7 +186,7 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
                 .unwrap();
         let fork_llm =
             script(&[Vec::new(), fork_writes.clone()], want != start);
-        let forked = agent(fork_llm, &fork)
+        let forked = coder(fork_llm, &fork, false)
             .fork(&Checkpoint::at(outcome.run.clone(), seq))
             .start("go on", &store)
             .outcome()

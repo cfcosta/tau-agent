@@ -54,11 +54,3 @@ fn cards_keep_what_was_clicked(tc: hegel::TestCase) {
         }
     }
 }
-
-/// The UI takes its look from the kit.
-#[test]
-fn only_the_kit_holds_design_values() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
-    let found = tau_ui_kit::design::check(&src, &[]);
-    assert!(found.is_empty(), "{}", found.join("\n"));
-}

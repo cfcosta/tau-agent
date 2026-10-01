@@ -29,20 +29,8 @@ use tau_memory_e2e::{
     scenario::Variant,
 };
 use tau_store::Store;
-use tau_testing::scripted::ScriptedModel;
+use tau_testing::{block_on_io, scripted::ScriptedModel};
 use tau_tools::{path::Root, plugin::CodingTools};
-
-thread_local! {
-    static RUNTIME: tokio::runtime::Runtime =
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-}
-
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    RUNTIME.with(|runtime| runtime.block_on(future))
-}
 
 /// Turns of tool calls then a last answer: a run's figures are its
 /// responses, its calls, and the usage and cost the model reported.
@@ -74,7 +62,7 @@ fn a_runs_figures_are_read_from_its_events(tc: TestCase) {
     let agent = Agent::new(model.clone())
         .model("scripted")
         .plugin(CodingTools::new(Root::new(dir.path().to_owned())));
-    let (metrics, events) = block_on(async {
+    let (metrics, events) = block_on_io(async {
         let store = Store::memory().await.unwrap();
         let mut meter = Meter::new();
         let mut run = agent.start("list files", &store);

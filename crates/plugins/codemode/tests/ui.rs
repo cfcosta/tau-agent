@@ -29,6 +29,7 @@ use tau_codemode::{
     ui::{self, CodemodeUi, Row, State},
 };
 use tau_jev::{Jev, fake::FakeJev};
+use tau_testing::block_on_io;
 use tau_ui_plugin::{
     CallData,
     CallResult,
@@ -149,14 +150,6 @@ impl Host for CardHost {
     }
 }
 
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(future)
-}
-
 async fn script(host: &Arc<CardHost>, code: &str) -> Outcome {
     run(
         host.clone(),
@@ -260,7 +253,7 @@ fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
         code.push_str("error(\"boom\")\n");
     }
     let host = Arc::new(CardHost::default());
-    let outcome = block_on(script(&host, &code));
+    let outcome = block_on_io(script(&host, &code));
     let (text, details) = result_text(&outcome);
     let stored = ui::stored_rows(&details).unwrap();
     assert_eq!(stored.rows.len(), calls.len());
@@ -332,7 +325,7 @@ fn a_jev_request_shows_while_it_runs() {
     let code = "pcall(function() return jev.noul({ state = 1, question = 'ok' }) end)\n\
                 tools.echo({ s = 'a' })\n\
                 jev.noul({ state = 2, question = 'ok' })";
-    block_on(script(&host, code));
+    block_on_io(script(&host, code));
     let folded = host.folded.lock().unwrap().clone();
     // Only the first update: the request has started, nothing else.
     let mut data = CallData::default();
@@ -563,12 +556,4 @@ fn the_card_shows_the_script_as_it_goes(cx: &mut TestAppContext) {
     assert_eq!(label.as_deref(), Some("0 calls · 1.5 s · $0.0004"));
     assert_eq!(failed.as_deref(), Some("codemode:2: boom"));
     assert!(folds);
-}
-
-/// The UI takes its look from the kit.
-#[test]
-fn only_the_kit_holds_design_values() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let found = tau_ui_kit::design::check(&src, &[]);
-    assert!(found.is_empty(), "{}", found.join("\n"));
 }

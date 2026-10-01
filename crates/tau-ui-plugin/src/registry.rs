@@ -499,7 +499,6 @@ mod tests {
         Manifest,
         Point,
         points::{AtApp, AtRun, STATUS},
-        run::CardInfo,
         view::{NavEntry, PluginStatus},
     };
 
@@ -568,46 +567,6 @@ mod tests {
         }
     }
 
-    /// The anchors a fold places, in order.
-    #[derive(Default)]
-    struct Anchors(Vec<String>);
-
-    impl RunCx for Anchors {
-        fn transcript(&mut self, key: &str) {
-            self.0.push(key.to_owned());
-        }
-
-        fn attach(&mut self, _: &str, _: &str) -> bool {
-            false
-        }
-
-        fn dropped(&mut self, _: &str, _: crate::Dropped) -> bool {
-            false
-        }
-
-        fn cut(&mut self, _: &str, _: crate::OutputCut) -> bool {
-            false
-        }
-
-        fn mark(&mut self, _: &str, _: crate::CardMark) -> bool {
-            false
-        }
-
-        fn rewrite(&mut self, _: &str) {}
-
-        fn cards(&self) -> Vec<CardInfo> {
-            Vec::new()
-        }
-
-        fn last_text(&self) -> Option<String> {
-            None
-        }
-
-        fn turn(&self) -> u32 {
-            0
-        }
-    }
-
     /// Folding through the registry is folding the typed state: every
     /// body lands in order, with its anchor, and the state travels as
     /// JSON between bodies. A body the plugin does not read changes
@@ -620,7 +579,7 @@ mod tests {
         let registry = Registry::new().with(Counter);
         let plugin = registry.get("counter").unwrap();
         let mut state = Value::Null;
-        let mut anchors = Anchors::default();
+        let mut anchors = crate::testing::FakeRun::default();
         for body in &bodies {
             let body = match body {
                 Some(n) => json!({ "n": n }),
@@ -634,7 +593,7 @@ mod tests {
             serde_json::from_value(state).unwrap_or_default();
         assert_eq!(folded, kept);
         let keys: Vec<String> = kept.iter().map(|n| format!("n-{n}")).collect();
-        assert_eq!(anchors.0, keys);
+        assert_eq!(anchors.anchors, keys);
     }
 
     /// A contribution to a point nobody declares is reported; one to the

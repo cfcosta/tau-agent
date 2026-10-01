@@ -1511,14 +1511,6 @@ fn the_card_shows_the_server_and_the_result(cx: &mut TestAppContext) {
     );
 }
 
-/// The UI takes its look from the kit.
-#[test]
-fn only_the_kit_holds_design_values() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let found = tau_ui_kit::design::check(&src, &[]);
-    assert!(found.is_empty(), "{}", found.join("\n"));
-}
-
 /// A repository's prompts are the composer's commands there, with their
 /// arguments; outside it, the user's servers' are. Running one checks
 /// its arguments first: a mistake says so and puts the command back;

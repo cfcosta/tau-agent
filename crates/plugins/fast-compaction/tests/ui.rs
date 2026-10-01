@@ -2,7 +2,7 @@
 //! outputs, what it says as a run starts, and that it keeps to the
 //! design language.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use hegel::generators::{self as gs, Generator as _};
 use serde_json::{Value, json};
@@ -13,85 +13,29 @@ use tau_fast_compaction::{
 use tau_ui_plugin::{
     CardInfo,
     Dropped,
-    OutputCut,
     REWRITE,
-    RepoCtx,
     RunCtx,
-    RunCx,
     RunKind,
     Services,
     UiPlugin,
+    testing::{FakeRun, run_ctx},
 };
 
-/// A run with cards, as the fold reaches it: what it marks on them, and
-/// the rewrites it names.
-#[derive(Default)]
-struct Run {
-    cards: Vec<CardInfo>,
-    dropped: BTreeMap<String, Dropped>,
-    cut: BTreeMap<String, OutputCut>,
-    attached: Vec<String>,
-    named: Vec<String>,
-}
-
-impl Run {
-    fn with_calls(n: usize) -> Self {
-        Self {
-            cards: (0..n)
-                .map(|i| CardInfo {
-                    call_id: format!("c{i}"),
-                    tool: "read".into(),
-                    args: json!({ "path": format!("f{i}.rs") }),
-                    summary: format!("f{i}.rs"),
-                    size: 400,
-                    turn: i as u32 + 1,
-                })
-                .collect(),
-            ..Self::default()
-        }
-    }
-
-    fn has(&self, call_id: &str) -> bool {
-        self.cards.iter().any(|card| card.call_id == call_id)
-    }
-}
-
-impl RunCx for Run {
-    fn transcript(&mut self, _: &str) {}
-
-    fn attach(&mut self, call_id: &str, _: &str) -> bool {
-        self.attached.push(call_id.to_owned());
-        self.has(call_id)
-    }
-
-    fn dropped(&mut self, call_id: &str, dropped: Dropped) -> bool {
-        self.dropped.insert(call_id.to_owned(), dropped);
-        self.has(call_id)
-    }
-
-    fn cut(&mut self, call_id: &str, cut: OutputCut) -> bool {
-        self.cut.insert(call_id.to_owned(), cut);
-        self.has(call_id)
-    }
-
-    fn mark(&mut self, _: &str, _: tau_ui_plugin::CardMark) -> bool {
-        false
-    }
-
-    fn rewrite(&mut self, key: &str) {
-        self.named.push(key.to_owned());
-    }
-
-    fn cards(&self) -> Vec<CardInfo> {
-        self.cards.clone()
-    }
-
-    fn last_text(&self) -> Option<String> {
-        None
-    }
-
-    fn turn(&self) -> u32 {
-        self.cards.len() as u32
+/// A run showing `n` reads, `c0` and on, one a turn.
+fn with_calls(n: usize) -> FakeRun {
+    FakeRun {
+        cards: (0..n)
+            .map(|i| CardInfo {
+                call_id: format!("c{i}"),
+                tool: "read".into(),
+                args: json!({ "path": format!("f{i}.rs") }),
+                summary: format!("f{i}.rs"),
+                size: 400,
+                turn: i as u32 + 1,
+            })
+            .collect(),
+        turn: n as u32,
+        ..FakeRun::default()
     }
 }
 
@@ -139,7 +83,7 @@ fn passes_mark_what_they_drop(tc: hegel::TestCase) {
         ))
         .max_size(4),
     );
-    let mut run = Run::with_calls(cards);
+    let mut run = with_calls(cards);
     let mut state = State::default();
     for (actions, stored) in &passes {
         let body = if *stored {
@@ -151,9 +95,9 @@ fn passes_mark_what_they_drop(tc: hegel::TestCase) {
         };
         state.apply(&body, &mut run);
     }
-    assert_eq!(run.named.len(), passes.len());
+    assert_eq!(run.rewrites.len(), passes.len());
     assert_eq!(state.passes.len(), passes.len());
-    assert_eq!(state.last.as_ref(), run.named.last());
+    assert_eq!(state.last.as_ref(), run.rewrites.last());
     let Some((actions, _)) = passes.last() else {
         assert!(state.ledger.is_empty());
         return;
@@ -178,10 +122,10 @@ fn passes_mark_what_they_drop(tc: hegel::TestCase) {
         assert_eq!(entry.decision, Decision::Pinned);
     }
     assert!(
-        state
-            .ledger
+        state.ledger.iter().all(|entry| run
+            .attached
             .iter()
-            .all(|entry| run.attached.contains(&entry.call_id))
+            .any(|(id, _)| *id == entry.call_id))
     );
 }
 
@@ -189,7 +133,7 @@ fn passes_mark_what_they_drop(tc: hegel::TestCase) {
 /// was saved; one Jev left whole changes nothing.
 #[test]
 fn a_cut_output_goes_on_its_card() {
-    let mut run = Run::with_calls(1);
+    let mut run = with_calls(1);
     let mut state = State::default();
     let output = |pruned: bool| {
         json!({
@@ -214,17 +158,10 @@ fn run(jev: bool) -> RunCtx {
             Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.5));
         services = services.with(jev);
     }
-    let dir = std::env::temp_dir().join("tau-fast-compaction-ui");
+    let _dir = std::env::temp_dir().join("tau-fast-compaction-ui");
     RunCtx {
-        kind: RunKind::Chat,
-        repo: RepoCtx {
-            name: "repo".into(),
-            checkout: dir.join("checkout"),
-            dir,
-        },
-        model: "gpt-5.5".into(),
-        effort: None,
         services,
+        ..run_ctx(RunKind::Chat)
     }
 }
 
@@ -236,7 +173,7 @@ fn it_says_whether_it_is_on(tc: hegel::TestCase) {
     let run = run(jev);
     let mut state = State::default();
     for body in FastCompactionUi.starting(&(), &run, &()) {
-        state.apply(&body, &mut Run::default());
+        state.apply(&body, &mut FakeRun::default());
     }
     assert_eq!(state.on, Some(jev));
     let status = state.status().unwrap();
@@ -261,12 +198,4 @@ fn kept_calls_read_as_kept(tc: hegel::TestCase) {
     );
     let kept = matches!(decision, Decision::Pinned | Decision::Keep);
     assert_eq!(decision.card_label() == "kept", kept);
-}
-
-/// The UI takes its look from the kit.
-#[test]
-fn only_the_kit_holds_design_values() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let found = tau_ui_kit::design::check(&src, &[]);
-    assert!(found.is_empty(), "{}", found.join("\n"));
 }

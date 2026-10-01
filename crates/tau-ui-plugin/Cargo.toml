@@ -17,6 +17,10 @@ tau-store.workspace = true
 tau-ui-kit.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 
+[features]
+# Fakes for testing a plugin's UI half: `tau_ui_plugin::testing`.
+testing = []
+
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true

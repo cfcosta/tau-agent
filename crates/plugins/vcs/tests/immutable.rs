@@ -17,21 +17,8 @@ use jj_lib::{
 };
 use pollster::block_on;
 use serde_json::json;
-use tau_agent::{
-    plugin::Plugin,
-    tool::{RunId, ToolCtx, ToolUpdates},
-};
+use tau_agent::{plugin::Plugin, tool::ToolCtx};
 use tau_vcs::{Identity, Vcs, VcsPlugin};
-use tokio_util::sync::CancellationToken;
-
-fn ctx() -> ToolCtx {
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-    ToolCtx::new(
-        CancellationToken::new(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    )
-}
 
 /// Tags the working-copy commit of the workspace at `dir`.
 fn tag_working_copy(dir: &Path) {
@@ -75,16 +62,19 @@ fn writes_refuse_an_immutable_working_copy() {
     tag_working_copy(dir.path());
 
     let describe = find("vcs_describe");
-    let err =
-        tau_testing::block_on(describe.call(json!({"message": "nope"}), ctx()))
-            .unwrap_err()
-            .to_string();
+    let err = tau_testing::block_on(
+        describe.call(json!({"message": "nope"}), ToolCtx::detached()),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.starts_with("The working-copy commit "), "{err}");
     assert!(err.ends_with(" is immutable"), "{err}");
 
     // Reading still works, and shows the flag.
     let log = find("vcs_log");
-    let output = tau_testing::block_on(log.call(json!({}), ctx())).unwrap();
+    let output =
+        tau_testing::block_on(log.call(json!({}), ToolCtx::detached()))
+            .unwrap();
     let details = output.details.unwrap();
     assert_eq!(details["changes"][0]["immutable"], json!(true));
 }

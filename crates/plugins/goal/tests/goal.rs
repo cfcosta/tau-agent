@@ -34,21 +34,7 @@ use tau_goal::{
 };
 use tau_jev::{Answer, JevError, fake::FakeJev};
 use tau_store::{Entry, Store, TurnUsage};
-use tau_testing::scripted::ScriptedModel;
-
-thread_local! {
-    /// The test's runtime. The store needs one with I/O, and an
-    /// in-memory store lives in the runtime that opened it.
-    static RUNTIME: tokio::runtime::Runtime =
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-}
-
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    RUNTIME.with(|runtime| runtime.block_on(future))
-}
+use tau_testing::{block_on_io, scripted::ScriptedModel};
 
 /// A Jev that answers each request with the next probability, and the
 /// last one after that.
@@ -78,7 +64,7 @@ fn agent(llm: &ScriptedModel, jev: FakeJev) -> Agent {
 }
 
 fn records(store: &Store, run: &RunId) -> Vec<Value> {
-    block_on(store.records(&run.0, NAME))
+    block_on_io(store.records(&run.0, NAME))
         .unwrap()
         .iter()
         .map(|body| serde_json::from_str(body).unwrap())
@@ -100,7 +86,7 @@ fn run(
     input: &str,
     resume: Option<&RunId>,
 ) -> (RunId, Vec<RunEvent>, StopReason) {
-    block_on(async {
+    block_on_io(async {
         let mut run = match resume {
             Some(id) => agent.resume(id).start(input, store),
             None => agent.start(input, store),
@@ -206,7 +192,7 @@ fn the_run_goes_on_until_jev_says_the_goal_holds() {
         })
         .turn(|t| t.text("14 passed."));
     let fake = jev(&[0.1, 0.2, 0.9]);
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on_io(Store::memory()).unwrap();
     let agent = agent(&llm, fake.clone());
     let (id, events, stop) =
         run(&agent, &store, "/goal --budget 5 the tests pass", None);
@@ -266,7 +252,7 @@ fn a_goal_stops_when_out_of_continuations_or_budget() {
     let llm = ScriptedModel::new()
         .turn(|t| t.text("tried"))
         .turn(|t| t.text("tried again"));
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on_io(Store::memory()).unwrap();
     let (id, events, _) = run(
         &agent(&llm, jev(&[0.1])),
         &store,
@@ -284,7 +270,7 @@ fn a_goal_stops_when_out_of_continuations_or_budget() {
     let llm = ScriptedModel::new()
         .turn(|t| t.text("tried").cost(0.25))
         .turn(|t| t.text("tried again").cost(0.25));
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on_io(Store::memory()).unwrap();
     let (id, _, _) = run(
         &agent(&llm, jev(&[0.1])),
         &store,
@@ -303,7 +289,7 @@ fn store_record(store: &Store, run: &RunId, record: &Record) {
         plugin: NAME.into(),
         body: record.to_value().to_string(),
     };
-    block_on(store.append_turn(&run.0, &[entry], TurnUsage::default()))
+    block_on_io(store.append_turn(&run.0, &[entry], TurnUsage::default()))
         .unwrap();
 }
 
@@ -315,7 +301,7 @@ fn a_goal_outlives_the_run_and_takes_what_an_interface_stores() {
         .turn(|t| t.text("paused, so no check"))
         .turn(|t| t.text("done"));
     let fake = jev(&[0.1, 0.1, 0.9]);
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on_io(Store::memory()).unwrap();
     let agent = agent(&llm, fake.clone());
     let (id, _, _) =
         run(&agent, &store, "/goal --continuations 1 it works", None);
@@ -357,7 +343,7 @@ fn a_goal_outlives_the_run_and_takes_what_an_interface_stores() {
 fn no_goal_means_no_checks_and_a_failed_check_stops() {
     let llm = ScriptedModel::new().turn(|t| t.text("hello"));
     let fake = jev(&[0.1]);
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on_io(Store::memory()).unwrap();
     let (id, events, _) = run(&agent(&llm, fake.clone()), &store, "hi", None);
     assert!(fake.requests().is_empty());
     assert!(continued(&events).is_empty());
@@ -365,7 +351,7 @@ fn no_goal_means_no_checks_and_a_failed_check_stops() {
 
     let llm = ScriptedModel::new().turn(|t| t.text("hello"));
     let failing = FakeJev::new(|_| Err(JevError::Status(503)));
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on_io(Store::memory()).unwrap();
     let (id, events, stop) =
         run(&agent(&llm, failing), &store, "/goal it works", None);
     assert_eq!(stop, StopReason::Stop);

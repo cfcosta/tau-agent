@@ -18,21 +18,10 @@ use tau_memory_e2e::{
     runner::{Budget, Config, Report, RunKey, Stage, evaluate},
     scenario::{self, Variant},
 };
-use tau_testing::scripted::{Request, ScriptedModel};
-
-thread_local! {
-    /// The tests' runtime: the store needs I/O, memory and the checks a
-    /// blocking pool.
-    static RUNTIME: tokio::runtime::Runtime =
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-}
-
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    RUNTIME.with(|runtime| runtime.block_on(future))
-}
+use tau_testing::{
+    block_on_io,
+    scripted::{Request, ScriptedModel},
+};
 
 /// The scripted model of each run, by arm, variant, trial and stage;
 /// a run without one gets an empty script, which fails at once.
@@ -79,7 +68,8 @@ fn config(
 }
 
 fn run(config: &Config, scripts: &Scripts) -> Report {
-    block_on(evaluate(config, &|key| scripts.model(key), &mut |_| {})).unwrap()
+    block_on_io(evaluate(config, &|key| scripts.model(key), &mut |_| {}))
+        .unwrap()
 }
 
 /// The text of a request's first user message: the plugins' context,

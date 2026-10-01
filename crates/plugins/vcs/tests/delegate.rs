@@ -1,15 +1,16 @@
 //! The `delegate` tool (ADR 0009): a sub-agent works on the caller's
 //! code, its changes land on the caller's stack, and it closes.
 
+mod common;
+
 use std::{
     collections::VecDeque,
-    path::Path,
-    process::Command,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use async_trait::async_trait;
+use common::{coder, project_with};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
@@ -19,40 +20,14 @@ use tau_agent::{
 use tau_ai::responses::request::ReasoningEffort;
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
-use tau_tools::{path::Root, plugin::CodingTools};
 use tau_vcs::{
     Delegate,
     Identity,
     Link,
-    Project,
     RunWorkspace,
-    VcsPlugin,
     delegate::ChildModel,
     run_workspace::{PLUGIN, bookmark},
 };
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-}
-
-fn project(home: &Path) -> Project {
-    let src = home.join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    git(&src, &["init", "--quiet"]);
-    std::fs::write(src.join("README.md"), "hello\n").unwrap();
-    git(&src, &["add", "README.md"]);
-    git(&src, &["commit", "--quiet", "-m", "first"]);
-    Project::import(src.to_str().unwrap(), home.join("p"), Identity::default())
-        .unwrap()
-}
 
 fn commit(message: &str) -> serde_json::Value {
     json!({ "message": message })
@@ -62,22 +37,13 @@ fn write(path: &str) -> serde_json::Value {
     json!({ "path": path, "content": format!("{path}\n") })
 }
 
-/// A coder on `workspace`, as the host builds one.
-fn coder(llm: ScriptedModel, workspace: &RunWorkspace) -> Agent {
-    Agent::new(llm)
-        .name("coder")
-        .plugin(CodingTools::new(Root::new(workspace.dir())))
-        .plugin(VcsPlugin::new(workspace.vcs().clone()))
-        .plugin(workspace.clone())
-}
-
 /// A coder that can delegate, its sub-agents built the same way.
 fn delegating(
     llm: ScriptedModel,
     workspace: &RunWorkspace,
     child: impl Fn(RunWorkspace) -> Result<Agent, ToolError> + Send + Sync + 'static,
 ) -> Agent {
-    coder(llm, workspace).tool(Delegate::new(
+    coder(llm, workspace, true).tool(Delegate::new(
         workspace.clone(),
         Identity::default(),
         &[],
@@ -95,7 +61,7 @@ fn runtime() -> tokio::runtime::Runtime {
 #[test]
 fn a_sub_agent_lands_its_changes_on_the_caller() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -116,7 +82,7 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
                 .unwrap();
         let child_llm = llm.clone();
         let outcome = delegating(llm.clone(), &parent, move |workspace| {
-            Ok(coder(child_llm.clone(), &workspace))
+            Ok(coder(child_llm.clone(), &workspace, true))
         })
         .run("write parent.txt, then delegate child.txt", &store)
         .await
@@ -199,7 +165,7 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
 #[test]
 fn a_sub_agents_leftover_is_described_from_its_task() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -217,7 +183,7 @@ fn a_sub_agents_leftover_is_described_from_its_task() {
                 .unwrap();
         let script = child_llm.clone();
         let outcome = delegating(llm.clone(), &parent, move |workspace| {
-            Ok(coder(script.clone(), &workspace))
+            Ok(coder(script.clone(), &workspace, true))
         })
         .run("hand child.txt to a sub-agent", &store)
         .await
@@ -245,7 +211,7 @@ fn a_sub_agents_leftover_is_described_from_its_task() {
 #[test]
 fn a_failed_sub_agent_is_dropped() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -272,7 +238,7 @@ fn a_failed_sub_agent_is_dropped() {
 #[test]
 fn a_sub_agent_that_fails_leaves_no_changes() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -285,7 +251,7 @@ fn a_sub_agent_that_fails_leaves_no_changes() {
                 .unwrap();
         let child_llm = llm.clone();
         let outcome = delegating(llm.clone(), &parent, move |workspace| {
-            Ok(coder(child_llm.clone(), &workspace))
+            Ok(coder(child_llm.clone(), &workspace, true))
         })
         .run("delegate a write", &store)
         .await
@@ -314,7 +280,7 @@ fn a_sub_agent_that_fails_leaves_no_changes() {
 #[test]
 fn delegating_needs_a_clean_working_copy() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -364,7 +330,7 @@ fn delegating_to(
 ) -> Agent {
     delegating(llm, workspace, move |workspace| {
         let script = scripts.lock().unwrap().pop_front().unwrap();
-        Ok(coder(script, &workspace))
+        Ok(coder(script, &workspace, true))
     })
 }
 
@@ -373,7 +339,7 @@ fn delegating_to(
 #[test]
 fn sub_agents_in_one_batch_both_land() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -409,7 +375,7 @@ fn sub_agents_in_one_batch_both_land() {
 #[test]
 fn a_clashing_sub_agent_lands_its_conflict() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -458,7 +424,7 @@ fn a_clashing_sub_agent_lands_its_conflict() {
 #[test]
 fn a_landing_names_only_the_conflicts_it_brought() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -560,7 +526,7 @@ impl AgentTool for Gauge {
 #[test]
 fn at_most_four_sub_agents_run_at_once() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -583,7 +549,7 @@ fn at_most_four_sub_agents_run_at_once() {
             let script = ScriptedModel::new()
                 .turn(|t| t.tool_call("gauge", json!({})))
                 .turn(|t| t.text("waited"));
-            Ok(coder(script, &workspace).tool(child_gauge.clone()))
+            Ok(coder(script, &workspace, true).tool(child_gauge.clone()))
         })
         .run("fan out", &store)
         .await
@@ -603,7 +569,7 @@ fn at_most_four_sub_agents_run_at_once() {
 #[test]
 fn a_call_can_pick_its_model_and_effort() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -620,14 +586,14 @@ fn a_call_can_pick_its_model_and_effort() {
                 .unwrap();
         let asked = Arc::new(Mutex::new(Vec::new()));
         let seen = asked.clone();
-        let agent = coder(llm.clone(), &parent).tool(Delegate::new(
+        let agent = coder(llm.clone(), &parent, true).tool(Delegate::new(
             parent.clone(),
             Identity::default(),
             &["gpt-5.5".to_owned(), "gpt-5.5-mini".to_owned()],
             move |workspace, model: &ChildModel| {
                 seen.lock().unwrap().push(model.clone());
                 let script = ScriptedModel::new().turn(|t| t.text("ok"));
-                Ok(coder(script, &workspace))
+                Ok(coder(script, &workspace, true))
             },
         ));
         let outcome = agent.run("pick", &store).await.unwrap();
@@ -651,7 +617,7 @@ fn a_call_can_pick_its_model_and_effort() {
 #[test]
 fn a_sub_agent_at_a_limit_lands_its_work() {
     let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
@@ -667,7 +633,7 @@ fn a_sub_agent_at_a_limit_lands_its_work() {
                         .tool_call("vcs_commit", commit("feat: child"))
                 })
                 .turn(|t| t.text("never asked"));
-            Ok(coder(script, &workspace).limits(Limits {
+            Ok(coder(script, &workspace, true).limits(Limits {
                 max_turns: Some(1),
                 ..Limits::default()
             }))

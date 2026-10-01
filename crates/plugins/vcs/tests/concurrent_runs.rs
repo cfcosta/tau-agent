@@ -39,12 +39,11 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    process::Command,
     sync::{Arc, Barrier},
 };
 
 use hegel::{TestCase, generators as gs};
-use tau_testing::block_on;
+use tau_testing::{block_on, git::git};
 use tau_vcs::{DEFAULT_WORKSPACE, Identity, Link, Project, UpdateFrom, Vcs};
 
 /// A file's contents; `None` is no file.
@@ -54,20 +53,6 @@ const VALUES: [Val; 3] = [None, Some("x\n"), Some("y\n")];
 /// Chats made in one case, open or closed.
 const MAX_CHATS: usize = 4;
 const ROOT: &str = "0000000000000000000000000000000000000000";
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "init.defaultBranch=main"])
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {output:?}");
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
 
 fn write(dir: &Path, path: &str, value: Val) {
     let file = dir.join(path);

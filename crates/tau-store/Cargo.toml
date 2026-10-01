@@ -15,3 +15,4 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 hegeltest.workspace = true
+tau-testing.workspace = true

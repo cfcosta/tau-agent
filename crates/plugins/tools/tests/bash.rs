@@ -45,13 +45,9 @@ fn ctx_with_updates() -> (
     CancellationToken,
     mpsc::UnboundedReceiver<(std::sync::Arc<str>, ToolOutput)>,
 ) {
-    let (sender, receiver) = mpsc::unbounded_channel();
+    let (updates, receiver) = ToolUpdates::channel("call_1");
     let cancel = CancellationToken::new();
-    let ctx = ToolCtx::new(
-        cancel.clone(),
-        ToolUpdates::for_tests("call_1", sender),
-        RunId("run_1".into()),
-    );
+    let ctx = ToolCtx::new(cancel.clone(), updates, RunId("run_1".into()));
     (ctx, cancel, receiver)
 }
 

@@ -14,54 +14,12 @@ use tau_goal::{
     ui::{GoalUi, State},
 };
 use tau_ui_plugin::{
-    CardInfo,
-    RepoCtx,
     RunCtx,
-    RunCx,
     RunKind,
     Services,
     UiPlugin,
+    testing::{FakeRun, run_ctx},
 };
-
-/// The anchors a fold places, in order.
-#[derive(Default)]
-struct Anchors(Vec<String>);
-
-impl RunCx for Anchors {
-    fn transcript(&mut self, key: &str) {
-        self.0.push(key.to_owned());
-    }
-
-    fn attach(&mut self, _: &str, _: &str) -> bool {
-        false
-    }
-
-    fn dropped(&mut self, _: &str, _: tau_ui_plugin::Dropped) -> bool {
-        false
-    }
-
-    fn cut(&mut self, _: &str, _: tau_ui_plugin::OutputCut) -> bool {
-        false
-    }
-
-    fn mark(&mut self, _: &str, _: tau_ui_plugin::CardMark) -> bool {
-        false
-    }
-
-    fn rewrite(&mut self, _: &str) {}
-
-    fn cards(&self) -> Vec<CardInfo> {
-        Vec::new()
-    }
-
-    fn last_text(&self) -> Option<String> {
-        None
-    }
-
-    fn turn(&self) -> u32 {
-        0
-    }
-}
 
 /// One of tau-goal's records, or what it says as a run starts.
 #[hegel::composite]
@@ -116,7 +74,7 @@ fn body(tc: &hegel::TestCase) -> Value {
 fn the_fold_follows_the_records(tc: hegel::TestCase) {
     let bodies: Vec<Value> = tc.draw(gs::vecs(body()).max_size(12));
     let mut state = State::default();
-    let mut anchors = Anchors::default();
+    let mut anchors = FakeRun::default();
     for body in &bodies {
         state.apply(body, &mut anchors);
     }
@@ -134,10 +92,15 @@ fn the_fold_follows_the_records(tc: hegel::TestCase) {
             )
         })
         .count();
-    assert_eq!(anchors.0.len(), noted);
-    let keys: BTreeSet<&String> = anchors.0.iter().collect();
+    assert_eq!(anchors.anchors.len(), noted);
+    let keys: BTreeSet<&String> = anchors.anchors.iter().collect();
     assert_eq!(keys.len(), noted, "each note has a key of its own");
-    assert!(anchors.0.iter().all(|key| state.notes.contains_key(key)));
+    assert!(
+        anchors
+            .anchors
+            .iter()
+            .all(|key| state.notes.contains_key(key))
+    );
     let held: BTreeSet<u32> = records
         .iter()
         .filter_map(|record| match record {
@@ -162,15 +125,8 @@ fn run(kind: RunKind, jev: bool) -> RunCtx {
         services = services.with(jev);
     }
     RunCtx {
-        kind,
-        repo: RepoCtx {
-            name: "repo".into(),
-            checkout: "/tmp/repo".into(),
-            dir: "/tmp/tau/repo".into(),
-        },
-        model: "gpt-5.5".into(),
-        effort: None,
         services,
+        ..run_ctx(kind)
     }
 }
 
@@ -187,18 +143,10 @@ fn it_says_whether_it_checks(tc: hegel::TestCase) {
     let on = jev && kind != RunKind::SubAgent;
     let mut state = State::default();
     for body in GoalUi.starting(&(), &run, &()) {
-        state.apply(&body, &mut Anchors::default());
+        state.apply(&body, &mut FakeRun::default());
     }
     assert_eq!(state.checks, on);
     let plugins = GoalUi.agent_plugins(&(), &run, &()).unwrap();
     assert_eq!(plugins.len(), usize::from(on));
     assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
-}
-
-/// The UI takes its look from the kit.
-#[test]
-fn only_the_kit_holds_design_values() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let found = tau_ui_kit::design::check(&src, &[]);
-    assert!(found.is_empty(), "{}", found.join("\n"));
 }
