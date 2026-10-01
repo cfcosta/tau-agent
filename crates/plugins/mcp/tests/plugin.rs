@@ -162,10 +162,10 @@ impl AgentTool for Caller {
         let name = args["name"].as_str().unwrap();
         let result = match ctx.call(name, args["args"].clone()).await {
             Ok(output) => {
-                json!({"ok": text(&output.content), "structured": output.structured})
+                json!({"ok": text(&output.content), "structured": output.structured, "details": output.details})
             }
             Err(ToolError::Output(output)) => {
-                json!({"err": text(&output.content), "structured": output.structured})
+                json!({"err": text(&output.content), "structured": output.structured, "details": output.details})
             }
             Err(error) => json!({"err": error.to_string()}),
         };
@@ -219,7 +219,7 @@ async fn direct_tools_are_declared_and_called_by_the_model() {
 
 /// Codemode tools are not declared, and the model cannot call them, but
 /// a tool calls them through the loop and gets the structured result,
-/// an `isError` one included. The namespace carries the server's
+/// an `isError` one included; the call's details carry it for its card. The namespace carries the server's
 /// description and instructions.
 #[tokio::test(flavor = "multi_thread")]
 async fn codemode_tools_are_called_from_tools_only() {
@@ -256,6 +256,15 @@ async fn codemode_tools_are_called_from_tools_only() {
             "isError": false
         })
     );
+    // The call's details name it for its card, with its hints and the
+    // structured result.
+    let details = &nested["result"]["details"];
+    assert_eq!(
+        (&details["server"], &details["tool"]),
+        (&json!("srv"), &json!("echo"))
+    );
+    assert_eq!(details["annotations"]["readOnlyHint"], json!(true));
+    assert_eq!(details["structuredContent"], json!({"echo": "nested"}));
     assert_eq!(
         nested["namespaces"],
         json!([{

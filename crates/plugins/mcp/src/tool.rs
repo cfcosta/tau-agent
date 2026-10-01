@@ -11,14 +11,19 @@ use crate::{
     results::{Spill, map_result},
 };
 
+/// The most bytes of a result's `structuredContent`, as JSON, a call's
+/// `details` keep for its card: as much text as the model gets. Past it,
+/// the card shows the text; scripts get the whole value either way.
+pub const DETAILS_STRUCTURED_LIMIT: usize = crate::results::TEXT_LIMIT;
+
 /// An MCP server's tool. Its name is `mcp__<server>__<tool>`
 /// ([`crate::names`]); calls go through the server's [`Connection`],
 /// which connects again when it dropped and never sends a call twice.
 ///
 /// The tool's MCP hints are kept in [`McpTool::annotations`], and every
 /// call's `details` carry them too, as
-/// `{ "server", "tool", "annotations": { "readOnlyHint", ... } }`, for
-/// the constitution and the interface.
+/// `{ "server", "tool", "annotations": { "readOnlyHint", ... },
+/// "structuredContent"? }`, for the constitution and the interface.
 #[derive(Clone)]
 pub struct McpTool {
     name: String,
@@ -85,12 +90,24 @@ impl McpTool {
         &self.info.annotations
     }
 
-    fn details(&self) -> Value {
-        json!({
+    /// What every call's `details` carry: the server, the tool, its
+    /// hints, and the result's `structuredContent` when it has one that
+    /// fits in [`DETAILS_STRUCTURED_LIMIT`], for the call's card.
+    fn details(&self, structured: Option<&Value>) -> Value {
+        let mut details = json!({
             "server": self.server(),
             "tool": self.info.name,
             "annotations": self.info.annotations,
-        })
+        });
+        if let Some(content) = structured
+            .and_then(|result| result.get("structuredContent"))
+            .filter(|content| {
+                content.to_string().len() <= DETAILS_STRUCTURED_LIMIT
+            })
+        {
+            details["structuredContent"] = content.clone();
+        }
+        details
     }
 }
 
@@ -202,7 +219,7 @@ impl AgentTool for McpTool {
                     &self.spill,
                 );
                 let mut output = mapped.output;
-                output.details = Some(self.details());
+                output.details = Some(self.details(output.structured.as_ref()));
                 if mapped.is_error {
                     Err(ToolError::output(output))
                 } else {

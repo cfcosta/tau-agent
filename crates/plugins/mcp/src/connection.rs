@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -79,7 +79,9 @@ pub struct Status {
 
 /// The MCP hints a tool gives about itself, kept for the constitution
 /// and the interface. `None` is a hint the tool did not give.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct Annotations {
     #[serde(rename = "readOnlyHint", skip_serializing_if = "Option::is_none")]
