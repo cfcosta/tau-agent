@@ -30,8 +30,11 @@
 //! trunk's files are the model's: the main chat's, upstream's, and the
 //! landed chats'.
 //!
-//! Races that break these are pinned below as ignored examples, and the
-//! property does not draw them; each restriction names its example.
+//! The races it found are examples below, each one shrunk to its steps,
+//! with what went wrong before the fix. The landing and the drop follow
+//! the host as it is now: the chat's head is read after the main chat's
+//! catch-up, and a drop catches up and keeps what the main chat's `@`
+//! stands on.
 
 use std::{
     collections::BTreeMap,
@@ -395,19 +398,21 @@ impl Model {
                 let name = self.chats[c].name.clone();
                 Box::new(move || {
                     let bookmark = format!("tau/{name}");
+                    // As `Host::drop_child`: the main chat catches up,
+                    // and keeps what its working copy stands on.
+                    catch_up(&project)?;
                     let head = project
                         .bookmark(&bookmark)
                         .map_err(|e| e.to_string())?;
                     if let Some(head) = head {
-                        let keep = match project
-                            .bookmark(&trunk_name)
+                        let wc = project
+                            .workspace_head(DEFAULT_WORKSPACE)
                             .map_err(|e| e.to_string())?
-                        {
-                            Some(keep) => keep,
-                            None => {
-                                project.trunk().map_err(|e| e.to_string())?
-                            }
-                        };
+                            .ok_or("the main chat has no working copy")?;
+                        let keep = project
+                            .parent_of(&wc)
+                            .map_err(|e| e.to_string())?
+                            .ok_or("the main chat's @ has no parent")?;
                         project
                             .abandon_between(&keep, &head)
                             .map_err(|e| format!("abandon: {e}"))?;
@@ -581,7 +586,10 @@ impl Model {
                     self.last_change = self.latest.clone();
                 }
             }
-            MainAct::Drop(c) => self.chats[c].state = State::Dropped,
+            MainAct::Drop(c) => {
+                self.behind = false;
+                self.chats[c].state = State::Dropped;
+            }
         }
         match host {
             HostAct::Idle => {}
@@ -773,10 +781,7 @@ fn draw_round(
         let chat = tc.draw(gs::sampled_from(landable));
         mains.extend([MainAct::Land(chat), MainAct::Land(chat)]);
     }
-    // A drop after an update, before the main chat catches up, abandons
-    // the main chat's own commits:
-    // `dropping_a_chat_after_an_update_abandons_the_main_chats_commits`.
-    if !open.is_empty() && !m.behind {
+    if !open.is_empty() {
         mains.push(MainAct::Drop(tc.draw(gs::sampled_from(open.clone()))));
     }
     let main = tc.draw(gs::sampled_from(mains));
@@ -883,7 +888,7 @@ fn events(
         }
         _ => {}
     }
-    if m.behind && !matches!(main, MainAct::Idle | MainAct::Drop(_)) {
+    if m.behind && main != MainAct::Idle {
         if m.open_chats().is_empty() {
             tc.event("a catch-up after an update");
         } else {
@@ -939,8 +944,7 @@ fn side_by_side(tc: TestCase) {
     m.finish();
 }
 
-// Races that break the property, pinned as examples. Each is a decision
-// for the host or for how tau-vcs serializes its operations.
+// The races the property found, one example each.
 
 /// Runs `a` and `b` at once and fails on either's error.
 fn race(a: (&str, Job), b: (&str, Job)) {
@@ -1101,26 +1105,16 @@ fn an_update_during_a_main_chat_turn_keeps_upstream_on_trunk() {
     );
 }
 
-/// Dropping a chat after an update, before the main chat catches up,
-/// abandons the main chat's own commits, and its committed work leaves
-/// its workspace.
+/// Dropping a chat after an update, as `Host::drop_child` does it,
+/// abandons only the chat's own commit: the main chat catches up first
+/// and keeps what its working copy stands on.
 ///
-/// `Host::drop_child` abandons what the chat's head has that its
-/// parent's bookmark lacks (`Project::abandon_between`). The main chat's
-/// bookmark is trunk's, and the update moved it to upstream's commit,
-/// which lacks the main chat's commits under the chat. So they are
-/// abandoned with the chat's, the main chat's `@` moves onto their
-/// parent, and its next tool deletes their files. No race is needed;
-/// this is `drop_child`'s sequence after an update, which the
-/// sequential model does not reach (it keeps the main chat's head, not
-/// trunk's bookmark).
-///
-/// Fix options, in tau-ui: catch the main chat up before dropping one of
-/// its chats, as `Host::land` does; or keep what the main chat's
-/// workspace stands on (`@`'s parent) rather than its bookmark.
+/// The host used to keep only what trunk's bookmark had. After an update
+/// that is upstream's commit, which lacks the main chat's commits under
+/// the chat, so they were abandoned with the chat's, and the main chat's
+/// committed work left its workspace on its next tool.
 #[test]
-#[ignore = "bug: dropping a chat after an update abandons the main chat's commits"]
-fn dropping_a_chat_after_an_update_abandons_the_main_chats_commits() {
+fn dropping_a_chat_after_an_update_keeps_the_main_chats_commits() {
     let repo = Repo::new();
     write(&repo.main_dir(), "main.txt", Some("x\n"));
     let main =
@@ -1128,17 +1122,21 @@ fn dropping_a_chat_after_an_update_abandons_the_main_chats_commits() {
             .unwrap();
     let chat = repo.project.add_workspace("c0", &main.commit_id).unwrap();
     write(&repo.project.workspace_dir("c0"), "chat0.txt", Some("x\n"));
-    let head = block_on(chat.commit_all("chat turn", "tau/c0")).unwrap();
+    block_on(chat.commit_all("chat turn", "tau/c0")).unwrap();
     repo.push_upstream(Some("x\n"));
     repo.project
         .update(UpdateFrom::Checkout(&repo.src()))
         .unwrap();
     // `Host::drop_child`.
-    let keep = repo.project.bookmark(&repo.trunk_name).unwrap().unwrap();
-    let dropped = repo
+    catch_up(&repo.project).unwrap();
+    let head = repo.project.bookmark("tau/c0").unwrap().unwrap();
+    let wc = repo
         .project
-        .abandon_between(&keep, &head.commit_id)
+        .workspace_head(DEFAULT_WORKSPACE)
+        .unwrap()
         .unwrap();
+    let keep = repo.project.parent_of(&wc).unwrap().unwrap();
+    let dropped = repo.project.abandon_between(&keep, &head).unwrap();
     assert_eq!(dropped, 1, "only the chat's own commit goes");
     block_on(repo.main.working_copy()).unwrap();
     assert_eq!(read(&repo.main_dir(), "main.txt").as_deref(), Some("x\n"));

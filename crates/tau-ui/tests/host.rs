@@ -683,6 +683,7 @@ fn a_fork_lands_on_its_parent_and_closes() {
 struct AfterUpdate {
     host: Host,
     project: Project,
+    main_dir: std::path::PathBuf,
     chat: tau_agent::tool::RunId,
     _dirs: (tempfile::TempDir, tempfile::TempDir),
 }
@@ -717,6 +718,7 @@ fn a_chat_after_an_update() -> AfterUpdate {
     let main = on_main(&host, "write a");
     until_end(&mut events);
     wait_until_done(&host, &main);
+    let main_dir = host.workspace(&main).unwrap();
     let chat = host
         .fork(&main, None, "write c", &ModelChoice::default())
         .unwrap();
@@ -732,6 +734,7 @@ fn a_chat_after_an_update() -> AfterUpdate {
     AfterUpdate {
         host,
         project,
+        main_dir,
         chat: chat.id,
         _dirs: (src, repos),
     }
@@ -750,6 +753,25 @@ fn a_chat_lands_after_an_update() {
     for file in ["README.md", "NEW.md", "a.txt", "c.txt"] {
         let at = after.project.file_at(&trunk, file).unwrap();
         assert!(at.is_some(), "{file}");
+    }
+}
+
+/// A chat dropped after an update, before the main chat caught up,
+/// takes only its own commits. `Host::drop_child` used to keep only what
+/// trunk's bookmark had, upstream's commit, and so abandoned the main
+/// chat's commit too, and its files left the main chat's workspace.
+#[test]
+fn a_chat_drops_after_an_update() {
+    let after = a_chat_after_an_update();
+    after.host.drop_child(&after.chat).unwrap();
+    for file in ["a.txt", "NEW.md"] {
+        assert!(after.main_dir.join(file).exists(), "{file}");
+    }
+    assert!(!after.main_dir.join("c.txt").exists());
+    let trunk = after.project.trunk().unwrap();
+    for file in ["NEW.md", "a.txt"] {
+        let at = after.project.file_at(&trunk, file).unwrap();
+        assert!(at.is_some(), "{file} on trunk");
     }
 }
 

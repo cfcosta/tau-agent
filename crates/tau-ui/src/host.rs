@@ -1712,12 +1712,26 @@ impl Host {
             }
         }
         let project = self.slot_of_run(child)?.project()?;
+        // A main chat catches up with trunk first, as for a landing, and
+        // keeps what its working copy stands on: its commits that an
+        // update moved trunk past are its own, not the child's.
+        let main = self.is_main(&parent);
+        if main {
+            self.catch_up(&project, DEFAULT_WORKSPACE)?;
+        }
         if let Some(head) = project.bookmark(&bookmark(child))? {
-            let keep = match project
-                .bookmark(&self.bookmark_of(&parent, &project)?)?
-            {
+            let stands_on = match project.workspace_head(DEFAULT_WORKSPACE)? {
+                Some(wc) if main => project.parent_of(&wc)?,
+                _ => None,
+            };
+            let keep = match stands_on {
                 Some(keep) => keep,
-                None => project.trunk()?,
+                None => match project
+                    .bookmark(&self.bookmark_of(&parent, &project)?)?
+                {
+                    Some(keep) => keep,
+                    None => project.trunk()?,
+                },
             };
             project.abandon_between(&keep, &head)?;
         }

@@ -434,6 +434,11 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
 - `Host::drop_child` closes a child without landing it: its own
   changes (what its head has that its parent's lacks) are abandoned
   with `Project::abandon_between`, and its workspace and bookmark go.
+  A main chat catches up with trunk first, and what it keeps is what
+  its working copy stands on, not trunk's bookmark: an update may have
+  moved trunk past the main chat's own commits under the child.
+  `Host::land` catches a main chat up first too, and reads the child's
+  head after, since the catch-up restacks the child.
   The operation log keeps what was abandoned.
 - A child cannot land or be dropped while it has children still open:
   running, or holding changes it does not have. They land or are
