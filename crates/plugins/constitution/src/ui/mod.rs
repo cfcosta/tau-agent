@@ -67,8 +67,10 @@ pub struct ConstitutionUi;
 /// The plugin on the host: each repository's rules as runs check them,
 /// and where it keeps what a person looked at.
 pub struct Host {
-    /// The plugin's own database, opened when first needed.
+    /// The plugin's own database, opened when first needed, by one
+    /// thread at a time: two opening it at once would both migrate it.
     db: OnceLock<Db>,
+    opening: Mutex<()>,
     path: PathBuf,
     runtime: tokio::runtime::Handle,
     /// By [`rules_key`]: an edit replaces them here, and every run's
@@ -423,6 +425,10 @@ impl Host {
         if let Some(db) = self.db.get() {
             return Ok(db);
         }
+        let _opening = self.opening.lock().expect("not poisoned");
+        if let Some(db) = self.db.get() {
+            return Ok(db);
+        }
         let db = self.runtime.block_on(Db::open(&self.path))?;
         Ok(self.db.get_or_init(|| db))
     }
@@ -752,6 +758,7 @@ impl PluginHost for Host {
     fn new(cx: &HostCx) -> anyhow::Result<Self> {
         Ok(Host {
             db: OnceLock::new(),
+            opening: Mutex::default(),
             path: cx.plugin_dir(NAME).join("constitution.db"),
             runtime: cx.runtime.clone(),
             constitutions: Mutex::default(),

@@ -130,6 +130,11 @@ impl Host {
         }
     }
 
+    /// Where `plugin` keeps its own files on this host.
+    pub fn plugin_dir(&self, plugin: &str) -> PathBuf {
+        self.host_cx().plugin_dir(plugin)
+    }
+
     /// The saved settings of `plugin`, or its defaults.
     pub(super) fn plugin_settings(
         &self,

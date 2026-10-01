@@ -63,16 +63,6 @@ fn host_on(
 
 /// [`host_on`] over a store in the file `db`, which a test can open
 /// again to look into.
-/// tau-constitution's own database, under the test hosts' directory.
-fn rules_db() -> std::path::PathBuf {
-    fresh_repo_list()
-        .parent()
-        .unwrap()
-        .join("plugins")
-        .join(tau_constitution::NAME)
-        .join("constitution.db")
-}
-
 fn host_with_store(
     llm: ScriptedModel,
     root: &Path,
@@ -121,11 +111,15 @@ fn test_account() -> tau_ai::chatgpt::AccountId {
 fn fresh_repo_list() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU32, Ordering};
     static COUNT: AtomicU32 = AtomicU32::new(0);
-    std::env::temp_dir().join(format!(
-        "tau-ui-repos-{}-{}.json",
+    // A directory of its own: a host keeps its plugins' files next to
+    // its repositories, and tests must not share them.
+    let dir = std::env::temp_dir().join(format!(
+        "tau-ui-host-{}-{}",
         std::process::id(),
         COUNT.fetch_add(1, Ordering::Relaxed)
-    ))
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join("repos.json")
 }
 
 /// Receives until `RunEnd`, with a timeout so a hang fails the test.
@@ -1379,7 +1373,9 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
         .unwrap()
         .display()
         .to_string();
-    let rules_db = rules_db();
+    let rules_db = host
+        .plugin_dir(tau_constitution::NAME)
+        .join("constitution.db");
     let open = || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1471,6 +1467,9 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
         .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.95)));
     // What the store holds for the repository, as a run would read it.
     let root = host.project_of(REPO).unwrap().root().to_owned();
+    let rules_db = host
+        .plugin_dir(tau_constitution::NAME)
+        .join("constitution.db");
     let stored = || {
         let key = root.canonicalize().unwrap().display().to_string();
         tokio::runtime::Builder::new_current_thread()
@@ -1479,7 +1478,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             .unwrap()
             .block_on(async {
                 let db =
-                    tau_constitution::db::Db::open(rules_db()).await.unwrap();
+                    tau_constitution::db::Db::open(&rules_db).await.unwrap();
                 tau_constitution::Constitution::load(&db, &key).await
             })
             .unwrap()
