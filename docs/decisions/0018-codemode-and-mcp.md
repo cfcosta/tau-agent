@@ -26,9 +26,9 @@ turn, and every result goes into the transcript.
 
 ### Two plugin crates
 
-- **`tau-mcp`** (`crates/plugins/mcp`): connects to MCP servers and
+- **`tau-mcp`** (`crates/plugins/tau-mcp`): connects to MCP servers and
   adds their tools. Its reference is [mcp.md](../reference/mcp.md).
-- **`tau-codemode`** (`crates/plugins/codemode`): the `codemode`
+- **`tau-codemode`** (`crates/plugins/tau-codemode`): the `codemode`
   tool, a Luau sandbox that calls any callable tool, MCP tools
   included, and asks Jev. Its reference is
   [codemode.md](../reference/codemode.md).

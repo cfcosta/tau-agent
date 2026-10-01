@@ -226,7 +226,7 @@ Derive the return type from `output_schema` when the server sends one, and use `
   - The `buildRustPackage` for tau-ui uses stdenv, which has a C++ compiler, so the Nix package build is fine too.
 - **tokio**: the workspace enables `macros, rt, sync, time`. rmcp's child-process transport adds `process` and `io-util`, which is fine for a plugin crate.
 - **Send**: tau's tools need Send futures, so use mlua's `send` feature (see above).
-- Per decision 0017 ("plugins bring their UI"), the plugin crate (crates/plugins/mcp or codemode) has to ship its own UI pieces. That does not affect the library choice.
+- Per decision 0017 ("plugins bring their UI"), the plugin crate (crates/plugins/tau-mcp or codemode) has to ship its own UI pieces. That does not affect the library choice.
 
 ## Sources
 

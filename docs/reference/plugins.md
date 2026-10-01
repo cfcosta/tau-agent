@@ -327,7 +327,7 @@ start run
 
 Three of the four plugins ask Jev (TypeSafe's System One model) for
 decisions, so the client is its own small crate, not code copied three
-times. It is built: `crates/plugins/jev`. Plugins take an `impl Jev`
+times. It is built: `crates/plugins/tau-jev`. Plugins take an `impl Jev`
 (the trait), so tests answer with `tau_jev::fake::FakeJev` and
 production uses the HTTP client, `tau_jev::TypeSafe`.
 
@@ -407,7 +407,7 @@ Token estimates and overflow detection, which the loop uses for
 
 ### `tau-reasoning`: reasoning effort per job
 
-Built: `crates/plugins/reasoning`. Runs whose effort is "auto" get
+Built: `crates/plugins/tau-reasoning`. Runs whose effort is "auto" get
 it in tau-ui when a TypeSafe key is saved; its choice (every level's
 probability, the confidence and the threshold) is reported and
 recorded, and shows as the run's reasoning note and plan. The Models
@@ -576,7 +576,7 @@ Research and the reasons behind these choices:
   - Retrieval and interference run today: `cargo run --release -p
 tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
     for BM25 alone, `--json PATH` for the rows). The corpus is
-    `crates/plugins/memory/eval/harbor.toml`, synthetic facts about a
+    `crates/plugins/tau-memory/eval/harbor.toml`, synthetic facts about a
     made-up service. Every level holds the same number of notes, so only
     the near-duplicates per answer change.
   - The end-to-end tasks run with `cargo run --release -p tau-memory-e2e`
@@ -587,7 +587,7 @@ tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
     - Access is a saved ChatGPT sign-in with plan usage: `--chatgpt ID`,
       or tau's active account. The model defaults to tau-ui's. Without
       a sign-in, nothing runs.
-    - Five scenarios in `crates/evals/memory-e2e`, each a small bash
+    - Five scenarios in `crates/evals/tau-memory-e2e`, each a small bash
       repository made in a temporary directory. The first run finds a
       fact by doing a task (the suite needs an environment variable,
       code is generated, settings keys take a prefix, a release touches
@@ -617,7 +617,7 @@ tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
 
 ### `tau-constitution`: rules checked on specific calls
 
-Built: `crates/plugins/constitution`. Its reference is
+Built: `crates/plugins/tau-constitution`. Its reference is
 [constitution.md](constitution.md).
 
 - **Seams:** `before_tool`, optionally `before_stop`.
@@ -646,7 +646,7 @@ Built: `crates/plugins/constitution`. Its reference is
 
 ### `tau-fast-compaction`: prune stale tool history
 
-Built: `crates/plugins/fast-compaction`. Its reference is
+Built: `crates/plugins/tau-fast-compaction`. Its reference is
 [fast-compaction.md](fast-compaction.md).
 
 - **Seams:** `rewrite_context` (both triggers), `start` to restore
@@ -677,7 +677,7 @@ Built: `crates/plugins/fast-compaction`. Its reference is
 
 ### `tau-goal`: keep going until a goal holds
 
-Built: `crates/plugins/goal`. Its reference is [goal.md](goal.md).
+Built: `crates/plugins/tau-goal`. Its reference is [goal.md](goal.md).
 
 - **Seams:** `start` (a `/goal` input sets the goal),
   `after_tool_result` (the latest results, as evidence), `on_event`
@@ -698,7 +698,7 @@ Built: `crates/plugins/goal`. Its reference is [goal.md](goal.md).
 2. `Agent` builds each run's settings from its `RunPlan`, not from the
    agent directly.
 3. Compaction moves behind `rewrite_context`, into its own crate,
-   `tau-compaction` (`crates/plugins/compaction`); an agent adds it with
+   `tau-compaction` (`crates/plugins/tau-compaction`); an agent adds it with
    `Agent::plugin` ([0006](../decisions/0006-plugin-crates.md)).
 4. `tau-store`:
    - a `context` entry kind, which replaces `compaction`;

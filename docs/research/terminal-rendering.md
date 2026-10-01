@@ -18,7 +18,7 @@ alternatives. It ends with a recommendation and a staged plan.
 
 ## What tau does today
 
-- `tau_tools::bash` (`crates/plugins/tools/src/bash.rs`) runs
+- `tau_tools::bash` (`crates/plugins/tau-tools/src/bash.rs`) runs
   `$SHELL -c <command>` with `stdin` set to null and `stdout`/`stderr`
   on pipes. The child sees no TTY, so most programs turn colors and
   progress bars off.

@@ -23,12 +23,12 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
-tau-codemode = { path = "../plugins/codemode", default-features = false }
+tau-codemode = { path = "../plugins/tau-codemode", default-features = false }
 tau-compaction.workspace = true
 tau-constitution.workspace = true
-tau-ask = { path = "../plugins/ask", default-features = false }
+tau-ask = { path = "../plugins/tau-ask", default-features = false }
 tau-goal.workspace = true
-tau-mcp = { path = "../plugins/mcp", default-features = false }
+tau-mcp = { path = "../plugins/tau-mcp", default-features = false }
 tau-memory.workspace = true
 tau-reasoning.workspace = true
 tau-remote.workspace = true
@@ -36,12 +36,12 @@ tau-fast-compaction.workspace = true
 tau-store.workspace = true
 # `bash` cards draw their output as a terminal
 # (docs/decisions/0010-terminal-rendering.md).
-tau-tools = { path = "../plugins/tools", default-features = false, features = [
+tau-tools = { path = "../plugins/tau-tools", default-features = false, features = [
   "terminal",
 ] }
 # Draws those commands' terminals.
 tau-terminal.workspace = true
-tau-vcs = { path = "../plugins/vcs", default-features = false }
+tau-vcs = { path = "../plugins/tau-vcs", default-features = false }
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 futures-util.workspace = true

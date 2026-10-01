@@ -1,6 +1,6 @@
 # Codemode (`tau-codemode`)
 
-- Status: built (`crates/plugins/codemode`): the engine, behind a
+- Status: built (`crates/plugins/tau-codemode`): the engine, behind a
   `Host` trait, the `Codemode` plugin that wires it to `ToolCtx::call`,
   and its interface, `CodemodeUi` (a `UiPlugin`, after
   [0017](../decisions/0017-plugins-bring-their-ui.md)), registered in

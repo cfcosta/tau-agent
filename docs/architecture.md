@@ -21,14 +21,19 @@ tau-agent/
 │   ├── tau-terminal/ # libghostty-vt terminal, PTY command runner,
 │   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
 │   └── plugins/
-│       ├── ask/              # tau-ask: the agent asks the person; the panel in the
-│       │                     # composer's place (ADR 0019)
-│       ├── codemode/         # tau-codemode: Luau scripts that call tools and Jev
-│       ├── compaction/       # tau-compaction: summarizing compaction
-│       ├── fast-compaction/  # tau-fast-compaction: Jev-driven pruning of tool history
-│       ├── jev/              # tau-jev: TypeSafe's Jev client, for plugins
-│       ├── mcp/              # tau-mcp: MCP servers' tools (rmcp), the Servers page
-│       └── tools/            # tau-tools: read, bash, edit, write, grep, find, ls
+│       ├── tau-ask/              # the agent asks the person; the panel in the
+│       │                         # composer's place (ADR 0019)
+│       ├── tau-codemode/         # Luau scripts that call tools and Jev
+│       ├── tau-compaction/       # summarizing compaction
+│       ├── tau-constitution/     # a repository's rules, checked with Jev
+│       ├── tau-fast-compaction/  # Jev-driven pruning of tool history
+│       ├── tau-goal/             # keeps a chat going until its /goal holds
+│       ├── tau-jev/              # TypeSafe's Jev client, for plugins
+│       ├── tau-mcp/              # MCP servers' tools (rmcp), the Servers page
+│       ├── tau-memory/           # linked notes each repository's runs keep
+│       ├── tau-reasoning/        # picks a run's reasoning effort
+│       ├── tau-tools/            # read, bash, edit, write, grep, find, ls
+│       └── tau-vcs/              # version control on jj-lib, and landing runs
 └── docs/
 ```
 

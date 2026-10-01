@@ -344,7 +344,7 @@ keeps jj work off tokio's worker threads.
 
 ## The `tau-vcs` plugin
 
-A crate at `crates/plugins/vcs`, named `tau-vcs`, per
+A crate at `crates/plugins/tau-vcs`, named `tau-vcs`, per
 [0006](../decisions/0006-plugin-crates.md). It depends on `tau-agent`
 and `jj-lib`, and nothing depends on it except the app.
 

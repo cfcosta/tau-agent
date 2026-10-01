@@ -1,7 +1,7 @@
 # tau-ask
 
 The agent asks the person one to four questions and waits for the
-answers. Crate: `crates/plugins/ask`. Decision:
+answers. Crate: `crates/plugins/tau-ask`. Decision:
 [0019](../decisions/0019-ask-the-person.md).
 
 ## The tool

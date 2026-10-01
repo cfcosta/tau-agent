@@ -1,6 +1,6 @@
 # MCP servers (`tau-mcp`)
 
-- Status: built in `crates/plugins/mcp` (`tau-mcp`), with its
+- Status: built in `crates/plugins/tau-mcp` (`tau-mcp`), with its
   interface: `McpUi`, a `UiPlugin`
   ([0017](../decisions/0017-plugins-bring-their-ui.md)) that tau-ui
   registers ("The interface"). Decided in
@@ -737,7 +737,7 @@ server after the files and settings: an in-process one through
 
 ## Against real servers
 
-`crates/plugins/mcp/examples/live.rs` checks tau-mcp and tau-codemode
+`crates/plugins/tau-mcp/examples/live.rs` checks tau-mcp and tau-codemode
 against real MCP servers. Node, uv and git come from nixpkgs:
 
 ```sh

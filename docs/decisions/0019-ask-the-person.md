@@ -1,6 +1,6 @@
 # 0019: The agent asks the person, in the composer's place
 
-- Status: accepted. Built: `tau-ask` (`crates/plugins/ask`) and the
+- Status: accepted. Built: `tau-ask` (`crates/plugins/tau-ask`) and the
   `COMPOSER` point in `tau-ui-plugin`, which `tau-ui` draws in place of
   the composer. Reference: [ask.md](../reference/ask.md).
 - Date: 2026-10-01

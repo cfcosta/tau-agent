@@ -49,15 +49,15 @@ jobs:
             --file crates/tau-agent/src/agent.rs \
             --file crates/tau-agent/src/validation.rs \
             --file crates/tau-agent/src/schema.rs \
-            --file crates/plugins/compaction/src/lib.rs \
-            --file crates/plugins/compaction/src/plugin.rs \
-            --file crates/plugins/fast-compaction/src/state.rs \
-            --file crates/plugins/fast-compaction/src/decide.rs \
-            --file crates/plugins/fast-compaction/src/ledger.rs \
-            --file crates/plugins/fast-compaction/src/lib.rs \
-            --file crates/plugins/jev/src/lib.rs \
-            --file crates/plugins/tools/src/edit.rs \
-            --file crates/plugins/tools/src/truncate.rs \
+            --file crates/plugins/tau-compaction/src/lib.rs \
+            --file crates/plugins/tau-compaction/src/plugin.rs \
+            --file crates/plugins/tau-fast-compaction/src/state.rs \
+            --file crates/plugins/tau-fast-compaction/src/decide.rs \
+            --file crates/plugins/tau-fast-compaction/src/ledger.rs \
+            --file crates/plugins/tau-fast-compaction/src/lib.rs \
+            --file crates/plugins/tau-jev/src/lib.rs \
+            --file crates/plugins/tau-tools/src/edit.rs \
+            --file crates/plugins/tau-tools/src/truncate.rs \
             --file crates/tau-store/src/lib.rs
       - uses: actions/upload-artifact@v4
         if: always()

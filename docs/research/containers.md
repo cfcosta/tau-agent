@@ -3,7 +3,7 @@
 - Status: research. Nothing here is built.
 - Date: 2026-09-28
 
-Today the coding tools in `tau-tools` (`crates/plugins/tools`) run on
+Today the coding tools in `tau-tools` (`crates/plugins/tau-tools`) run on
 the host, as the user. `bash` spawns `/bin/bash -c <command>` in the
 tool's root directory. `read`, `write`, `edit`, `grep`, `find` and `ls`
 run in-process. A model that runs `rm -rf ~`, reads `~/.ssh`, or sends
@@ -553,7 +553,7 @@ How it plugs into the existing seams:
    `$HOME`), `--unshare-net` for `Network::None`, and a seccomp filter
    built with `seccompiler`. Probe at `open`: if user namespaces are
    blocked (Ubuntu's AppArmor rule), fail with a message that names the
-   fix. Tests: the `bash` tests in `crates/plugins/tools/tests/bash.rs`
+   fix. Tests: the `bash` tests in `crates/plugins/tau-tools/tests/bash.rs`
    run under both providers, plus escape tests (write outside the
    project, `connect` to a socket in `/run`, a `setsid` child that must
    die on timeout).

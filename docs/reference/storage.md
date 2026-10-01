@@ -207,8 +207,8 @@ queries too:
 
 ```sh
 sqlx database setup --source crates/tau-store/migrations
-sqlx migrate run --ignore-missing --source crates/plugins/constitution/migrations
-(cd crates/plugins/constitution && cargo sqlx prepare)
+sqlx migrate run --ignore-missing --source crates/plugins/tau-constitution/migrations
+(cd crates/plugins/tau-constitution && cargo sqlx prepare)
 ```
 
 - **Commit `.sqlx/`.** Crates that depend on `tau-store` don't set

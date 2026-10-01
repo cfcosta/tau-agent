@@ -1,6 +1,6 @@
 # Fast compaction
 
-`tau-fast-compaction` (`crates/plugins/fast-compaction`) keeps a run's
+`tau-fast-compaction` (`crates/plugins/tau-fast-compaction`) keeps a run's
 context lean with Jev, TypeSafe's System One model, in two stages. It
 never summarizes: what stays is verbatim, and what goes is archived or
 can be re-run. When pruning cannot free enough, summarizing compaction
@@ -162,7 +162,7 @@ and is reported as a `PluginError` event. The run goes on.
 
 ### Evaluation
 
-`crates/evals/output-pruning` measures whether output pruning keeps the
+`crates/evals/tau-output-pruning-eval` measures whether output pruning keeps the
 lines a task needs. Each workload is a conversation that ends in one
 long command output, generated from a seed with synthetic noise (cargo,
 npm, pip, pytest, bundler and upload logs; no network), with **needles**:

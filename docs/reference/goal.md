@@ -3,7 +3,7 @@
 Keeps a conversation going until a goal holds. Each time the model
 would stop, Jev (TypeSafe's System One model) is asked whether the
 goal is met; if not, the model is sent back with the goal. Crate:
-`crates/plugins/goal`. Design: [plugins.md](plugins.md).
+`crates/plugins/tau-goal`. Design: [plugins.md](plugins.md).
 
 ## Setting a goal
 

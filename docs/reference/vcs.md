@@ -1,6 +1,6 @@
 # Version-control tools (`tau-vcs`, optional)
 
-- Status: implemented in `crates/plugins/vcs`, on `jj-lib` 0.45.1.
+- Status: implemented in `crates/plugins/tau-vcs`, on `jj-lib` 0.45.1.
 - Design study: [jj-lib.md](../research/jj-lib.md). Decisions:
   [0009](../decisions/0009-child-runs-land-on-their-parent.md) (child
   runs land on their parent) and

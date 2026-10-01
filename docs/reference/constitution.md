@@ -2,7 +2,7 @@
 
 Checks a run's tool calls and final answer against rules, asking Jev
 (TypeSafe's System One model) how likely each rule is broken. Crate:
-`crates/plugins/constitution`. Design: [plugins.md](plugins.md).
+`crates/plugins/tau-constitution`. Design: [plugins.md](plugins.md).
 
 ## Rules
 
@@ -10,7 +10,7 @@ A constitution is a list of rules and two settings. Each repository's is
 kept in the plugin's own SQLite file,
 `<tau's directory>/plugins/tau-constitution/constitution.db`
 (`constitutions` and `constitution_rules`, with the plugin's own
-migrations and sqlx metadata in `crates/plugins/constitution`), and
+migrations and sqlx metadata in `crates/plugins/tau-constitution`), and
 edited only through tau's UI. The same file keeps the flagged calls and
 answers a person reviewed (`reviewed`).
 

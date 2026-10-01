@@ -6,7 +6,7 @@ implementations, and its summarization prompts have drifted apart. This
 one is the version pi ships.
 
 Compaction is a plugin, in the `tau-compaction` crate
-(`crates/plugins/compaction`). It is **off by default**: most workflow
+(`crates/plugins/tau-compaction`). It is **off by default**: most workflow
 runs are short. Add it to long-running agents with
 `Agent::plugin(Compaction::default())`, after any other context plugin,
 so cheaper rewrites get the first chance. The token estimate it
