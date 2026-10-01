@@ -170,9 +170,14 @@ pub const SEARCH: Point<AtApp, NavEntry> = Point::new("tau.search");
 pub const PLAN_STEPS: Point<AtRun> = Point::new("tau.run.plan.steps");
 /// What the model picker says auto does, under its efforts.
 pub const PICKER_AUTO: Point<AtApp, String> = Point::new("tau.picker.auto");
+/// In the composer's place under a run's transcript, while a plugin
+/// needs the person's input there more than a message: a question the
+/// run waits on. The first contribution draws in its place; the
+/// composer comes back once none does.
+pub const COMPOSER: Point<AtRun> = Point::new("tau.run.composer");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 19] = [
+pub const ALL: [&str; 20] = [
     CARD.name,
     TRANSCRIPT.name,
     REWRITE.name,
@@ -192,4 +197,5 @@ pub const ALL: [&str; 19] = [
     SEARCH.name,
     PLAN_STEPS.name,
     PICKER_AUTO.name,
+    COMPOSER.name,
 ];

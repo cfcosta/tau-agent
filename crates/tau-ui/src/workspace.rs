@@ -3327,7 +3327,26 @@ impl Workspace {
                 screen.children(banners)
             })
             .child(self.transcript(compact, t, cx))
-            .child(self.composer(compact, t, cx))
+            .child(
+                // A plugin that needs the person's input more than a
+                // message draws in the composer's place.
+                self.current()
+                    .filter(|_| self.route != Route::NewRun)
+                    .and_then(|run| {
+                        let at =
+                            tau_ui_plugin::points::AtRun { run: run.info() };
+                        self.contributions(
+                            tau_ui_plugin::points::COMPOSER,
+                            &at,
+                            cx,
+                        )
+                        .into_iter()
+                        .next()
+                    })
+                    .unwrap_or_else(|| {
+                        self.composer(compact, t, cx).into_any_element()
+                    }),
+            )
     }
 
     /// Any screen but a run's.
