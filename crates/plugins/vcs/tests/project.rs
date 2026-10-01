@@ -569,6 +569,64 @@ fn a_first_turn_that_commits_still_changed_files() {
     });
 }
 
+/// A turn that edits a file and then undoes the commit the turn before
+/// made changed that file: the turn before's parent, back in `@` after the
+/// undo, holds the edit, and is not followed as a catch-up would be.
+#[test]
+fn a_turn_that_undoes_a_commit_keeps_its_paths() {
+    let src = tempfile::tempdir().unwrap();
+    source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let store = Store::memory().await.unwrap();
+        let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
+        let first =
+            RunWorkspace::new(project.clone(), "first", Identity::default())
+                .unwrap()
+                .on_turn({
+                    let heard = heard.clone();
+                    move |turn| heard.lock().unwrap().push(turn.paths.clone())
+                });
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("vcs_commit", json!({ "message": "feat: x" }))
+            })
+            .turn(|t| {
+                t.tool_call("write", write("README.md", ""))
+                    .tool_call("vcs_undo", json!({}))
+            })
+            .turn(|t| t.text("done"))
+            .turn(|t| t.text("still done"))
+            .turn(|t| t.text("feat: empty the readme"));
+        let outcome = agent(llm.clone(), &first)
+            .plugin(VcsPlugin::new(first.vcs().clone()))
+            .run("commit, then edit and undo", &store)
+            .await
+            .unwrap();
+        llm.assert_exhausted();
+        let changed: Vec<bool> =
+            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap())
+                .iter()
+                .map(|(_, link)| link.changed)
+                .collect();
+        assert_eq!(changed, [false, true, false, false]);
+        assert_eq!(
+            *heard.lock().unwrap(),
+            [vec![], vec!["README.md".to_owned()], vec![], vec![]]
+        );
+    });
+}
+
 /// A fork whose turn's parent changed since starts on the files merged
 /// onto the parent as it is now; its first turn, which only reads,
 /// changed nothing.

@@ -373,8 +373,9 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   snapshot stores `{ "turn": n, "error": "…" }` and the run goes on.
   Observers given with `on_turn` hear each `TurnSnapshot`, with the
   paths the turn changed. They count from the turn before's snapshot
-  rebased onto its parent as that is now, as a fork merges a snapshot,
-  with the changes landed on the run since applied on top: what a
+  rebased onto its parent as that is now, as a fork merges a snapshot
+  (a parent the run took back into `@` with `vcs_undo` is not followed:
+  its parent is), with the changes landed on the run since applied on top: what a
   catch-up brought by restacking the commit the run stands on, or a
   landing by stacking on it, is not the turn's. The landing's own links
   record what landed. A confirmed landing tags its operation with the

@@ -649,7 +649,9 @@ pub(crate) fn end_turn(
 /// `since`, rebased onto its parent as that is now
 /// (`parent now + snapshot - parent then`), as
 /// `Project::add_workspace_from_snapshot` merges a snapshot. What a
-/// catch-up brought by restacking the parent is not the turn's.
+/// catch-up brought by restacking the parent is not the turn's. A parent
+/// whose change is a working copy now (undone with `vcs_undo`) is not
+/// followed: its parent is, as a fork's is.
 fn since_tree(
     repo: &dyn Repo,
     since: &CommitId,
@@ -658,8 +660,8 @@ fn since_tree(
     let Some(then) = snapshot.parent_ids().first() else {
         return Ok(snapshot.tree());
     };
-    let then = repo.store().get_commit(then)?;
-    let now = match block_on(repo.resolve_change_id(then.change_id()))? {
+    let mut then = repo.store().get_commit(then)?;
+    let mut now = match block_on(repo.resolve_change_id(then.change_id()))? {
         Some(targets) => {
             let visible: Vec<&CommitId> =
                 targets.visible_with_offsets().map(|(_, id)| id).collect();
@@ -670,6 +672,23 @@ fn since_tree(
         }
         None => then.clone(),
     };
+    // An undo can take the parent's change back into a working copy,
+    // with the edits made since: those are the turn's, not a catch-up's.
+    // As a fork does, go one change down.
+    if repo
+        .view()
+        .wc_commit_ids()
+        .values()
+        .any(|id| id == now.id())
+    {
+        let (Some(up_then), Some(up_now)) =
+            (then.parent_ids().first(), now.parent_ids().first())
+        else {
+            return Ok(snapshot.tree());
+        };
+        then = repo.store().get_commit(up_then)?;
+        now = repo.store().get_commit(up_now)?;
+    }
     if now.id() == then.id() {
         return Ok(snapshot.tree());
     }
