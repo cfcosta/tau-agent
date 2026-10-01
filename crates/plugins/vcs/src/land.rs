@@ -5,8 +5,9 @@
 //! parent's workspace, so the parent's files follow in the same
 //! operation.
 //!
-//! Merging a run into trunk moves the other way: the run's own changes
-//! go onto trunk's head ([`move_onto`]), in the run's workspace.
+//! Catching up with trunk moves the other way: a run's own changes go
+//! onto trunk's head ([`move_onto`]), in the run's workspace, as the
+//! main chat does when an update moved trunk without it.
 
 use std::collections::HashSet;
 
@@ -201,7 +202,7 @@ pub(crate) fn move_onto(
         .ok_or_else(|| VcsError::NotCommitId(onto.to_owned()))?;
     let name = worker.workspace()?.workspace_name().to_owned();
     if confirm {
-        let (_, moved) = session::mutate(worker, "merge", |tx, wc| {
+        let (_, moved) = session::mutate(worker, "move_onto", |tx, wc| {
             rebase_run(tx, wc, &name, &onto, bookmark)
         })?;
         return Ok(moved);

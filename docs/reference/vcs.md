@@ -83,12 +83,13 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
 - **Stale working copies.** When an operation in another workspace
   rewrote this workspace's commit, as the main chat's catch-up with
   trunk does to the commits its chats stand on, the next tool or turn
-  first moves the files to the rewritten commit, as jj's `workspace
-  update-stale` does, with what was edited on disk since the last
-  snapshot merged on top, as a rebase would: an edit to a file the
+  first moves the files to the rewritten commit, as jj's
+  `workspace update-stale` does, with what was edited on disk since the
+  last snapshot merged on top, as a rebase would: an edit to a file the
   rewrite changed too becomes a conflict. When a concurrent operation
-  forked the operation log instead, the tools fail with `The working
-  copy is stale: ...` and ask for the user to update the workspace.
+  forked the operation log instead, the tools fail with
+  `The working copy is stale: ...` and ask for the user to update the
+  workspace.
 
 ## Results
 
@@ -194,9 +195,9 @@ A changed path is a `FileChange`:
 
 ### vcs_land: `{}`
 
-- Only with `VcsPlugin::landing()`: for runs that land on a parent or
-  merge into trunk when they finish. Sub-agents land as they return and
-  do not get it.
+- Only with `VcsPlugin::landing()`: for chats that land on their
+  repository's main chat when they finish. Sub-agents land as they
+  return and do not get it.
 - Proposes landing the run's commits. It moves nothing: it refuses
   while `@` holds changes (`Your working copy has uncommitted changes
 (…). Commit your work with vcs_commit first.`), and otherwise returns
@@ -389,21 +390,15 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   (`conflicts`), and the new head. Confirmed, conflicts land as jj
   conflicts for the parent's next turn to resolve.
 
-## Merging a run into trunk
+## Moving onto trunk
 
-A top-level run is a child of trunk (ADR 0014). Trunk has no model, so
-the run itself does the moving and the resolving:
-
-- `Vcs::move_onto(trunk, bookmark, confirm)`, on the run's `Vcs`,
-  rebases the run's changes, up to `@`, onto trunk's newest commit, and
-  points the run's bookmark at its newest commit there. With `confirm`
-  off it changes nothing and returns what it would do, as a `Landing`;
-  its `conflicts` include any in `@`.
-- `Project::fast_forward_trunk(head)` then moves trunk's bookmark (the
-  default branch, else `main`, `master` or `trunk`; `main` in an empty
-  repository) to `head`. It refuses unless trunk is `head` or one of
-  its ancestors: `<name> has moved on past this run; merge it again`.
-- Merging is local: nothing is pushed.
+`Vcs::move_onto(trunk, bookmark, confirm)`, on a run's `Vcs`, rebases
+the run's changes, up to `@`, onto trunk's newest commit, and points
+`bookmark` at the run's newest commit there. Each change keeps its
+change id, and the run's files follow. With `confirm` off it changes
+nothing and returns what it would do, as a `Landing`; its `conflicts`
+include any in `@`. The main chat catches up with trunk this way (see
+below).
 
 ## A repository's main chat
 
@@ -414,9 +409,10 @@ and `forget_workspace` never removes it. It commits on trunk: its
 `RunWorkspace` is built with `commits_to(project.trunk_name())`, so its
 commits, its turns'
 snapshots, the chats that land on it and its sub-agents all move
-trunk's bookmark, not `tau/<run>`. It has nothing to land or merge: it
-does not get `vcs_land`, the host refuses to merge it, and its bar
-offers neither.
+trunk's bookmark, not `tau/<run>`. It has nothing to land: it does
+not get `vcs_land`, and its bar offers no landing. It is the only
+top-level run (ADR 0016), so nothing merges into trunk: a chat lands on
+the main chat, which moves trunk.
 
 Trunk can move without it, when an update brings commits from GitHub.
 When the main chat has moved trunk too, `Project::update` takes

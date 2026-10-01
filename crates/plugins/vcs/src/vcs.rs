@@ -165,8 +165,8 @@ impl Vcs {
 
     /// Moves this run's own changes, up to `@`, onto `onto` (a full
     /// commit id in hex), and points `bookmark` at the run's newest
-    /// commit there: what merging into trunk does first. With `confirm`
-    /// off it changes nothing and says what moving would do.
+    /// commit there: how the main chat catches up with trunk. With
+    /// `confirm` off it changes nothing and says what moving would do.
     pub async fn move_onto(
         &self,
         onto: impl Into<String>,

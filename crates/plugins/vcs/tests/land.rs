@@ -3,7 +3,7 @@
 
 use std::{path::Path, process::Command};
 
-use tau_vcs::{Identity, Project, Vcs, VcsError};
+use tau_vcs::{DEFAULT_WORKSPACE, Identity, Project, Vcs, VcsError};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -204,22 +204,30 @@ fn the_parents_uncommitted_work_moves_on_top() {
     assert_eq!(working_copy.head, landing.head);
 }
 
-/// Merging a run into trunk (ADR 0014): its changes move onto trunk's
-/// newest commit, previewed first, then trunk moves forward to the run.
+/// The main chat's commits move trunk (ADR 0015). It catches up with
+/// trunk first, as the host has it: its workspace starts on jj's root.
+fn commit_on_trunk(project: &Project, path: &str, text: &str) -> String {
+    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    let trunk = project.trunk_name().unwrap();
+    block(main.move_onto(project.trunk().unwrap(), trunk.clone(), true));
+    std::fs::write(dir.join(path), text).unwrap();
+    block(main.commit_all("on trunk", trunk)).commit_id
+}
+
+/// A run moves onto trunk's newest commit, as the main chat catches up
+/// (ADR 0014): previewed first, then its changes go on top and its
+/// bookmark follows.
 #[test]
-fn a_run_merges_into_trunk() {
+fn a_run_moves_onto_trunk() {
     let home = tempfile::tempdir().unwrap();
     let (project, trunk) = project(home.path());
     let session = run(&project, "session", &trunk);
-    let other = run(&project, "other", &trunk);
     session.write("s.txt", "s\n");
     session.turn();
     // Trunk moves on while the session works.
-    other.write("t.txt", "t\n");
-    let moved = other.turn();
-    project.fast_forward_trunk(&moved).unwrap();
-    let trunk = project.trunk().unwrap();
-    assert_eq!(trunk, moved);
+    let trunk = commit_on_trunk(&project, "t.txt", "t\n");
+    assert_eq!(project.trunk().unwrap(), trunk);
 
     let preview =
         block(session.vcs.move_onto(&trunk, session.bookmark(), false));
@@ -227,32 +235,26 @@ fn a_run_merges_into_trunk() {
     assert!(preview.conflicts.is_empty());
     assert_eq!(session.read("t.txt"), None, "a preview changes nothing");
 
-    let merged = block(session.vcs.move_onto(&trunk, session.bookmark(), true));
+    let moved = block(session.vcs.move_onto(&trunk, session.bookmark(), true));
     assert_eq!(session.read("t.txt").as_deref(), Some("t\n"));
     assert_eq!(session.read("s.txt").as_deref(), Some("s\n"));
+    assert_eq!(project.parent_of(&moved.head).unwrap(), Some(trunk));
     assert_eq!(
         project.bookmark(&session.bookmark()).unwrap(),
-        Some(merged.head.clone())
+        Some(moved.head.clone())
     );
-    assert_eq!(project.fast_forward_trunk(&merged.head).unwrap(), "main");
-    assert_eq!(project.trunk().unwrap(), merged.head);
 }
 
-/// Trunk only moves forward: a head that trunk is not under is refused.
+/// A run that changed what trunk changed since shows the conflict in its
+/// preview, as data.
 #[test]
-fn trunk_does_not_move_sideways() {
+fn moving_onto_trunk_shows_conflicts() {
     let home = tempfile::tempdir().unwrap();
     let (project, trunk) = project(home.path());
-    let one = run(&project, "one", &trunk);
     let two = run(&project, "two", &trunk);
-    one.write("a.txt", "one\n");
-    let first = one.turn();
     two.write("a.txt", "two\n");
-    let second = two.turn();
-    project.fast_forward_trunk(&first).unwrap();
-    let err = project.fast_forward_trunk(&second).unwrap_err().to_string();
-    assert!(err.contains("has moved on"), "{err}");
-    // Moved onto the new trunk, the other run conflicts, as data.
-    let preview = block(two.vcs.move_onto(&first, two.bookmark(), false));
+    two.turn();
+    let trunk = commit_on_trunk(&project, "a.txt", "one\n");
+    let preview = block(two.vcs.move_onto(&trunk, two.bookmark(), false));
     assert_eq!(preview.conflicts, ["a.txt"]);
 }

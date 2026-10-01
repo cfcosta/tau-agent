@@ -323,32 +323,6 @@ impl Project {
             })
     }
 
-    /// Moves trunk's bookmark forward to `head` (a full commit id in hex):
-    /// merging a run into trunk (ADR 0014). Refuses unless trunk is
-    /// `head` or one of its ancestors, so nothing on trunk is lost.
-    /// Returns the bookmark's name; an empty repository gets `main`.
-    pub fn fast_forward_trunk(&self, head: &str) -> Result<String, VcsError> {
-        let repo = self.load()?;
-        let head_id = CommitId::try_from_hex(head)
-            .ok_or_else(|| VcsError::NotCommitId(head.to_owned()))?;
-        let (name, trunk) = self.trunk_bookmark(&repo).unwrap_or_else(|| {
-            (
-                self.default_branch().unwrap_or_else(|| "main".to_owned()),
-                repo.store().root_commit_id().clone(),
-            )
-        });
-        if !block_on(repo.index().is_ancestor(&trunk, &head_id))? {
-            return Err(VcsError::NotFastForward(name));
-        }
-        let mut tx = repo.start_transaction();
-        tx.repo_mut().set_local_bookmark_target(
-            RefName::new(&name),
-            jj_lib::op_store::RefTarget::normal(head_id),
-        );
-        block_on(tx.commit(format!("tau: move {name} forward")))?;
-        Ok(name)
-    }
-
     /// The changes `head` (a full commit id in hex) has that trunk lacks,
     /// oldest first: a run's stack, as a pull request pushes it.
     pub fn stack(&self, head: &str) -> Result<Vec<StackChange>, VcsError> {

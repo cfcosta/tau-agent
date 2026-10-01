@@ -46,8 +46,6 @@ pub enum VcsError {
          with vcs_commit first."
     )]
     Uncommitted(String),
-    #[error("{0} has moved on past this run; merge it again")]
-    NotFastForward(String),
     #[error("The parent's working copy is a merge")]
     ParentMerge,
     #[error("The child's changes do not form one stack")]
