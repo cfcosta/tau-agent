@@ -123,7 +123,58 @@ fn call(tool: &str, args: serde_json::Value) -> Call {
         tool: tool.into(),
         args,
         is_error: false,
+        parent: None,
     }
+}
+
+/// Calls a tool made through the loop (a codemode script's) count apart
+/// from the model's own, failed ones included, and are still listed.
+#[hegel::test(test_cases = 100)]
+fn nested_calls_count_apart(tc: TestCase) {
+    use std::sync::Arc;
+
+    use tau_agent::tool::{RunId, ToolOutput};
+    // (nested?, failed?)
+    let calls: Vec<(bool, bool)> =
+        tc.draw(gs::vecs(hegel::tuples!(gs::booleans(), gs::booleans())));
+    let run = RunId("r".into());
+    let mut meter = Meter::new();
+    let mut top = 0;
+    for (n, (nested, failed)) in calls.iter().enumerate() {
+        let (call_id, parent) = if *nested {
+            (format!("c{top}/{n}"), Some(format!("c{top}")))
+        } else {
+            top = n;
+            (format!("c{n}"), None)
+        };
+        meter.observe(&RunEvent::ToolStart {
+            run: run.clone(),
+            call_id: call_id.clone(),
+            tool: "read".into(),
+            args: json!({}),
+            parent: parent.clone(),
+        });
+        meter.observe(&RunEvent::ToolEnd {
+            run: run.clone(),
+            call_id,
+            output: Arc::new(ToolOutput::text("")),
+            is_error: *failed,
+            parent,
+        });
+    }
+    let outcome =
+        Err(tau_agent::agent::AgentError::OutputSchema("none".into()));
+    let metrics = meter.finish(&outcome, std::time::Duration::ZERO);
+    let count = |nested: bool, failed: bool| {
+        calls
+            .iter()
+            .filter(|(n, f)| *n == nested && (!failed || *f))
+            .count() as u32
+    };
+    assert_eq!(metrics.tool_calls, count(false, false));
+    assert_eq!(metrics.failed_calls, count(false, true));
+    assert_eq!(metrics.nested_calls, count(true, false));
+    assert_eq!(meter.calls().len(), calls.len());
 }
 
 #[test]
@@ -198,6 +249,7 @@ fn run_metrics(tc: &TestCase) -> RunMetrics {
         turns: tc.draw(gs::integers::<u32>().max_value(50)),
         tool_calls: tc.draw(gs::integers::<u32>().max_value(50)),
         failed_calls: tc.draw(gs::integers::<u32>().max_value(5)),
+        nested_calls: tc.draw(gs::integers::<u32>().max_value(50)),
         input_tokens: tc.draw(gs::integers::<u64>().max_value(1_000_000)),
         output_tokens: tc.draw(gs::integers::<u64>().max_value(100_000)),
         cached_tokens: tc.draw(gs::integers::<u64>().max_value(1_000_000)),

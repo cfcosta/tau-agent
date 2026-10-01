@@ -14,12 +14,15 @@ use tau_ai::message::Usage;
 
 use crate::{arm::Arm, scenario::Variant};
 
-/// One tool call a run made.
+/// One tool call a run made: the model's, or one a tool made through the
+/// loop (a codemode script's), which names the call it came from.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Call {
     pub tool: String,
     pub args: Value,
     pub is_error: bool,
+    /// The call that made it, for a nested call.
+    pub parent: Option<String>,
 }
 
 /// Follows a run's events: its turns, its tool calls and their usage.
@@ -45,6 +48,7 @@ impl Meter {
                 call_id,
                 tool,
                 args,
+                parent,
                 ..
             } => self.calls.push((
                 call_id.clone(),
@@ -52,6 +56,7 @@ impl Meter {
                     tool: tool.to_string(),
                     args: args.clone(),
                     is_error: false,
+                    parent: parent.clone(),
                 },
             )),
             RunEvent::ToolEnd {
@@ -67,7 +72,8 @@ impl Meter {
         }
     }
 
-    /// The calls seen so far, in order.
+    /// The calls seen so far, in order, nested ones included: a script
+    /// that reads memory reads it as much as the model's own call does.
     pub fn calls(&self) -> Vec<Call> {
         self.calls.iter().map(|(_, call)| call.clone()).collect()
     }
@@ -84,15 +90,19 @@ impl Meter {
             Ok(outcome) => (outcome.usage.clone(), stop_name(&outcome.stop)),
             Err(error) => (self.usage.clone(), format!("error: {error}")),
         };
+        let count = |nested: bool, failed: bool| {
+            self.calls
+                .iter()
+                .filter(|(_, call)| call.parent.is_some() == nested)
+                .filter(|(_, call)| !failed || call.is_error)
+                .count() as u32
+        };
         RunMetrics {
             success: None,
             turns: self.turns,
-            tool_calls: self.calls.len() as u32,
-            failed_calls: self
-                .calls
-                .iter()
-                .filter(|(_, call)| call.is_error)
-                .count() as u32,
+            tool_calls: count(false, false),
+            failed_calls: count(false, true),
+            nested_calls: count(true, false),
             input_tokens: usage.input,
             output_tokens: usage.output,
             cached_tokens: usage.cache_read,
@@ -119,9 +129,13 @@ pub struct RunMetrics {
     pub success: Option<bool>,
     /// Model responses.
     pub turns: u32,
+    /// The model's tool calls.
     pub tool_calls: u32,
-    /// Tool calls that returned an error.
+    /// The model's tool calls that returned an error.
     pub failed_calls: u32,
+    /// Calls tools made through the loop (a codemode script's), apart
+    /// from the model's.
+    pub nested_calls: u32,
     /// Input tokens, as the provider counts them.
     pub input_tokens: u64,
     pub output_tokens: u64,
