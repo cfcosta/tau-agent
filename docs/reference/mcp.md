@@ -9,7 +9,9 @@
   are listed in "Deviations".
 - Date: 2026-10-01
 
-`tau-mcp` connects to MCP servers and adds their tools to the agent.
+`tau-mcp` connects to MCP servers and adds their tools to the agent,
+with their resources as three tools and their prompts as composer
+commands.
 By default the model sees them like any other tool, and Codemode
 scripts can call them too. It follows pi's MCP extension
 (`coding-agent/src/extensions/mcp`, audited in
@@ -131,7 +133,9 @@ The common `mcpServers` shape:
 - **Reconnects** lazily: the next call to a dropped or failed server
   connects again. HTTP connects retry transient errors (408, 429, 5xx
   but 501, network errors) after 250 ms and 1 s. **Tool calls are never
-  retried**: they can have side effects. A connect, listing the tools
+  retried**: they can have side effects. Reading a resource and getting
+  a prompt are read-only, so one the connection drops under is sent
+  once more, on a new connection. A connect, listing the tools
   included, gives up after 30 s.
 - **Protocol:** rmcp's `ClientLifecycleMode::Auto`, 2026-07-28
   preferred, 2025-11-25 as the fallback. `Auto` falls back only for a
@@ -143,7 +147,12 @@ The common `mcpServers` shape:
   `subscriptions/listen`, which tau opens when the server says its tool
   list changes; on 2025-11-25 it is a plain notification. A
   disconnected server keeps its last tools, so a call to one connects
-  again.
+  again. A server whose capabilities offer resources gets its resources
+  and resource templates listed too, and one that offers prompts its
+  prompts, every page, and again on `resources/list_changed` and
+  `prompts/list_changed` (through `subscriptions/listen` on
+  2026-07-28). A server without the capability is not asked; a list
+  that fails is left empty and does not fail the connect.
 - **Stdio close:** rmcp's `cancel()`, then the child's process group
   gets SIGTERM and, after 2 s, SIGKILL.
 - **Roots:** the repository's directory, as a `file://` URI, when the
@@ -222,9 +231,9 @@ result does not depend on order. A server's namespace is
 - **For the model:**
   - text blocks as text, images as images;
   - a resource link as
-    `[Resource <uri> "<title>" (<mime>, <size>): <description>]`, the
-    title its `title`, else its `name`, each part left out when
-    missing;
+    `[Resource <uri> "<title>" (<mime>, <size>): <description>. Read it with read_mcp_resource (server "<server>")]`,
+    the title its `title`, else its `name`, each part but the hint
+    left out when missing;
   - an embedded text resource as its text; an embedded binary one
     saved to a 0600 file `$TMPDIR/tau-mcp-<hex>.<ext>`, as
     `[Resource <uri> (<mime>) saved to <path>]`; audio the same way;
@@ -239,6 +248,65 @@ result does not depend on order. A server's namespace is
   `CallToolResult` (`content`, `structuredContent`, `isError`), never
   cut. An `isError` result carries it too, so a script gets it back
   instead of an error.
+
+## Resources
+
+As pi and Codex expose them: three tools of the plugin's, not of a
+server's.
+
+| Tool                          | Arguments         | For the model                   | For scripts                    |
+| ----------------------------- | ----------------- | ------------------------------- | ------------------------------ |
+| `list_mcp_resources`          | `{ server? }`     | `{ resources }` as pretty JSON  | `{ resources: [...] }`         |
+| `list_mcp_resource_templates` | `{ server? }`     | `{ resourceTemplates }` as JSON | `{ resourceTemplates: [...] }` |
+| `read_mcp_resource`           | `{ server, uri }` | the contents                    | `{ server, uri, contents }`    |
+
+- **Exposure:** the widest among the servers, on and not hidden, whose
+  capabilities offer resources (`resources::exposure`): declared from
+  the run's start (added in `start`) when one of them is `direct`,
+  `Nested` when the widest is `codemode`, absent when there is none.
+  The servers' `toolExposure` does not count.
+- **Listing** gives the lists last listed, each item with its `server`
+  first, then the resource's `uri`, `name`, `title`, `description`,
+  `mimeType` and `size` (a template's `uriTemplate` instead of `uri`),
+  all servers' or `server`'s. It first waits for the servers to finish
+  connecting, and connects a named one that dropped or failed. An
+  unknown server fails, naming those that offer resources; a named one
+  that does not offer them, or is not connected, fails saying so. The
+  text is cut at 20 KB as a call's is.
+- **Reading** sends `resources/read`, tried twice as above. Its
+  contents: text as text; an `image/*` blob as an image; any other blob
+  saved to a 0600 file in the spill directory, as
+  `[Resource <uri> (<mime>) saved to <path>]`; the text cut at 20 KB.
+  Scripts get the contents whole.
+- **MCP apps** are left out everywhere: a resource or template whose
+  URI starts `ui://` or whose type is `text/html;profile=mcp-app` (case
+  and spaces aside) is not listed, its contents are dropped from a
+  read, and reading a `ui://` URI fails. tau shows no MCP apps.
+
+## Prompts
+
+A server's prompts are the composer's commands, not the model's tools.
+
+- **Names:** `/mcp__<server>__<prompt>`, named as tools are ("Names"),
+  so they fit in 64 characters and never collide.
+- **Arguments:** `key=value`, separated by whitespace. A value may be
+  quoted, whole or in part, with `"..."` (where `\` takes the next
+  character as it is) or `'...'` (as it is). The menu shows them as
+  `name=… [style=…]`, required ones first.
+- **Checks** before `prompts/get`: an argument the prompt does not take,
+  one given twice, or a required one missing fails with the command's
+  usage: "/mcp__git__commit needs the argument `changes`. Usage:
+  /mcp__git__commit changes=<changes> [style=<style>]". The window
+  checks them as the user runs the command, and the host again.
+- **The messages** become the text a person sends, one after another
+  with a blank line between, whatever their role: text as it is, an
+  embedded text resource as its text, a resource link as a call's
+  result shows it, and images, audio and binary resources named in
+  brackets (`[Image (image/png)]`). The text fills the composer, for
+  the person to read and send.
+- **Where:** the composer lists the prompts of the servers of the
+  repository it is in (the open run's, else the one new runs start in),
+  or the user's alone outside one.
 
 ## The server list
 
@@ -326,7 +394,10 @@ or, without a repository, the user's and the settings' alone.
   user's page, this repository on a repository's), or why it is locked;
   and its tools, each with its exposure, its name as tools
   call it, and badges for its hints (read-only, destructive,
-  idempotent, open world).
+  idempotent, open world); then how many resources, resource templates
+  and prompts it offers, and the first 20 of each: a resource's URI,
+  title and type, a template's URI template, a prompt's command and
+  arguments, each with its description's first line.
 - **Waiting for approval:** each repository server not yet approved,
   with its whole entry as tau prints it, and Approve.
 - **Skipped entries**, each with where and why.
@@ -346,9 +417,15 @@ or, without a repository, the user's and the settings' alone.
     server whose entry is off, and, in a repository, for turning on a
     user server off in every repository;
   - `reconnect { repo, server }` builds the scope's plugin if it was
-    not, and connects `server`, or every server, again.
+    not, and connects `server`, or every server, again;
+  - `prompt { repo, command, arguments }` gets a prompt in that scope,
+    waiting up to 2 minutes, and replies `prompt { text }`, which fills
+    the composer, or `prompt_failed { error, command }`, which shows the
+    error and puts the command back in the composer.
     The editor checks a new server as the host does before it sends it,
     and says why it will not; removing asks twice.
+- **Commands:** each prompt of a server that is on, as
+  `Manifest::listed_commands` gives the composer ("Prompts").
 - **The sidebar:** under each repository, "MCP", with its servers
   counted and a badge for the approvals waiting. The Plugins screen
   links to the page.
@@ -380,11 +457,19 @@ or, without a repository, the user's and the settings' alone.
 - `pool`: `Pool` (`new`, `update`, `get`, `connections`, `shutdown`)
   and `diff`, for the host.
 - `names`: `tool_names`, `namespace`.
-- `results`: `map_result`, `cut_middle`, `truncate`, `Spill`.
+- `results`: `map_result`, `resource_contents`, `resource_link`,
+  `cut_middle`, `truncate`, `Spill`.
 - `connection`: `Connection` (`new`, `start`, `connect`, `status`, `tools`,
-  `instructions`, `call`, `settled`, `shutdown`), `State`, `Status`,
-  `ToolInfo`, `Annotations`, `CallFailure`, `Environment`. Only its
-  private `client` module touches rmcp.
+  `resources`, `templates`, `prompts`, `offers_resources`,
+  `offers_prompts`, `instructions`, `call`, `read_resource`,
+  `get_prompt`, `settled`, `shutdown`), `State`, `Status`, `ToolInfo`,
+  `ResourceInfo`, `TemplateInfo`, `PromptInfo`, `PromptArgument`,
+  `Annotations`, `CallFailure`, `Environment`. Only its private
+  `client` module touches rmcp.
+- `resources`: `ResourceTool`, `Kind`, `exposure`, `is_app`.
+- `prompts`: `Prompt`, `prompts`, `command_names`, `parse_arguments`,
+  `format_arguments`, `check_arguments`, `usage`, `arguments_hint`,
+  `prompt_text`.
 - `ui`: `McpUi`, its `Host`, the page's data (`Servers`, `ServerRow`,
   `ToolRow`, `PendingRow`), `Act` and `apply` (what an action does to
   the settings), `server_entry`, `summary`; `ui::page` and `ui::card`.
@@ -401,6 +486,9 @@ mcp.connections();               // states, errors, tools
 mcp.config_errors();
 mcp.pending_approvals();
 mcp.tool("mcp__linear__list_issues"); // with its annotations
+mcp.resource_tools();            // list_mcp_resources, ... if any
+mcp.prompts();                   // each with its command
+mcp.get_prompt("mcp__git__commit", "changes=x", &cancel).await;
 mcp.reconnect("linear");
 mcp.shutdown().await;            // also on drop, in the background
 ```
@@ -440,6 +528,11 @@ From the design above, as first written:
   named only text, images and resources.
 - **Names** are distinct unless two SHA-256 prefixes of 8 hex digits
   collide, which the rule does not resolve.
+- **Resources are listed from the connection's lists**, kept up to date
+  by `list_changed`, not paged live with a cursor as Codex's tools are;
+  the tools take no `cursor`.
+- **Prompts fill the composer** rather than being sent: their text comes
+  from a server, so the person reads it first.
 
 ## Tests
 
@@ -460,6 +553,17 @@ From the design above, as first written:
   test binary run as a stdio server: a call, and closing ends the
   server and a process it started. A local HTTP server answering 503
   gets three tries; one answering 404, one.
+- **Resources and prompts** (`tests/resources.rs`, `tests/prompts.rs`):
+  as properties, the resource tools' exposure is the widest among the
+  servers that offer resources, for any servers in any order; MCP apps
+  are recognized whatever their case and spacing; `key=value`
+  arguments, quoted or not, read back as written; a prompt's arguments
+  are accepted exactly when none is unknown or given twice and every
+  required one is there. Against the in-process server, on both
+  protocols: every page of resources, templates and prompts, MCP apps'
+  left out; reading text, an image and other binary; `list_changed`
+  for resources and prompts; a read the connection drops under, sent
+  once more; a server without the capabilities; prompts with arguments.
 - **The server list, as a property:** at most 4,096 characters,
   descriptions at most 250, kept servers in order, the overflow count
   right.
@@ -497,9 +601,16 @@ From the design above, as first written:
   on a computer and a phone, with the editor open and with locked
   switches; the sidebar and the run's line count servers and
   approvals; the card names the server and shows the structured result
-  or the text. And the design test.
+  or the text; a repository's prompts are its commands, a mistake in
+  one's arguments is shown and the command put back, and the host's
+  answer fills the composer. Against an in-process server on the host,
+  the page lists its resources, templates and prompts and the host gets
+  a prompt. And the design test.
 - **In the loop**, with `ScriptedModel`: direct tools are declared and
   called by the model; codemode tools are not declared and a tool calls
   them through the loop (Codemode's scripts are its own crate's
   tests); hidden tools are neither; a server that connects mid-run
-  shows from the next run; a withdrawn tool fails with its message.
+  shows from the next run; a withdrawn tool fails with its message; the
+  model lists and reads a direct server's resources; with only
+  codemode servers the resource tools are `Nested`; without a server
+  that offers resources, or only hidden ones, there are none.

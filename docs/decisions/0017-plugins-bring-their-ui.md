@@ -361,8 +361,13 @@ the sketch above in these places:
   notes stale with it). `HostCx` also reaches the plugins' saved
   settings, which a host half reads and saves when an action changes
   them (tau-mcp's approvals), and tau's config directory.
+- **Commands.** A manifest's own slash commands are fixed
+  (`SlashCommand`, `/goal`); `Manifest::listed_commands` adds commands a
+  plugin lists from its data and the composer's repository's, which
+  come and go with it (tau-mcp's prompts).
 - **Actions.** A plugin's UI asks through a `Handle`: `act` (its host
-  half, answered through `reply`), `record` (fold and store a change
+  half, answered through `reply`, which gets the UI's context to ask
+  for more), `record` (fold and store a change
   the interface makes), `navigate`, `send`, `steer`, `composer`,
   `alert`, `open_run`, `ask_jev_key` and `refresh`.
 - **What stays in tau-ui.** The Plan screen, generic plugin notes for

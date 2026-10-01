@@ -140,5 +140,16 @@ signatures.
 - Codemode's input is JSON `{ "code": string }`. pi constrains it with
   a Lark grammar so the model writes raw source; tau-ai has no custom
   tools yet, and that waits for them.
-- Left for later: MCP OAuth (rmcp's `auth`), resources and prompts,
-  sampling and elicitation.
+- Servers' resources reach the model and scripts through three tools
+  of tau-mcp's, as pi and Codex have them (`list_mcp_resources`,
+  `list_mcp_resource_templates`, `read_mcp_resource`), exposed as the
+  widest server that offers resources. Reading is read-only, so a read
+  is tried twice; tool calls still never are. MCP apps' resources are
+  left out, as pi does.
+- Servers' prompts are the person's, not the model's: composer
+  commands, `/mcp__<server>__<prompt> key=value ...`, whose messages
+  fill the composer. tau-ui-plugin gained commands a plugin lists from
+  its data (`Manifest::listed_commands`) for them.
+- Left for later: MCP OAuth (rmcp's `auth`), sampling and elicitation,
+  resource subscriptions (`resources/subscribe`), and prompt argument
+  completion (`completion/complete`).
