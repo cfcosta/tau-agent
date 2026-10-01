@@ -9497,6 +9497,7 @@ dependencies = [
  "tau-fast-compaction",
  "tau-goal",
  "tau-jev",
+ "tau-mcp",
  "tau-memory",
  "tau-reasoning",
  "tau-remote",
