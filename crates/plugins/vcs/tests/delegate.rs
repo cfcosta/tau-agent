@@ -191,6 +191,53 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
     });
 }
 
+/// A sub-agent that leaves its work uncommitted has it committed at its
+/// end, with a message its model writes from its own task, not from the
+/// caller's prompt it inherited.
+#[test]
+fn a_sub_agents_leftover_is_described_from_its_task() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("delegate", json!({ "task": "write child.txt" }))
+            })
+            .turn(|t| t.text("done"));
+        let child_llm = ScriptedModel::new()
+            .turn(|t| t.tool_call("write", write("child.txt")))
+            .turn(|t| t.text("written"))
+            .turn(|t| t.text("still written"))
+            .turn(|t| t.text("feat: child"));
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let script = child_llm.clone();
+        let outcome = delegating(llm.clone(), &parent, move |workspace| {
+            Ok(coder(script.clone(), &workspace))
+        })
+        .run("hand child.txt to a sub-agent", &store)
+        .await
+        .unwrap();
+        assert_eq!(outcome.text, "done");
+        child_llm.assert_exhausted();
+        let asked = format!("{:?}", child_llm.requests()[3].transcript);
+        assert!(
+            asked.contains("<task>\\nwrite child.txt\\n</task>"),
+            "{asked}"
+        );
+        let head = project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap();
+        let stack: Vec<String> = project
+            .stack(&head)
+            .unwrap()
+            .into_iter()
+            .map(|change| change.description.trim().to_owned())
+            .collect();
+        assert_eq!(stack, ["feat: child"]);
+    });
+}
+
 /// A sub-agent that cannot start leaves nothing behind, and the caller
 /// hears why.
 #[test]

@@ -343,7 +343,8 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   `COMMIT_FIRST` and the paths as the next user message.
 - **When it finishes** normally or at a limit with changes still in
   `@`, they are committed (`Vcs::commit_all`), with a message the run's
-  model writes from the diff and the task: one short `PluginCtx::ask`.
+  model writes from the diff and the run's task (its own input, not the
+  first message of a transcript it forked): one short `PluginCtx::ask`.
   tau never writes a commit message itself; without an answer, the work
   stays uncommitted. A failed or cancelled run keeps its work as it is.
 - **Forking at a turn**: read the run's links with

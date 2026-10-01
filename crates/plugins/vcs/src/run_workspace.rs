@@ -275,6 +275,7 @@ impl Plugin for RunWorkspace {
             observers: self.observers.clone(),
             pending: self.pending.clone(),
             model: plan.model().to_owned(),
+            task: plan.input.clone(),
             since,
             held: false,
             bookmark: self.bookmark_of(&ctx.run),
@@ -289,6 +290,9 @@ struct Turns {
     pending: Arc<Mutex<Vec<Pending>>>,
     /// The run's model, which describes work left uncommitted.
     model: String,
+    /// What the run was asked: its own input, not the first message of a
+    /// transcript it inherited.
+    task: String,
     /// The last turn's snapshot, or `@` as the run started, to tell what
     /// a turn changed.
     since: Option<String>,
@@ -393,17 +397,7 @@ impl PluginRun for Turns {
         let Ok(diff) = self.vcs.working_copy_diff().await else {
             return;
         };
-        let task = run
-            .transcript
-            .iter()
-            .find_map(|message| match message {
-                Message::User(user) => match &user.content {
-                    UserContent::Text(text) => Some(text.clone()),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .unwrap_or_default();
+        let task = &self.task;
         let settings = Settings {
             model: self.model.clone(),
             instructions: Some(DESCRIBE.to_owned()),
