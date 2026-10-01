@@ -357,7 +357,7 @@ fn compaction_follows_when_pruning_cannot_help() {
         assert_eq!(outcome.text, "done");
         let by: Vec<String> =
             rewrites(&events).into_iter().map(|r| r.0).collect();
-        assert_eq!(by, ["compaction"]);
+        assert_eq!(by, [tau_compaction::NAME]);
         assert_eq!(jev.requests().len(), 1, "pruning was asked first");
     });
 }

@@ -39,7 +39,7 @@ use crate::{
 };
 
 /// The name compaction goes by in events and stored rewrites.
-pub const NAME: &str = "compaction";
+pub const NAME: &str = "tau-compaction";
 
 #[async_trait]
 impl Plugin for Compaction {

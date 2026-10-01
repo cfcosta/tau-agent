@@ -104,7 +104,7 @@ pub use crate::{
 };
 
 /// The name the plugin goes by in events and stored rewrites.
-pub const NAME: &str = "fast-compaction";
+pub const NAME: &str = "tau-fast-compaction";
 
 /// Settings, pi's defaults for history pruning. See the crate docs for
 /// what each governs.

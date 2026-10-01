@@ -83,7 +83,7 @@ impl VcsPlugin {
 #[async_trait]
 impl Plugin for VcsPlugin {
     fn name(&self) -> &str {
-        "vcs"
+        crate::ui::NAME
     }
 
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {

@@ -101,7 +101,7 @@ impl CodingTools {
 
 impl Plugin for CodingTools {
     fn name(&self) -> &str {
-        "coding-tools"
+        crate::ui::NAME
     }
 
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {

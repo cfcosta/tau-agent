@@ -341,7 +341,7 @@ the next context plugin is offered it.
 
 ### Storage and forks
 
-A rewrite is stored as a `context` entry by `fast-compaction`, followed
+A rewrite is stored as a `context` entry by `tau-fast-compaction`, followed
 by the pruned transcript ([storage.md](storage.md)). The entry's body
 is the ledger, with the archive of each cut result, and the pass's
 stats: calls, pinned, kept, results and calls dropped, requests, the

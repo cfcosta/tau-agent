@@ -60,7 +60,7 @@ blank line, then a short body that says what changed and why. Answer \
 with the message only.";
 
 /// The name the plugin stores its links under.
-pub const PLUGIN: &str = "workspace";
+pub const PLUGIN: &str = crate::ui::NAME;
 
 /// The local bookmark on a run's newest commit: `tau/<run id>`.
 pub fn bookmark(run: &RunId) -> String {

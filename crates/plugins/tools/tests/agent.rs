@@ -126,7 +126,7 @@ fn the_plugin_picks_tools_in_pis_order() {
     use tau_agent::plugin::Plugin;
     let root = Root::new("/tmp");
     let all = CodingTools::new(root.clone());
-    assert_eq!(all.name(), "coding-tools");
+    assert_eq!(all.name(), tau_tools::ui::NAME);
     assert_eq!(tool_names(&all.tools()), tool_names(&coding_tools(&root)));
     assert_eq!(tool_names(&all.tools()), Tool::ALL.map(Tool::name).to_vec());
     let picked = CodingTools::new(root.clone()).only(&[

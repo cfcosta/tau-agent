@@ -278,7 +278,7 @@ pub struct Rewrite {
 - **Storage.** A rewrite is stored in one write, as a `context` entry
   `{ plugin, details }` followed by the new transcript's messages.
   Loading a transcript starts at the latest `context` entry.
-  Compaction's rewrite is a `context` entry from the `compaction` plugin
+  Compaction's rewrite is a `context` entry from the `tau-compaction` plugin
   whose first message is the summary.
 - **Resuming.** A fork gets the details of the latest rewrite it
   inherits from `RunPlan::last_rewrite`, when its plugin made it.

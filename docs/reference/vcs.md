@@ -356,7 +356,7 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   local bookmark, `tau/<run id>`, at the run's newest commit (`@`'s
   parent), so the run's work stays findable by name after its
   workspace is gone. Then it stores a `Link` record under the plugin
-  name `workspace`:
+  name `tau-vcs`:
 
   ```json
   {
@@ -404,7 +404,7 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   tau never writes a commit message itself; without an answer, the work
   stays uncommitted. A failed or cancelled run keeps its work as it is.
 - **Forking at a turn**: read the run's links with
-  `Store::plugin_entries(run, "workspace")`, take the `seq` of the
+  `Store::plugin_entries(run, "tau-vcs")`, take the `seq` of the
   turn's link, and fork with `Checkpoint::at(run, seq)` and a new
   `RunWorkspace`. The fork inherits the transcript and links up to that
   turn, and `Project::add_workspace_from_snapshot` starts it on a new

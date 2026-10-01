@@ -70,7 +70,7 @@ fn the_plugin_offers_every_tool() {
     let dir = tempfile::tempdir().unwrap();
     let vcs = Vcs::init(dir.path(), Identity::default()).unwrap();
     let plugin = VcsPlugin::new(vcs);
-    assert_eq!(plugin.name(), "vcs");
+    assert_eq!(plugin.name(), tau_vcs::ui::NAME);
     let tools = plugin.tools();
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(

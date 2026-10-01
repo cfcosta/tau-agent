@@ -129,7 +129,7 @@ fn threshold_compaction_summarizes_older_messages() {
                     plugin,
                     ..
                 } => {
-                    assert_eq!(&**plugin, "compaction");
+                    assert_eq!(&**plugin, tau_compaction::NAME);
                     Some(*tokens_before)
                 }
                 _ => None,
@@ -169,7 +169,7 @@ fn threshold_compaction_summarizes_older_messages() {
         let Entry::Context { plugin, body } = &entries[0] else {
             panic!("{entries:?}")
         };
-        assert_eq!(plugin, "compaction");
+        assert_eq!(plugin, tau_compaction::NAME);
         let record: Record = serde_json::from_str(body).unwrap();
         assert_eq!(record.message(), next[0]);
         assert_eq!(record.read_files, vec!["src/lib.rs".to_owned()]);

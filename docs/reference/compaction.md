@@ -111,6 +111,6 @@ estimated with `chars / 4`.
   it ("The conversation history before this point was compacted into
   the following summary: <summary>…</summary>"). A later compaction
   passes it to the "update" prompt and never summarizes it again.
-- A `ContextRewritten` event from the `compaction` plugin is emitted.
+- A `ContextRewritten` event from the `tau-compaction` plugin is emitted.
 - The next turn sends a full request, because the transcript changed. The
   WebSocket continuation chain restarts from there.
