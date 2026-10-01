@@ -301,8 +301,6 @@ Nothing moves a run to another way of paying after a plan error.
   (signs in again with `prompt=consent`).
 - Onboarding's model step: "Continue with ChatGPT" opens the browser;
   while it waits, the page can be opened again or the redirect pasted.
-- Once, after the first sign-in with plan usage: "You're using your
-  ChatGPT plan", with "Got it" (saved in `models.json`).
 - A run stopped by a usage limit: "Usage limit reached — Review your
   plan or this app's limit in ChatGPT settings." with "Manage usage";
   a dead sign-in asks to sign in again; a sign-in without plan usage
@@ -362,7 +360,7 @@ never a token.
   table, `newest_per_family` keeps at most one model per plan family,
   in family order, at its highest version; and today's four pinned.
 - tau-ui: `plan_usage` and `models` unit tests, and workspace tests for
-  the notice, the composer line, the alerts, the account picker, the
+  the composer line, the alerts, the account picker, the
   plan's models in the picker and on the model step, and the not
   eligible state.
 

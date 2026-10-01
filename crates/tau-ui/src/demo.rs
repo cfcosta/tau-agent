@@ -1665,9 +1665,6 @@ pub fn models() -> crate::models::Models {
     );
     settings
         .set_default("tau-memory", ModelChoice::new("gpt-6-luna", Effort::Low));
-    // The note on the plan shows only where asked for (`--open
-    // plan-notice`).
-    settings.plan_notice_seen = true;
     Models {
         options: plan_models(),
         settings,

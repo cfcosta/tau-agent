@@ -44,7 +44,7 @@ use crate::{
     models::{ModelChoice, ModelSettings, USAGE_SETTINGS_URL},
     pairing::{PairRequest, PairStep, Pairing, PairingUpdate, Progress},
     phones::{Phones, PhonesRequest},
-    plan_usage::{self, PlanAction, PlanAlert},
+    plan_usage::{PlanAction, PlanAlert},
     pull_request::{PrState, PullRequest},
     route::{self, Route},
     setup::{
@@ -2646,21 +2646,6 @@ impl Workspace {
         cx.open_url(USAGE_SETTINGS_URL);
     }
 
-    /// Dismisses the note on using the ChatGPT plan for good.
-    pub fn dismiss_plan_notice(&mut self, cx: &mut Context<Self>) {
-        self.catalog.models.settings.plan_notice_seen = true;
-        cx.emit(WorkspaceEvent::SaveModelSettings(
-            self.catalog.models.settings.clone(),
-        ));
-        cx.notify();
-    }
-
-    /// Whether the note on using the ChatGPT plan shows.
-    pub fn shows_plan_notice(&self) -> bool {
-        let models = &self.catalog.models;
-        models.access.shows_plan_notice(&models.settings)
-    }
-
     /// A run stopped on the ChatGPT plan: says what to do next. A
     /// temporary refusal, which the run already retried, says nothing
     /// more than the run's error.
@@ -2734,64 +2719,6 @@ impl Workspace {
             _ => ui::icon(Icon::Chat, IconSize::LARGE, t.muted),
         };
         ui::modal(glyph, alert.title(), alert.message(), None, actions, t)
-    }
-
-    /// The note shown once after signing in with plan usage: what the
-    /// plan pays for, where to manage it, and "Got it".
-    fn plan_notice(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
-        div()
-            .flex()
-            .items_start()
-            .gap(sp(2.5))
-            .px(sp(3.5))
-            .py(sp(3.))
-            .rounded(radius::BOX)
-            .border_1()
-            .border_color(t.blue_border)
-            .bg(t.blue_soft)
-            .child(div().mt(sp(0.25)).child(ui::icon(
-                Icon::Chat,
-                IconSize::MEDIUM,
-                t.blue,
-            )))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .flex()
-                    .flex_col()
-                    .gap(sp(1.))
-                    .child(ui::text(
-                        plan_usage::NOTICE_TITLE,
-                        Type::SMALL,
-                        t.text,
-                    ))
-                    .child(ui::text(
-                        plan_usage::NOTICE_BODY,
-                        Type::CAPTION,
-                        t.muted,
-                    ))
-                    .child(
-                        div()
-                            .id("plan-notice-manage")
-                            .child(ui::text_link(
-                                plan_usage::MANAGE_USAGE,
-                                Type::CAPTION,
-                                t,
-                            ))
-                            .on_click(
-                                cx.listener(|ws, _, _, cx| ws.manage_usage(cx)),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .id("plan-notice-dismiss")
-                    .child(ui::button("Got it", ButtonKind::Secondary, t))
-                    .on_click(
-                        cx.listener(|ws, _, _, cx| ws.dismiss_plan_notice(cx)),
-                    ),
-            )
     }
 
     pub fn toggle_repo(&mut self, name: &str, cx: &mut Context<Self>) {
@@ -3350,9 +3277,6 @@ impl Workspace {
             .chrome(ui::Edge::Bottom, t)
             .when_some(self.composer_target().filter(|_| compact), |bar, target| {
                 bar.child(div().flex().child(self.model_chip(target, t, cx)))
-            })
-            .when(self.shows_plan_notice(), |bar| {
-                bar.child(self.plan_notice(t, cx))
             })
             .when_some(self.fork_banner(t, cx), |bar, banner| bar.child(banner))
             .when(!self.attachments.is_empty(), |bar| {

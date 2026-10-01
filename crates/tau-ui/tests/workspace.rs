@@ -2056,51 +2056,6 @@ fn search_opens_again_after_escape(cx: &mut TestAppContext) {
     assert!(searching(&mut cx), "ctrl+k works after the picker");
 }
 
-/// The demo's catalog on the ChatGPT plan, with the note on it not yet
-/// read.
-fn on_plan(ws: &mut Workspace, cx: &mut gpui::Context<Workspace>) {
-    let mut catalog = ws.catalog().clone();
-    catalog.models.settings.plan_notice_seen = false;
-    ws.set_catalog(catalog, cx);
-}
-
-/// On the plan, the note shows until "Got it", which saves that it was
-/// read, and "Manage usage" opens ChatGPT's usage settings.
-#[gpui::test]
-fn the_plan_notice_shows_once(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        ws.navigate(Route::NewRun, cx);
-        on_plan(ws, cx);
-        assert!(ws.shows_plan_notice());
-    });
-    // Drawn with the note.
-    cx.run_until_parked();
-    workspace.update(&mut cx, |ws, cx| {
-        ws.dismiss_plan_notice(cx);
-        assert!(!ws.shows_plan_notice());
-        ws.manage_usage(cx);
-    });
-    let saved = events.borrow().iter().rev().find_map(|event| match event {
-        WorkspaceEvent::SaveModelSettings(settings) => Some(settings.clone()),
-        _ => None,
-    });
-    assert!(saved.is_some_and(|settings| settings.plan_notice_seen));
-    assert_eq!(
-        cx.opened_url().as_deref(),
-        Some(tau_ui::models::USAGE_SETTINGS_URL)
-    );
-    // Off the plan, the note does not show.
-    workspace.update(&mut cx, |ws, cx| {
-        let mut catalog = ws.catalog().clone();
-        catalog.models.access.chatgpt = false;
-        catalog.models.settings.plan_notice_seen = false;
-        ws.set_catalog(catalog, cx);
-        assert!(!ws.shows_plan_notice());
-    });
-    cx.run_until_parked();
-}
-
 /// A run stopped on the plan's usage limit says so, with "Manage usage"
 /// first; a temporary refusal, already retried, says nothing more.
 #[gpui::test]

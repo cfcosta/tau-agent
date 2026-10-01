@@ -156,9 +156,6 @@ pub struct ModelSettings {
     pub defaults: Vec<(String, ModelChoice)>,
     /// Models the picker leaves out.
     pub hidden: Vec<String>,
-    /// The user read the note on using their ChatGPT plan, shown once
-    /// after the first sign-in that allows it.
-    pub plan_notice_seen: bool,
 }
 
 impl Default for ModelSettings {
@@ -166,7 +163,6 @@ impl Default for ModelSettings {
         Self {
             defaults: vec![("coder".into(), ModelChoice::default())],
             hidden: Vec::new(),
-            plan_notice_seen: false,
         }
     }
 }
@@ -261,12 +257,6 @@ impl AccessInfo {
     /// The account tau signs in with, if one is saved.
     pub fn active_account(&self) -> Option<&ChatGptAccount> {
         self.accounts.iter().find(|account| account.active)
-    }
-
-    /// Whether the note on using the plan shows: runs use it, and the
-    /// user has not dismissed the note yet.
-    pub fn shows_plan_notice(&self, settings: &ModelSettings) -> bool {
-        self.chatgpt && !settings.plan_notice_seen
     }
 }
 
@@ -405,21 +395,5 @@ mod tests {
         settings
             .set_default("coder", ModelChoice::new("gpt-6-luna", Effort::Auto));
         assert_eq!(settings.default_for("coder").model, "gpt-6-luna");
-    }
-
-    /// The note on using the plan shows while runs use it, until it is
-    /// dismissed.
-    #[test]
-    fn the_plan_notice_shows_once() {
-        let mut settings = ModelSettings::default();
-        let mut access = AccessInfo::default();
-        assert!(!access.shows_plan_notice(&settings), "not on the plan");
-        access.chatgpt = true;
-        assert!(access.shows_plan_notice(&settings));
-        settings.plan_notice_seen = true;
-        assert!(!access.shows_plan_notice(&settings));
-        let text = serde_json::to_string(&settings).unwrap();
-        let back: ModelSettings = serde_json::from_str(&text).unwrap();
-        assert!(back.plan_notice_seen, "saved with the settings");
     }
 }

@@ -12,8 +12,7 @@
 //! - `--open <screen>`: run, history, memory, plugins, constitution,
 //!   compare, plan or ledger; onboarding's welcome, github, token,
 //!   model, repos or ready; pr and pr-opened; alert, a sample dialog; attach-alert, a long one on New run;
-//!   usage-limit, the ChatGPT plan's limit; plan-notice, the note shown
-//!   once on the plan; plan-disabled, the Models
+//!   usage-limit, the ChatGPT plan's limit; plan-disabled, the Models
 //!   screen with plan use not enabled; plan-signing-in, onboarding
 //!   waiting for the ChatGPT sign-in; plan-connecting, that wait
 //!   ending in a sign-in after 2.5 s, to watch the handshake land;
@@ -505,13 +504,6 @@ fn open_demo_screen(
             }
             workspace.set_catalog(catalog, cx);
             workspace.navigate(Route::Models, cx);
-            return;
-        }
-        Some("plan-notice") => {
-            let mut catalog = workspace.catalog().clone();
-            catalog.models.settings.plan_notice_seen = false;
-            workspace.set_catalog(catalog, cx);
-            workspace.navigate(Route::NewRun, cx);
             return;
         }
         // The wait ending in a sign-in, to watch the handshake land.
