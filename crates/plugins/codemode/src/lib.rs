@@ -21,20 +21,30 @@
 //!   store in the inspector, and its entry on the Plugins screen.
 
 pub mod description;
+#[cfg(feature = "host")]
 mod engine;
+#[cfg(feature = "host")]
 pub mod host;
 pub mod image;
+#[cfg(feature = "host")]
 pub mod jev;
 pub mod live;
+#[cfg(feature = "host")]
 pub mod options;
+#[cfg(feature = "host")]
 pub mod plugin;
 pub mod result;
+#[cfg(feature = "host")]
 pub mod search;
+#[cfg(feature = "host")]
 pub mod signature;
 pub mod store;
 pub mod ui;
+#[cfg(feature = "host")]
 pub mod value;
 
+pub use description::PLUGIN;
+#[cfg(feature = "host")]
 pub use engine::{
     MAX_OUTPUT_BYTES,
     MEMORY_LIMIT,
@@ -43,10 +53,15 @@ pub use engine::{
     error_text,
     run,
 };
+#[cfg(feature = "host")]
 pub use host::{Host, Namespace, ToolCall, ToolEntry};
+#[cfg(feature = "host")]
 pub use options::{Options, Source, SourceError};
-pub use plugin::{Codemode, CodemodeTool, PLUGIN};
+#[cfg(feature = "host")]
+pub use plugin::{Codemode, CodemodeTool};
 pub use result::{CallRow, CallStatus, Failure, Item, Outcome, Rendered};
+#[cfg(feature = "host")]
 pub use signature::describe;
+#[cfg(feature = "host")]
 pub use tokio_util::sync::CancellationToken;
 pub use ui::CodemodeUi;

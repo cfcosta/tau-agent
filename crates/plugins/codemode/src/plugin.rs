@@ -34,6 +34,7 @@ use crate::{
     Host,
     Item,
     Namespace,
+    PLUGIN,
     Request,
     ToolCall,
     ToolEntry,
@@ -43,9 +44,6 @@ use crate::{
     signature::{self, CATALOG_BUDGET_TOKENS},
     store,
 };
-
-/// The plugin's name, under which its store records are kept.
-pub const PLUGIN: &str = "tau-codemode";
 
 /// Why a codemode call that no plugin added cannot run.
 pub const NOT_A_PLUGIN: &str = "codemode runs only as its plugin's tool: \

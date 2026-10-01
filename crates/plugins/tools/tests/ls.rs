@@ -11,7 +11,8 @@ use tau_agent::{
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
 use tau_tools::{
-    ls::{EntryKind, Listing, Ls},
+    details::{EntryKind, Listing},
+    ls::Ls,
     path::Root,
     truncate::{MAX_BYTES, format_size, truncate_head},
 };

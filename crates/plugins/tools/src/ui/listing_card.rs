@@ -13,7 +13,7 @@ use tau_ui_kit::{
 };
 
 use super::listing::{ChangeKind, DirListing, Listed, age, count, size};
-use crate::ls::EntryKind;
+use crate::details::EntryKind;
 
 /// The header: the directory, then a chip for each kind of change in
 /// `@` and one for ignored entries. What it holds follows, as the

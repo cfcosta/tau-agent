@@ -6,13 +6,25 @@ edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["host"]
+# The agent half: the `codemode` tool, which runs Luau. The records, their
+# fold and the card build without it, as on a phone.
+host = [
+  "dep:async-trait",
+  "dep:futures-util",
+  "dep:mlua",
+  "dep:tokio",
+  "dep:tokio-util",
+]
+
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
+async-trait = { workspace = true, optional = true }
 base64.workspace = true
-futures-util.workspace = true
+futures-util = { workspace = true, optional = true }
 gpui = { package = "gpui-pre", version = "=0.3.7" }
-mlua.workspace = true
+mlua = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tau-agent.workspace = true
@@ -20,8 +32,8 @@ tau-ai.workspace = true
 tau-jev.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
-tokio-util.workspace = true
+tokio = { workspace = true, features = ["sync", "time"], optional = true }
+tokio-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 tau-ui-plugin = { workspace = true, features = ["testing"] }

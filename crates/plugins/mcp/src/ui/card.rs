@@ -18,7 +18,7 @@ use super::{
     McpUi,
     page::{hint_badge, hints},
 };
-use crate::connection::Annotations;
+use crate::info::Annotations;
 
 /// The most lines of a result's text a card shows.
 const TEXT_LINES: usize = 40;

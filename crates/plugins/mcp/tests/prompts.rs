@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use tau_mcp::{
     McpPlugin,
     config::{ServerConfig, Transport},
-    connection::{PromptArgument, PromptInfo},
+    info::{PromptArgument, PromptInfo},
     prompts::{
         arguments_hint,
         check_arguments,

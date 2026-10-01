@@ -24,9 +24,8 @@ use jj_lib::{
     workspace::{LockedWorkspace, Workspace},
 };
 use pollster::block_on;
-use serde::{Deserialize, Serialize};
 
-use crate::{error::VcsError, lock::lock_repo, vcs::Worker};
+use crate::{TooLarge, error::VcsError, lock::lock_repo, vcs::Worker};
 
 /// The operation attribute naming the tool that wrote an operation.
 pub(crate) const TOOL_ATTRIBUTE: &str = "tau.vcs.tool";
@@ -58,14 +57,6 @@ pub(crate) struct Snapshot {
     /// New files over [`MAX_NEW_FILE_SIZE`], which the snapshot left
     /// out of `@`.
     pub too_large: Vec<TooLarge>,
-}
-
-/// A new file the snapshot left out of `@` for its size.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TooLarge {
-    pub path: String,
-    /// Its size in bytes.
-    pub size: u64,
 }
 
 /// Snapshots the working copy, one operation if files changed, and

@@ -22,7 +22,8 @@ use tau_agent::{
 };
 
 use crate::{
-    diff::{ChangeKind, FileChange},
+    ChangeKind,
+    FileChange,
     tools::{
         Commit,
         Describe,

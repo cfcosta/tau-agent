@@ -15,29 +15,40 @@
 //! pipes and neither is built.
 
 /// Unix only: it runs commands in their own process group.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "host"))]
 pub mod bash;
+pub mod details;
+#[cfg(feature = "host")]
 pub mod edit;
+#[cfg(feature = "host")]
 pub mod errno;
+#[cfg(feature = "host")]
 pub mod find;
+#[cfg(feature = "host")]
 pub mod grep;
+#[cfg(feature = "host")]
 pub mod image;
+#[cfg(feature = "host")]
 pub mod lock;
+#[cfg(feature = "host")]
 pub mod ls;
+#[cfg(feature = "host")]
 pub mod path;
-/// Unix only, like `bash`.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "host"))]
 pub mod plugin;
+#[cfg(feature = "host")]
 pub mod read;
+#[cfg(feature = "host")]
 pub mod truncate;
 pub mod ui;
+#[cfg(feature = "host")]
 pub mod write;
 
-/// What every tool returns when the run is cancelled while it works.
 pub const ABORTED: &str = "Operation aborted";
 
 /// A search that could not start: its glob or its pattern does not
 /// parse. The model reads the parser's own message.
+#[cfg(feature = "host")]
 #[derive(Debug, thiserror::Error)]
 pub enum SearchError {
     #[error(transparent)]
@@ -48,6 +59,7 @@ pub enum SearchError {
     Pattern(#[from] grep_regex::Error),
 }
 
+#[cfg(feature = "host")]
 impl From<SearchError> for tau_agent::tool::ToolError {
     fn from(error: SearchError) -> Self {
         Self::other(error)
@@ -56,7 +68,7 @@ impl From<SearchError> for tau_agent::tool::ToolError {
 
 /// All seven tools on `root`, in pi's order, for `Agent::tools`. The
 /// same tools [`plugin::CodingTools`] adds.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "host"))]
 pub fn coding_tools(
     root: &path::Root,
 ) -> Vec<std::sync::Arc<dyn tau_agent::tool::AgentTool>> {

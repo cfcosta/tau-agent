@@ -51,7 +51,7 @@ use tau_mcp::{
         StdioConfig,
         Transport,
     },
-    connection::{Annotations, PromptArgument, ResourceInfo, TemplateInfo},
+    info::{Annotations, PromptArgument, ResourceInfo, TemplateInfo},
     ui::{
         self,
         Act,

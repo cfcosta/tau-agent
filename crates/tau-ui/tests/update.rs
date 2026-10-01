@@ -3,8 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 use tau_ui::demo;
-use tau_ui_remote::{update::HostUpdate, view::RunUpdate, workspace::WorkspaceEvent};
-
+use tau_ui_remote::{
+    update::HostUpdate,
+    view::RunUpdate,
+    workspace::WorkspaceEvent,
+};
 
 fn round_trip<T>(value: &T) -> T
 where

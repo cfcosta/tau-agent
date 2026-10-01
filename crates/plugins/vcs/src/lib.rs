@@ -24,35 +24,55 @@
 //! push are left to the host; [`clone_bare`] brings a remote repository
 //! in, over HTTPS, for [`Project::import`].
 
+#[cfg(feature = "host")]
 mod clone;
+#[cfg(feature = "host")]
 pub mod delegate;
+pub mod details;
+#[cfg(feature = "host")]
 mod diff;
+#[cfg(feature = "host")]
 pub mod error;
+#[cfg(feature = "host")]
 mod land;
+#[cfg(feature = "host")]
 mod lock;
+#[cfg(feature = "host")]
 mod ops;
+#[cfg(feature = "host")]
 pub mod plugin;
+#[cfg(feature = "host")]
 pub mod project;
+#[cfg(feature = "host")]
 pub mod run_workspace;
+#[cfg(feature = "host")]
 mod session;
+#[cfg(feature = "host")]
 pub mod tools;
 pub mod ui;
+#[cfg(feature = "host")]
 mod vcs;
 
+#[cfg(feature = "host")]
 pub use clone::{CloneError, TransferError, clone_bare};
+#[cfg(feature = "host")]
 pub use delegate::Delegate;
-pub use diff::{ChangeKind, FileChange, MAX_DIFF_BYTES};
+pub use details::{ChangeInfo, ChangeKind, FileChange, Landing, TooLarge};
+#[cfg(feature = "host")]
+pub use diff::MAX_DIFF_BYTES;
+#[cfg(feature = "host")]
 pub use error::VcsError;
-pub use land::Landing;
+#[cfg(feature = "host")]
 pub use ops::{
-    ChangeInfo,
     Committed,
     DEFAULT_LOG_LIMIT,
     MAX_LOG_LIMIT,
     TurnSnapshot,
     WorkingCopy,
 };
+#[cfg(feature = "host")]
 pub use plugin::VcsPlugin;
+#[cfg(feature = "host")]
 pub use project::{
     DEFAULT_WORKSPACE,
     FileDiff,
@@ -61,8 +81,11 @@ pub use project::{
     UpdateFrom,
     Updated,
 };
+#[cfg(feature = "host")]
 pub use run_workspace::{Link, RunWorkspace};
-pub use session::{MAX_NEW_FILE_SIZE, TooLarge};
+#[cfg(feature = "host")]
+pub use session::MAX_NEW_FILE_SIZE;
+#[cfg(feature = "host")]
 pub use vcs::{Identity, Vcs};
 
 /// What every tool returns when the run is cancelled before it starts.

@@ -87,15 +87,13 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     auth::{GrantKey, TokenStore, http::mcp_client},
     config::Dial,
-    connection::{
+    connection::{AuthNeed, Progress, ToolInfo},
+    info::{
         Annotations,
-        AuthNeed,
-        Progress,
         PromptArgument,
         PromptInfo,
         ResourceInfo,
         TemplateInfo,
-        ToolInfo,
     },
 };
 

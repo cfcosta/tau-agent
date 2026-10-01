@@ -38,6 +38,7 @@ use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
     Landing,
+    details::DELEGATE,
     error::VcsError,
     project::Project,
     run_workspace::{Pending, RunWorkspace, bookmark},
@@ -58,9 +59,6 @@ pub struct ChildModel {
 pub type ChildAgent = Arc<
     dyn Fn(RunWorkspace, &ChildModel) -> Result<Agent, ToolError> + Send + Sync,
 >;
-
-/// The name the model calls the tool by.
-pub const NAME: &str = "delegate";
 
 /// Sub-agents of one caller that run at once. Calls past it wait for a
 /// slot.
@@ -195,7 +193,7 @@ fn landed_note(landing: &Landing, brought: &[String]) -> String {
 #[async_trait]
 impl AgentTool for Delegate {
     fn name(&self) -> &str {
-        NAME
+        DELEGATE
     }
 
     fn description(&self) -> &str {
@@ -264,7 +262,7 @@ impl AgentTool for Delegate {
         let outcome = match (self.child)(workspace.clone(), &asked) {
             Ok(agent) => {
                 agent
-                    .as_tool(NAME, "")
+                    .as_tool(DELEGATE, "")
                     .forking()
                     .call(json!({ "input": task }), ctx)
                     .await

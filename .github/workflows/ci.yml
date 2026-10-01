@@ -30,6 +30,15 @@ jobs:
       - name: Clippy
         run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
 
+      # What a phone builds: the interface, and the plugins without their
+      # host halves.
+      - name: Clippy without the plugins' host halves
+        run: |
+          nix develop -c cargo clippy -p tau-ui-remote --all-targets -- -D warnings
+          for plugin in tau-ask tau-codemode tau-mcp tau-tools tau-vcs; do
+            nix develop -c cargo clippy -p "$plugin" --no-default-features --lib -- -D warnings
+          done
+
       - name: Tests
         run: nix develop -c cargo nextest run --workspace
 

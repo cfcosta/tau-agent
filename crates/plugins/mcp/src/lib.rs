@@ -16,30 +16,42 @@
 //! - [`ui`]: the plugin with its UI, [`McpUi`] (ADR 0017): the Servers
 //!   page, MCP tools' cards, and one plugin per repository on the host.
 
+#[cfg(feature = "host")]
 pub mod auth;
 pub mod config;
 pub mod names;
+#[cfg(feature = "host")]
 pub mod results;
 
+#[cfg(feature = "host")]
 mod client;
+#[cfg(feature = "host")]
 pub mod connection;
 #[cfg(feature = "demo")]
 pub mod demo;
+pub mod info;
+#[cfg(feature = "host")]
 mod plugin;
+#[cfg(feature = "host")]
 pub mod pool;
 pub mod prompts;
+#[cfg(feature = "host")]
 pub mod resources;
+#[cfg(feature = "host")]
 pub mod tool;
 pub mod ui;
 
+#[cfg(feature = "host")]
 pub use plugin::{
     DESCRIPTION_LIMIT,
     McpPlugin,
     McpPluginBuilder,
-    NAME,
     SERVERS_INTRO,
     SERVERS_LIMIT,
     STARTUP_WAIT,
     servers_block,
 };
 pub use ui::McpUi;
+
+/// The name the plugin goes by in events and errors.
+pub const NAME: &str = "tau-mcp";

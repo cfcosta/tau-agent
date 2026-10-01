@@ -372,8 +372,16 @@ production uses the HTTP client, `tau_jev::TypeSafe`.
 builds its agent plugin for a run, folds what it publishes
 (`PluginCtx::publish`) into its state for the run, live and from
 history alike, and adds its pages and contributions to the interface
-at extension points. `tau-ui` registers them in `plugins.rs` and builds
-a run's plugins only through that registry.
+at extension points. `tau-ui-remote` registers them in `plugins.rs`,
+and `tau-ui`'s host builds a run's plugins only through that registry.
+
+- **The host half.** A plugin whose agent half brings native code or a
+  network client puts it behind a default `host` feature: tau-codemode
+  (Luau), tau-vcs (jj-lib, gix), tau-mcp (rmcp), tau-tools (the tools)
+  and tau-ask. Off, the crate keeps its records, their fold, its views
+  and the shapes they read (`details` modules, tau-mcp's `info`), and
+  its `UiPlugin` builds no agent plugin. `tau-ui-remote` takes them
+  that way, so a phone links none of it; `tau-ui` turns `host` on.
 
 - **The fold.** `UiPlugin::State` implements `Fold`: its `Record` is
   the plugin's record enum, `apply(&mut self, record, run)` folds one,

@@ -52,7 +52,7 @@ pub struct Status(pub Vcs);
 #[async_trait]
 impl TypedTool for Status {
     type Args = StatusArgs;
-    const NAME: &'static str = "vcs_status";
+    const NAME: &'static str = crate::details::STATUS;
     const DESCRIPTION: &'static str = "Show the working-copy change (@): its change id, description and parent, the files it changes against the parent (A added, M modified, D deleted), and unresolved conflicts. File edits are recorded automatically; there is nothing to stage.";
 
     async fn call(
@@ -81,7 +81,7 @@ pub struct Diff(pub Vcs);
 #[async_trait]
 impl TypedTool for Diff {
     type Args = DiffArgs;
-    const NAME: &'static str = "vcs_diff";
+    const NAME: &'static str = crate::details::DIFF;
     const DESCRIPTION: &'static str = "Show a change's diff against its parent as a unified diff, the working copy by default. Output is truncated to 50KB; pass paths to narrow it.";
 
     async fn call(
@@ -109,7 +109,7 @@ pub struct Log(pub Vcs);
 #[async_trait]
 impl TypedTool for Log {
     type Args = LogArgs;
-    const NAME: &'static str = "vcs_log";
+    const NAME: &'static str = crate::details::LOG;
     const DESCRIPTION: &'static str = "List the working-copy change (@) and its ancestors, newest first. Each row: change id, commit id, flags (@, (empty), (conflict), (divergent), (immutable)), bookmarks in brackets, and the first line of the description. A divergent change id names more than one commit: pass its commit id instead. Pass these ids to the other vcs tools.";
 
     async fn call(
@@ -135,7 +135,7 @@ pub struct Show(pub Vcs);
 #[async_trait]
 impl TypedTool for Show {
     type Args = ShowArgs;
-    const NAME: &'static str = "vcs_show";
+    const NAME: &'static str = crate::details::SHOW;
     const DESCRIPTION: &'static str = "Show one change: its ids, author, parents, full description and diff against its parent. Output is truncated to 50KB.";
 
     async fn call(

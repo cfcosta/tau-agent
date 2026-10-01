@@ -25,23 +25,8 @@ use jj_lib::{
     transaction::Transaction,
 };
 use pollster::block_on;
-use serde::{Deserialize, Serialize};
 
-use crate::{ChangeInfo, error::VcsError, session, vcs::Worker};
-
-/// What landing a child did, or would do.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Landing {
-    /// The child's changes as they are on the parent's stack after the
-    /// landing, newest first. Empty when the child had nothing the
-    /// parent lacks.
-    pub changes: Vec<ChangeInfo>,
-    /// Paths that hold conflict markers in the parent's new newest
-    /// commit: what the parent's next turn has to resolve.
-    pub conflicts: Vec<String>,
-    /// The parent's newest commit after the landing, in hex.
-    pub head: String,
-}
+use crate::{ChangeInfo, Landing, error::VcsError, session, vcs::Worker};
 
 /// Lands the child whose newest commit is `child_head` (a full commit
 /// id in hex) on this workspace's run, and points `bookmark`, the

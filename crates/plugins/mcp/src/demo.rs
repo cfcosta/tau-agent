@@ -2,7 +2,7 @@
 //! these stand for what its host half would see once they started.
 
 use crate::{
-    connection::Annotations,
+    info::Annotations,
     ui::{Defined, PendingRow, ServerRow, Servers, ToolRow},
 };
 

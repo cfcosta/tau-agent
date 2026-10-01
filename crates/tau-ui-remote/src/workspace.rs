@@ -956,7 +956,7 @@ impl Workspace {
             let task = call
                 .as_deref()
                 .and_then(|call| view.call(call))
-                .filter(|(tool, _)| *tool == tau_vcs::delegate::NAME)
+                .filter(|(tool, _)| *tool == tau_vcs::details::DELEGATE)
                 .and_then(|(_, args)| args.get("task")?.as_str())
                 .map(str::to_owned)
                 .unwrap_or_default();
@@ -993,7 +993,7 @@ impl Workspace {
             && let Some(view) = self.run(run)
             && view
                 .call(call_id)
-                .is_some_and(|(tool, _)| tool == tau_vcs::delegate::NAME)
+                .is_some_and(|(tool, _)| tool == tau_vcs::details::DELEGATE)
         {
             let done: Vec<RunId> = view
                 .children

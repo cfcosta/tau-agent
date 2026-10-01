@@ -2,6 +2,9 @@
 //! agent: it never lists tools, so the prompt cache holds across runs
 //! and as servers connect.
 
+/// The plugin's name, under which its store records are kept.
+pub const PLUGIN: &str = "tau-codemode";
+
 /// The tool's name.
 pub const NAME: &str = "codemode";
 

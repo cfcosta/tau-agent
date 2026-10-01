@@ -5,22 +5,16 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use tau_agent::tool::TypedTool as _;
 use tau_ui_kit::diff::DiffKind;
 
 use super::change_log::Change;
-use crate::{
-    ChangeInfo,
-    ChangeKind,
-    FileChange,
-    tools::{Diff, Show},
-};
+use crate::{ChangeInfo, ChangeKind, FileChange, details};
 
 /// The tool whose results read as a [`ChangeDiff`] of the files alone.
-pub const DIFF_TOOL: &str = Diff::NAME;
+pub const DIFF_TOOL: &str = details::DIFF;
 /// The tool whose results read as a [`ChangeDiff`] with its author and
 /// parents.
-pub const SHOW_TOOL: &str = Show::NAME;
+pub const SHOW_TOOL: &str = details::SHOW;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChangeDiff {

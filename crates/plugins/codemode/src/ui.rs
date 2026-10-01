@@ -47,7 +47,6 @@ use tau_ui_plugin::{
 
 use crate::{
     CallStatus,
-    Codemode,
     PLUGIN,
     description::NAME,
     live::JevUpdate,
@@ -337,8 +336,17 @@ impl UiPlugin for CodemodeUi {
         run: &RunCtx,
         _settings: &(),
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        let jev = run.services.get::<Arc<dyn Jev>>().cloned();
-        Ok(vec![Box::new(Codemode::new(jev))])
+        #[cfg(feature = "host")]
+        {
+            let jev = run.services.get::<Arc<dyn Jev>>().cloned();
+            Ok(vec![Box::new(crate::Codemode::new(jev))])
+        }
+        // Without its host half, a run gets no `codemode` tool.
+        #[cfg(not(feature = "host"))]
+        {
+            let _ = run;
+            Ok(Vec::new())
+        }
     }
 
     fn catalog(&self, _host: &(), cx: &HostCx, _settings: &()) -> PluginInfo {

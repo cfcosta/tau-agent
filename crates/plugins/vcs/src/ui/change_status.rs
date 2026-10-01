@@ -5,16 +5,15 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use tau_agent::tool::TypedTool as _;
 
 use super::{
     change_diff::{FileDiff, files_of},
     change_log::Change,
 };
-use crate::{ChangeInfo, ChangeKind, FileChange, TooLarge, tools::Status};
+use crate::{ChangeInfo, ChangeKind, FileChange, TooLarge, details};
 
 /// The tool whose results read as a [`ChangeStatus`].
-pub const TOOL: &str = Status::NAME;
+pub const TOOL: &str = details::STATUS;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChangeStatus {

@@ -17,7 +17,12 @@ use tau_tools::ui::{
     term::{SeenLine, TermOutput, TermStatus},
     term_card::TermCards,
 };
-use tau_ui_remote::{Workspace, catalog::Catalog, route::Route, view::{RunView, Stored, ToolCard, ToolState}};
+use tau_ui_remote::{
+    Workspace,
+    catalog::Catalog,
+    route::Route,
+    view::{RunView, Stored, ToolCard, ToolState},
+};
 
 fn run() -> RunId {
     RunId(Arc::from("r"))
@@ -236,16 +241,18 @@ fn the_model_text_marks_what_was_left_out() {
         is_error: false,
         parent: None,
     });
-    view.update(tau_ui_remote::view::RunUpdate::Event(RunEvent::PluginReport {
-        run: run(),
-        plugin: tau_fast_compaction::NAME.into(),
-        body: json!({
-            "kind": "output", "call_id": "c1", "lines": 1964, "chunks": 3,
-            "kept": 2, "dropped_lines": 1960, "segments": 1, "requests": 1,
-            "tokens_before": 9000, "tokens_after": 40, "pruned": true,
-            "archive": "/a.txt",
-        }),
-    }));
+    view.update(tau_ui_remote::view::RunUpdate::Event(
+        RunEvent::PluginReport {
+            run: run(),
+            plugin: tau_fast_compaction::NAME.into(),
+            body: json!({
+                "kind": "output", "call_id": "c1", "lines": 1964, "chunks": 3,
+                "kept": 2, "dropped_lines": 1960, "segments": 1, "requests": 1,
+                "tokens_before": 9000, "tokens_after": 40, "pruned": true,
+                "archive": "/a.txt",
+            }),
+        },
+    ));
     let lines = term(&view).expect("a terminal").seen_lines();
     assert!(matches!(lines[0], SeenLine::Note(_)));
     assert_eq!(lines[1], SeenLine::Text("Starting".into()));

@@ -11,18 +11,22 @@
 //! - [`prompt_text`]: a `GetPromptResult`'s messages as the text a person
 //!   sends.
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::collections::BTreeSet;
+#[cfg(feature = "host")]
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
+#[cfg(feature = "host")]
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    connection::{Connection, PromptInfo},
-    names::tool_names,
-    results::resource_link,
-};
+#[cfg(feature = "host")]
+use crate::connection::Connection;
+#[cfg(feature = "host")]
+use crate::results::resource_link;
+use crate::{info::PromptInfo, names::tool_names};
 
 /// A server's prompt, with the command that gets it.
+#[cfg(feature = "host")]
 #[derive(Clone)]
 pub struct Prompt {
     /// Without the slash: `mcp__<server>__<prompt>`.
@@ -32,6 +36,7 @@ pub struct Prompt {
 }
 
 /// Every prompt `connections` offer now, with its command.
+#[cfg(feature = "host")]
 pub fn prompts(connections: &[Arc<Connection>]) -> Vec<Prompt> {
     let listed: Vec<(Arc<Connection>, PromptInfo)> = connections
         .iter()
@@ -58,6 +63,7 @@ pub fn prompts(connections: &[Arc<Connection>]) -> Vec<Prompt> {
         .collect()
 }
 
+#[cfg(feature = "host")]
 impl Prompt {
     /// Gets the prompt with the `key=value` pairs of `arguments`, checked
     /// first, and gives its messages as text.
@@ -241,6 +247,7 @@ pub fn check_arguments(
     Ok(given)
 }
 
+#[cfg(feature = "host")]
 /// A `GetPromptResult`'s messages as the text a person sends, one after
 /// another with a blank line between: text as it is, an embedded text
 /// resource as its text, a resource link as a call's result shows it,
@@ -264,10 +271,12 @@ pub fn prompt_text(server: &str, result: &Value) -> String {
         .join("\n\n")
 }
 
+#[cfg(feature = "host")]
 fn field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
+#[cfg(feature = "host")]
 fn block_text(server: &str, block: &Value) -> String {
     let mime = || field(block, "mimeType").unwrap_or("unknown type");
     match field(block, "type") {

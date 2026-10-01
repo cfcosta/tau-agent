@@ -12,6 +12,10 @@ hegeltest.workspace = true
 tau-testing.workspace = true
 tempfile.workspace = true
 
+# The plugins come without their host halves (each one's `host`
+# feature): what runs agents is tau-ui's, and a phone runs none. Cargo
+# cannot turn a workspace dependency's defaults off, so these name
+# their paths.
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 base64.workspace = true
@@ -19,23 +23,25 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
-tau-codemode.workspace = true
+tau-codemode = { path = "../plugins/codemode", default-features = false }
 tau-compaction.workspace = true
 tau-constitution.workspace = true
-tau-ask.workspace = true
+tau-ask = { path = "../plugins/ask", default-features = false }
 tau-goal.workspace = true
-tau-mcp.workspace = true
+tau-mcp = { path = "../plugins/mcp", default-features = false }
 tau-memory.workspace = true
 tau-reasoning.workspace = true
 tau-remote.workspace = true
 tau-fast-compaction.workspace = true
 tau-store.workspace = true
-# The product shows `bash` output as a terminal: commands run under a
-# pseudo-terminal (docs/decisions/0010-terminal-rendering.md).
-tau-tools = { workspace = true, features = ["terminal"] }
+# `bash` cards draw their output as a terminal
+# (docs/decisions/0010-terminal-rendering.md).
+tau-tools = { path = "../plugins/tools", default-features = false, features = [
+  "terminal",
+] }
 # Draws those commands' terminals.
 tau-terminal.workspace = true
-tau-vcs.workspace = true
+tau-vcs = { path = "../plugins/vcs", default-features = false }
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 futures-util.workspace = true

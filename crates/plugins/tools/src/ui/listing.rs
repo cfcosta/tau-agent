@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ls::Entry;
+use crate::details::Entry;
 
 /// How the run's change touches a path, as the vcs plugin marks it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

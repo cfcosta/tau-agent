@@ -5,12 +5,11 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use tau_agent::tool::TypedTool as _;
 
-use crate::{ChangeInfo, tools::Log};
+use crate::{ChangeInfo, details};
 
 /// The tool whose results read as a [`ChangeLog`].
-pub const TOOL: &str = Log::NAME;
+pub const TOOL: &str = details::LOG;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChangeLog {

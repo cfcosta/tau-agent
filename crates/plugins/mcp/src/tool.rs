@@ -10,7 +10,8 @@ use tau_agent::{
 };
 
 use crate::{
-    connection::{Annotations, CallFailure, Connection, Progress, ToolInfo},
+    connection::{CallFailure, Connection, Progress, ToolInfo},
+    info::Annotations,
     results::map_result,
 };
 

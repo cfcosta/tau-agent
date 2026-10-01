@@ -3,7 +3,9 @@
 #
 # - `lib`: tau-phone cross-compiled for arm64 Android (API 31) with the
 #   NDK's clang, as `lib/arm64-v8a/libtau_phone.so`, next to the NDK's
-#   `libc++_shared.so`, which Luau (tau-codemode, through tau-ui) needs.
+#   `libc++_shared.so`. Luau needed it, and the phone links Luau no
+#   longer (tau-ui-remote leaves tau-codemode's host half out); it stays
+#   until an APK without it is shown to load.
 # - `apk`: the Gradle project, offline, with those libraries as its
 #   jniLibs, signed with the debug key committed beside it.
 #

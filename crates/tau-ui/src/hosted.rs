@@ -12,7 +12,6 @@ use tau_ui_plugin::{
     RepoCtx,
     registry::HostState,
 };
-
 use tau_ui_remote::{catalog::PluginInfo, plugins::registry};
 
 /// A plugin with its UI, and its state on this host.

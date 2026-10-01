@@ -20,11 +20,13 @@ use jj_lib::{
     transaction::Transaction,
 };
 use pollster::block_on;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{
-    diff::{self, FileChange},
+    ChangeInfo,
+    FileChange,
+    diff,
     error::VcsError,
     session::{
         self,
@@ -48,27 +50,6 @@ pub const MAX_LOG_LIMIT: u32 = 100;
 pub(crate) struct Report {
     pub text: String,
     pub details: Value,
-}
-
-/// One change, as the tools describe it in `details`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChangeInfo {
-    /// The full change id, in jj's `k`-`z` letters.
-    pub change_id: String,
-    /// The full commit id, in hex.
-    pub commit_id: String,
-    pub description: String,
-    /// The change touches no files.
-    pub empty: bool,
-    pub conflict: bool,
-    pub immutable: bool,
-    /// The change is this workspace's working copy (`@`).
-    pub working_copy: bool,
-    /// More than one visible commit has this change id, so the change id
-    /// names none of them: pass a commit id.
-    pub divergent: bool,
-    /// The local bookmarks on this commit, such as `main`, sorted.
-    pub bookmarks: Vec<String>,
 }
 
 impl ChangeInfo {

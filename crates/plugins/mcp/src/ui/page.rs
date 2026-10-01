@@ -39,7 +39,7 @@ use super::{
     ToolRow,
     server_entry,
 };
-use crate::connection::Annotations;
+use crate::info::Annotations;
 
 /// A server being added or edited.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

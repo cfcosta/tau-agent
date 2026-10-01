@@ -48,7 +48,7 @@ use self::{
     change_status::ChangeStatus,
     landed::{LandedCard, LandingRecord},
 };
-use crate::delegate;
+use crate::details;
 
 /// The name tau-vcs goes by in the interface.
 pub const NAME: &str = "tau-vcs";
@@ -201,7 +201,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
     };
     let data = &at.data;
     match at.tool.as_str() {
-        delegate::NAME => {
+        details::DELEGATE => {
             let landed = delegated(data)?;
             let child = landed.from.clone();
             let handle = view.handle.clone();

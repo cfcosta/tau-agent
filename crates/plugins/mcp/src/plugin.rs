@@ -18,6 +18,7 @@ use tau_agent::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    NAME,
     auth::TokenStore,
     config::{
         ConfigError,
@@ -35,9 +36,6 @@ use crate::{
     results::temp_spill,
     tool::McpTool,
 };
-
-/// The name the plugin goes by in events and errors.
-pub const NAME: &str = "tau-mcp";
 
 /// How long `start` waits, at most, for servers that may have direct
 /// tools and are still connecting.

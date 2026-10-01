@@ -16,39 +16,11 @@ use jj_lib::{
     tree_merge::MergeOptions,
 };
 use pollster::block_on;
-use serde::{Deserialize, Serialize};
 
-use crate::error::VcsError;
+use crate::{ChangeKind, FileChange, error::VcsError};
 
 /// The most bytes of diff text a tool returns: 50 KiB, as `tau-tools`.
 pub const MAX_DIFF_BYTES: usize = 50 * 1024;
-
-/// How a path changed between two trees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ChangeKind {
-    Added,
-    Modified,
-    Removed,
-}
-
-impl ChangeKind {
-    /// The one-letter code `jj status` uses.
-    pub fn letter(self) -> char {
-        match self {
-            ChangeKind::Added => 'A',
-            ChangeKind::Modified => 'M',
-            ChangeKind::Removed => 'D',
-        }
-    }
-}
-
-/// One changed path.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileChange {
-    pub path: String,
-    pub kind: ChangeKind,
-}
 
 /// The paths that differ between `from` and `to` under `matcher`.
 pub(crate) fn changed_paths(

@@ -33,11 +33,12 @@
 //! gradle -p crates/tau-phone/android assembleDebug
 //! ```
 //!
-//! tau-ui brings Luau (through `tau-codemode`), which is C++ linked
-//! against the NDK's `libc++_shared.so`, so the APK carries that library
-//! next to tau-phone's; without it, the app fails to load its library.
-//! The Nix build copies it from the NDK; in the shell,
-//! `CARGO_NDK_LINK_LIBCXX_SHARED` has cargo-ndk copy it into jniLibs.
+//! The phone depends on tau-ui-remote, with each plugin's views and none
+//! of their host halves: none of the plugins' tools, nor Luau, jj-lib or
+//! the MCP client,
+//! come along. The APK still carries the NDK's `libc++_shared.so`,
+//! which Luau needed, until one without it is shown to load
+//! (`CARGO_NDK_LINK_LIBCXX_SHARED` in the shell).
 //! The shell's APK is
 //! `crates/tau-phone/android/app/build/outputs/apk/debug/app-debug.apk`.
 

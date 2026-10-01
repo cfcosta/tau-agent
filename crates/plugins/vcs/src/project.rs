@@ -36,7 +36,8 @@ use jj_lib::{
 use pollster::block_on;
 
 use crate::{
-    diff::{ChangeKind, FileChange},
+    ChangeKind,
+    FileChange,
     error::VcsError,
     run_workspace::Link,
     vcs::{Identity, Vcs, settings},
