@@ -460,6 +460,8 @@ pub struct Connection {
     /// Why it waits for a sign-in, and the sign-in it last connected
     /// under ([`TokenStore::fingerprint`]).
     auth: Mutex<(Option<AuthNeed>, Option<String>)>,
+    /// Bumped whenever anything [`Self::watch`] reports changes.
+    revision: watch::Sender<u64>,
 }
 
 impl Drop for Connection {
@@ -501,6 +503,7 @@ impl Connection {
             generation: AtomicU64::new(0),
             started: AtomicBool::new(false),
             auth: Mutex::default(),
+            revision: watch::channel(0).0,
         })
     }
 
@@ -594,10 +597,20 @@ impl Connection {
 
     fn set_status(&self, state: State, error: Option<String>) {
         self.status.send_replace(Status { state, error });
+        self.revision.send_modify(|revision| *revision += 1);
     }
 
     fn changed(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
+        self.revision.send_modify(|revision| *revision += 1);
+    }
+
+    /// A receiver that sees a change whenever the status, the tools, the
+    /// instructions, the resources, the templates or the prompts change,
+    /// for an interface that shows them. It ends when the connection is
+    /// dropped.
+    pub fn watch(&self) -> watch::Receiver<u64> {
+        self.revision.subscribe()
     }
 
     /// The tools last listed.

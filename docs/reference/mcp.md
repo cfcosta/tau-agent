@@ -576,6 +576,12 @@ added the direct ones.
   going on that hold it end; they keep what they started with. Files
   are not watched: an edit by hand shows the next time the scope is
   used.
+- **Drawn again on changes.** Each connection a scope's plugin uses
+  reports a change of its state or of what its server lists
+  (`Connection::watch`); the host asks the interface to draw the
+  catalog again, once per burst of changes (50 ms). So the page shows a
+  server as connected once it is, not as it was when the page last
+  asked.
 - **Closed with the host.** Dropping the host shuts down every
   connection, runs going on included.
 - **Settings.** The host half reads and saves the plugin's settings
@@ -680,7 +686,7 @@ or, without a repository, the user's and the settings' alone.
 - `results`: `map_result`, `resource_contents`, `resource_link`,
   `cut_middle`, `truncate`, `Spill`.
 - `connection`: `Connection` (`new`, `start`, `connect`, `status`,
-  `protocol`, `tools`,
+  `protocol`, `watch`, `tools`,
   `resources`, `templates`, `prompts`, `offers_resources`,
   `offers_prompts`, `instructions`, `call`, `read_resource`,
   `get_prompt`, `settled`, `shutdown`, `oauth`, `auth_need`,

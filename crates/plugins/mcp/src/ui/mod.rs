@@ -169,6 +169,11 @@ struct Built {
     pool: Pool,
 }
 
+/// How long the page waits after a connection changes before it asks
+/// for a redraw, so a burst of changes makes one.
+pub const REFRESH_COALESCE: std::time::Duration =
+    std::time::Duration::from_millis(50);
+
 /// The plugin on the host: one pool of connections shared by every
 /// repository for the user's servers, one pool per scope for the rest,
 /// and one [`McpPlugin`] per scope over them, built when first needed
@@ -185,7 +190,14 @@ pub struct Host {
     /// The sign-ins waiting for the browser, by grant: a new one for the
     /// same grant ends the old.
     signing_in: Mutex<BTreeMap<GrantKey, tokio::task::AbortHandle>>,
+    /// Asks the interface to draw the page again.
+    refresh: Option<Refresh>,
+    /// The connections whose changes reach `refresh` already.
+    watched: Mutex<Vec<std::sync::Weak<Connection>>>,
 }
+
+/// Asks the interface to draw the catalog again.
+pub type Refresh = Arc<dyn Fn() + Send + Sync>;
 
 impl Host {
     /// A host whose user file is in `user_dir`, connecting on `runtime`.
@@ -201,7 +213,45 @@ impl Host {
             shared: Pool::new(Environment::process(None).with_auth(auth)),
             scopes: Mutex::default(),
             signing_in: Mutex::default(),
+            refresh: None,
+            watched: Mutex::default(),
         }
+    }
+
+    /// The same host, asking the interface to draw the page again
+    /// whenever a connection it started changes: its state, or what the
+    /// server lists. Without it, the page shows a connection as it was
+    /// when the page last asked, `connecting` for good after Connect.
+    pub fn with_refresh(mut self, refresh: Refresh) -> Self {
+        self.refresh = Some(refresh);
+        self
+    }
+
+    /// Sends `connection`'s changes to the interface, once per
+    /// connection. The task ends with the connection.
+    fn watch(&self, connection: &Arc<Connection>) {
+        let Some(refresh) = self.refresh.clone() else {
+            return;
+        };
+        let mut watched = self.watched.lock().expect("not poisoned");
+        watched.retain(|weak| weak.strong_count() > 0);
+        if watched
+            .iter()
+            .any(|weak| std::ptr::eq(weak.as_ptr(), Arc::as_ptr(connection)))
+        {
+            return;
+        }
+        watched.push(Arc::downgrade(connection));
+        let mut changes = connection.watch();
+        self.runtime.spawn(async move {
+            while changes.changed().await.is_ok() {
+                // Changes come in bursts (connected, then the lists):
+                // one redraw for each.
+                tokio::time::sleep(REFRESH_COALESCE).await;
+                changes.borrow_and_update();
+                refresh();
+            }
+        });
     }
 
     /// `~/.config/tau/mcp-auth.json`, where sign-ins are kept; none
@@ -340,6 +390,7 @@ impl Host {
             loaded.sources.pending.clone(),
         );
         for connection in plugin.connections() {
+            self.watch(connection);
             connection.start();
         }
         scopes.insert(
@@ -1305,10 +1356,11 @@ impl UiPlugin for McpUi {
     }
 
     fn host(&self, cx: &HostCx) -> anyhow::Result<Host> {
-        Ok(Host::new(
-            cx.runtime.clone(),
-            cx.config_dir().map(Path::to_owned),
-        ))
+        let refresher = cx.clone();
+        Ok(
+            Host::new(cx.runtime.clone(), cx.config_dir().map(Path::to_owned))
+                .with_refresh(Arc::new(move || refresher.refresh())),
+        )
     }
 
     /// The repository's servers, started on its first run, when it has

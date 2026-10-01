@@ -487,6 +487,8 @@ fn a_server_is_on_when_its_entry_and_the_settings_say_so(tc: TestCase) {
 /// settings in memory.
 struct Fixture {
     _dirs: (tempfile::TempDir, tempfile::TempDir),
+    /// What the host asked the interface, in order.
+    pushes: Arc<std::sync::Mutex<Vec<tau_ui_plugin::Push>>>,
     runtime: tokio::runtime::Runtime,
     host: Option<Host>,
     cx: HostCx,
@@ -520,6 +522,8 @@ impl Fixture {
             checkout: repo_dir.path().to_owned(),
             dir: repo_dir.path().join("tau"),
         };
+        let pushes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let pushed = pushes.clone();
         let cx = HostCx::new(
             store,
             runtime.handle().clone(),
@@ -528,11 +532,12 @@ impl Fixture {
                 .with(ConfigDir(user_dir.path().to_owned())),
             user_dir.path().join("data"),
             vec![repo.clone()],
-            Arc::new(|_| {}),
+            Arc::new(move |push| pushed.lock().unwrap().push(push)),
         );
         let host = McpUi.host(&cx).unwrap();
         Self {
             _dirs: (user_dir, repo_dir),
+            pushes,
             runtime,
             host: Some(host),
             cx,
@@ -1667,4 +1672,63 @@ fn the_host_gets_prompts_and_lists_what_servers_offer() {
         ["mcp__srv__greet", "mcp__srv__summary"]
     );
     assert_eq!(data.commands().len(), 2);
+}
+
+/// The page is drawn again when a connection it started changes: once
+/// Connect's servers connect, and when a server lists new tools. It used
+/// to show them `connecting` until something else redrew it.
+#[test]
+fn the_page_is_drawn_again_when_connections_change() {
+    let fixture = Fixture::new(None, None);
+    let server = common::State::new(true);
+    fixture.host().set_servers(vec![ServerConfig::new(
+        "srv",
+        Transport::Stream(server.dial()),
+    )]);
+    let pushes = || {
+        fixture
+            .pushes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|push| **push == tau_ui_plugin::Push::Catalog)
+            .count()
+    };
+    let state = || {
+        McpUi.data(fixture.host(), &fixture.cx).servers[0]
+            .state
+            .clone()
+    };
+    let wait = |done: &dyn Fn() -> bool| {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        done()
+    };
+    fixture
+        .act(Act::Reconnect {
+            repo: None,
+            server: None,
+        })
+        .unwrap();
+    let asked = pushes();
+    assert!(
+        wait(&|| state().as_deref() == Some("connected")),
+        "{:?}",
+        state()
+    );
+    assert!(wait(&|| pushes() > asked), "no redraw once connected");
+
+    let before = pushes();
+    fixture
+        .runtime
+        .block_on(server.add_tool(common::tool("late", "Late.")));
+    assert!(wait(&|| pushes() > before), "no redraw for a new tool");
+    let listed = McpUi.data(fixture.host(), &fixture.cx).servers[0]
+        .tools
+        .iter()
+        .any(|tool| tool.tool == "late");
+    assert!(listed, "the new tool is listed");
 }
