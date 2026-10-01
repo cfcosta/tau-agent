@@ -1,4 +1,4 @@
-//! tau-ui takes its look from `tau-ui-kit`. Only `ui/components.rs`,
+//! tau-ui-remote takes its look from `tau-ui-kit`. Only `ui/components.rs`,
 //! which holds the components that know tau's own types, may write raw
 //! design values (`tau_ui_kit::design::check`).
 

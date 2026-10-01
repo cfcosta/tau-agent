@@ -6,11 +6,11 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use tau_agent::tool::RunId;
 use tau_ask::{Answer, Record, Reply, ui::Act};
-use tau_ui::{
+use tau_ui::demo;
+use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
     catalog::Catalog,
-    demo,
     route::Route,
     update::HostUpdate,
 };
@@ -25,12 +25,12 @@ fn open(
 
 fn open_with(
     cx: &mut TestAppContext,
-    runs: Vec<tau_ui::view::RunView>,
+    runs: Vec<tau_ui_remote::view::RunView>,
 ) -> (Entity<Workspace>, VisualTestContext, Events) {
-    cx.update(tau_ui::init);
+    cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         let catalog = Catalog {
-            repos: vec![tau_ui::catalog::Repo {
+            repos: vec![tau_ui_remote::catalog::Repo {
                 name: "tau-agent".into(),
                 main: Some(demo::run_id()),
                 ..Default::default()

@@ -2825,7 +2825,7 @@ fn repos(
                                     t,
                                 ))
                                 .on_click(|_, _, cx| {
-                                    cx.open_url(&crate::github::install_url())
+                                    cx.open_url(&crate::setup::install_url())
                                 }),
                         ),
                 ))

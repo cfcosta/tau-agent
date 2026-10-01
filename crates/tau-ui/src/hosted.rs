@@ -13,8 +13,7 @@ use tau_ui_plugin::{
     registry::HostState,
 };
 
-use super::registry;
-use crate::catalog::PluginInfo;
+use tau_ui_remote::{catalog::PluginInfo, plugins::registry};
 
 /// A plugin with its UI, and its state on this host.
 #[derive(Clone)]

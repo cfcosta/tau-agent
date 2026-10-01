@@ -2,7 +2,7 @@
 //! table, links keep where they go, and code stays code.
 
 use hegel::{TestCase, generators as gs, generators::Generator as _};
-use tau_ui::markdown::{Align, Block, Span, blocks, plain};
+use tau_ui_remote::markdown::{Align, Block, Span, blocks, plain};
 
 /// A cell as written, and the text it shows: plain, marked, empty, and
 /// pipes, escaped as GitHub's tables need even inside code.

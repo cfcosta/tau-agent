@@ -10,7 +10,7 @@ use jni::{
     objects::{JByteBuffer, JClass, JObject, JString, JValue},
     sys::jint,
 };
-use tau_ui::{
+use tau_ui_remote::{
     Workspace,
     assets::Assets,
     catalog::Catalog,
@@ -47,7 +47,7 @@ fn android_main(app: android_activity::AndroidApp) {
     Application::with_platform(platform.into_rc())
         .with_assets(Assets)
         .run(move |cx: &mut App| {
-            tau_ui::init(cx);
+            tau_ui_remote::init(cx);
             // The system gives the window its size.
             let options = WindowOptions {
                 window_bounds: None,

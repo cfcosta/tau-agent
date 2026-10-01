@@ -1,82 +1,37 @@
-//! A GPUI interface for tau agents: a desktop layout with the run list,
-//! the transcript and an inspector, and a one-column phone layout below
-//! 720 px.
+//! tau on the computer: the host that runs agents in the repositories
+//! cloned from GitHub and drives tau-ui-remote's interface, and serves
+//! the phones paired with it.
 //!
-//! The crate draws runs; it does not start them. A host wires it to
-//! agents in two directions:
-//!
-//! - **In:** every [`RunEvent`](tau_agent::event::RunEvent) a run streams
-//!   goes to [`Workspace::apply_event`]. What plugins decide but no event
-//!   carries yet (a run's plan, a call's state) goes to
-//!   [`Workspace::update_run`] as a [`RunUpdate`](view::RunUpdate).
-//! - **Out:** the workspace emits a [`WorkspaceEvent`] when the user
-//!   starts, steers, cancels or forks a run. Subscribe to it and call the
-//!   matching `Agent` or `Run` method.
-//!
-//! ```ignore
-//! let workspace = cx.new(|cx| Workspace::new("tau-agent", vec![], window, cx));
-//! cx.subscribe(&workspace, move |workspace, event, cx| match event {
-//!     WorkspaceEvent::NewRun { prompt } => {
-//!         let run = agent.start(prompt, &store);
-//!         // Stream `run.events()` into `Workspace::apply_event`.
-//!     }
-//!     WorkspaceEvent::Steer { run, text } => runs[run].steer(text),
-//!     WorkspaceEvent::Cancel { run } => runs[run].cancel(),
-//!     _ => {}
-//! })
-//! .detach();
-//! ```
-//!
-//! [`host::Host`] is that wiring for a real coding agent: a tokio runtime
+//! [`host::Host`] is the wiring for a real coding agent: a tokio runtime
 //! beside GPUI, `tau-tools` and `tau-compaction` as plugins, a ChatGPT
 //! plan through Sign in with ChatGPT, and the run store. `cargo run -p
 //! tau-ui` uses it when a ChatGPT account with plan use is signed in,
-//! and opens onboarding to sign one in when none is ([`host::onboard`]). With `--demo`, [`demo`]
-//! replays a scripted session.
-//!
-//! Onboarding ([`setup`]) and pull requests ([`pull_request`]) follow
-//! the same pattern: the workspace emits a request, the host answers
-//! with [`Workspace::update_setup`] or [`Workspace::set_pull_request`].
-//! So does a phone's pairing ([`pairing`]): the workspace emits a
-//! [`PairRequest`](pairing::PairRequest), and the phone's remote answers
-//! with [`Workspace::update_pairing`].
+//! and opens onboarding to sign one in when none is
+//! ([`host::onboard`]). With `--demo`, [`demo`] replays a scripted
+//! session, its plugins answering through their real host halves.
 
 pub mod accounts;
-pub mod attach;
-pub mod catalog;
 pub mod demo;
 pub mod github;
 pub mod host;
+pub mod hosted;
 pub mod metered;
-pub mod models;
-pub mod motion;
-pub mod pairing;
 pub mod phone_server;
-pub mod phones;
-pub mod picker;
-pub mod plan_usage;
-pub mod plugins;
-pub mod pull_request;
-pub mod remote;
-pub mod repos;
-pub mod route;
-pub mod search;
-pub mod setup;
-pub mod slash;
-pub mod titles;
-pub mod ui;
-pub mod update;
-pub mod view;
-pub mod workspace;
 
-use gpui::App;
-pub use tau_ui_kit::{assets, input, markdown, theme};
-pub use workspace::{Workspace, WorkspaceEvent};
-
-/// Sets up what the interface needs once per app: fonts, the theme and
-/// the text field's keys.
-pub fn init(cx: &mut App) {
-    tau_ui_kit::init(cx);
-    workspace::bind_keys(cx);
-    tau_terminal::view::bind_keys(cx);
-}
+// The interface's modules, by the paths the host has always used.
+use tau_ui_remote::{
+    Workspace,
+    WorkspaceEvent,
+    catalog,
+    models,
+    pairing,
+    phones,
+    plugins,
+    pull_request,
+    route,
+    setup,
+    titles,
+    update,
+    view,
+    workspace,
+};

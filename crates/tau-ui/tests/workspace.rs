@@ -3,11 +3,11 @@
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use tau_agent::event::StopReason;
-use tau_ui::{
+use tau_ui::demo;
+use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
     catalog::Catalog,
-    demo,
     models::{Effort, ModelChoice, ModelSettings},
     pull_request::PrState,
     route::Route,
@@ -23,11 +23,11 @@ fn open(
     VisualTestContext,
     std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>,
 ) {
-    cx.update(tau_ui::init);
+    cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         // `retry-after` is tau-agent's main chat, which chats fork.
         let catalog = Catalog {
-            repos: vec![tau_ui::catalog::Repo {
+            repos: vec![tau_ui_remote::catalog::Repo {
                 name: "tau-agent".into(),
                 main: Some(demo::run_id()),
                 ..Default::default()
@@ -271,7 +271,7 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
         let fork = ws.current().expect("the fork is open");
         assert_eq!(
             fork.origin,
-            tau_ui::view::Origin::Fork {
+            tau_ui_remote::view::Origin::Fork {
                 from: run.clone(),
                 turn: 2
             }
@@ -282,7 +282,7 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
         assert!(!fork.status.is_live(), "the fork played to its end");
         assert!(fork.items.iter().any(|item| matches!(
             item,
-            tau_ui::view::Item::TurnEnd { turn: 3 }
+            tau_ui_remote::view::Item::TurnEnd { turn: 3 }
         )));
         let parent = ws.run(&run).unwrap();
         assert!(parent.children.iter().any(|child| child.id == fork.id));
@@ -316,7 +316,7 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
         workspace.read_with(&cx, |ws, _| ws.current().unwrap().id.clone());
     workspace.update(&mut cx, |ws, cx| {
         ws.apply(
-            tau_ui::update::HostUpdate::Titled {
+            tau_ui_remote::update::HostUpdate::Titled {
                 run: fork.clone(),
                 title: "Double the retry delay".into(),
             },
@@ -752,7 +752,10 @@ fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
         ws.open_memory("docbert", cx);
     });
     workspace.update(&mut cx, |ws, cx| {
-        ws.add_repo(tau_ui::catalog::Repo::new("dotfiles", "~/dotfiles"), cx);
+        ws.add_repo(
+            tau_ui_remote::catalog::Repo::new("dotfiles", "~/dotfiles"),
+            cx,
+        );
         assert_eq!(ws.selected_repo(), Some("dotfiles"));
         assert!(ws.is_repo_open("dotfiles"));
         ws.remove_repo("docbert", cx);
@@ -814,7 +817,7 @@ fn github_from_the_app_comes_back_when_done(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(demo::run_id()), cx);
         ws.update_setup(
-            SetupUpdate::Repos(vec![tau_ui::setup::RepoChoice {
+            SetupUpdate::Repos(vec![tau_ui_remote::setup::RepoChoice {
                 name: "octocat/hello".into(),
                 description: String::new(),
                 branch: "main".into(),
@@ -949,7 +952,7 @@ fn a_waiting_chatgpt_sign_in_can_be_cancelled(cx: &mut TestAppContext) {
 /// redrawing it starts nothing new.
 #[gpui::test]
 fn a_landing_sign_in_animates_the_handshake_once(cx: &mut TestAppContext) {
-    use tau_ui::motion::{Link, Mood};
+    use tau_ui_remote::motion::{Link, Mood};
     let (workspace, mut cx, _) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
         let mut setup = demo::setup(SetupStep::Model);
@@ -1282,7 +1285,7 @@ fn history_runs_the_query_typed_and_shows_its_rows(cx: &mut TestAppContext) {
 fn search_finds_runs_repositories_and_actions(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
-        use tau_ui::search::Pick;
+        use tau_ui_remote::search::Pick;
         let hits = ws.search_hits("rerank", cx);
         assert_eq!(hits[0].label, "rerank-latency");
         assert_eq!(hits[0].detail, "chat in docbert");
@@ -1354,16 +1357,16 @@ fn composer_slash(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
     text: &str,
-) -> tau_ui::slash::Slash {
+) -> tau_ui_remote::slash::Slash {
     workspace.update(cx, |ws, cx| {
         ws.set_composer(text, cx);
         ws.composer_slash(cx)
     })
 }
 
-fn names(slash: tau_ui::slash::Slash) -> Vec<String> {
+fn names(slash: tau_ui_remote::slash::Slash) -> Vec<String> {
     match slash {
-        tau_ui::slash::Slash::Menu(commands) => {
+        tau_ui_remote::slash::Slash::Menu(commands) => {
             commands.into_iter().map(|command| command.name).collect()
         }
         _ => Vec::new(),
@@ -1392,11 +1395,11 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     // Not a command: a message.
     assert_eq!(
         composer_slash(&workspace, &mut cx, "/usr/bin is slow"),
-        tau_ui::slash::Slash::None
+        tau_ui_remote::slash::Slash::None
     );
     assert_eq!(
         composer_slash(&workspace, &mut cx, "/nope"),
-        tau_ui::slash::Slash::None
+        tau_ui_remote::slash::Slash::None
     );
     workspace.update(&mut cx, |ws, cx| {
         // ↑↓ wrap around; Tab completes the one selected.
@@ -1407,9 +1410,9 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
         // Esc closes the menu until the text changes.
         ws.set_composer("/", cx);
         assert!(ws.slash_dismiss(cx));
-        assert_eq!(ws.composer_slash(cx), tau_ui::slash::Slash::None);
+        assert_eq!(ws.composer_slash(cx), tau_ui_remote::slash::Slash::None);
         ws.set_composer("/g", cx);
-        assert_ne!(ws.composer_slash(cx), tau_ui::slash::Slash::None);
+        assert_ne!(ws.composer_slash(cx), tau_ui_remote::slash::Slash::None);
         // Enter on a command being typed runs it.
         ws.submit_prompt("/cl".into(), cx);
         assert!(ws.is_closed(&done));
@@ -1461,8 +1464,8 @@ fn goal_records(events: &[WorkspaceEvent]) -> Vec<(String, tau_goal::Record)> {
 fn goal_checks(
     run: &tau_agent::tool::RunId,
     checks: bool,
-) -> tau_ui::update::HostUpdate {
-    tau_ui::update::HostUpdate::PluginFold {
+) -> tau_ui_remote::update::HostUpdate {
+    tau_ui_remote::update::HostUpdate::PluginFold {
         run: run.clone(),
         plugin: tau_goal::NAME.into(),
         body: serde_json::json!({ "kind": "starting", "checks": checks }),
@@ -1661,7 +1664,7 @@ fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
         ws.navigate(Route::Run(stopped.clone()), cx);
         // A goal still to be met, then paused.
         ws.apply(
-            tau_ui::update::HostUpdate::PluginRestate {
+            tau_ui_remote::update::HostUpdate::PluginRestate {
                 run: stopped.clone(),
                 plugin: tau_goal::NAME.into(),
                 records: set(),
@@ -1691,7 +1694,7 @@ fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
     // The pause could not be saved: the host puts back what is stored.
     workspace.update(&mut cx, |ws, cx| {
         ws.apply(
-            tau_ui::update::HostUpdate::PluginRestate {
+            tau_ui_remote::update::HostUpdate::PluginRestate {
                 run: stopped.clone(),
                 plugin: tau_goal::NAME.into(),
                 records: set(),
@@ -1886,7 +1889,7 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
         let view = ws.run(&sibling).expect("a chat for the sibling");
         assert!(matches!(view.items.first(), Some(Item::User(task)) if task == "write the docs"));
         let view = ws.run(&child).expect("a chat for the sub-agent");
-        assert_eq!(view.origin, tau_ui::view::Origin::SubAgent { parent: parent.clone() });
+        assert_eq!(view.origin, tau_ui_remote::view::Origin::SubAgent { parent: parent.clone() });
         assert!(matches!(view.items.first(), Some(Item::User(task)) if task == "write the tests"));
         ws.navigate(Route::Run(child.clone()), cx);
 
@@ -2130,7 +2133,7 @@ fn search_opens_again_after_escape(cx: &mut TestAppContext) {
 /// first; a temporary refusal, already retried, says nothing more.
 #[gpui::test]
 fn a_usage_limit_offers_to_manage_usage(cx: &mut TestAppContext) {
-    use tau_ui::plan_usage::{PlanAction, PlanAlert};
+    use tau_ui_remote::plan_usage::{PlanAction, PlanAlert};
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
         let mut busy = demo::usage_limit();
@@ -2150,7 +2153,7 @@ fn a_usage_limit_offers_to_manage_usage(cx: &mut TestAppContext) {
     });
     assert_eq!(
         cx.opened_url().as_deref(),
-        Some(tau_ui::models::USAGE_SETTINGS_URL)
+        Some(tau_ui_remote::models::USAGE_SETTINGS_URL)
     );
     // Never a silent switch: nothing asked the host to use another way
     // to pay.
@@ -2165,7 +2168,7 @@ fn a_usage_limit_offers_to_manage_usage(cx: &mut TestAppContext) {
 /// setup.
 #[gpui::test]
 fn plan_alerts_lead_to_signing_in(cx: &mut TestAppContext) {
-    use tau_ui::plan_usage::{PlanAction, PlanAlert};
+    use tau_ui_remote::plan_usage::{PlanAction, PlanAlert};
     let (workspace, mut cx, events) = open_demo(cx);
     let active = demo::chatgpt_accounts()[0].id.clone();
     workspace.update(&mut cx, |ws, cx| {
@@ -2244,13 +2247,18 @@ fn chatgpt_accounts_switch_and_sign_in(cx: &mut TestAppContext) {
     }));
 }
 
-fn computer() -> tau_ui::pairing::Computer {
+fn computer() -> tau_ui_remote::pairing::Computer {
     demo::computer()
 }
 
 #[gpui::test]
 fn scanning_pairs_then_opens_the_runs(cx: &mut TestAppContext) {
-    use tau_ui::pairing::{PairRequest, PairStep, PairingUpdate, Progress};
+    use tau_ui_remote::pairing::{
+        PairRequest,
+        PairStep,
+        PairingUpdate,
+        Progress,
+    };
 
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
@@ -2282,7 +2290,12 @@ fn scanning_pairs_then_opens_the_runs(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_typed_address_compares_the_certificate_first(cx: &mut TestAppContext) {
-    use tau_ui::pairing::{PairRequest, PairStep, PairingUpdate, Progress};
+    use tau_ui_remote::pairing::{
+        PairRequest,
+        PairStep,
+        PairingUpdate,
+        Progress,
+    };
 
     let (workspace, mut cx, events) = open(cx);
     let fingerprint = computer().fingerprint;
@@ -2322,7 +2335,7 @@ fn a_typed_address_compares_the_certificate_first(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn leaving_a_pairing_halfway_cancels_it(cx: &mut TestAppContext) {
-    use tau_ui::pairing::{PairRequest, PairStep, Progress};
+    use tau_ui_remote::pairing::{PairRequest, PairStep, Progress};
 
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
@@ -2344,7 +2357,7 @@ fn leaving_a_pairing_halfway_cancels_it(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn an_unreachable_computer_leads_back_once_it_answers(cx: &mut TestAppContext) {
-    use tau_ui::pairing::{PairRequest, PairStep, PairingUpdate};
+    use tau_ui_remote::pairing::{PairRequest, PairStep, PairingUpdate};
 
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
@@ -2373,7 +2386,7 @@ fn an_unreachable_computer_leads_back_once_it_answers(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn every_pairing_screen_draws(cx: &mut TestAppContext) {
-    use tau_ui::pairing::PairStep;
+    use tau_ui_remote::pairing::PairStep;
 
     let (workspace, mut cx, _) = open(cx);
     for step in [
@@ -2393,7 +2406,7 @@ fn every_pairing_screen_draws(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_mirrored_workspace_echoes_what_the_host_applies(cx: &mut TestAppContext) {
-    use tau_ui::update::HostUpdate;
+    use tau_ui_remote::update::HostUpdate;
 
     let (workspace, mut cx, _) = open(cx);
     let echoed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -2436,13 +2449,13 @@ fn a_snapshot_replaces_the_runs(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
     use tau_agent::tool::RunId;
-    use tau_ui::view::{Origin, RunView};
+    use tau_ui_remote::view::{Origin, RunView};
 
     let (workspace, mut cx, events) = open(cx);
     let main = RunId("main".into());
     workspace.update(&mut cx, |ws, cx| {
         let mut catalog = Catalog::default();
-        let mut repo = tau_ui::catalog::Repo::new("hello", "");
+        let mut repo = tau_ui_remote::catalog::Repo::new("hello", "");
         repo.main = Some(main.clone());
         catalog.repos.push(repo);
         ws.set_catalog(catalog, cx);
@@ -2517,7 +2530,7 @@ fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_new_repository_lists_its_main_chat(cx: &mut TestAppContext) {
     use tau_agent::tool::RunId;
-    use tau_ui::{catalog::Repo, update::HostUpdate, view::RunView};
+    use tau_ui_remote::{catalog::Repo, update::HostUpdate, view::RunView};
 
     let (workspace, mut cx, _) = open(cx);
     let main = RunId("main-of-hello".into());
@@ -2553,7 +2566,7 @@ fn a_new_repository_lists_its_main_chat(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_picked_effort_stays_after_sending(cx: &mut TestAppContext) {
     use tau_agent::tool::RunId;
-    use tau_ui::{
+    use tau_ui_remote::{
         models::Effort,
         view::{RunStatus, RunView},
     };
@@ -2586,7 +2599,7 @@ fn a_picked_effort_stays_after_sending(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_chat_under_main_offers_no_fork(cx: &mut TestAppContext) {
     use tau_agent::tool::RunId;
-    use tau_ui::view::{Origin, RunStatus, RunView};
+    use tau_ui_remote::view::{Origin, RunStatus, RunView};
 
     let (workspace, mut cx, _) = open(cx);
     let chat = RunId("chat".into());
@@ -2603,7 +2616,7 @@ fn a_chat_under_main_offers_no_fork(cx: &mut TestAppContext) {
         assert!(!ws.can_fork(run));
         assert!(!ws.can_fork_at(run, 1));
         assert!(!ws.start_fork_at(&chat, 1, cx), "no fork mode");
-        assert!(matches!(ws.slash("/fo"), tau_ui::slash::Slash::None));
+        assert!(matches!(ws.slash("/fo"), tau_ui_remote::slash::Slash::None));
     });
 }
 
@@ -2769,7 +2782,7 @@ impl Land {
 fn a_landing_is_proposed_once_from_any_depth(cx: &mut TestAppContext) {
     use hegel::generators as gs;
     use tau_agent::tool::RunId;
-    use tau_ui::view::RunView;
+    use tau_ui_remote::view::RunView;
 
     let (workspace, mut cx, events) = open_demo(cx);
     let mut case = 0;

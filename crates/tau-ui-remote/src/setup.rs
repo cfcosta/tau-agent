@@ -217,6 +217,14 @@ impl Setup {
     }
 }
 
+/// The GitHub App tau signs in through, by its name in GitHub's URLs.
+pub const APP_SLUG: &str = "ascend-repository-cfcosta";
+
+/// Where to give the app access to more repositories.
+pub fn install_url() -> String {
+    format!("https://github.com/apps/{APP_SLUG}/installations/new")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

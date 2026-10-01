@@ -22,7 +22,7 @@ hegeltest.workspace = true
 qrcode.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
-# The same spec as tau-ui's.
+# The same spec as tau-ui-remote's.
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 # Its crates.io release is on gpui-pre 0.3.4; `main` is on 0.3.7. The
 # device packages (camera, location…) are left out.
@@ -30,6 +30,6 @@ gpui_mobile = { package = "gpui-pre-mobile", git = "https://github.com/longbridg
 android-activity = { version = "0.6", features = ["native-activity"] }
 android_logger = "0.15"
 log = "0.4"
-tau-ui.workspace = true
+tau-ui-remote.workspace = true
 # gpui-pre-mobile's version, to call tau's own Java.
 jni = "0.22"

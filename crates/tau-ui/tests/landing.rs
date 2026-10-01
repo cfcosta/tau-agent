@@ -11,10 +11,12 @@ use serde_json::json;
 use tau_agent::tool::RunId;
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
-    Workspace,
     accounts::Credentials,
-    catalog::Catalog,
     host::{Host, HostConfig},
+};
+use tau_ui_remote::{
+    Workspace,
+    catalog::Catalog,
     route::Route,
     view::Item,
     workspace::LandingState,
@@ -106,7 +108,7 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
         .turn(|t| t.tool_call("vcs_commit", commit("docs: keep both")))
         .turn(|t| t.text("resolved"));
 
-    cx.update(tau_ui::init);
+    cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         Workspace::new("tau", Vec::new(), Catalog::default(), window, cx)
     });

@@ -1,0 +1,43 @@
+[package]
+name = "tau-ui-remote"
+description = "tau's interface: the workspace, its screens and the plugins' views, and the phone's remote that drives it from a computer's tau."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+hegeltest.workspace = true
+tau-testing.workspace = true
+tempfile.workspace = true
+
+[dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent = { workspace = true, features = ["serde"] }
+tau-ai.workspace = true
+tau-codemode.workspace = true
+tau-compaction.workspace = true
+tau-constitution.workspace = true
+tau-ask.workspace = true
+tau-goal.workspace = true
+tau-mcp.workspace = true
+tau-memory.workspace = true
+tau-reasoning.workspace = true
+tau-remote.workspace = true
+tau-fast-compaction.workspace = true
+tau-store.workspace = true
+# The product shows `bash` output as a terminal: commands run under a
+# pseudo-terminal (docs/decisions/0010-terminal-rendering.md).
+tau-tools = { workspace = true, features = ["terminal"] }
+# Draws those commands' terminals.
+tau-terminal.workspace = true
+tau-vcs.workspace = true
+tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+anyhow.workspace = true

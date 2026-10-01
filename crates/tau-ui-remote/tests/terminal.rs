@@ -17,12 +17,7 @@ use tau_tools::ui::{
     term::{SeenLine, TermOutput, TermStatus},
     term_card::TermCards,
 };
-use tau_ui::{
-    Workspace,
-    catalog::Catalog,
-    route::Route,
-    view::{RunView, Stored, ToolCard, ToolState},
-};
+use tau_ui_remote::{Workspace, catalog::Catalog, route::Route, view::{RunView, Stored, ToolCard, ToolState}};
 
 fn run() -> RunId {
     RunId(Arc::from("r"))
@@ -241,7 +236,7 @@ fn the_model_text_marks_what_was_left_out() {
         is_error: false,
         parent: None,
     });
-    view.update(tau_ui::view::RunUpdate::Event(RunEvent::PluginReport {
+    view.update(tau_ui_remote::view::RunUpdate::Event(RunEvent::PluginReport {
         run: run(),
         plugin: tau_fast_compaction::NAME.into(),
         body: json!({
@@ -281,7 +276,7 @@ fn the_model_text_marks_what_was_left_out() {
 /// and live chunks reach its screen.
 #[gpui::test]
 fn the_workspace_draws_and_copies_a_terminal(cx: &mut TestAppContext) {
-    cx.update(tau_ui::init);
+    cx.update(tau_ui_remote::init);
     let mut view = started();
     view.apply(&chunk(0, b"\x1b[1;32m   Compiling\x1b[0m tau\r\n"));
     let window = cx.add_window(|window, cx| {

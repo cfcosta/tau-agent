@@ -27,14 +27,8 @@ use crate::{
 
 /// The GitHub App tau signs in through.
 pub const CLIENT_ID: &str = "Iv23lisaZLq1FOECQUNe";
-pub const APP_SLUG: &str = "ascend-repository-cfcosta";
 /// Items per page of a GitHub list: its maximum.
 pub const PER_PAGE: usize = 100;
-
-/// Where to give the app access to more repositories.
-pub fn install_url() -> String {
-    format!("https://github.com/apps/{APP_SLUG}/installations/new")
-}
 
 /// A saved sign-in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

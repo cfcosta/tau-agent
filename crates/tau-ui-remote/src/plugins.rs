@@ -19,8 +19,6 @@ use tau_ui_plugin::{
     points,
 };
 
-pub mod hosted;
-
 use crate::{
     view::RunView,
     workspace::{Workspace, WorkspaceEvent},

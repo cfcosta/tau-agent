@@ -2,7 +2,7 @@
 //!
 //! The phone runs no agent: it pairs with the tau on a computer and
 //! shows and steers its runs (decision 0013), through tau-ui's
-//! [`remote`](tau_ui::remote). Pairing reads the computer's code in
+//! [`remote`](tau_ui_remote::remote). Pairing reads the computer's code in
 //! tau's own viewfinder: a Java activity (`TauViewfinder`, on CameraX,
 //! without Google Play services) shows the camera's preview full screen
 //! and hands each frame's luminance, one at a time, to [`qr`] over JNI,

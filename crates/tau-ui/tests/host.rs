@@ -17,6 +17,8 @@ use tau_ui::{
     accounts::Credentials,
     github::{Api, Token},
     host::{Host, HostConfig},
+};
+use tau_ui_remote::{
     models::{AccountState, Effort, ModelChoice},
     view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
 };
@@ -281,7 +283,7 @@ fn a_new_chat_shows_the_goal_it_inherits() {
 }
 
 /// tau-goal's state in `view`, as its fold leaves it.
-fn goal_of(view: &tau_ui::view::RunView) -> tau_goal::ui::State {
+fn goal_of(view: &tau_ui_remote::view::RunView) -> tau_goal::ui::State {
     view.plugin_states
         .get(tau_goal::NAME)
         .map(|state| serde_json::from_value(state.json().clone()).unwrap())
@@ -289,7 +291,7 @@ fn goal_of(view: &tau_ui::view::RunView) -> tau_goal::ui::State {
 }
 
 /// The text of tau-goal's notes in `view`'s transcript, in order.
-fn goal_notes(view: &tau_ui::view::RunView) -> Vec<String> {
+fn goal_notes(view: &tau_ui_remote::view::RunView) -> Vec<String> {
     let state = goal_of(view);
     view.items
         .iter()
@@ -303,7 +305,9 @@ fn goal_notes(view: &tau_ui::view::RunView) -> Vec<String> {
 }
 
 /// tau-reasoning's state in `view`, as its fold leaves it.
-fn reasoning_of(view: &tau_ui::view::RunView) -> tau_reasoning::ui::State {
+fn reasoning_of(
+    view: &tau_ui_remote::view::RunView,
+) -> tau_reasoning::ui::State {
     view.plugin_states
         .get(tau_reasoning::NAME)
         .map(|state| serde_json::from_value(state.json().clone()).unwrap())
@@ -336,7 +340,7 @@ fn every_jev_plugin_is_listed() {
         );
         assert_eq!(plugin.spend, 0.0);
     }
-    let reasoning = |catalog: &tau_ui::catalog::Catalog| {
+    let reasoning = |catalog: &tau_ui_remote::catalog::Catalog| {
         catalog
             .plugins
             .iter()
@@ -402,7 +406,7 @@ fn a_stored_run_shows_the_plan_it_ran_with() {
             .iter()
             .any(|field| field.name == "workspace" && !field.value.is_empty())
     );
-    let workspace = |view: &tau_ui::view::RunView| {
+    let workspace = |view: &tau_ui_remote::view::RunView| {
         view.plugins.iter().any(|status| status.name == "workspace")
     };
     assert_eq!(workspace(stored), workspace(&live));
@@ -963,7 +967,7 @@ fn a_failed_sub_agent_comes_back_from_history() {
     let child = main_view
         .children
         .iter()
-        .find(|child| child.kind == tau_ui::view::ChildKind::SubAgent)
+        .find(|child| child.kind == tau_ui_remote::view::ChildKind::SubAgent)
         .expect("the sub-agent under its parent");
     let view = history.iter().find(|view| view.id == child.id).unwrap();
     assert_eq!(
@@ -1151,7 +1155,7 @@ fn models_follow_the_sign_in_and_settings_persist() {
     let (host, _events) = Host::new(config).unwrap();
     let models = host.models();
     assert_eq!(models.settings, settings);
-    assert_eq!(models.options, tau_ui::models::plan_models());
+    assert_eq!(models.options, tau_ui_remote::models::plan_models());
     assert!(models.access.chatgpt);
     assert_eq!(models.access.label, "ChatGPT plan");
     let accounts = &models.access.accounts;
@@ -1270,7 +1274,7 @@ fn github_repositories_clone_into_tau() {
     assert!(!host.is_importing());
     assert_eq!(
         host.catalog().project,
-        tau_ui::catalog::ProjectStatus::Unknown
+        tau_ui_remote::catalog::ProjectStatus::Unknown
     );
     // Cloning it again lists the same repository, without fetching.
     assert_eq!(host.clone_github("cfcosta/hello").unwrap().name, "hello");
@@ -1368,13 +1372,17 @@ fn rules_act(host: &Host, act: Act) -> Option<serde_json::Value> {
 }
 
 /// A repository's constitution, as its page gets it.
-fn rules_of(repo: &tau_ui::catalog::Repo) -> tau_constitution::ui::Rules {
+fn rules_of(
+    repo: &tau_ui_remote::catalog::Repo,
+) -> tau_constitution::ui::Rules {
     serde_json::from_value(repo.plugins[tau_constitution::NAME].json().clone())
         .unwrap()
 }
 
 /// What the checks did in `view`, as tau-constitution's fold leaves it.
-fn checks_of(view: &tau_ui::view::RunView) -> tau_constitution::ui::State {
+fn checks_of(
+    view: &tau_ui_remote::view::RunView,
+) -> tau_constitution::ui::State {
     view.plugin_states
         .get(tau_constitution::NAME)
         .map(|state| serde_json::from_value(state.json().clone()).unwrap())
@@ -1543,7 +1551,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     }
     wait_until_done(&host, &view.id);
     assert!(!dir.path().join("a.txt").exists(), "the write was refused");
-    let blocked = |view: &tau_ui::view::RunView| {
+    let blocked = |view: &tau_ui_remote::view::RunView| {
         view.items.iter().any(|item| {
             matches!(item, Item::Tool(card)
                 if matches!(&card.state, ToolState::Blocked { .. }))
@@ -1700,7 +1708,7 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         view.apply(&event);
     }
     wait_until_done(&host, &view.id);
-    let cut_of = |view: &tau_ui::view::RunView| {
+    let cut_of = |view: &tau_ui_remote::view::RunView| {
         view.items.iter().find_map(|item| match item {
             Item::Tool(card) if card.tool == "bash" => card.cut.clone(),
             _ => None,
@@ -1861,7 +1869,7 @@ fn a_run_becomes_a_pull_request_on_github() {
     assert_eq!(head, "commit-1");
     assert_eq!(
         host.pull_request_checks(&run.id).unwrap(),
-        tau_ui::pull_request::Checks::Passed
+        tau_ui_remote::pull_request::Checks::Passed
     );
     let requests = seen.lock().unwrap().clone();
     let find = |line: &str| {
@@ -1965,7 +1973,7 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
         Some(tau_ai::responses::request::ReasoningEffort::High)
     );
     // The plan's reasoning, as tau-reasoning's state says it.
-    let chosen = |view: &tau_ui::view::RunView| {
+    let chosen = |view: &tau_ui_remote::view::RunView| {
         reasoning_of(view).plan.as_deref() == Some("high")
     };
     assert!(chosen(&view), "{:?}", view.plugin_states);
@@ -2024,7 +2032,7 @@ fn reasoning_settings_reach_the_plugin() {
         Ok(tau_jev::fake::response(answers, request))
     });
     let host = host.with_jev(std::sync::Arc::new(jev.clone()));
-    let mut settings = tau_ui::models::ModelSettings::default();
+    let mut settings = tau_ui_remote::models::ModelSettings::default();
     settings.plugins.insert(
         tau_reasoning::NAME.into(),
         serde_json::json!({ "redecide": true, "threshold": 0.9 }),
@@ -2213,7 +2221,7 @@ fn each_message_is_scored_again() {
     }
     wait_until_done(&host, &view.id);
     // What the composer sends next: auto again, not the picked none.
-    let next = tau_ui::Workspace::model_of(&view);
+    let next = tau_ui_remote::Workspace::model_of(&view);
     assert_eq!(next, auto);
     host.resume(&view.id, "prove the Riemann hypothesis", &next)
         .unwrap();

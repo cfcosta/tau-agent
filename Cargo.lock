@@ -9404,7 +9404,7 @@ dependencies = [
  "qrcode",
  "rqrr",
  "tau-remote",
- "tau-ui",
+ "tau-ui-remote",
 ]
 
 [[package]]
@@ -9544,8 +9544,6 @@ dependencies = [
  "hegeltest",
  "if-addrs",
  "libc",
- "pulldown-cmark",
- "qrcode",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -9563,15 +9561,14 @@ dependencies = [
  "tau-reasoning",
  "tau-remote",
  "tau-store",
- "tau-terminal",
  "tau-testing",
  "tau-tools",
  "tau-ui-kit",
  "tau-ui-plugin",
+ "tau-ui-remote",
  "tau-vcs",
  "tempfile",
  "tokio",
- "unicode-segmentation",
  "uuid",
 ]
 
@@ -9603,6 +9600,40 @@ dependencies = [
  "tau-ai",
  "tau-store",
  "tau-ui-kit",
+ "tokio",
+]
+
+[[package]]
+name = "tau-ui-remote"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "futures-util",
+ "gpui-pre",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-ask",
+ "tau-codemode",
+ "tau-compaction",
+ "tau-constitution",
+ "tau-fast-compaction",
+ "tau-goal",
+ "tau-mcp",
+ "tau-memory",
+ "tau-reasoning",
+ "tau-remote",
+ "tau-store",
+ "tau-terminal",
+ "tau-testing",
+ "tau-tools",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "tau-vcs",
+ "tempfile",
  "tokio",
 ]
 

@@ -29,7 +29,7 @@ use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
     catalog::Catalog,
-    plugins::hosted::{self, Hosted},
+    hosted::{self, Hosted},
 };
 
 /// What the demo's runs cost each plugin over the last 30 days, as the
@@ -87,7 +87,9 @@ impl DemoHost {
         let settings: Arc<Mutex<BTreeMap<String, Value>>> = Arc::default();
         let (read, save) = (settings.clone(), settings.clone());
         let saved = SavedSettings::new(
-            move |plugin| read.lock().expect("not poisoned").get(plugin).cloned(),
+            move |plugin| {
+                read.lock().expect("not poisoned").get(plugin).cloned()
+            },
             move |plugin, value| {
                 save.lock()
                     .expect("not poisoned")

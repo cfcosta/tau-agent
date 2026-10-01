@@ -1,7 +1,7 @@
 //! Phones, as the computer shows them (decision 0013): whether they may
 //! connect, where tau listens, the pairing code, and the phones paired.
 //!
-//! [`phone_server`](crate::phone_server) keeps it and hands it to the
+//! tau-ui's phone server keeps it and hands it to the
 //! Workspace with [`Workspace::set_phones`](crate::Workspace::set_phones).
 
 use std::time::Instant;

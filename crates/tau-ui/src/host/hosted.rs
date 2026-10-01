@@ -18,8 +18,8 @@ use tau_ui_plugin::{
 };
 
 use super::*;
-use crate::plugins::hosted;
-pub(super) use crate::plugins::hosted::Hosted;
+use crate::hosted;
+pub(super) use crate::hosted::Hosted;
 
 impl Host {
     /// Makes each plugin's host state.

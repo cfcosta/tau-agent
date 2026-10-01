@@ -5,13 +5,12 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use tau_ui::{
+use tau_ui::{demo, phone_server};
+use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
     catalog::Catalog,
-    demo,
     pairing::PairStep,
-    phone_server,
     phones::PhonesRequest,
     remote::{self, Platform},
     route::Route,
@@ -20,9 +19,9 @@ use tau_ui::{
 
 fn window(
     cx: &mut TestAppContext,
-    runs: Vec<tau_ui::view::RunView>,
+    runs: Vec<tau_ui_remote::view::RunView>,
 ) -> (Entity<Workspace>, VisualTestContext) {
-    cx.update(tau_ui::init);
+    cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         Workspace::new("tau", runs, Catalog::default(), window, cx)
     });

@@ -13,6 +13,11 @@ tau-agent/
 │   ├── tau-ui-kit/   # the design language: theme tokens, icons, fonts, components,
 │   │                 # text field, marked-up text (ADR 0017)
 │   ├── tau-ui-plugin/ # UiPlugin, its Fold, the registry, extension points (ADR 0017)
+│   ├── tau-ui-remote/ # the interface: workspace, screens, plugins' views, and the
+│   │                 # phone's remote that drives it from a computer (ADR 0013)
+│   ├── tau-ui/       # the desktop app: the host that runs agents, the phone
+│   │                 # server, onboarding's sign-ins, the demo
+│   ├── tau-phone/    # tau-ui-remote on Android
 │   ├── terminal/     # tau-terminal: libghostty-vt terminal, PTY command runner,
 │   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
 │   └── plugins/
@@ -36,6 +41,10 @@ Dependency direction:
 - `tau-terminal` depends on no tau crate. `tau-tools` uses it for
   `bash` only with its `terminal` feature, which `tau-ui` turns on
   ([0010](decisions/0010-terminal-rendering.md)).
+- `tau-ui-remote` draws runs and starts none: it depends on the
+  plugins' views, not on their host halves. `tau-ui` brings those
+  (each plugin's default `host` feature) and drives it; `tau-phone`
+  depends on `tau-ui-remote` alone.
 - Plugins, under `crates/plugins/`, depend on `tau-agent` (and
   `tau-ai` for message types). Core crates never depend on a plugin
   ([0006](decisions/0006-plugin-crates.md)). Each plugin brings its own

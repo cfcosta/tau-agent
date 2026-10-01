@@ -5,11 +5,7 @@ use gpui::Context;
 use tau_ui_plugin::PluginValue;
 
 use super::*;
-use crate::{
-    route::Route,
-    setup::ModelAccess,
-    workspace::PickerTarget,
-};
+use crate::{route::Route, setup::ModelAccess, workspace::PickerTarget};
 
 /// Opens a screen of the demo on the workspace, with what it needs from
 /// the demo's host.
@@ -91,7 +87,9 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // go back; and the computer's Phones screen.
     ("pair", |ws, _, cx| pair_at(ws, PairStep::Welcome, cx)),
     ("pair-scan", |ws, _, cx| pair_at(ws, PairStep::Scan, cx)),
-    ("pair-address", |ws, _, cx| pair_at(ws, PairStep::Address, cx)),
+    ("pair-address", |ws, _, cx| {
+        pair_at(ws, PairStep::Address, cx)
+    }),
     ("pair-paired", |ws, _, cx| pair_at(ws, PairStep::Paired, cx)),
     ("pair-unreachable", |ws, _, cx| {
         pair_at(ws, PairStep::Unreachable, cx)
@@ -146,7 +144,9 @@ pub static SCREENS: &[(&str, Screen)] = &[
             cards.update(cx, |cards, _| cards.pick(&run, LOG_CALL, LOG_PICKED));
         }
     }),
-    ("status", |ws, _, cx| vcs_card(ws, STATUS_CALL, SHOW_FILE, cx)),
+    ("status", |ws, _, cx| {
+        vcs_card(ws, STATUS_CALL, SHOW_FILE, cx)
+    }),
     ("show", |ws, _, cx| vcs_card(ws, SHOW_CALL, SHOW_FILE, cx)),
     ("diff", |ws, _, cx| vcs_card(ws, DIFF_CALL, DIFF_FILE, cx)),
     // The repository tree's states.
@@ -201,7 +201,9 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.toggle_sheet(cx);
     }),
     // The run's other states.
-    ("run-plugins", |ws, _, cx| ws.navigate(Route::Run(run_id()), cx)),
+    ("run-plugins", |ws, _, cx| {
+        ws.navigate(Route::Run(run_id()), cx)
+    }),
     // The demo streams tau-reasoning's note in right after the task.
     ("note-open", |ws, _, cx| ws.toggle_note(&run_id(), 1, cx)),
     ("composer-lines", |ws, _, cx| {
@@ -308,7 +310,13 @@ fn model_at(
     model: ModelAccess,
     cx: &mut Context<Workspace>,
 ) {
-    workspace.set_setup(Setup { model, ..setup(SetupStep::Model) }, cx);
+    workspace.set_setup(
+        Setup {
+            model,
+            ..setup(SetupStep::Model)
+        },
+        cx,
+    );
     workspace.navigate(Route::Setup(SetupStep::Model), cx);
 }
 
@@ -331,7 +339,13 @@ fn pull_request_at(
 ) {
     let run = run_id();
     let pr = Box::new(pr);
-    workspace.apply(HostUpdate::PullRequest { run: run.clone(), pr }, cx);
+    workspace.apply(
+        HostUpdate::PullRequest {
+            run: run.clone(),
+            pr,
+        },
+        cx,
+    );
     workspace.open_pull_request(&run, cx);
 }
 
@@ -355,7 +369,11 @@ fn vcs_card(
 /// tau-agent's rules page in the state `name` names, which
 /// tau-constitution opens; a rule is tried on the demo run's shell
 /// commands.
-fn rules_at(workspace: &mut Workspace, name: &str, cx: &mut Context<Workspace>) {
+fn rules_at(
+    workspace: &mut Workspace,
+    name: &str,
+    cx: &mut Context<Workspace>,
+) {
     plugin_page(workspace, tau_constitution::NAME, "rules", "repo", cx);
     let Some(ui) = workspace
         .plugin_ui::<tau_constitution::ui::page::Ui>(tau_constitution::NAME)
@@ -375,7 +393,11 @@ fn rules_at(workspace: &mut Workspace, name: &str, cx: &mut Context<Workspace>) 
 
 /// The demo run working on [`GOAL`], with the records tau-goal
 /// published by `state`.
-fn goal_at(workspace: &mut Workspace, state: &str, cx: &mut Context<Workspace>) {
+fn goal_at(
+    workspace: &mut Workspace,
+    state: &str,
+    cx: &mut Context<Workspace>,
+) {
     workspace.navigate(Route::Run(run_id()), cx);
     for body in tau_goal::demo::records(GOAL, state) {
         let event = RunEvent::PluginReport {

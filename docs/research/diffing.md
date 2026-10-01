@@ -7,8 +7,8 @@ tau makes diffs in two places today. The `edit` tool
 (`crates/plugins/tools/src/edit.rs`, `generate_diff`) uses `similar` to
 build a unified diff with 4 lines of context, and returns it to the
 model. The GPUI app reads that text back (`parse_diff` in
-`crates/tau-ui/src/view.rs`) and draws it line by line in
-`crates/tau-ui/src/ui/transcript.rs`. It drops hunk headers, has no line
+`crates/tau-ui-remote/src/view.rs`) and draws it line by line in
+`crates/tau-ui-remote/src/ui/transcript.rs`. It drops hunk headers, has no line
 numbers, no intra-line highlights and no syntax colors.
 
 This note surveys the Rust options and says which to use for each job.

@@ -17,7 +17,7 @@ use gpui::{
     px,
     size,
 };
-use tau_ui::{markdown::Align, theme::theme, ui};
+use tau_ui_remote::{markdown::Align, theme::theme, ui};
 
 const HEAD: [&str; 3] = ["Area", "Linked Pi extension", "Ours"];
 const ROWS: [[&str; 3]; 3] = [
@@ -96,7 +96,7 @@ impl Render for Table {
 
 #[gpui::test]
 fn every_cell_holds_its_lines(cx: &mut TestAppContext) {
-    cx.update(tau_ui::init);
+    cx.update(tau_ui_remote::init);
     let cells = Rc::new(RefCell::new(Vec::new()));
     let window = cx.add_window({
         let cells = cells.clone();

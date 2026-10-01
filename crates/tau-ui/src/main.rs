@@ -35,13 +35,15 @@ use gpui::{
     size,
 };
 use tau_ui::{
-    Workspace,
     accounts::Credentials,
-    assets::Assets,
-    catalog::Catalog,
     demo,
     host::{self, Host, HostConfig},
-    motion::{self, MotionPreference},
+};
+use tau_ui_remote::{
+    Workspace,
+    assets::Assets,
+    catalog::Catalog,
+    motion::MotionPreference,
     route::Route,
     setup::SetupStep,
 };
@@ -114,7 +116,7 @@ fn main() {
 
     gpui_platform::application().with_assets(Assets).run(
         move |cx: &mut App| {
-            tau_ui::init(cx);
+            tau_ui_remote::init(cx);
             let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -265,7 +267,7 @@ fn follow_motion_preference(
     }
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
-        let asking = cx.background_spawn(motion::desktop_animations());
+        let asking = cx.background_spawn(desktop_animations());
         preference.desktop_animations = asking.await;
         let reduce = preference.reduce();
         let _ = workspace.update(cx, |ws, cx| ws.set_reduce_motion(reduce, cx));
@@ -296,4 +298,20 @@ fn demo_workspace(
         workspace.replay(demo::run_id(), demo::script(), cx);
     }
     workspace
+}
+
+/// Whether the desktop animates, from GNOME's `enable-animations`
+/// through the XDG settings portal; `None` without a portal or the key.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub async fn desktop_animations() -> Option<bool> {
+    let settings = ashpd::desktop::settings::Settings::new().await.ok()?;
+    settings
+        .read::<bool>("org.gnome.desktop.interface", "enable-animations")
+        .await
+        .ok()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+pub async fn desktop_animations() -> Option<bool> {
+    None
 }

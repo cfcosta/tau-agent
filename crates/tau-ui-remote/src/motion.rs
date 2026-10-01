@@ -454,22 +454,6 @@ pub fn saved_reduce_motion(path: &Path) -> Option<bool> {
     }
 }
 
-/// Whether the desktop animates, from GNOME's `enable-animations`
-/// through the XDG settings portal; `None` without a portal or the key.
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub async fn desktop_animations() -> Option<bool> {
-    let settings = ashpd::desktop::settings::Settings::new().await.ok()?;
-    settings
-        .read::<bool>("org.gnome.desktop.interface", "enable-animations")
-        .await
-        .ok()
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-pub async fn desktop_animations() -> Option<bool> {
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
