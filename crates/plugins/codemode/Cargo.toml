@@ -1,0 +1,23 @@
+[package]
+name = "tau-codemode"
+description = "The codemode tool: a Luau sandbox that calls tau's tools and Jev, as a plugin."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+mlua.workspace = true
+serde_json.workspace = true
+tau-ai.workspace = true
+tau-jev.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+tokio-util.workspace = true
+
+[dev-dependencies]
+hegeltest.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
