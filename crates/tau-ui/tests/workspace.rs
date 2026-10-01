@@ -2,7 +2,7 @@
 //! host drives them, in GPUI's test app.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use tau_agent::event::StopReason;
+use tau_agent::event::{RunEvent, StopReason};
 use tau_ui::{
     Workspace,
     WorkspaceEvent,
@@ -12,7 +12,7 @@ use tau_ui::{
     pull_request::PrState,
     route::Route,
     setup::{GitHub, ModelAccess, Setup, SetupStep, SetupUpdate},
-    view::{BranchCode, CodeState, Item, RunStatus},
+    view::{BranchCode, CodeState, Item, RunStatus, RunUpdate},
     workspace::{LandingState, PickerTarget},
 };
 
@@ -1370,6 +1370,71 @@ fn the_constitution_settings_and_reset(cx: &mut TestAppContext) {
         ws.reset_rules(&repo, cx);
     });
     assert_eq!(resets(&events.borrow()), 1);
+}
+
+/// A flagged final answer marked fine leaves the queue for what was
+/// handled, as a call does; one not marked stays.
+#[gpui::test]
+fn an_answer_marked_fine_is_handled(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let run = demo::run_id();
+        for (_, update) in demo::script() {
+            ws.update_run(&run, update, cx);
+        }
+        for (rule, answer) in [("R6", "Done."), ("R6", "Done again.")] {
+            ws.update_run(
+                &run,
+                RunUpdate::Event(RunEvent::TurnStart {
+                    run: run.clone(),
+                    turn: 90,
+                }),
+                cx,
+            );
+            ws.update_run(
+                &run,
+                RunUpdate::Event(RunEvent::TextDelta {
+                    run: run.clone(),
+                    parent: None,
+                    delta: answer.into(),
+                }),
+                cx,
+            );
+            ws.update_run(
+                &run,
+                RunUpdate::Event(RunEvent::PluginReport {
+                    run: run.clone(),
+                    plugin: "tau-constitution".into(),
+                    body: serde_json::json!({
+                        "kind": "flagged", "rule": rule,
+                        "text": "The final answer names the tests that ran.",
+                        "score": 0.5,
+                    }),
+                }),
+                cx,
+            );
+        }
+        let answers = |ws: &Workspace| -> Vec<String> {
+            ws.review_items("tau-agent")
+                .into_iter()
+                .filter(|item| item.tool.is_none())
+                .map(|item| item.key)
+                .collect()
+        };
+        assert_eq!(answers(ws), ["answer-0", "answer-1"]);
+        ws.mark_reviewed(&run, "answer-1", cx);
+        assert_eq!(answers(ws), ["answer-0"]);
+        let fine: Vec<String> = ws
+            .handled("tau-agent")
+            .into_iter()
+            .filter(|done| {
+                done.what == tau_ui::rule_editor::HandledKind::LookedFine
+                    && done.shown.starts_with("final answer")
+            })
+            .map(|done| done.shown)
+            .collect();
+        assert_eq!(fine, ["final answer: Done again."]);
+    });
 }
 
 #[gpui::test]

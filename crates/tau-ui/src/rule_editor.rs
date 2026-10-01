@@ -615,6 +615,23 @@ impl Workspace {
                     run_title: run.title.clone(),
                 });
             }
+            // Flagged answers a person marked fine, keyed as in
+            // `review_items`.
+            for (n, answer) in
+                run.constitution.flagged_answers.iter().enumerate()
+            {
+                if self
+                    .dismissed
+                    .contains(&(run.id.clone(), format!("answer-{n}")))
+                {
+                    handled.push(Handled {
+                        what: HandledKind::LookedFine,
+                        shown: format!("final answer: {}", answer.answer),
+                        rule: answer.rule.clone(),
+                        run_title: run.title.clone(),
+                    });
+                }
+            }
         }
         handled
     }
