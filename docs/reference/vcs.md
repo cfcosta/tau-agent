@@ -80,10 +80,14 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
   files. The one exception is a new file larger than 1 MiB
   (`MAX_NEW_FILE_SIZE`, jj's default): it stays out of `@`, and
   `vcs_status` names it under `Left out of @` with its size.
-- **Stale working copies.** If another process rewrote this workspace's
-  commit, the tools fail with `The working copy is stale: ...` and ask
-  for the user to update the workspace. They do not update it
-  themselves.
+- **Stale working copies.** When an operation in another workspace
+  rewrote this workspace's commit, as the main chat's catch-up with
+  trunk does to the commits its chats stand on, the next tool or turn
+  first moves the files to the rewritten commit, as jj's `workspace
+  update-stale` does; files on disk that neither commit has stay. When
+  a concurrent operation forked the operation log instead, the tools
+  fail with `The working copy is stale: ...` and ask for the user to
+  update the workspace.
 
 ## Results
 
@@ -479,6 +483,6 @@ the UI"):
   `vcs_abandon`, `vcs_squash`, `vcs_cat` and named revisions (`trunk`,
   `fork-point`) are not built.
 - **Operation log.** Browsing it, restoring an arbitrary operation, and
-  updating a stale workspace.
+  updating a workspace a concurrent operation left stale.
 - **Guarding the shell.** A `before_tool` hook that blocks `git` and
   `jj` in `bash` is not built.

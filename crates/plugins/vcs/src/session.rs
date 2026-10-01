@@ -131,8 +131,14 @@ fn snapshot_locked(
             repo = block_on(repo.reload_at(&op))?;
             wc = wc_commit(&repo, name)?;
         }
-        WorkingCopyFreshness::WorkingCopyStale
-        | WorkingCopyFreshness::SiblingOperation => {
+        // Another workspace's operation rewrote this one's commit: the
+        // main chat catching up with trunk restacks the commits a chat
+        // stands on. The files move to it, as jj's `workspace
+        // update-stale` does.
+        WorkingCopyFreshness::WorkingCopyStale => {
+            block_on(locked.locked_wc().check_out(&wc))?;
+        }
+        WorkingCopyFreshness::SiblingOperation => {
             return Err(VcsError::Stale);
         }
     }

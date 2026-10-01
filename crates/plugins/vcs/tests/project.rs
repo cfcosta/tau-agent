@@ -228,6 +228,43 @@ fn an_update_under_the_main_chats_commits_takes_upstreams_trunk() {
     assert_eq!(block_on(main.working_copy()).unwrap().paths, ["wip.txt"]);
 }
 
+/// A chat forked at the main chat's commit stays idle while the main
+/// chat catches up with an update: the catch-up restacks the commit the
+/// chat stands on, and the chat's next turn finds its files moved onto
+/// it, upstream's included, with a file it left on disk kept.
+#[test]
+fn a_chat_follows_the_main_chat_onto_upstream() {
+    let src = tempfile::tempdir().unwrap();
+    source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    let trunk = project.trunk_name().unwrap();
+    std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
+    let ours = block_on(main.commit_all("ours", trunk.clone())).unwrap();
+    let chat = project.add_workspace("chat", &ours.commit_id).unwrap();
+    let chat_dir = project.workspace_dir("chat");
+    std::fs::write(chat_dir.join("draft.txt"), "draft\n").unwrap();
+
+    let theirs = commit(src.path(), "theirs.txt");
+    project.update(UpdateFrom::Checkout(src.path())).unwrap();
+    let moved =
+        block_on(main.move_onto(theirs.clone(), trunk.clone(), true)).unwrap();
+
+    let turn = block_on(chat.end_turn("tau/chat", None)).unwrap();
+    assert_eq!(turn.head, moved.head, "the chat stands on the restacked commit");
+    for file in ["ours.txt", "theirs.txt", "draft.txt"] {
+        assert!(chat_dir.join(file).exists(), "{file}");
+    }
+    assert_eq!(turn.paths, ["draft.txt"]);
+}
+
 #[test]
 fn a_clone_updates_from_its_remote() {
     let src = tempfile::tempdir().unwrap();
