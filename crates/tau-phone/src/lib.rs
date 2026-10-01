@@ -18,6 +18,12 @@
 //! gradle -p crates/tau-phone/android assembleDebug
 //! ```
 //!
+//! tau-ui brings Luau (through `tau-codemode`), which is C++ linked
+//! against the NDK's `libc++_shared.so`. The shell sets
+//! `CARGO_NDK_LINK_LIBCXX_SHARED`, so cargo-ndk copies that library into
+//! jniLibs with tau-phone's, and the APK packages it; without it, the
+//! app fails to load its library.
+//!
 //! Gradle fetches CameraX and AndroidX Activity from Google's Maven. The
 //! APK is `crates/tau-phone/android/app/build/outputs/apk/debug/app-debug.apk`;
 //! `adb install` it.

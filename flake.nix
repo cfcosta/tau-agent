@@ -294,6 +294,12 @@
               # against a filesystem NixOS does not have; the SDK's is
               # patched for Nix.
               GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${sdk}/build-tools/36.0.0/aapt2";
+              # Luau (tau-codemode, through tau-ui) is C++, and mlua's
+              # build links it against the NDK's `c++_shared`, so
+              # libtau_phone.so needs libc++_shared.so at load time.
+              # This has cargo-ndk copy it next to the library, into
+              # jniLibs, and the APK packages it.
+              CARGO_NDK_LINK_LIBCXX_SHARED = "true";
 
               # Whatever the host toolchain leaves behind, from Nix's setup
               # hooks or an outer shell, would go to the NDK's clang too.
