@@ -724,6 +724,52 @@ OAuth does not apply and a 401 fails the server. The builder also takes
 server after the files and settings: an in-process one through
 `Transport::Stream(Dial)`, which no file can name.
 
+## Against real servers
+
+`crates/plugins/mcp/examples/live.rs` checks tau-mcp and tau-codemode
+against real MCP servers. Node, uv and git come from nixpkgs:
+
+```sh
+nix shell nixpkgs#nodejs nixpkgs#uv nixpkgs#git -c \
+  cargo run -p tau-mcp --example live -- [--model gpt-5.6-luna]
+```
+
+It writes a temporary `mcp.json` and repository (never the user's
+files) and starts:
+
+- `everything`: `npx -y @modelcontextprotocol/server-everything stdio`,
+  `direct`;
+- `everything_http`: the same server's streamable HTTP mode on a free
+  port, `codemode`;
+- `git`: `uvx mcp-server-git` over the temporary repository,
+  `codemode`;
+- `fetch`: `uvx mcp-server-fetch`, `codemode`, against a page the
+  example serves on localhost.
+
+It prints `ok` or `FAIL` for each check and exits with the number
+failed. The checks: every server connects, with the protocol it agreed
+on; tools, resources, templates and prompts are listed, and
+`list_changed` lists tools and resources the server adds later; calls
+with text, structured content, images, errors, progress and roots;
+cancelling a call ends it at once and the connection serves the next;
+reading resources and templates; prompts as commands, with arguments and
+their usage error; what the model reads of resource links, embedded
+resources, images, structured content and the resource tools; every
+real tool's Luau signature parses; Codemode scripts calling four tools
+on three servers in `parallel`, `search_tools` and `describe_namespace`
+on the real catalog, an `isError` result returned and an image passed
+on; a killed stdio server and a restarted HTTP server reached again on
+the next call; and closing the plugin ends every server process. With
+`--model`, it runs the agent on the signed-in ChatGPT account (tau's
+`~/.config/tau/chatgpt`) for at most 6 turns, and checks the model made
+a direct MCP call and a codemode script that called MCP tools (about
+$0.002 with `gpt-5.6-luna`).
+
+As run on 2026-10-01, against server-everything 2026.8.31 (TypeScript
+SDK 1.30.1), mcp-server-git and mcp-server-fetch 2026.8.18 (Python SDK
+1.30.0): every server speaks 2025-11-25, so each connect goes through
+rmcp's fallback from `server/discover` to `initialize`.
+
 ## Deviations
 
 From the design above, as first written:

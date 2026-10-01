@@ -55,6 +55,7 @@ webpki-roots.workspace = true
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
+mlua.workspace = true
 regex.workspace = true
 tempfile.workspace = true
 rmcp = { version = "3.5.0", default-features = false, features = [
@@ -63,6 +64,7 @@ rmcp = { version = "3.5.0", default-features = false, features = [
   "server",
   "transport-io",
 ] }
+tau-codemode.workspace = true
 tau-store.workspace = true
 tau-testing.workspace = true
 tokio = { workspace = true, features = [
