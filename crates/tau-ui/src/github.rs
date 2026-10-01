@@ -17,7 +17,6 @@ use gpui::{App, Entity};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{Notify, oneshot};
-use tokio_rustls::rustls::{ClientConfig, RootCertStore, crypto::ring};
 
 use crate::{
     accounts::{Credentials, write_private},
@@ -125,20 +124,8 @@ impl Default for Api {
 
 impl Api {
     pub fn at(web: &str, api: &str) -> Self {
-        // rustls with ring and Mozilla's roots, as for OpenAI: no
-        // system certificate store.
-        let roots = RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-        };
-        let tls = ClientConfig::builder_with_provider(Arc::new(
-            ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect("ring supports the default protocol versions")
-        .with_root_certificates(roots)
-        .with_no_client_auth();
         let http = reqwest::Client::builder()
-            .tls_backend_preconfigured(tls)
+            .tls_backend_preconfigured(tau_ai::http::tls_config())
             .user_agent("tau")
             .timeout(Duration::from_secs(30))
             .build()

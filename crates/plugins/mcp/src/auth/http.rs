@@ -2,7 +2,7 @@
 //! as the rest of tau, for the servers' connections and for every
 //! request sign-in makes.
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use rmcp::transport::auth::{
     OAuthHttpClient,
@@ -11,11 +11,7 @@ use rmcp::transport::auth::{
     OAuthHttpRedirectPolicy,
     OAuthHttpRequest,
 };
-use tokio_rustls::rustls::{
-    ClientConfig as TlsConfig,
-    RootCertStore,
-    crypto::ring,
-};
+use tau_ai::http::tls_config;
 
 /// The most an OAuth answer may be: metadata, a registration, a token.
 const MAX_BODY: usize = 1024 * 1024;
@@ -23,23 +19,12 @@ const MAX_BODY: usize = 1024 * 1024;
 /// How long one OAuth request may take when rmcp does not say.
 const OAUTH_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn tls() -> TlsConfig {
-    let roots = RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
-    TlsConfig::builder_with_provider(Arc::new(ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .expect("ring supports the default protocol versions")
-        .with_root_certificates(roots)
-        .with_no_client_auth()
-}
-
 /// The client a server's connection uses: as rmcp's default one (no
 /// idle pool, no redirects, so headers never reach another host) but
 /// with tau's TLS, since reqwest has no provider of its own here.
 pub(crate) fn mcp_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .tls_backend_preconfigured(tls())
+        .tls_backend_preconfigured(tls_config())
         .pool_max_idle_per_host(0)
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -58,7 +43,7 @@ impl OAuthHttp {
     pub(crate) fn new() -> Self {
         let client = |policy| {
             reqwest::Client::builder()
-                .tls_backend_preconfigured(tls())
+                .tls_backend_preconfigured(tls_config())
                 .redirect(policy)
                 .timeout(OAUTH_TIMEOUT)
                 .build()

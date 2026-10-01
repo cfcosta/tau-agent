@@ -9279,8 +9279,6 @@ dependencies = [
  "serde_json",
  "tau-ai",
  "tokio",
- "tokio-rustls",
- "webpki-roots",
 ]
 
 [[package]]
@@ -9314,12 +9312,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "tokio-rustls",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
  "url",
- "webpki-roots",
 ]
 
 [[package]]
@@ -9573,10 +9569,8 @@ dependencies = [
  "tau-vcs",
  "tempfile",
  "tokio",
- "tokio-rustls",
  "unicode-segmentation",
  "uuid",
- "webpki-roots",
 ]
 
 [[package]]

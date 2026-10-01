@@ -44,8 +44,6 @@ tau-ui-plugin.workspace = true
 futures-util.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 reqwest.workspace = true
-tokio-rustls.workspace = true
-webpki-roots.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
 unicode-segmentation = "1.12.0"

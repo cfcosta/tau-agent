@@ -5,7 +5,6 @@ use std::{fmt, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use serde_json::json;
 use tau_ai::retry::{RetryPolicy, jitter, parse_retry_after};
-use tokio_rustls::rustls::{ClientConfig, RootCertStore, crypto::ring};
 
 use crate::{DEFAULT_MODEL, Jev, JevError, Request, Response, SYSTEM_ONE_URL};
 
@@ -63,18 +62,8 @@ impl fmt::Debug for TypeSafe {
 
 impl TypeSafe {
     pub fn new(api_key: impl Into<String>) -> Self {
-        let roots = RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-        };
-        let tls = ClientConfig::builder_with_provider(Arc::new(
-            ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect("ring supports the default protocol versions")
-        .with_root_certificates(roots)
-        .with_no_client_auth();
         let http = reqwest::Client::builder()
-            .tls_backend_preconfigured(tls)
+            .tls_backend_preconfigured(tau_ai::http::tls_config())
             .timeout(ATTEMPT_TIMEOUT)
             .build()
             .expect("a static client configuration builds");

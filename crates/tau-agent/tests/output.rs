@@ -55,7 +55,9 @@ fn truncation_spills_the_whole_text(tc: TestCase) {
         assert!(files.is_empty());
         return;
     };
-    assert!(out.starts_with("Warning: truncated output (original token count: "));
+    assert!(
+        out.starts_with("Warning: truncated output (original token count: ")
+    );
     assert_eq!(files.len(), 1);
     let path = files[0].as_ref().unwrap().path();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), text);

@@ -66,20 +66,22 @@ impl Dialer for Tls {
     }
 }
 
-/// TLS with rustls, the `ring` provider and Mozilla's roots from
-/// `webpki-roots`: no system certificate store and no native crypto
-/// build.
-fn tls_connector() -> TlsConnector {
+/// tau's TLS for every client it opens: rustls, the `ring` provider and
+/// Mozilla's roots from `webpki-roots`, with no system certificate
+/// store and no native crypto build.
+pub fn tls_config() -> ClientConfig {
     let roots = RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
-    let config =
-        ClientConfig::builder_with_provider(Arc::new(ring::default_provider()))
-            .with_safe_default_protocol_versions()
-            .expect("ring supports the default protocol versions")
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-    TlsConnector::from(Arc::new(config))
+    ClientConfig::builder_with_provider(Arc::new(ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .expect("ring supports the default protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+}
+
+fn tls_connector() -> TlsConnector {
+    TlsConnector::from(Arc::new(tls_config()))
 }
 
 /// A request to send.

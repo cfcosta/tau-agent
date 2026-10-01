@@ -40,7 +40,6 @@ tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util"] }
-tokio-rustls.workspace = true
 tokio-util.workspace = true
 tracing = "0.1"
 # `filter::Targets`, for the filter that keeps rmcp's sign-in debug logs
@@ -50,7 +49,6 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
   "std",
 ] }
 url = "2.5.8"
-webpki-roots.workspace = true
 
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
