@@ -80,6 +80,7 @@ use crate::{
     config::{
         ConfigError,
         McpConfig,
+        Off,
         Origin,
         PendingApproval,
         Read,
@@ -88,6 +89,7 @@ use crate::{
         Sources,
         Transport,
         USER_FILE,
+        repo_key,
         valid_name,
     },
     connection::{Annotations, Connection, Environment},
@@ -196,21 +198,23 @@ impl Host {
     fn load(&self, scope: &Scope, settings: &Settings) -> Loaded {
         let user = Read::user(self.user_dir.as_deref());
         let added = self.servers.lock().expect("not poisoned").clone();
-        let with_added = |mut sources: Sources| {
+        let with_added = |mut sources: Sources, repo: Option<&Path>| {
             for server in &added {
                 sources.add(server.clone());
             }
+            sources.disable(settings, repo);
             sources
         };
-        let shared =
-            with_added(Sources::from_reads(&user, settings, &Read::default()));
+        let shared = with_added(
+            Sources::from_reads(&user, settings, &Read::default()),
+            None,
+        );
         let sources = match scope.repo() {
             None => shared.clone(),
-            Some(repo) => with_added(Sources::from_reads(
-                &user,
-                settings,
-                &Read::repo(Some(repo)),
-            )),
+            Some(repo) => with_added(
+                Sources::from_reads(&user, settings, &Read::repo(Some(repo))),
+                Some(repo),
+            ),
         };
         Loaded {
             shared: shared
@@ -452,6 +456,8 @@ pub struct ServerRow {
     /// One connection shared by every repository: a server of the
     /// user's file or the settings that does not run per repository.
     pub shared: bool,
+    /// Why it is off, when it is.
+    pub off: Option<Off>,
     pub error: Option<String>,
     pub tools: Vec<ToolRow>,
     /// The entry, as the page edits it: only a settings server's.
@@ -631,6 +637,7 @@ fn servers_view(
                     }
                 },
                 shared: shared.contains(&config.name),
+                off: sources.off.get(&config.name).copied(),
                 error: status.and_then(|status| status.error),
                 tools: listed
                     .into_iter()
@@ -697,8 +704,15 @@ pub enum Act {
     Edit { name: String, entry: Value },
     /// Removes a settings server.
     Remove { name: String },
-    /// Turns a settings server on or off.
-    Enable { name: String, enabled: bool },
+    /// Turns any server on or off in `repo`, or one of the user's
+    /// servers in every repository without one, in the settings: its
+    /// entry is not touched.
+    Enable {
+        #[serde(default)]
+        repo: Option<String>,
+        name: String,
+        enabled: bool,
+    },
     /// Starts the servers of `repo` (or the user's alone) if they are
     /// not, and connects `server` again, or every server.
     Reconnect {
@@ -729,11 +743,13 @@ pub fn server_entry(name: &str, entry: &Value) -> Result<Value, String> {
 
 /// The settings after `act`, or why it is refused. `user_names` are the
 /// names the user's file has; `pending` the servers of the act's
-/// repository waiting for approval, as the host reads them now.
+/// repository waiting for approval, as the host reads them now;
+/// `repo_key` the act's repository's [`repo_key`].
 pub fn apply(
     settings: &Settings,
     user_names: &BTreeSet<String>,
     pending: &[PendingApproval],
+    repo_key: Option<&str>,
     act: &Act,
 ) -> Result<Settings, String> {
     let mut next = settings.clone();
@@ -794,19 +810,45 @@ pub fn apply(
             settings_entry(name)?;
             next.servers.remove(name);
         }
-        Act::Enable { name, enabled } => {
-            let mut entry = server_entry(name, settings_entry(name)?)?;
-            match enabled {
-                true => entry.as_object_mut().map(|e| e.remove("enabled")),
-                false => entry
-                    .as_object_mut()
-                    .map(|e| e.insert("enabled".into(), json!(false))),
-            };
-            next.servers.insert(name.clone(), entry);
+        Act::Enable { name, enabled, .. } => {
+            if !valid_name(name) {
+                return Err(format!("`{name}` is not a server name."));
+            }
+            next.disabled.set(repo_key, name, !enabled);
         }
         Act::Reconnect { .. } => {}
     }
     Ok(next)
+}
+
+/// Whether the page may turn `name` on or off in `sources`, a
+/// repository's (`in_repo`) or the user's alone: it must be one of
+/// them, and turning it on must turn it on. One its entry turns off is
+/// turned on there; one turned off for every repository, on the page of
+/// the user's servers.
+fn enabling(
+    sources: &Sources,
+    in_repo: bool,
+    name: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    if !sources
+        .servers
+        .iter()
+        .any(|(_, server)| server.name == name)
+    {
+        return Err(format!("No server `{name}` here."));
+    }
+    match sources.off.get(name) {
+        Some(Off::Entry) if enabled => Err(format!(
+            "`{name}` says `\"enabled\": false` in its entry: turn it on there."
+        )),
+        Some(Off::Everywhere) if enabled && in_repo => Err(format!(
+            "`{name}` is turned off for every repository: turn it on in your \
+             servers."
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// The repository listed as `name`.
@@ -975,19 +1017,27 @@ impl UiPlugin for McpUi {
                 }
             }
             act => {
-                let pending = match act {
-                    Act::Approve { repo: name, .. } => {
-                        let repo = repo(cx, name)?;
-                        host.sources(
-                            &Scope::of(Some(&repo.checkout)),
-                            &settings,
-                        )
-                        .pending
-                    }
-                    _ => Vec::new(),
+                let checkout = match act {
+                    Act::Approve { repo: name, .. }
+                    | Act::Enable {
+                        repo: Some(name), ..
+                    } => Some(repo(cx, name)?.checkout.clone()),
+                    _ => None,
                 };
-                let next = apply(&settings, &host.user_names(), &pending, act)
-                    .map_err(anyhow::Error::msg)?;
+                let scope = Scope::of(checkout.as_deref());
+                let sources = host.sources(&scope, &settings);
+                if let Act::Enable { name, enabled, .. } = act {
+                    enabling(&sources, scope.repo().is_some(), name, *enabled)
+                        .map_err(anyhow::Error::msg)?;
+                }
+                let next = apply(
+                    &settings,
+                    &host.user_names(),
+                    &sources.pending,
+                    checkout.as_deref().map(repo_key).as_deref(),
+                    act,
+                )
+                .map_err(anyhow::Error::msg)?;
                 cx.save_settings(NAME, &next)?;
             }
         }

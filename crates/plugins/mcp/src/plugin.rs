@@ -132,6 +132,7 @@ impl McpPluginBuilder {
         for server in self.servers {
             sources.add(server);
         }
+        sources.disable(&self.settings, self.repo.as_deref());
         let process = Environment::process(self.repo.clone());
         let environment = Environment {
             env: self.env.unwrap_or(process.env),

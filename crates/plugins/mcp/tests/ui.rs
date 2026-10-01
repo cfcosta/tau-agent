@@ -41,6 +41,7 @@ use tau_mcp::{
         Exposure,
         HttpConfig,
         McpConfig,
+        Off,
         Origin,
         ServerConfig,
         Settings,
@@ -116,9 +117,10 @@ fn namespace(name: &str) -> String {
 
 /// Whatever the page asks, in whatever order, the settings' servers are
 /// a model's: a server is added only under a new name that neither the
-/// user's file nor another server's namespace takes, and edited,
-/// removed or turned on and off only when the page added it. Every
-/// entry the settings keep parses, and the settings survive saving.
+/// user's file nor another server's namespace takes, and edited or
+/// removed only when the page added it; turning one on or off never
+/// touches an entry. Every entry the settings keep parses, and the
+/// settings survive saving.
 #[hegel::test(test_cases = 200)]
 fn settings_follow_the_actions(tc: TestCase) {
     let steps: Vec<Step> = tc.draw(gs::vecs(step()).max_size(16));
@@ -126,6 +128,8 @@ fn settings_follow_the_actions(tc: TestCase) {
     let mut settings = Settings::default();
     // Name to (command, enabled).
     let mut model: BTreeMap<String, (String, bool)> = BTreeMap::new();
+    // The names turned off.
+    let mut off: BTreeSet<String> = BTreeSet::new();
     for step in steps {
         let (act, expected) = match step {
             Step::Add(n, command) => {
@@ -169,17 +173,24 @@ fn settings_follow_the_actions(tc: TestCase) {
                 let ok = next.remove(&name).is_some();
                 (Act::Remove { name }, ok.then_some(next))
             }
+            // Any name: turning a server off leaves its entry alone.
             Step::Enable(n, enabled) => {
                 let name = NAMES[n].to_owned();
-                let mut next = model.clone();
-                let ok = next
-                    .get_mut(&name)
-                    .map(|server| server.1 = enabled)
-                    .is_some();
-                (Act::Enable { name, enabled }, ok.then_some(next))
+                match enabled {
+                    true => off.remove(&name),
+                    false => off.insert(name.clone()),
+                };
+                (
+                    Act::Enable {
+                        repo: None,
+                        name,
+                        enabled,
+                    },
+                    Some(model.clone()),
+                )
             }
         };
-        let result = ui::apply(&settings, &user, &[], &act);
+        let result = ui::apply(&settings, &user, &[], None, &act);
         match expected {
             Some(next) => {
                 settings = result
@@ -201,6 +212,7 @@ fn settings_follow_the_actions(tc: TestCase) {
             })
             .collect();
         assert_eq!(kept, model);
+        assert_eq!(settings.disabled.user, off);
         let saved = serde_json::to_value(&settings).unwrap();
         assert_eq!(
             serde_json::from_value::<Settings>(saved).unwrap(),
@@ -267,14 +279,21 @@ fn an_approval_holds_for_the_entry_shown(tc: TestCase) {
     let none = BTreeSet::new();
     if wrong != server.approval_hash() {
         assert!(
-            ui::apply(&settings, &none, &sources.pending, &approve(&wrong))
-                .is_err()
+            ui::apply(
+                &settings,
+                &none,
+                &sources.pending,
+                None,
+                &approve(&wrong)
+            )
+            .is_err()
         );
     }
     let approved = ui::apply(
         &settings,
         &none,
         &sources.pending,
+        None,
         &approve(&server.approval_hash()),
     )
     .unwrap();
@@ -302,6 +321,7 @@ fn bad_entries_are_refused() {
             &Settings::default(),
             &none,
             &[],
+            None,
             &Act::Add {
                 name: name.into(),
                 entry,
@@ -314,6 +334,145 @@ fn bad_entries_are_refused() {
     let added = add("x", json!({ "command": "x", "type": "stdio" })).unwrap();
     // As tau prints it: the default type left out.
     assert_eq!(added.servers["x"], json!({ "command": "x" }));
+}
+
+// Turning servers off.
+
+const REPOS: [&str; 2] = ["/src/one", "/src/two"];
+
+/// Turning a server on or off at a level: everywhere (`None`) or in one
+/// repository.
+#[derive(Debug, Clone)]
+struct Toggle {
+    repo: Option<usize>,
+    name: usize,
+    enabled: bool,
+}
+
+hegel::pretty_print_as_debug!(Toggle);
+
+#[hegel::composite]
+fn toggle(tc: &TestCase) -> Toggle {
+    Toggle {
+        repo: tc.draw(gs::optional(gs::integers().max_value(REPOS.len() - 1))),
+        name: tc.draw(gs::integers().max_value(NAMES.len() - 1)),
+        enabled: tc.draw(gs::booleans()),
+    }
+}
+
+/// Whatever the page turns on and off, in whatever order, the settings
+/// say what was last asked of each name at each level and of no other,
+/// touch no entry, survive saving, and say nothing once everything is
+/// on again.
+#[hegel::test(test_cases = 200)]
+fn toggles_round_trip_through_the_settings(tc: TestCase) {
+    let toggles: Vec<Toggle> = tc.draw(gs::vecs(toggle()).max_size(20));
+    let none = BTreeSet::new();
+    let mut settings = Settings::default();
+    let mut model: BTreeMap<(Option<&str>, &str), bool> = BTreeMap::new();
+    for toggle in &toggles {
+        let (repo, name) = (toggle.repo.map(|r| REPOS[r]), NAMES[toggle.name]);
+        let act = Act::Enable {
+            repo: repo.map(|_| "listed by name".to_owned()),
+            name: name.to_owned(),
+            enabled: toggle.enabled,
+        };
+        settings = ui::apply(&settings, &none, &[], repo, &act).unwrap();
+        model.insert((repo, name), !toggle.enabled);
+        let saved = serde_json::to_value(&settings).unwrap();
+        assert_eq!(
+            serde_json::from_value::<Settings>(saved).unwrap(),
+            settings
+        );
+    }
+    for repo in std::iter::once(None).chain(REPOS.map(Some)) {
+        for name in NAMES {
+            assert_eq!(
+                settings.disabled.is_off(repo, name),
+                model.get(&(repo, name)).copied().unwrap_or(false),
+                "{name} at {repo:?}"
+            );
+        }
+    }
+    assert!(settings.servers.is_empty() && settings.approved.is_empty());
+    for ((repo, name), _) in model {
+        let act = Act::Enable {
+            repo: repo.map(str::to_owned),
+            name: name.to_owned(),
+            enabled: true,
+        };
+        settings = ui::apply(&settings, &none, &[], repo, &act).unwrap();
+    }
+    assert_eq!(serde_json::to_value(&settings).unwrap(), json!({}));
+}
+
+/// For every server, wherever it comes from: it is on exactly when its
+/// entry says so and the settings do not turn it off, where turning it
+/// off everywhere holds for the user's servers and turning it off in a
+/// repository for that repository's view of any server. The reason
+/// given is the first of the entry, everywhere, the repository.
+#[hegel::test(test_cases = 200)]
+fn a_server_is_on_when_its_entry_and_the_settings_say_so(tc: TestCase) {
+    let origin = tc.draw(
+        gs::sampled_from(vec![Origin::User, Origin::Settings, Origin::Repo])
+            .print_as_debug(),
+    );
+    let in_repo = origin == Origin::Repo || tc.draw(gs::booleans());
+    let (flag, everywhere, here, elsewhere) = (
+        tc.draw(gs::booleans()),
+        tc.draw(gs::booleans()),
+        tc.draw(gs::booleans()),
+        tc.draw(gs::booleans()),
+    );
+    let repo = Path::new(REPOS[0]);
+    let mut server = ServerConfig::new(
+        "srv",
+        Transport::Stdio(StdioConfig {
+            command: "x".into(),
+            ..StdioConfig::default()
+        }),
+    );
+    server.enabled = flag;
+    let file = McpConfig {
+        servers: vec![server.clone()],
+    };
+    let mut settings = Settings::default();
+    match origin {
+        Origin::Settings => {
+            settings
+                .servers
+                .insert("srv".into(), server.to_entry().unwrap());
+        }
+        Origin::Repo => {
+            settings.approved.insert(server.approval_hash());
+        }
+        Origin::User => {}
+    }
+    settings.disabled.set(None, "srv", everywhere);
+    settings.disabled.set(Some(REPOS[0]), "srv", here);
+    settings.disabled.set(Some(REPOS[1]), "srv", elsewhere);
+    let (user, repo_file) = match origin {
+        Origin::User => (Some(&file), None),
+        Origin::Settings => (None, None),
+        Origin::Repo => (None, Some(&file)),
+    };
+    let mut sources = Sources::merge(user, &settings, repo_file);
+    assert!(sources.pending.is_empty());
+    sources.disable(&settings, in_repo.then_some(repo));
+    let user_server = origin != Origin::Repo;
+    let off = !flag || (user_server && everywhere) || (in_repo && here);
+    assert_eq!(sources.servers.len(), 1);
+    assert_eq!(sources.servers[0].1.enabled, !off);
+    let reason = if !flag {
+        Some(Off::Entry)
+    } else if user_server && everywhere {
+        Some(Off::Everywhere)
+    } else if in_repo && here {
+        Some(Off::Repo)
+    } else {
+        None
+    };
+    assert_eq!(sources.off.get("srv").copied(), reason);
 }
 
 // The host.
@@ -484,14 +643,17 @@ fn the_page_edits_only_its_own_servers() {
         .unwrap();
     fixture
         .act(Act::Enable {
+            repo: None,
             name: "git".into(),
             enabled: false,
         })
         .unwrap();
+    // Turned off in the settings, its entry as it was.
     assert_eq!(
         fixture.settings().servers["git"],
-        json!({ "command": MISSING, "enabled": false })
+        json!({ "command": MISSING })
     );
+    assert!(fixture.settings().disabled.is_off(None, "git"));
     let data = McpUi.data(fixture.host(), &fixture.cx);
     let names: Vec<(&str, Defined, bool)> = data
         .servers
@@ -652,6 +814,61 @@ fn connect_starts_a_repository_servers() {
     );
 }
 
+/// The page turns any server off without touching its file: one of the
+/// user's in one repository alone, which leaves the shared connection
+/// to the others; it refuses to turn on one its entry turns off, or, in
+/// a repository, one turned off for every repository.
+#[test]
+fn the_page_turns_any_server_off() {
+    let fixture = Fixture::new(
+        Some(json!({ "mcpServers": {
+            "a": { "command": MISSING },
+            "off": { "command": MISSING, "enabled": false },
+        } })),
+        None,
+    );
+    let user_file =
+        std::fs::read_to_string(fixture._dirs.0.path().join("mcp.json"))
+            .unwrap();
+    let checkout = fixture.repo.checkout.clone();
+    let enable = |repo: Option<&str>, name: &str, enabled: bool| {
+        fixture.act(Act::Enable {
+            repo: repo.map(str::to_owned),
+            name: name.into(),
+            enabled,
+        })
+    };
+    enable(Some("r"), "a", false).unwrap();
+    let key = checkout.display().to_string();
+    assert!(fixture.settings().disabled.is_off(Some(&key), "a"));
+    let settings = fixture.settings();
+    let here = fixture.host().plugin(Some(&checkout), &settings);
+    let user = fixture.host().plugin(None, &settings);
+    assert!(!here.connections()[0].config().enabled);
+    assert!(user.connections()[0].config().enabled);
+    let shown = fixture.repo_data();
+    assert_eq!(shown.servers[0].off, Some(Off::Repo));
+    assert!(!shown.servers[0].shared);
+    assert_eq!(shown.servers[1].off, Some(Off::Entry));
+    // The entry's own `enabled: false` holds.
+    assert!(enable(None, "off", true).is_err());
+    assert!(enable(Some("r"), "off", true).is_err());
+    // Off everywhere: the repository cannot turn it on alone.
+    enable(Some("r"), "a", true).unwrap();
+    enable(None, "a", false).unwrap();
+    assert_eq!(fixture.repo_data().servers[0].off, Some(Off::Everywhere));
+    assert!(enable(Some("r"), "a", true).is_err());
+    enable(None, "a", true).unwrap();
+    assert_eq!(fixture.repo_data().servers[0].off, None);
+    assert!(fixture.repo_data().servers[0].shared);
+    assert!(enable(None, "nowhere", false).is_err());
+    assert_eq!(
+        std::fs::read_to_string(fixture._dirs.0.path().join("mcp.json"))
+            .unwrap(),
+        user_file
+    );
+}
+
 /// The catalog says how many servers there are, how many are connected
 /// and how many wait.
 #[test]
@@ -733,7 +950,8 @@ fn the_editor_sends_what_it_may(cx: &mut TestAppContext) {
         ui.remove("git", cx);
         assert_eq!(ui.removing(), Some("git"));
         ui.remove("git", cx);
-        ui.enable("git", false, cx);
+        ui.enable(None, "git", false, cx);
+        ui.enable(Some("r"), "linear", true, cx);
         ui.approve(
             "r",
             &PendingRow {
@@ -758,8 +976,14 @@ fn the_editor_sends_what_it_may(cx: &mut TestAppContext) {
             },
             Act::Remove { name: "git".into() },
             Act::Enable {
+                repo: None,
                 name: "git".into(),
                 enabled: false,
+            },
+            Act::Enable {
+                repo: Some("r".into()),
+                name: "linear".into(),
+                enabled: true,
             },
             Act::Approve {
                 repo: "r".into(),
@@ -836,6 +1060,7 @@ fn servers() -> Servers {
                 enabled: true,
                 state: Some("failed".into()),
                 error: Some("HTTP 401".into()),
+                shared: true,
                 ..ServerRow::default()
             },
         ],
@@ -971,6 +1196,26 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
     });
     for compact in [false, true] {
         draw_page(cx, &ui, &repos, at_repo.clone(), compact);
+    }
+    // Servers turned off, by their entry and for every repository: the
+    // repository's page cannot turn them on, the user's can turn on the
+    // second.
+    let mut off = servers();
+    off.servers[0].off = Some(Off::Entry);
+    off.servers[1].off = Some(Off::Everywhere);
+    for server in &mut off.servers {
+        server.enabled = false;
+    }
+    assert_eq!(
+        page::locked(&off.servers[0], false),
+        Some("off in its entry")
+    );
+    assert!(page::locked(&off.servers[1], true).is_some());
+    assert_eq!(page::locked(&off.servers[1], false), None);
+    assert_eq!(page::locked(&servers().servers[0], true), None);
+    let off_repos = BTreeMap::from([("r".to_owned(), off)]);
+    for compact in [false, true] {
+        draw_page(cx, &ui, &off_repos, at_repo.clone(), compact);
     }
     // Without a repository, the user's servers alone; the editor, open,
     // draws over the page.

@@ -32,6 +32,7 @@ use super::{
     Act,
     Defined,
     McpUi,
+    Off,
     PendingRow,
     ServerRow,
     Servers,
@@ -212,14 +213,18 @@ impl Ui {
         self.changed(cx);
     }
 
+    /// Turns `name` on or off in `repo`, or in every repository without
+    /// one.
     pub fn enable(
         &mut self,
+        repo: Option<&str>,
         name: &str,
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
         self.handle.act(
             Act::Enable {
+                repo: repo.map(str::to_owned),
                 name: name.to_owned(),
                 enabled,
             },
@@ -522,7 +527,12 @@ fn server_card(
     t: &Theme,
 ) -> Div {
     let name = server.name.clone();
-    let state = server.state.clone().unwrap_or_else(|| "not started".into());
+    let state = server.state.clone().unwrap_or_else(|| {
+        match repo.is_none() && per_repo(server) {
+            true => "starts in each repository".into(),
+            false => "not started".into(),
+        }
+    });
     let actions = div()
         .flex()
         .items_center()
@@ -538,20 +548,11 @@ fn server_card(
                 move |ui, cx| ui.reconnect(repo.as_deref(), Some(&name), cx),
             ))
         })
+        .child(toggle(ui, repo, server, false, t))
         .when(server.defined == Defined::Settings, |row| {
             let entry = server.entry.clone().unwrap_or(Value::Null);
-            let (edit, toggle, remove) =
-                (name.clone(), name.clone(), name.clone());
-            let enabled = server.enabled;
-            row.child(
-                div()
-                    .id(SharedString::from(format!("mcp-enable-{name}")))
-                    .child(ui::switch(enabled, t))
-                    .on_click(on_ui(ui, move |ui, cx| {
-                        ui.enable(&toggle, !enabled, cx)
-                    })),
-            )
-            .child(action(
+            let (edit, remove) = (name.clone(), name.clone());
+            row.child(action(
                 format!("mcp-edit-{name}"),
                 "Edit",
                 ButtonKind::Secondary,
@@ -580,6 +581,12 @@ fn server_card(
                 .child(ui::dot(state_color(server.state.as_deref(), t), 8.))
                 .child(mono(server.name.clone(), Type::SMALL, t.text))
                 .child(ui::badge(server.defined.label(), t.muted, t.border))
+                .when(server.shared, |row| {
+                    row.child(ui::badge("shared", t.green, t.border))
+                })
+                .when(per_repo(server), |row| {
+                    row.child(ui::badge("per repository", t.muted, t.border))
+                })
                 .child(ui::badge(
                     server.exposure.clone(),
                     t.blue,
@@ -643,20 +650,11 @@ fn server_actions_compact(
                 move |ui, cx| ui.reconnect(repo.as_deref(), Some(&name), cx),
             ))
         })
+        .child(toggle(ui, repo, server, true, t))
         .when(server.defined == Defined::Settings, |row| {
             let entry = server.entry.clone().unwrap_or(Value::Null);
-            let enabled = server.enabled;
-            let (edit, toggle, remove) =
-                (name.clone(), name.clone(), name.clone());
+            let (edit, remove) = (name.clone(), name.clone());
             row.child(action(
-                format!("mcp-enable-{name}"),
-                if enabled { "Turn off" } else { "Turn on" },
-                ButtonKind::Secondary,
-                ui,
-                t,
-                move |ui, cx| ui.enable(&toggle, !enabled, cx),
-            ))
-            .child(action(
                 format!("mcp-edit-{name}"),
                 "Edit",
                 ButtonKind::Secondary,
@@ -673,6 +671,78 @@ fn server_actions_compact(
                 move |ui, cx| ui.remove(&remove, cx),
             ))
         })
+}
+
+/// Whether `server` is one of the user's that is on and runs once per
+/// repository: its `cwd` is relative, or a repository turned it off for
+/// itself alone.
+fn per_repo(server: &ServerRow) -> bool {
+    !server.shared && server.defined != Defined::Repo && server.enabled
+}
+
+/// Why the page cannot turn `server` on here, when it cannot: its
+/// entry turns it off, or, in a repository, it is one of the user's
+/// servers turned off for every repository.
+pub fn locked(server: &ServerRow, in_repo: bool) -> Option<&'static str> {
+    match server.off {
+        Some(Off::Entry) => Some("off in its entry"),
+        Some(Off::Everywhere) if in_repo => Some("off in every repository"),
+        _ => None,
+    }
+}
+
+/// What turning `server` on or off says, and where: in `repo`, or for
+/// every repository on the page of the user's servers.
+pub fn reach(server: &ServerRow, repo: Option<&str>) -> &'static str {
+    match (repo, server.defined) {
+        (None, _) => "every repository",
+        (Some(_), Defined::Repo) => "this repository",
+        (Some(_), _) => "this repository only",
+    }
+}
+
+/// The switch that turns `server` on or off at the page's level (a
+/// button on a phone), or why it cannot.
+fn toggle(
+    ui: &Entity<Ui>,
+    repo: Option<&str>,
+    server: &ServerRow,
+    compact: bool,
+    t: &Theme,
+) -> AnyElement {
+    if let Some(why) = locked(server, repo.is_some()) {
+        return mono(why, Type::CAPTION, t.dim).into_any_element();
+    }
+    let repo_name = repo;
+    let (repo, name, enabled) =
+        (repo.map(str::to_owned), server.name.clone(), server.enabled);
+    let id = SharedString::from(format!("mcp-enable-{name}"));
+    let flip = move |ui: &mut Ui, cx: &mut Context<Ui>| {
+        ui.enable(repo.as_deref(), &name, !enabled, cx)
+    };
+    if compact {
+        return action(
+            id,
+            if enabled { "Turn off" } else { "Turn on" },
+            ButtonKind::Secondary,
+            ui,
+            t,
+            flip,
+        )
+        .into_any_element();
+    }
+    div()
+        .flex()
+        .items_center()
+        .gap(sp(1.5))
+        .child(mono(reach(server, repo_name), Type::MICRO, t.dim))
+        .child(
+            div()
+                .id(id)
+                .child(ui::switch(enabled, t))
+                .on_click(on_ui(ui, flip)),
+        )
+        .into_any_element()
 }
 
 /// What a tool's hints say, as badges: read-only, destructive,

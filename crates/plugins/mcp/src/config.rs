@@ -6,7 +6,13 @@
 //! Nothing here touches the network or the file system but
 //! [`Sources::load`], which reads the two documented files.
 
-use std::{collections::BTreeSet, fmt, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
@@ -686,8 +692,8 @@ pub fn merge(
 }
 
 /// The plugin's settings, which tau-ui's page edits: the servers added
-/// there, and the repository servers the user approved, by
-/// [`ServerConfig::approval_hash`].
+/// there, the repository servers the user approved, by
+/// [`ServerConfig::approval_hash`], and the servers the page turned off.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(
@@ -702,6 +708,12 @@ pub struct Settings {
         skip_serializing_if = "BTreeSet::is_empty"
     )]
     pub approved: BTreeSet<String>,
+    #[serde(
+        rename = "disabledServers",
+        default,
+        skip_serializing_if = "Disabled::is_empty"
+    )]
+    pub disabled: Disabled,
 }
 
 impl Settings {
@@ -709,6 +721,93 @@ impl Settings {
     pub fn config(&self) -> (McpConfig, Vec<ConfigError>) {
         McpConfig::from_value(&json!({ "mcpServers": self.servers }))
     }
+}
+
+/// The servers the page turned off, by name, without touching their
+/// entries: `user` for the user's servers (the user's file's, the
+/// settings') in every repository, and `repos`, keyed by the
+/// repository's directory ([`repo_key`]), for any server in that
+/// repository alone.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Disabled {
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub user: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub repos: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl Disabled {
+    pub fn is_empty(&self) -> bool {
+        self.user.is_empty() && self.repos.is_empty()
+    }
+
+    /// Whether `name` is turned off at `repo` (a [`repo_key`]), or for
+    /// the user's servers everywhere without one.
+    pub fn is_off(&self, repo: Option<&str>, name: &str) -> bool {
+        match repo {
+            None => self.user.contains(name),
+            Some(repo) => self
+                .repos
+                .get(repo)
+                .is_some_and(|names| names.contains(name)),
+        }
+    }
+
+    /// Turns `name` off, or on again, at `repo` or everywhere. A
+    /// repository left with nothing turned off is forgotten.
+    pub fn set(&mut self, repo: Option<&str>, name: &str, off: bool) {
+        let names = match repo {
+            None => &mut self.user,
+            Some(repo) => self.repos.entry(repo.to_owned()).or_default(),
+        };
+        if off {
+            names.insert(name.to_owned());
+        } else {
+            names.remove(name);
+        }
+        self.repos.retain(|_, names| !names.is_empty());
+    }
+
+    /// Why the server `name` from `origin`, whose entry says `enabled`,
+    /// is off in `repo` (a [`repo_key`]), or in the user's servers alone
+    /// without one; `None` when it is on. Its entry's `enabled: false`
+    /// comes first, then the user's servers turned off everywhere (which
+    /// a repository's own server ignores), then the repository's.
+    pub fn off(
+        &self,
+        origin: Origin,
+        name: &str,
+        enabled: bool,
+        repo: Option<&str>,
+    ) -> Option<Off> {
+        if !enabled {
+            Some(Off::Entry)
+        } else if origin != Origin::Repo && self.is_off(None, name) {
+            Some(Off::Everywhere)
+        } else if repo.is_some() && self.is_off(repo, name) {
+            Some(Off::Repo)
+        } else {
+            None
+        }
+    }
+}
+
+/// The key of `repo` in [`Disabled::repos`]: its directory, as written.
+pub fn repo_key(repo: &Path) -> String {
+    repo.display().to_string()
+}
+
+/// Why a server is off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Off {
+    /// Its entry says `enabled: false`; only editing it turns it on.
+    Entry,
+    /// The page turned one of the user's servers off for every
+    /// repository.
+    Everywhere,
+    /// The page turned it off in this repository.
+    Repo,
 }
 
 /// A repository server waiting for the user's approval.
@@ -728,6 +827,8 @@ pub struct Sources {
     pub errors: Vec<ConfigError>,
     /// Repository servers that are not connected until approved.
     pub pending: Vec<PendingApproval>,
+    /// Why each server that is off is off, by name.
+    pub off: BTreeMap<String, Off>,
 }
 
 impl Sources {
@@ -763,6 +864,29 @@ impl Sources {
             servers,
             errors,
             pending,
+            off: BTreeMap::new(),
+        }
+    }
+
+    /// Turns off the servers the settings turn off in `repo`, or in the
+    /// user's servers alone without one ([`Disabled::off`]): a server is
+    /// on when its entry says so and nothing turned it off. Run after
+    /// every server is added, once: a server it turned off reads as one
+    /// whose entry is off. Approvals are not touched.
+    pub fn disable(&mut self, settings: &Settings, repo: Option<&Path>) {
+        let key = repo.map(repo_key);
+        self.off.clear();
+        for (origin, server) in &mut self.servers {
+            let off = settings.disabled.off(
+                *origin,
+                &server.name,
+                server.enabled,
+                key.as_deref(),
+            );
+            server.enabled = off.is_none();
+            if let Some(off) = off {
+                self.off.insert(server.name.clone(), off);
+            }
         }
     }
 
@@ -773,9 +897,7 @@ impl Sources {
         settings: &Settings,
         repo: Option<&Path>,
     ) -> Self {
-        let user = Read::user(user_dir);
-        let repo = Read::repo(repo);
-        Self::from_reads(&user, settings, &repo)
+        Self::from_reads(&Read::user(user_dir), settings, &Read::repo(repo))
     }
 
     /// [`Self::merge`] of files already read, their errors first.
