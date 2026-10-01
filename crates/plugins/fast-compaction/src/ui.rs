@@ -333,9 +333,9 @@ impl UiPlugin for FastCompactionUi {
         _host: &(),
         run: &RunCtx,
         _settings: &(),
-    ) -> Vec<Box<dyn Plugin>> {
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         let Some(jev) = run.services.get::<Arc<dyn Jev>>() else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let archive_dir = run.repo.dir.join("archive");
         let _ = std::fs::DirBuilder::new()
@@ -348,9 +348,9 @@ impl UiPlugin for FastCompactionUi {
             archive_dir,
             ..Settings::default()
         };
-        vec![Box::new(
+        Ok(vec![Box::new(
             FastCompaction::shared(jev.clone()).settings(settings),
-        )]
+        )])
     }
 
     fn starting(&self, _host: &(), run: &RunCtx, _settings: &()) -> Vec<Value> {

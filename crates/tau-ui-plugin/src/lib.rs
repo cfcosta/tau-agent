@@ -160,13 +160,14 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
     fn host(&self, cx: &HostCx) -> anyhow::Result<Self::Host>;
 
     /// The agent plugins for one run or sub-agent; none when the plugin
-    /// is off for it.
+    /// is off for it. An error fails the run: what the plugin needs to
+    /// check it could not be read.
     fn agent_plugins(
         &self,
         host: &Self::Host,
         run: &RunCtx,
         settings: &Self::Settings,
-    ) -> Vec<Box<dyn Plugin>>;
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>>;
 
     /// Bodies to fold into a run's state as it starts or goes on, before
     /// anything is published: whether the plugin is on, and why not.

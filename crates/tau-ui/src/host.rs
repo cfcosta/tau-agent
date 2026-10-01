@@ -1357,11 +1357,12 @@ impl Host {
                 &models,
                 move |child, asked| {
                     let choice = child_choice(&caller, asked)?;
-                    Ok(registered(
+                    registered(
                         on_workspace(for_model(&choice), child, false),
                         tau_ui_plugin::RunKind::SubAgent,
                         &choice,
-                    ))
+                    )
+                    .map_err(|error| format!("{error:#}").into())
                 },
             )
         };
@@ -1372,7 +1373,7 @@ impl Host {
         } else {
             tau_ui_plugin::RunKind::Chat
         };
-        Ok((registered(agent, kind, choice), name))
+        Ok((registered(agent, kind, choice)?, name))
     }
 
     /// Jev, when there is a TypeSafe key (or one given for tests).

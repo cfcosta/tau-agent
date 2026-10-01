@@ -265,18 +265,18 @@ impl UiPlugin for ReasoningPlugin {
         _host: &(),
         run: &RunCtx,
         settings: &Settings,
-    ) -> Vec<Box<dyn Plugin>> {
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         let Some(jev) = run.services.get::<Arc<dyn Jev>>() else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         if run.effort.is_some() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        vec![Box::new(
+        Ok(vec![Box::new(
             Reasoning::new(jev.clone())
                 .redecide(settings.redecide)
                 .threshold(settings.threshold),
-        )]
+        )])
     }
 
     fn starting(

@@ -294,13 +294,13 @@ impl UiPlugin for GoalUi {
         _host: &(),
         run: &RunCtx,
         _settings: &(),
-    ) -> Vec<Box<dyn Plugin>> {
-        match run.services.get::<Arc<dyn Jev>>() {
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
+        Ok(match run.services.get::<Arc<dyn Jev>>() {
             Some(jev) if run.kind != RunKind::SubAgent => {
                 vec![Box::new(GoalPlugin::new(jev.clone()))]
             }
             _ => Vec::new(),
-        }
+        })
     }
 
     fn starting(&self, _host: &(), run: &RunCtx, _settings: &()) -> Vec<Value> {

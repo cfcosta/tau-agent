@@ -201,7 +201,7 @@ fn it_says_whether_it_is_on(tc: hegel::TestCase) {
     } else if !jev {
         assert_eq!(status, tau_ui_plugin::NO_KEY);
     }
-    let plugins = ReasoningPlugin.agent_plugins(&(), &run, &settings);
+    let plugins = ReasoningPlugin.agent_plugins(&(), &run, &settings).unwrap();
     assert_eq!(plugins.len(), usize::from(on));
     assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
 }

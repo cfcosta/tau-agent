@@ -119,12 +119,16 @@ impl Host {
     }
 
     /// What adds each plugin's agent plugins, in the registry's order, to
-    /// an agent in `repo`: the run's, or a sub-agent's, on its model.
+    /// an agent in `repo`: the run's, or a sub-agent's, on its model. A
+    /// plugin that cannot build its own fails the run.
     pub(super) fn registered(
         &self,
         repo: &RepoSlot,
-    ) -> impl Fn(Agent, RunKind, &ModelChoice) -> Agent + Clone + Send + Sync + 'static
-    {
+    ) -> impl Fn(Agent, RunKind, &ModelChoice) -> anyhow::Result<Agent>
+    + Clone
+    + Send
+    + Sync
+    + 'static {
         let hosted: Vec<(Hosted, Value)> = self
             .hosted
             .iter()
@@ -149,12 +153,12 @@ impl Host {
                     .map(|effort| effort.as_str().to_owned()),
                 services,
             };
-            hosted.iter().fold(agent, |agent, (hosted, settings)| {
-                hosted
+            hosted.iter().try_fold(agent, |agent, (hosted, settings)| {
+                Ok(hosted
                     .plugin
-                    .agent_plugins(&hosted.state, &run, settings)
+                    .agent_plugins(&hosted.state, &run, settings)?
                     .into_iter()
-                    .fold(agent, Agent::boxed_plugin)
+                    .fold(agent, Agent::boxed_plugin))
             })
         }
     }

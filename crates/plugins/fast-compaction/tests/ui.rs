@@ -236,7 +236,7 @@ fn it_says_whether_it_is_on(tc: hegel::TestCase) {
     assert_eq!(state.on, Some(jev));
     let status = state.status().unwrap();
     assert_eq!(status == tau_ui_plugin::NO_KEY, !jev, "{status}");
-    let plugins = FastCompactionUi.agent_plugins(&(), &run, &());
+    let plugins = FastCompactionUi.agent_plugins(&(), &run, &()).unwrap();
     assert_eq!(plugins.len(), usize::from(jev));
     assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
     assert!(FastCompactionUi.rewrites_keep_transcript());

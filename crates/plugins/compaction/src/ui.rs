@@ -47,12 +47,12 @@ impl UiPlugin for CompactionUi {
         _host: &(),
         run: &RunCtx,
         _settings: &(),
-    ) -> Vec<Box<dyn Plugin>> {
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         let mut compaction = Compaction::default();
         if let Some(model) = tau_ai::model::find(&run.model) {
             compaction = compaction.context_window(model.context_window);
         }
-        vec![Box::new(compaction)]
+        Ok(vec![Box::new(compaction)])
     }
 
     fn catalog(&self, _host: &(), _cx: &HostCx, _settings: &()) -> PluginInfo {

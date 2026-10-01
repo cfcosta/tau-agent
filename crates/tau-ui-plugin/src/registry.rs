@@ -72,7 +72,7 @@ pub trait ErasedPlugin: Send + Sync {
         host: &HostState,
         run: &RunCtx,
         settings: &Value,
-    ) -> Vec<Box<dyn Plugin>>;
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>>;
     fn starting(
         &self,
         host: &HostState,
@@ -199,7 +199,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         host: &HostState,
         run: &RunCtx,
         settings: &Value,
-    ) -> Vec<Box<dyn Plugin>> {
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         self.plugin
             .agent_plugins(self.host(host), run, &decode(settings))
     }
@@ -483,8 +483,8 @@ mod tests {
             _: &(),
             _: &RunCtx,
             _: &(),
-        ) -> Vec<Box<dyn Plugin>> {
-            Vec::new()
+        ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
+            Ok(Vec::new())
         }
 
         fn catalog(&self, _: &(), _: &HostCx, _: &()) -> PluginInfo {

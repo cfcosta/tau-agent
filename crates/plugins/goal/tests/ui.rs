@@ -186,7 +186,7 @@ fn it_says_whether_it_checks(tc: hegel::TestCase) {
         state.apply(&body, &mut Anchors::default());
     }
     assert_eq!(state.checks, on);
-    let plugins = GoalUi.agent_plugins(&(), &run, &());
+    let plugins = GoalUi.agent_plugins(&(), &run, &()).unwrap();
     assert_eq!(plugins.len(), usize::from(on));
     assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
 }
