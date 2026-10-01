@@ -324,7 +324,10 @@ the user's checkout.
 - `trunk()` is the commit new runs start from: the branch the copy's
   `HEAD` names, else `main`, `master` or `trunk`, else the root commit.
 - `add_workspace(name, base)` makes `runs/<name>` on a new empty commit
-  on top of `base` and checks out its files. `forget_workspace(name)`
+  on top of `base` and checks out its files. When `base` was rewritten
+  since the caller read it, as the main chat's catch-up rewrites its
+  commits, the workspace starts on the commit `base`'s change names
+  now, so the old commit does not come back beside the new one. `forget_workspace(name)`
   drops it from the view and deletes the directory; its commits stay.
 - These calls block. Call them off the async executor.
 

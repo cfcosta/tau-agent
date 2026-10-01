@@ -577,7 +577,9 @@ impl Project {
 
     /// Makes run `name`'s workspace, on a new empty commit on top of
     /// `base` (a full commit id in hex), with `base`'s files checked out,
-    /// and opens it. Opens it as it is if it exists already.
+    /// and opens it. When `base` was rewritten, the workspace starts on
+    /// the commit its change names now. Opens it as it is if it exists
+    /// already.
     pub fn add_workspace(
         &self,
         name: &str,
@@ -603,7 +605,11 @@ impl Project {
                 WorkspaceNameBuf::from(name),
             ))
             .map_err(VcsError::AddWorkspace)?;
+        // Where `base`'s change is now: a catch-up may have rewritten it
+        // since the caller read it, and checking out the old commit would
+        // bring it back beside the new one, a divergent change.
         let base = commit(&repo, base)?;
+        let base = visible(repo.as_ref(), &base)?.unwrap_or(base);
         let mut tx = repo.start_transaction();
         let wc = block_on(
             tx.repo_mut().check_out(WorkspaceNameBuf::from(name), &base),

@@ -1255,3 +1255,35 @@ fn the_repository_lock_never_deadlocks() {
     let trunk = repo.project.bookmark(&repo.trunk_name).unwrap();
     assert!(trunk.is_some(), "trunk's bookmark names one commit");
 }
+
+/// A chat started on a commit the main chat's catch-up has rewritten
+/// since the host read it starts where the commit's change is now, and
+/// the change stays one commit.
+///
+/// `Host::start` reads the main chat's latest link, resolves it with
+/// `Project::current`, then makes the chat's workspace on that commit.
+/// A catch-up in between restacked it. Checking out the old commit
+/// brought it back, visible beside its rewrite: the main chat's change
+/// was divergent, and `Project::current` failed on its links.
+#[test]
+fn a_chat_started_on_a_rewritten_commit_starts_where_it_is_now() {
+    let repo = Repo::new();
+    write(&repo.main_dir(), "main.txt", Some("x\n"));
+    let main =
+        block_on(repo.main.commit_all("main turn", repo.trunk_name.clone()))
+            .unwrap();
+    repo.push_upstream(Some("x\n"));
+    repo.project
+        .update(UpdateFrom::Checkout(&repo.src()))
+        .unwrap();
+    catch_up(&repo.project).unwrap();
+    repo.project.add_workspace("c0", &main.commit_id).unwrap();
+    let now = repo
+        .project
+        .current([change_link(&main.change_id, &main.commit_id)])
+        .expect("the main chat's change is one commit")
+        .remove(0);
+    assert_ne!(now.commit_id, main.commit_id, "the catch-up rewrote it");
+    let wc = repo.project.workspace_head("c0").unwrap().unwrap();
+    assert_eq!(repo.project.parent_of(&wc).unwrap(), Some(now.commit_id));
+}
