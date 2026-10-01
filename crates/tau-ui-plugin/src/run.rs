@@ -19,6 +19,27 @@ pub struct CardInfo {
     pub turn: u32,
 }
 
+/// What a tool call sent, as its card shows it: its arguments, what it
+/// reported while it ran, and its result.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CallData {
+    pub args: Value,
+    /// Each update's details while it ran, oldest first.
+    pub updates: Vec<Value>,
+    /// The text of the latest update.
+    pub partial: Option<String>,
+    /// Its result, once it ended.
+    pub result: Option<CallResult>,
+}
+
+/// What a tool returned.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CallResult {
+    pub text: String,
+    pub details: Option<Value>,
+    pub error: bool,
+}
+
 /// What a plugin decided about a tool call, for its card.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CardMark {

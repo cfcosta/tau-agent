@@ -6,7 +6,8 @@
 use serde::Deserialize;
 use serde_json::Value;
 use tau_agent::tool::TypedTool as _;
-use tau_vcs::{ChangeInfo, tools::Log};
+
+use crate::{ChangeInfo, tools::Log};
 
 /// The tool whose results read as a [`ChangeLog`].
 pub const TOOL: &str = Log::NAME;

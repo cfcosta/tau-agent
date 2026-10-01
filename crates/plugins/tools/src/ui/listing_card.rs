@@ -8,15 +8,14 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{Div, Hsla, div, prelude::*, px};
-use tau_tools::ls::EntryKind;
-use tau_vcs::ChangeKind;
-
-use super::{heading, icon, mono};
-use crate::{
+use tau_ui_kit::{
     assets::Icon,
-    listing::{DirListing, Listed, age, count, size},
+    components::{heading, icon, mono},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
 };
+
+use super::listing::{ChangeKind, DirListing, Listed, age, count, size};
+use crate::ls::EntryKind;
 
 /// The header: the directory, then a chip for each kind of change in
 /// `@` and one for ignored entries. What it holds follows, as the

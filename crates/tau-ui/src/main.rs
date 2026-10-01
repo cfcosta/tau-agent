@@ -315,7 +315,13 @@ fn open_demo_screen(
             let run = demo::run_id();
             workspace.navigate(Route::Run(run.clone()), cx);
             workspace.toggle_card(&run, demo::LOG_CALL, cx);
-            workspace.pick_change(&run, demo::LOG_CALL, demo::LOG_PICKED, cx);
+            if let Some(cards) =
+                workspace.plugin_ui::<tau_vcs::ui::Ui>(tau_vcs::ui::NAME)
+            {
+                cards.update(cx, |cards, _| {
+                    cards.pick(&run, demo::LOG_CALL, demo::LOG_PICKED)
+                });
+            }
             return;
         }
         // The vcs_status, vcs_show and vcs_diff cards, open, with a file
@@ -329,7 +335,12 @@ fn open_demo_screen(
             };
             workspace.navigate(Route::Run(run.clone()), cx);
             workspace.toggle_card(&run, call, cx);
-            workspace.toggle_file(&run, call, file, cx);
+            if let Some(cards) =
+                workspace.plugin_ui::<tau_vcs::ui::Ui>(tau_vcs::ui::NAME)
+            {
+                cards
+                    .update(cx, |cards, _| cards.toggle_file(&run, call, file));
+            }
             return;
         }
         Some("fork-picker") => {

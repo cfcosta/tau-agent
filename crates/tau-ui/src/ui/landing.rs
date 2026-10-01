@@ -4,12 +4,12 @@
 //! chat share.
 
 use gpui::{Context, SharedString, div, prelude::*, px};
+use tau_vcs::ui::{change_log::Change, log_card};
 
 use crate::{
     assets::Icon,
-    change_log::Change,
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, Material as _, components::ButtonKind, log_card},
+    ui::{self, Material as _, components::ButtonKind},
     view::{Origin, RunView},
     workspace::{LandingState, Workspace},
 };

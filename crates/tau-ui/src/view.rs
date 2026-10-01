@@ -23,13 +23,6 @@ use tau_ai::message::{
     UserContent,
 };
 
-use crate::{
-    change_diff::{self, ChangeDiff},
-    change_log::{self, ChangeLog},
-    change_status::{self, ChangeStatus},
-    listing::{self, DirListing},
-};
-
 /// One run, as the transcript, the inspector and the run list show it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunView {
@@ -171,46 +164,10 @@ pub enum Item {
     },
 }
 
-/// The record a landing leaves in its parent, under [`LANDING_RECORD`]:
-/// enough to draw its card again when the parent comes back from
-/// history.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LandingRecord {
-    pub from: String,
-    pub title: String,
-    pub landing: tau_vcs::Landing,
-}
-
 /// The plugin name a landing's record is stored under.
 pub const LANDING_RECORD: &str = "landing";
 
-impl LandedCard {
-    pub fn from_record(record: LandingRecord) -> Self {
-        Self {
-            from: RunId(record.from.into()),
-            title: record.title,
-            changes: record
-                .landing
-                .changes
-                .into_iter()
-                .map(crate::change_log::Change::new)
-                .collect(),
-            conflicts: record.landing.conflicts,
-        }
-    }
-}
-
-/// A child run that landed on this run: what it brought.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LandedCard {
-    pub from: RunId,
-    /// The child's title, as the run list called it.
-    pub title: String,
-    /// Its changes on this run's stack, newest first.
-    pub changes: Vec<crate::change_log::Change>,
-    /// Paths left with conflict markers for this run's next turn.
-    pub conflicts: Vec<String>,
-}
+pub use tau_vcs::ui::landed::{LandedCard, LandingRecord};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCard {
@@ -219,10 +176,10 @@ pub struct ToolCard {
     /// The argument worth reading at a glance: a path, a command, a
     /// pattern.
     pub summary: String,
-    /// The arguments the model sent.
-    pub args: Value,
     pub state: ToolState,
-    pub body: ToolBody,
+    /// What the call sent and returned, for the tool's plugin to draw.
+    /// Shared: cloning a card, and handing it to plugins, is cheap.
+    pub data: std::sync::Arc<CallData>,
     /// The plugin that added the tool, when a plugin did.
     pub from_plugin: Option<String>,
     /// What a context rewrite left of the call, when it dropped some.
@@ -256,200 +213,11 @@ pub enum ToolState {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub enum ToolBody {
-    #[default]
-    None,
-    Diff(Vec<DiffLine>),
-    Output(Vec<String>),
-    /// A `bash` run under a terminal: its raw output, drawn as a screen.
-    Terminal(Box<TermOutput>),
-    /// A `vcs_log` result, shown as the stack over trunk.
-    Log(Box<ChangeLog>),
-    /// A `vcs_diff` result: the files, each opening to its hunks.
-    Files(Box<ChangeDiff>),
-    /// A `vcs_show` result: the message, ids and parent, then the files.
-    Commit(Box<ChangeDiff>),
-    /// A `vcs_status` result: what `@` holds, each file opening to its
-    /// hunks.
-    Status(Box<ChangeStatus>),
-    /// A `delegate` result: the sub-agent, and what it landed.
-    Delegated(Box<LandedCard>),
-    /// An `ls` result: the folders, then the files.
-    Listing(Box<DirListing>),
-}
-
-/// A command's terminal, from the `term` details of `bash`'s updates and
-/// result (`docs/reference/tools.md`, "bash: terminal mode").
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TermOutput {
-    pub cols: u16,
-    pub rows: u16,
-    /// The raw output: the chunks so far while the command runs, the
-    /// result's replay once it ends. Written to a new `cols`×`rows`
-    /// terminal, it draws the screen. Shared, so cloning a card is cheap.
-    pub bytes: std::sync::Arc<Vec<u8>>,
-    /// The `seq` the next chunk must carry.
-    pub next_seq: u64,
-    /// How the command ended; `None` while it runs.
-    pub end: Option<TermEnd>,
-    /// The text the model got: the result's text, pruned or not.
-    pub seen: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TermEnd {
-    pub status: TermStatus,
-    /// The exit code; `None` on a timeout or a cancel.
-    pub exit_code: Option<i32>,
-    /// Whether `bytes` is a VT snapshot of the final screen, rather
-    /// than the whole raw output.
-    pub snapshot: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TermStatus {
-    Exited,
-    TimedOut,
-    Cancelled,
-}
-
-impl TermOutput {
-    fn new(cols: u16, rows: u16) -> Self {
-        Self {
-            cols,
-            rows,
-            bytes: Default::default(),
-            next_seq: 0,
-            end: None,
-            seen: String::new(),
-        }
+impl ToolCard {
+    /// The arguments the model sent.
+    pub fn args(&self) -> &Value {
+        &self.data.args
     }
-
-    /// `120×40`.
-    pub fn size_label(&self) -> String {
-        format!("{}×{}", self.cols, self.rows)
-    }
-
-    /// The model's text, line by line, with fast compaction's marks read
-    /// back: its header and footer, and each `[N lines omitted]`.
-    pub fn seen_lines(&self) -> Vec<SeenLine> {
-        let lines: Vec<&str> = self.seen.lines().collect();
-        let pruned =
-            lines.first() == Some(&tau_fast_compaction::output::HEADER);
-        lines
-            .iter()
-            .enumerate()
-            .map(|(index, line)| {
-                let omitted = line
-                    .strip_prefix('[')
-                    .and_then(|rest| rest.strip_suffix(" lines omitted]"))
-                    .and_then(|count| count.parse().ok());
-                match omitted {
-                    Some(count) if pruned => SeenLine::Omitted(count),
-                    _ if pruned
-                        && (index == 0
-                            || (index + 1 == lines.len()
-                                && line.starts_with("[full output: "))) =>
-                    {
-                        SeenLine::Note((*line).to_owned())
-                    }
-                    _ => SeenLine::Text((*line).to_owned()),
-                }
-            })
-            .collect()
-    }
-
-    /// Takes one progress update's `term` details: a chunk, in order.
-    /// Out-of-order or repeated chunks are dropped.
-    fn push_chunk(&mut self, term: &Value) {
-        let (Some(seq), Some(bytes)) = (
-            term.get("seq").and_then(Value::as_u64),
-            term.get("bytes").and_then(Value::as_str).and_then(decode),
-        ) else {
-            return;
-        };
-        if seq == self.next_seq && self.end.is_none() {
-            std::sync::Arc::make_mut(&mut self.bytes).extend_from_slice(&bytes);
-            self.next_seq += 1;
-        }
-    }
-
-    /// A result's `term` details: how the command ended and its replay.
-    fn from_result(term: &Value, seen: String) -> Option<Self> {
-        let size = |key: &str| {
-            term.get(key)
-                .and_then(Value::as_u64)
-                .and_then(|value| u16::try_from(value).ok())
-        };
-        let status = match term.get("status").and_then(Value::as_str)? {
-            "exited" => TermStatus::Exited,
-            "timedOut" => TermStatus::TimedOut,
-            "cancelled" => TermStatus::Cancelled,
-            _ => return None,
-        };
-        Some(Self {
-            cols: size("cols")?,
-            rows: size("rows")?,
-            bytes: std::sync::Arc::new(
-                term.get("bytes").and_then(Value::as_str).and_then(decode)?,
-            ),
-            next_seq: term.get("chunks").and_then(Value::as_u64).unwrap_or(0),
-            end: Some(TermEnd {
-                status,
-                exit_code: term
-                    .get("exitCode")
-                    .and_then(Value::as_i64)
-                    .and_then(|code| i32::try_from(code).ok()),
-                snapshot: term.get("replay").and_then(Value::as_str)
-                    == Some("snapshot"),
-            }),
-            seen,
-        })
-    }
-
-    /// What the card's header says of how it ended: `exit 100`, `timed
-    /// out`, `cancelled`; `None` for a clean exit.
-    pub fn failure(&self) -> Option<String> {
-        let end = self.end?;
-        match end.status {
-            TermStatus::Exited => match end.exit_code {
-                Some(0) => None,
-                Some(code) => Some(format!("exit {code}")),
-                None => Some("exited".into()),
-            },
-            TermStatus::TimedOut => Some("timed out".into()),
-            TermStatus::Cancelled => Some("cancelled".into()),
-        }
-    }
-}
-
-/// A line of the text the model saw.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SeenLine {
-    Text(String),
-    /// A run of lines fast compaction left out.
-    Omitted(usize),
-    /// Fast compaction's header or footer.
-    Note(String),
-}
-
-fn decode(text: &str) -> Option<Vec<u8>> {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD.decode(text).ok()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DiffLine {
-    pub kind: DiffKind,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DiffKind {
-    Context,
-    Added,
-    Removed,
 }
 
 /// A plugin speaking in the transcript. Lighter than a tool card, and
@@ -463,8 +231,13 @@ pub struct PluginNote {
     pub tone: Tone,
 }
 
-pub use tau_ui_kit::theme::Tone;
+pub use tau_ui_kit::{
+    diff::{DiffKind, DiffLine},
+    theme::Tone,
+};
 pub use tau_ui_plugin::{
+    CallData,
+    CallResult,
     CardMark,
     Dropped,
     OutputCut,
@@ -627,7 +400,7 @@ impl Folding<'_> {
                 Item::Tool(card) => cards.push(tau_ui_plugin::CardInfo {
                     call_id: card.call_id.clone(),
                     tool: card.tool.clone(),
-                    args: card.args.clone(),
+                    args: card.args().clone(),
                     summary: card.summary.clone(),
                     size: card.size,
                     turn,
@@ -702,7 +475,7 @@ impl ContextParts {
                     conversation += tokens(text.len())
                 }
                 Item::Tool(card) => {
-                    let args = card.args.to_string().len();
+                    let args = card.args().to_string().len();
                     match card.dropped {
                         Some(Dropped::Call) => {}
                         Some(Dropped::Result) => conversation += tokens(args),
@@ -1042,9 +815,11 @@ impl RunView {
                                 call_id: call.id.clone(),
                                 tool: call.name.clone(),
                                 summary: summarize_args(&args),
-                                args,
                                 state: ToolState::Running,
-                                body: ToolBody::None,
+                                data: std::sync::Arc::new(CallData {
+                                    args,
+                                    ..CallData::default()
+                                }),
                                 from_plugin: None,
                                 dropped: None,
                                 cut: None,
@@ -1192,12 +967,13 @@ impl RunView {
     }
 
     /// The last edit that changed a file, with its diff.
-    pub fn last_diff(&self) -> Option<(&ToolCard, &[DiffLine])> {
+    pub fn last_diff(&self) -> Option<(&ToolCard, Vec<DiffLine>)> {
         self.items.iter().rev().find_map(|item| match item {
-            Item::Tool(card) => match &card.body {
-                ToolBody::Diff(lines) => Some((&**card, lines.as_slice())),
-                _ => None,
-            },
+            Item::Tool(card) => {
+                let result = card.data.result.as_ref()?;
+                let diff = result.details.as_ref()?.get("diff")?.as_str()?;
+                Some((&**card, tau_ui_kit::diff::parse(diff)))
+            }
             _ => None,
         })
     }
@@ -1344,43 +1120,28 @@ impl RunView {
                 call_id: call_id.clone(),
                 tool: tool.to_string(),
                 summary: summarize_args(args),
-                args: args.clone(),
                 state: ToolState::Running,
-                body: ToolBody::None,
+                data: std::sync::Arc::new(CallData {
+                    args: args.clone(),
+                    ..CallData::default()
+                }),
                 from_plugin: None,
                 dropped: None,
                 cut: None,
                 anchors: Vec::new(),
                 size: 0,
             }))),
+            // What the call reports while it runs, for its plugin to
+            // draw: a command's screen, the output so far.
             RunEvent::ToolUpdate {
                 call_id, partial, ..
             } => {
                 if let Some(card) = self.tool_mut(call_id) {
-                    let term = partial
-                        .details
-                        .as_ref()
-                        .and_then(|details| details.get("term"));
-                    match (&mut card.body, term) {
-                        (ToolBody::Terminal(output), Some(term)) => {
-                            output.push_chunk(term)
-                        }
-                        // An update with text only, once there is a
-                        // terminal: the screen already has it.
-                        (ToolBody::Terminal(_), None) => {}
-                        (_, Some(term)) => {
-                            let mut output = TermOutput::new(
-                                tau_terminal::Size::TOOL.cols,
-                                tau_terminal::Size::TOOL.rows,
-                            );
-                            output.push_chunk(term);
-                            card.body = ToolBody::Terminal(Box::new(output));
-                        }
-                        (_, None) => {
-                            card.body =
-                                ToolBody::Output(tail(&text_of(partial), 6))
-                        }
+                    let data = std::sync::Arc::make_mut(&mut card.data);
+                    if let Some(details) = &partial.details {
+                        data.updates.push(details.clone());
                     }
+                    data.partial = Some(text_of(partial));
                 }
             }
             RunEvent::ToolEnd {
@@ -1691,132 +1452,26 @@ impl RunView {
 
 fn finish_tool(card: &mut ToolCard, output: &ToolOutput, is_error: bool) {
     let text = text_of(output);
-    card.size = card.args.to_string().len() + text.len();
-    // A command run under a terminal, on success or failure.
-    let term = output
-        .details
-        .as_ref()
-        .and_then(|details| details.get("term"))
-        .and_then(|term| TermOutput::from_result(term, text.clone()));
-    if let Some(term) = term {
-        card.state = match term.failure() {
-            Some(failure) => ToolState::Failed(failure),
-            None if is_error => ToolState::Failed(first_line(&text)),
-            None => ToolState::Done {
-                summary: line_count(&text),
-            },
-        };
-        card.body = ToolBody::Terminal(Box::new(term));
-        return;
-    }
-    if is_error {
-        card.state = ToolState::Failed(first_line(&text));
-        return;
-    }
-    // A sub-agent's landing, from the `delegate` tool.
-    let delegated = (card.tool == tau_vcs::delegate::NAME)
-        .then_some(output.details.as_ref())
-        .flatten()
-        .and_then(|details| {
-            Some(LandingRecord {
-                from: details.get("run")?.as_str()?.to_owned(),
-                title: card
-                    .args
-                    .get("task")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                landing: serde_json::from_value(
-                    details.get("landing")?.clone(),
-                )
-                .ok()?,
-            })
-        });
-    if let Some(record) = delegated {
-        card.state = ToolState::Done {
-            summary: Some(match record.landing.changes.len() {
-                0 => "no changes".into(),
-                1 => "1 change landed".into(),
-                n => format!("{n} changes landed"),
-            }),
-        };
-        card.body =
-            ToolBody::Delegated(Box::new(LandedCard::from_record(record)));
-        return;
-    }
-    let status = (card.tool == change_status::TOOL)
-        .then_some(output.details.as_ref())
-        .flatten()
-        .and_then(ChangeStatus::parse);
-    if let Some(status) = status {
-        card.state = ToolState::Done {
-            summary: Some(status.summary()),
-        };
-        card.body = ToolBody::Status(Box::new(status));
-        return;
-    }
-    let vcs = [change_diff::DIFF_TOOL, change_diff::SHOW_TOOL]
-        .contains(&card.tool.as_str())
-        .then_some(output.details.as_ref())
-        .flatten()
-        .and_then(ChangeDiff::parse);
-    if let Some(diff) = vcs {
-        card.state = ToolState::Done {
-            summary: Some(diff.stat()),
-        };
-        card.body = if card.tool == change_diff::SHOW_TOOL {
-            ToolBody::Commit(Box::new(diff))
-        } else {
-            ToolBody::Files(Box::new(diff))
-        };
-        return;
-    }
-    let listing = (card.tool == listing::TOOL)
-        .then_some(output.details.as_ref())
-        .flatten()
-        .and_then(DirListing::parse);
-    if let Some(listing) = listing {
-        card.state = ToolState::Done {
-            summary: Some(listing.summary()),
-        };
-        card.body = ToolBody::Listing(Box::new(listing));
-        return;
-    }
-    let diff = output
-        .details
-        .as_ref()
-        .and_then(|details| details.get("diff"))
-        .and_then(Value::as_str)
-        .map(parse_diff);
-    let log = (card.tool == change_log::TOOL)
-        .then_some(output.details.as_ref())
-        .flatten()
-        .and_then(ChangeLog::parse);
-    if let Some(log) = log {
-        card.state = ToolState::Done {
-            summary: Some(log.summary()),
-        };
-        card.body = ToolBody::Log(Box::new(log));
-        return;
-    }
-    // A tool may say how to sum up its result ("5 matches · 9 ms").
+    card.size = card.args().to_string().len() + text.len();
     let reported = output
         .details
         .as_ref()
         .and_then(|details| details.get("summary"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    card.state = ToolState::Done {
-        summary: match (&diff, reported) {
-            (Some(lines), _) => Some(diff_stat(lines)),
-            (None, Some(summary)) => Some(summary),
-            (None, None) => line_count(&text),
-        },
-    };
-    card.body = match diff {
-        Some(lines) => ToolBody::Diff(lines),
-        None if card.tool == "bash" => ToolBody::Output(tail(&text, 4)),
-        None => ToolBody::None,
+    std::sync::Arc::make_mut(&mut card.data).result = Some(CallResult {
+        text: text.clone(),
+        details: output.details.clone(),
+        error: is_error,
+    });
+    // The tool's plugin says more of the result when it draws the card.
+    card.state = if is_error {
+        ToolState::Failed(first_line(&text))
+    } else {
+        // A tool may say how to sum up its result ("5 matches · 9 ms").
+        ToolState::Done {
+            summary: reported.or_else(|| line_count(&text)),
+        }
     };
 }
 
@@ -1853,57 +1508,12 @@ fn first_line(text: &str) -> String {
     text.lines().next().unwrap_or_default().to_owned()
 }
 
-fn tail(text: &str, count: usize) -> Vec<String> {
-    let lines: Vec<&str> = text.lines().collect();
-    let start = lines.len().saturating_sub(count);
-    lines[start..]
-        .iter()
-        .map(|line| (*line).to_owned())
-        .collect()
-}
-
 fn line_count(text: &str) -> Option<String> {
     match text.lines().count() {
         0 => None,
         1 => Some("1 line".into()),
         count => Some(format!("{count} lines")),
     }
-}
-
-/// Reads a unified diff into lines, dropping the file and hunk headers.
-pub fn parse_diff(diff: &str) -> Vec<DiffLine> {
-    const HEADERS: [&str; 9] = [
-        "---",
-        "+++",
-        "@@",
-        "diff --git ",
-        "new file mode",
-        "deleted file mode",
-        "old mode",
-        "new mode",
-        "\\ No newline",
-    ];
-    diff.lines()
-        .filter(|line| !HEADERS.iter().any(|header| line.starts_with(header)))
-        .map(|line| {
-            let (kind, rest) = match line.chars().next() {
-                Some('+') => (DiffKind::Added, &line[1..]),
-                Some('-') => (DiffKind::Removed, &line[1..]),
-                Some(' ') => (DiffKind::Context, &line[1..]),
-                _ => (DiffKind::Context, line),
-            };
-            DiffLine {
-                kind,
-                text: rest.to_owned(),
-            }
-        })
-        .collect()
-}
-
-pub fn diff_stat(lines: &[DiffLine]) -> String {
-    let added = lines.iter().filter(|l| l.kind == DiffKind::Added).count();
-    let removed = lines.iter().filter(|l| l.kind == DiffKind::Removed).count();
-    format!("+{added} −{removed}")
 }
 
 pub use tau_ui_kit::format::{clock, fine_usd, grouped, tokens, usd};
@@ -2387,15 +1997,10 @@ mod tests {
         });
         let card = view.tool("c1").expect("card");
         assert_eq!(card.summary, "retry.rs");
-        assert_eq!(
-            card.state,
-            ToolState::Done {
-                summary: Some("+2 −1".into())
-            }
-        );
-        let ToolBody::Diff(lines) = &card.body else {
-            panic!("expected a diff, got {:?}", card.body);
-        };
+        assert!(matches!(card.state, ToolState::Done { .. }));
+        // tau-tools draws the diff the result carries.
+        let lines = tau_tools::ui::diff_of(&card.data).expect("a diff");
+        assert_eq!(tau_ui_kit::diff::stat(&lines), "+2 −1");
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].kind, DiffKind::Removed);
     }
@@ -2434,15 +2039,11 @@ mod tests {
             is_error: false,
         });
         let card = view.tool("c1").expect("card");
-        assert_eq!(
-            card.state,
-            ToolState::Done {
-                summary: Some("1 on the stack · 1 on trunk".into())
-            }
-        );
-        let ToolBody::Log(log) = &card.body else {
-            panic!("expected a log, got {:?}", card.body);
-        };
+        // tau-vcs reads the log the result carries.
+        let details = card.data.result.as_ref().unwrap().details.as_ref();
+        let log = tau_vcs::ui::change_log::ChangeLog::parse(details.unwrap())
+            .expect("a log");
+        assert_eq!(log.summary(), "1 on the stack · 1 on trunk");
         assert_eq!(log.stack[0].changes[0].subject, "a card");
         assert_eq!(log.trunk[0].scope.as_deref(), Some("docs"));
     }
@@ -2482,21 +2083,17 @@ mod tests {
                 is_error: false,
             });
         }
-        let show = view.tool("c1").expect("card");
-        assert_eq!(
-            show.state,
-            ToolState::Done {
-                summary: Some("+2 −1".into())
-            }
-        );
-        let ToolBody::Commit(commit) = &show.body else {
-            panic!("expected a commit, got {:?}", show.body);
+        // tau-vcs reads a show as a commit, a diff as its files.
+        let parsed = |id: &str| {
+            let card = view.tool(id).expect("card");
+            let details = card.data.result.as_ref().unwrap().details.clone();
+            tau_vcs::ui::change_diff::ChangeDiff::parse(&details.unwrap())
+                .expect("a diff")
         };
+        let commit = parsed("c1");
+        assert_eq!(commit.stat(), "+2 −1");
         assert_eq!(commit.change.subject, "honor retry-after");
-        assert!(matches!(
-            &view.tool("c2").expect("card").body,
-            ToolBody::Files(files) if files.files[0].hunks[0].lines.len() == 3
-        ));
+        assert_eq!(parsed("c2").files[0].hunks[0].lines.len(), 3);
     }
 
     #[test]
@@ -2791,16 +2388,18 @@ mod tests {
             call_id: "c1".into(),
             tool: "read".into(),
             summary: String::new(),
-            args: json!({"path": "a.rs"}),
             state: ToolState::Done { summary: None },
-            body: ToolBody::None,
+            data: Arc::new(CallData {
+                args: json!({"path": "a.rs"}),
+                ..CallData::default()
+            }),
             from_plugin: None,
             dropped: None,
             cut: None,
             anchors: Vec::new(),
             size: 0,
         };
-        let args = card.args.to_string().len();
+        let args = card.args().to_string().len();
         card.size = args + 4_000;
         view.items.push(Item::Tool(Box::new(card.clone())));
         view.context.used = 5_000;

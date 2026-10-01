@@ -794,9 +794,7 @@ fn a_run_delegates_and_the_sub_agent_lands() {
             _ => None,
         })
         .expect("a delegate card");
-    let tau_ui::view::ToolBody::Delegated(landed) = &card.body else {
-        panic!("{:?}", card.body);
-    };
+    let landed = tau_vcs::ui::delegated(&card.data).expect("a landing");
     assert_eq!(landed.changes.len(), 1);
     assert_eq!(landed.title, "write c.txt");
     let child = history

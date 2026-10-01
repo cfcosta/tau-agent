@@ -9201,9 +9201,11 @@ dependencies = [
 name = "tau-tools"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.23.1",
  "globset",
+ "gpui-pre",
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
@@ -9221,6 +9223,8 @@ dependencies = [
  "tau-store",
  "tau-terminal",
  "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -9305,9 +9309,11 @@ dependencies = [
 name = "tau-vcs"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
  "gix",
+ "gpui-pre",
  "hegeltest",
  "jj-lib",
  "pollster 1.0.1",
@@ -9321,6 +9327,8 @@ dependencies = [
  "tau-store",
  "tau-testing",
  "tau-tools",
+ "tau-ui-kit",
+ "tau-ui-plugin",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

@@ -35,6 +35,7 @@ pub mod project;
 pub mod run_workspace;
 mod session;
 pub mod tools;
+pub mod ui;
 mod vcs;
 
 pub use clone::{CloneError, TransferError, clone_bare};

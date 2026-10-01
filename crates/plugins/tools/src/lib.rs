@@ -30,6 +30,7 @@ pub mod path;
 pub mod plugin;
 pub mod read;
 pub mod truncate;
+pub mod ui;
 pub mod write;
 
 /// What every tool returns when the run is cancelled while it works.

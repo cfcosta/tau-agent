@@ -27,6 +27,10 @@ use crate::{
 pub fn registry() -> &'static Registry {
     static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
         Registry::new()
+            // The tools' cards: the host builds the tools themselves on
+            // each run's workspace.
+            .with(tau_tools::ui::ToolsUi)
+            .with(tau_vcs::ui::VcsUi)
             .with(tau_reasoning::ReasoningPlugin)
             // Pruning first: it is cheaper than a summary, and summarizing
             // follows when pruning cannot help.

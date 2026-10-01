@@ -7,7 +7,9 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 async-trait.workspace = true
+gpui = { package = "gpui-pre", version = "=0.3.7" }
 futures-util.workspace = true
 # Clones over HTTPS without the git binary. reqwest brings rustls,
 # with the ring provider tokio-rustls already builds.
@@ -27,6 +29,9 @@ tau-agent.workspace = true
 thiserror.workspace = true
 tau-ai.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }
+# Its UI (ADR 0017).
+tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true

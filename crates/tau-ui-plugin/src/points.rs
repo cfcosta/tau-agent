@@ -1,6 +1,8 @@
 //! The extension points `tau-ui` declares, and the context each gives
 //! its contributions. A plugin contributes to them in its manifest.
 
+use tau_ui_kit::theme::Tone;
+
 use crate::{
     manifest::{Point, PointCx},
     view::{NavEntry, PlanField, PluginStatus, RowNote, RunInfo},
@@ -88,6 +90,34 @@ pub struct AtCard {
     pub tool: String,
     /// The plugin's anchors on the card, in the order they came.
     pub keys: Vec<String>,
+    /// What the call sent and returned. Shared: a card's points share it.
+    pub data: std::sync::Arc<crate::CallData>,
+    /// The argument worth reading at a glance.
+    pub summary: String,
+    /// What a plugin cut from its result, when one did.
+    pub cut: Option<crate::OutputCut>,
+}
+
+/// How a tool's own plugin draws its card, in tau-ui's frame.
+#[derive(Default)]
+pub struct CardView {
+    /// In place of the summary of its arguments.
+    pub head: Option<gpui::AnyElement>,
+    /// The result's line at the header's end: `+12 −3`, `3 matches`.
+    pub label: Option<String>,
+    /// The call failed, as its result tells, though the tool returned.
+    pub failed: Option<String>,
+    /// The card's edge, when its result wants attention.
+    pub edge: Option<Tone>,
+    /// A small drawing of the result, before the fold's chevron.
+    pub shape: Option<gpui::AnyElement>,
+    /// Under the header.
+    pub body: Option<gpui::AnyElement>,
+    /// Whether the body folds, closed until its header is clicked.
+    pub folds: bool,
+    /// Whether the body sits inset under the header and says itself what
+    /// was cut from the result (a terminal's screen).
+    pub inset: bool,
 }
 
 impl PointCx for AtCard {
@@ -102,6 +132,9 @@ pub const TRANSCRIPT: Point<AtAnchor> = Point::new("tau.run.transcript");
 pub const REWRITE: Point<AtRewrite> = Point::new("tau.run.rewrite");
 /// Under the inspector's context meter.
 pub const CONTEXT: Point<AtRun> = Point::new("tau.run.context");
+/// A tool call's card, drawn by the plugin whose tool it is: the first
+/// to answer draws it.
+pub const CARD: Point<AtCard, CardView> = Point::new("tau.run.card");
 /// Beside a tool card's title.
 pub const CARD_BADGE: Point<AtCard> = Point::new("tau.run.card.badge");
 /// Under a tool card's body.
@@ -139,7 +172,8 @@ pub const PLAN_STEPS: Point<AtRun> = Point::new("tau.run.plan.steps");
 pub const PICKER_AUTO: Point<AtApp, String> = Point::new("tau.picker.auto");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 18] = [
+pub const ALL: [&str; 19] = [
+    CARD.name,
     TRANSCRIPT.name,
     REWRITE.name,
     CONTEXT.name,

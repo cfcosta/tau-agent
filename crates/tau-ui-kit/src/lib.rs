@@ -8,6 +8,7 @@
 pub mod assets;
 pub mod components;
 pub mod design;
+pub mod diff;
 pub mod format;
 pub mod input;
 pub mod markdown;

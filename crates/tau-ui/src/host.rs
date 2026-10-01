@@ -94,7 +94,6 @@ use crate::{
         RunView,
         Stored,
         Tone,
-        parse_diff,
     },
     workspace::{Workspace, WorkspaceEvent},
 };
@@ -1052,33 +1051,15 @@ impl Host {
     /// What the workspace shows beyond runs: the agent's plugins and the
     /// store.
     pub fn catalog(&self) -> Catalog {
-        let mut plugins = vec![
-            PluginInfo {
-                name: "tau-tools".into(),
-                description: "read bash edit write grep find ls".into(),
-                seams: vec![Seam::Tools],
-                spend: 0.0,
-                page: None,
-            },
-            PluginInfo {
-                name: "tau-vcs".into(),
-                description: "status diff log show describe commit new \
-                              restore undo, on the run's workspace"
-                    .into(),
-                seams: vec![Seam::Tools],
-                spend: 0.0,
-                page: None,
-            },
-            PluginInfo {
-                name: "workspace".into(),
-                description: "A jj workspace per run, and a commit per \
+        let mut plugins = vec![PluginInfo {
+            name: "workspace".into(),
+            description: "A jj workspace per run, and a commit per \
                               turn to fork from"
-                    .into(),
-                seams: vec![Seam::Start],
-                spend: 0.0,
-                page: None,
-            },
-        ];
+                .into(),
+            seams: vec![Seam::Start],
+            spend: 0.0,
+            page: None,
+        }];
         let source = self.access_label();
         let slots = self.repos.lock().expect("not poisoned").clone();
         let list = self.list.lock().expect("not poisoned").clone();
@@ -2057,11 +2038,7 @@ impl Host {
                 set_by: workspace.as_ref().map(|_| "workspace".to_owned()),
             },
         ];
-        view.plugins = vec![PluginStatus {
-            name: "tau-tools".into(),
-            state: "7 tools".into(),
-            tone: Tone::Quiet,
-        }];
+        view.plugins = Vec::new();
         if workspace.is_some() {
             view.plugins.push(PluginStatus {
                 name: "workspace".into(),
@@ -3259,7 +3236,7 @@ async fn branch_code(
                 .iter()
                 .map(|file| FileChange {
                     stat: file_stat(file),
-                    lines: parse_diff(&file.text),
+                    lines: tau_ui_kit::diff::parse(&file.text),
                 })
                 .collect(),
         })

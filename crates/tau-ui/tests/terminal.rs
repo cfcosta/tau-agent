@@ -1,6 +1,6 @@
-//! `bash` cards under a terminal: the view model builds a card's
-//! terminal from the `term` chunks and the result's details, live and
-//! from history; the workspace draws it and copies it.
+//! `bash` cards under a terminal: tau-tools builds a card's terminal
+//! from the `term` chunks and the result's details the view keeps, live
+//! and from history; the workspace draws it and copies it.
 
 use std::sync::Arc;
 
@@ -13,20 +13,15 @@ use tau_agent::{
     tool::{RunId, ToolOutput},
 };
 use tau_ai::message::Message;
+use tau_tools::ui::{
+    term::{SeenLine, TermOutput, TermStatus},
+    term_card::TermCards,
+};
 use tau_ui::{
     Workspace,
     catalog::Catalog,
     route::Route,
-    view::{
-        Item,
-        RunView,
-        SeenLine,
-        Stored,
-        TermStatus,
-        ToolBody,
-        ToolCard,
-        ToolState,
-    },
+    view::{RunView, Stored, ToolCard, ToolState},
 };
 
 fn run() -> RunId {
@@ -71,6 +66,16 @@ fn card(view: &RunView) -> &ToolCard {
     view.tool("c1").expect("the card")
 }
 
+/// The terminal tau-tools draws for the card, folded from scratch.
+fn term(view: &RunView) -> Option<TermOutput> {
+    let card = card(view);
+    TermCards::default().output(
+        &(run(), card.call_id.clone()),
+        &card.data,
+        card.cut.is_some(),
+    )
+}
+
 /// Chunks join in `seq` order, whatever else arrives: a repeated or
 /// early chunk is dropped, and an update with text only changes
 /// nothing.
@@ -94,9 +99,7 @@ fn chunks_join_in_order(tc: TestCase) {
             partial: Arc::new(ToolOutput::text("text only")),
         });
     }
-    let ToolBody::Terminal(term) = &card(&view).body else {
-        panic!("a terminal: {:?}", card(&view).body)
-    };
+    let term = term(&view).expect("a terminal");
     assert_eq!(*term.bytes, pieces.concat());
     assert_eq!(term.next_seq, pieces.len() as u64);
     assert_eq!(term.end, None);
@@ -119,11 +122,9 @@ fn the_result_ends_the_terminal() {
         }),
         is_error: true,
     });
-    let card = card(&view);
-    assert_eq!(card.state, ToolState::Failed("exit 100".into()));
-    let ToolBody::Terminal(term) = &card.body else {
-        panic!("a terminal")
-    };
+    assert!(matches!(card(&view).state, ToolState::Failed(_)));
+    let term = term(&view).expect("a terminal");
+    assert_eq!(term.failure().as_deref(), Some("exit 100"));
     assert_eq!(term.bytes.as_slice(), bytes);
     let end = term.end.expect("ended");
     assert_eq!(
@@ -137,16 +138,10 @@ fn the_result_ends_the_terminal() {
 /// A timeout says so; a clean exit is done.
 #[test]
 fn how_a_command_ended_shows_on_its_card() {
-    for (code, status, state) in [
-        (None, "timedOut", ToolState::Failed("timed out".into())),
-        (None, "cancelled", ToolState::Failed("cancelled".into())),
-        (
-            Some(0),
-            "exited",
-            ToolState::Done {
-                summary: Some("1 line".into()),
-            },
-        ),
+    for (code, status, failure) in [
+        (None, "timedOut", Some("timed out")),
+        (None, "cancelled", Some("cancelled")),
+        (Some(0), "exited", None),
     ] {
         let mut view = started();
         view.apply(&RunEvent::ToolEnd {
@@ -158,7 +153,15 @@ fn how_a_command_ended_shows_on_its_card() {
             }),
             is_error: code != Some(0),
         });
-        assert_eq!(card(&view).state, state);
+        assert_eq!(term(&view).unwrap().failure().as_deref(), failure);
+        if failure.is_none() {
+            assert_eq!(
+                card(&view).state,
+                ToolState::Done {
+                    summary: Some("1 line".into())
+                }
+            );
+        }
     }
 }
 
@@ -203,23 +206,18 @@ fn a_stored_result_rebuilds_the_terminal() {
         "details": result_details(bytes, Some(0), "exited"),
         "isError": false, "timestamp": 0
     }));
-    let ToolBody::Terminal(term) = &card(&view).body else {
-        panic!("a terminal: {:?}", card(&view).body)
-    };
-    assert_eq!(term.bytes.as_slice(), bytes);
+    assert_eq!(term(&view).expect("a terminal").bytes.as_slice(), bytes);
 
     let old = history(json!({
         "role": "toolResult", "toolCallId": "c1", "toolName": "bash",
         "content": [{"type": "text", "text": "a\nb"}],
         "isError": false, "timestamp": 0
     }));
-    assert_eq!(
-        card(&old).body,
-        ToolBody::Output(vec!["a".into(), "b".into()])
-    );
+    assert!(term(&old).is_none());
+    assert_eq!(tau_tools::ui::output_lines(&card(&old).data), ["a", "b"]);
 }
 
-/// The model's text reads back fast compaction's header, omissions and
+/// Cut, the model's text reads back the cut's header, omissions and
 /// footer; other text is lines.
 #[test]
 fn the_model_text_marks_what_was_left_out() {
@@ -237,10 +235,17 @@ fn the_model_text_marks_what_was_left_out() {
         }),
         is_error: false,
     });
-    let ToolBody::Terminal(term) = &card(&view).body else {
-        panic!("a terminal")
-    };
-    let lines = term.seen_lines();
+    view.update(tau_ui::view::RunUpdate::Event(RunEvent::PluginReport {
+        run: run(),
+        plugin: tau_fast_compaction::NAME.into(),
+        body: json!({
+            "kind": "output", "call_id": "c1", "lines": 1964, "chunks": 3,
+            "kept": 2, "dropped_lines": 1960, "segments": 1, "requests": 1,
+            "tokens_before": 9000, "tokens_after": 40, "pruned": true,
+            "archive": "/a.txt",
+        }),
+    }));
+    let lines = term(&view).expect("a terminal").seen_lines();
     assert!(matches!(lines[0], SeenLine::Note(_)));
     assert_eq!(lines[1], SeenLine::Text("Starting".into()));
     assert_eq!(lines[2], SeenLine::Omitted(1960));
@@ -259,11 +264,8 @@ fn the_model_text_marks_what_was_left_out() {
         }),
         is_error: false,
     });
-    let ToolBody::Terminal(term) = &card(&plain).body else {
-        panic!("a terminal")
-    };
     assert_eq!(
-        term.seen_lines(),
+        term(&plain).expect("a terminal").seen_lines(),
         [SeenLine::Text("[3 lines omitted]".into())]
     );
 }
@@ -302,7 +304,12 @@ fn the_workspace_draws_and_copies_a_terminal(cx: &mut TestAppContext) {
         );
     });
     cx.run_until_parked();
-    workspace.update(&mut cx, |ws, cx| ws.copy_term(&run(), "c1", cx));
+    let cards = workspace.read_with(&cx, |ws, _| {
+        ws.plugin_ui::<tau_tools::ui::Ui>(tau_tools::ui::NAME)
+            .expect("tau-tools draws its cards")
+    });
+    let key = (run(), "c1".to_owned());
+    cards.update(&mut cx, |cards, cx| cards.terms.copy(&key, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text())
@@ -310,13 +317,12 @@ fn the_workspace_draws_and_copies_a_terminal(cx: &mut TestAppContext) {
         Some("   Compiling tau\n    Finished")
     );
     // Expanding and switching tabs are plain toggles.
-    workspace.update(&mut cx, |ws, cx| {
-        ws.toggle_term_expanded(&run(), "c1", cx);
-        ws.show_model_text(&run(), "c1", true, cx);
+    cards.update(&mut cx, |cards, cx| {
+        cards.terms.toggle_expanded(&key, cx);
+        cards.terms.show_model_text(&key, true);
     });
     cx.run_until_parked();
     workspace.read_with(&cx, |ws, _| {
-        let run = ws.run(&run()).unwrap();
-        assert!(run.items.iter().any(|item| matches!(item, Item::Tool(card) if matches!(card.body, ToolBody::Terminal(_)))));
+        assert!(term(ws.run(&run()).unwrap()).is_some());
     });
 }

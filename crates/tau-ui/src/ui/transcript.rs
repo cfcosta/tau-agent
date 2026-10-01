@@ -14,19 +14,7 @@ use gpui::{
     relative,
 };
 
-use super::{
-    Material as _,
-    diff_card,
-    icon,
-    link,
-    listing_card,
-    log_card,
-    mono,
-    rich,
-    status_card,
-    stop_look,
-    term_card,
-};
+use super::{Material as _, icon, link, mono, rich, stop_look};
 use crate::{
     assets::Icon,
     route::Route,
@@ -36,9 +24,10 @@ use crate::{
         DiffLine,
         Dropped,
         Item,
+        LandedCard,
         PluginNote,
         RunView,
-        ToolBody,
+        Tone,
         ToolCard,
         ToolState,
         proposed_text,
@@ -155,9 +144,7 @@ fn item_view(
                 ))
                 .into_any_element()
         }
-        Item::Landed(card) => {
-            log_card::landed(card, t, compact, cx).into_any_element()
-        }
+        Item::Landed(card) => landed(card, t, compact, cx).into_any_element(),
         Item::ForkReady { fork } => {
             fork_ready(ws, run, fork, t, compact, cx).into_any_element()
         }
@@ -374,64 +361,7 @@ fn tool(
     compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let (status, border) = match &card.state {
-        ToolState::Running => (
-            icon(Icon::Spinner, IconSize::COMPACT, t.accent),
-            t.accent_border,
-        ),
-        ToolState::Done { .. } => {
-            (icon(Icon::Check, IconSize::COMPACT, t.green), t.border)
-        }
-        ToolState::Failed(_) => {
-            (icon(Icon::Blocked, IconSize::BASE, t.red), t.red_border)
-        }
-        ToolState::Blocked { .. } => {
-            (icon(Icon::Blocked, IconSize::BASE, t.red), t.red_border)
-        }
-        ToolState::Flagged { .. } => (
-            icon(Icon::Warning, IconSize::BASE, t.accent),
-            t.accent_border,
-        ),
-    };
-    // A status with conflicts or left-out files says so on its edge.
-    let border = match &card.body {
-        ToolBody::Status(status) => {
-            status_card::border(status, t).unwrap_or(border)
-        }
-        _ => border,
-    };
     let dropped = card.dropped.is_some();
-    let summary = match &card.body {
-        ToolBody::Files(diff) if !dropped => diff_card::files_summary(diff, t),
-        ToolBody::Commit(diff) if !dropped => {
-            diff_card::commit_summary(diff, t)
-        }
-        ToolBody::Status(status) if !dropped => {
-            status_card::summary(status, t, compact)
-        }
-        ToolBody::Listing(listing) if !dropped => {
-            listing_card::summary(listing, &card.summary, t, compact)
-        }
-        _ => mono(card.summary.clone(), Type::CAPTION, t.text_soft)
-            .flex_1()
-            .min_w(px(0.))
-            .truncate()
-            .when(card.dropped == Some(Dropped::Call), |s| {
-                s.line_through().text_color(t.muted)
-            }),
-    };
-
-    // A log, diff or show starts closed; its header opens it.
-    let folds = !dropped
-        && matches!(
-            card.body,
-            ToolBody::Log(_)
-                | ToolBody::Files(_)
-                | ToolBody::Commit(_)
-                | ToolBody::Status(_)
-                | ToolBody::Listing(_)
-        );
-    let open = !folds || ws.card_open(&run.id, &card.call_id);
     // What plugins draw on the card, each given its own anchors on it.
     let at_card = |plugin: &str| tau_ui_plugin::points::AtCard {
         run: run.info(),
@@ -443,6 +373,9 @@ fn tool(
             .filter(|(by, _)| by == plugin)
             .map(|(_, key)| key.clone())
             .collect(),
+        data: card.data.clone(),
+        summary: card.summary.clone(),
+        cut: card.cut.as_deref().cloned(),
     };
     let names: Vec<String> = crate::plugins::registry()
         .plugins()
@@ -461,6 +394,14 @@ fn tool(
             .find(|(name, _)| name == plugin)
             .map(|(_, at)| at)
     };
+    // The tool's own plugin draws the card; a call a rewrite dropped
+    // shows only its arguments.
+    let view = ws
+        .contributions_with(tau_ui_plugin::points::CARD, context_of, cx)
+        .into_iter()
+        .next()
+        .filter(|_| !dropped)
+        .unwrap_or_default();
     let badges = ws.contributions_with(
         tau_ui_plugin::points::CARD_BADGE,
         context_of,
@@ -468,6 +409,62 @@ fn tool(
     );
     let extras =
         ws.contributions_with(tau_ui_plugin::points::CARD_BODY, context_of, cx);
+
+    let failed =
+        view.failed.is_some() || matches!(card.state, ToolState::Failed(_));
+    let (status, border) = match &card.state {
+        ToolState::Running => (
+            icon(Icon::Spinner, IconSize::COMPACT, t.accent),
+            t.accent_border,
+        ),
+        _ if failed => {
+            (icon(Icon::Blocked, IconSize::BASE, t.red), t.red_border)
+        }
+        ToolState::Done { .. } | ToolState::Failed(_) => {
+            (icon(Icon::Check, IconSize::COMPACT, t.green), t.border)
+        }
+        ToolState::Blocked { .. } => {
+            (icon(Icon::Blocked, IconSize::BASE, t.red), t.red_border)
+        }
+        ToolState::Flagged { .. } => (
+            icon(Icon::Warning, IconSize::BASE, t.accent),
+            t.accent_border,
+        ),
+    };
+    // A result that wants attention says so on the card's edge.
+    let border = match view.edge {
+        Some(Tone::Danger) => t.red_border,
+        Some(Tone::Warn) => t.accent_border,
+        _ => border,
+    };
+    let summary = match view.head {
+        Some(head) => head,
+        None => mono(card.summary.clone(), Type::CAPTION, t.text_soft)
+            .flex_1()
+            .min_w(px(0.))
+            .truncate()
+            .when(card.dropped == Some(Dropped::Call), |s| {
+                s.line_through().text_color(t.muted)
+            })
+            .into_any_element(),
+    };
+    // A body that folds starts closed; its header opens it.
+    let folds = view.folds && view.body.is_some();
+    let open = !folds || ws.card_open(&run.id, &card.call_id);
+    let label = match &view.failed {
+        Some(failure) => label(failure.clone(), t.red),
+        None => match (&card.state, view.label) {
+            (ToolState::Done { .. }, Some(text)) => {
+                let color = if text.starts_with('+') {
+                    t.green
+                } else {
+                    t.dim
+                };
+                label(text, color)
+            }
+            _ => state_label(card, t),
+        },
+    };
     let header = div()
         .id(SharedString::from(format!("tool-{}", card.call_id)))
         .flex()
@@ -501,23 +498,16 @@ fn tool(
             },
         )
         .child(summary)
-        .child(state_label(card, t))
+        .child(label)
         .children(badges)
         .when(folds, |row| {
             let run_id = run.id.clone();
             let call_id = card.call_id.clone();
-            let shape = match &card.body {
-                ToolBody::Log(log) => Some(log_card::bars(log, t)),
-                ToolBody::Files(diff) | ToolBody::Commit(diff) => {
-                    Some(diff_card::blocks(diff, t))
-                }
-                _ => None,
-            };
             row.cursor_pointer()
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.toggle_card(&run_id, &call_id, cx)
                 }))
-                .when(!compact, |row| row.children(shape))
+                .when(!compact, |row| row.children(view.shape))
                 .child(icon(
                     if open { Icon::Down } else { Icon::Chevron },
                     IconSize::SMALL,
@@ -525,115 +515,65 @@ fn tool(
                 ))
         });
 
-    let body: Option<AnyElement> = match (&card.state, &card.body) {
-        (ToolState::Blocked { plugin, reason }, _) => Some(
+    let body: Option<AnyElement> = match &card.state {
+        ToolState::Blocked { plugin, reason } => Some(
             blocked_body(card, plugin, reason, t, compact).into_any_element(),
         ),
-        (ToolState::Flagged { .. }, _) => None,
-        _ if dropped => None,
-        (_, ToolBody::Log(log)) => open.then(|| {
-            log_card::body(ws, run, card, log, t, compact, cx)
-                .into_any_element()
-        }),
-        (_, ToolBody::Files(diff)) => open.then(|| {
-            diff_card::files_body(ws, run, card, diff, t, compact, cx)
-                .into_any_element()
-        }),
-        (_, ToolBody::Commit(diff)) => open.then(|| {
-            diff_card::commit_body(ws, run, card, diff, t, compact, cx)
-                .into_any_element()
-        }),
-        (_, ToolBody::Delegated(landed)) => {
-            let child = landed.from.clone();
-            Some(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(log_card::landed_body(landed, t, compact))
-                    .child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "open-child-{}",
-                                landed.from.0
-                            )))
-                            .px(sp(3.))
-                            .py(sp(2.))
-                            .border_t_1()
-                            .border_color(t.border)
-                            .child(link("Open the sub-agent's chat", t))
-                            .on_click(cx.listener(move |ws, _, _, cx| {
-                                ws.navigate(Route::Run(child.clone()), cx)
-                            })),
-                    )
-                    .into_any_element(),
-            )
-        }
-        (_, ToolBody::Listing(listing)) => open.then(|| {
-            listing_card::body(listing, t, compact).into_any_element()
-        }),
-        (_, ToolBody::Status(status)) => open.then(|| {
-            status_card::body(ws, run, card, status, t, compact, cx)
-                .into_any_element()
-        }),
-        (_, ToolBody::Diff(lines)) => Some(diff(lines, t).into_any_element()),
-        (_, ToolBody::Terminal(term)) => Some(
-            term_card::body(ws, &run.id, card, term, t, compact, cx)
-                .into_any_element(),
-        ),
-        (_, ToolBody::Output(lines)) if !lines.is_empty() => {
-            Some(output(lines, t).into_any_element())
-        }
-        _ => None,
+        ToolState::Flagged { .. } => None,
+        _ => view.body.filter(|_| open),
     };
 
-    // What output pruning cut from the result, and the file that holds
-    // the whole output, which opens with the system's application. A
-    // terminal's strip says it itself.
-    let terminal = matches!(card.body, ToolBody::Terminal(_));
-    let cut = card
-        .cut
-        .as_ref()
-        .filter(|_| !dropped && !terminal)
-        .map(|cut| {
-            let path = std::path::PathBuf::from(&cut.archive);
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .min_w(px(0.))
-                .px(sp(3.))
-                .py(sp(1.5))
-                .border_t_1()
-                .border_color(t.border)
-                .child(
-                    mono(
-                        format!("{} · full output", cut.label()),
-                        Type::MICRO,
-                        t.dim,
+    // What a plugin cut from the result, and the file that holds the
+    // whole output, which opens with the system's application; unless
+    // the body says it itself.
+    let cut =
+        card.cut
+            .as_ref()
+            .filter(|_| !dropped && !view.inset)
+            .map(|cut| {
+                let path = std::path::PathBuf::from(&cut.archive);
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(2.))
+                    .min_w(px(0.))
+                    .px(sp(3.))
+                    .py(sp(1.5))
+                    .border_t_1()
+                    .border_color(t.border)
+                    .child(
+                        mono(
+                            format!("{} · full output", cut.label()),
+                            Type::MICRO,
+                            t.dim,
+                        )
+                        .flex_shrink_0(),
                     )
-                    .flex_shrink_0(),
-                )
-                .when(!compact, |row| {
-                    row.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "archive-{}",
-                                card.call_id
-                            )))
-                            .flex_1()
-                            .min_w(px(0.))
-                            .cursor_pointer()
-                            .hover(|style| style.underline())
-                            .child(
-                                mono(cut.archive.clone(), Type::MICRO, t.blue)
+                    .when(!compact, |row| {
+                        row.child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "archive-{}",
+                                    card.call_id
+                                )))
+                                .flex_1()
+                                .min_w(px(0.))
+                                .cursor_pointer()
+                                .hover(|style| style.underline())
+                                .child(
+                                    mono(
+                                        cut.archive.clone(),
+                                        Type::MICRO,
+                                        t.blue,
+                                    )
                                     .truncate(),
-                            )
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.open_with_system(&path)
-                            })),
-                    )
-                })
-        });
+                                )
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.open_with_system(&path)
+                                })),
+                        )
+                    })
+            });
 
     div()
         .flex()
@@ -644,12 +584,61 @@ fn tool(
         .raised(t)
         .overflow_hidden()
         .when(dropped, |card| card.opacity(0.7))
-        .child(header.when(body.is_some() && !terminal, |h| {
+        .child(header.when(body.is_some() && !view.inset, |h| {
             h.border_b_1().border_color(t.border)
         }))
         .children(body)
         .children(cut)
         .children(extras)
+}
+
+/// A child run's landing, in its parent's chat: what came, and what is
+/// left to resolve. The child's title opens its closed chat.
+fn landed(
+    card: &LandedCard,
+    t: &Theme,
+    compact: bool,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let from = card.from.clone();
+    let count = match card.changes.len() {
+        1 => "1 change".to_owned(),
+        n => format!("{n} changes"),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .border_1()
+        .border_color(t.border)
+        .rounded(radius::BOX)
+        .raised(t)
+        .overflow_hidden()
+        .child(
+            div()
+                .id(SharedString::from(format!("landed-{}", card.from.0)))
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .min_h(px(36.))
+                .px(sp(3.))
+                .cursor_pointer()
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.navigate(Route::Run(from.clone()), cx)
+                }))
+                .child(icon(Icon::Fork, IconSize::COMPACT, t.change))
+                .child(mono("landed", Type::CAPTION, t.blue).flex_shrink_0())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .typeset(Type::SMALL)
+                        .text_color(t.text_soft)
+                        .child(card.title.clone()),
+                )
+                .child(mono(count, Type::CAPTION, t.dim).flex_shrink_0()),
+        )
+        .child(tau_vcs::ui::landed::landed_body(card, t, compact))
 }
 
 /// A finished fork, waiting in its parent's chat: what it is, and Land
@@ -771,6 +760,17 @@ fn fork_ready(
         )
 }
 
+/// A card's line at the header's end.
+fn label(text: String, color: gpui::Hsla) -> Div {
+    div()
+        .flex_shrink_0()
+        .max_w(px(260.))
+        .truncate()
+        .typeset(Type::CAPTION)
+        .text_color(color)
+        .child(text)
+}
+
 fn state_label(card: &ToolCard, t: &Theme) -> Div {
     let (text, color): (String, _) = match &card.state {
         ToolState::Running => ("running".into(), t.accent),
@@ -791,13 +791,7 @@ fn state_label(card: &ToolCard, t: &Theme) -> Div {
             ("Ran · flagged for review".into(), t.accent)
         }
     };
-    div()
-        .flex_shrink_0()
-        .max_w(px(260.))
-        .truncate()
-        .typeset(Type::CAPTION)
-        .text_color(color)
-        .child(text)
+    label(text, color)
 }
 
 /// A refused call: what the model proposed, and the reason it got
@@ -809,7 +803,7 @@ fn blocked_body(
     t: &Theme,
     compact: bool,
 ) -> Div {
-    let proposed: Vec<DiffLine> = proposed_text(&card.args)
+    let proposed: Vec<DiffLine> = proposed_text(card.args())
         .into_iter()
         .map(|text| DiffLine {
             kind: DiffKind::Added,
@@ -819,7 +813,9 @@ fn blocked_body(
     div()
         .flex()
         .flex_col()
-        .when(!proposed.is_empty(), |body| body.child(diff(&proposed, t)))
+        .when(!proposed.is_empty(), |body| {
+            body.child(tau_ui_kit::diff::view(&proposed, t))
+        })
         .child(
             div()
                 .flex()
@@ -863,54 +859,6 @@ fn blocked_body(
                         ),
                 ),
         )
-}
-
-pub fn diff(lines: &[DiffLine], t: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .py(sp(1.5))
-        .font_family(crate::theme::MONO)
-        .typeset(Type::CAPTION)
-        .line_height(px(20.))
-        .children(lines.iter().map(|line| {
-            let (sign, color, bg) = match line.kind {
-                DiffKind::Added => {
-                    ("+ ", t.added_text, Some(t.green.opacity(0.12)))
-                }
-                DiffKind::Removed => {
-                    ("- ", t.removed_text, Some(t.red.opacity(0.12)))
-                }
-                DiffKind::Context => ("  ", t.dim, None),
-            };
-            div()
-                .px(sp(3.))
-                .text_color(color)
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .when_some(bg, |row, bg| row.bg(bg))
-                .child(format!("{sign}{}", line.text))
-        }))
-}
-
-pub fn output(lines: &[String], t: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .px(sp(3.))
-        .py(sp(2.))
-        .font_family(crate::theme::MONO)
-        .typeset(Type::CAPTION)
-        .line_height(px(20.))
-        .text_color(t.muted)
-        .children(lines.iter().map(|line| {
-            let pass = line.trim_start().starts_with("PASS");
-            div()
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .when(pass, |row| row.text_color(t.green))
-                .child(line.clone())
-        }))
 }
 
 #[allow(clippy::too_many_arguments)]

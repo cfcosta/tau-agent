@@ -90,7 +90,6 @@ use crate::{
         RunStatus,
         RunUpdate,
         RunView,
-        ToolBody,
         ToolState,
     },
 };
@@ -397,13 +396,6 @@ pub struct Workspace {
     /// Tool cards that fold, opened, as `(run, call id)`. They start
     /// closed.
     open_cards: HashSet<(RunId, String)>,
-    /// The terminals of `bash` cards, and how each is open.
-    pub(crate) terms: std::cell::RefCell<crate::ui::term_card::TermCards>,
-    /// Files opened to their hunks in a diff or show card, as `(run,
-    /// call id, path)`.
-    open_files: HashSet<(RunId, String, String)>,
-    /// The change picked in each `vcs_log` card, by full change id.
-    picked_changes: HashMap<(RunId, String), String>,
     pub(crate) kept_branch: Option<RunId>,
     /// Child runs on their way to landing, by run.
     landings: HashMap<RunId, LandingState>,
@@ -652,9 +644,6 @@ impl Workspace {
             inspector_shown: false,
             open_notes: HashSet::new(),
             open_cards: HashSet::new(),
-            terms: Default::default(),
-            open_files: HashSet::new(),
-            picked_changes: HashMap::new(),
             kept_branch: None,
             landings: HashMap::new(),
             proposed: HashSet::new(),
@@ -953,7 +942,7 @@ impl Workspace {
                 .as_deref()
                 .and_then(|call| view.tool(call))
                 .filter(|card| card.tool == tau_vcs::delegate::NAME)
-                .and_then(|card| card.args.get("task")?.as_str())
+                .and_then(|card| card.args().get("task")?.as_str())
                 .map(str::to_owned)
                 .unwrap_or_default();
             let mut child = RunView::new(
@@ -971,16 +960,6 @@ impl Workspace {
         }
         for run in &mut self.runs {
             run.apply(event);
-        }
-        // A command's screen takes the output its card gained.
-        if let RunEvent::ToolUpdate { run, call_id, .. }
-        | RunEvent::ToolEnd { run, call_id, .. } = event
-            && let Some(card) =
-                self.run(run).and_then(|view| view.tool(call_id))
-            && let ToolBody::Terminal(term) = &card.body
-        {
-            let term = term.clone();
-            self.terms.get_mut().sync(run, call_id, &term, cx);
         }
         // A fork that finishes waits in its parent's chat, to land or
         // be dropped.
@@ -1326,55 +1305,6 @@ impl Workspace {
 
     pub fn card_open(&self, run: &RunId, call_id: &str) -> bool {
         self.open_cards.contains(&(run.clone(), call_id.to_owned()))
-    }
-
-    /// Opens or closes one file's hunks in a diff or show card.
-    pub fn toggle_file(
-        &mut self,
-        run: &RunId,
-        call_id: &str,
-        path: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let key = (run.clone(), call_id.to_owned(), path.to_owned());
-        if !self.open_files.remove(&key) {
-            self.open_files.insert(key);
-        }
-        cx.notify();
-    }
-
-    pub fn file_open(&self, run: &RunId, call_id: &str, path: &str) -> bool {
-        self.open_files.contains(&(
-            run.clone(),
-            call_id.to_owned(),
-            path.to_owned(),
-        ))
-    }
-
-    /// Picks a change in a `vcs_log` card to show its detail, or puts
-    /// it back when it is already the one picked.
-    pub fn pick_change(
-        &mut self,
-        run: &RunId,
-        call_id: &str,
-        change_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let key = (run.clone(), call_id.to_owned());
-        if self.picked_changes.get(&key).map(String::as_str) == Some(change_id)
-        {
-            self.picked_changes.remove(&key);
-        } else {
-            self.picked_changes.insert(key, change_id.to_owned());
-        }
-        cx.notify();
-    }
-
-    /// The change picked in a `vcs_log` card, by full change id.
-    pub fn picked_change(&self, run: &RunId, call_id: &str) -> Option<&str> {
-        self.picked_changes
-            .get(&(run.clone(), call_id.to_owned()))
-            .map(String::as_str)
     }
 
     /// Asks what landing `run` on its parent would do (ADR 0014).

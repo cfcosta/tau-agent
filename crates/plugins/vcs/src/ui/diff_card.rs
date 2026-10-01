@@ -3,18 +3,21 @@
 //! each opening to its hunks, and a show leads with the message, ids,
 //! author and parents, then lists its files the same way.
 
-use gpui::{Context, Div, SharedString, div, prelude::*, px};
-use tau_vcs::ChangeKind;
-
-use super::{dot, heading, icon, log_card, mono};
-use crate::{
+use gpui::{Div, SharedString, div, prelude::*, px};
+use tau_ui_kit::{
     assets::Icon,
+    components::{dot, heading, icon, mono},
+    diff::DiffKind,
+    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
+};
+
+use super::{
+    Card,
     change_diff::{ChangeDiff, FileDiff, Hunk},
     change_log::Change,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    view::{DiffKind, RunView, ToolCard},
-    workspace::Workspace,
+    log_card,
 };
+use crate::ChangeKind;
 
 /// A closed card's share of added and removed lines: five squares,
 /// green for added, red for removed, grey for the rest of a rounding.
@@ -77,37 +80,28 @@ pub fn commit_summary(diff: &ChangeDiff, t: &Theme) -> Div {
 
 /// An open diff: its files.
 pub fn files_body(
-    ws: &Workspace,
-    run: &RunView,
-    card: &ToolCard,
+    card: &Card<'_>,
     diff: &ChangeDiff,
     t: &Theme,
     compact: bool,
-    cx: &mut Context<Workspace>,
 ) -> Div {
     div().flex().flex_col().py(sp(1.)).child(file_list(
-        ws,
-        run,
         card,
         &diff.files,
         diff.truncated,
         &|_| false,
         t,
         compact,
-        cx,
     ))
 }
 
 /// An open show: the message, then the ids, author and parents, then
 /// the files.
 pub fn commit_body(
-    ws: &Workspace,
-    run: &RunView,
-    card: &ToolCard,
+    card: &Card<'_>,
     diff: &ChangeDiff,
     t: &Theme,
     compact: bool,
-    cx: &mut Context<Workspace>,
 ) -> Div {
     let change = &diff.change;
     let info = &change.info;
@@ -252,15 +246,12 @@ pub fn commit_body(
             )
         })
         .child(div().pb(sp(1.)).child(file_list(
-            ws,
-            run,
             card,
             &diff.files,
             diff.truncated,
             &|_| false,
             t,
             compact,
-            cx,
         )))
 }
 
@@ -306,34 +297,28 @@ fn parent_line(parent: &Change, t: &Theme) -> Div {
 
 /// Each file as a row that opens to its hunks, then a note when the
 /// diff was cut.
-#[allow(clippy::too_many_arguments)]
 pub fn file_list(
-    ws: &Workspace,
-    run: &RunView,
-    card: &ToolCard,
+    card: &Card<'_>,
     files: &[FileDiff],
     truncated: bool,
     conflicted: &dyn Fn(&str) -> bool,
     t: &Theme,
     compact: bool,
-    cx: &mut Context<Workspace>,
 ) -> Div {
     let rows: Vec<Div> = files
         .iter()
         .map(|file| {
-            let open = ws.file_open(&run.id, &card.call_id, &file.path);
+            let open = card.ui.file_open(&card.run, &card.call_id, &file.path);
             div()
                 .flex()
                 .flex_col()
                 .child(file_row(
-                    run,
                     card,
                     file,
                     open,
                     conflicted(&file.path),
                     t,
                     compact,
-                    cx,
                 ))
                 .when(open, |column| column.child(hunks(file, t, compact)))
         })
@@ -367,18 +352,15 @@ pub fn file_list(
         })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn file_row(
-    run: &RunView,
-    card: &ToolCard,
+    card: &Card<'_>,
     file: &FileDiff,
     open: bool,
     conflicted: bool,
     t: &Theme,
     compact: bool,
-    cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
-    let run_id = run.id.clone();
+    let run_id = card.run.clone();
     let call_id = card.call_id.clone();
     let path = file.path.clone();
     let (letter, color) = match file.kind {
@@ -403,9 +385,9 @@ fn file_row(
         .px(sp(3.))
         .cursor_pointer()
         .hover(|row| row.bg(t.raised))
-        .on_click(cx.listener(move |ws, _, _, cx| {
-            ws.toggle_file(&run_id, &call_id, &path, cx)
-        }))
+        .on_click(
+            card.on_ui(move |ui| ui.toggle_file(&run_id, &call_id, &path)),
+        )
         .child(icon(
             if open { Icon::Down } else { Icon::Chevron },
             IconSize::TINY,
@@ -583,7 +565,7 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
         .border_t_1()
         .border_b_1()
         .border_color(t.raised)
-        .font_family(crate::theme::MONO)
+        .font_family(tau_ui_kit::theme::MONO)
         .typeset(Type::CAPTION)
         .line_height(px(20.))
         .when(file.binary, |body| body.child(note("A binary file.")))

@@ -2,15 +2,16 @@
 //! copy and the stack over trunk, each in runs of one commit scope. A
 //! change picked in it shows its whole description and ids.
 
-use gpui::{Context, Div, Hsla, SharedString, Stateful, div, prelude::*, px};
-
-use super::{Material as _, dot, heading, icon, mono};
-use crate::{
+use gpui::{Div, Hsla, SharedString, Stateful, div, prelude::*, px};
+use tau_ui_kit::{
     assets::Icon,
-    change_log::{Change, ChangeLog, ScopeRun},
+    components::{dot, heading, icon, mono},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    view::{LandedCard, RunView, ToolCard},
-    workspace::Workspace,
+};
+
+use super::{
+    Card,
+    change_log::{Change, ChangeLog, ScopeRun},
 };
 
 /// A closed log's shape: a bar for each change on the stack, in its
@@ -46,27 +47,20 @@ pub fn bars(log: &ChangeLog, t: &Theme) -> Div {
 
 /// An open log: the working copy, the stack, then trunk, and the
 /// detail of the change picked.
-pub fn body(
-    ws: &Workspace,
-    run: &RunView,
-    card: &ToolCard,
-    log: &ChangeLog,
-    t: &Theme,
-    compact: bool,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let picked = ws
-        .picked_change(&run.id, &card.call_id)
+pub fn body(card: &Card<'_>, log: &ChangeLog, t: &Theme, compact: bool) -> Div {
+    let picked = card
+        .ui
+        .picked(&card.run, &card.call_id)
         .and_then(|id| log.change(id));
     let is_picked =
         |change: &Change| picked.is_some_and(|p| p.info == change.info);
     let working_copy = log.working_copy.as_ref().map(|change| {
         let chosen = is_picked(change);
-        working_copy_row(row(run, card, change, chosen, t, cx), change, t)
+        working_copy_row(row(card, change, chosen, t), change, t)
             .when(!chosen, |row| row.bg(t.accent.opacity(0.07)))
     });
-    let stack = scope_runs(&log.stack, run, card, &is_picked, t, compact, cx);
-    let trunk = scope_runs(&log.trunk, run, card, &is_picked, t, compact, cx);
+    let stack = scope_runs(&log.stack, card, &is_picked, t, compact);
+    let trunk = scope_runs(&log.trunk, card, &is_picked, t, compact);
     let shown = log.changes().count();
     div()
         .flex()
@@ -117,14 +111,12 @@ fn scope_color(run: &ScopeRun, t: &Theme) -> Hsla {
 
 /// A row that picks `change` when clicked, or puts it back.
 fn row(
-    run: &RunView,
-    card: &ToolCard,
+    card: &Card<'_>,
     change: &Change,
     chosen: bool,
     t: &Theme,
-    cx: &mut Context<Workspace>,
 ) -> Stateful<Div> {
-    let run_id = run.id.clone();
+    let run_id = card.run.clone();
     let call_id = card.call_id.clone();
     let change_id = change.info.change_id.clone();
     div()
@@ -138,9 +130,7 @@ fn row(
         .cursor_pointer()
         .when(chosen, |row| row.bg(t.selected))
         .when(!chosen, |row| row.hover(|row| row.bg(t.raised)))
-        .on_click(cx.listener(move |ws, _, _, cx| {
-            ws.pick_change(&run_id, &call_id, &change_id, cx)
-        }))
+        .on_click(card.on_ui(move |ui| ui.pick(&run_id, &call_id, &change_id)))
 }
 
 /// `@`, pinned above the stack: what it holds, in words.
@@ -195,12 +185,10 @@ fn working_copy_row(
 /// Each run's scope, then its changes.
 fn scope_runs(
     runs: &[ScopeRun],
-    run: &RunView,
-    card: &ToolCard,
+    card: &Card<'_>,
     is_picked: &dyn Fn(&Change) -> bool,
     t: &Theme,
     compact: bool,
-    cx: &mut Context<Workspace>,
 ) -> Vec<Div> {
     runs.iter()
         .map(|scope_run| {
@@ -234,7 +222,7 @@ fn scope_runs(
                 .changes
                 .iter()
                 .map(|change| {
-                    let row = row(run, card, change, is_picked(change), t, cx);
+                    let row = row(card, change, is_picked(change), t);
                     change_row(row, change, color, t, compact)
                 })
                 .collect();
@@ -444,85 +432,4 @@ pub fn stack_rows(changes: &[Change], t: &Theme, compact: bool) -> Vec<Div> {
                 .child(short_id(change, t))
         })
         .collect()
-}
-
-/// A child run's landing, in its parent's chat: what came, and what is
-/// left to resolve. The child's title opens its closed chat.
-pub fn landed(
-    card: &LandedCard,
-    t: &Theme,
-    compact: bool,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let from = card.from.clone();
-    let count = match card.changes.len() {
-        1 => "1 change".to_owned(),
-        n => format!("{n} changes"),
-    };
-    div()
-        .flex()
-        .flex_col()
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::BOX)
-        .raised(t)
-        .overflow_hidden()
-        .child(
-            div()
-                .id(SharedString::from(format!("landed-{}", card.from.0)))
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .min_h(px(36.))
-                .px(sp(3.))
-                .cursor_pointer()
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.navigate(crate::route::Route::Run(from.clone()), cx)
-                }))
-                .child(icon(Icon::Fork, IconSize::COMPACT, t.change))
-                .child(mono("landed", Type::CAPTION, t.blue).flex_shrink_0())
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .typeset(Type::SMALL)
-                        .text_color(t.text_soft)
-                        .child(card.title.clone()),
-                )
-                .child(mono(count, Type::CAPTION, t.dim).flex_shrink_0()),
-        )
-        .child(landed_body(card, t, compact))
-}
-
-/// What a landing brought: its changes as they sit on the stack, and
-/// the files left with conflict markers.
-pub fn landed_body(card: &LandedCard, t: &Theme, compact: bool) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .when(!card.changes.is_empty(), |column| {
-            column.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .py(sp(1.5))
-                    .border_t_1()
-                    .border_color(t.border)
-                    .children(stack_rows(&card.changes, t, compact)),
-            )
-        })
-        .when(!card.conflicts.is_empty(), |column| {
-            column.child(
-                div()
-                    .px(sp(3.))
-                    .pb(sp(2.))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.red)
-                    .child(format!(
-                        "Conflicts in {}: the next turn resolves them.",
-                        card.conflicts.join(", ")
-                    )),
-            )
-        })
 }

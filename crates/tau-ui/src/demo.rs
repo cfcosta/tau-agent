@@ -1212,7 +1212,7 @@ pub fn branch_code() -> BranchCode {
         added,
         removed,
     };
-    let lines = |text: &str| crate::view::parse_diff(text);
+    let lines = |text: &str| tau_ui_kit::diff::parse(text);
     BranchCode {
         main: vec![
             stat(
@@ -2364,7 +2364,7 @@ fn vcs_output(head: &str, diff: &str, mut details: Value) -> ToolOutput {
 
 /// The files a diff touches, as the tools list them.
 fn diff_files(diff: &str) -> Vec<Value> {
-    crate::change_diff::parse_files(diff)
+    tau_vcs::ui::change_diff::parse_files(diff)
         .into_iter()
         .map(|file| json!({ "path": file.path, "kind": file.kind }))
         .collect()
@@ -3082,7 +3082,7 @@ pub fn script() -> Vec<Step> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::{Item, ToolBody, ToolState};
+    use crate::view::{Item, ToolState};
 
     #[test]
     fn every_demo_screen_has_a_route() {
@@ -3107,23 +3107,26 @@ mod tests {
         for (_, update) in script() {
             run.update(update);
         }
-        let body = |call: &str| &run.tool(call).expect(call).body;
-        assert!(matches!(body(LOG_CALL), ToolBody::Log(_)));
-        let ToolBody::Commit(show) = body(SHOW_CALL) else {
-            panic!("{:?}", body(SHOW_CALL));
+        use tau_vcs::ui::{
+            change_diff::ChangeDiff,
+            change_log::ChangeLog,
+            change_status::ChangeStatus,
         };
+        let details = |call: &str| {
+            let card = run.tool(call).expect(call);
+            card.data.result.as_ref().unwrap().details.clone().unwrap()
+        };
+        assert!(ChangeLog::parse(&details(LOG_CALL)).is_some());
+        let show = ChangeDiff::parse(&details(SHOW_CALL)).expect("a show");
         assert_eq!(show.files.len(), 4);
         assert!(show.files.iter().any(|file| file.path == SHOW_FILE));
         assert_eq!(show.parents.len(), 1);
-        let ToolBody::Files(diff) = body(DIFF_CALL) else {
-            panic!("{:?}", body(DIFF_CALL));
-        };
+        let diff = ChangeDiff::parse(&details(DIFF_CALL)).expect("a diff");
         assert_eq!(diff.files[0].path, DIFF_FILE);
         assert_eq!(diff.files[0].kind, tau_vcs::ChangeKind::Added);
         assert_eq!(diff.files[0].added, 21);
-        let ToolBody::Status(status) = body(STATUS_CALL) else {
-            panic!("{:?}", body(STATUS_CALL));
-        };
+        let status =
+            ChangeStatus::parse(&details(STATUS_CALL)).expect("a status");
         assert_eq!(status.working_copy.info.change_id, LOG_PICKED);
         assert_eq!(status.files.len(), show.files.len());
         assert!(status.files.iter().all(|file| !file.hunks.is_empty()));
@@ -3136,17 +3139,14 @@ mod tests {
             run.update(update);
         }
         let card = run.tool(LS_CALL).expect(LS_CALL);
-        let ToolBody::Listing(listing) = &card.body else {
-            panic!("{:?}", card.body);
-        };
+        let details = card.data.result.as_ref().unwrap().details.clone();
+        let listing =
+            tau_tools::ui::listing::DirListing::parse(&details.unwrap())
+                .expect("a listing");
         assert_eq!(listing.dirs().count(), 3);
         assert_eq!(listing.changed(), 1);
-        assert_eq!(
-            card.state,
-            ToolState::Done {
-                summary: Some("3 folders · 13 files · 121 KB".into())
-            }
-        );
+        assert!(matches!(card.state, ToolState::Done { .. }));
+        assert_eq!(listing.summary(), "3 folders · 13 files · 121 KB");
     }
 
     #[test]
@@ -3248,17 +3248,25 @@ mod tests {
         // The test run output pruning cut stays, with its terminal.
         assert_eq!(view.tool("c7").and_then(|card| card.dropped), None);
         assert!(view.tool("c7").is_some_and(|card| card.cut.is_some()));
-        assert!(matches!(
-            view.tool("c7").map(|card| &card.body),
-            Some(crate::view::ToolBody::Terminal(_))
-        ));
-        // What `start` decided comes before the first turn: memory's
-        // note, and tau-reasoning's choice, which it draws itself.
-        assert_eq!(view.start_notes().count(), 1);
-        assert!(matches!(
-            view.items.get(1),
-            Some(Item::Anchor { plugin, .. }) if plugin == tau_reasoning::NAME
-        ));
+        assert!(view.tool("c7").is_some_and(|card| {
+            tau_tools::ui::term_card::TermCards::default()
+                .output(
+                    &(view.id.clone(), card.call_id.clone()),
+                    &card.data,
+                    true,
+                )
+                .is_some()
+        }));
+        // What `start` decided comes before the first turn: what memory
+        // recalled, and tau-reasoning's choice, which each draws itself.
+        let anchored: Vec<&str> = view.items[1..3]
+            .iter()
+            .filter_map(|item| match item {
+                Item::Anchor { plugin, .. } => Some(plugin.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(anchored, [tau_reasoning::NAME, tau_memory::plugin::NAME]);
         let reasoning: tau_reasoning::ui::State = serde_json::from_value(
             view.plugin_states[tau_reasoning::NAME].clone(),
         )

@@ -28,18 +28,8 @@ use crate::{
         pill,
         rich,
         status_look,
-        transcript,
     },
-    view::{
-        CodeState,
-        FileKind,
-        FileStat,
-        Origin,
-        RunView,
-        ToolBody,
-        tokens,
-        usd,
-    },
+    view::{CodeState, FileKind, FileStat, Origin, RunView, tokens, usd},
     workspace::Workspace,
 };
 
@@ -292,7 +282,7 @@ fn code(
                             .border_b_1()
                             .border_color(t.border),
                     )
-                    .child(transcript::diff(shown, t))
+                    .child(tau_ui_kit::diff::view(shown, t))
                     .when(hidden > 0, |card| {
                         card.child(
                             ui::text(
@@ -361,13 +351,8 @@ fn branch(
     let (stop_color, stop) = status_look(&run.status, t);
     let tests = run.items.iter().rev().find_map(|item| match item {
         crate::view::Item::Tool(card) if card.tool == "bash" => {
-            let lines: Vec<String> = match &card.body {
-                ToolBody::Output(lines) => lines.clone(),
-                ToolBody::Terminal(term) => {
-                    term.seen.lines().map(str::to_owned).collect()
-                }
-                _ => return None,
-            };
+            card.data.result.as_ref()?;
+            let lines = tau_tools::ui::output_lines(&card.data);
             lines
                 .iter()
                 .rev()
@@ -401,7 +386,7 @@ fn branch(
                         t.text_soft,
                     )),
             )
-            .child(transcript::diff(lines, t))
+            .child(tau_ui_kit::diff::view(&lines, t))
     });
 
     div()

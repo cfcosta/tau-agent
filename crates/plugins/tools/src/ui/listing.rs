@@ -4,8 +4,17 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tau_tools::ls::Entry;
-use tau_vcs::ChangeKind;
+
+use crate::ls::Entry;
+
+/// How the run's change touches a path, as the vcs plugin marks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChangeKind {
+    Added,
+    Modified,
+    Removed,
+}
 
 /// The tool whose results read as a [`DirListing`].
 pub const TOOL: &str = "ls";

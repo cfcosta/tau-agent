@@ -6,14 +6,15 @@
 use serde::Deserialize;
 use serde_json::Value;
 use tau_agent::tool::TypedTool as _;
-use tau_vcs::{
+use tau_ui_kit::diff::DiffKind;
+
+use super::change_log::Change;
+use crate::{
     ChangeInfo,
     ChangeKind,
     FileChange,
     tools::{Diff, Show},
 };
-
-use crate::{change_log::Change, view::DiffKind};
 
 /// The tool whose results read as a [`ChangeDiff`] of the files alone.
 pub const DIFF_TOOL: &str = Diff::NAME;

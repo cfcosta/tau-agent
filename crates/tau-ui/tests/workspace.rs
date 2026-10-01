@@ -1706,36 +1706,26 @@ fn a_log_card_opens_and_picks_one_change(cx: &mut TestAppContext) {
         assert!(ws.card_open(&run, "log"));
         assert!(!ws.card_open(&run, "other"), "only that card opens");
 
-        assert_eq!(ws.picked_change(&run, "log"), None);
-        ws.pick_change(&run, "log", "qpvuntsm", cx);
-        assert_eq!(ws.picked_change(&run, "log"), Some("qpvuntsm"));
-        ws.pick_change(&run, "log", "rlvkpnrz", cx);
-        assert_eq!(ws.picked_change(&run, "log"), Some("rlvkpnrz"));
-        assert_eq!(ws.picked_change(&run, "other"), None);
-        ws.pick_change(&run, "log", "rlvkpnrz", cx);
-        assert_eq!(
-            ws.picked_change(&run, "log"),
-            None,
-            "a second click puts it back"
-        );
+        let cards = ws
+            .plugin_ui::<tau_vcs::ui::Ui>(tau_vcs::ui::NAME)
+            .expect("tau-vcs draws its cards");
+        cards.update(cx, |cards, _| {
+            assert_eq!(cards.picked(&run, "log"), None);
+            cards.pick(&run, "log", "qpvuntsm");
+            assert_eq!(cards.picked(&run, "log"), Some("qpvuntsm"));
+            cards.pick(&run, "log", "rlvkpnrz");
+            assert_eq!(cards.picked(&run, "log"), Some("rlvkpnrz"));
+            assert_eq!(cards.picked(&run, "other"), None);
+            cards.pick(&run, "log", "rlvkpnrz");
+            assert_eq!(
+                cards.picked(&run, "log"),
+                None,
+                "a second click puts it back"
+            );
+        });
 
         ws.toggle_card(&run, "log", cx);
         assert!(!ws.card_open(&run, "log"));
-    });
-}
-
-#[gpui::test]
-fn a_diff_card_opens_one_file_at_a_time(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        let run = demo::run_id();
-        assert!(!ws.file_open(&run, "diff", "a.rs"), "files start closed");
-        ws.toggle_file(&run, "diff", "a.rs", cx);
-        assert!(ws.file_open(&run, "diff", "a.rs"));
-        assert!(!ws.file_open(&run, "diff", "b.rs"));
-        assert!(!ws.file_open(&run, "show", "a.rs"), "per card");
-        ws.toggle_file(&run, "diff", "a.rs", cx);
-        assert!(!ws.file_open(&run, "diff", "a.rs"));
     });
 }
 
@@ -1917,7 +1907,7 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
         assert!(!ws.is_closed(&sibling), "its own call has not returned");
         assert_eq!(ws.route(), &Route::Run(parent.clone()), "back to the parent");
         let card = ws.run(&parent).unwrap().tool("d1").unwrap();
-        assert!(matches!(&card.body, tau_ui::view::ToolBody::Delegated(landed) if landed.from == child));
+        assert!(tau_vcs::ui::delegated(&card.data).is_some_and(|landed| landed.from == child));
     });
     assert!(events.borrow().iter().any(|event| matches!(event,
         WorkspaceEvent::CloseRun { run } if *run == child)));

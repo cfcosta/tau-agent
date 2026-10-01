@@ -4,26 +4,29 @@
 //! and left-out files in boxes of their own, then the files, each
 //! opening to its hunks as in the diff card.
 
-use gpui::{Context, Div, Hsla, div, prelude::*, px};
-use tau_vcs::ChangeKind;
-
-use super::{diff_card, heading, icon, log_card, mono};
-use crate::{
+use gpui::{Div, Hsla, div, prelude::*, px};
+use tau_ui_kit::{
     assets::Icon,
-    change_log::Change,
-    change_status::ChangeStatus,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    view::{RunView, ToolCard},
-    workspace::Workspace,
+    components::{heading, icon, mono},
+    theme::{Design as _, IconSize, Theme, Tone, Type, radius, sp, weight},
 };
 
-/// The card's border: red while a file holds conflict markers, amber
+use super::{
+    Card,
+    change_log::Change,
+    change_status::ChangeStatus,
+    diff_card,
+    log_card,
+};
+use crate::ChangeKind;
+
+/// The card's edge: red while a file holds conflict markers, amber
 /// while a file is left out, else none of its own.
-pub fn border(status: &ChangeStatus, t: &Theme) -> Option<Hsla> {
+pub fn edge(status: &ChangeStatus) -> Option<Tone> {
     if !status.conflicts.is_empty() {
-        Some(t.red_border)
+        Some(Tone::Danger)
     } else if !status.too_large.is_empty() {
-        Some(t.accent_border)
+        Some(Tone::Warn)
     } else {
         None
     }
@@ -88,13 +91,10 @@ pub fn summary(status: &ChangeStatus, t: &Theme, compact: bool) -> Div {
 /// An open status: `@`, its parents, the conflicts and left-out files,
 /// then what `@` changes.
 pub fn body(
-    ws: &Workspace,
-    run: &RunView,
-    card: &ToolCard,
+    card: &Card<'_>,
     status: &ChangeStatus,
     t: &Theme,
     compact: bool,
-    cx: &mut Context<Workspace>,
 ) -> Div {
     let working_copy = &status.working_copy;
     let parents: Vec<Div> = status
@@ -185,15 +185,12 @@ pub fn body(
                     .child(heading(&format!("In @ · {}", status.summary()), t)),
             )
             .child(diff_card::file_list(
-                ws,
-                run,
                 card,
                 &status.files,
                 status.truncated,
                 &|path| status.is_conflicted(path),
                 t,
                 compact,
-                cx,
             ))
         })
 }

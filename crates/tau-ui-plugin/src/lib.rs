@@ -30,7 +30,15 @@ use gpui::Context;
 pub use host::{HostCx, Push, RepoCtx, RunCtx, RunKind, TurnCommit, TurnHooks};
 pub use manifest::{Manifest, Page, Point, PointCx, SlashCommand};
 pub use registry::{Env, ErasedPlugin, Registry};
-pub use run::{CardInfo, CardMark, Dropped, OutputCut, RunCx};
+pub use run::{
+    CallData,
+    CallResult,
+    CardInfo,
+    CardMark,
+    Dropped,
+    OutputCut,
+    RunCx,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 pub use services::Services;
