@@ -147,6 +147,13 @@ fn snapshot_locked(
     };
     let mut repo = block_on(loader.load_at_head())?;
     let mut wc = wc_commit(&repo, name)?;
+    // Two operations that rewrote `@` from the same one, merged when the
+    // repository loaded: one side is a stray copy, and either may hold
+    // the work. tau-vcs's own writes never do this (`crate::lock`);
+    // another program's can.
+    if divergent(&repo, &wc)? {
+        return Err(VcsError::Stale);
+    }
     match block_on(WorkingCopyFreshness::check_stale(
         locked.locked_wc(),
         &wc,
@@ -223,6 +230,15 @@ fn snapshot_locked(
         wc,
         too_large,
     })
+}
+
+/// Whether other visible commits share `commit`'s change id.
+fn divergent(repo: &ReadonlyRepo, commit: &Commit) -> Result<bool, VcsError> {
+    let Some(targets) = block_on(repo.resolve_change_id(commit.change_id()))?
+    else {
+        return Ok(false);
+    };
+    Ok(targets.visible_with_offsets().nth(1).is_some())
 }
 
 /// Writes the commit `build` makes, with the committer's time moved on a

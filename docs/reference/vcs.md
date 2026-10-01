@@ -101,10 +101,12 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
   last snapshot merged on top, as a rebase would: an edit to a file the
   rewrite changed too becomes a conflict. tau-vcs never forks the
   operation log itself (see "Threading"). Another program can, as a
-  `jj` command run by hand can; when that leaves the working copy on an
-  operation the repository's head does not descend from, the tools
-  fail with `The working copy is stale: ...` and ask for the user to
-  update the workspace.
+  `jj` command run by hand can. When that leaves the working copy on an
+  operation the repository's head does not descend from, or leaves
+  `@`'s change divergent (two operations rewrote `@` at once, and jj
+  merged both), the tools fail with `The working copy is stale: ...`
+  and ask for the user to update the workspace: either side of a
+  divergent `@` may hold the run's work, so they keep both.
 
 ## Results
 

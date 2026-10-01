@@ -1309,3 +1309,72 @@ fn a_chat_started_on_a_rewritten_commit_starts_where_it_is_now() {
     let wc = repo.project.workspace_head("c0").unwrap().unwrap();
     assert_eq!(repo.project.parent_of(&wc).unwrap(), Some(now.commit_id));
 }
+
+/// A chat whose `@` another program rewrote at the same time as the
+/// chat's own snapshot, so that jj merged the two into a divergent `@`,
+/// fails with `VcsError::Stale`, and keeps its files on disk.
+///
+/// tau-vcs's own writes take the repository's lock and never fork the
+/// operation log. Another process, as a `jj` command run by hand, can:
+/// here a transaction started before the chat's `end_turn` rewrites the
+/// chat's `@` after it. Either side of the divergent change may hold
+/// the chat's work, so the tools stop rather than check out one of them.
+#[test]
+fn a_divergent_working_copy_is_stale() {
+    use jj_lib::{
+        config::{ConfigLayer, ConfigSource, StackedConfig},
+        default_backend_factories::{
+            default_backend_factories,
+            default_working_copy_factories,
+        },
+        ref_name::WorkspaceNameBuf,
+        repo::Repo as _,
+        settings::UserSettings,
+        workspace::Workspace,
+    };
+    let repo = Repo::new();
+    let trunk = repo.project.trunk().unwrap();
+    let chat = repo.project.add_workspace("c0", &trunk).unwrap();
+    let dir = repo.project.workspace_dir("c0");
+    write(&dir, "chat0.txt", Some("x\n"));
+
+    let mut config = StackedConfig::with_defaults();
+    let mut user = ConfigLayer::empty(ConfigSource::User);
+    user.set_value("user.name", "other").unwrap();
+    user.set_value("user.email", "other@localhost").unwrap();
+    config.add_layer(user);
+    let settings = UserSettings::from_config(config).unwrap();
+    let workspace = Workspace::load(
+        &settings,
+        &repo.main_dir(),
+        &default_backend_factories(),
+        &default_working_copy_factories(),
+    )
+    .unwrap();
+    // The other program's operation starts here.
+    let before =
+        pollster::block_on(workspace.repo_loader().load_at_head()).unwrap();
+
+    block_on(chat.end_turn("tau/c0", None)).unwrap();
+
+    let id = before
+        .view()
+        .get_wc_commit_id(&WorkspaceNameBuf::from("c0"))
+        .unwrap()
+        .clone();
+    let wc = before.store().get_commit(&id).unwrap();
+    let mut tx = before.start_transaction();
+    pollster::block_on(
+        tx.repo_mut()
+            .rewrite_commit(&wc)
+            .set_description("described elsewhere")
+            .write(),
+    )
+    .unwrap();
+    pollster::block_on(tx.repo_mut().rebase_descendants()).unwrap();
+    pollster::block_on(tx.commit("other program")).unwrap();
+
+    let err = block_on(chat.working_copy()).unwrap_err();
+    assert!(matches!(err, tau_vcs::VcsError::Stale), "{err}");
+    assert_eq!(read(&dir, "chat0.txt").as_deref(), Some("x\n"));
+}
