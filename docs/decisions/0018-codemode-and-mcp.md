@@ -128,9 +128,10 @@ signatures.
 - Every plugin crate that uses `tau-codemode` compiles Luau's C++ once.
 - The phone builds Luau too, since tau-ui depends on `tau-codemode`.
   The NDK's clang++ compiles it, and `luau0-src` links it against the
-  NDK's `c++_shared`. The `android` dev shell has cargo-ndk copy
-  `libc++_shared.so` into jniLibs (`CARGO_NDK_LINK_LIBCXX_SHARED`), so
-  the APK carries it. The engine is in the phone's library though the
+  NDK's `c++_shared`. The APK carries `libc++_shared.so`: the Nix
+  build (`nix build .#tau-phone-apk`) copies it from the NDK, and the
+  `android` dev shell has cargo-ndk copy it into jniLibs
+  (`CARGO_NDK_LINK_LIBCXX_SHARED`). The engine is in the phone's library though the
   phone never runs a script; leaving it out with a feature is open, as
   in decision 0017.
 - MCP servers are processes and connections owned by the agent, not by

@@ -129,8 +129,13 @@ A phone is another interface on the same host.
 - tau-ui builds in two shapes: a desktop app with a host, and a phone
   app with a remote. Features or targets keep the host's dependencies
   out of the phone build.
-- The flake grows an Android build: the SDK, the NDK, `cargo-ndk`, and
-  packaging an APK.
+- The flake grows an Android build: the SDK, the NDK, and packaging an
+  APK. `nix build .#tau-phone-apk` builds a signed debug APK offline
+  and reproducibly, from Gradle dependencies recorded in
+  `crates/tau-phone/android/deps.json` by
+  `scripts/update-android-deps.sh`; the `android` dev shell keeps
+  `cargo-ndk` and a networked Gradle for working on the app. The steps
+  are in `crates/tau-phone/src/lib.rs`.
 - No push notifications: a phone learns of a finished run while the
   app is open. Push would need Apple's and Google's services, and a
   server to call them; that is a later decision.
