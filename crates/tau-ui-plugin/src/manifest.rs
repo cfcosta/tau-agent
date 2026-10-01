@@ -107,6 +107,17 @@ impl<P: UiPlugin> Page<P> {
 }
 
 type Run<P> = Box<dyn for<'a> Fn(&str, &mut ViewCx<'a, P>) + Send + Sync>;
+type List<P> = Box<
+    dyn Fn(
+            &<P as UiPlugin>::Data,
+            Option<&<P as UiPlugin>::RepoData>,
+        ) -> Vec<ListedCommand>
+        + Send
+        + Sync,
+>;
+type RunListed<P> = Box<
+    dyn for<'a> Fn(&str, &str, Option<&str>, &mut ViewCx<'a, P>) + Send + Sync,
+>;
 type Popover<P> =
     Box<dyn for<'a> Fn(&str, &mut ViewCx<'a, P>) -> AnyElement + Send + Sync>;
 
@@ -183,12 +194,33 @@ impl<P: UiPlugin> SlashCommand<P> {
     }
 }
 
+/// A command a plugin lists from what it knows, so it comes and goes with
+/// it: an MCP server's prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedCommand {
+    /// Without the slash.
+    pub name: String,
+    /// What it does, in the composer's menu.
+    pub hint: String,
+    /// What follows the name, as the menu shows it; empty when it takes
+    /// nothing, and then picking it runs it.
+    pub args: String,
+    pub icon: tau_ui_kit::assets::Icon,
+}
+
+/// Commands listed from the plugin's data ([`Manifest::listed_commands`]).
+pub(crate) struct Listed<P: UiPlugin> {
+    pub(crate) list: List<P>,
+    pub(crate) run: RunListed<P>,
+}
+
 /// Everything a plugin adds to the interface.
 pub struct Manifest<P: UiPlugin> {
     pub(crate) pages: Vec<Page<P>>,
     pub(crate) points: Vec<&'static str>,
     pub(crate) contributions: Vec<Contribution<P>>,
     pub(crate) commands: Vec<SlashCommand<P>>,
+    pub(crate) listed: Option<Listed<P>>,
 }
 
 impl<P: UiPlugin> Default for Manifest<P> {
@@ -204,6 +236,7 @@ impl<P: UiPlugin> Manifest<P> {
             points: Vec::new(),
             contributions: Vec::new(),
             commands: Vec::new(),
+            listed: None,
         }
     }
 
@@ -256,6 +289,29 @@ impl<P: UiPlugin> Manifest<P> {
 
     pub fn command(mut self, command: SlashCommand<P>) -> Self {
         self.commands.push(command);
+        self
+    }
+
+    /// Commands that come and go with what the plugin knows. `list` gives
+    /// them from its data and, when the composer is in a repository, its
+    /// data for that repository; `run` runs one, given its name, what
+    /// follows it, trimmed, and that repository's name. A command of the
+    /// manifest's own wins over a listed one of the same name.
+    pub fn listed_commands(
+        mut self,
+        list: impl Fn(&P::Data, Option<&P::RepoData>) -> Vec<ListedCommand>
+        + Send
+        + Sync
+        + 'static,
+        run: impl for<'a> Fn(&str, &str, Option<&str>, &mut ViewCx<'a, P>)
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.listed = Some(Listed {
+            list: Box::new(list),
+            run: Box::new(run),
+        });
         self
     }
 }

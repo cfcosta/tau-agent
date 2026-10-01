@@ -360,7 +360,7 @@ fn a_rule_is_tried_and_says_what_it_would_do(cx: &mut TestAppContext) {
     );
     // What the host answers goes back to the editor.
     let reply = json!({ "Ok": [[{ "tool": "bash", "shown": "psql prod", "score": 0.9 }], 0.001] });
-    ui.update(cx, |ui, _| ConstitutionUi.reply(ui, reply));
+    ui.update(cx, |ui, cx| ConstitutionUi.reply(ui, reply, cx));
     ui.read_with(cx, |ui, _| {
         let Trying::Done { trials, .. } = &ui.draft().unwrap().trying else {
             panic!("not tried");

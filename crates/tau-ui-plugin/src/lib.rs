@@ -38,8 +38,15 @@ pub use host::{
     TurnCommit,
     TurnHooks,
 };
-pub use manifest::{Manifest, Page, Point, PointCx, SlashCommand};
-pub use registry::{Env, ErasedPlugin, Registry};
+pub use manifest::{
+    ListedCommand,
+    Manifest,
+    Page,
+    Point,
+    PointCx,
+    SlashCommand,
+};
+pub use registry::{CommandsAt, Env, ErasedPlugin, Registry};
 pub use run::{
     CallData,
     CallResult,
@@ -245,8 +252,15 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
     /// `handle` is its way back to that window.
     fn new_ui(&self, handle: Handle, cx: &mut Context<Self::Ui>) -> Self::Ui;
 
-    /// What [`Self::act`] answered.
-    fn reply(&self, _ui: &mut Self::Ui, _reply: Value) {}
+    /// What [`Self::act`] answered, in the window's UI state, which may
+    /// ask the interface for more through its [`Handle`].
+    fn reply(
+        &self,
+        _ui: &mut Self::Ui,
+        _reply: Value,
+        _cx: &mut Context<Self::Ui>,
+    ) {
+    }
 
     /// Whether its context rewrites keep the transcript, marking what
     /// they drop ([`RunCx::dropped`]), rather than replace it with

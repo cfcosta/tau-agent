@@ -753,7 +753,12 @@ impl UiPlugin for ConstitutionUi {
         page::Ui::new(handle, rule_text, rule_on)
     }
 
-    fn reply(&self, ui: &mut page::Ui, reply: Value) {
+    fn reply(
+        &self,
+        ui: &mut page::Ui,
+        reply: Value,
+        _cx: &mut Context<page::Ui>,
+    ) {
         if let Ok(result) = serde_json::from_value::<TrialResult>(reply) {
             ui.tried(result);
         }

@@ -29,8 +29,8 @@ pub struct Command {
     /// With its slash: `/fork`.
     pub name: String,
     /// What follows the name, as the menu shows it.
-    pub args: &'static str,
-    pub about: &'static str,
+    pub args: String,
+    pub about: String,
     pub glyph: Icon,
     /// Whether it acts on the open conversation.
     pub needs_run: bool,
@@ -47,8 +47,8 @@ fn builtin() -> [Command; 5] {
                    glyph: Icon,
                    needs_run: bool| Command {
         name: name.to_owned(),
-        args: "",
-        about,
+        args: String::new(),
+        about: about.to_owned(),
         glyph,
         needs_run,
         plugin: None,
@@ -93,7 +93,7 @@ pub enum Slash {
     /// A plugin's command being written, past its name: what follows.
     Writing {
         plugin: &'static str,
-        command: &'static str,
+        command: String,
         args: String,
     },
 }
@@ -108,15 +108,17 @@ impl Workspace {
         let forks = run.is_some_and(|run| self.can_fork(run));
         let plugins = crate::plugins::registry().plugins().flat_map(|plugin| {
             let name = plugin.name();
-            plugin.commands().into_iter().map(move |command| Command {
-                name: format!("/{}", command.name),
-                args: command.args,
-                about: command.hint,
-                glyph: command.icon,
-                needs_run: false,
-                plugin: Some(name),
-                popover: command.popover,
-            })
+            self.plugin_commands(plugin.as_ref()).into_iter().map(
+                move |command| Command {
+                    name: format!("/{}", command.name),
+                    args: command.args,
+                    about: command.hint,
+                    glyph: command.icon,
+                    needs_run: false,
+                    plugin: Some(name),
+                    popover: command.popover,
+                },
+            )
         });
         plugins
             .chain(builtin())
@@ -128,7 +130,11 @@ impl Workspace {
     /// What `text` in the composer asks for.
     pub fn slash(&self, text: &str) -> Slash {
         for plugin in crate::plugins::registry().plugins() {
-            for command in plugin.commands().into_iter().filter(|c| c.popover) {
+            for command in self
+                .plugin_commands(plugin.as_ref())
+                .into_iter()
+                .filter(|c| c.popover)
+            {
                 if let Some(rest) =
                     text.strip_prefix(&format!("/{} ", command.name))
                 {
@@ -315,7 +321,7 @@ impl Workspace {
                 plugin,
                 command,
                 args,
-            } => self.plugin_popover(plugin, command, &args, cx)?,
+            } => self.plugin_popover(plugin, &command, &args, cx)?,
         };
         let popover = div()
             .flex()
@@ -383,12 +389,12 @@ impl Workspace {
                 )
                 .child(
                     ui::mono(command.name.clone(), Type::SMALL, t.text)
-                        .w(px(64.))
+                        .min_w(px(64.))
                         .flex_shrink_0(),
                 )
                 .when(!compact, |row| {
                     row.child(
-                        ui::mono(command.args, Type::CAPTION, t.dim)
+                        ui::mono(command.args.clone(), Type::CAPTION, t.dim)
                             .w(px(100.))
                             .flex_shrink_0(),
                     )
@@ -403,7 +409,7 @@ impl Workspace {
                         } else {
                             t.muted
                         })
-                        .child(command.about),
+                        .child(command.about.clone()),
                 )
                 .when(selected && !compact, |row| {
                     row.child(ui::key_hint("Tab", t))

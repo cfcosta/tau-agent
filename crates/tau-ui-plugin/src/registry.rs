@@ -51,12 +51,21 @@ pub struct PageInfo {
     pub name: &'static str,
 }
 
+/// What the composer lists commands from: the plugin's data and, when
+/// the composer is in a repository, that repository's name and the
+/// plugin's data for it.
+#[derive(Debug, Clone, Copy)]
+pub struct CommandsAt<'a> {
+    pub data: &'a Value,
+    pub repo: Option<(&'a str, &'a Value)>,
+}
+
 /// A slash command, by name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandInfo {
-    pub name: &'static str,
-    pub hint: &'static str,
-    pub args: &'static str,
+    pub name: String,
+    pub hint: String,
+    pub args: String,
     pub icon: tau_ui_kit::assets::Icon,
     /// Whether it has a popover while it is written.
     pub popover: bool,
@@ -116,9 +125,16 @@ pub trait ErasedPlugin: Send + Sync {
     fn pages(&self) -> Vec<PageInfo>;
     fn page_title(&self, page: &str, env: Env<'_>) -> Option<String>;
     fn draw_page(&self, page: &str, env: Env<'_>) -> Option<AnyElement>;
-    fn commands(&self) -> Vec<CommandInfo>;
-    /// Runs the command `name`; false when the plugin has none.
-    fn run_command(&self, name: &str, args: &str, env: Env<'_>) -> bool;
+    /// Its commands: the manifest's, then those it lists from `at`.
+    fn commands(&self, at: CommandsAt<'_>) -> Vec<CommandInfo>;
+    /// Runs the command `name` in `repo`; false when the plugin has none.
+    fn run_command(
+        &self,
+        name: &str,
+        args: &str,
+        repo: Option<&str>,
+        env: Env<'_>,
+    ) -> bool;
     /// The popover of command `name` while it is written.
     fn command_popover(
         &self,
@@ -264,7 +280,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
     fn reply(&self, ui: AnyEntity, reply: Value, cx: &mut App) {
         if let Ok(ui) = ui.downcast::<P::Ui>() {
             ui.update(cx, |ui, cx| {
-                self.plugin.reply(ui, reply);
+                self.plugin.reply(ui, reply, cx);
                 cx.notify();
             });
         }
@@ -329,27 +345,54 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         self.with_view(env, |view| page.draw(view))
     }
 
-    fn commands(&self) -> Vec<CommandInfo> {
-        self.manifest
-            .commands
-            .iter()
-            .map(|command| CommandInfo {
+    fn commands(&self, at: CommandsAt<'_>) -> Vec<CommandInfo> {
+        let own = self.manifest.commands.iter().map(|command| CommandInfo {
+            name: command.name.to_owned(),
+            hint: command.hint.to_owned(),
+            args: command.args.to_owned(),
+            icon: command.icon,
+            popover: command.has_popover(),
+        });
+        let listed = self.manifest.listed.as_ref().map(|listed| {
+            let data: P::Data = decode(at.data);
+            let repo: Option<P::RepoData> =
+                at.repo.map(|(_, value)| decode(value));
+            (listed.list)(&data, repo.as_ref())
+        });
+        let mut commands: Vec<CommandInfo> = own.collect();
+        for command in listed.into_iter().flatten() {
+            if commands.iter().any(|known| known.name == command.name) {
+                continue;
+            }
+            commands.push(CommandInfo {
                 name: command.name,
                 hint: command.hint,
                 args: command.args,
                 icon: command.icon,
-                popover: command.has_popover(),
-            })
-            .collect()
+                popover: false,
+            });
+        }
+        commands
     }
 
-    fn run_command(&self, name: &str, args: &str, env: Env<'_>) -> bool {
-        let Some(command) =
+    fn run_command(
+        &self,
+        name: &str,
+        args: &str,
+        repo: Option<&str>,
+        env: Env<'_>,
+    ) -> bool {
+        if let Some(command) =
             self.manifest.commands.iter().find(|c| c.name == name)
-        else {
+        {
+            return self
+                .with_view(env, |view| command.run(args, view))
+                .is_some();
+        }
+        let Some(listed) = &self.manifest.listed else {
             return false;
         };
-        self.with_view(env, |view| command.run(args, view))
+        self.with_view(env, |view| (listed.run)(name, args, repo, view))
             .is_some()
     }
 

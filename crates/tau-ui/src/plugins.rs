@@ -419,6 +419,33 @@ impl Workspace {
         )
     }
 
+    /// The repository the composer is in: the open run's, else the one
+    /// new runs start in.
+    pub(crate) fn command_repo(&self) -> Option<String> {
+        self.current()
+            .filter(|_| self.route != crate::route::Route::NewRun)
+            .map(|run| run.repo.clone())
+            .filter(|repo| !repo.is_empty())
+            .or_else(|| self.selected_repo().map(str::to_owned))
+    }
+
+    /// `plugin`'s commands where the composer is: its own, and those it
+    /// lists from its data and the composer's repository's.
+    pub(crate) fn plugin_commands(
+        &self,
+        plugin: &dyn tau_ui_plugin::ErasedPlugin,
+    ) -> Vec<tau_ui_plugin::registry::CommandInfo> {
+        let name = plugin.name();
+        let null = serde_json::Value::Null;
+        let data = self.catalog.plugin_data.get(name).unwrap_or(&null);
+        let repo = self.command_repo();
+        let repo = repo.as_deref().and_then(|repo| {
+            let value = self.catalog.repo(repo)?.plugins.get(name)?;
+            Some((repo, value))
+        });
+        plugin.commands(tau_ui_plugin::CommandsAt { data, repo })
+    }
+
     /// Runs `text` as a plugin's slash command (`/name args`), on the run
     /// open, if a plugin has the command; says whether one did.
     pub(crate) fn run_plugin_command(
@@ -432,7 +459,9 @@ impl Workspace {
         let (name, args) =
             rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
         let Some(plugin) = registry().plugins().find(|plugin| {
-            plugin.commands().iter().any(|command| command.name == name)
+            self.plugin_commands(plugin.as_ref())
+                .iter()
+                .any(|command| command.name == name)
         }) else {
             return false;
         };
@@ -440,6 +469,7 @@ impl Workspace {
             .current()
             .filter(|_| self.route != crate::route::Route::NewRun)
             .cloned();
+        let repo = self.command_repo();
         let params = BTreeMap::new();
         let ran = self
             .with_plugin(
@@ -447,7 +477,9 @@ impl Workspace {
                 run.as_ref(),
                 &params,
                 cx,
-                |plugin, env| plugin.run_command(name, args.trim(), env),
+                |plugin, env| {
+                    plugin.run_command(name, args.trim(), repo.as_deref(), env)
+                },
             )
             .unwrap_or(false);
         cx.notify();
