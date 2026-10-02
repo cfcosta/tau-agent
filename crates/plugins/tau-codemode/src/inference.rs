@@ -124,7 +124,8 @@ impl InferRequest {
         let validator = jsonschema::validator_for(schema)
             .map_err(|error| format!("invalid schema: {error}"))?;
         validator.validate(&answer).map_err(|error| {
-            format!("answer does not match schema: {error}")
+            // Rejected output belongs to the private trace, not the parent.
+            format!("answer does not match schema ({})", error.kind().keyword())
         })?;
         Ok(answer)
     }

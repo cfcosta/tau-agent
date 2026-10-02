@@ -30,6 +30,7 @@ pub mod image;
 pub mod inference;
 #[cfg(feature = "host")]
 pub mod inference_budget;
+pub mod inference_trace;
 #[cfg(feature = "host")]
 pub mod jev;
 #[cfg(feature = "host")]

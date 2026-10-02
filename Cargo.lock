@@ -9193,6 +9193,7 @@ dependencies = [
  "tau-ui-plugin",
  "tokio",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]

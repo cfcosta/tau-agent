@@ -30,13 +30,14 @@ mlua = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-tau-agent.workspace = true
+tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
 tau-jev.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 tokio = { workspace = true, features = ["sync", "time"], optional = true }
 tokio-util = { workspace = true, optional = true }
+uuid.workspace = true
 
 [dev-dependencies]
 tau-ui-plugin = { workspace = true, features = ["testing"] }

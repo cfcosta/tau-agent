@@ -67,6 +67,7 @@ use crate::{
     description::{self, NAME},
     inference::InferRequest,
     inference_budget::{Budget, Limits, Permit},
+    inference_trace::{self, Attempt, AttemptOutcome, UsageProvenance},
     modules,
     options,
     run,
@@ -136,13 +137,29 @@ fn infer_output_schema() -> Value {
         "properties": {
             "ok": {"type": "boolean"},
             "value": {},
-            "trace_id": {"type": "null"},
+            "trace_id": {"type": "string"},
             "usage": {"type": "object"},
             "error": {"type": ["string", "null"]}
         },
         "required": ["ok", "value", "trace_id", "usage", "error"],
         "additionalProperties": false
     })
+}
+
+/// Store before reporting so a failed write never looks terminal in the UI.
+async fn publish_inference(
+    plugin: &PluginCtx,
+    record: inference_trace::Record,
+) -> Result<(), String> {
+    let record = store::Record::Inference(record);
+    plugin
+        .record(&record)
+        .await
+        .map_err(|error| error.to_string())?;
+    let body =
+        serde_json::to_value(&record).map_err(|error| error.to_string())?;
+    plugin.report(body);
+    Ok(())
 }
 
 /// This tool exists only in one run's plan, so its budget cannot leak to
@@ -157,32 +174,93 @@ struct InferTool {
 
 struct InferObserver {
     budget: Arc<Budget>,
-    usage: Arc<Mutex<Usage>>,
+    plugin: PluginCtx,
+    trace_id: String,
+    attempts: Arc<Mutex<Vec<Attempt>>>,
+    reservations: Arc<Mutex<Vec<u32>>>,
 }
 
 struct InferAttempt {
     permit: Permit,
-    usage: Arc<Mutex<Usage>>,
+    number: u32,
+    attempts: Arc<Mutex<Vec<Attempt>>>,
+    reported: bool,
 }
 
 #[async_trait]
 impl AskObserver for InferObserver {
     async fn admit(
         &self,
-        _attempt: u32,
+        attempt: u32,
         cancel: &CancellationToken,
     ) -> Result<Box<dyn AskPermit>, String> {
+        let permit = self.budget.admit(cancel).await?;
+        publish_inference(
+            &self.plugin,
+            inference_trace::Record::Attempt {
+                trace_id: self.trace_id.clone(),
+                owner: self.plugin.run.clone(),
+                number: attempt,
+            },
+        )
+        .await
+        .map_err(|error| {
+            format!("cannot reserve inference attempt: {error}")
+        })?;
+        self.reservations.lock().unwrap().push(attempt);
         Ok(Box::new(InferAttempt {
-            permit: self.budget.admit(cancel).await?,
-            usage: self.usage.clone(),
+            permit,
+            number: attempt,
+            attempts: self.attempts.clone(),
+            reported: false,
         }))
     }
 }
 
 impl AskPermit for InferAttempt {
-    fn report(&mut self, usage: &Usage, _end: AskAttemptEnd) {
+    fn report(&mut self, usage: &Usage, end: AskAttemptEnd) {
+        if self.reported {
+            return;
+        }
+        self.reported = true;
+        if end != AskAttemptEnd::Finished {
+            self.permit.block_incomplete();
+        }
         self.permit.report(usage);
-        *self.usage.lock().unwrap() += usage;
+        let outcome = match end {
+            AskAttemptEnd::Finished => AttemptOutcome::Finished,
+            AskAttemptEnd::Cancelled => AttemptOutcome::Cancelled,
+            AskAttemptEnd::BrokeGrammar => AttemptOutcome::BrokeGrammar,
+            AskAttemptEnd::NoTerminal => AttemptOutcome::NoTerminal,
+            AskAttemptEnd::OpenFailed => AttemptOutcome::OpenFailed,
+        };
+        let usage_provenance = if end != AskAttemptEnd::Finished {
+            UsageProvenance::Unknown
+        } else if *usage == Usage::default() {
+            UsageProvenance::SdkZeroOrDefault
+        } else {
+            UsageProvenance::SdkReported
+        };
+        self.attempts.lock().unwrap().push(Attempt {
+            number: self.number,
+            outcome,
+            reported_usage: usage.clone(),
+            usage_provenance,
+        });
+    }
+}
+
+/// A dropped tool future must not allow further admissions in this run.
+struct TraceCompletionGuard {
+    budget: Arc<Budget>,
+    terminal_stored: bool,
+}
+
+impl Drop for TraceCompletionGuard {
+    fn drop(&mut self) {
+        if !self.terminal_stored {
+            self.budget.block_incomplete();
+        }
     }
 }
 
@@ -190,6 +268,7 @@ impl InferTool {
     fn output(
         &self,
         value: Value,
+        trace_id: &str,
         usage: Usage,
         error: Option<String>,
         output_limit: bool,
@@ -197,7 +276,7 @@ impl InferTool {
         let body = json!({
             "ok": error.is_none(),
             "value": value,
-            "trace_id": null,
+            "trace_id": trace_id,
             "usage": usage,
             "error": error,
         });
@@ -245,26 +324,104 @@ impl AgentTool for InferTool {
         args: Value,
         ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
+        let trace_id = uuid::Uuid::now_v7().to_string();
+        let Some(plugin) = ctx.plugin().cloned() else {
+            return self.output(
+                Value::Null,
+                &trace_id,
+                Usage::default(),
+                Some("infer requires its plugin context".into()),
+                false,
+            );
+        };
         let request = match InferRequest::parse(args) {
             Ok(request) => request,
             Err(error) => {
+                let started = inference_trace::Record::Started {
+                    trace_id: trace_id.clone(),
+                    owner: plugin.run.clone(),
+                    task: String::new(),
+                    context: Value::Null,
+                    schema: None,
+                    model: self.model.clone(),
+                    effort: self
+                        .reasoning
+                        .map(|effort| format!("{effort:?}").to_lowercase()),
+                };
+                if let Err(publish_error) =
+                    publish_inference(&plugin, started).await
+                {
+                    return self.output(
+                        Value::Null,
+                        &trace_id,
+                        Usage::default(),
+                        Some(format!(
+                            "inference trace {trace_id} could not start: {publish_error}; no provider attempt was made"
+                        )),
+                        false,
+                    );
+                }
+                let finished = inference_trace::Record::Finished {
+                    trace_id: trace_id.clone(),
+                    owner: plugin.run.clone(),
+                    complete: true,
+                    selected: None,
+                    raw_output: None,
+                    raw_output_truncated: false,
+                    error: Some(error.clone()),
+                    attempts: Vec::new(),
+                    total_usage: Usage::default(),
+                };
+                if let Err(publish_error) =
+                    publish_inference(&plugin, finished).await
+                {
+                    self.budget.block_incomplete();
+                    return self.output(
+                        Value::Null,
+                        &trace_id,
+                        Usage::default(),
+                        Some(format!(
+                            "inference trace {trace_id} has no stored terminal record: {publish_error}; incomplete budget, use a new run or fork"
+                        )),
+                        false,
+                    );
+                }
                 return self.output(
                     Value::Null,
+                    &trace_id,
                     Usage::default(),
                     Some(error),
                     false,
                 );
             }
         };
-        let Some(plugin) = ctx.plugin().cloned() else {
+        let output_limit = plugin.supports_output_token_limit();
+        let started = inference_trace::Record::Started {
+            trace_id: trace_id.clone(),
+            owner: plugin.run.clone(),
+            task: request.task.clone(),
+            context: request.context.clone(),
+            schema: request.schema.clone(),
+            model: self.model.clone(),
+            effort: self
+                .reasoning
+                .map(|effort| format!("{effort:?}").to_lowercase()),
+        };
+        if let Err(error) = publish_inference(&plugin, started).await {
             return self.output(
                 Value::Null,
+                &trace_id,
                 Usage::default(),
-                Some("infer requires its plugin context".into()),
-                false,
+                Some(format!(
+                    "inference trace {trace_id} could not start: {error}; no provider attempt was made"
+                )),
+                output_limit,
             );
+        }
+        let mut completion = TraceCompletionGuard {
+            budget: self.budget.clone(),
+            terminal_stored: false,
         };
-        let output_limit = plugin.supports_output_token_limit();
         let settings = Settings {
             model: self.model.clone(),
             instructions: Some("Answer only the user's independent inference request. Do not assume prior conversation, access tools, or request tool execution.".into()),
@@ -279,10 +436,14 @@ impl AgentTool for InferTool {
             content: UserContent::Text(request.input_text()),
             timestamp: plugin.now(),
         })];
-        let usage = Arc::new(Mutex::new(Usage::default()));
+        let attempts = Arc::new(Mutex::new(Vec::new()));
+        let reservations = Arc::new(Mutex::new(Vec::new()));
         let observer = InferObserver {
             budget: self.budget.clone(),
-            usage: usage.clone(),
+            plugin: plugin.clone(),
+            trace_id: trace_id.clone(),
+            attempts: attempts.clone(),
+            reservations: reservations.clone(),
         };
         let response = tokio::select! {
             biased;
@@ -290,7 +451,35 @@ impl AgentTool for InferTool {
             _ = tokio::time::sleep_until(self.budget.deadline()) => Err("inference deadline reached".to_owned()),
             answer = plugin.ask_observed(settings, &input, &observer) => answer.map_err(|error| error.to_string()),
         };
-        let reported = usage.lock().unwrap().clone();
+        let mut attempts = attempts.lock().unwrap().clone();
+        let reservations = reservations.lock().unwrap().clone();
+        for number in reservations {
+            if !attempts.iter().any(|attempt| attempt.number == number) {
+                attempts.push(Attempt {
+                    number,
+                    outcome: AttemptOutcome::Interrupted,
+                    reported_usage: Usage::default(),
+                    usage_provenance: UsageProvenance::Unknown,
+                });
+            }
+        }
+        attempts.sort_by_key(|attempt| attempt.number);
+        let complete = attempts.iter().all(|attempt| {
+            attempt.outcome == AttemptOutcome::Finished
+                && attempt.usage_provenance != UsageProvenance::Unknown
+        });
+        if !complete {
+            self.budget.block_incomplete();
+        }
+        let mut reported = Usage::default();
+        for attempt in &attempts {
+            reported += &attempt.reported_usage;
+        }
+        let raw_output = response.as_ref().ok().map(|answer| answer.text());
+        let (raw_output, raw_output_truncated) = raw_output
+            .as_deref()
+            .map(inference_trace::bounded_raw_output)
+            .map_or((None, false), |(raw, truncated)| (Some(raw), truncated));
         let result = response.and_then(|answer| {
             if ctx.cancel.is_cancelled() {
                 return Err("inference cancelled".into());
@@ -320,12 +509,40 @@ impl AgentTool for InferTool {
                 }
             }
         });
-        match result {
-            Ok(value) => self.output(value, reported, None, output_limit),
-            Err(error) => {
-                self.output(Value::Null, reported, Some(error), output_limit)
-            }
+        let (mut value, mut error) = match result {
+            Ok(value) => (value, None),
+            Err(error) => (Value::Null, Some(error)),
+        };
+        if !complete {
+            value = Value::Null;
+            error = Some(format!(
+                "inference trace {trace_id} has incomplete attempt usage; use a new run or fork"
+            ));
         }
+        let finished = inference_trace::Record::Finished {
+            trace_id: trace_id.clone(),
+            owner: plugin.run.clone(),
+            complete,
+            selected: error.is_none().then(|| value.clone()),
+            raw_output,
+            raw_output_truncated,
+            error: error.clone(),
+            attempts,
+            total_usage: reported.clone(),
+        };
+        if let Err(publish_error) = publish_inference(&plugin, finished).await {
+            return self.output(
+                Value::Null,
+                &trace_id,
+                reported,
+                Some(format!(
+                    "inference trace {trace_id} has no stored terminal record: {publish_error}; incomplete budget, use a new run or fork"
+                )),
+                output_limit,
+            );
+        }
+        completion.terminal_stored = true;
+        self.output(value, &trace_id, reported, error, output_limit)
     }
 }
 
@@ -346,7 +563,7 @@ impl Plugin for Codemode {
     async fn start(
         &self,
         plan: &mut RunPlan,
-        _ctx: &PluginCtx,
+        ctx: &PluginCtx,
     ) -> Result<Box<dyn PluginRun>, PluginError> {
         for name in crate::module_tools::NAMES {
             if plan.tools().iter().any(|tool| tool.name() == name) {
@@ -358,8 +575,11 @@ impl Plugin for Codemode {
         if plan.tools().iter().any(|tool| tool.name() == "infer") {
             return Err("codemode cannot add infer: a tool with that name already exists".into());
         }
-        let budget =
-            Budget::new(self.inference_limits).map_err(PluginError::from)?;
+        let records = ctx.records().await.map_err(PluginError::from)?;
+        let restored = inference_trace::restore_budget(&records, &ctx.run)
+            .map_err(PluginError::from)?;
+        let budget = Budget::restored(self.inference_limits, restored)
+            .map_err(PluginError::from)?;
         let model = self.inference_model.as_deref().unwrap_or(plan.model());
         let infer = Arc::new(InferTool {
             budget,

@@ -15,7 +15,7 @@
 //! Plugins' verdicts on a nested call ([`CallData::nested_marks`]) mark
 //! its row in both.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use gpui::{Div, div, prelude::*, px};
 use serde::{Deserialize, Serialize};
@@ -69,6 +69,8 @@ pub struct State {
     pub writes: usize,
     /// Immutable module versions and the current version of each name.
     pub modules: modules::Library,
+    /// Private inference records; a start without a finish is interrupted.
+    pub inference: Vec<crate::inference_trace::Record>,
 }
 
 impl Fold for State {
@@ -84,7 +86,44 @@ impl Fold for State {
             Record::Module(record) => {
                 let _ = self.modules.apply(&record);
             }
+            Record::Inference(record) => self.inference.push(record),
         }
+    }
+}
+
+impl State {
+    /// A start stays incomplete until a matching durable finish arrives.
+    pub fn inference_statuses(&self) -> BTreeMap<String, &'static str> {
+        let mut statuses = BTreeMap::new();
+        for record in &self.inference {
+            match record {
+                crate::inference_trace::Record::Started {
+                    trace_id, ..
+                }
+                | crate::inference_trace::Record::Attempt {
+                    trace_id, ..
+                } => {
+                    statuses
+                        .entry(trace_id.clone())
+                        .or_insert("interrupted / incomplete");
+                }
+                crate::inference_trace::Record::Finished {
+                    trace_id,
+                    complete,
+                    ..
+                } => {
+                    statuses.insert(
+                        trace_id.clone(),
+                        if *complete {
+                            "finished"
+                        } else {
+                            "interrupted / incomplete"
+                        },
+                    );
+                }
+            }
+        }
+        statuses
     }
 }
 
@@ -596,6 +635,7 @@ fn call_row(row: &Row, t: &Theme) -> Div {
 
 /// The store a run's scripts kept, key by key.
 fn store_section(state: &State, t: &Theme) -> Div {
+    let inference = state.inference_statuses();
     div()
         .flex()
         .flex_col()
@@ -623,6 +663,13 @@ fn store_section(state: &State, t: &Theme) -> Div {
                     )
                 }),
                 t,
+            )
+        })
+        .when(!inference.is_empty(), |section| {
+            section.child(heading("Inference traces", t)).children(
+                inference.into_iter().map(|(id, status)| {
+                    mono(format!("{id} · {status}"), Type::CAPTION, t.text_soft)
+                }),
             )
         })
 }

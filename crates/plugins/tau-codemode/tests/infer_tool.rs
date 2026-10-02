@@ -33,7 +33,7 @@ use tau_ai::{
     },
     responses::request::{ReasoningEffort, Settings},
 };
-use tau_codemode::{Codemode, inference_budget::Limits};
+use tau_codemode::{Codemode, PLUGIN, inference_budget::Limits};
 use tau_store::{Entry, Store};
 use tau_testing::{block_on_io as block_on, scripted::ScriptedModel};
 
@@ -112,6 +112,17 @@ async fn results(store: &Store, run: &str) -> Vec<ToolResultMessage> {
             }
             _ => None,
         })
+        .collect()
+}
+
+async fn trace_records(store: &Store, run: &str) -> Vec<Value> {
+    store
+        .records(run, PLUGIN)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|body| serde_json::from_str(&body).unwrap())
+        .filter(|body: &Value| body["kind"] == "inference")
         .collect()
 }
 
@@ -206,6 +217,33 @@ return { a.ok, a.value, b.ok, b.value.n, c.ok, c.value == json.null }
                     && metadata["provider_output_limit"] == true)
         );
         assert_eq!(calls[2].0["value"], Value::Null);
+        let traces = trace_records(&store, &outcome.run.0).await;
+        assert_eq!(
+            traces.iter().filter(|r| r["phase"] == "started").count(),
+            3
+        );
+        assert_eq!(
+            traces.iter().filter(|r| r["phase"] == "attempt").count(),
+            3
+        );
+        assert_eq!(
+            traces.iter().filter(|r| r["phase"] == "finished").count(),
+            3
+        );
+        for (body, _, _) in &calls {
+            let id = body["trace_id"].as_str().expect("opaque trace ID");
+            assert!(traces.iter().any(|r| r["phase"] == "finished"
+                && r["trace_id"] == id
+                && r["complete"] == true));
+            assert!(body.get("task").is_none());
+            assert!(body.get("raw_output").is_none());
+        }
+        assert!(
+            traces
+                .iter()
+                .any(|r| r["task"] == "plain"
+                    && r["context"] == json!({"id": 7}))
+        );
         let requests = model.requests();
         assert_eq!(requests.len(), 5);
         assert!(!requests[0].settings.tools.is_empty());
@@ -350,6 +388,21 @@ return { failures, good.ok, good.value }
                 .contains("exact range")
         );
         assert_eq!(calls[5].0["value"], "recovered");
+        let traces = trace_records(&store, &outcome.run.0).await;
+        assert_eq!(
+            traces.iter().filter(|r| r["phase"] == "finished").count(),
+            6
+        );
+        let first = traces
+            .iter()
+            .find(|r| {
+                r["phase"] == "finished"
+                    && r["trace_id"] == calls[0].0["trace_id"]
+            })
+            .unwrap();
+        assert_eq!(first["raw_output"], "\"wrong\"");
+        assert_eq!(first["selected"], Value::Null);
+        assert!(!calls[0].0.to_string().contains("wrong"));
         let rows = events
             .seen
             .lock()
@@ -426,6 +479,16 @@ fn attempts_and_failed_usage_are_shared_across_scripts() {
         assert_eq!(calls[0].0["usage"]["cacheWrite"], 7);
         assert_eq!(calls[0].0["usage"]["output"], 8);
         assert_eq!(calls[0].0["usage"]["cost"]["total"], 0.5);
+        let traces = trace_records(&store, &outcome.run.0).await;
+        let retry = traces
+            .iter()
+            .find(|r| {
+                r["phase"] == "finished"
+                    && r["trace_id"] == calls[0].0["trace_id"]
+            })
+            .unwrap();
+        assert_eq!(retry["attempts"].as_array().unwrap().len(), 2);
+        assert_eq!(retry["total_usage"], calls[0].0["usage"]);
         assert_eq!(calls[1].0["usage"]["input"], 0);
         assert!(calls[1].1);
         assert_eq!(
@@ -433,6 +496,52 @@ fn attempts_and_failed_usage_are_shared_across_scripts() {
             2,
             "rejected call opens no session"
         );
+        model.assert_exhausted();
+    });
+}
+
+#[test]
+fn resume_keeps_calls_spent_while_fork_gets_fresh_allowance() {
+    block_on(async {
+        let script = "return tools.infer({ task = 'private', context = json.null }).value";
+        let model = ScriptedModel::new()
+            .turn(outer_call(script))
+            .turn(|turn| turn.text("root answer").usage(3, 2))
+            .turn(|turn| turn.text("done"))
+            .turn(outer_call(script))
+            .turn(|turn| turn.text("done"))
+            .turn(outer_call(script))
+            .turn(|turn| turn.text("fork answer").usage(4, 2))
+            .turn(|turn| turn.text("done"));
+        let store = Store::memory().await.unwrap();
+        let events = Events::default();
+        let agent = Agent::new(model.clone())
+            .plugin(Codemode::new(None).with_inference_limits(Limits {
+                max_calls: 1,
+                ..Limits::default()
+            }))
+            .plugin(events.clone());
+        let root = agent.run("root", &store).await.unwrap();
+        let resumed =
+            agent.resume(&root.run).run("again", &store).await.unwrap();
+        let resume_result = results(&store, &resumed.run.0).await;
+        assert!(!resume_result.last().unwrap().is_error);
+        assert_eq!(result_text(resume_result.last().unwrap()), "null");
+        let calls = nested(&events);
+        assert_eq!(calls.len(), 2);
+        assert!(calls[1].1);
+        assert_eq!(calls[1].0["ok"], false);
+        assert_eq!(calls[1].0["value"], Value::Null);
+        assert!(calls[1].0["error"].as_str().unwrap().contains("call limit"));
+        let fork = agent
+            .fork(&root.checkpoint())
+            .run("fork", &store)
+            .await
+            .unwrap();
+        let fork_result = results(&store, &fork.run.0).await;
+        assert_eq!(result_text(fork_result.last().unwrap()), "fork answer");
+        assert_eq!(nested(&events)[2].0["ok"], true);
+        assert_eq!(infer_requests(&model).len(), 2);
         model.assert_exhausted();
     });
 }
@@ -464,8 +573,19 @@ return { a.ok, b.ok }
         assert!(!results(&store, &outcome.run.0).await[0].is_error);
         let calls = nested(&events);
         assert_eq!(calls.len(), 2);
-        assert!(calls.iter().all(|(body, is_error, _)| *is_error
-            && body["error"].as_str().unwrap().contains("deadline")));
+        assert!(
+            calls.iter().all(|(body, is_error, _)| {
+                *is_error
+                    && body["ok"] == false
+                    && body["value"] == Value::Null
+                    && body["error"].as_str().is_some_and(|error| {
+                        error.contains("deadline")
+                            || error.contains("incomplete inference budget")
+                            || error.contains("incomplete attempt usage")
+                    })
+            }),
+            "nested replies: {calls:?}"
+        );
         assert_eq!(
             infer_requests(&model).len(),
             1,
@@ -476,7 +596,7 @@ return { a.ok, b.ok }
 }
 
 #[test]
-fn script_timeout_drops_stream_and_frees_slot_for_next_script() {
+fn script_timeout_keeps_incomplete_attempt_from_reopening_budget() {
     block_on(async {
         let timed = "-- @options: {\"timeout_ms\": 50}\nreturn tools.infer({ task = 'slow', context = json.null })";
         let next =
@@ -485,29 +605,148 @@ fn script_timeout_drops_stream_and_frees_slot_for_next_script() {
             .turn(outer_call(timed))
             .turn(|turn| turn.text("too late").delay(Duration::from_secs(10)))
             .turn(outer_call(next))
-            .turn(|turn| turn.text("admitted"))
             .turn(|turn| turn.text("done"));
         let store = Store::memory().await.unwrap();
-        let agent = Agent::new(model.clone()).plugin(
-            Codemode::new(None).with_inference_limits(Limits {
+        let events = Events::default();
+        let agent = Agent::new(model.clone())
+            .plugin(Codemode::new(None).with_inference_limits(Limits {
                 max_concurrency: 1,
                 timeout: Duration::from_secs(30),
                 ..Limits::default()
-            }),
-        );
+            }))
+            .plugin(events.clone());
         let outcome = agent.run("go", &store).await.unwrap();
         let result = results(&store, &outcome.run.0).await;
         assert_eq!(result.len(), 2);
         assert!(result[0].is_error);
         assert!(!result[1].is_error);
-        assert_eq!(result_text(&result[1]), "admitted");
-        assert_eq!(infer_requests(&model).len(), 2);
+        assert_eq!(result_text(&result[1]), "null");
+        let calls = nested(&events);
+        assert_eq!(calls.len(), 2);
+        assert!(calls[1].1);
+        assert_eq!(calls[1].0["ok"], false);
+        assert_eq!(calls[1].0["value"], Value::Null);
+        assert!(
+            calls[1].0["error"]
+                .as_str()
+                .unwrap()
+                .contains("incomplete inference budget")
+        );
+        assert_eq!(infer_requests(&model).len(), 1);
         model.assert_exhausted();
     });
 }
 
 #[derive(Clone)]
 struct NoOutputLimit(ScriptedModel);
+
+#[derive(Clone)]
+struct FailingInferOpen {
+    outer: ScriptedModel,
+    open_attempts: Arc<Mutex<usize>>,
+}
+
+impl Llm for FailingInferOpen {
+    fn open(
+        &self,
+        settings: Settings,
+    ) -> BoxFuture<'static, Result<Box<dyn LlmSession>, LlmError>> {
+        if settings.tools.is_empty() {
+            *self.open_attempts.lock().unwrap() += 1;
+            return Box::pin(async {
+                Err(LlmError {
+                    message: "inference open failed".into(),
+                })
+            });
+        }
+        self.outer.open(settings)
+    }
+}
+
+#[test]
+fn open_failure_is_unknown_and_blocks_later_and_resumed_attempts() {
+    block_on(async {
+        let script = r#"
+local first = tools.infer({ task = "first", context = json.null })
+local second = tools.infer({ task = "second", context = json.null })
+return { first.ok, second.ok }
+"#;
+        let next = "return tools.infer({ task = 'resumed', context = json.null }).value";
+        let outer = ScriptedModel::new()
+            .turn(outer_call(script))
+            .turn(|turn| turn.text("done"))
+            .turn(outer_call(next))
+            .turn(|turn| turn.text("done"));
+        let open_attempts = Arc::new(Mutex::new(0));
+        let model = FailingInferOpen {
+            outer: outer.clone(),
+            open_attempts: open_attempts.clone(),
+        };
+        let events = Events::default();
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(model)
+            .plugin(Codemode::new(None))
+            .plugin(events.clone());
+        let root = agent.run("go", &store).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&result_text(
+                &results(&store, &root.run.0).await[0]
+            ))
+            .unwrap(),
+            json!([false, false])
+        );
+        let calls = nested(&events);
+        assert_eq!(calls.len(), 2);
+        assert!(
+            calls
+                .iter()
+                .all(|(body, is_error, _)| *is_error && body["ok"] == false)
+        );
+        assert!(
+            calls[0].0["error"]
+                .as_str()
+                .unwrap()
+                .contains("incomplete attempt usage")
+        );
+        assert!(
+            calls[1].0["error"]
+                .as_str()
+                .unwrap()
+                .contains("incomplete inference budget")
+        );
+        let traces = trace_records(&store, &root.run.0).await;
+        let failed = traces
+            .iter()
+            .find(|record| {
+                record["phase"] == "finished"
+                    && record["trace_id"] == calls[0].0["trace_id"]
+            })
+            .unwrap();
+        assert_eq!(failed["complete"], false);
+        assert_eq!(failed["attempts"][0]["outcome"], "open_failed");
+        assert_eq!(failed["attempts"][0]["usage_provenance"], "unknown");
+        assert_eq!(failed["attempts"][0]["reported_usage"]["totalTokens"], 0);
+        let resumed =
+            agent.resume(&root.run).run("again", &store).await.unwrap();
+        assert!(
+            !results(&store, &resumed.run.0)
+                .await
+                .last()
+                .unwrap()
+                .is_error
+        );
+        assert_eq!(nested(&events)[2].0["ok"], false);
+        assert!(
+            nested(&events)[2].0["error"]
+                .as_str()
+                .unwrap()
+                .contains("incomplete inference budget")
+        );
+        assert_eq!(*open_attempts.lock().unwrap(), 1);
+        assert!(infer_requests(&outer).is_empty());
+        outer.assert_exhausted();
+    });
+}
 
 impl Llm for NoOutputLimit {
     fn supports_output_token_limit(&self) -> bool {

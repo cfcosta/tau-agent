@@ -5,6 +5,13 @@ attempts. Create one `Arc<Budget>` at the start of an agent run and share it
 across every script and retry in that run. The budget does not itself call a
 provider or charge `PluginCtx`.
 
+The plugin restores a stored run's call count and reported usage from its
+terminal inference traces. A reserved attempt without a final SDK report
+blocks further same-run admissions, even when partial usage was reported or
+opening the provider failed. A fork has a fresh
+allowance; inherited parent traces do not spend it. The monotonic deadline is
+new for each activation, while call and reported-usage allowances persist.
+
 ```rust
 use tau_codemode::{CancellationToken, inference_budget::{Budget, Limits}};
 

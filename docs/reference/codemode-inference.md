@@ -9,8 +9,8 @@ Codemode refuses to start a run if another tool already has the reserved name
 The call returns `{ ok, value, trace_id, usage, error }`. `value` is the answer
 text when there is no schema, or validated JSON when there is one. Failures
 return `ok = false`, `value = null`, and a readable `error`. `usage` sums every
-reported attempt, including failed and retried responses. `trace_id` is null
-until inference provenance is implemented. The tool's output metadata has
+reported attempt, including failed and retried responses. `trace_id` identifies
+private persisted provenance (see [inference traces](codemode-inference-traces.md)). The tool's output metadata has
 `provider_output_limit`, indicating whether the provider accepts the requested
 2,048-token output ceiling.
 

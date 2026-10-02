@@ -12,6 +12,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::inference_trace::RestoredBudget;
+
 /// Limits shared by every inference attempt in an agent run.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Limits {
@@ -47,6 +49,7 @@ struct State {
     calls: usize,
     in_flight: usize,
     usage: Usage,
+    incomplete_attempt: bool,
 }
 
 /// One budget shared across scripts and retries in an agent run.
@@ -61,6 +64,14 @@ pub struct Budget {
 impl Budget {
     /// Creates a budget. A zero call limit is valid and disables admissions.
     pub fn new(limits: Limits) -> Result<Arc<Self>, String> {
+        Self::restored(limits, RestoredBudget::default())
+    }
+
+    /// Restores persisted allowances; the monotonic deadline starts now.
+    pub fn restored(
+        limits: Limits,
+        restored: RestoredBudget,
+    ) -> Result<Arc<Self>, String> {
         if limits.max_concurrency == 0 {
             return Err("max_concurrency must be positive".into());
         }
@@ -80,7 +91,12 @@ impl Budget {
             limits,
             deadline,
             slots: Arc::new(Semaphore::new(limits.max_concurrency)),
-            state: Mutex::new(State::default()),
+            state: Mutex::new(State {
+                calls: restored.calls,
+                usage: restored.usage,
+                incomplete_attempt: restored.incomplete_attempt,
+                ..State::default()
+            }),
         }))
     }
 
@@ -104,6 +120,11 @@ impl Budget {
         }
         if Instant::now() >= self.deadline {
             return Err("inference deadline reached".into());
+        }
+        if state.incomplete_attempt {
+            return Err(
+                "incomplete inference budget; use a new run or fork".into()
+            );
         }
         if state.calls >= self.limits.max_calls {
             return Err("inference call limit reached".into());
@@ -147,6 +168,11 @@ impl Budget {
     pub fn deadline(&self) -> Instant {
         self.deadline
     }
+
+    /// Prevent more attempts if a terminal trace cannot be stored.
+    pub fn block_incomplete(&self) {
+        self.state.lock().unwrap().incomplete_attempt = true;
+    }
 }
 
 /// One admitted attempt; dropping it frees its concurrency slot.
@@ -164,6 +190,11 @@ impl Permit {
             self.budget.state.lock().unwrap().usage += usage;
             self.reported = true;
         }
+    }
+
+    /// Stop later admissions when this attempt has no final SDK usage.
+    pub fn block_incomplete(&self) {
+        self.budget.block_incomplete();
     }
 }
 
