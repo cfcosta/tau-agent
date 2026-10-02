@@ -34,6 +34,7 @@ tau-store.workspace = true
 # The product shows `bash` output as a terminal: commands run under a
 # pseudo-terminal (docs/decisions/0010-terminal-rendering.md).
 tau-tools = { workspace = true, features = ["terminal"] }
+tau-artifacts.workspace = true
 tau-vcs.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true

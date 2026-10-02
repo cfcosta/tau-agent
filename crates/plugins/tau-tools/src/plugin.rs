@@ -127,7 +127,14 @@ impl Plugin for CodingTools {
         let mut tools: Vec<Arc<dyn AgentTool>> = self
             .tools
             .iter()
-            .map(|tool| tool.build(&self.root))
+            .map(|tool| match (tool, &self.artifacts) {
+                (Tool::Read, Some(bytes)) => Arc::new(
+                    read::Read::new(self.root.clone())
+                        .with_artifacts(bytes.clone()),
+                )
+                    as Arc<dyn AgentTool>,
+                _ => tool.build(&self.root),
+            })
             .collect();
         tools.push(Arc::new(artifact_read::ArtifactRead::new(
             self.artifacts.clone(),

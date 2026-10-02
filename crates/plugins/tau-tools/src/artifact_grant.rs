@@ -94,6 +94,13 @@ pub async fn publish_artifact<R: std::io::Read + Send + 'static>(
 ) -> Result<ArtifactGrant, tau_agent::error::ToolError> {
     use tau_agent::error::ToolError;
 
+    struct CancelOnDrop(tokio_util::sync::CancellationToken);
+    impl Drop for CancelOnDrop {
+        fn drop(&mut self) {
+            self.0.cancel();
+        }
+    }
+
     let Some(plugin) = ctx.plugin().cloned() else {
         return Err(ToolError::from(
             "artifact grant requires a tool plugin context",
@@ -105,7 +112,10 @@ pub async fn publish_artifact<R: std::io::Read + Send + 'static>(
         ));
     }
     let storage = bytes.clone();
-    let cancel = ctx.cancel.clone();
+    // Dropping this future (for example on a script timeout) need not
+    // cancel the parent tool context. The child stops the blocking reader.
+    let cancel = ctx.cancel.child_token();
+    let _cancel_on_drop = CancelOnDrop(cancel.clone());
     let work = tokio::task::spawn_blocking(move || {
         storage.publish_reader(reader, &cancel)
     });

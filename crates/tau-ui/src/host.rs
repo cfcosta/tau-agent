@@ -39,6 +39,7 @@ use tau_ai::{
     model::find,
     refusal::Refusal,
 };
+use tau_artifacts::{Bytes, Quotas};
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools::{path::Root, plugin::CodingTools};
@@ -601,6 +602,8 @@ impl Host {
         // after theirs, and context compaction goes by the run's model.
         let registered = self.registered(repo);
         let project = repo.project()?;
+        let artifacts =
+            Bytes::new(project.root().join("artifacts"), Quotas::default())?;
         // A run and its sub-agents work the same way, each in its own
         // workspace: tools, then what plugins add, which hear each turn's
         // commit. Only the run itself can delegate, so sub-agents do not
@@ -608,7 +611,7 @@ impl Host {
         // `lands`: the run proposes its own landing with `vcs_land`
         // (ADR 0014). Sub-agents land as they return, without it.
         let on_workspace =
-            |agent: Agent, workspace: RunWorkspace, lands: bool| {
+            move |agent: Agent, workspace: RunWorkspace, lands: bool| {
                 let hooks = TurnHooks::default();
                 let workspace = {
                     let hooks = hooks.clone();
@@ -622,7 +625,10 @@ impl Host {
                 let vcs = VcsPlugin::new(workspace.vcs().clone());
                 let vcs = if lands { vcs.landing() } else { vcs };
                 let agent = agent
-                    .plugin(CodingTools::new(Root::new(workspace.dir())))
+                    .plugin(
+                        CodingTools::new(Root::new(workspace.dir()))
+                            .with_artifacts(artifacts.clone()),
+                    )
                     .plugin(vcs)
                     .plugin(workspace);
                 (agent, Services::default().with(hooks))
@@ -636,6 +642,7 @@ impl Host {
         };
         let agent = for_model(choice, &workspace);
         let delegate = {
+            let child_on_workspace = on_workspace.clone();
             let registered = registered.clone();
             let caller = choice.clone();
             let models: Vec<String> =
@@ -647,7 +654,8 @@ impl Host {
                 move |child, asked| {
                     let choice = child_choice(&caller, asked)?;
                     let agent = for_model(&choice, &child);
-                    let (agent, services) = on_workspace(agent, child, false);
+                    let (agent, services) =
+                        child_on_workspace(agent, child, false);
                     registered(
                         agent,
                         tau_ui_plugin::RunKind::SubAgent,

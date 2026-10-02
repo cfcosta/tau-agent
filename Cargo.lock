@@ -9578,6 +9578,7 @@ dependencies = [
  "serde_json",
  "tau-agent",
  "tau-ai",
+ "tau-artifacts",
  "tau-ask",
  "tau-codemode",
  "tau-compaction",

@@ -22,7 +22,8 @@ A text result has this shape:
   "truncated": false,
   "complete": true,
   "truncated_by": null,
-  "first_line_exceeds_limit": false
+  "first_line_exceeds_limit": false,
+  "artifact_error": "artifact storage is unavailable"
 }
 ```
 
@@ -47,6 +48,11 @@ lines. If the first line is larger than 50 KiB, the tool cannot return that
 line or advance past it, so `next_offset` is `null` and
 `first_line_exceeds_limit` is true.
 
+Both text and image structured values also contain an `artifact` reference
+to the complete original file or an explicit `artifact_error`. The direct
+content and the fields above keep their existing meanings. See
+[full-file artifacts](codemode-artifact-files.md).
+
 ## Images
 
 Image results preserve the direct content blocks in a JSON-compatible array:
@@ -59,7 +65,8 @@ Image results preserve the direct content blocks in a JSON-compatible array:
     { "type": "text", "text": "Read image file [image/png]" },
     { "type": "image", "data": "iVBORw0KGgo...", "mimeType": "image/png" }
   ],
-  "omitted": false
+  "omitted": false,
+  "artifact_error": "artifact storage is unavailable"
 }
 ```
 

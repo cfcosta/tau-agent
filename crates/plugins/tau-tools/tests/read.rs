@@ -445,6 +445,7 @@ fn empty_text_has_structured_range() {
             "complete": true,
             "truncated_by": null,
             "first_line_exceeds_limit": false,
+            "artifact_error": "artifact storage is unavailable",
         })
     );
 }
@@ -503,6 +504,7 @@ fn subset_has_structured_text_and_continuation() {
             "complete": false,
             "truncated_by": null,
             "first_line_exceeds_limit": false,
+            "artifact_error": "artifact storage is unavailable",
         })
     );
 }
