@@ -36,6 +36,12 @@ pub struct LlmError {
 
 /// A model provider.
 pub trait Llm: Send + Sync + 'static {
+    /// Whether side requests can send `Settings::max_output_tokens` to
+    /// this provider. Providers opt in only when their route accepts it.
+    fn supports_output_token_limit(&self) -> bool {
+        false
+    }
+
     /// Opens a session for one run.
     fn open(
         &self,

@@ -17,6 +17,9 @@
 //!   order `respond` is called. Two runs sharing one `ScriptedModel`
 //!   therefore interleave their draws from one script; give each run its
 //!   own `ScriptedModel` to keep their scripts independent.
+//! - **Output ceiling simulation.** This fake accepts and records
+//!   `Settings::max_output_tokens`, so its provider capability is true.
+//!   It does not truncate scripted output to enforce the ceiling.
 //! - **Recording.** Every request (`settings` plus the transcript it was
 //!   asked to answer) is recorded in [`ScriptedModel::requests`], in call
 //!   order, whichever session made the call.
@@ -219,6 +222,10 @@ impl ScriptedModel {
 }
 
 impl Llm for ScriptedModel {
+    fn supports_output_token_limit(&self) -> bool {
+        true
+    }
+
     fn open(
         &self,
         settings: Settings,

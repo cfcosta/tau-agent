@@ -1311,3 +1311,466 @@ fn before_request_picks_each_turns_effort() {
         assert_eq!(errors, 3);
     });
 }
+
+mod side_ask_tests {
+    use std::{
+        sync::{
+            Arc,
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use async_trait::async_trait;
+    use futures_util::future::BoxFuture;
+    use tau_agent::plugin::{
+        AskAttemptEnd,
+        AskError,
+        AskObserver,
+        AskPermit,
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        RunPlan,
+    };
+    use tau_ai::{
+        llm::{Llm, LlmError, LlmSession},
+        message::{AssistantMessage, Usage},
+        responses::request::Settings,
+    };
+    use tau_testing::{block_on, scripted::ScriptedModel};
+    use tokio_util::sync::CancellationToken;
+
+    use super::{Agent, PluginError, Store};
+
+    #[derive(Clone)]
+    struct CountingModel {
+        scripted: ScriptedModel,
+        opens: Arc<AtomicUsize>,
+    }
+
+    impl CountingModel {
+        fn new(scripted: ScriptedModel) -> Self {
+            Self {
+                scripted,
+                opens: Arc::default(),
+            }
+        }
+    }
+
+    impl Llm for CountingModel {
+        fn supports_output_token_limit(&self) -> bool {
+            self.scripted.supports_output_token_limit()
+        }
+
+        fn open(
+            &self,
+            settings: Settings,
+        ) -> BoxFuture<'static, Result<Box<dyn LlmSession>, LlmError>> {
+            self.opens.fetch_add(1, Ordering::SeqCst);
+            self.scripted.open(settings)
+        }
+    }
+
+    #[derive(Clone)]
+    struct UnsupportedModel {
+        scripted: ScriptedModel,
+        opens: Arc<AtomicUsize>,
+    }
+
+    impl Llm for UnsupportedModel {
+        fn open(
+            &self,
+            settings: Settings,
+        ) -> BoxFuture<'static, Result<Box<dyn LlmSession>, LlmError>> {
+            self.opens.fetch_add(1, Ordering::SeqCst);
+            self.scripted.open(settings)
+        }
+    }
+
+    enum Admission {
+        Allow,
+        RejectAt(u32),
+        CancelWhileWaiting,
+        CancelInFlight(ScriptedModel),
+    }
+
+    #[derive(Default)]
+    struct AttemptLog {
+        admitted: Mutex<Vec<u32>>,
+        reported: Mutex<Vec<(Usage, AskAttemptEnd)>>,
+        live: AtomicUsize,
+        dropped: AtomicUsize,
+    }
+
+    struct Observer {
+        admission: Admission,
+        log: Arc<AttemptLog>,
+    }
+
+    impl Observer {
+        fn new(admission: Admission) -> Self {
+            Self {
+                admission,
+                log: Arc::default(),
+            }
+        }
+    }
+
+    struct Permit(Arc<AttemptLog>);
+
+    impl AskPermit for Permit {
+        fn report(&mut self, usage: &Usage, end: AskAttemptEnd) {
+            assert!(self.0.live.load(Ordering::SeqCst) > 0);
+            self.0.reported.lock().unwrap().push((usage.clone(), end));
+        }
+    }
+
+    impl Drop for Permit {
+        fn drop(&mut self) {
+            self.0.live.fetch_sub(1, Ordering::SeqCst);
+            self.0.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl AskObserver for Observer {
+        async fn admit(
+            &self,
+            attempt: u32,
+            cancel: &CancellationToken,
+        ) -> Result<Box<dyn AskPermit>, String> {
+            self.log.admitted.lock().unwrap().push(attempt);
+            match &self.admission {
+                Admission::RejectAt(rejected) if *rejected == attempt => {
+                    return Err("budget exhausted".into());
+                }
+                Admission::CancelWhileWaiting => {
+                    cancel.cancel();
+                    cancel.cancelled().await;
+                    return Err("cancelled".into());
+                }
+                Admission::CancelInFlight(model) => {
+                    let model = model.clone();
+                    let cancel = cancel.clone();
+                    tokio::spawn(async move {
+                        while model.requests().is_empty() {
+                            tokio::task::yield_now().await;
+                        }
+                        cancel.cancel();
+                    });
+                }
+                _ => {}
+            }
+            self.log.live.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(Permit(self.log.clone())))
+        }
+    }
+
+    #[derive(Clone)]
+    struct SideAsk {
+        observer: Option<Arc<Observer>>,
+        max_output_tokens: Option<u32>,
+        capability: Arc<Mutex<Option<bool>>>,
+        result: Arc<Mutex<Option<Result<AssistantMessage, AskError>>>>,
+    }
+
+    impl SideAsk {
+        fn observed(observer: Arc<Observer>) -> Self {
+            Self {
+                observer: Some(observer),
+                max_output_tokens: Some(2048),
+                capability: Arc::default(),
+                result: Arc::default(),
+            }
+        }
+
+        fn legacy() -> Self {
+            Self {
+                observer: None,
+                max_output_tokens: None,
+                capability: Arc::default(),
+                result: Arc::default(),
+            }
+        }
+
+        fn take(&self) -> Result<AssistantMessage, AskError> {
+            self.result.lock().unwrap().take().expect("side ask ran")
+        }
+
+        fn supports_output_token_limit(&self) -> bool {
+            self.capability.lock().unwrap().expect("plugin started")
+        }
+    }
+
+    #[async_trait]
+    impl Plugin for SideAsk {
+        fn name(&self) -> &str {
+            "side-ask"
+        }
+
+        async fn start(
+            &self,
+            _plan: &mut RunPlan,
+            ctx: &PluginCtx,
+        ) -> Result<Box<dyn PluginRun>, PluginError> {
+            *self.capability.lock().unwrap() =
+                Some(ctx.supports_output_token_limit());
+            let settings = Settings {
+                model: "gpt-5.5".into(),
+                max_output_tokens: self.max_output_tokens,
+                ..Settings::default()
+            };
+            let result = match &self.observer {
+                Some(observer) => {
+                    ctx.ask_observed(settings, &[], observer.as_ref()).await
+                }
+                None => ctx.ask(settings, &[]).await,
+            };
+            *self.result.lock().unwrap() = Some(result);
+            Ok(Box::new(()))
+        }
+    }
+
+    #[test]
+    fn unsupported_output_limit_fails_before_admission_or_side_open() {
+        block_on(async {
+            let scripted =
+                ScriptedModel::new().turn(|t| t.text("main").cost(0.5));
+            let model = UnsupportedModel {
+                scripted: scripted.clone(),
+                opens: Arc::default(),
+            };
+            let observer = Arc::new(Observer::new(Admission::Allow));
+            let plugin = SideAsk::observed(observer.clone());
+            let store = Store::memory().await.unwrap();
+            let outcome = Agent::new(model.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await
+                .unwrap();
+            assert!(!model.supports_output_token_limit());
+            assert!(!plugin.supports_output_token_limit());
+            assert!(matches!(
+                plugin.take(),
+                Err(AskError::OutputLimitUnsupported)
+            ));
+            assert!(observer.log.admitted.lock().unwrap().is_empty());
+            assert!(observer.log.reported.lock().unwrap().is_empty());
+            assert_eq!(observer.log.live.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                model.opens.load(Ordering::SeqCst),
+                1,
+                "only main session opened"
+            );
+            assert_eq!(scripted.requests().len(), 1);
+            assert_eq!(outcome.usage.cost.total, 0.5, "no side charge");
+        });
+    }
+
+    #[test]
+    fn legacy_ask_rejects_a_limit_on_an_unsupported_provider() {
+        block_on(async {
+            let scripted = ScriptedModel::new().turn(|t| t.text("main"));
+            let model = UnsupportedModel {
+                scripted: scripted.clone(),
+                opens: Arc::default(),
+            };
+            let mut plugin = SideAsk::legacy();
+            plugin.max_output_tokens = Some(2048);
+            let store = Store::memory().await.unwrap();
+            Agent::new(model.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await
+                .unwrap();
+            assert!(matches!(
+                plugin.take(),
+                Err(AskError::OutputLimitUnsupported)
+            ));
+            assert_eq!(model.opens.load(Ordering::SeqCst), 1);
+            assert_eq!(scripted.requests().len(), 1);
+        });
+    }
+
+    #[test]
+    fn legacy_ask_without_a_limit_works_on_an_unsupported_provider() {
+        block_on(async {
+            let scripted = ScriptedModel::new()
+                .turn(|t| t.text("side").cost(0.3))
+                .turn(|t| t.text("main").cost(0.5));
+            let model = UnsupportedModel {
+                scripted: scripted.clone(),
+                opens: Arc::default(),
+            };
+            let plugin = SideAsk::legacy();
+            let store = Store::memory().await.unwrap();
+            let outcome = Agent::new(model.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await
+                .unwrap();
+            assert!(!plugin.supports_output_token_limit());
+            assert_eq!(plugin.take().unwrap().text(), "side");
+            assert_eq!(model.opens.load(Ordering::SeqCst), 2);
+            assert_eq!(scripted.requests().len(), 2);
+            assert_eq!(outcome.usage.cost.total, 0.8);
+        });
+    }
+
+    #[test]
+    fn admission_rejection_prevents_a_side_session() {
+        block_on(async {
+            let scripted = ScriptedModel::new().turn(|t| t.text("main"));
+            let model = CountingModel::new(scripted.clone());
+            let observer = Arc::new(Observer::new(Admission::RejectAt(1)));
+            let plugin = SideAsk::observed(observer.clone());
+            let store = Store::memory().await.unwrap();
+            Agent::new(model.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await
+                .unwrap();
+            assert!(
+                matches!(plugin.take(), Err(AskError::Admission(message)) if message == "budget exhausted")
+            );
+            assert_eq!(
+                model.opens.load(Ordering::SeqCst),
+                1,
+                "only main session opened"
+            );
+            assert_eq!(scripted.requests().len(), 1);
+            assert_eq!(*observer.log.admitted.lock().unwrap(), [1]);
+            assert!(observer.log.reported.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn retry_admits_and_charges_each_provider_attempt() {
+        block_on(async {
+            let scripted = ScriptedModel::new()
+                .turn(|t| {
+                    t.error("rate_limit_exceeded", "wait")
+                        .usage(10, 2)
+                        .cost(0.2)
+                })
+                .turn(|t| t.text("side").usage(20, 3).cost(0.3))
+                .turn(|t| t.text("main").cost(0.5));
+            let observer = Arc::new(Observer::new(Admission::Allow));
+            let plugin = SideAsk::observed(observer.clone());
+            let store = Store::memory().await.unwrap();
+            let outcome = Agent::new(scripted.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await
+                .unwrap();
+            assert_eq!(plugin.take().unwrap().text(), "side");
+            assert_eq!(*observer.log.admitted.lock().unwrap(), [1, 2]);
+            let reports = observer.log.reported.lock().unwrap();
+            assert_eq!(reports.len(), 2);
+            assert_eq!(reports[0].0.cost.total, 0.2);
+            assert_eq!(reports[1].0.cost.total, 0.3);
+            assert!(
+                reports
+                    .iter()
+                    .all(|(_, end)| *end == AskAttemptEnd::Finished)
+            );
+            assert_eq!(observer.log.dropped.load(Ordering::SeqCst), 2);
+            assert_eq!(observer.log.live.load(Ordering::SeqCst), 0);
+            assert_eq!(outcome.usage.cost.total, 1.0);
+            assert_eq!(scripted.requests().len(), 3);
+            assert_eq!(
+                scripted.requests()[0].settings.max_output_tokens,
+                Some(2048)
+            );
+        });
+    }
+
+    #[test]
+    fn admission_can_stop_a_retry_after_charging_the_first_attempt() {
+        block_on(async {
+            let scripted = ScriptedModel::new()
+                .turn(|t| t.error("rate_limit_exceeded", "wait").cost(0.2))
+                .turn(|t| t.text("main").cost(0.5));
+            let observer = Arc::new(Observer::new(Admission::RejectAt(2)));
+            let plugin = SideAsk::observed(observer.clone());
+            let store = Store::memory().await.unwrap();
+            let outcome = Agent::new(scripted.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await
+                .unwrap();
+            assert!(matches!(plugin.take(), Err(AskError::Admission(_))));
+            assert_eq!(*observer.log.admitted.lock().unwrap(), [1, 2]);
+            assert_eq!(observer.log.reported.lock().unwrap().len(), 1);
+            assert_eq!(observer.log.dropped.load(Ordering::SeqCst), 1);
+            assert_eq!(outcome.usage.cost.total, 0.7);
+            assert_eq!(scripted.requests().len(), 2);
+        });
+    }
+
+    #[test]
+    fn cancellation_ends_waiting_admission_and_releases_an_in_flight_permit() {
+        block_on(async {
+            let waiting =
+                Arc::new(Observer::new(Admission::CancelWhileWaiting));
+            let plugin = SideAsk::observed(waiting.clone());
+            let scripted = ScriptedModel::new();
+            let store = Store::memory().await.unwrap();
+            let _ = Agent::new(scripted.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await;
+            assert!(matches!(plugin.take(), Err(AskError::Cancelled)));
+            // The legacy runner may start its main request before observing
+            // cancellation. The observer must prevent the side request, which
+            // SideAsk distinguishes with its explicit output ceiling.
+            assert!(scripted.requests().iter().all(|request| {
+                request.settings.max_output_tokens != Some(2048)
+            }));
+            assert_eq!(waiting.log.live.load(Ordering::SeqCst), 0);
+
+            let scripted = ScriptedModel::new()
+                .turn(|t| t.text("slow").delay(Duration::from_secs(60)));
+            let in_flight = Arc::new(Observer::new(Admission::CancelInFlight(
+                scripted.clone(),
+            )));
+            let plugin = SideAsk::observed(in_flight.clone());
+            let store = Store::memory().await.unwrap();
+            let _ = Agent::new(scripted.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await;
+            assert!(matches!(plugin.take(), Err(AskError::Cancelled)));
+            assert_eq!(
+                in_flight.log.reported.lock().unwrap()[0].1,
+                AskAttemptEnd::Cancelled
+            );
+            assert_eq!(in_flight.log.dropped.load(Ordering::SeqCst), 1);
+            assert_eq!(in_flight.log.live.load(Ordering::SeqCst), 0);
+        });
+    }
+
+    #[test]
+    fn legacy_ask_retries_and_charges_without_an_observer() {
+        block_on(async {
+            let scripted = ScriptedModel::new()
+                .turn(|t| t.error("rate_limit_exceeded", "wait").cost(0.2))
+                .turn(|t| t.text("side").cost(0.3))
+                .turn(|t| t.text("main").cost(0.5));
+            let plugin = SideAsk::legacy();
+            let store = Store::memory().await.unwrap();
+            let outcome = Agent::new(scripted.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await
+                .unwrap();
+            assert_eq!(plugin.take().unwrap().text(), "side");
+            assert_eq!(scripted.requests().len(), 3);
+            assert!(plugin.supports_output_token_limit());
+            assert_eq!(outcome.usage.cost.total, 1.0);
+            assert_eq!(scripted.requests()[0].settings.max_output_tokens, None);
+        });
+    }
+}

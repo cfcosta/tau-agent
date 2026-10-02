@@ -52,6 +52,7 @@ fn settings_unprinted(tc: &TestCase) -> Settings {
             ReasoningEffort::Max,
         ])).print_as_debug()),
         text_format: tc.draw(gs::optional(gs::just(json!({"type": "json_schema", "name": "T", "schema": {}, "strict": true})))),
+        max_output_tokens: tc.draw(gs::optional(gs::integers::<u32>().min_value(1).max_value(8192))),
         service_tier: tc.draw(gs::optional(gs::sampled_from(vec!["flex".to_owned(), "priority".to_owned()]))),
         prompt_cache_key: tc.draw(gs::optional(generators::text(100))),
     }
@@ -133,14 +134,20 @@ fn encrypted_reasoning_follows_the_model(tc: TestCase) {
     assert_eq!(body.get("reasoning").cloned(), expected);
 }
 
-/// Wire limits: `prompt_cache_key` is cut to its first 64 characters,
-/// and no request asks for `max_output_tokens`, which the plan route
-/// rejects.
+/// Property inventory: generic request fields preserve the optional output
+/// ceiling and clamp the cache key. Settings is the oracle; its generator
+/// builds valid limits by construction, and `hegel.toml` supplies CI counts.
 #[hegel::test(test_cases = 300)]
 fn wire_limits_are_clamped(tc: TestCase) {
     let settings = tc.draw(settings());
     let body = body(&settings, vec![]);
-    assert!(!body.contains_key("max_output_tokens"));
+    assert_eq!(
+        body.get("max_output_tokens"),
+        settings
+            .max_output_tokens
+            .map(|limit| json!(limit))
+            .as_ref()
+    );
     if let Some(key) = &settings.prompt_cache_key {
         let sent = body["prompt_cache_key"].as_str().unwrap();
         assert_eq!(
@@ -163,6 +170,17 @@ fn wire_limits_are_clamped(tc: TestCase) {
             .map(|f| json!({"format": f}))
             .as_ref()
     );
+}
+
+#[test]
+fn generic_request_fields_include_only_configured_output_ceiling() {
+    let mut settings = Settings {
+        model: "gpt-5.5".into(),
+        ..Settings::default()
+    };
+    assert!(!body(&settings, vec![]).contains_key("max_output_tokens"));
+    settings.max_output_tokens = Some(2048);
+    assert_eq!(body(&settings, vec![])["max_output_tokens"], json!(2048));
 }
 
 /// A full body in the shape the WebSocket guide shows.

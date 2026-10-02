@@ -9,6 +9,7 @@ use tau_ai::{
     client::OpenAi,
     cost,
     event::{AssistantEvent, DoneReason},
+    llm::Llm,
     message::{Message, StopReason, Usage, UserContent, UserMessage},
     model::{ServiceTier, find},
     responses::{
@@ -72,6 +73,7 @@ fn one_response(
     let model_name = settings.model.clone();
     sim.client("client", async move {
         let client = OpenAi::with_connector(SimConnector, Limits::default());
+        assert!(!client.supports_output_token_limit());
         let mut session = client.session(settings).await.unwrap();
         // The session keeps the caller's settings, with whether the model
         // reasons taken from the model table.
@@ -186,6 +188,30 @@ fn reasoning_follows_the_table(tc: TestCase) {
     };
     let (_, request) = one_response(&tc, known, usage);
     assert_eq!(request["include"], json!(["reasoning.encrypted_content"]));
+}
+
+/// Property inventory: the current ChatGPT route strips the output ceiling
+/// whether configured or absent. The fake server's captured request is the
+/// oracle. Generate valid positive u32 limits so shrinking tends toward a
+/// small counterexample; `hegel.toml` sets local and CI case counts.
+#[hegel::test]
+fn chatgpt_route_omits_output_ceiling(tc: TestCase) {
+    let limit = tc.draw(gs::integers::<u32>().min_value(1).max_value(8192));
+    let usage = Usage::default();
+    let settings = Settings {
+        model: "gpt-5.5".into(),
+        max_output_tokens: Some(limit),
+        ..Settings::default()
+    };
+    let (_, request) = one_response(&tc, settings, usage.clone());
+    assert!(request.get("max_output_tokens").is_none());
+
+    let settings = Settings {
+        model: "gpt-5.5".into(),
+        ..Settings::default()
+    };
+    let (_, request) = one_response(&tc, settings, usage);
+    assert!(request.get("max_output_tokens").is_none());
 }
 
 /// A warm-up sends the session's settings with no input and

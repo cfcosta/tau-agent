@@ -202,12 +202,20 @@ impl PluginCtx {
     pub fn now(&self) -> Timestamp;
     /// The run's retry policy, for a plugin's own model requests.
     pub fn retry_policy(&self) -> RetryPolicy;
+    /// Whether the provider accepts an output token ceiling on side requests.
+    pub fn supports_output_token_limit(&self) -> bool;
     /// Asks the model once outside the run's conversation: its own
     /// session and lane, the run's retry policy and cancellation, every
     /// attempt's usage charged to the run. Compaction's summaries go
     /// through it.
     pub async fn ask(&self, settings: Settings, input: &[Message])
         -> Result<AssistantMessage, AskError>;
+    /// The same side request, with admission before the first open and
+    /// before each retry. Each admitted attempt reports usage and its
+    /// end state, then releases its permit before retry backoff.
+    pub async fn ask_observed(
+        &self, settings: Settings, input: &[Message], observer: &dyn AskObserver
+    ) -> Result<AssistantMessage, AskError>;
     /// Adds usage (cost included) to the run's total, which limits
     /// check, and to this plugin's own cost (`Store::plugin_costs`).
     /// The run emits it as `RunEvent::PluginCharged` before its next
@@ -243,6 +251,25 @@ pub fn read_records<R: DeserializeOwned>(plugin: &str, bodies: &[Value])
 
 A plugin's records are one `#[serde(tag = "kind")]` enum, which its
 agent half publishes and its UI fold reads.
+
+`AskObserver::admit(attempt, cancel)` receives a 1-based attempt number
+and returns a `Box<dyn AskPermit>` or a rejection string. Rejection becomes
+`AskError::Admission` without opening a session or sending a request.
+`AskPermit::report(&mut self, usage, end)` runs once for an admitted attempt;
+`AskAttemptEnd` is `Finished`, `Cancelled`, `BrokeGrammar`, `NoTerminal`,
+or `OpenFailed`. `Finished` includes terminal provider errors that may be
+retried. A permit's `Drop` releases its slot even if the future is dropped
+before `report`. Usage is charged to the run when the provider supplies it,
+including on retryable errors. A partial stream may have no usage to report;
+its report then carries default `Usage`, without a fabricated charge.
+
+`Settings::max_output_tokens: Option<u32>` adds an optional field to the
+generic Responses request builder; `None` omits it. The current OpenAI
+ChatGPT route strips this field and reports
+`supports_output_token_limit() == false`. Both `ask` and `ask_observed`
+return `AskError::OutputLimitUnsupported` for `Some(...)` on an unsupported
+provider, before observer admission or session open. A provider that opts
+in may accept a ceiling, but it is not a hard dollar cap.
 
 ## Context rewrites
 

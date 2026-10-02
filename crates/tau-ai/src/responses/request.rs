@@ -88,6 +88,8 @@ pub struct Settings {
     pub reasoning: Option<ReasoningEffort>,
     /// The `text.format` of a typed run.
     pub text_format: Option<Value>,
+    /// Optional provider output ceiling. The provider decides how to enforce it.
+    pub max_output_tokens: Option<u32>,
     pub service_tier: Option<String>,
     pub prompt_cache_key: Option<String>,
 }
@@ -137,6 +139,9 @@ pub fn fields(settings: &Settings) -> Fields {
     }
     if let Some(format) = &settings.text_format {
         body.insert("text".into(), json!({ "format": format }));
+    }
+    if let Some(max_output_tokens) = settings.max_output_tokens {
+        body.insert("max_output_tokens".into(), json!(max_output_tokens));
     }
     if let Some(tier) = &settings.service_tier {
         body.insert("service_tier".into(), json!(tier));
