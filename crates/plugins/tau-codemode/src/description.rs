@@ -22,7 +22,8 @@ pub const INTRO: &str = r#"Run Luau code to orchestrate and compose tool calls
 - A tool call that fails, is blocked, or gets invalid arguments raises an error carrying the tool's error text. Use pcall to catch it.
 - Calls inside `parallel(f1, f2, ...)` run at the same time; it returns each function's result in order. `parallel_settled` returns { ok, value | error } for each instead of raising.
 - `map(items, fn, concurrency?)` maps a marked array with at most `concurrency` running callbacks (default 4, range 1..32), passing `(item, index)`. It returns ordered `{ ok = true, value = ... }` or `{ ok = false, error = string }` records. `nil` becomes `json.null`; only the first callback return is used. At most 10000 items.
-- Runs plain Luau: no files, no processes, no network, no timers, no require.
+- `require(name, version?)` loads a registered Luau module from this conversation. Omit `version` for the selected version; an explicit version is its 64-character digest. Modules may import only declared dependencies at their pinned versions. Each VM caches module values; later scripts start fresh.
+- Runs plain Luau: no files, no processes, no network, no timers, or file-based imports.
 - Accepts raw Luau source, not JSON, quoted strings, or markdown code fences.
 - You may start the code with a line like `-- @options: {"max_output_tokens": 1000, "timeout_ms": 60000}`.
 - `max_output_tokens` sets the token budget for the script's output. Defaults to 10000 tokens.
@@ -38,6 +39,7 @@ Globals:
 - `image(item)`: appends an image: a base64 `data:` URL, `{ image_url = ... }`, or an MCP ImageContent block such as `result.content[1]`.
 - `store(key, value)`: keeps a JSON value under a string key for later `codemode` calls in this conversation. `nil` deletes the key. Writes are kept only if the script succeeds.
 - `load(key)`: returns a copy of the stored value, or `nil`.
+- `require(name, version?)`: returns one function or table from a registered module.
 - `ALL_TOOLS`: `{ name, description }` for every callable tool.
 - `search_tools(query, { limit?, namespace? })`: the callable tools that best match the query (default limit 8), as `ALL_TOOLS` entries.
 - `describe_tool(name)`: a tool's description and Luau signature, or `nil`.

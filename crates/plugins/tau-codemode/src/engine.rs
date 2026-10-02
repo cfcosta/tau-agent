@@ -52,6 +52,7 @@ use crate::{
     image,
     jev,
     live::JevUpdate,
+    modules::{self, Definition},
     options::Source,
     result::{
         CallRow,
@@ -246,6 +247,9 @@ fn close(lua: &Lua, state: &State, main: &Thread) {
         .map(|(_, thread)| thread)
         .chain(std::iter::once(main.clone()))
         .collect();
+    // Cached tables/functions can refer to require closures, so break that
+    // Lua -> Rust -> Lua ownership path before collecting the VM.
+    state.modules.lock().expect("not poisoned").clear();
     lua.remove_interrupt();
     if let Ok(noop) = lua.create_function(|_, ()| Ok(())) {
         for thread in &threads {
@@ -320,6 +324,8 @@ struct State {
     deadline: Option<Instant>,
     ticks: AtomicU64,
     threads: Mutex<HashMap<usize, Thread>>,
+    modules: Mutex<HashMap<String, LuaValue>>,
+    module_load: tokio::sync::Mutex<()>,
 }
 
 #[derive(Default)]
@@ -371,6 +377,8 @@ impl State {
             deadline,
             ticks: AtomicU64::new(0),
             threads: Mutex::default(),
+            modules: Mutex::default(),
+            module_load: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -603,6 +611,27 @@ fn install(lua: &Lua, state: &Arc<State>) -> mlua::Result<()> {
     let globals = lua.globals();
     // mlua's `require` loads modules from files.
     globals.raw_remove("require")?;
+    let s = Arc::clone(state);
+    globals.set(
+        "require",
+        lifted(
+            lua.create_async_function(move |lua, args: MultiValue| {
+                let s = Arc::clone(&s);
+                async move {
+                    let (name, version) = match require_args(args) {
+                        Ok(args) => args,
+                        Err(message) => return fail(&lua, message),
+                    };
+                    match load_module(&lua, &s, &name, version.as_deref()).await
+                    {
+                        Ok(value) => Ok(ok([value])),
+                        Err(message) => fail(&lua, message),
+                    }
+                }
+            })?,
+            AT_CALLER,
+        )?,
+    )?;
 
     // JSON shapes.
     let array_meta = lua.array_metatable();
@@ -1126,6 +1155,253 @@ fn stopped(state: &State) -> Option<&'static str> {
         CANCELLED => Some("Script cancelled"),
         _ => Some("exit"),
     }
+}
+
+fn require_args(args: MultiValue) -> Result<(String, Option<String>), String> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(
+            "require() expects a module name and optional version".into()
+        );
+    }
+    let mut args = args.into_iter();
+    let Some(LuaValue::String(name)) = args.next() else {
+        return Err("require(): the name must be a string".into());
+    };
+    let name = name
+        .to_str()
+        .map_err(|_| "require(): invalid UTF-8 name")?
+        .to_string();
+    modules::validate_name(&name)
+        .map_err(|error| format!("require(): {error}"))?;
+    let version = match args.next() {
+        None | Some(LuaValue::Nil) => None,
+        Some(LuaValue::String(version)) => {
+            let version = version
+                .to_str()
+                .map_err(|_| "require(): invalid UTF-8 version")?
+                .to_string();
+            if !modules::valid_version(&version) {
+                return Err(
+                    "require(): version must be 64 lowercase hex characters"
+                        .into(),
+                );
+            }
+            Some(version)
+        }
+        Some(_) => return Err("require(): the version must be a string".into()),
+    };
+    Ok((name, version))
+}
+
+/// Resolve the declared graph before evaluating any source. This catches
+/// cycles across simultaneous imports without waiting on another importer.
+async fn visit_module(
+    state: &State,
+    name: &str,
+    version: Option<&str>,
+    path: &mut Vec<String>,
+    definitions: &mut HashMap<String, Definition>,
+    order: &mut Vec<String>,
+) -> Result<String, String> {
+    if let Some(message) = stopped(state) {
+        return Err(message.into());
+    }
+    let definition = state.host.module(name, version).await?.ok_or_else(
+        || match version {
+            Some(version) => {
+                format!("module {name}@{version} is not registered")
+            }
+            None => format!("module {name} is not registered"),
+        },
+    )?;
+    definition.verify()?;
+    if definition.name() != name
+        || version.is_some_and(|v| v != definition.version())
+    {
+        return Err(format!("module {name} returned a mismatched version"));
+    }
+    let key = definition.version().to_owned();
+    if path.contains(&key) {
+        let mut chain = path.clone();
+        chain.push(key);
+        return Err(format!("module import cycle: {}", chain.join(" -> ")));
+    }
+    if definitions.contains_key(&key) {
+        return Ok(key);
+    }
+    path.push(key.clone());
+    for (child, pin) in definition.dependencies() {
+        Box::pin(visit_module(
+            state,
+            child,
+            Some(pin),
+            path,
+            definitions,
+            order,
+        ))
+        .await?;
+    }
+    path.pop();
+    order.push(key.clone());
+    definitions.insert(key.clone(), definition);
+    Ok(key)
+}
+
+async fn load_module(
+    lua: &Lua,
+    state: &Arc<State>,
+    name: &str,
+    version: Option<&str>,
+) -> Result<LuaValue, String> {
+    let _loading = state.module_load.lock().await;
+    let mut definitions = HashMap::new();
+    let mut order = Vec::new();
+    let key = visit_module(
+        state,
+        name,
+        version,
+        &mut Vec::new(),
+        &mut definitions,
+        &mut order,
+    )
+    .await?;
+    for version in order {
+        if state
+            .modules
+            .lock()
+            .expect("not poisoned")
+            .contains_key(&version)
+        {
+            continue;
+        }
+        let definition = &definitions[&version];
+        let value = evaluate_module(lua, state, definition).await?;
+        state
+            .modules
+            .lock()
+            .expect("not poisoned")
+            .insert(version, value);
+    }
+    Ok(state.modules.lock().expect("not poisoned")[&key].clone())
+}
+
+async fn evaluate_module(
+    lua: &Lua,
+    state: &Arc<State>,
+    definition: &Definition,
+) -> Result<LuaValue, String> {
+    if let Some(message) = stopped(state) {
+        return Err(message.into());
+    }
+    let environment = lua.create_table().map_err(|e| e.to_string())?;
+    let meta = lua.create_table().map_err(|e| e.to_string())?;
+    let globals = lua.globals();
+    let inherit = lua
+        .create_function(move |_, (_environment, key): (Table, LuaValue)| {
+            if let LuaValue::String(name) = &key
+                && matches!(name.to_str()?.as_ref(), "getfenv" | "setfenv")
+            {
+                return Ok(LuaValue::Boolean(false));
+            }
+            globals.get::<LuaValue>(key)
+        })
+        .map_err(|e| e.to_string())?;
+    // A module can delete its own fields. Keep introspection blocked in
+    // the fallback too, so nil/rawset cannot recover the caller's require.
+    meta.set("__index", inherit).map_err(|e| e.to_string())?;
+    meta.set("__metatable", "locked")
+        .map_err(|e| e.to_string())?;
+    environment
+        .set_metatable(Some(meta))
+        .map_err(|e| e.to_string())?;
+    environment
+        .set("_G", environment.clone())
+        .map_err(|e| e.to_string())?;
+    // Environment introspection could recover the caller's unrestricted
+    // require and bypass this definition's dependency pins.
+    environment
+        .set("getfenv", false)
+        .map_err(|e| e.to_string())?;
+    environment
+        .set("setfenv", false)
+        .map_err(|e| e.to_string())?;
+    let pins = definition.dependencies().clone();
+    let cache = Arc::clone(state);
+    let dependency_require = lua
+        .create_function(move |lua, args: MultiValue| {
+            let (name, version) = match require_args(args) {
+                Ok(args) => args,
+                Err(message) => return fail(lua, message),
+            };
+            let Some(pin) = pins.get(&name) else {
+                return fail(
+                    lua,
+                    format!("module dependency {name} is not declared"),
+                );
+            };
+            if version.as_deref().is_some_and(|version| version != pin) {
+                return fail(
+                    lua,
+                    format!("module dependency {name} version mismatch"),
+                );
+            }
+            match cache
+                .modules
+                .lock()
+                .expect("not poisoned")
+                .get(pin)
+                .cloned()
+            {
+                Some(value) => Ok(ok([value])),
+                None => fail(
+                    lua,
+                    format!("module dependency {name}@{pin} is unavailable"),
+                ),
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    // Keep the same string-error contract as top-level require.
+    let lift: Function = lua.load(PRELUDE).eval().map_err(|e| e.to_string())?;
+    let dependency_require: Function = lift
+        .call((dependency_require, AT_CALLER))
+        .map_err(|e| e.to_string())?;
+    environment
+        .set("require", dependency_require)
+        .map_err(|e| e.to_string())?;
+    let function = lua
+        .load(definition.source())
+        .set_name(format!(
+            "=module:{}@{}",
+            definition.name(),
+            definition.version()
+        ))
+        .set_mode(ChunkMode::Text)
+        .set_environment(environment)
+        .into_function()
+        .map_err(|error| error_text(&error))?;
+    let thread = lua.create_thread(function).map_err(|e| e.to_string())?;
+    state.own(&thread);
+    let result = thread
+        .clone()
+        .into_async::<MultiValue>(())
+        .map_err(|error| error_text(&error))?
+        .await;
+    state.disown(&thread);
+    let values = result.map_err(|error| error_text(&error))?;
+    if values.len() != 1 {
+        return Err(format!(
+            "module {} must return exactly one value",
+            definition.name()
+        ));
+    }
+    let value = values.into_iter().next().expect("one value");
+    if !matches!(value, LuaValue::Function(_) | LuaValue::Table(_)) {
+        return Err(format!(
+            "module {} must return a function or table",
+            definition.name()
+        ));
+    }
+    Ok(value)
 }
 
 /// `jev.<function>`.

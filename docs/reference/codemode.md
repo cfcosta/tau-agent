@@ -75,8 +75,9 @@ tau differs from pi, it says so.
   run is cancelled the interrupt raises an error at every tick, which
   `pcall` cannot outrun.
 - **What a script cannot reach:** files, processes, the network,
-  timers, `require`, `loadstring` of bytecode. mlua adds a `require`
-  that reads files, so the engine removes it. Only the globals below
+  timers, file-based imports, `loadstring` of bytecode. mlua adds a `require`
+  that reads files, so the engine replaces it with registered module loading
+  ([module loading](codemode-module-loading.md)). Only the globals below
   reach outside the VM, and every one of them goes through the loop or
   the plugin.
 - **Output:** at most 64 MiB of output text and images, which live
@@ -284,7 +285,8 @@ Run Luau code to orchestrate and compose tool calls
 - Tool functions return a table or a string, as their signature says.
 - A tool call that fails, is blocked, or gets invalid arguments raises an error carrying the tool's error text. Use pcall to catch it.
 - Calls inside `parallel(f1, f2, ...)` run at the same time; it returns each function's result in order. `parallel_settled` returns { ok, value | error } for each instead of raising.
-- Runs plain Luau: no files, no processes, no network, no timers, no require.
+- `require(name, version?)` loads a registered module from this conversation. Modules use exact dependency pins and are cached within one VM.
+- Runs plain Luau: no files, no processes, no network, no timers, or file-based imports.
 - Accepts raw Luau source, not JSON, quoted strings, or markdown code fences.
 - You may start the code with a line like `-- @options: {"max_output_tokens": 1000, "timeout_ms": 60000}`.
 - `max_output_tokens` sets the token budget for the script's output. Defaults to 10000 tokens.
@@ -482,7 +484,7 @@ holds for every input:
 - **Sandbox, as examples:** return values; errors with line numbers;
   `pcall` of a failing tool; parallel calls overlap in time; a tight
   loop times out; cancel stops a tight loop; the memory limit; no
-  `io`, `os.execute`, `require`; globals are read-only; calls still
+  `io`, `os.execute`, or file imports; globals are read-only; calls still
   running at the end are cancelled.
 - **In the loop** (`tau-testing::ScriptedModel`): a codemode call
   makes one transcript result however many nested calls it makes; a

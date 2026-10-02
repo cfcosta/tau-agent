@@ -1,7 +1,8 @@
 # Codemode module records
 
-Codemode module definitions are immutable records. This is a storage and fold
-contract; no module inspector or VM loading is provided yet.
+Codemode module definitions are immutable records. This page describes their
+storage and fold contract. See [module loading](codemode-module-loading.md)
+for the VM's `require` behavior. No definition tools are provided yet.
 
 The outer plugin record has `kind: "module"`. Its payload has `op: "define"`
 with a `definition`, or `op: "select"` with `name` and `version`. A definition

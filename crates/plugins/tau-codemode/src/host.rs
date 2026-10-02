@@ -11,6 +11,8 @@ use serde_json::Value;
 use tau_ai::message::Usage;
 use tau_jev::Jev;
 
+use crate::modules::Definition;
+
 /// A callable tool, as scripts see it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolEntry {
@@ -70,6 +72,16 @@ pub trait Host: Send + Sync + 'static {
     /// The namespaces those tools belong to.
     fn namespaces(&self) -> Vec<Namespace> {
         Vec::new()
+    }
+
+    /// Finds a registered module by selected version or exact digest.
+    /// The default host has no module library.
+    async fn module(
+        &self,
+        _name: &str,
+        _version: Option<&str>,
+    ) -> Result<Option<Definition>, String> {
+        Ok(None)
     }
 
     /// Runs a tool. `Ok` carries the readable value: structured output

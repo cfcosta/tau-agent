@@ -284,7 +284,7 @@ async fn the_sandbox_has_no_way_out() {
              io = io == nil,\n\
              execute = os.execute == nil,\n\
              exit = os.exit == nil,\n\
-             require = require == nil,\n\
+             require = type(require) == 'function',\n\
              package = package == nil,\n\
              dofile = dofile == nil,\n\
              loadfile = loadfile == nil,\n\
