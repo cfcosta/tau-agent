@@ -43,4 +43,8 @@ gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
 tau-store.workspace = true
 tau-testing.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+tokio = { workspace = true, features = [
+  "rt-multi-thread",
+  "time",
+  "test-util",
+] }

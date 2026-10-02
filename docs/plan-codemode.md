@@ -42,7 +42,7 @@ to large inputs.
 ### M2: Bounded inference
 
 - [x] **10:** Parse [bounded inference requests and validate output schemas](reference/codemode-inference-request.md).
-- [ ] **11:** Add shared per-run admission limits.
+- [x] **11:** Add [shared per-run admission limits](reference/codemode-inference-budget.md).
 - [ ] **12:** Admit and report each side-request attempt, including retries.
 - [ ] **13:** Add `tools.infer` as a nested tool owned by Codemode.
 - [ ] **14:** Store private inference traces and provenance.
