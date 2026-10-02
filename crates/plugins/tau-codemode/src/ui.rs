@@ -15,16 +15,20 @@
 //! Plugins' verdicts on a nested call ([`CallData::nested_marks`]) mark
 //! its row in both.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::Write,
+    sync::Arc,
+};
 
-use gpui::{Div, div, prelude::*, px};
+use gpui::{App, Context, Div, Entity, SharedString, div, prelude::*, px};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tau_agent::plugin::Plugin;
+use tau_agent::{plugin::Plugin, tool::RunId};
 use tau_jev::Jev;
 use tau_ui_kit::{
     assets::Icon,
-    components::{self as ui, code_block, heading, icon, mono},
+    components::{self as ui, ButtonKind, code_block, heading, icon, mono},
     format::fine_usd,
     theme::{IconSize, Theme, Tone, Type, sp},
 };
@@ -32,11 +36,13 @@ use tau_ui_plugin::{
     CallData,
     CardMark,
     Fold,
+    Handle,
     HostCx,
     Manifest,
     NestedMark,
     PluginInfo,
     PluginStatus,
+    PluginUi,
     RunCtx,
     RunCx,
     Seam,
@@ -58,6 +64,103 @@ use crate::{
 /// tau-codemode with its UI.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CodemodeUi;
+
+/// Inspector disclosure state; only opened source and test details are rendered.
+pub struct InspectorUi {
+    open: BTreeSet<String>,
+    handle: Handle,
+}
+
+impl PluginUi for InspectorUi {
+    fn new(handle: Handle, _: &mut Context<Self>) -> Self {
+        Self {
+            open: BTreeSet::new(),
+            handle,
+        }
+    }
+}
+
+impl InspectorUi {
+    fn toggle(&mut self, key: String) {
+        if !self.open.remove(&key) {
+            self.open.insert(key);
+        }
+    }
+}
+
+/// A user request to select an already persisted immutable version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Action {
+    Select {
+        run: RunId,
+        name: String,
+        version: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ActionReply {
+    error: String,
+}
+
+/// Validate against the run's persisted fork records, never the view state.
+pub fn validate_selection(
+    records: &[Value],
+    name: &str,
+    version: &str,
+) -> Result<modules::Record, String> {
+    for value in records {
+        if value.get("kind").and_then(Value::as_str) == Some("module")
+            && value.get("op").and_then(Value::as_str) == Some("define")
+            && value.pointer("/definition/version").and_then(Value::as_str)
+                == Some(version)
+            && value.pointer("/definition/name").and_then(Value::as_str)
+                == Some(name)
+        {
+            let record: Record = serde_json::from_value(value.clone())
+                .map_err(|_| {
+                    "The saved module definition is corrupt".to_owned()
+                })?;
+            if let Record::Module(modules::Record::Define { definition }) =
+                record
+            {
+                definition.verify().map_err(|error| {
+                    format!("The saved module definition is corrupt: {error}")
+                })?;
+            }
+        }
+    }
+    let library = modules::fold(records);
+    match library.versions().get(version) {
+        Some(definition) if definition.name() == name => {
+            Ok(modules::Record::Select {
+                name: name.to_owned(),
+                version: version.to_owned(),
+            })
+        }
+        Some(_) => Err("That version belongs to another module".into()),
+        None => Err("That module version is missing from this run".into()),
+    }
+}
+
+/// The inspector's button sends only run, name, and exact version.
+pub fn select_version(
+    run: &RunId,
+    name: &str,
+    version: &str,
+    handle: &Handle,
+    cx: &mut App,
+) {
+    handle.act(
+        Action::Select {
+            run: run.clone(),
+            name: name.to_owned(),
+            version: version.to_owned(),
+        },
+        cx,
+    );
+}
 
 /// What a run's scripts kept in the store, as its records leave it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -370,7 +473,7 @@ impl UiPlugin for CodemodeUi {
     type RepoData = ();
     type Settings = ();
     type Host = ();
-    type Ui = ();
+    type Ui = InspectorUi;
 
     fn name(&self) -> &'static str {
         PLUGIN
@@ -407,13 +510,66 @@ impl UiPlugin for CodemodeUi {
         }
     }
 
+    fn act(
+        &self,
+        _host: &(),
+        action: Value,
+        cx: &HostCx,
+    ) -> anyhow::Result<Option<Value>> {
+        let result = (|| {
+            let Action::Select { run, name, version } =
+                serde_json::from_value::<Action>(action).map_err(|_| {
+                    "Invalid module selection action".to_owned()
+                })?;
+            let records = cx
+                .records(&run, PLUGIN)
+                .map_err(|error| error.to_string())?;
+            let selection = validate_selection(&records, &name, &version)?;
+            let body = serde_json::to_value(Record::Module(selection))
+                .map_err(|error| error.to_string())?;
+            cx.publish(&run, PLUGIN, &body)
+                .map_err(|error| error.to_string())
+        })();
+        Ok(result.err().map(|error| {
+            serde_json::to_value(ActionReply { error })
+                .expect("reply serializes")
+        }))
+    }
+
+    fn reply(
+        &self,
+        ui: &mut Self::Ui,
+        reply: Value,
+        cx: &mut Context<Self::Ui>,
+    ) {
+        if let Ok(reply) = serde_json::from_value::<ActionReply>(reply) {
+            ui.handle.alert("Module selection failed", reply.error, cx);
+        }
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::CARD, card)
             .contribute(points::INSPECTOR, |_: &AtRun, view| {
                 let state = view.state?;
                 let t = view.theme().clone();
-                Some(store_section(state, &t).into_any_element())
+                let open = view.ui.read(view.cx).open.clone();
+                Some(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(sp(4.))
+                        .child(store_section(state, &t))
+                        .child(modules_section(
+                            &state.modules,
+                            view.run.map(|run| &run.id),
+                            &open,
+                            view.ui.clone(),
+                            view.handle.clone(),
+                            &t,
+                        ))
+                        .into_any_element(),
+                )
             })
             .contribute(points::STATUS, |at: &AtRun, view| {
                 let scripts = view
@@ -672,4 +828,314 @@ fn store_section(state: &State, t: &Theme) -> Div {
                 }),
             )
         })
+}
+
+/// Compact JSON written into a byte cap; a large fake fixture never gets
+/// expanded into pretty JSON just to draw the inspector.
+pub fn compact_json_preview(value: &impl Serialize, limit: usize) -> String {
+    struct Limited(Vec<u8>, usize, bool);
+    impl Write for Limited {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let remaining = self.1.saturating_sub(self.0.len());
+            self.0
+                .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+            if bytes.len() > remaining {
+                self.2 = true;
+                Err(std::io::Error::other("preview limit"))
+            } else {
+                Ok(bytes.len())
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut out = Limited(Vec::new(), limit, false);
+    let _ = serde_json::to_writer(&mut out, value);
+    let mut text = String::from_utf8_lossy(&out.0).into_owned();
+    if out.2 {
+        text.push('…');
+    }
+    text
+}
+
+fn disclosure(
+    key: String,
+    label: String,
+    open: bool,
+    ui_state: gpui::Entity<InspectorUi>,
+    handle: Handle,
+    t: &Theme,
+) -> gpui::Stateful<Div> {
+    div()
+        .id(SharedString::from(key.clone()))
+        .min_h(px(32.))
+        .flex()
+        .items_center()
+        .gap(sp(1.))
+        .cursor_pointer()
+        .child(icon(
+            if open { Icon::Down } else { Icon::Chevron },
+            IconSize::SMALL,
+            t.dim,
+        ))
+        .child(mono(label, Type::MICRO, t.text_soft))
+        .on_click(move |_, _, cx| {
+            ui_state.update(cx, |ui, _| ui.toggle(key.clone()));
+            handle.refresh(cx);
+        })
+}
+
+/// The selected version first, followed by each previous immutable version.
+fn modules_section(
+    library: &modules::Library,
+    run: Option<&RunId>,
+    open: &BTreeSet<String>,
+    ui_state: Entity<InspectorUi>,
+    handle: Handle,
+    t: &Theme,
+) -> Div {
+    let mut section = div().flex().flex_col().gap(sp(2.)).child(heading(
+        &format!("Codemode modules · {}", library.selected().len()),
+        t,
+    ));
+    if library.selected().is_empty() {
+        return section.child(ui::text(
+            "No modules defined in this run.",
+            Type::CAPTION,
+            t.muted,
+        ));
+    }
+    let Some(run) = run else {
+        return section;
+    };
+    for (name, selected) in library.selected() {
+        section = section.child(heading(name, t));
+        if let Some(definition) = library.versions().get(selected) {
+            section = section.child(version_row(
+                definition,
+                true,
+                library.tests(selected),
+                run,
+                open,
+                (ui_state.clone(), handle.clone()),
+                t,
+            ));
+        }
+        let previous: Vec<_> = library
+            .versions()
+            .values()
+            .filter(|definition| {
+                definition.name() == name && definition.version() != selected
+            })
+            .collect();
+        if !previous.is_empty() {
+            section = section.child(mono(
+                "Previous immutable versions",
+                Type::MICRO,
+                t.dim,
+            ));
+            for definition in previous {
+                section = section.child(version_row(
+                    definition,
+                    false,
+                    library.tests(definition.version()),
+                    run,
+                    open,
+                    (ui_state.clone(), handle.clone()),
+                    t,
+                ));
+            }
+        }
+    }
+    section
+}
+
+fn version_row(
+    definition: &modules::Definition,
+    selected: bool,
+    tests: &[modules::ModuleTest],
+    run: &RunId,
+    open: &BTreeSet<String>,
+    controls: (Entity<InspectorUi>, Handle),
+    t: &Theme,
+) -> Div {
+    let (ui_state, handle) = controls;
+    let name = definition.name();
+    let version = definition.version();
+    let source_key = format!("module-source-{version}");
+    let source_open = open.contains(&source_key);
+    let signatures_key = format!("module-signatures-{version}");
+    let signatures_open = open.contains(&signatures_key);
+    let mut row = div()
+        .flex()
+        .flex_col()
+        .gap(sp(1.5))
+        .p(sp(2.))
+        .border_1()
+        .border_color(t.border)
+        .rounded(tau_ui_kit::theme::radius::BOX)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .child(
+                    mono(
+                        format!(
+                            "{} · {}",
+                            if selected { "Selected" } else { "Version" },
+                            version
+                        ),
+                        Type::MICRO,
+                        t.text_soft,
+                    )
+                    .flex_1()
+                    .min_w(px(0.))
+                    .truncate(),
+                )
+                .when(!selected, |header| {
+                    let (run, name, version, handle) = (
+                        run.clone(),
+                        name.to_owned(),
+                        version.to_owned(),
+                        handle.clone(),
+                    );
+                    header.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "module-select-{version}"
+                            )))
+                            .child(ui::button(
+                                "Select version",
+                                ButtonKind::Secondary,
+                                t,
+                            ))
+                            .on_click(move |_, _, cx| {
+                                select_version(
+                                    &run, &name, &version, &handle, cx,
+                                )
+                            }),
+                    )
+                }),
+        )
+        .child(mono(
+            format!(
+                "Signatures: {}",
+                compact_json_preview(definition.signatures(), 1024)
+            ),
+            Type::MICRO,
+            t.muted,
+        ))
+        .child(mono(
+            format!(
+                "Dependencies: {}",
+                if definition.dependencies().is_empty() {
+                    "none".to_owned()
+                } else {
+                    definition
+                        .dependencies()
+                        .iter()
+                        .map(|(name, version)| format!("{name}@{version}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            ),
+            Type::MICRO,
+            t.muted,
+        ))
+        .child(disclosure(
+            source_key,
+            "Show source".into(),
+            source_open,
+            ui_state.clone(),
+            handle.clone(),
+            t,
+        ));
+    if source_open {
+        row = row.child(code_block(Some("luau"), definition.source(), t));
+    }
+    row = row.child(disclosure(
+        signatures_key,
+        "Show signatures".into(),
+        signatures_open,
+        ui_state.clone(),
+        handle.clone(),
+        t,
+    ));
+    if signatures_open {
+        // Compact definitions are bounded at 16 KiB; no pretty-print amplification.
+        let signatures = serde_json::to_string(definition.signatures())
+            .expect("signatures are JSON");
+        row = row.child(code_block(Some("json"), &signatures, t));
+    }
+    row = row.child(mono(format!("Controlled tests · {}", tests.len()), Type::MICRO, t.text_soft))
+        .child(mono("Tests use supplied fake calls and exact module versions; passing is evidence for those inputs, not proof of live behavior.", Type::MICRO, t.dim));
+    for (index, test) in tests.iter().enumerate() {
+        let report = test.result();
+        let key = format!("module-test-{version}-{index}");
+        let expanded = open.contains(&key);
+        row = row.child(disclosure(
+            key,
+            format!(
+                "{} · test {} · {}",
+                if report.passed { "Passed" } else { "Failed" },
+                index + 1,
+                version
+            ),
+            expanded,
+            ui_state.clone(),
+            handle.clone(),
+            t,
+        ));
+        if expanded {
+            row = row
+                .child(code_block(Some("luau"), test.code(), t))
+                .child(mono(
+                    format!(
+                        "Fake calls: {}",
+                        compact_json_preview(&test.tools(), 2048)
+                    ),
+                    Type::MICRO,
+                    t.dim,
+                ))
+                .child(mono(
+                    format!(
+                        "Output{}: {}",
+                        if report.output_truncated {
+                            " (truncated)"
+                        } else {
+                            ""
+                        },
+                        preview(&report.output, 2048)
+                    ),
+                    Type::MICRO,
+                    t.muted,
+                ))
+                .child(mono(
+                    format!(
+                        "Calls: {}",
+                        compact_json_preview(&report.calls, 2048)
+                    ),
+                    Type::MICRO,
+                    t.dim,
+                ));
+            if let Some(error) = &report.error {
+                row = row.child(mono(
+                    format!(
+                        "Error{}: {}",
+                        if report.error_truncated {
+                            " (truncated)"
+                        } else {
+                            ""
+                        },
+                        preview(error, 2048)
+                    ),
+                    Type::MICRO,
+                    t.red,
+                ));
+            }
+        }
+    }
+    row
 }

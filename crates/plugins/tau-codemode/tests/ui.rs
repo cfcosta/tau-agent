@@ -24,23 +24,290 @@ use tau_codemode::{
     ToolCall,
     ToolEntry,
     ToolReply,
+    modules::{self, Definition, ModuleTest, TestReport},
     options,
     run,
     store::{self, Writes},
-    ui::{self, CodemodeUi, Row, State},
+    ui::{self, Action, CodemodeUi, InspectorUi, Row, State},
 };
 use tau_jev::{Jev, fake::FakeJev};
+use tau_store::{Entry, NewRun, RunKind, Store, TurnUsage};
 use tau_testing::block_on_io;
 use tau_ui_plugin::{
     CallData,
     CallResult,
     CardMark,
     Handle,
+    HostCx,
+    PluginUi as _,
+    Request as UiRequest,
     RunInfo,
+    Services,
     UiPlugin as _,
     ViewCx,
     points::AtCard,
 };
+
+fn module_record(record: modules::Record) -> Value {
+    serde_json::to_value(store::Record::Module(record)).unwrap()
+}
+
+fn module_definition(name: &str, source: &str) -> Definition {
+    Definition::new(
+        name.into(),
+        source.into(),
+        json!({"run": "() -> number"}),
+        BTreeMap::new(),
+    )
+    .unwrap()
+}
+
+// Property inventory: generated define/select/test sequences have the same
+// module library in the live UI fold, a reloaded UI fold, and the separate
+// persisted-record library oracle at every prefix. hegel.toml sets counts.
+#[hegel::test]
+fn module_records_match_live_and_reloaded_ui(tc: hegel::TestCase) {
+    let steps: Vec<(u8, u8)> = tc.draw(
+        gs::vecs(hegel::tuples!(gs::integers::<u8>(), gs::integers::<u8>()))
+            .max_size(20),
+    );
+    let registry = tau_ui_plugin::Registry::new().with(CodemodeUi);
+    let plugin = registry.get(PLUGIN).unwrap();
+    let mut state = tau_ui_plugin::PluginValue::default();
+    let mut records = Vec::new();
+    let mut known = Vec::<Definition>::new();
+    for (kind, n) in steps {
+        let record = if kind % 3 == 0 || known.is_empty() {
+            let definition = module_definition(
+                if n % 2 == 0 { "alpha" } else { "beta" },
+                &format!("return {n}"),
+            );
+            known.push(definition.clone());
+            modules::Record::Define { definition }
+        } else {
+            let definition = &known[n as usize % known.len()];
+            if kind % 3 == 1 {
+                modules::Record::Select {
+                    name: definition.name().into(),
+                    version: definition.version().into(),
+                }
+            } else {
+                let report = TestReport {
+                    name: definition.name().into(),
+                    version: definition.version().into(),
+                    passed: n % 2 == 0,
+                    output: format!("case {n}"),
+                    output_truncated: false,
+                    calls: vec![],
+                    error: None,
+                    error_truncated: false,
+                };
+                modules::Record::Test {
+                    test: ModuleTest::new(
+                        definition.name().into(),
+                        definition.version().into(),
+                        format!("assert({n} == {n})"),
+                        vec![],
+                        report,
+                    )
+                    .unwrap(),
+                }
+            }
+        };
+        let body = module_record(record);
+        records.push(body.clone());
+        plugin.apply(
+            &mut state,
+            &body,
+            &mut tau_ui_plugin::testing::FakeRun::default(),
+        );
+        let oracle = modules::fold(&records);
+        assert_eq!(state.get::<State>().modules, oracle);
+        let mut reloaded = tau_ui_plugin::PluginValue::default();
+        for body in &records {
+            plugin.apply(
+                &mut reloaded,
+                body,
+                &mut tau_ui_plugin::testing::FakeRun::default(),
+            );
+        }
+        assert_eq!(reloaded.get::<State>().modules, oracle);
+    }
+}
+
+#[test]
+fn selection_validation_rejects_missing_mismatched_and_corrupt_versions() {
+    let definition = module_definition("alpha", "return 1");
+    let version = definition.version().to_owned();
+    let record = module_record(modules::Record::Define { definition });
+    assert_eq!(
+        ui::validate_selection(
+            std::slice::from_ref(&record),
+            "alpha",
+            &version
+        )
+        .unwrap(),
+        modules::Record::Select {
+            name: "alpha".into(),
+            version: version.clone()
+        }
+    );
+    assert!(
+        ui::validate_selection(&[], "alpha", &version)
+            .unwrap_err()
+            .contains("missing")
+    );
+    assert!(
+        ui::validate_selection(std::slice::from_ref(&record), "beta", &version)
+            .unwrap_err()
+            .contains("another")
+    );
+    let mut corrupt = record;
+    corrupt["definition"]["source"] = json!("return 2");
+    assert!(
+        ui::validate_selection(&[corrupt], "alpha", &version)
+            .unwrap_err()
+            .contains("corrupt")
+    );
+}
+
+#[gpui::test]
+fn selection_button_sends_only_the_exact_version(cx: &mut TestAppContext) {
+    let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let received = requests.clone();
+    let handle = Handle::new(
+        PLUGIN,
+        Rc::new(move |_, request, _: &mut App| {
+            received.borrow_mut().push(request)
+        }),
+    );
+    let run = RunId("run-7".into());
+    let version = "a".repeat(64);
+    cx.update(|cx| ui::select_version(&run, "alpha", &version, &handle, cx));
+    assert_eq!(
+        *requests.borrow(),
+        vec![UiRequest::Act(
+            serde_json::to_value(Action::Select {
+                run,
+                name: "alpha".into(),
+                version,
+            })
+            .unwrap()
+        )]
+    );
+}
+
+#[gpui::test]
+fn rejected_selection_requests_a_visible_alert(cx: &mut TestAppContext) {
+    let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let received = requests.clone();
+    let handle = Handle::new(
+        PLUGIN,
+        Rc::new(move |_, request, _: &mut App| {
+            received.borrow_mut().push(request)
+        }),
+    );
+    cx.update(|cx| {
+        let ui = cx.new(|cx| InspectorUi::new(handle, cx));
+        ui.update(cx, |ui, cx| {
+            CodemodeUi.reply(
+                ui,
+                json!({"error": "That module version is missing"}),
+                cx,
+            )
+        });
+    });
+    assert_eq!(
+        *requests.borrow(),
+        vec![UiRequest::Alert {
+            title: "Module selection failed".into(),
+            message: "That module version is missing".into(),
+        }]
+    );
+}
+
+#[test]
+fn host_action_revalidates_persisted_records_and_publishes_selection() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(Store::memory()).unwrap();
+    let run = RunId("module-run".into());
+    runtime
+        .block_on(store.create_run(&NewRun {
+            id: &run.0,
+            workflow_id: None,
+            agent: "test",
+            kind: RunKind::Root,
+            model: "test",
+            turns: 0,
+        }))
+        .unwrap();
+    let first = module_definition("alpha", "return 1");
+    let second = module_definition("alpha", "return 2");
+    for definition in [&first, &second] {
+        runtime
+            .block_on(
+                store.append_turn(
+                    &run.0,
+                    &[Entry::Plugin {
+                        plugin: PLUGIN.into(),
+                        body: module_record(modules::Record::Define {
+                            definition: definition.clone(),
+                        })
+                        .to_string(),
+                    }],
+                    TurnUsage::default(),
+                ),
+            )
+            .unwrap();
+    }
+    let cx = HostCx::new(
+        store,
+        runtime.handle().clone(),
+        Services::default(),
+        std::path::PathBuf::from("/tmp/tau-codemode-ui-test"),
+        vec![],
+        Arc::new(|_| {}),
+    );
+    let action = |name: &str, version: &str| {
+        serde_json::to_value(Action::Select {
+            run: run.clone(),
+            name: name.into(),
+            version: version.into(),
+        })
+        .unwrap()
+    };
+    assert!(
+        CodemodeUi
+            .act(&(), action("alpha", first.version()), &cx)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        modules::fold(&cx.records(&run, PLUGIN).unwrap()).selected()["alpha"],
+        first.version()
+    );
+    let count = cx.records(&run, PLUGIN).unwrap().len();
+    for bad in [
+        action("alpha", &"f".repeat(64)),
+        action("beta", first.version()),
+    ] {
+        let reply = CodemodeUi.act(&(), bad, &cx).unwrap().unwrap();
+        assert!(reply["error"].is_string());
+        assert_eq!(cx.records(&run, PLUGIN).unwrap().len(), count);
+    }
+}
+
+#[test]
+fn large_fake_fixture_json_is_bounded_before_display() {
+    let value = json!({"fake": "x".repeat(1024 * 1024)});
+    let preview = ui::compact_json_preview(&value, 2048);
+    assert!(preview.len() <= 2051);
+    assert!(preview.ends_with('…'));
+}
 
 const CALL: &str = "call_1";
 
@@ -543,7 +810,7 @@ fn draw(
     let handle = Handle::new(PLUGIN, Rc::new(|_, _, _: &mut App| {}));
     cx.update(|cx| {
         cx.set_global(tau_ui_kit::theme::Theme::graphite());
-        let ui = cx.new(|_| ());
+        let ui = cx.new(|cx| InspectorUi::new(handle.clone(), cx));
         let mut view = ViewCx::new(
             &CodemodeUi,
             ui,

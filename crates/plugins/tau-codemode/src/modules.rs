@@ -255,6 +255,12 @@ impl ModuleTest {
     pub fn result(&self) -> &TestReport {
         &self.result
     }
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+    pub fn tools(&self) -> &[ExpectedCall] {
+        &self.tools
+    }
 
     fn verify(&self) -> Result<(), String> {
         Self::new(

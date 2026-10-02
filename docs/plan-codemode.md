@@ -59,7 +59,7 @@ correctness and evaluation, not on assumed token savings.
 - [x] **19:** [Load registered modules into fresh VMs](reference/codemode-module-loading.md) with exact dependency pins.
 - [x] **20:** Add [owned definition, listing, inspection and selection tools](reference/codemode-module-tools.md) with per-VM import pins.
 - [x] **21:** [Exercise exact-version modules with bounded fake-tool tests](reference/codemode-module-tests.md), without live side effects.
-- [ ] **22:** Add scratch-module inspection and rollback to the UI.
+- [x] **22:** Add [scratch-module inspection and trusted exact-version rollback](reference/codemode-modules-ui.md) to the UI.
 - [ ] **23:** Add repository storage and pinned version selection.
 - [ ] **24:** Add approval-controlled repository publication.
 
