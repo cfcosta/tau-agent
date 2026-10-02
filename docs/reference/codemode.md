@@ -286,6 +286,7 @@ Run Luau code to orchestrate and compose tool calls
 - A tool call that fails, is blocked, or gets invalid arguments raises an error carrying the tool's error text. Use pcall to catch it.
 - Calls inside `parallel(f1, f2, ...)` run at the same time; it returns each function's result in order. `parallel_settled` returns { ok, value | error } for each instead of raising.
 - `require(name, version?)` loads a registered module from this conversation. Modules use exact dependency pins and are cached within one VM.
+- `tools.module_define`, `tools.module_list`, `tools.module_inspect`, and `tools.module_select` manage immutable module definitions and the selected version. See [module tools](codemode-module-tools.md).
 - Runs plain Luau: no files, no processes, no network, no timers, or file-based imports.
 - Accepts raw Luau source, not JSON, quoted strings, or markdown code fences.
 - You may start the code with a line like `-- @options: {"max_output_tokens": 1000, "timeout_ms": 60000}`.

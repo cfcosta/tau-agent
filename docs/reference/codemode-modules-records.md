@@ -2,7 +2,8 @@
 
 Codemode module definitions are immutable records. This page describes their
 storage and fold contract. See [module loading](codemode-module-loading.md)
-for the VM's `require` behavior. No definition tools are provided yet.
+for the VM's `require` behavior and [module tools](codemode-module-tools.md)
+for calls that write these records.
 
 The outer plugin record has `kind: "module"`. Its payload has `op: "define"`
 with a `definition`, or `op: "select"` with `name` and `version`. A definition

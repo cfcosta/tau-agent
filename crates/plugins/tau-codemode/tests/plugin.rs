@@ -541,7 +541,13 @@ return { tools.codemode == nil, table.concat(names, ",") }
 
         let result = only_result(&store, &outcome.run.0).await;
         let value: Value = serde_json::from_str(&items(&result)[0]).unwrap();
-        assert_eq!(value, json!([true, "echo"]));
+        assert_eq!(
+            value,
+            json!([
+                true,
+                "echo,module_define,module_inspect,module_list,module_select"
+            ])
+        );
     });
 }
 

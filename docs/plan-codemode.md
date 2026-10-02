@@ -57,7 +57,7 @@ correctness and evaluation, not on assumed token savings.
 
 - [x] **18:** Add [immutable scratch-module records and their fold](reference/codemode-modules-records.md).
 - [x] **19:** [Load registered modules into fresh VMs](reference/codemode-module-loading.md) with exact dependency pins.
-- [ ] **20:** Add definition, listing, and source/signature inspection.
+- [x] **20:** Add [owned definition, listing, inspection and selection tools](reference/codemode-module-tools.md) with per-VM import pins.
 - [ ] **21:** Exercise modules against controlled fake tools.
 - [ ] **22:** Add scratch-module inspection and rollback to the UI.
 - [ ] **23:** Add repository storage and pinned version selection.

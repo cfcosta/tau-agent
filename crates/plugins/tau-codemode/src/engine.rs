@@ -325,6 +325,7 @@ struct State {
     ticks: AtomicU64,
     threads: Mutex<HashMap<usize, Thread>>,
     modules: Mutex<HashMap<String, LuaValue>>,
+    module_aliases: Mutex<HashMap<String, String>>,
     module_load: tokio::sync::Mutex<()>,
 }
 
@@ -378,6 +379,7 @@ impl State {
             ticks: AtomicU64::new(0),
             threads: Mutex::default(),
             modules: Mutex::default(),
+            module_aliases: Mutex::default(),
             module_load: tokio::sync::Mutex::new(()),
         }
     }
@@ -1254,6 +1256,16 @@ async fn load_module(
     version: Option<&str>,
 ) -> Result<LuaValue, String> {
     let _loading = state.module_load.lock().await;
+    if version.is_none()
+        && let Some(pin) = state
+            .module_aliases
+            .lock()
+            .expect("not poisoned")
+            .get(name)
+            .cloned()
+    {
+        return Ok(state.modules.lock().expect("not poisoned")[&pin].clone());
+    }
     let mut definitions = HashMap::new();
     let mut order = Vec::new();
     let key = visit_module(
@@ -1281,6 +1293,13 @@ async fn load_module(
             .lock()
             .expect("not poisoned")
             .insert(version, value);
+    }
+    if version.is_none() {
+        state
+            .module_aliases
+            .lock()
+            .expect("not poisoned")
+            .insert(name.to_owned(), key.clone());
     }
     Ok(state.modules.lock().expect("not poisoned")[&key].clone())
 }

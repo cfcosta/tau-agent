@@ -60,6 +60,7 @@ Luau signatures. Others may be callable too: find them with \
 /// direct tools' signatures in its context.
 pub struct Codemode {
     tool: Arc<CodemodeTool>,
+    module_writes: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Codemode {
@@ -68,6 +69,7 @@ impl Codemode {
     pub fn new(jev: Option<Arc<dyn Jev>>) -> Self {
         Self {
             tool: Arc::new(CodemodeTool::new(jev)),
+            module_writes: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -102,6 +104,13 @@ impl Plugin for Codemode {
         plan: &mut RunPlan,
         _ctx: &PluginCtx,
     ) -> Result<Box<dyn PluginRun>, PluginError> {
+        for name in crate::module_tools::NAMES {
+            if plan.tools().iter().any(|tool| tool.name() == name) {
+                return Err(
+                    format!("codemode reserves tool name `{name}`").into()
+                );
+            }
+        }
         let tools: Vec<ToolEntry> = plan
             .tools()
             .iter()
@@ -112,6 +121,12 @@ impl Plugin for Codemode {
             .collect();
         if let Some(text) = context(&tools) {
             plan.context.push(text);
+        }
+        for name in crate::module_tools::NAMES {
+            plan.add_tool(Arc::new(crate::module_tools::ModuleTool::new(
+                name,
+                self.module_writes.clone(),
+            )));
         }
         Ok(Box::new(()))
     }
@@ -202,14 +217,12 @@ impl AgentTool for CodemodeTool {
             format!("codemode could not read its store: {error}")
         })?;
         let snapshot = store::fold(&records);
-        let module_library = modules::fold(&records);
         let max_output_tokens = source.options.max_output_tokens();
         let host = Arc::new(LoopHost {
             catalog: ctx.catalog(),
             ctx: ctx.clone(),
             jev: self.jev.clone(),
             plugin: plugin.clone(),
-            module_library,
         });
         let outcome = run(
             host,
@@ -394,7 +407,6 @@ struct LoopHost {
     catalog: Catalog,
     jev: Option<Arc<dyn Jev>>,
     plugin: PluginCtx,
-    module_library: modules::Library,
 }
 
 #[async_trait]
@@ -404,11 +416,14 @@ impl Host for LoopHost {
         name: &str,
         version: Option<&str>,
     ) -> Result<Option<modules::Definition>, String> {
-        let version = version.or_else(|| {
-            self.module_library.selected().get(name).map(String::as_str)
-        });
+        let records = self.plugin.records().await.map_err(|error| {
+            format!("codemode could not read its modules: {error}")
+        })?;
+        let library = modules::fold(&records);
+        let version = version
+            .or_else(|| library.selected().get(name).map(String::as_str));
         Ok(version
-            .and_then(|version| self.module_library.versions().get(version))
+            .and_then(|version| library.versions().get(version))
             .filter(|definition| definition.name() == name)
             .cloned())
     }

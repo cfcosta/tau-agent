@@ -23,6 +23,7 @@ pub const INTRO: &str = r#"Run Luau code to orchestrate and compose tool calls
 - Calls inside `parallel(f1, f2, ...)` run at the same time; it returns each function's result in order. `parallel_settled` returns { ok, value | error } for each instead of raising.
 - `map(items, fn, concurrency?)` maps a marked array with at most `concurrency` running callbacks (default 4, range 1..32), passing `(item, index)`. It returns ordered `{ ok = true, value = ... }` or `{ ok = false, error = string }` records. `nil` becomes `json.null`; only the first callback return is used. At most 10000 items.
 - `require(name, version?)` loads a registered Luau module from this conversation. Omit `version` for the selected version; an explicit version is its 64-character digest. Modules may import only declared dependencies at their pinned versions. Each VM caches module values; later scripts start fresh.
+- `tools.module_define({ name, source, signatures?, dependencies? })` compiles and registers a module, then selects its content version. `tools.module_list({})` lists selected metadata; `tools.module_inspect({ name, version? })` includes source; `tools.module_select({ name, version })` selects an older registered version. Definition does not execute source or run tests.
 - Runs plain Luau: no files, no processes, no network, no timers, or file-based imports.
 - Accepts raw Luau source, not JSON, quoted strings, or markdown code fences.
 - You may start the code with a line like `-- @options: {"max_output_tokens": 1000, "timeout_ms": 60000}`.
