@@ -52,6 +52,7 @@ struct Args {
 pub struct Read {
     root: Root,
     parameters: Value,
+    output_schema: Value,
     description: String,
 }
 
@@ -61,6 +62,7 @@ impl Read {
             root,
             parameters: serde_json::to_value(schemars::schema_for!(Args))
                 .expect("a generated schema is valid JSON"),
+            output_schema: output_schema(),
             description: format!(
                 "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to {MAX_LINES} lines or {}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
                 MAX_BYTES / 1024
@@ -81,6 +83,10 @@ impl AgentTool for Read {
 
     fn parameters(&self) -> &Value {
         &self.parameters
+    }
+
+    fn output_schema(&self) -> Option<&Value> {
+        Some(&self.output_schema)
     }
 
     async fn call(
@@ -112,7 +118,7 @@ fn read(root: &Root, args: &Args) -> Result<ToolOutput, ToolError> {
         .read_to_end(&mut head)
         .map_err(|e| errno::message(&e, "read", &path))?;
     match image::detect(&head) {
-        Some(mime_type) => read_image(&path, head, file, mime_type),
+        Some(mime_type) => read_image(&path, &args.path, head, file, mime_type),
         None => {
             let reader = BufReader::new(std::io::Cursor::new(head).chain(file));
             read_text(reader, &args.path, args.offset, args.limit, &path)
@@ -122,35 +128,47 @@ fn read(root: &Root, args: &Args) -> Result<ToolOutput, ToolError> {
 
 fn read_image(
     path: &Path,
+    shown_path: &str,
     mut bytes: Vec<u8>,
     mut file: File,
     mime_type: &str,
 ) -> Result<ToolOutput, ToolError> {
     file.read_to_end(&mut bytes)
         .map_err(|e| errno::message(&e, "read", path))?;
-    let content = match image::process(&bytes, mime_type) {
+    let (content, omitted) = match image::process(&bytes, mime_type) {
         Ok(processed) => {
             let mut note = format!("Read image file [{}]", processed.mime_type);
             for hint in &processed.hints {
                 note.push('\n');
                 note.push_str(hint);
             }
-            vec![
-                text(note),
-                InputBlock::Image(ImageContent {
-                    data: processed.data,
-                    mime_type: processed.mime_type,
-                }),
-            ]
+            (
+                vec![
+                    text(note),
+                    InputBlock::Image(ImageContent {
+                        data: processed.data,
+                        mime_type: processed.mime_type,
+                    }),
+                ],
+                false,
+            )
         }
-        Err(image::Omitted(message)) => {
-            vec![text(format!("Read image file [{mime_type}]\n{message}"))]
-        }
+        Err(image::Omitted(message)) => (
+            vec![text(format!("Read image file [{mime_type}]\n{message}"))],
+            true,
+        ),
     };
+    let structured_content = serde_json::to_value(&content)
+        .expect("tool content blocks serialize as JSON");
     Ok(ToolOutput {
         content,
         details: None,
-        structured: None,
+        structured: Some(json!({
+            "kind": "image",
+            "path": shown_path,
+            "content": structured_content,
+            "omitted": omitted,
+        })),
     })
 }
 
@@ -245,6 +263,36 @@ fn read_text(
         .join("\n");
     let truncation = truncate_head(&selected, MAX_LINES, MAX_BYTES);
     let first = start + 1;
+    let next_offset = if truncation.first_line_exceeds_limit {
+        None
+    } else if truncation.truncated() {
+        let next_line = start.saturating_add(truncation.output_lines);
+        (next_line < total).then(|| (next_line as u64).saturating_add(1))
+    } else {
+        end.filter(|end| *end < total)
+            .map(|end| (end as u64).saturating_add(1))
+    };
+    let complete = start == 0
+        && end.is_none_or(|end| end >= total)
+        && !truncation.truncated();
+    let structured = json!({
+        "kind": "text",
+        "path": shown_path,
+        "text": truncation.content,
+        "offset": (first as u64),
+        "requested_limit": limit,
+        "total_lines": total,
+        "returned_lines": truncation.output_lines,
+        "next_offset": next_offset,
+        "truncated": truncation.truncated(),
+        "complete": complete,
+        "truncated_by": match truncation.by {
+            Some(Limit::Lines) => Some("lines"),
+            Some(Limit::Bytes) => Some("bytes"),
+            None => None,
+        },
+        "first_line_exceeds_limit": truncation.first_line_exceeds_limit,
+    });
     let text = if truncation.first_line_exceeds_limit {
         format!(
             "[Line {first} is {}, exceeds {} limit. Use bash: sed -n '{first}p' {shown_path} | head -c {MAX_BYTES}]",
@@ -291,6 +339,86 @@ fn read_text(
             text_signature: None,
         })],
         details,
-        structured: None,
+        structured: Some(structured),
+    })
+}
+
+fn output_schema() -> Value {
+    json!({
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "text"},
+                    "path": {"type": "string"},
+                    "text": {"type": "string"},
+                    "offset": {"type": "integer", "minimum": 1},
+                    "requested_limit": {
+                        "anyOf": [
+                            {"type": "integer", "minimum": 0},
+                            {"type": "null"},
+                        ]
+                    },
+                    "total_lines": {"type": "integer", "minimum": 0},
+                    "returned_lines": {"type": "integer", "minimum": 0},
+                    "next_offset": {
+                        "anyOf": [
+                            {"type": "integer", "minimum": 1},
+                            {"type": "null"},
+                        ]
+                    },
+                    "truncated": {"type": "boolean"},
+                    "complete": {"type": "boolean"},
+                    "truncated_by": {
+                        "enum": ["lines", "bytes", null]
+                    },
+                    "first_line_exceeds_limit": {"type": "boolean"},
+                },
+                "required": [
+                    "kind", "path", "text", "offset", "requested_limit",
+                    "total_lines", "returned_lines", "next_offset",
+                    "truncated", "complete", "truncated_by",
+                    "first_line_exceeds_limit"
+                ],
+                "additionalProperties": false,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "image"},
+                    "path": {"type": "string"},
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "oneOf": [
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"const": "text"},
+                                        "text": {"type": "string"},
+                                    },
+                                    "required": ["type", "text"],
+                                    "additionalProperties": false,
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"const": "image"},
+                                        "data": {"type": "string"},
+                                        "mimeType": {"type": "string"},
+                                    },
+                                    "required": ["type", "data", "mimeType"],
+                                    "additionalProperties": false,
+                                },
+                            ]
+                        },
+                    },
+                    "omitted": {"type": "boolean"},
+                },
+                "required": ["kind", "path", "content", "omitted"],
+                "additionalProperties": false,
+            },
+        ],
+        "discriminator": {"propertyName": "kind"},
     })
 }

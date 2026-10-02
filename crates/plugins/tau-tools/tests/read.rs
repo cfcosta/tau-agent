@@ -305,6 +305,18 @@ fn image_known_cases() {
         "Read image file [image/png]\n[Image converted from image/bmp to image/png.]"
     );
     assert_eq!(image_of(&output).0, "image/png");
+    let structured = output.structured.as_ref().unwrap();
+    assert_eq!(structured["kind"], "image");
+    assert_eq!(structured["path"], "dot.bmp");
+    assert_eq!(structured["omitted"], false);
+    assert_eq!(
+        structured["content"],
+        serde_json::to_value(&output.content).unwrap()
+    );
+    let data = STANDARD
+        .decode(structured["content"][1]["data"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(tau_tools::image::detect(&data), Some("image/png"));
 
     std::fs::write(dir.path().join("wrong.jpg"), png(3, 2)).unwrap();
     let output = call(&root, json!({"path": "wrong.jpg"})).unwrap();
@@ -400,4 +412,286 @@ fn a_first_line_over_the_limit_points_to_sed() {
         text_of(&output),
         "[Line 1 is 58.6KB, exceeds 50.0KB limit. Use bash: sed -n '1p' f.txt | head -c 51200]"
     );
+    let structured = output.structured.unwrap();
+    assert_eq!(structured["text"], "");
+    assert_eq!(structured["returned_lines"], 0);
+    assert_eq!(structured["truncated"], true);
+    assert_eq!(structured["truncated_by"], "bytes");
+    assert_eq!(structured["first_line_exceeds_limit"], true);
+    assert_eq!(structured["next_offset"], Value::Null);
+}
+
+/// Empty output is a complete read of an empty file. The scan's line
+/// count keeps the same split semantics used by the direct reader.
+#[test]
+fn empty_text_has_structured_range() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("empty.txt"), "").unwrap();
+    let output =
+        call(&Root::new(dir.path()), json!({"path": "empty.txt"})).unwrap();
+    assert_eq!(text_of(&output), "");
+    assert_eq!(
+        output.structured.unwrap(),
+        json!({
+            "kind": "text",
+            "path": "empty.txt",
+            "text": "",
+            "offset": 1,
+            "requested_limit": null,
+            "total_lines": 1,
+            "returned_lines": 0,
+            "next_offset": null,
+            "truncated": false,
+            "complete": true,
+            "truncated_by": null,
+            "first_line_exceeds_limit": false,
+        })
+    );
+}
+
+/// A zero limit selects no text, preserves offset zero's existing
+/// normalization to line one, and does not underflow a continuation.
+#[test]
+fn zero_limit_has_an_empty_range_without_underflow() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("f.txt"), "one\ntwo").unwrap();
+    let output = call(
+        &Root::new(dir.path()),
+        json!({"path": "f.txt", "offset": 0, "limit": 0}),
+    )
+    .unwrap();
+    assert_eq!(
+        text_of(&output),
+        "\n\n[2 more lines in file. Use offset=1 to continue.]"
+    );
+    let structured = output.structured.unwrap();
+    assert_eq!(structured["offset"], 1);
+    assert_eq!(structured["requested_limit"], 0);
+    assert_eq!(structured["text"], "");
+    assert_eq!(structured["returned_lines"], 0);
+    assert_eq!(structured["next_offset"], 1);
+    assert_eq!(structured["complete"], false);
+}
+
+/// A requested subset reports its selected text and the first line after
+/// that subset, while the direct continuation notice stays unchanged.
+#[test]
+fn subset_has_structured_text_and_continuation() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("f.txt"), "one\ntwo\nthree").unwrap();
+    let output = call(
+        &Root::new(dir.path()),
+        json!({"path": "f.txt", "offset": 2, "limit": 1}),
+    )
+    .unwrap();
+    assert_eq!(
+        text_of(&output),
+        "two\n\n[1 more lines in file. Use offset=3 to continue.]"
+    );
+    assert_eq!(
+        output.structured.unwrap(),
+        json!({
+            "kind": "text",
+            "path": "f.txt",
+            "text": "two",
+            "offset": 2,
+            "requested_limit": 1,
+            "total_lines": 3,
+            "returned_lines": 1,
+            "next_offset": 3,
+            "truncated": false,
+            "complete": false,
+            "truncated_by": null,
+            "first_line_exceeds_limit": false,
+        })
+    );
+}
+
+/// The 2000-line and 50 KiB boundaries are inclusive. Crossing either
+/// one reports the same display cut used by the direct output.
+#[test]
+fn structured_text_tracks_exact_and_exceeded_bounds() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = Root::new(dir.path());
+    let exact_lines = vec!["x"; MAX_LINES].join("\n");
+    std::fs::write(dir.path().join("f.txt"), &exact_lines).unwrap();
+    let output = call(&root, json!({"path": "f.txt"})).unwrap();
+    assert_eq!(text_of(&output), exact_lines);
+    let structured = output.structured.unwrap();
+    assert_eq!(structured["total_lines"], MAX_LINES);
+    assert_eq!(structured["returned_lines"], MAX_LINES);
+    assert_eq!(structured["truncated"], false);
+    assert_eq!(structured["complete"], true);
+    assert_eq!(structured["next_offset"], Value::Null);
+
+    let over_lines = vec!["x"; MAX_LINES + 1].join("\n");
+    std::fs::write(dir.path().join("f.txt"), &over_lines).unwrap();
+    let output = call(&root, json!({"path": "f.txt"})).unwrap();
+    let structured = output.structured.unwrap();
+    assert_eq!(structured["total_lines"], MAX_LINES + 1);
+    assert_eq!(structured["returned_lines"], MAX_LINES);
+    assert_eq!(structured["truncated"], true);
+    assert_eq!(structured["truncated_by"], "lines");
+    assert_eq!(structured["next_offset"], MAX_LINES + 1);
+    assert_eq!(structured["complete"], false);
+
+    let exact_bytes = "x".repeat(MAX_BYTES);
+    std::fs::write(dir.path().join("f.txt"), &exact_bytes).unwrap();
+    let output = call(&root, json!({"path": "f.txt"})).unwrap();
+    let structured = output.structured.unwrap();
+    assert_eq!(structured["text"].as_str().unwrap().len(), MAX_BYTES);
+    assert_eq!(structured["truncated"], false);
+    assert_eq!(structured["complete"], true);
+
+    let over_bytes = "x".repeat(MAX_BYTES + 1);
+    std::fs::write(dir.path().join("f.txt"), &over_bytes).unwrap();
+    let output = call(&root, json!({"path": "f.txt"})).unwrap();
+    let structured = output.structured.unwrap();
+    assert_eq!(structured["text"], "");
+    assert_eq!(structured["truncated"], true);
+    assert_eq!(structured["truncated_by"], "bytes");
+    assert_eq!(structured["first_line_exceeds_limit"], true);
+    assert_eq!(structured["next_offset"], Value::Null);
+}
+
+/// Unicode text remains intact in the structured range and counts the
+/// same line boundaries as the streaming reader.
+#[test]
+fn structured_text_keeps_unicode_and_path() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("é.txt"), "α😀\n漢字").unwrap();
+    let output = call(
+        &Root::new(dir.path()),
+        json!({"path": "é.txt", "offset": 2, "limit": 1}),
+    )
+    .unwrap();
+    assert_eq!(text_of(&output), "漢字");
+    let structured = output.structured.unwrap();
+    assert_eq!(structured["path"], "é.txt");
+    assert_eq!(structured["text"], "漢字");
+    assert_eq!(structured["total_lines"], 2);
+    assert_eq!(structured["returned_lines"], 1);
+    assert_eq!(structured["next_offset"], Value::Null);
+    assert_eq!(structured["complete"], false);
+}
+
+/// A recognized but undecodable image is marked omitted and carries the
+/// same text block the direct output returned.
+#[test]
+fn an_omitted_image_has_structured_text_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut invalid_png = b"\x89PNG\r\n\x1a\n".to_vec();
+    invalid_png.extend_from_slice(&13_u32.to_be_bytes());
+    invalid_png.extend_from_slice(b"IHDR");
+    std::fs::write(dir.path().join("broken.png"), invalid_png).unwrap();
+    let output =
+        call(&Root::new(dir.path()), json!({"path": "broken.png"})).unwrap();
+    assert_eq!(
+        text_of(&output),
+        "Read image file [image/png]\n[Image omitted: could not be resized below the inline image size limit.]"
+    );
+    let structured = output.structured.as_ref().unwrap();
+    assert_eq!(structured["kind"], "image");
+    assert_eq!(structured["omitted"], true);
+    assert_eq!(structured["content"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        structured["content"],
+        serde_json::to_value(&output.content).unwrap()
+    );
+}
+
+/// The public schema covers both tagged result variants and is exposed
+/// through `AgentTool::output_schema`.
+#[test]
+fn read_declares_its_structured_output_schema() {
+    let read = Read::new(Root::new("/"));
+    let schema = read.output_schema().unwrap();
+    assert_eq!(schema["oneOf"].as_array().unwrap().len(), 2);
+    assert_eq!(schema["oneOf"][0]["properties"]["kind"]["const"], "text");
+    assert_eq!(schema["oneOf"][1]["properties"]["kind"]["const"], "image");
+    for field in [
+        "text",
+        "offset",
+        "requested_limit",
+        "total_lines",
+        "returned_lines",
+        "next_offset",
+        "truncated",
+        "complete",
+        "truncated_by",
+        "first_line_exceeds_limit",
+    ] {
+        assert!(
+            schema["oneOf"][0]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(field)),
+            "missing required field {field}"
+        );
+    }
+    assert!(
+        schema["oneOf"][1]["properties"]["content"]["items"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|block| block["properties"]["type"]["const"] == "image")
+    );
+}
+
+/// Property inventory:
+/// - `structured_text_matches_split_select_ranges` compares the structured
+///   text, offsets, and continuation with an independent split/select oracle.
+/// Generator plan: draw 1–8 nonempty Unicode lines without `\n`, then draw an
+/// in-range offset and a limit from 0–10. Inputs are valid by construction;
+/// shrinking reduces line count, line text, offset, and limit without rejects.
+/// CI uses Hegel's detected `ci` profile (derandomized, database disabled,
+/// and `TooSlow` suppressed); the local 100-case override keeps this focused
+/// differential property bounded.
+#[hegel::composite]
+fn small_valid_lines(tc: &TestCase) -> Vec<String> {
+    tc.draw(
+        gs::vecs(gs::text().exclude_characters("\n").min_size(1).max_size(12))
+            .min_size(1)
+            .max_size(8),
+    )
+}
+
+#[hegel::test(test_cases = 100)]
+fn structured_text_matches_split_select_ranges(tc: TestCase) {
+    let lines = tc.draw(small_valid_lines());
+    let total = lines.len();
+    let offset =
+        tc.draw(gs::integers::<u64>().min_value(1).max_value(total as u64));
+    let limit = tc.draw(gs::integers::<u64>().max_value(10));
+    let start = offset as usize - 1;
+    let end = start.saturating_add(limit as usize).min(total);
+    let content = lines.join("\n");
+    let expected_text =
+        content.split('\n').collect::<Vec<_>>()[start..end].join("\n");
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("f.txt"), content).unwrap();
+    let output = call(
+        &Root::new(dir.path()),
+        json!({"path": "f.txt", "offset": offset, "limit": limit}),
+    )
+    .unwrap();
+    let structured = output.structured.unwrap();
+    assert_eq!(structured["text"], expected_text);
+    assert_eq!(structured["offset"], offset);
+    assert_eq!(structured["requested_limit"], limit);
+    assert_eq!(structured["total_lines"], total);
+    assert_eq!(structured["returned_lines"], end - start);
+    assert_eq!(
+        structured["next_offset"],
+        if end < total {
+            json!(end + 1)
+        } else {
+            Value::Null
+        }
+    );
+    assert_eq!(structured["complete"], start == 0 && end == total);
+    assert_eq!(structured["truncated"], false);
+    assert_eq!(structured["truncated_by"], Value::Null);
+    assert_eq!(structured["first_line_exceeds_limit"], false);
 }

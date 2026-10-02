@@ -32,7 +32,7 @@ Live evaluations require an explicit budget and remain opt-in.
 - [x] **05:** Add [structured directory entries](reference/codemode-ls.md) to `ls`.
 - [x] **06:** Add [structured paths and completeness](reference/codemode-find.md) to `find`.
 - [x] **07:** Add [structured matches and context](reference/codemode-grep.md) to `grep`.
-- [ ] **08:** Add structured text and range metadata to `read`.
+- [x] **08:** Add [structured text and ranges](reference/codemode-read.md) to `read`.
 - [ ] **09:** Add structured exit status and output metadata to `bash`.
 
 Tasks 05 through 08 depend on the result contracts, but not on each other.
