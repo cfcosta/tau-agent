@@ -11,6 +11,12 @@ pub const MAX_SIGNATURES_BYTES: usize = 16 * 1024;
 pub const MAX_DEPENDENCIES: usize = 32;
 pub const MAX_REGISTERED_BYTES: usize = 1024 * 1024;
 pub const MAX_VERSIONS: usize = 128;
+pub const MAX_TEST_CODE_BYTES: usize = 64 * 1024;
+pub const MAX_TEST_FIXTURES: usize = 128;
+pub const MAX_TEST_FIXTURE_BYTES: usize = 1024 * 1024;
+pub const MAX_TEST_REPORT_BYTES: usize = 256 * 1024;
+pub const MAX_TEST_RECORDS: usize = 128;
+pub const MAX_TEST_RECORD_BYTES: usize = 8 * 1024 * 1024;
 
 /// A definition's content fixes its version. Fields are private so callers
 /// cannot change content while retaining the old digest.
@@ -139,6 +145,127 @@ fn normalize(value: Value) -> Value {
 pub enum Record {
     Define { definition: Definition },
     Select { name: String, version: String },
+    Test { test: ModuleTest },
+}
+
+/// One fake call expected by a test, in invocation order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedCall {
+    pub name: String,
+    pub args: Value,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_value"
+    )]
+    pub value: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+fn deserialize_present_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
+    // Omitted means no readable value; explicit JSON null is still a value.
+    Value::deserialize(deserializer).map(Some)
+}
+
+/// The bounded result retained for exact-version inspection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TestReport {
+    pub name: String,
+    pub version: String,
+    pub passed: bool,
+    pub output: String,
+    #[serde(default)]
+    pub output_truncated: bool,
+    pub calls: Vec<Value>,
+    pub error: Option<String>,
+    #[serde(default)]
+    pub error_truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModuleTest {
+    name: String,
+    version: String,
+    code: String,
+    tools: Vec<ExpectedCall>,
+    result: TestReport,
+}
+
+impl ModuleTest {
+    pub fn new(
+        name: String,
+        version: String,
+        code: String,
+        tools: Vec<ExpectedCall>,
+        result: TestReport,
+    ) -> Result<Self, String> {
+        validate_name(&name)?;
+        if !valid_version(&version)
+            || result.name != name
+            || result.version != version
+        {
+            return Err("module test names an invalid version or report".into());
+        }
+        if code.len() > MAX_TEST_CODE_BYTES {
+            return Err("module test code exceeds 64 KiB".into());
+        }
+        if tools.len() > MAX_TEST_FIXTURES {
+            return Err("module test has more than 128 fake calls".into());
+        }
+        for call in &tools {
+            validate_name(&call.name)?;
+            if !call.args.is_object() {
+                return Err("module test fake args must be an object".into());
+            }
+        }
+        if serde_json::to_vec(&tools)
+            .map_err(|error| error.to_string())?
+            .len()
+            > MAX_TEST_FIXTURE_BYTES
+        {
+            return Err("module test fixtures exceed 1 MiB".into());
+        }
+        if result.output.len() > 64 * 1024
+            || serde_json::to_vec(&result)
+                .map_err(|error| error.to_string())?
+                .len()
+                > MAX_TEST_REPORT_BYTES
+        {
+            return Err("module test report exceeds its bound".into());
+        }
+        Ok(Self {
+            name,
+            version,
+            code,
+            tools,
+            result,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+    pub fn result(&self) -> &TestReport {
+        &self.result
+    }
+
+    fn verify(&self) -> Result<(), String> {
+        Self::new(
+            self.name.clone(),
+            self.version.clone(),
+            self.code.clone(),
+            self.tools.clone(),
+            self.result.clone(),
+        )
+        .map(|_| ())
+    }
 }
 
 /// Registered definitions remain available after selection changes.
@@ -147,6 +274,7 @@ pub enum Record {
 pub struct Library {
     versions: BTreeMap<String, Definition>,
     selected: BTreeMap<String, String>,
+    tests: BTreeMap<String, Vec<ModuleTest>>,
 }
 
 pub type Snapshot = Library;
@@ -157,6 +285,9 @@ impl Library {
     }
     pub fn selected(&self) -> &BTreeMap<String, String> {
         &self.selected
+    }
+    pub fn tests(&self, version: &str) -> &[ModuleTest] {
+        self.tests.get(version).map(Vec::as_slice).unwrap_or(&[])
     }
 
     pub fn apply(&mut self, record: &Record) -> Result<(), String> {
@@ -201,6 +332,38 @@ impl Library {
                     );
                 }
                 self.selected.insert(name.clone(), version.clone());
+            }
+            Record::Test { test } => {
+                test.verify()?;
+                if self
+                    .versions
+                    .get(test.version())
+                    .is_none_or(|definition| definition.name() != test.name())
+                {
+                    return Err("module test names an unknown version".into());
+                }
+                let count: usize = self.tests.values().map(Vec::len).sum();
+                if count >= MAX_TEST_RECORDS {
+                    return Err("module library has 128 tests".into());
+                }
+                let total: usize = self
+                    .tests
+                    .values()
+                    .flatten()
+                    .map(|test| {
+                        serde_json::to_vec(test).expect("test is JSON").len()
+                    })
+                    .sum();
+                let size = serde_json::to_vec(test)
+                    .map_err(|error| error.to_string())?
+                    .len();
+                if total + size > MAX_TEST_RECORD_BYTES {
+                    return Err("module library tests exceed 8 MiB".into());
+                }
+                self.tests
+                    .entry(test.version().to_owned())
+                    .or_default()
+                    .push(test.clone());
             }
         }
         Ok(())

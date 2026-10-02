@@ -6,7 +6,8 @@ for the VM's `require` behavior and [module tools](codemode-module-tools.md)
 for calls that write these records.
 
 The outer plugin record has `kind: "module"`. Its payload has `op: "define"`
-with a `definition`, or `op: "select"` with `name` and `version`. A definition
+with a `definition`, `op: "select"` with `name` and `version`, or `op: "test"`
+with a bounded `test` containing source, fake fixtures, and result. A definition
 contains `name`, `version`, `source`, `signatures`, and `dependencies`. Define
 registers the version and selects it. Select changes the current version of
 that name only when that exact version is already registered under the name.
@@ -26,6 +27,9 @@ each dependency version is exactly 64 lowercase hexadecimal characters.
 The library holds at most 128 distinct versions and 1 MiB of serialized
 definition JSON across registered versions. Invalid, malformed, and oversized
 records leave the folded library unchanged. Records are folded oldest first.
+Test records apply only after their exact definition is registered. They are
+indexed by version and never transfer to changed definitions. See
+[module tests](codemode-module-tests.md) for test quotas and report semantics.
 
 `modules::fold` accepts the plugin's JSON records. `store::fold` continues to
 return only script store values. The UI state serializes a default-empty module

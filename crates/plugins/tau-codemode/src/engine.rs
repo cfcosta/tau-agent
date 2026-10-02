@@ -22,7 +22,7 @@ use std::{
     sync::{
         Arc,
         Mutex,
-        atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -131,10 +131,9 @@ pub async fn run(host: Arc<dyn Host>, request: Request) -> Outcome {
         deadline,
     ));
     let failure = match drive(&state, &request.source.code).await {
-        Ok(items) => {
-            state.items.lock().expect("not poisoned").extend(items);
-            None
-        }
+        Ok(items) => items
+            .into_iter()
+            .find_map(|item| state.push(item).err().map(Failure::Error)),
         Err(failure) => Some(failure),
     };
     state.finish(
@@ -315,6 +314,8 @@ struct State {
     sequential: tokio::sync::Mutex<()>,
     items: Mutex<Vec<Item>>,
     output_bytes: AtomicUsize,
+    output_byte_limit: usize,
+    output_exceeded: AtomicBool,
     calls: Mutex<Calls>,
     store: Mutex<Store>,
     usage: Mutex<Usage>,
@@ -346,6 +347,7 @@ impl State {
         cancel: CancellationToken,
         deadline: Option<Instant>,
     ) -> Self {
+        let output_byte_limit = host.output_byte_limit();
         let mut tools = host.tools();
         tools.sort_by(|a, b| a.name.cmp(&b.name));
         tools.dedup_by(|a, b| a.name == b.name);
@@ -369,6 +371,8 @@ impl State {
             sequential: tokio::sync::Mutex::new(()),
             items: Mutex::default(),
             output_bytes: AtomicUsize::new(0),
+            output_byte_limit,
+            output_exceeded: AtomicBool::new(false),
             calls: Mutex::default(),
             store: Mutex::new(Store::new(store)),
             usage: Mutex::default(),
@@ -412,10 +416,11 @@ impl State {
             Item::Image(image) => image.data.len(),
         };
         let total = self.output_bytes.fetch_add(size, Ordering::SeqCst) + size;
-        if total > MAX_OUTPUT_BYTES {
+        if total > self.output_byte_limit {
+            self.output_exceeded.store(true, Ordering::SeqCst);
             return Err(format!(
-                "the script's output passed {} MiB",
-                MAX_OUTPUT_BYTES >> 20
+                "the script's output passed {} bytes",
+                self.output_byte_limit
             ));
         }
         self.items.lock().expect("not poisoned").push(item);
@@ -472,12 +477,21 @@ impl State {
         wall: Duration,
         timeout_ms: Option<u64>,
     ) -> Outcome {
-        let failure = failure.map(|failure| match failure {
-            Failure::TimedOut { .. } => Failure::TimedOut {
-                timeout_ms: timeout_ms.unwrap_or(0),
-            },
-            other => other,
-        });
+        let failure = failure
+            .map(|failure| match failure {
+                Failure::TimedOut { .. } => Failure::TimedOut {
+                    timeout_ms: timeout_ms.unwrap_or(0),
+                },
+                other => other,
+            })
+            .or_else(|| {
+                self.output_exceeded.load(Ordering::SeqCst).then(|| {
+                    Failure::Error(format!(
+                        "the script's output passed {} bytes",
+                        self.output_byte_limit
+                    ))
+                })
+            });
         let mut calls =
             std::mem::take(&mut *self.calls.lock().expect("not poisoned"));
         for (row, started) in calls.rows.iter_mut().zip(&calls.started) {

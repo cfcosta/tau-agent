@@ -90,6 +90,7 @@ pub struct Codemode {
     module_writes: Arc<tokio::sync::Mutex<()>>,
     inference_limits: Limits,
     inference_model: Option<String>,
+    module_test_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl Codemode {
@@ -101,6 +102,7 @@ impl Codemode {
             module_writes: Arc::new(tokio::sync::Mutex::new(())),
             inference_limits: Limits::default(),
             inference_model: None,
+            module_test_slots: Arc::new(tokio::sync::Semaphore::new(2)),
         }
     }
 
@@ -382,6 +384,7 @@ impl Plugin for Codemode {
             plan.add_tool(Arc::new(crate::module_tools::ModuleTool::new(
                 name,
                 self.module_writes.clone(),
+                self.module_test_slots.clone(),
             )));
         }
         Ok(Box::new(()))

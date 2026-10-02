@@ -13,15 +13,24 @@ use tau_agent::{
 
 use crate::{
     PLUGIN,
-    modules::{self, Definition, Library, Record},
+    modules::{
+        self,
+        Definition,
+        ExpectedCall,
+        Library,
+        ModuleTest,
+        Record,
+        TestReport,
+    },
     store,
 };
 
-pub(crate) const NAMES: [&str; 4] = [
+pub(crate) const NAMES: [&str; 5] = [
     "module_define",
     "module_list",
     "module_inspect",
     "module_select",
+    "module_test",
 ];
 
 pub(crate) struct ModuleTool {
@@ -30,12 +39,14 @@ pub(crate) struct ModuleTool {
     parameters: Value,
     output_schema: Value,
     writes: Arc<tokio::sync::Mutex<()>>,
+    test_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl ModuleTool {
     pub(crate) fn new(
         name: &'static str,
         writes: Arc<tokio::sync::Mutex<()>>,
+        test_slots: Arc<tokio::sync::Semaphore>,
     ) -> Self {
         let (description, parameters, output_schema) = match name {
             "module_define" => (
@@ -61,8 +72,9 @@ impl ModuleTool {
                 json!({"type":"object","properties":{
                     "name":{"type":"string"},"version":{"type":"string"},
                     "source":{"type":"string"},"signatures":{},
-                    "dependencies":{"type":"object","additionalProperties":{"type":"string"}}
-                },"required":["name","version","source","signatures","dependencies"],"additionalProperties":false}),
+                    "dependencies":{"type":"object","additionalProperties":{"type":"string"}},
+                    "tests":{"type":"array","items":{"type":"object"}}
+                },"required":["name","version","source","signatures","dependencies","tests"],"additionalProperties":false}),
             ),
             "module_select" => (
                 "Select a registered version of a module; older versions remain available for rollback.",
@@ -70,6 +82,22 @@ impl ModuleTool {
                     "name":{"type":"string"},"version":{"type":"string"}
                 },"required":["name","version"],"additionalProperties":false}),
                 metadata_schema(),
+            ),
+            "module_test" => (
+                "Run assertions against an exact registered module version in a fresh isolated VM. Only supplied ordered fake calls are available; the report is saved on that version.",
+                json!({"type":"object","properties":{
+                    "name":{"type":"string"},"version":{"type":"string"},
+                    "code":{"type":"string"},
+                    "tools":{"type":"array","maxItems":128,"items":{"type":"object","properties":{
+                        "name":{"type":"string"},"args":{"type":"object"},"value":{},"error":{"type":"string"}
+                    },"required":["name","args"],"additionalProperties":false}}
+                },"required":["name","code"],"additionalProperties":false}),
+                json!({"type":"object","properties":{
+                    "name":{"type":"string"},"version":{"type":"string"},"passed":{"type":"boolean"},
+                    "output":{"type":"string"},"output_truncated":{"type":"boolean"},
+                    "calls":{"type":"array"},"error":{"type":["string","null"]},
+                    "error_truncated":{"type":"boolean"}
+                },"required":["name","version","passed","output","output_truncated","calls","error","error_truncated"],"additionalProperties":false}),
             ),
             _ => {
                 unreachable!("only reserved module tool names are constructed")
@@ -81,6 +109,7 @@ impl ModuleTool {
             parameters,
             output_schema,
             writes,
+            test_slots,
         }
     }
 }
@@ -262,7 +291,79 @@ impl AgentTool for ModuleTool {
                 )?;
                 let mut value = metadata(definition);
                 value["source"] = Value::String(definition.source().into());
+                value["tests"] =
+                    serde_json::to_value(library.tests(definition.version()))?;
                 Ok(output(value))
+            }
+            "module_test" => {
+                let name = field(&args, "name")?.to_owned();
+                let code = field(&args, "code")?.to_owned();
+                let version = args
+                    .get("version")
+                    .map(|value| {
+                        value.as_str().ok_or("module version must be a string")
+                    })
+                    .transpose()?
+                    .map(str::to_owned);
+                let fixtures: Vec<ExpectedCall> = serde_json::from_value(
+                    args.get("tools").cloned().unwrap_or_else(|| json!([])),
+                )
+                .map_err(|error| format!("module test tools: {error}"))?;
+                let library = current(plugin).await?;
+                let definition =
+                    definition(&library, &name, version.as_deref())?.clone();
+                // Validate source and fixture quotas before acquiring a VM slot.
+                let empty = TestReport {
+                    name: name.clone(),
+                    version: definition.version().into(),
+                    passed: false,
+                    output: String::new(),
+                    output_truncated: false,
+                    calls: vec![],
+                    error: None,
+                    error_truncated: false,
+                };
+                ModuleTest::new(
+                    name.clone(),
+                    definition.version().into(),
+                    code.clone(),
+                    fixtures.clone(),
+                    empty,
+                )
+                .map_err(ToolError::from)?;
+                let report = crate::module_tests::run_test(
+                    &definition,
+                    &library,
+                    code.clone(),
+                    fixtures.clone(),
+                    ctx.cancel.clone(),
+                    self.test_slots.clone(),
+                )
+                .await
+                .map_err(ToolError::from)?;
+                if ctx.cancel.is_cancelled() {
+                    return Err("module test cancelled".into());
+                }
+                let test = ModuleTest::new(
+                    name,
+                    definition.version().into(),
+                    code,
+                    fixtures,
+                    report.clone(),
+                )
+                .map_err(ToolError::from)?;
+                let record = store::Record::Module(Record::Test { test });
+                let _guard = self.writes.lock().await;
+                let mut latest = current(plugin).await?;
+                if let store::Record::Module(module_record) = &record {
+                    latest.apply(module_record).map_err(ToolError::from)?;
+                }
+                if ctx.cancel.is_cancelled() {
+                    return Err("module test cancelled".into());
+                }
+                plugin.record(&record).await.map_err(ToolError::other)?;
+                plugin.report(serde_json::to_value(&record)?);
+                Ok(output(serde_json::to_value(report)?))
             }
             "module_select" => {
                 let name = field(&args, "name")?.to_owned();

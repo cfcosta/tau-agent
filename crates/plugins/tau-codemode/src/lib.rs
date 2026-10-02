@@ -36,6 +36,8 @@ pub mod jev;
 pub mod json;
 pub mod live;
 #[cfg(feature = "host")]
+mod module_tests;
+#[cfg(feature = "host")]
 mod module_tools;
 pub mod modules;
 #[cfg(feature = "host")]

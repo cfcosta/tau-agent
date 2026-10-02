@@ -66,6 +66,11 @@ impl ToolReply {
 /// The run a script belongs to.
 #[async_trait]
 pub trait Host: Send + Sync + 'static {
+    /// Maximum bytes retained from script output. Tests use a smaller bound.
+    fn output_byte_limit(&self) -> usize {
+        crate::MAX_OUTPUT_BYTES
+    }
+
     /// The tools scripts may call. Read once per script.
     fn tools(&self) -> Vec<ToolEntry>;
 
