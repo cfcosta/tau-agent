@@ -28,7 +28,7 @@ Live evaluations require an explicit budget and remain opt-in.
 ### M1: Structured results
 
 - [x] **03:** Add bounded `json.encode` and `json.decode` to Luau.
-- [ ] **04:** Preserve nested-call status separately from its returned value.
+- [x] **04:** Preserve nested-call status separately from its returned value.
 - [ ] **05:** Add structured directory entries to `ls`.
 - [ ] **06:** Add structured paths and completeness metadata to `find`.
 - [ ] **07:** Add structured matches and context lines to `grep`.

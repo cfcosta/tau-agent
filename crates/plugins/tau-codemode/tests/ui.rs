@@ -23,6 +23,7 @@ use tau_codemode::{
     Request,
     ToolCall,
     ToolEntry,
+    ToolReply,
     options,
     run,
     store::{self, Writes},
@@ -115,10 +116,12 @@ fn tool(name: &str) -> ToolEntry {
 #[async_trait]
 impl Host for CardHost {
     fn tools(&self) -> Vec<ToolEntry> {
-        vec![tool("echo"), tool("fail")]
+        let mut typed = tool("typed");
+        typed.output_schema = Some(json!({"type": "object"}));
+        vec![tool("echo"), tool("fail"), typed]
     }
 
-    async fn call_tool(&self, call: ToolCall) -> Result<Value, String> {
+    async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String> {
         self.folded
             .lock()
             .unwrap()
@@ -128,15 +131,34 @@ impl Host for CardHost {
                 let msg = call.args["msg"].as_str().unwrap_or("").to_owned();
                 (ToolOutput::text(msg.clone()), Err(msg))
             }
+            "typed" => {
+                let msg = call.args["msg"].as_str().unwrap_or("").to_owned();
+                let value = json!({"echo": msg});
+                let output = ToolOutput {
+                    structured: Some(value.clone()),
+                    ..ToolOutput::text(msg.clone())
+                };
+                (
+                    output,
+                    Ok(ToolReply {
+                        value,
+                        error: Some(msg),
+                    }),
+                )
+            }
             _ => (
                 ToolOutput::text(call.args.to_string()),
-                Ok(call.args.clone()),
+                Ok(ToolReply::success(call.args.clone())),
             ),
+        };
+        let failed = match &result {
+            Ok(reply) => reply.error.is_some(),
+            Err(_) => true,
         };
         self.folded.lock().unwrap().push(Folded::End(
             call.id.clone(),
             output,
-            result.is_err(),
+            failed,
         ));
         result
     }
@@ -196,6 +218,8 @@ enum Call {
     Echo(String),
     /// `fail`, with its message.
     Fail(String),
+    /// A readable structured error, still failed in the call row.
+    Typed(String),
     /// `jev.noul`; a bad one gets an answer out of range and raises.
     Jev(bool),
 }
@@ -213,6 +237,9 @@ impl Call {
                     "function() return tools.fail({{ msg = \"{text}\" }}) end"
                 )
             }
+            Self::Typed(text) => format!(
+                "function() return tools.typed({{ msg = \"{text}\" }}) end"
+            ),
             Self::Jev(bad) => format!(
                 "function() return jev.noul({{ state = 1, question = \"{}\" }}) end",
                 if *bad { "bad" } else { "ok" }
@@ -234,7 +261,13 @@ impl Call {
 fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
     let text = || gs::text().alphabet("abc xyz").max_size(700);
     let calls: Vec<Call> = tc.draw(
-        gs::vecs(gs::default::<Call>().echo(text()).fail(text())).max_size(8),
+        gs::vecs(
+            gs::default::<Call>()
+                .echo(text())
+                .fail(text())
+                .typed(text()),
+        )
+        .max_size(8),
     );
     let at_once: bool = tc.draw(gs::booleans());
     let output: String = tc.draw(gs::text().alphabet("abc").max_size(20));

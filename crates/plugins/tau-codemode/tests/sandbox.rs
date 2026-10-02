@@ -116,6 +116,9 @@ async fn an_mcp_error_result_is_returned_not_raised() {
     )
     .await;
     assert_eq!(texts(&outcome), ["true", "0"]);
+    assert!(!outcome.is_error(), "a readable tool error does not raise");
+    assert_eq!(outcome.calls[0].status, CallStatus::Error);
+    assert_eq!(outcome.calls[0].error.as_deref(), Some("no access"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -185,6 +185,10 @@ b` appends each value that is not `nil`. A return value JSON cannot
     message is the tool's error text. `pcall` catches it. When nothing
     catches it, the result shows it with the script's line, as
     `codemode:4: tool broke`.
+    A readable structured error still has status `error` in both the live
+    card and the stored call row. The diagnostic comes from the failed
+    call's text, not from fields in its JSON value. Handling the value does
+    not by itself fail the surrounding script.
 - **Images** a tool returns are not shown to the model unless the
   script passes them to `image()`.
 - **Parallel calls:** a call inside a `parallel` function yields its

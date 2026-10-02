@@ -56,7 +56,7 @@ pub use engine::{
     run,
 };
 #[cfg(feature = "host")]
-pub use host::{Host, Namespace, ToolCall, ToolEntry};
+pub use host::{Host, Namespace, ToolCall, ToolEntry, ToolReply};
 #[cfg(feature = "host")]
 pub use options::{Options, Source, SourceError};
 #[cfg(feature = "host")]

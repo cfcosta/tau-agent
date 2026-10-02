@@ -12,7 +12,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::json;
 use tau_codemode::{
     CancellationToken,
     Host,
@@ -21,6 +21,7 @@ use tau_codemode::{
     Request,
     ToolCall,
     ToolEntry,
+    ToolReply,
     options,
     run,
     store::Snapshot,
@@ -137,7 +138,7 @@ impl Host for FakeHost {
         }]
     }
 
-    async fn call_tool(&self, call: ToolCall) -> Result<Value, String> {
+    async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String> {
         self.calls.lock().unwrap().push(call.clone());
         let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(now, Ordering::SeqCst);
@@ -162,7 +163,11 @@ impl Host for FakeHost {
             other => Err(format!("unknown tool {other}")),
         };
         watch.finished = true;
-        result
+        result.map(|value| ToolReply {
+            value,
+            error: (call.name == "mcp__linear__list_issues")
+                .then(|| "no access".into()),
+        })
     }
 
     fn jev(&self) -> Option<Arc<dyn Jev>> {

@@ -38,6 +38,7 @@ use crate::{
     Request,
     ToolCall,
     ToolEntry,
+    ToolReply,
     description::{self, NAME},
     options,
     run,
@@ -310,25 +311,32 @@ pub fn wanted(code: &str) -> Wanted {
     }
 }
 
-/// The value a script gets from a nested call's result:
+/// A nested call's readable value and independent failure diagnostic:
 ///
-/// - the structured output, when the tool has an output schema and the
-///   output carries one, a failed call's output included;
-/// - otherwise a success's text, its text blocks joined;
-/// - otherwise `Err` with the error's text, which the script raises.
-pub fn script_value(
+/// - structured output with a schema stays readable even on failure;
+/// - otherwise a success returns its text blocks joined;
+/// - otherwise `Err` raises the error's text in the script.
+///
+/// No JSON field, including MCP's `isError`, overrides the loop's status.
+pub fn script_reply(
     has_output_schema: bool,
     result: Result<ToolOutput, ToolError>,
-) -> Result<Value, String> {
+) -> Result<ToolReply, String> {
     match result {
-        Ok(output) => Ok(match output.structured {
+        Ok(output) => Ok(ToolReply::success(match output.structured {
             Some(value) if has_output_schema => value,
             _ => Value::String(output.text_content()),
-        }),
-        Err(ToolError::Output(output)) => match output.structured {
-            Some(value) if has_output_schema => Ok(value),
-            _ => Err(output.text_content()),
-        },
+        })),
+        Err(ToolError::Output(output)) => {
+            let error = output.text_content();
+            match output.structured {
+                Some(value) if has_output_schema => Ok(ToolReply {
+                    value,
+                    error: Some(error),
+                }),
+                _ => Err(error),
+            }
+        }
         Err(error) => Err(error.to_string()),
     }
 }
@@ -412,13 +420,13 @@ impl Host for LoopHost {
     /// Goes through `ToolCtx::call`. It sends the call before its first
     /// await, so the loop numbers calls in the order the engine starts
     /// them and the two agree on ids.
-    async fn call_tool(&self, call: ToolCall) -> Result<Value, String> {
+    async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String> {
         let has_output_schema = self
             .catalog
             .get(&call.name)
             .is_some_and(|tool| tool.output_schema().is_some());
         let result = self.ctx.call(&call.name, call.args).await;
-        script_value(has_output_schema, result)
+        script_reply(has_output_schema, result)
     }
 
     fn jev(&self) -> Option<Arc<dyn Jev>> {

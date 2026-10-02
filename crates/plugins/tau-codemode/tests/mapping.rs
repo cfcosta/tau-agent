@@ -5,7 +5,10 @@ use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_agent::tool::{ToolError, ToolOutput};
 use tau_ai::message::{ImageContent, InputBlock, TextContent};
-use tau_codemode::plugin::{Wanted, script_value, wanted};
+use tau_codemode::{
+    ToolReply,
+    plugin::{Wanted, script_reply, wanted},
+};
 
 /// One block of a tool's output.
 #[derive(Debug, Clone)]
@@ -92,15 +95,50 @@ fn a_result_maps_to_one_script_value(tc: hegel::TestCase) {
         Ending::Message => Err(ToolError::Message(message.clone())),
     };
     let display = result.as_ref().err().map(ToString::to_string);
-    let value = script_value(has_schema, result);
+    let value = script_reply(has_schema, result);
     match (ending, has_schema, structured) {
         (Ending::Message, ..) => assert_eq!(value, Err(message)),
-        (_, true, Some(structured)) => assert_eq!(value, Ok(structured)),
-        (Ending::Ok, ..) => assert_eq!(value, Ok(Value::String(joined))),
+        (_, true, Some(structured)) => assert_eq!(
+            value,
+            Ok(ToolReply {
+                value: structured,
+                error: (ending == Ending::Output).then_some(joined),
+            })
+        ),
+        (Ending::Ok, ..) => {
+            assert_eq!(value, Ok(ToolReply::success(Value::String(joined))))
+        }
         (Ending::Output, ..) => {
             assert_eq!(value, Err(joined));
             assert_eq!(value.unwrap_err(), display.unwrap());
         }
+    }
+}
+
+/// Payload fields cannot override execution status; empty diagnostics
+/// and a null structured value must still preserve a failed call.
+#[test]
+fn structured_fields_do_not_determine_call_status() {
+    let success = script_reply(
+        true,
+        Ok(ToolOutput {
+            structured: Some(json!({"isError": true})),
+            ..ToolOutput::text("fine")
+        }),
+    )
+    .unwrap();
+    assert_eq!(success.error, None);
+    for value in [Value::Null, json!({"isError": false})] {
+        let reply = script_reply(
+            true,
+            Err(ToolError::output(ToolOutput {
+                structured: Some(value.clone()),
+                ..ToolOutput::text("")
+            })),
+        )
+        .unwrap();
+        assert_eq!(reply.value, value);
+        assert_eq!(reply.error.as_deref(), Some(""));
     }
 }
 

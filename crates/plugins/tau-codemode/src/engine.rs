@@ -1084,9 +1084,14 @@ fn tool_function(
                 args,
             };
             match state.host.call_tool(call).await {
-                Ok(value) => {
-                    guard.end(CallStatus::Ok, None, None);
-                    Ok(ok([to_lua(&lua, &value)?]))
+                Ok(reply) => {
+                    let status = if reply.error.is_some() {
+                        CallStatus::Error
+                    } else {
+                        CallStatus::Ok
+                    };
+                    guard.end(status, reply.error.as_deref(), None);
+                    Ok(ok([to_lua(&lua, &reply.value)?]))
                 }
                 Err(error) => {
                     guard.end(CallStatus::Error, Some(&error), None);

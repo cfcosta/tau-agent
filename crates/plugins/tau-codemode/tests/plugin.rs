@@ -341,6 +341,7 @@ fn before_tool_blocks_a_nested_call() {
 fn structured_output_returns_a_table() {
     block_on(async {
         let store = Store::memory().await.unwrap();
+        let recorder = Recorder::default();
         let agent = Agent::new(model(&[r#"
 local t = tools.typed({ text = "hi" })
 local failed = tools.typed({ text = "bad", fail = true })
@@ -350,12 +351,37 @@ return { t.echo, failed.echo, plain, ok, err }
 "#]))
         .tool(Echo::new("typed").structured())
         .tool(Echo::new("plain"))
-        .plugin(Codemode::new(None));
+        .plugin(Codemode::new(None))
+        .plugin(recorder.clone());
         let outcome = agent.run("go", &store).await.unwrap();
 
         let result = only_result(&store, &outcome.run.0).await;
         let value: Value = serde_json::from_str(&items(&result)[0]).unwrap();
         assert_eq!(value, json!(["hi", "bad", "hi", false, "oops"]));
+        assert!(!result.is_error, "the script handled both failed calls");
+        let calls = result.details.as_ref().unwrap()["calls"]
+            .as_array()
+            .unwrap();
+        let statuses: Vec<_> = calls
+            .iter()
+            .map(|row| row["status"].as_str().unwrap())
+            .collect();
+        assert_eq!(statuses, ["ok", "error", "ok", "error"]);
+        assert_eq!(calls[1]["error"], "bad");
+        assert_eq!(calls[3]["error"], "oops");
+        let events = recorder.events.lock().unwrap();
+        let failed: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                RunEvent::ToolEnd {
+                    parent: Some(_),
+                    is_error,
+                    ..
+                } => Some(*is_error),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(failed, [false, true, false, true]);
     });
 }
 

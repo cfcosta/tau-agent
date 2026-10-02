@@ -46,6 +46,21 @@ pub struct ToolCall {
     pub args: Value,
 }
 
+/// A readable nested-call value and its independent execution status.
+/// A structured error is returned to the script without raising, but
+/// `error: Some(..)` keeps its call row failed, including an empty message.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolReply {
+    pub value: Value,
+    pub error: Option<String>,
+}
+
+impl ToolReply {
+    pub fn success(value: Value) -> Self {
+        Self { value, error: None }
+    }
+}
+
 /// The run a script belongs to.
 #[async_trait]
 pub trait Host: Send + Sync + 'static {
@@ -57,15 +72,15 @@ pub trait Host: Send + Sync + 'static {
         Vec::new()
     }
 
-    /// Runs a tool. `Ok` is the value the script gets: the structured
-    /// output when the tool has one (even on an error result that
-    /// carries it), else its text as a JSON string. `Err` is the error
-    /// text of a failed call with no structured output; the script gets
-    /// a Lua error with it.
+    /// Runs a tool. `Ok` carries the readable value: structured output
+    /// when the tool has one, else successful text as a JSON string.
+    /// A failed call with structured output returns `Ok` with `error`
+    /// set; its value remains readable while its call row stays failed.
+    /// `Err` is a failure without a readable value and raises a Lua error.
     ///
     /// The future is dropped when the script ends, times out or is
     /// cancelled before the call finishes.
-    async fn call_tool(&self, call: ToolCall) -> Result<Value, String>;
+    async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String>;
 
     /// The Jev the `jev` global asks, if the run has one.
     fn jev(&self) -> Option<Arc<dyn Jev>> {
