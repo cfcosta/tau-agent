@@ -37,7 +37,7 @@ use std::{
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tau_agent::{
     error::ToolError,
     output::Spill,
@@ -85,6 +85,7 @@ pub struct Bash {
     root: Root,
     shell: Option<PathBuf>,
     parameters: Value,
+    output_schema: Value,
     /// Whether commands run under a pseudo-terminal.
     #[cfg(feature = "terminal")]
     terminal: bool,
@@ -98,6 +99,7 @@ impl Bash {
             root,
             shell: None,
             parameters,
+            output_schema: output_schema(),
             #[cfg(feature = "terminal")]
             terminal: true,
         }
@@ -139,6 +141,10 @@ impl AgentTool for Bash {
 
     fn parameters(&self) -> &Value {
         &self.parameters
+    }
+
+    fn output_schema(&self) -> Option<&Value> {
+        Some(&self.output_schema)
     }
 
     async fn call(
@@ -651,6 +657,34 @@ enum Outcome {
     Done,
     Cancelled,
     TimedOut,
+    SpawnFailed,
+}
+
+fn output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "status": {"enum": ["exited", "timed_out", "cancelled", "spawn_failed"]},
+            "exit_code": {"type": ["integer", "null"]},
+            "output": {"type": "string"},
+            "truncated": {"type": "boolean"},
+            "truncated_by": {"enum": ["lines", "bytes", null]},
+            "line_limit_exceeded": {"type": "boolean"},
+            "byte_limit_exceeded": {"type": "boolean"},
+            "total_lines": {"type": "integer", "minimum": 0},
+            "total_bytes": {"type": "integer", "minimum": 0},
+            "returned_lines": {"type": "integer", "minimum": 0},
+            "returned_bytes": {"type": "integer", "minimum": 0},
+            "last_line_partial": {"type": "boolean"},
+            "spill_path": {"type": ["string", "null"]},
+            "error": {"type": ["string", "null"]}
+        },
+        "required": ["status", "exit_code", "output", "truncated",
+            "truncated_by", "line_limit_exceeded", "byte_limit_exceeded",
+            "total_lines", "total_bytes", "returned_lines",
+            "returned_bytes", "last_line_partial", "spill_path", "error"],
+        "additionalProperties": false
+    })
 }
 
 impl Bash {
@@ -662,7 +696,14 @@ impl Bash {
         let timeout = validate_timeout(args.timeout)?;
 
         if ctx.cancel.is_cancelled() {
-            return Err(ToolError::from("Command aborted"));
+            return finish(
+                Accumulator::new(MAX_LINES, MAX_BYTES, std::env::temp_dir()),
+                Outcome::Cancelled,
+                None,
+                args.timeout,
+                None,
+                None,
+            );
         }
 
         let shell = self.resolve_shell();
@@ -681,9 +722,26 @@ impl Bash {
             .stderr(Stdio::piped());
         command.process_group(0);
 
-        let mut child = command.spawn().map_err(|error| {
-            format!("failed to start {}: {error}", shell.display())
-        })?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                return finish(
+                    Accumulator::new(
+                        MAX_LINES,
+                        MAX_BYTES,
+                        std::env::temp_dir(),
+                    ),
+                    Outcome::SpawnFailed,
+                    None,
+                    args.timeout,
+                    None,
+                    Some(format!(
+                        "failed to start {}: {error}",
+                        shell.display()
+                    )),
+                );
+            }
+        };
         let pid = child.id().ok_or("spawned child has no pid")?;
         let stdout = child.stdout.take().expect("stdout is piped");
         let stderr = child.stderr.take().expect("stderr is piped");
@@ -743,9 +801,11 @@ impl Bash {
 
         let exit_code = match outcome {
             Outcome::Done => Some(code_rx.await.unwrap_or(1)),
-            Outcome::Cancelled | Outcome::TimedOut => None,
+            Outcome::Cancelled | Outcome::TimedOut | Outcome::SpawnFailed => {
+                None
+            }
         };
-        finish(acc, outcome, exit_code, args.timeout, None)
+        finish(acc, outcome, exit_code, args.timeout, None, None)
     }
 }
 
@@ -760,30 +820,58 @@ fn finish(
     exit_code: Option<i32>,
     timeout: Option<f64>,
     details: Option<Value>,
+    error: Option<String>,
 ) -> Result<ToolOutput, ToolError> {
     acc.finish();
     let snapshot = acc.snapshot();
     let truncated = snapshot.truncated();
+    let spill_path = acc.spill_path().map(|path| path.display().to_string());
+    let structured = json!({
+        "status": match outcome {
+            Outcome::Done => "exited",
+            Outcome::TimedOut => "timed_out",
+            Outcome::Cancelled => "cancelled",
+            Outcome::SpawnFailed => "spawn_failed",
+        },
+        "exit_code": exit_code,
+        "output": snapshot.content,
+        "truncated": truncated,
+        "truncated_by": match snapshot.by {
+            Some(Limit::Lines) => Some("lines"),
+            Some(Limit::Bytes) => Some("bytes"),
+            None => None,
+        },
+        "line_limit_exceeded": snapshot.total_lines > acc.max_lines,
+        "byte_limit_exceeded": snapshot.total_bytes > acc.max_bytes,
+        "total_lines": snapshot.total_lines,
+        "total_bytes": snapshot.total_bytes,
+        "returned_lines": snapshot.output_lines,
+        "returned_bytes": snapshot.output_bytes,
+        "last_line_partial": snapshot.last_line_partial,
+        "spill_path": spill_path,
+        "error": error,
+    });
     let mut content = snapshot.content;
     if truncated && let Some(path) = acc.spill_path() {
         content.push_str(&format!("\n\nFull output: {}", path.display()));
     }
 
-    let failed = |text: String| match &details {
-        Some(details) => ToolError::output(ToolOutput {
-            details: Some(details.clone()),
+    let failed = |text: String| {
+        ToolError::output(ToolOutput {
+            details: details.clone(),
+            structured: Some(structured.clone()),
             ..ToolOutput::text(text)
-        }),
-        None => ToolError::from(text),
+        })
     };
+    if let Some(error) = error {
+        return Err(failed(error));
+    }
     match outcome {
+        Outcome::SpawnFailed => unreachable!("spawn failures have an error"),
         Outcome::Cancelled => {
             Err(failed(append_status(&content, "Command aborted")))
         }
         Outcome::TimedOut => {
-            // Report the value the caller gave us, not one recovered
-            // from the `Duration` (`bash.ts:361`: pi reports the input
-            // number verbatim).
             let secs = timeout.expect("timed out implies a timeout was set");
             Err(failed(append_status(
                 &content,
@@ -796,6 +884,7 @@ fn finish(
             if exit_code == 0 {
                 Ok(ToolOutput {
                     details,
+                    structured: Some(structured),
                     ..ToolOutput::text(display)
                 })
             } else {
@@ -815,7 +904,65 @@ fn finish(
 mod tests {
     use std::os::unix::fs::PermissionsExt;
 
+    use hegel::{TestCase, generators as gs};
+
     use super::*;
+
+    /// Property inventory: full-source byte/line counts and limit flags agree
+    /// with independent string oracles; snapshots retain the established
+    /// tail-cutting behavior and spilled bytes equal the original source.
+    /// Generator: valid ASCII and newlines, split at an arbitrary byte
+    /// boundary; small positive limits make both cuts shrink to short
+    /// examples. No input rejection is needed. The workspace hegel.toml
+    /// supplies case counts and CI selects Hegel's deterministic CI
+    /// profile; keep counts there rather than on this property.
+    #[hegel::test]
+    fn finish_metadata_matches_full_output_oracle(tc: TestCase) {
+        let bytes: Vec<u8> = tc.draw(
+            gs::vecs(hegel::one_of!(gs::just(b'\n'), gs::just(b'a')))
+                .max_size(200),
+        );
+        let split = tc
+            .draw(gs::integers::<usize>().min_value(0).max_value(bytes.len()));
+        let max_lines =
+            tc.draw(gs::integers::<usize>().min_value(1).max_value(12));
+        let max_bytes =
+            tc.draw(gs::integers::<usize>().min_value(1).max_value(40));
+        let dir = tempfile::tempdir().unwrap();
+        let mut acc = Accumulator::new(max_lines, max_bytes, dir.path());
+        acc.append(&bytes[..split]);
+        acc.append(&bytes[split..]);
+        let native_cut = acc.snapshot().by;
+        let result =
+            finish(acc, Outcome::Done, Some(0), None, None, None).unwrap();
+        let value = result.structured.unwrap();
+        let full = std::str::from_utf8(&bytes).unwrap();
+        let expected = truncate::truncate_tail(full, max_lines, max_bytes);
+        assert_eq!(value["output"], expected.content);
+        assert_eq!(value["truncated"], expected.truncated());
+        assert_eq!(
+            value["truncated_by"],
+            match native_cut {
+                Some(Limit::Lines) => json!("lines"),
+                Some(Limit::Bytes) => json!("bytes"),
+                None => Value::Null,
+            }
+        );
+        let line_count = full.split_terminator('\n').count();
+        assert_eq!(value["line_limit_exceeded"], line_count > max_lines);
+        assert_eq!(value["byte_limit_exceeded"], bytes.len() > max_bytes);
+        assert_eq!(value["total_lines"], line_count);
+        assert_eq!(value["total_bytes"], bytes.len());
+        assert_eq!(value["returned_lines"], expected.output_lines);
+        assert_eq!(value["returned_bytes"], expected.output_bytes);
+        assert_eq!(value["last_line_partial"], expected.last_line_partial);
+        if expected.truncated() {
+            let path = value["spill_path"].as_str().unwrap();
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        } else {
+            assert_eq!(value["spill_path"], Value::Null);
+        }
+    }
 
     /// `is_executable` requires a regular file with at least one
     /// executable bit, not just any bit set (`docs/reference/tools.md`,

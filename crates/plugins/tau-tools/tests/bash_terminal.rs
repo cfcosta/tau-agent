@@ -40,6 +40,15 @@ struct Called {
 }
 
 impl Called {
+    fn structured(&self) -> &Value {
+        let output = match &self.result {
+            Ok(output) => output,
+            Err(ToolError::Output(output)) => output,
+            Err(other) => panic!("a failure with no output: {other}"),
+        };
+        output.structured.as_ref().expect("structured bash result")
+    }
+
     /// The result's text, failed or not.
     fn text(&self) -> String {
         match &self.result {
@@ -267,6 +276,9 @@ async fn a_failed_command_keeps_its_details() {
     assert_eq!(details["status"], json!("exited"));
     assert_eq!(details["exitCode"], json!(3));
     assert_eq!(decode(&details["bytes"]), b"hi\r\n");
+    assert_eq!(called.structured()["status"], "exited");
+    assert_eq!(called.structured()["exit_code"], 3);
+    assert_eq!(called.structured()["output"], "hi\n");
 }
 
 /// A timeout kills the group and says so in the details, with no exit
@@ -285,6 +297,8 @@ async fn a_timeout_is_in_the_details() {
     let details = called.details();
     assert_eq!(details["status"], json!("timedOut"));
     assert_eq!(details["exitCode"], Value::Null);
+    assert_eq!(called.structured()["status"], "timed_out");
+    assert_eq!(called.structured()["output"], "hi\n");
 }
 
 /// A cancel kills the group and says so in the details.
@@ -302,6 +316,23 @@ async fn a_cancel_is_in_the_details() {
         call(&bash, json!({"command": "echo hi; sleep 5"}), cancel).await;
     assert_eq!(called.text(), "hi\n\n\nCommand aborted");
     assert_eq!(called.details()["status"], json!("cancelled"));
+    assert_eq!(called.structured()["status"], "cancelled");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn missing_terminal_shell_reports_spawn_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let shell = dir.path().join("missing-shell");
+    let bash = Bash::new(Root::new(dir.path())).with_shell(&shell);
+    let called =
+        call(&bash, json!({"command": "true"}), CancellationToken::new()).await;
+    assert!(
+        called
+            .text()
+            .starts_with(&format!("failed to start {}: ", shell.display()))
+    );
+    assert_eq!(called.structured()["status"], "spawn_failed");
+    assert_eq!(called.structured()["error"], called.text());
 }
 
 /// Updates carry the text so far as their content, so a caller that

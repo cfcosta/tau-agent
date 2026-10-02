@@ -74,14 +74,24 @@ pub(super) async fn run(
     timeout: Option<Duration>,
     ctx: ToolCtx,
 ) -> Result<ToolOutput, ToolError> {
-    let mut run = Command::new(shell)
+    let mut run = match Command::new(shell)
         .arg("-c")
         .arg(&args.command)
         .current_dir(dir)
         .spawn()
-        .map_err(|error| {
-            format!("failed to start {}: {error}", shell.display())
-        })?;
+    {
+        Ok(run) => run,
+        Err(error) => {
+            return finish(
+                Accumulator::new(MAX_LINES, MAX_BYTES, std::env::temp_dir()),
+                Outcome::SpawnFailed,
+                None,
+                args.timeout,
+                None,
+                Some(format!("failed to start {}: {error}", shell.display())),
+            );
+        }
+    };
     let killer = run.killer();
 
     let mut acc = Accumulator::new(MAX_LINES, MAX_BYTES, std::env::temp_dir());
@@ -133,9 +143,20 @@ pub(super) async fn run(
         }
     }
 
-    let finished = finished
-        .expect("the loop ends with the run")
-        .map_err(|error| ToolError::from(format!("terminal: {error}")))?;
+    let finished = match finished.expect("the loop ends with the run") {
+        Ok(finished) => finished,
+        Err(error) => {
+            stream.flush(&ctx, &acc.preview(""));
+            return finish(
+                acc,
+                outcome,
+                None,
+                args.timeout,
+                None,
+                Some(format!("terminal: {error}")),
+            );
+        }
+    };
     acc.append(finished.text.as_bytes());
     // Every chunk goes out before the tool returns: updates sent after
     // are dropped.
@@ -143,10 +164,10 @@ pub(super) async fn run(
 
     let exit_code = match outcome {
         Outcome::Done => Some(finished.status.map_or(1, exit_code_of)),
-        Outcome::Cancelled | Outcome::TimedOut => None,
+        Outcome::Cancelled | Outcome::TimedOut | Outcome::SpawnFailed => None,
     };
     let details = result_details(&finished, outcome, exit_code, stream.seq);
-    finish(acc, outcome, exit_code, args.timeout, Some(details))
+    finish(acc, outcome, exit_code, args.timeout, Some(details), None)
 }
 
 /// The raw bytes on their way to callers.
@@ -201,6 +222,7 @@ fn result_details(
                 Outcome::Done => "exited",
                 Outcome::TimedOut => "timedOut",
                 Outcome::Cancelled => "cancelled",
+                Outcome::SpawnFailed => "spawnFailed",
             },
             "exitCode": exit_code,
             "chunks": chunks,

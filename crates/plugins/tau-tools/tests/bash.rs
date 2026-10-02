@@ -15,8 +15,11 @@ use std::{
 };
 
 use hegel::{TestCase, generators as gs};
-use serde_json::json;
-use tau_agent::tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolUpdates};
+use serde_json::{Value, json};
+use tau_agent::{
+    error::ToolError,
+    tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolUpdates},
+};
 use tau_ai::message::InputBlock;
 use tau_tools::{
     bash::{
@@ -37,6 +40,13 @@ fn text_of(output: &ToolOutput) -> &str {
     match &output.content[0] {
         InputBlock::Text(text) => &text.text,
         InputBlock::Image(_) => panic!("expected a text block"),
+    }
+}
+
+fn structured_error(error: &ToolError) -> &Value {
+    match error {
+        ToolError::Output(output) => output.structured.as_ref().unwrap(),
+        other => panic!("expected output error: {other}"),
     }
 }
 
@@ -423,6 +433,10 @@ fn parameters_schema_matches_the_documented_shape() {
         "Timeout in seconds (optional, no default timeout)"
     );
     assert_eq!(schema["required"], json!(["command"]));
+    let result_schema = bash.output_schema().unwrap();
+    assert_eq!(result_schema["type"], "object");
+    assert_eq!(result_schema["additionalProperties"], false);
+    assert_eq!(result_schema["required"].as_array().unwrap().len(), 14);
 }
 
 // -- Real processes (normal, unpaused runtime) --------------------------
@@ -440,6 +454,11 @@ async fn success_returns_stdout_and_stderr_merged() {
     let text = text_of(&output);
     assert!(text.contains("out"), "{text}");
     assert!(text.contains("err"), "{text}");
+    let structured = output.structured.as_ref().unwrap();
+    assert_eq!(structured["status"], "exited");
+    assert_eq!(structured["exit_code"], 0);
+    assert_eq!(structured["output"], text);
+    assert_eq!(structured["error"], Value::Null);
 }
 
 /// A command with no output returns `(no output)`.
@@ -450,6 +469,7 @@ async fn no_output_reports_a_placeholder() {
     let (ctx, _cancel, _rx) = ctx_with_updates();
     let output = bash.call(json!({"command": "true"}), ctx).await.unwrap();
     assert_eq!(text_of(&output), "(no output)");
+    assert_eq!(output.structured.as_ref().unwrap()["output"], "");
 }
 
 /// The command runs in the tool's root directory
@@ -513,6 +533,10 @@ async fn error_string_nonzero_exit_no_output() {
         error.to_string(),
         "(no output)\n\nCommand exited with code 3"
     );
+    let structured = structured_error(&error);
+    assert_eq!(structured["status"], "exited");
+    assert_eq!(structured["exit_code"], 3);
+    assert_eq!(structured["output"], "");
 }
 
 /// Error string: a non-zero exit keeps the output printed before it.
@@ -542,6 +566,10 @@ async fn error_string_timeout_with_output() {
         error.to_string(),
         "hi\n\n\nCommand timed out after 0.2 seconds"
     );
+    let structured = structured_error(&error);
+    assert_eq!(structured["status"], "timed_out");
+    assert_eq!(structured["exit_code"], Value::Null);
+    assert_eq!(structured["output"], "hi\n");
 }
 
 /// Error string: cancellation, keeping the output printed before it.
@@ -578,7 +606,32 @@ async fn error_string_already_cancelled() {
         .await
         .unwrap_err();
     assert_eq!(error.to_string(), "Command aborted");
+    let structured = structured_error(&error);
+    assert_eq!(structured["status"], "cancelled");
+    assert_eq!(structured["output"], "");
     assert!(!marker.exists(), "the command ran despite being cancelled");
+}
+
+#[tokio::test]
+async fn missing_shell_has_spawn_failed_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let shell = dir.path().join("missing-shell");
+    let bash = Bash::new(Root::new(dir.path())).with_shell(&shell);
+    let (ctx, _cancel, _rx) = ctx_with_updates();
+    let error = bash
+        .call(json!({"command": "true"}), ctx)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .starts_with(&format!("failed to start {}: ", shell.display()))
+    );
+    let structured = structured_error(&error);
+    assert_eq!(structured["status"], "spawn_failed");
+    assert_eq!(structured["exit_code"], Value::Null);
+    assert_eq!(structured["output"], "");
+    assert_eq!(structured["error"], error.to_string());
 }
 
 /// Error string: an invalid `timeout` argument, for every kind of
