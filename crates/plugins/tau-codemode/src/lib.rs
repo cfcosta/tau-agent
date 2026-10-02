@@ -28,6 +28,8 @@ pub mod host;
 pub mod image;
 #[cfg(feature = "host")]
 pub mod jev;
+#[cfg(feature = "host")]
+pub mod json;
 pub mod live;
 #[cfg(feature = "host")]
 pub mod options;

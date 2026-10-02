@@ -42,6 +42,7 @@ Globals:
 - `describe_tool(name)`: a tool's description and Luau signature, or `nil`.
 - `describe_namespace(name)`: `{ name, description, instructions, tools }` for a namespace such as an MCP server, or `nil`.
 - `json.null` is JSON null; `array({})` is an empty JSON array.
+- `json.encode(value)` returns compact JSON; `json.decode(text)` parses JSON. Each text is at most 1 MiB. Decode refuses integer literals outside ±2^53 instead of rounding them. Failures raise string errors.
 - `return value` appends the value like `text`."#;
 
 /// The `Jev:` section, when the plugin has a Jev.

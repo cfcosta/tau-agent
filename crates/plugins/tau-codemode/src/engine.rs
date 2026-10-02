@@ -609,6 +609,38 @@ fn install(lua: &Lua, state: &Arc<State>) -> mlua::Result<()> {
     array_meta.set_readonly(true);
     let json = lua.create_table()?;
     json.set("null", lua.null())?;
+    json.set(
+        "encode",
+        lifted(
+            lua.create_function(
+                |lua, value: LuaValue| match crate::json::encode(lua, &value) {
+                    Ok(text) => {
+                        Ok(ok([LuaValue::String(lua.create_string(text)?)]))
+                    }
+                    Err(error) => fail(lua, format!("json.encode(): {error}")),
+                },
+            )?,
+            AT_CALLER,
+        )?,
+    )?;
+    json.set(
+        "decode",
+        lifted(
+            lua.create_function(|lua, text: LuaValue| {
+                let LuaValue::String(text) = text else {
+                    return fail(
+                        lua,
+                        "json.decode(): the text must be a string",
+                    );
+                };
+                match crate::json::decode(&text.as_bytes()) {
+                    Ok(value) => Ok(ok([to_lua(lua, &value)?])),
+                    Err(error) => fail(lua, format!("json.decode(): {error}")),
+                }
+            })?,
+            AT_CALLER,
+        )?,
+    )?;
     globals.set("json", json)?;
     globals.set(
         "array",

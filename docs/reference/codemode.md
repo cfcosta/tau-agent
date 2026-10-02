@@ -133,6 +133,8 @@ jev.ask({ state = s, questions = { a = { kind = "noul", question = "..." }, ... 
 
 -- JSON shapes.
 json.null          -- JSON null inside a table
+json.encode(value) -- compact JSON, at most 1 MiB
+json.decode(text)  -- parsed value, refuses integer literals outside ±2^53
 array({})          -- an empty table that encodes as [] instead of {}
 ```
 
@@ -145,6 +147,11 @@ array({})          -- an empty table that encodes as [] instead of {}
 - Numbers are doubles: integral values within ±2^53 come back as JSON
   integers, non-finite ones as `null` (as `JSON.stringify` does).
   Object keys come back sorted.
+- `json.encode` and `json.decode` use the same null and array mapping.
+  Each JSON text is at most 1 MiB. Decode refuses integer literals outside
+  ±2^53 instead of silently rounding them. Invalid JSON, excess depth,
+  cycles, and unsupported values raise string errors that `pcall` catches.
+  Encode retains the ordinary non-finite-number-to-null behavior.
 - `text(nil)` appends `null`; `print` shows `nil` as `nil`. `return a,
 b` appends each value that is not `nil`. A return value JSON cannot
   hold (a function) fails the script with
