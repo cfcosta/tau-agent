@@ -35,6 +35,12 @@ indexed by version and never transfer to changed definitions. See
 return only script store values. The UI state serializes a default-empty module
 library alongside the script store for replay and resume.
 
+Repository promotion uses separate `kind: "promotion"` records with `op:
+"requested"` or `op: "decided"`. The request stores exact content and evidence;
+the terminal decision stores its request ID, owner, digest, and decision. UI
+state folds these records for inspection. See
+[module promotion](codemode-module-promotion.md) for validation and activation.
+
 `tests/modules.rs` checks digest normalization, content changes, validation,
 quotas, rollback, JSON round trips, and ordered prefix/fork behavior. Its Hegel
 property generates valid define/select histories without rejection and compares

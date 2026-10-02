@@ -5,16 +5,43 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::Write,
-    os::unix::fs::OpenOptionsExt,
+    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
-use crate::modules::{self, Definition, Library, RepositoryPin};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    modules::{self, Definition, Library, RepositoryPin},
+    promotion::{self, Request},
+};
 
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 // A 64 KiB UTF-8 source can expand sixfold in JSON. Add 16 KiB of
 // signatures, 32 bounded dependencies, and the definition envelope.
 const MAX_VERSION_FILE_BYTES: u64 = 512 * 1024;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryManifest {
+    selected: BTreeMap<String, String>,
+    approved_requests: BTreeMap<String, ApprovalReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApprovalReceipt {
+    owner: String,
+    digest: String,
+}
+
+pub(crate) struct ManifestLock(File);
+
+impl Drop for ManifestLock {
+    fn drop(&mut self) {
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
 
 /// The directory is tau's private per-repository directory, outside its checkout.
 #[derive(Debug, Clone)]
@@ -25,6 +52,14 @@ pub struct RepositoryModules {
 impl RepositoryModules {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self { dir: dir.into() }
+    }
+
+    pub fn scope(&self) -> String {
+        self.dir.to_string_lossy().into_owned()
+    }
+
+    pub fn key(&self) -> String {
+        promotion::repository_key(&self.dir)
     }
 
     fn versions_dir(&self) -> PathBuf {
@@ -142,12 +177,12 @@ impl RepositoryModules {
         Ok(definition)
     }
 
-    fn read_selected(&self) -> Result<BTreeMap<String, String>, String> {
+    fn read_manifest(&self) -> Result<RepositoryManifest, String> {
         let path = self.dir.join("selected.json");
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(BTreeMap::new());
+                return Ok(RepositoryManifest::default());
             }
             Err(error) => return Err(error.to_string()),
         };
@@ -163,12 +198,44 @@ impl RepositoryModules {
         if bytes.len() as u64 > MAX_MANIFEST_BYTES {
             return Err("repository selection manifest exceeds 64 KiB".into());
         }
-        let selected: BTreeMap<String, String> = serde_json::from_slice(&bytes)
-            .map_err(|error| {
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|error| {
                 format!("repository selection manifest is corrupt: {error}")
             })?;
-        Self::validate_selected(&selected)?;
-        Ok(selected)
+        let manifest = if value
+            .get("selected")
+            .is_some_and(serde_json::Value::is_object)
+        {
+            serde_json::from_slice::<RepositoryManifest>(&bytes).map_err(
+                |error| {
+                    format!("repository selection manifest is corrupt: {error}")
+                },
+            )?
+        } else {
+            RepositoryManifest {
+                selected: serde_json::from_slice(&bytes).map_err(|error| {
+                    format!("repository selection manifest is corrupt: {error}")
+                })?,
+                ..Default::default()
+            }
+        };
+        Self::validate_selected(&manifest.selected)?;
+        if manifest.approved_requests.len() > promotion::MAX_RECEIPTS {
+            return Err("repository approval receipts exceed quota".into());
+        }
+        for (id, receipt) in &manifest.approved_requests {
+            if uuid::Uuid::parse_str(id).is_err()
+                || receipt.owner.is_empty()
+                || !modules::valid_version(&receipt.digest)
+            {
+                return Err("invalid repository approval receipt".into());
+            }
+        }
+        Ok(manifest)
+    }
+
+    fn read_selected(&self) -> Result<BTreeMap<String, String>, String> {
+        Ok(self.read_manifest()?.selected)
     }
 
     fn validate_selected(
@@ -188,31 +255,42 @@ impl RepositoryModules {
         Ok(())
     }
 
-    fn serialize_bounded_selected(
-        selected: &BTreeMap<String, String>,
+    fn serialize_manifest(
+        manifest: &RepositoryManifest,
     ) -> Result<Vec<u8>, String> {
-        Self::validate_selected(selected)?;
+        Self::validate_selected(&manifest.selected)?;
+        if manifest.approved_requests.len() > promotion::MAX_RECEIPTS {
+            return Err("repository approval receipts exceed quota".into());
+        }
         let bytes =
-            serde_json::to_vec(selected).map_err(|error| error.to_string())?;
+            serde_json::to_vec(manifest).map_err(|error| error.to_string())?;
         if bytes.len() as u64 > MAX_MANIFEST_BYTES {
             return Err("repository selection manifest exceeds 64 KiB".into());
         }
         Ok(bytes)
     }
 
-    /// Only trusted host code can activate a staged version. Task 24 supplies
-    /// the validated user grant before calling this operation.
-    #[allow(dead_code)]
-    pub(crate) fn activate(
-        &self,
-        name: &str,
-        version: &str,
-    ) -> Result<(), String> {
-        self.read_version(name, version)?;
-        let mut selected = self.read_selected()?;
-        selected.insert(name.to_owned(), version.to_owned());
-        let bytes = Self::serialize_bounded_selected(&selected)?;
+    pub(crate) fn lock_manifest(&self) -> Result<ManifestLock, String> {
         fs::create_dir_all(&self.dir).map_err(|error| error.to_string())?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(self.dir.join(".selected.lock"))
+            .map_err(|error| error.to_string())?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(ManifestLock(file))
+    }
+
+    fn write_manifest(
+        &self,
+        manifest: &RepositoryManifest,
+    ) -> Result<(), String> {
+        let bytes = Self::serialize_manifest(manifest)?;
         let temporary =
             self.dir.join(format!(".selected-{}", uuid::Uuid::now_v7()));
         let result = (|| {
@@ -232,6 +310,76 @@ impl RepositoryModules {
         File::open(&self.dir)
             .and_then(|dir| dir.sync_all())
             .map_err(|error| error.to_string())
+    }
+
+    /// Stage exact versions, then atomically select the root and retain its
+    /// receipt. An identical replay cannot change a later selection.
+    #[cfg(test)]
+    fn approve(&self, request: &Request) -> Result<bool, String> {
+        let lock = self.lock_manifest()?;
+        self.approve_with_lock(request, &lock)
+    }
+
+    pub(crate) fn approve_with_lock(
+        &self,
+        request: &Request,
+        _lock: &ManifestLock,
+    ) -> Result<bool, String> {
+        let mut manifest = self.read_manifest()?;
+        let receipt = ApprovalReceipt {
+            owner: request.owner.clone(),
+            digest: request.digest.clone(),
+        };
+        if let Some(existing) = manifest.approved_requests.get(&request.id) {
+            if existing != &receipt {
+                return Err("repository receipt conflicts with request".into());
+            }
+            return Ok(false);
+        }
+        for definition in request.versions.values() {
+            self.stage(definition)?;
+        }
+        self.read_version(request.root.name(), request.root.version())?;
+        manifest.selected.insert(
+            request.root.name().to_owned(),
+            request.root.version().to_owned(),
+        );
+        manifest
+            .approved_requests
+            .insert(request.id.clone(), receipt);
+        self.write_manifest(&manifest)?;
+        Ok(true)
+    }
+
+    pub(crate) fn has_receipt_with_lock(
+        &self,
+        request: &Request,
+        _lock: &ManifestLock,
+    ) -> Result<bool, String> {
+        let receipt = ApprovalReceipt {
+            owner: request.owner.clone(),
+            digest: request.digest.clone(),
+        };
+        match self.read_manifest()?.approved_requests.get(&request.id) {
+            Some(existing) if existing == &receipt => Ok(true),
+            Some(_) => Err("repository receipt conflicts with request".into()),
+            None => Ok(false),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn activate(
+        &self,
+        name: &str,
+        version: &str,
+    ) -> Result<(), String> {
+        self.read_version(name, version)?;
+        let _lock = self.lock_manifest()?;
+        let mut manifest = self.read_manifest()?;
+        manifest
+            .selected
+            .insert(name.to_owned(), version.to_owned());
+        self.write_manifest(&manifest)
     }
 
     /// Capture selected aliases and exact dependency closure. Dependencies of
@@ -363,6 +511,53 @@ mod tests {
     ) -> Definition {
         Definition::new(name.into(), source.into(), json!({}), dependencies)
             .unwrap()
+    }
+
+    #[test]
+    fn receipt_replay_preserves_later_alias_after_missing_terminal() {
+        let fixture = Fixture::new();
+        let mut scratch = Library::default();
+        let pin = RepositoryPin {
+            owner: "run".into(),
+            selected: BTreeMap::new(),
+            versions: BTreeMap::new(),
+        };
+        let mut requests = Vec::new();
+        for source in ["return 1", "return 2"] {
+            let root = definition("math", source, BTreeMap::new());
+            scratch
+                .apply(&crate::modules::Record::Define {
+                    definition: root.clone(),
+                })
+                .unwrap();
+            requests.push(
+                Request::capture(
+                    "run",
+                    &fixture.repository.scope(),
+                    &fixture.repository.key(),
+                    root,
+                    &scratch,
+                    &pin,
+                )
+                .unwrap(),
+            );
+        }
+        // The first activation has no Store terminal. The second request
+        // selects a newer alias before the first receipt is retried.
+        assert!(fixture.repository.approve(&requests[0]).unwrap());
+        assert!(fixture.repository.approve(&requests[1]).unwrap());
+        assert!(!fixture.repository.approve(&requests[0]).unwrap());
+        assert_eq!(
+            fixture.repository.read_selected().unwrap()["math"],
+            requests[1].root.version()
+        );
+        let lock = fixture.repository.lock_manifest().unwrap();
+        assert!(
+            fixture
+                .repository
+                .has_receipt_with_lock(&requests[0], &lock)
+                .unwrap()
+        );
     }
 
     #[test]

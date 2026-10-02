@@ -367,9 +367,15 @@ pub fn pin_for_run(
 ) -> Result<Option<RepositoryPin>, String> {
     let mut found = None;
     for value in records {
-        if value.get("kind").and_then(Value::as_str) != Some("repository_pin")
-            || value.get("owner").and_then(Value::as_str) != Some(owner)
-        {
+        if value.get("kind").and_then(Value::as_str) != Some("repository_pin") {
+            continue;
+        }
+        let pin_owner = value
+            .get("owner")
+            .and_then(Value::as_str)
+            .filter(|owner| !owner.is_empty())
+            .ok_or("corrupt repository pin owner")?;
+        if pin_owner != owner {
             continue;
         }
         let crate::store::Record::RepositoryPin(pin) =

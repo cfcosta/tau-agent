@@ -658,6 +658,9 @@ impl Plugin for Codemode {
                 name,
                 self.module_writes.clone(),
                 self.module_test_slots.clone(),
+                self.repository
+                    .as_ref()
+                    .map(|repo| (repo.scope(), repo.key())),
             )));
         }
         Ok(Box::new(()))

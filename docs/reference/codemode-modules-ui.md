@@ -35,5 +35,6 @@ The inspector uses the same `State.modules` record fold for live updates and
 reloaded runs. `State.modules` defaults to an empty library when deserializing
 older state. The view, fold, and action request types compile without the
 Codemode host feature; the host action itself needs the normal host context.
-The inspector has no approval or promotion operation and adds no model-facing
-tool.
+The inspector also shows [repository promotion requests](codemode-module-promotion.md)
+with exact content and evidence behind closed disclosures. Approve and Decline
+are trusted host actions; only `module_promote` is available to scripts.

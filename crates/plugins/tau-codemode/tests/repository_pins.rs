@@ -148,3 +148,36 @@ fn corrupt_owned_pin_fails_without_falling_back_to_inherited_pin() {
     ];
     assert!(modules::pin_for_run(&records, "child").is_err());
 }
+
+#[test]
+fn missing_or_empty_pin_owner_fails_closed_on_resume() {
+    let definition = definition("alpha", 1);
+    let pin = RepositoryPin {
+        owner: "run".into(),
+        selected: BTreeMap::from([(
+            "alpha".into(),
+            definition.version().into(),
+        )]),
+        versions: BTreeMap::from([(definition.version().into(), definition)]),
+    };
+    let original =
+        serde_json::to_value(store::Record::RepositoryPin(pin)).unwrap();
+    for malformed in [None, Some(json!("")), Some(json!(7))] {
+        let mut record = original.clone();
+        match malformed {
+            None => {
+                record.as_object_mut().unwrap().remove("owner");
+            }
+            Some(owner) => {
+                record["owner"] = owner;
+            }
+        }
+        assert!(modules::pin_for_run(&[record.clone()], "run").is_err());
+        assert!(modules::pin_for_run(&[record], "fresh-fork").is_err());
+    }
+    assert!(
+        modules::pin_for_run(&[original], "fresh-fork")
+            .unwrap()
+            .is_none()
+    );
+}

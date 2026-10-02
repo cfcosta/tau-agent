@@ -37,3 +37,6 @@ starts a new VM and new mutable module heaps.
 
 `tests/module_loading.rs` covers host resolution, pins, sandbox boundaries,
 timeouts, cancellation, cache behavior, and generated arithmetic inputs.
+An approved repository promotion changes aliases only for fresh runs and forks;
+an existing run keeps its persisted pin. See
+[module promotion](codemode-module-promotion.md).

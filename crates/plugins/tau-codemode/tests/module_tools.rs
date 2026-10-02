@@ -108,6 +108,49 @@ return { made = made, listed = listed, inspected = inspected, answer = require('
 }
 
 #[test]
+fn promotion_tool_only_records_pending_and_catalog_has_no_approval() {
+    tau_testing::block_on_io(async {
+        let store = Store::memory().await.unwrap();
+        let path = std::env::temp_dir()
+            .join(format!("module-request-{}", uuid::Uuid::now_v7()));
+        let agent = Agent::new(model(&[r#"
+local made = tools.module_define({name='candidate',source='return {n=7}'})
+local requested = tools.module_promote({name='candidate',version=made.version})
+local approval = nil
+for _, tool in ipairs(ALL_TOOLS) do
+  if tool.name == 'module_approve' then approval = tool.name end
+end
+return {requested=requested,approval=approval,loaded=require('candidate').n}
+"#]))
+        .plugin(Codemode::new(None).with_repository(path.clone()));
+        let run = agent.run("go", &store).await.unwrap();
+        let result = last_result(&store, &run.run.0).await;
+        assert!(!result.is_error, "{result:?}");
+        let value = &values(&result)[0];
+        assert_eq!(value["requested"]["status"], "pending");
+        assert_eq!(value["loaded"], 7);
+        assert!(value.get("approval").is_none() || value["approval"].is_null());
+        let records = records(&store, &run.run.0).await;
+        assert_eq!(
+            records
+                .iter()
+                .filter(|value| value["kind"] == "promotion")
+                .count(),
+            1
+        );
+        assert_eq!(
+            records
+                .iter()
+                .find(|value| value["kind"] == "promotion")
+                .unwrap()["op"],
+            "requested"
+        );
+        assert!(!path.join("selected.json").exists());
+        let _ = std::fs::remove_dir_all(path);
+    });
+}
+
+#[test]
 fn replacements_inspection_rollback_and_forked_selection() {
     block_on(async {
         let store = Store::memory().await.unwrap();

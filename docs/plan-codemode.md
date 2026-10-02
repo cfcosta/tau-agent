@@ -61,7 +61,7 @@ correctness and evaluation, not on assumed token savings.
 - [x] **21:** [Exercise exact-version modules with bounded fake-tool tests](reference/codemode-module-tests.md), without live side effects.
 - [x] **22:** Add [scratch-module inspection and trusted exact-version rollback](reference/codemode-modules-ui.md) to the UI.
 - [x] **23:** Add [immutable repository storage, owner-specific pins and scratch-first discovery](reference/codemode-repository-modules.md), with persisted phone-safe source inspection and separate quotas.
-- [ ] **24:** Add approval-controlled repository publication.
+- [x] **24:** Add [persisted exact-version requests and trusted repository approval](reference/codemode-module-promotion.md), with closed source/evidence inspection, durable replay receipts and idempotent recovery.
 
 ### M4: Complete data outside the prompt
 

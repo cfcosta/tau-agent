@@ -6,10 +6,11 @@ checkout. The UI configures `Codemode::with_repository` with
 custom host can configure the same API with its own private directory. Access
 to that directory is within the same-user filesystem trust boundary.
 
-| File                | Contents                                                                        |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `versions/<digest>` | Canonical JSON `Definition`; filename is its lowercase SHA-256 content version. |
-| `selected.json`     | JSON object mapping module names to selected version digests.                   |
+| File                | Contents                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| `versions/<digest>` | Canonical JSON `Definition`; filename is its lowercase SHA-256 content version.                |
+| `selected.json`     | Manifest with aliases and approved request receipts; Task 23 plain alias maps remain readable. |
+| `.selected.lock`    | Private cross-process lock for manifest updates.                                               |
 
 `versions/<digest>` has a 512 KiB serialized JSON limit. The definition's
 unescaped source remains limited to 64 KiB; JSON escaping can expand each
@@ -18,7 +19,8 @@ and each definition has at most 32 dependencies. The 512 KiB file limit also
 covers their bounded representation and the definition envelope. Stage and
 read both reject larger version files.
 
-`selected.json` has a 64 KiB file limit and at most 256 aliases. Alias names
+`selected.json` has a 64 KiB file limit, at most 256 aliases, and at most 4096
+approval receipts. Alias names
 are module identifiers and values are lowercase SHA-256 digests. Activation
 checks the alias count and canonical serialized size before replacing the
 manifest; reads reject oversized or invalid manifests.
@@ -28,9 +30,9 @@ manifest; reads reject oversized or invalid manifests.
 hard link. A repeated stage verifies the existing canonical bytes. A corrupt,
 missing, mismatched, or non-regular version fails; it is never replaced or
 substituted with another version. Stage does not select the version. Only the
-crate-private trusted-host activation operation changes `selected.json`.
-There is no script-callable approval, installation, publication, or activation
-tool.
+trusted host's approval action changes `selected.json`; it commits an alias
+with a receipt under a cross-process lock. There is no script-callable approval
+or activation tool. See [module promotion](codemode-module-promotion.md).
 
 At plugin start, the host records one `kind: "repository_pin"` record owned by
 the run ID. Its `selected` map fixes the approved aliases, and its `versions`
@@ -40,7 +42,9 @@ scratch definitions. The pin is verified before use and is available to UI and
 phone folds without filesystem access. A resumed run with the same ID reuses
 its original pin. A fork or new run takes the currently selected repository
 aliases and its own pin; inherited pins owned by other runs do not select
-versions. The pin has a separate limit of 256 definitions and 16 MiB of
+versions. A recognized pin with a missing, empty, or malformed owner fails
+validation on resume. A valid foreign-owned pin remains inactive for a new
+run. The pin has a separate limit of 256 definitions and 16 MiB of
 serialized definitions. Closure capture rejects the 257th distinct version
 before reading its file. Repository versions are retained without garbage
 collection.

@@ -57,6 +57,7 @@ use crate::{
     description::NAME,
     live::{InferUpdate, JevUpdate},
     modules,
+    promotion,
     result::{MAX_ARGS_CHARS, MAX_ERROR_CHARS, preview},
     store::{Record, Snapshot, Writes},
 };
@@ -98,6 +99,11 @@ pub enum Action {
         run: RunId,
         name: String,
         version: String,
+    },
+    Promote {
+        run: RunId,
+        request_id: String,
+        decision: promotion::Decision,
     },
 }
 
@@ -164,6 +170,161 @@ pub fn select_version(
     );
 }
 
+/// The button sends only the persisted request identity and decision.
+pub fn decide_promotion(
+    run: &RunId,
+    request_id: &str,
+    decision: promotion::Decision,
+    handle: &Handle,
+    cx: &mut App,
+) {
+    handle.act(
+        Action::Promote {
+            run: run.clone(),
+            request_id: request_id.to_owned(),
+            decision,
+        },
+        cx,
+    );
+}
+
+#[cfg(feature = "host")]
+fn approve_or_decline(
+    cx: &HostCx,
+    run: &RunId,
+    request_id: &str,
+    decision: promotion::Decision,
+) -> Result<(), String> {
+    use tau_ui_plugin::{HOST_RECORD, HostRecord};
+
+    let host_records = cx
+        .runtime
+        .block_on(cx.store.plugin_entries_everywhere(HOST_RECORD))
+        .map_err(|error| error.to_string())?;
+    let own_hosts: Vec<_> = host_records
+        .iter()
+        .filter(|(owner, _)| owner.as_str() == run.0.as_ref())
+        .collect();
+    if own_hosts.len() != 1 {
+        return Err("run has no unique persisted host record".into());
+    }
+    let host: HostRecord = serde_json::from_str(&own_hosts[0].1)
+        .map_err(|_| "run host record is malformed".to_owned())?;
+    let repo = cx
+        .repo(&host.repo)
+        .ok_or("run repository is not configured on this host")?;
+    let repository = crate::repository_modules::RepositoryModules::new(
+        repo.dir.join("codemode-modules"),
+    );
+    // Serialize the Store decision check and manifest mutation across hosts.
+    let manifest_lock = repository.lock_manifest()?;
+    let raw_records = cx
+        .runtime
+        .block_on(cx.store.records(&run.0, PLUGIN))
+        .map_err(|error| error.to_string())?;
+    let records: Vec<Value> = raw_records
+        .iter()
+        .map(|body| {
+            serde_json::from_str(body)
+                .map_err(|_| "malformed persisted codemode record".to_owned())
+        })
+        .collect::<Result<_, _>>()?;
+    let (request, previous) = promotion::find_request(&records, request_id)?;
+    if request.owner != run.0.as_ref() {
+        return Err("promotion belongs to another run".into());
+    }
+    let matching_requests = cx
+        .runtime
+        .block_on(cx.store.plugin_entries_everywhere(PLUGIN))
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|(owner, body)| {
+            serde_json::from_str::<Value>(&body)
+                .map(|value| (owner, value))
+                .map_err(|_| "malformed persisted codemode record".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, body)| {
+            body.get("kind").and_then(Value::as_str) == Some("promotion")
+                && body.get("op").and_then(Value::as_str) == Some("requested")
+                && body.get("id").and_then(Value::as_str) == Some(request_id)
+        })
+        .collect::<Vec<_>>();
+    if matching_requests.len() != 1
+        || matching_requests[0].0.as_str() != run.0.as_ref()
+    {
+        return Err(
+            "promotion request ID is duplicated or owned by another run".into(),
+        );
+    }
+    let request_index = records
+        .iter()
+        .position(|body| {
+            body.get("kind").and_then(Value::as_str) == Some("promotion")
+                && body.get("op").and_then(Value::as_str) == Some("requested")
+                && body.get("id").and_then(Value::as_str) == Some(request_id)
+        })
+        .ok_or("promotion request is missing from persisted run records")?;
+    let at_request = &records[..=request_index];
+    let pin = modules::pin_for_run(at_request, &run.0)?
+        .ok_or("repository pin is missing for this run")?;
+    let scratch = modules::fold(at_request);
+    request.verify(
+        &scratch,
+        &pin,
+        &run.0,
+        &repository.scope(),
+        &repository.key(),
+    )?;
+    match previous {
+        Some(promotion::Decision::Declined) => {
+            return if decision == promotion::Decision::Declined {
+                Ok(())
+            } else {
+                Err("promotion was already declined".into())
+            };
+        }
+        Some(promotion::Decision::Approved)
+            if decision == promotion::Decision::Declined =>
+        {
+            return Err("promotion was already approved".into());
+        }
+        Some(promotion::Decision::Approved) => {
+            return if repository
+                .has_receipt_with_lock(&request, &manifest_lock)?
+            {
+                Ok(())
+            } else {
+                Err("approved terminal record has no repository receipt".into())
+            };
+        }
+        _ => {}
+    }
+    if decision == promotion::Decision::Declined
+        && repository.has_receipt_with_lock(&request, &manifest_lock)?
+    {
+        return Err("promotion was already activated; retry approval to store its terminal record".into());
+    }
+    if decision == promotion::Decision::Approved {
+        repository.approve_with_lock(&request, &manifest_lock)?;
+    }
+    if previous.is_none() {
+        let terminal = promotion::Terminal {
+            request_id: request.id,
+            owner: request.owner,
+            digest: request.digest,
+            decision,
+        };
+        let body = serde_json::to_value(Record::Promotion(
+            promotion::Record::Decided(terminal),
+        ))
+        .map_err(|error| error.to_string())?;
+        cx.publish(run, PLUGIN, &body).map_err(|error| format!("terminal record could not be stored; retry this decision: {error}"))?;
+    }
+    Ok(())
+}
+
 /// What a run's scripts kept in the store, as its records leave it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -176,6 +337,10 @@ pub struct State {
     pub modules: modules::Library,
     /// Full immutable repository source snapshots, keyed by owning run ID.
     pub repository_pins: BTreeMap<String, modules::RepositoryPin>,
+    /// Durable promotion requests and terminal decisions, suitable for phones.
+    pub promotions: Vec<promotion::Record>,
+    /// Serialized size of the folded promotion records.
+    pub promotion_bytes: usize,
     /// Private inference records; a start without a finish is interrupted.
     pub inference: Vec<crate::inference_trace::Record>,
 }
@@ -202,6 +367,28 @@ impl Fold for State {
             Record::RepositoryPin(pin) => {
                 if pin.verify().is_ok() {
                     self.repository_pins.insert(pin.owner.clone(), pin);
+                }
+            }
+            Record::Promotion(record) => {
+                if self.promotion_bytes == 0 && !self.promotions.is_empty() {
+                    self.promotion_bytes = self
+                        .promotions
+                        .iter()
+                        .map(|item| {
+                            serde_json::to_vec(item)
+                                .map_or(0, |bytes| bytes.len())
+                        })
+                        .sum();
+                }
+                if self.promotions.len() < promotion::MAX_REQUESTS * 2 {
+                    let size = serde_json::to_vec(&record)
+                        .map_or(usize::MAX, |bytes| bytes.len());
+                    if self.promotion_bytes.saturating_add(size)
+                        <= promotion::MAX_FOLDED_BYTES
+                    {
+                        self.promotion_bytes += size;
+                        self.promotions.push(record);
+                    }
                 }
             }
             Record::Inference(record) => self.inference.push(record),
@@ -585,19 +772,35 @@ impl UiPlugin for CodemodeUi {
         action: Value,
         cx: &HostCx,
     ) -> anyhow::Result<Option<Value>> {
-        let result = (|| {
-            let Action::Select { run, name, version } =
-                serde_json::from_value::<Action>(action).map_err(|_| {
-                    "Invalid module selection action".to_owned()
-                })?;
-            let records = cx
-                .records(&run, PLUGIN)
-                .map_err(|error| error.to_string())?;
-            let selection = validate_selection(&records, &name, &version)?;
-            let body = serde_json::to_value(Record::Module(selection))
-                .map_err(|error| error.to_string())?;
-            cx.publish(&run, PLUGIN, &body)
-                .map_err(|error| error.to_string())
+        let result = (|| match serde_json::from_value::<Action>(action)
+            .map_err(|_| "Invalid module action".to_owned())?
+        {
+            Action::Select { run, name, version } => {
+                let records = cx
+                    .records(&run, PLUGIN)
+                    .map_err(|error| error.to_string())?;
+                let selection = validate_selection(&records, &name, &version)?;
+                let body = serde_json::to_value(Record::Module(selection))
+                    .map_err(|error| error.to_string())?;
+                cx.publish(&run, PLUGIN, &body)
+                    .map_err(|error| error.to_string())
+            }
+            Action::Promote {
+                run,
+                request_id,
+                decision,
+            } => {
+                #[cfg(feature = "host")]
+                {
+                    approve_or_decline(cx, &run, &request_id, decision)
+                        .map_err(|error| format!("Promotion: {error}"))
+                }
+                #[cfg(not(feature = "host"))]
+                {
+                    let _ = (cx, run, request_id, decision);
+                    Err("Promotion: repository host is unavailable".into())
+                }
+            }
         })();
         Ok(result.err().map(|error| {
             serde_json::to_value(ActionReply { error })
@@ -612,7 +815,12 @@ impl UiPlugin for CodemodeUi {
         cx: &mut Context<Self::Ui>,
     ) {
         if let Ok(reply) = serde_json::from_value::<ActionReply>(reply) {
-            ui.handle.alert("Module selection failed", reply.error, cx);
+            let title = if reply.error.starts_with("Promotion:") {
+                "Module promotion failed"
+            } else {
+                "Module selection failed"
+            };
+            ui.handle.alert(title, reply.error, cx);
         }
     }
 
@@ -651,6 +859,16 @@ impl UiPlugin for CodemodeUi {
                             view.handle.clone(),
                             &t,
                         ))
+                        .when_some(view.run, |section, run| {
+                            section.child(promotions_section(
+                                &state.promotions,
+                                &run.id,
+                                &open,
+                                view.ui.clone(),
+                                view.handle.clone(),
+                                &t,
+                            ))
+                        })
                         .into_any_element(),
                 )
             })
@@ -1132,6 +1350,157 @@ fn repository_section(
                     (ui_state.clone(), handle.clone()),
                     t,
                 ));
+    }
+    section
+}
+
+fn promotions_section(
+    records: &[promotion::Record],
+    run: &RunId,
+    open: &BTreeSet<String>,
+    ui_state: Entity<InspectorUi>,
+    handle: Handle,
+    t: &Theme,
+) -> Div {
+    let requests: Vec<_> = records
+        .iter()
+        .filter_map(|record| match record {
+            promotion::Record::Requested(request)
+                if request.owner == run.0.as_ref() =>
+            {
+                Some(request.as_ref())
+            }
+            _ => None,
+        })
+        .collect();
+    let mut section = div().flex().flex_col().gap(sp(2.)).child(heading(
+        &format!("Repository promotion requests · {}", requests.len()),
+        t,
+    ));
+    for request in requests {
+        let decisions: Vec<_> = records
+            .iter()
+            .filter_map(|record| match record {
+                promotion::Record::Decided(terminal)
+                    if terminal.request_id == request.id
+                        && terminal.owner == request.owner
+                        && terminal.digest == request.digest =>
+                {
+                    Some(terminal.decision)
+                }
+                _ => None,
+            })
+            .collect();
+        let status = match decisions.as_slice() {
+            [] => "Pending",
+            [promotion::Decision::Approved] => "Approved",
+            [promotion::Decision::Declined] => "Declined",
+            _ => "Conflicting",
+        };
+        let key = format!("promotion-{}", request.id);
+        let expanded = open.contains(&key);
+        let mut row = div()
+            .flex()
+            .flex_col()
+            .gap(sp(1.))
+            .p(sp(2.))
+            .border_1()
+            .border_color(t.border)
+            .rounded(tau_ui_kit::theme::radius::BOX)
+            .child(mono(
+                format!(
+                    "{status} · {}@{} · {}",
+                    request.root.name(),
+                    request.root.version(),
+                    request.id
+                ),
+                Type::MICRO,
+                t.text_soft,
+            ))
+            .child(disclosure(
+                key,
+                "Show exact request".into(),
+                expanded,
+                ui_state.clone(),
+                handle.clone(),
+                t,
+            ));
+        if expanded {
+            row = row
+                .child(mono(
+                    format!(
+                        "Repository: {} · key {}",
+                        request.repository_scope, request.repository_key
+                    ),
+                    Type::MICRO,
+                    t.dim,
+                ))
+                .child(mono(
+                    format!("Content digest: {}", request.digest),
+                    Type::MICRO,
+                    t.dim,
+                ))
+                .child(mono(
+                    format!(
+                        "Dependencies: {}",
+                        compact_json_preview(request.root.dependencies(), 2048)
+                    ),
+                    Type::MICRO,
+                    t.muted,
+                ))
+                .child(mono(
+                    format!(
+                        "Closure: {}",
+                        compact_json_preview(&request.versions, 4096)
+                    ),
+                    Type::MICRO,
+                    t.muted,
+                ))
+                .child(mono(
+                    format!("Test evidence: {}", request.tests.len()),
+                    Type::MICRO,
+                    t.muted,
+                ))
+                .child(code_block(Some("luau"), request.root.source(), t))
+                .child(code_block(
+                    Some("json"),
+                    &compact_json_preview(request.root.signatures(), 16 * 1024),
+                    t,
+                ));
+            for test in &request.tests {
+                row = row.child(code_block(
+                    Some("json"),
+                    &compact_json_preview(test, 4096),
+                    t,
+                ));
+            }
+        }
+        if status == "Pending" {
+            for (label, decision) in [
+                ("Approve", promotion::Decision::Approved),
+                ("Decline", promotion::Decision::Declined),
+            ] {
+                let (run, request_id, handle) =
+                    (run.clone(), request.id.clone(), handle.clone());
+                row = row.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "promotion-{label}-{request_id}"
+                        )))
+                        .child(ui::button(label, ButtonKind::Secondary, t))
+                        .on_click(move |_, _, cx| {
+                            decide_promotion(
+                                &run,
+                                &request_id,
+                                decision,
+                                &handle,
+                                cx,
+                            )
+                        }),
+                );
+            }
+        }
+        section = section.child(row);
     }
     section
 }

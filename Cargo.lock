@@ -9180,6 +9180,7 @@ dependencies = [
  "gpui-pre",
  "hegeltest",
  "jsonschema",
+ "libc",
  "mlua",
  "serde",
  "serde_json",

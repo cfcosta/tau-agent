@@ -37,6 +37,7 @@ pub enum Record {
     Store(Writes),
     Module(crate::modules::Record),
     RepositoryPin(crate::modules::RepositoryPin),
+    Promotion(crate::promotion::Record),
     Inference(crate::inference_trace::Record),
 }
 

@@ -45,6 +45,7 @@ pub mod modules;
 pub mod options;
 #[cfg(feature = "host")]
 pub mod plugin;
+pub mod promotion;
 #[cfg(feature = "host")]
 pub mod repository_modules;
 pub mod result;

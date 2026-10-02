@@ -1,6 +1,6 @@
 # Codemode module tools
 
-Codemode owns five fixed nested tools. They are available on `tools` inside a
+Codemode owns six fixed nested tools. They are available on `tools` inside a
 codemode script and are never declared as separate model tools. Their names,
 descriptions, and JSON schemas stay fixed for the run. The list of modules
 changes through stored records, not through tool registration.
@@ -18,6 +18,7 @@ with `module_select` or used as the root of `module_test`.
 | `module_inspect` | `{ name, version? }`                           | `{ name, version, source, signatures, dependencies, tests }`                                        |
 | `module_select`  | `{ name, version }`                            | `{ name, version, signatures, dependencies }`                                                       |
 | `module_test`    | `{ name, version?, code, tools? }`             | `{ name, version, passed, output, output_truncated, calls, error, error_truncated }`                |
+| `module_promote` | `{ name, version }`                            | `{ request_id, name, version, status: "pending" }`                                                  |
 
 `signatures` and `dependencies` default to empty objects. Dependencies map
 module names to exact versions. Definitions are immutable: the version is the
@@ -70,3 +71,5 @@ that VM; a later codemode call starts with a fresh module heap.
 
 See [module tests](codemode-module-tests.md) for fixture syntax, execution
 limits, saved reports, and the meaning of a pass.
+See [module promotion](codemode-module-promotion.md) for pending requests,
+trusted approval, manifest receipts, and recovery.

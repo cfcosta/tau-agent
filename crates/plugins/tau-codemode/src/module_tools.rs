@@ -23,15 +23,17 @@ use crate::{
         RepositoryPin,
         TestReport,
     },
+    promotion,
     store,
 };
 
-pub(crate) const NAMES: [&str; 5] = [
+pub(crate) const NAMES: [&str; 6] = [
     "module_define",
     "module_list",
     "module_inspect",
     "module_select",
     "module_test",
+    "module_promote",
 ];
 
 pub(crate) struct ModuleTool {
@@ -41,6 +43,7 @@ pub(crate) struct ModuleTool {
     output_schema: Value,
     writes: Arc<tokio::sync::Mutex<()>>,
     test_slots: Arc<tokio::sync::Semaphore>,
+    repository: Option<(String, String)>,
 }
 
 impl ModuleTool {
@@ -48,6 +51,7 @@ impl ModuleTool {
         name: &'static str,
         writes: Arc<tokio::sync::Mutex<()>>,
         test_slots: Arc<tokio::sync::Semaphore>,
+        repository: Option<(String, String)>,
     ) -> Self {
         let (description, parameters, output_schema) = match name {
             "module_define" => (
@@ -100,6 +104,11 @@ impl ModuleTool {
                     "error_truncated":{"type":"boolean"}
                 },"required":["name","version","passed","output","output_truncated","calls","error","error_truncated"],"additionalProperties":false}),
             ),
+            "module_promote" => (
+                "Request trusted approval of one exact scratch version and its dependency closure. Creates a durable pending request; it does not activate a repository alias.",
+                json!({"type":"object","properties":{"name":{"type":"string"},"version":{"type":"string"}},"required":["name","version"],"additionalProperties":false}),
+                json!({"type":"object","properties":{"request_id":{"type":"string"},"name":{"type":"string"},"version":{"type":"string"},"status":{"type":"string","enum":["pending"]}},"required":["request_id","name","version","status"],"additionalProperties":false}),
+            ),
             _ => {
                 unreachable!("only reserved module tool names are constructed")
             }
@@ -111,6 +120,7 @@ impl ModuleTool {
             output_schema,
             writes,
             test_slots,
+            repository,
         }
     }
 }
@@ -425,6 +435,51 @@ impl AgentTool for ModuleTool {
                     &name,
                     Some(&version),
                 )?)))
+            }
+            "module_promote" => {
+                let (scope, key) = self.repository.as_ref().ok_or(
+                    "module promotion requires a configured repository",
+                )?;
+                let name = field(&args, "name")?;
+                let version = field(&args, "version")?;
+                let _guard = self.writes.lock().await;
+                let records =
+                    plugin.records().await.map_err(ToolError::other)?;
+                if promotion::request_count(&records) >= promotion::MAX_REQUESTS
+                {
+                    return Err("promotion request quota reached".into());
+                }
+                let scratch = modules::fold(&records);
+                let root = definition(&scratch, name, Some(version))?.clone();
+                let pin = modules::pin_for_run(&records, &plugin.run.0)
+                    .map_err(ToolError::from)?
+                    .ok_or("repository pin is missing for this run")?;
+                compile(root.name(), root.version(), root.source())?;
+                let request = promotion::Request::capture(
+                    &plugin.run.0,
+                    scope,
+                    key,
+                    root,
+                    &scratch,
+                    &pin,
+                )
+                .map_err(ToolError::from)?;
+                let record = store::Record::Promotion(
+                    promotion::Record::Requested(Box::new(request.clone())),
+                );
+                let size = serde_json::to_vec(&record)?.len();
+                if promotion::request_bytes(&records).saturating_add(size)
+                    > promotion::MAX_TOTAL_BYTES
+                {
+                    return Err("promotion requests exceed 32 MiB".into());
+                }
+                if ctx.cancel.is_cancelled() {
+                    return Err("module call cancelled".into());
+                }
+                let result = json!({"request_id":&request.id,"name":request.root.name(),"version":request.root.version(),"status":"pending"});
+                plugin.record(&record).await.map_err(ToolError::other)?;
+                plugin.report(serde_json::to_value(&record)?);
+                Ok(output(result))
             }
             _ => unreachable!(),
         }

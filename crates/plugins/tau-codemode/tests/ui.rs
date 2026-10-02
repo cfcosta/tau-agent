@@ -258,6 +258,37 @@ fn selection_button_sends_only_the_exact_version(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn promotion_button_sends_only_request_identity_and_decision(
+    cx: &mut TestAppContext,
+) {
+    let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let received = requests.clone();
+    let handle = Handle::new(
+        PLUGIN,
+        Rc::new(move |_, request, _: &mut App| {
+            received.borrow_mut().push(request)
+        }),
+    );
+    let run = RunId("run-7".into());
+    let request_id = "opaque-id";
+    cx.update(|cx| {
+        ui::decide_promotion(
+            &run,
+            request_id,
+            tau_codemode::promotion::Decision::Approved,
+            &handle,
+            cx,
+        )
+    });
+    assert_eq!(
+        *requests.borrow(),
+        vec![UiRequest::Act(
+            json!({"action":"promote","run":"run-7","request_id":"opaque-id","decision":"approved"})
+        )]
+    );
+}
+
+#[gpui::test]
 fn rejected_selection_requests_a_visible_alert(cx: &mut TestAppContext) {
     let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
     let received = requests.clone();
