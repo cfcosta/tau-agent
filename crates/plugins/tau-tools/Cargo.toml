@@ -12,6 +12,7 @@ default = ["host"]
 # on a phone.
 host = [
   "dep:async-trait",
+  "dep:tau-artifacts",
   "dep:globset",
   "dep:grep-matcher",
   "dep:grep-regex",
@@ -50,6 +51,8 @@ serde.workspace = true
 serde_json.workspace = true
 similar = { workspace = true, optional = true }
 tau-agent.workspace = true
+tau-artifacts = { workspace = true, optional = true }
+uuid.workspace = true
 tau-ai.workspace = true
 tau-terminal = { workspace = true, optional = true }
 thiserror.workspace = true

@@ -127,18 +127,66 @@ fn the_plugin_picks_tools_in_pis_order() {
     let root = Root::new("/tmp");
     let all = CodingTools::new(root.clone());
     assert_eq!(all.name(), tau_tools::ui::NAME);
-    assert_eq!(tool_names(&all.tools()), tool_names(&coding_tools(&root)));
-    assert_eq!(tool_names(&all.tools()), Tool::ALL.map(Tool::name).to_vec());
+    assert_eq!(
+        tool_names(&coding_tools(&root)),
+        Tool::ALL.map(Tool::name).to_vec()
+    );
+    assert_eq!(
+        tool_names(&all.tools()),
+        [
+            "read",
+            "bash",
+            "edit",
+            "write",
+            "grep",
+            "find",
+            "ls",
+            "artifact_read"
+        ]
+    );
+    assert_eq!(
+        all.tools().last().unwrap().exposure(),
+        tau_agent::tool::Exposure::Nested
+    );
+    let range = all.tools().pop().unwrap();
+    assert!(range.parameters()["properties"]["id"].is_object());
+    assert!(range.parameters()["properties"]["offset"].is_object());
+    assert!(range.parameters()["properties"]["limit"].is_object());
+    assert!(range.parameters()["properties"]["encoding"].is_object());
+    let output = range.output_schema().unwrap();
+    assert!(
+        output["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("complete"))
+    );
+    assert!(
+        output["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("next_offset"))
+    );
     let picked = CodingTools::new(root.clone()).only(&[
         Tool::Ls,
         Tool::Read,
         Tool::Grep,
     ]);
     assert_eq!(picked.selected(), [Tool::Read, Tool::Grep, Tool::Ls]);
-    assert_eq!(tool_names(&picked.tools()), ["read", "grep", "ls"]);
+    assert_eq!(
+        tool_names(&picked.tools()),
+        ["read", "grep", "ls", "artifact_read"]
+    );
     let no_shell = CodingTools::new(root).without(Tool::Bash);
     assert_eq!(
         tool_names(&no_shell.tools()),
-        ["read", "edit", "write", "grep", "find", "ls"]
+        [
+            "read",
+            "edit",
+            "write",
+            "grep",
+            "find",
+            "ls",
+            "artifact_read"
+        ]
     );
 }

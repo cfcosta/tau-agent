@@ -9135,6 +9135,7 @@ dependencies = [
 name = "tau-artifacts"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "hegeltest",
  "libc",
  "serde",
@@ -9544,6 +9545,7 @@ dependencies = [
  "similar",
  "tau-agent",
  "tau-ai",
+ "tau-artifacts",
  "tau-store",
  "tau-terminal",
  "tau-testing",
@@ -9554,6 +9556,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "unicode-normalization",
+ "uuid",
 ]
 
 [[package]]

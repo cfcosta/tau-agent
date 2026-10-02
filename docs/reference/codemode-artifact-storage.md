@@ -23,9 +23,10 @@ staging file, which is ignored by accounting and is not removed automatically
 because another process may still be writing it.
 
 Artifact deserialization validates the canonical ID and lowercase digest
-before any internal file resolution. The only byte-read method is crate-private
-for tests and the later authorized range API. This crate does not expose an
-unscoped read or wire a Tau tool or plugin yet.
+before any internal file resolution. The public bounded read method requires
+immutable metadata resolved by its caller; it does not authorize access by
+itself. `CodingTools` resolves that metadata from run-scoped grants before
+calling it. See [Code Mode artifact ranges](codemode-artifact-ranges.md).
 
 The Hegel property in `src/tests.rs` generates bounded raw bytes, Unicode
 bytes, and varied read splits, then checks the private read against the input,

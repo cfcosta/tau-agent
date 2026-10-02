@@ -14,6 +14,9 @@
 //! `docs/decisions/0010-terminal-rendering.md`). Without it, `bash` uses
 //! pipes and neither is built.
 
+pub mod artifact_grant;
+#[cfg(feature = "host")]
+pub mod artifact_read;
 /// Unix only: it runs commands in their own process group.
 #[cfg(all(unix, feature = "host"))]
 pub mod bash;
@@ -72,6 +75,8 @@ impl From<SearchError> for tau_agent::tool::ToolError {
 pub fn coding_tools(
     root: &path::Root,
 ) -> Vec<std::sync::Arc<dyn tau_agent::tool::AgentTool>> {
-    use tau_agent::plugin::Plugin;
-    plugin::CodingTools::new(root.clone()).tools()
+    plugin::Tool::ALL
+        .iter()
+        .map(|tool| tool.build(root))
+        .collect()
 }

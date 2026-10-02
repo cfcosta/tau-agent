@@ -9,8 +9,19 @@
 use std::sync::Arc;
 
 use tau_agent::{plugin::Plugin, tool::AgentTool};
+use tau_artifacts::Bytes;
 
-use crate::{bash, edit, find, grep, ls, path::Root, read, write};
+use crate::{
+    artifact_read,
+    bash,
+    edit,
+    find,
+    grep,
+    ls,
+    path::Root,
+    read,
+    write,
+};
 
 /// One of the coding tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -49,7 +60,7 @@ impl Tool {
         }
     }
 
-    fn build(self, root: &Root) -> Arc<dyn AgentTool> {
+    pub(crate) fn build(self, root: &Root) -> Arc<dyn AgentTool> {
         let root = root.clone();
         match self {
             Tool::Read => Arc::new(read::Read::new(root)),
@@ -71,6 +82,7 @@ impl Tool {
 pub struct CodingTools {
     root: Root,
     tools: Vec<Tool>,
+    artifacts: Option<Bytes>,
 }
 
 impl CodingTools {
@@ -78,7 +90,14 @@ impl CodingTools {
         Self {
             root,
             tools: Tool::ALL.to_vec(),
+            artifacts: None,
         }
+    }
+
+    /// Attach private byte storage for the nested artifact reader.
+    pub fn with_artifacts(mut self, bytes: Bytes) -> Self {
+        self.artifacts = Some(bytes);
+        self
     }
 
     /// Keeps only `tools`.
@@ -105,9 +124,14 @@ impl Plugin for CodingTools {
     }
 
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
-        self.tools
+        let mut tools: Vec<Arc<dyn AgentTool>> = self
+            .tools
             .iter()
             .map(|tool| tool.build(&self.root))
-            .collect()
+            .collect();
+        tools.push(Arc::new(artifact_read::ArtifactRead::new(
+            self.artifacts.clone(),
+        )));
+        tools
     }
 }

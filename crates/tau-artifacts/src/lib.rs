@@ -3,11 +3,11 @@
 //! Publication streams to a private staging file. A directory-wide lock
 //! serializes quota checks and atomic, no-clobber publication across handles
 //! and processes. No public method resolves an arbitrary artifact ID to bytes;
-//! an authorized range API can be added here later.
+//! callers must supply immutable metadata from an authorized scope.
 
 use std::{
     fs::{self, File, OpenOptions, Permissions},
-    io::{self, Read, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     os::{
         fd::AsRawFd,
         unix::fs::{OpenOptionsExt, PermissionsExt},
@@ -16,6 +16,7 @@ use std::{
     sync::Arc,
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
@@ -23,6 +24,31 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const CHUNK_BYTES: usize = 64 * 1024;
+pub const MAX_RANGE_BYTES: u32 = 65_536;
+pub const DEFAULT_RANGE_BYTES: u32 = 32_768;
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Encoding {
+    #[default]
+    Utf8,
+    Base64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Range {
+    pub id: String,
+    pub offset: u64,
+    pub next_offset: Option<u64>,
+    pub size_bytes: u64,
+    pub encoding: Encoding,
+    pub data: String,
+    pub eof: bool,
+    /// True only when this one range contains the whole artifact from byte zero.
+    pub complete: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Quotas {
@@ -111,13 +137,26 @@ pub enum Error {
     TotalQuotaExceeded,
     #[error("invalid artifact metadata")]
     InvalidArtifact,
+    #[error("artifact bytes are missing")]
+    MissingArtifact,
+    #[error("artifact range limit must be between 1 and 65536 bytes")]
+    InvalidLimit,
+    #[error("artifact offset is beyond the end")]
+    OffsetOutOfRange,
+    #[error("UTF-8 offset starts inside a codepoint")]
+    Utf8Start,
+    #[error("artifact bytes are not valid UTF-8; use base64")]
+    InvalidUtf8,
+    #[error("range limit is too small for one UTF-8 codepoint")]
+    Utf8LimitTooSmall,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Bytes(Arc<Storage>);
 
+#[derive(Debug)]
 struct Storage {
     objects: PathBuf,
     lock_path: PathBuf,
@@ -224,16 +263,100 @@ impl Bytes {
         Ok(artifact)
     }
 
-    /// Restricted to this crate until the authorized range API is built.
-    #[allow(dead_code)]
-    pub(crate) fn open_object(&self, artifact: &Artifact) -> Result<File> {
+    fn open_object(&self, artifact: &Artifact) -> Result<File> {
         artifact.validate()?;
         let path = self.0.objects.join(format!("{}.blob", artifact.id));
-        let file = File::open(path)?;
+        let file = File::open(path).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                Error::MissingArtifact
+            } else {
+                Error::Io(error)
+            }
+        })?;
         if file.metadata()?.len() != artifact.size_bytes {
             return Err(Error::InvalidArtifact);
         }
         Ok(file)
+    }
+
+    /// Read at most `limit` bytes from metadata resolved by the caller's
+    /// grant scope. This function does no authorization of its own.
+    pub fn read_range(
+        &self,
+        artifact: &Artifact,
+        offset: u64,
+        limit: u32,
+        encoding: Encoding,
+        cancellation: &CancellationToken,
+    ) -> Result<Range> {
+        if !(1..=MAX_RANGE_BYTES).contains(&limit) {
+            return Err(Error::InvalidLimit);
+        }
+        if cancellation.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let mut file = self.open_object(artifact)?;
+        if offset > artifact.size_bytes {
+            return Err(Error::OffsetOutOfRange);
+        }
+        let count =
+            (artifact.size_bytes - offset).min(u64::from(limit)) as usize;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = vec![0; count];
+        file.read_exact(&mut bytes).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                Error::InvalidArtifact
+            } else {
+                Error::Io(error)
+            }
+        })?;
+        if cancellation.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        if file.metadata()?.len() != artifact.size_bytes {
+            return Err(Error::InvalidArtifact);
+        }
+        let used = match encoding {
+            Encoding::Base64 => count,
+            Encoding::Utf8 => {
+                if bytes.first().is_some_and(|byte| byte & 0xc0 == 0x80) {
+                    return Err(Error::Utf8Start);
+                }
+                match std::str::from_utf8(&bytes) {
+                    Ok(_) => count,
+                    Err(error) if error.error_len().is_some() => {
+                        return Err(Error::InvalidUtf8);
+                    }
+                    Err(error)
+                        if offset + count as u64 == artifact.size_bytes =>
+                    {
+                        let _ = error;
+                        return Err(Error::InvalidUtf8);
+                    }
+                    Err(error) if error.valid_up_to() == 0 => {
+                        return Err(Error::Utf8LimitTooSmall);
+                    }
+                    Err(error) => error.valid_up_to(),
+                }
+            }
+        };
+        let next = offset + used as u64;
+        let eof = next == artifact.size_bytes;
+        let data = match encoding {
+            Encoding::Utf8 => String::from_utf8(bytes[..used].to_vec())
+                .map_err(|_| Error::InvalidUtf8)?,
+            Encoding::Base64 => STANDARD.encode(&bytes),
+        };
+        Ok(Range {
+            id: artifact.id.clone(),
+            offset,
+            next_offset: (!eof).then_some(next),
+            size_bytes: artifact.size_bytes,
+            encoding,
+            data,
+            eof,
+            complete: offset == 0 && eof,
+        })
     }
 }
 
