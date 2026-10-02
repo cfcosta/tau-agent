@@ -25,6 +25,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tau_agent::{
     error::{PluginError, ToolError},
@@ -178,6 +179,7 @@ struct InferObserver {
     trace_id: String,
     attempts: Arc<Mutex<Vec<Attempt>>>,
     reservations: Arc<Mutex<Vec<u32>>>,
+    updates: tau_agent::tool::ToolUpdates,
 }
 
 struct InferAttempt {
@@ -185,6 +187,7 @@ struct InferAttempt {
     number: u32,
     attempts: Arc<Mutex<Vec<Attempt>>>,
     reported: bool,
+    updates: tau_agent::tool::ToolUpdates,
 }
 
 #[async_trait]
@@ -208,11 +211,14 @@ impl AskObserver for InferObserver {
             format!("cannot reserve inference attempt: {error}")
         })?;
         self.reservations.lock().unwrap().push(attempt);
+        self.updates
+            .send(ToolOutput::text(format!("attempt {attempt} started")));
         Ok(Box::new(InferAttempt {
             permit,
             number: attempt,
             attempts: self.attempts.clone(),
             reported: false,
+            updates: self.updates.clone(),
         }))
     }
 }
@@ -247,6 +253,17 @@ impl AskPermit for InferAttempt {
             reported_usage: usage.clone(),
             usage_provenance,
         });
+        self.updates.send(ToolOutput::text(format!(
+            "attempt {} · {:?} · reported ${:.6}{}",
+            self.number,
+            outcome,
+            usage.cost.total,
+            if usage_provenance == UsageProvenance::Unknown {
+                " · final usage unknown"
+            } else {
+                ""
+            },
+        )));
     }
 }
 
@@ -272,6 +289,7 @@ impl InferTool {
         usage: Usage,
         error: Option<String>,
         output_limit: bool,
+        usage_complete: bool,
     ) -> Result<ToolOutput, ToolError> {
         let body = json!({
             "ok": error.is_none(),
@@ -282,7 +300,9 @@ impl InferTool {
         });
         let output = ToolOutput {
             content: vec![text_block(body.to_string())],
-            details: Some(json!({"provider_output_limit": output_limit})),
+            details: Some(
+                json!({"provider_output_limit": output_limit, "usage": usage, "usage_complete": usage_complete}),
+            ),
             structured: Some(body),
         };
         if output
@@ -332,6 +352,7 @@ impl AgentTool for InferTool {
                 Usage::default(),
                 Some("infer requires its plugin context".into()),
                 false,
+                true,
             );
         };
         let request = match InferRequest::parse(args) {
@@ -359,6 +380,7 @@ impl AgentTool for InferTool {
                             "inference trace {trace_id} could not start: {publish_error}; no provider attempt was made"
                         )),
                         false,
+                        true,
                     );
                 }
                 let finished = inference_trace::Record::Finished {
@@ -384,6 +406,7 @@ impl AgentTool for InferTool {
                             "inference trace {trace_id} has no stored terminal record: {publish_error}; incomplete budget, use a new run or fork"
                         )),
                         false,
+                        false,
                     );
                 }
                 return self.output(
@@ -392,6 +415,7 @@ impl AgentTool for InferTool {
                     Usage::default(),
                     Some(error),
                     false,
+                    true,
                 );
             }
         };
@@ -416,6 +440,7 @@ impl AgentTool for InferTool {
                     "inference trace {trace_id} could not start: {error}; no provider attempt was made"
                 )),
                 output_limit,
+                true,
             );
         }
         let mut completion = TraceCompletionGuard {
@@ -444,6 +469,7 @@ impl AgentTool for InferTool {
             trace_id: trace_id.clone(),
             attempts: attempts.clone(),
             reservations: reservations.clone(),
+            updates: ctx.updates.clone(),
         };
         let response = tokio::select! {
             biased;
@@ -539,10 +565,11 @@ impl AgentTool for InferTool {
                     "inference trace {trace_id} has no stored terminal record: {publish_error}; incomplete budget, use a new run or fork"
                 )),
                 output_limit,
+                false,
             );
         }
         completion.terminal_stored = true;
-        self.output(value, &trace_id, reported, error, output_limit)
+        self.output(value, &trace_id, reported, error, output_limit, complete)
     }
 }
 
@@ -817,17 +844,55 @@ pub fn script_reply(
     has_output_schema: bool,
     result: Result<ToolOutput, ToolError>,
 ) -> Result<ToolReply, String> {
+    script_reply_with_usage(has_output_schema, false, result)
+}
+
+#[derive(Deserialize)]
+struct InferDetails {
+    usage: Usage,
+    usage_complete: bool,
+}
+
+/// Only the reserved infer tool may supply display usage. Neither the
+/// readable JSON value nor another tool's details can set it.
+fn script_reply_with_usage(
+    has_output_schema: bool,
+    infer: bool,
+    result: Result<ToolOutput, ToolError>,
+) -> Result<ToolReply, String> {
+    let usage_of = |output: &ToolOutput| {
+        if !infer {
+            return None;
+        }
+        output.details.as_ref().and_then(|details| {
+            serde_json::from_value::<InferDetails>(details.clone()).ok()
+        })
+    };
     match result {
-        Ok(output) => Ok(ToolReply::success(match output.structured {
-            Some(value) if has_output_schema => value,
-            _ => Value::String(output.text_content()),
-        })),
+        Ok(output) => {
+            let details = usage_of(&output);
+            Ok(ToolReply {
+                usage: details.as_ref().map(|details| details.usage.clone()),
+                usage_complete: details.map(|details| details.usage_complete),
+                value: match output.structured {
+                    Some(value) if has_output_schema => value,
+                    _ => Value::String(output.text_content()),
+                },
+                error: None,
+            })
+        }
         Err(ToolError::Output(output)) => {
             let error = output.text_content();
+            let details = usage_of(&output);
             match output.structured {
                 Some(value) if has_output_schema => Ok(ToolReply {
                     value,
                     error: Some(error),
+                    usage: details
+                        .as_ref()
+                        .map(|details| details.usage.clone()),
+                    usage_complete: details
+                        .map(|details| details.usage_complete),
                 }),
                 _ => Err(error),
             }
@@ -937,7 +1002,7 @@ impl Host for LoopHost {
             .get(&call.name)
             .is_some_and(|tool| tool.output_schema().is_some());
         let result = self.ctx.call(&call.name, call.args).await;
-        script_reply(has_output_schema, result)
+        script_reply_with_usage(has_output_schema, call.name == "infer", result)
     }
 
     fn jev(&self) -> Option<Arc<dyn Jev>> {

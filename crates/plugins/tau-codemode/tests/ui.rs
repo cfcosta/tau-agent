@@ -13,6 +13,7 @@ use gpui::{App, AppContext as _, TestAppContext};
 use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_agent::tool::{RunId, ToolOutput};
+use tau_ai::message::{Usage, UsageCost};
 use tau_codemode::{
     CallStatus,
     CancellationToken,
@@ -24,6 +25,12 @@ use tau_codemode::{
     ToolCall,
     ToolEntry,
     ToolReply,
+    inference_trace::{
+        Attempt,
+        AttemptOutcome,
+        Record as TraceRecord,
+        UsageProvenance,
+    },
     modules::{self, Definition, ModuleTest, TestReport},
     options,
     run,
@@ -351,8 +358,13 @@ impl Default for CardHost {
     fn default() -> Self {
         Self {
             folded: Mutex::default(),
-            jev: Arc::new(FakeJev::nouls(|question| {
-                if question == "bad" { 1.5 } else { 0.5 }
+            jev: Arc::new(FakeJev::new(|request| {
+                // nouls() receives question IDs, not instruction text.
+                let answers = request.questions.iter().map(|(id, question)| {
+                    let bad = matches!(question, tau_jev::Question::Noul { instructions, .. } if instructions == &json!("bad"));
+                    (id.clone(), tau_jev::Answer::Noul { noul: if bad { 1.5 } else { 0.5 } })
+                }).collect();
+                Ok(tau_jev::fake::response(answers, request))
             })),
         }
     }
@@ -385,7 +397,9 @@ impl Host for CardHost {
     fn tools(&self) -> Vec<ToolEntry> {
         let mut typed = tool("typed");
         typed.output_schema = Some(json!({"type": "object"}));
-        vec![tool("echo"), tool("fail"), typed]
+        let mut infer = tool("infer");
+        infer.output_schema = Some(json!({"type": "object"}));
+        vec![tool("echo"), tool("fail"), typed, infer]
     }
 
     async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String> {
@@ -410,6 +424,34 @@ impl Host for CardHost {
                     Ok(ToolReply {
                         value,
                         error: Some(msg),
+                        usage: None,
+                        usage_complete: None,
+                    }),
+                )
+            }
+            "infer" => {
+                let fails = call.args["fails"].as_bool().unwrap_or(false);
+                let cost = if fails { 0.4 } else { 0.25 };
+                let value = json!({"ok": !fails});
+                let output = ToolOutput {
+                    structured: Some(value.clone()),
+                    ..ToolOutput::text(value.to_string())
+                };
+                (
+                    output,
+                    Ok(ToolReply {
+                        value,
+                        error: fails.then(|| "inference failed".into()),
+                        usage: Some(Usage {
+                            input: 2,
+                            total_tokens: 2,
+                            cost: UsageCost {
+                                total: cost,
+                                ..UsageCost::default()
+                            },
+                            ..Usage::default()
+                        }),
+                        usage_complete: Some(true),
                     }),
                 )
             }
@@ -489,6 +531,8 @@ enum Call {
     Typed(String),
     /// `jev.noul`; a bad one gets an answer out of range and raises.
     Jev(bool),
+    /// An inference with two reported attempts in the real integration.
+    Infer(bool),
 }
 
 impl Call {
@@ -511,10 +555,19 @@ impl Call {
                 "function() return jev.noul({{ state = 1, question = \"{}\" }}) end",
                 if *bad { "bad" } else { "ok" }
             ),
+            Self::Infer(fails) => format!(
+                "function() return tools.infer({{ fails = {} }}) end",
+                fails
+            ),
         }
     }
 }
 
+/// Property inventory: mixed tools, Jev, and infer retain independently
+/// expected statuses and infer costs through live and stored row folds.
+/// Generator plan: the Call enum constructs valid scripts; short vectors
+/// shrink by removing whole calls, while short strings shrink arguments.
+/// CI uses the workspace hegel.toml profile.
 /// Whatever calls a script makes, tools and Jev, in turn or at once,
 /// failing or not, the rows its card draws while it runs are the rows
 /// its result's details list once it ends, which is all a stored run
@@ -532,7 +585,8 @@ fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
             gs::default::<Call>()
                 .echo(text())
                 .fail(text())
-                .typed(text()),
+                .typed(text())
+                .infer(gs::booleans()),
         )
         .max_size(8),
     );
@@ -588,6 +642,49 @@ fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
             .all(|row| row.status != CallStatus::Running)
     );
     assert_eq!(timeless(&live.rows), timeless(&stored.rows));
+    let mut expected_statuses: Vec<(&str, &str)> = calls
+        .iter()
+        .map(|call| match call {
+            Call::Echo(_) => ("echo", "ok"),
+            Call::Fail(_) => ("fail", "error"),
+            Call::Typed(_) => ("typed", "error"),
+            Call::Jev(bad) => ("jev.noul", if *bad { "error" } else { "ok" }),
+            Call::Infer(fails) => {
+                ("infer", if *fails { "error" } else { "ok" })
+            }
+        })
+        .collect();
+    let mut actual_statuses: Vec<(&str, &str)> = live
+        .rows
+        .iter()
+        .map(|row| (row.name.as_str(), row.status.as_str()))
+        .collect();
+    expected_statuses.sort_unstable();
+    actual_statuses.sort_unstable();
+    assert_eq!(actual_statuses, expected_statuses);
+    let mut expected_infer: Vec<(CallStatus, f64)> = calls
+        .iter()
+        .filter_map(|call| match call {
+            Call::Infer(fails) => Some((
+                if *fails {
+                    CallStatus::Error
+                } else {
+                    CallStatus::Ok
+                },
+                if *fails { 0.4 } else { 0.25 },
+            )),
+            _ => None,
+        })
+        .collect();
+    let mut actual_infer: Vec<(CallStatus, f64)> = live
+        .rows
+        .iter()
+        .filter(|row| row.name == "infer")
+        .map(|row| (row.status, row.cost.expect("reported infer cost")))
+        .collect();
+    expected_infer.sort_by(|a, b| a.1.total_cmp(&b.1));
+    actual_infer.sort_by(|a, b| a.1.total_cmp(&b.1));
+    assert_eq!(actual_infer, expected_infer);
     // In the order they came, too.
     let mut in_order = host.data();
     in_order.args = data.args.clone();
@@ -758,6 +855,153 @@ fn the_store_folds_as_the_plugin_folds_it(tc: hegel::TestCase) {
     assert_eq!(
         state.writes,
         writes.iter().filter(|(junk, _)| !junk).count()
+    );
+}
+
+/// Source and restored folds expose the same exact private sections only
+/// after opening, while pending and uncertain traces never read as success.
+#[test]
+fn inference_trace_disclosure_survives_history_fold() {
+    let owner = RunId("r".into());
+    let start = TraceRecord::Started {
+        trace_id: "complete".into(),
+        owner: owner.clone(),
+        task: "exact task\nwith second line".into(),
+        context: json!({"private": [1, 2]}),
+        schema: Some(json!({"type": "string"})),
+        model: "model-a".into(),
+        effort: Some("high".into()),
+    };
+    let reserve = TraceRecord::Attempt {
+        trace_id: "complete".into(),
+        owner: owner.clone(),
+        number: 1,
+    };
+    let reported = Usage {
+        input: 3,
+        total_tokens: 3,
+        cost: UsageCost {
+            total: 0.3,
+            ..UsageCost::default()
+        },
+        ..Usage::default()
+    };
+    let finish = TraceRecord::Finished {
+        trace_id: "complete".into(),
+        owner: owner.clone(),
+        complete: true,
+        selected: Some(json!("selected")),
+        raw_output: Some("raw answer\nverbatim".into()),
+        raw_output_truncated: false,
+        error: None,
+        attempts: vec![Attempt {
+            number: 1,
+            outcome: AttemptOutcome::Finished,
+            reported_usage: reported.clone(),
+            usage_provenance: UsageProvenance::SdkReported,
+        }],
+        total_usage: reported,
+    };
+    let pending = TraceRecord::Started {
+        trace_id: "pending".into(),
+        owner: owner.clone(),
+        task: "unfinished".into(),
+        context: Value::Null,
+        schema: None,
+        model: "model-a".into(),
+        effort: None,
+    };
+    let records = vec![
+        start,
+        reserve,
+        finish,
+        pending,
+        TraceRecord::Attempt {
+            trace_id: "pending".into(),
+            owner,
+            number: 1,
+        },
+    ];
+    let live = State {
+        inference: records.clone(),
+        ..State::default()
+    };
+    let registry = tau_ui_plugin::Registry::new().with(CodemodeUi);
+    let plugin = registry.get(PLUGIN).unwrap();
+    let mut restored = tau_ui_plugin::PluginValue::default();
+    for record in records {
+        plugin.apply(
+            &mut restored,
+            &serde_json::to_value(store::Record::Inference(record)).unwrap(),
+            &mut tau_ui_plugin::testing::FakeRun::default(),
+        );
+    }
+    let history = restored.get::<State>();
+    assert_eq!(history.inference_statuses(), live.inference_statuses());
+    let live_traces = ui::inference_traces(&live);
+    let history_traces = ui::inference_traces(history);
+    assert_eq!(history_traces["complete"].status(), "finished");
+    assert_eq!(
+        history_traces["pending"].status(),
+        "interrupted / incomplete"
+    );
+    assert!(ui::trace_sections(&history_traces["complete"], false).is_empty());
+    let visible = ui::trace_sections(&history_traces["complete"], true);
+    assert_eq!(visible, ui::trace_sections(&live_traces["complete"], true));
+    assert!(visible.contains(&("Task", "exact task\nwith second line".into())));
+    assert!(visible.contains(&("Raw answer", "raw answer\nverbatim".into())));
+    assert!(visible.iter().any(
+        |(name, text)| *name == "Attempts" && text.contains("sdk_reported")
+    ));
+    assert!(
+        ui::trace_sections(&history_traces["pending"], true)
+            .iter()
+            .any(|(_, text)| text.contains("no terminal trace"))
+    );
+}
+
+#[test]
+fn infer_progress_and_partial_cost_survive_channel_interleaving() {
+    let id = "call_1/1";
+    let mut data = CallData::default();
+    // Codemode's update may fold before the nested ToolStart and ToolEnd.
+    data.updates.push(
+        json!({"infer": {"id": id, "name": "infer", "args": "{}",
+        "status": "running", "ms": 0, "error": null, "cost": null,
+        "usage_uncertain": false}}),
+    );
+    data.nested_start(id, CALL, "infer", &json!({"task": "a"}));
+    data.nested_update(id, &ToolOutput::text("attempt 2 started"));
+    assert_eq!(
+        ui::calls(CALL, &data).rows[0].progress.as_deref(),
+        Some("attempt 2 started")
+    );
+    let final_row = json!({"id": id, "name": "infer", "args": "{}",
+        "status": "error", "ms": 7, "error": "unknown final usage",
+        "cost": 0.7, "usage_uncertain": true});
+    data.updates.push(json!({"infer": final_row}));
+    data.nested_end(id, &ToolOutput::text(""), true);
+    let live = ui::calls(CALL, &data);
+    assert_eq!(live.rows[0].status, CallStatus::Error);
+    assert_eq!(live.rows[0].cost, Some(0.7));
+    assert!(live.rows[0].usage_uncertain);
+    assert_eq!(live.rows[0].progress, None);
+    assert!(ui::label(&live, None).contains("final usage unknown"));
+    let details = json!({"calls": [final_row], "complete": true,
+        "usage": {"cost": {"total": 0.7}}, "wall_ms": 7});
+    data.result = Some(CallResult {
+        text: "".into(),
+        details: Some(details),
+        error: false,
+    });
+    data.end();
+    assert_eq!(ui::calls(CALL, &data).rows[0].cost, Some(0.7));
+    assert!(
+        ui::label(
+            &ui::calls(CALL, &data),
+            data.result.as_ref().unwrap().details.as_ref()
+        )
+        .contains("final usage unknown")
     );
 }
 

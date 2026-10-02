@@ -69,8 +69,10 @@ pub struct CallRow {
     pub ms: u64,
     /// Cut at [`MAX_ERROR_CHARS`].
     pub error: Option<String>,
-    /// US dollars, for calls that cost something (Jev).
+    /// Reported US dollars for Jev or all admitted infer attempts.
     pub cost: Option<f64>,
+    /// Reported cost may be partial when an inference attempt has no final usage.
+    pub usage_uncertain: bool,
 }
 
 impl CallRow {
@@ -83,6 +85,7 @@ impl CallRow {
             "ms": self.ms,
             "error": self.error,
             "cost": self.cost,
+            "usage_uncertain": self.usage_uncertain,
         })
     }
 }
@@ -133,7 +136,7 @@ pub struct Outcome {
     pub calls_total: usize,
     /// The script's store writes; `None` when it failed.
     pub store: Option<Writes>,
-    /// Jev's usage, summed.
+    /// Jev and returned inference usage for display, summed once each.
     pub usage: Usage,
 }
 

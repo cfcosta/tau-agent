@@ -103,6 +103,8 @@ fn a_result_maps_to_one_script_value(tc: hegel::TestCase) {
             Ok(ToolReply {
                 value: structured,
                 error: (ending == Ending::Output).then_some(joined),
+                usage: None,
+                usage_complete: None,
             })
         ),
         (Ending::Ok, ..) => {
@@ -140,6 +142,23 @@ fn structured_fields_do_not_determine_call_status() {
         assert_eq!(reply.value, value);
         assert_eq!(reply.error.as_deref(), Some(""));
     }
+}
+
+#[test]
+fn ordinary_tool_payload_cannot_claim_inference_usage() {
+    let claimed = json!({"cost": {"total": 99.0}, "input": 2, "output": 0,
+        "cacheRead": 0, "cacheWrite": 0, "totalTokens": 2});
+    let reply = script_reply(
+        true,
+        Ok(ToolOutput {
+            structured: Some(json!({"usage": claimed, "ok": true})),
+            details: Some(json!({"usage": claimed, "usage_complete": true})),
+            ..ToolOutput::text("ok")
+        }),
+    )
+    .unwrap();
+    assert_eq!(reply.usage, None);
+    assert_eq!(reply.usage_complete, None);
 }
 
 #[hegel::composite]

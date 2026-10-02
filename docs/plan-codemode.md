@@ -46,7 +46,7 @@ to large inputs.
 - [x] **12:** [Admit and report each side-request attempt](reference/plugins.md), including retries and explicit output-limit capability.
 - [x] **13:** Add [isolated `tools.infer`](reference/codemode-inference.md) as a nested tool owned by Codemode.
 - [x] **14:** Store [bounded private traces and durable same-run budget provenance](reference/codemode-inference-traces.md), failing closed on uncertain usage.
-- [ ] **15:** Show inference progress, usage, and failures in the card.
+- [x] **15:** Show [inference progress, observed usage, uncertainty and private failures](reference/codemode-inference.md) with live/history parity and no duplicate charge.
 - [x] **16:** Add [bounded mapping with ordered settled results](reference/codemode-map.md).
 - [ ] **17:** Evaluate structured results and inference against the baseline.
 

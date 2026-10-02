@@ -14,6 +14,16 @@ private persisted provenance (see [inference traces](codemode-inference-traces.m
 `provider_output_limit`, indicating whether the provider accepts the requested
 2,048-token output ceiling.
 
+The Codemode card lists each inference as a call. While it runs, the row shows
+the latest attempt progress and the card remains open. On completion, the row
+shows success or failure and the sum of reported cost across every attempt,
+including retries and failed responses. The card's total usage includes Jev
+requests and returned inference usage for display. Inference usage is already
+charged by the agent loop and is not charged again by Codemode. A row with
+unknown final usage labels its reported cost as partial; zero SDK usage is not
+proof that the provider charged zero. Live rows use Codemode's own row updates
+for inference cost and settle to the same `details.calls` rows as stored runs.
+
 Every call sends one user message containing only its task and explicit JSON
 context. It opens an independent session, sends no parent transcript, and
 declares no tools. The host run's model and optional reasoning effort are used

@@ -167,6 +167,8 @@ impl Host for FakeHost {
             value,
             error: (call.name == "mcp__linear__list_issues")
                 .then(|| "no access".into()),
+            usage: None,
+            usage_complete: None,
         })
     }
 

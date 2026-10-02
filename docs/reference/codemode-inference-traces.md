@@ -21,8 +21,13 @@ attempt received a final SDK report. It does not claim the provider's raw
 output is complete.
 The selected value and trace ID are the only inference provenance returned to
 the main conversation. Private task, context, schema, and raw answer remain in
-plugin records. The inspector lists IDs and statuses without displaying those
-private fields.
+plugin records. The inspector shows trace IDs and status in collapsed rows.
+Opening a row reveals its exact task, context, optional schema, model,
+reasoning effort, raw answer, selected value, attempts, reported usage, and
+error. The raw answer is identified as truncated when its stored prefix hit
+the trace limit. A missing start or terminal record is labeled incomplete;
+the inspector does not present it as a successful result. Attempts with SDK
+zero or default usage retain that provenance in the opened trace.
 
 The started and attempt records are stored before their respective work. If
 the tool future is dropped or the process crashes before a terminal record,

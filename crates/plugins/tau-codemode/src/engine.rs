@@ -450,13 +450,23 @@ impl State {
                 ms: 0,
                 error: None,
                 cost: None,
+                usage_uncertain: false,
             });
             calls.started.push(Instant::now());
             calls.rows.len() - 1
         });
-        let update = row
-            .filter(|_| is_jev)
-            .map(|row| JevUpdate::new(&calls.rows[row], after));
+        let update = row.and_then(|row| {
+            if is_jev {
+                Some(JevUpdate::new(&calls.rows[row], after).to_details())
+            } else if name == "infer" {
+                Some(
+                    crate::live::InferUpdate::new(&calls.rows[row])
+                        .to_details(),
+                )
+            } else {
+                None
+            }
+        });
         drop(calls);
         let guard = CallGuard {
             state: self,
@@ -466,7 +476,7 @@ impl State {
             done: false,
         };
         if let Some(update) = update {
-            self.host.update(update.to_details());
+            self.host.update(update);
         }
         guard
     }
@@ -534,8 +544,9 @@ impl CallGuard<'_> {
         status: CallStatus,
         error: Option<&str>,
         cost: Option<f64>,
+        usage_uncertain: bool,
     ) {
-        self.record(status, error, cost);
+        self.record(status, error, cost, usage_uncertain);
     }
 
     fn record(
@@ -543,6 +554,7 @@ impl CallGuard<'_> {
         status: CallStatus,
         error: Option<&str>,
         cost: Option<f64>,
+        usage_uncertain: bool,
     ) {
         self.done = true;
         let Some(row) = self.row else {
@@ -555,10 +567,17 @@ impl CallGuard<'_> {
         row.ms = ms;
         row.error = error.map(|e| preview(e, MAX_ERROR_CHARS));
         row.cost = cost;
-        let update = self.jev_after.map(|after| JevUpdate::new(row, after));
+        row.usage_uncertain = usage_uncertain;
+        let update = self
+            .jev_after
+            .map(|after| JevUpdate::new(row, after).to_details())
+            .or_else(|| {
+                (row.name == "infer")
+                    .then(|| crate::live::InferUpdate::new(row).to_details())
+            });
         drop(calls);
         if let Some(update) = update {
-            self.state.host.update(update.to_details());
+            self.state.host.update(update);
         }
     }
 }
@@ -566,7 +585,7 @@ impl CallGuard<'_> {
 impl Drop for CallGuard<'_> {
     fn drop(&mut self) {
         if !self.done {
-            self.record(CallStatus::Cancelled, None, None);
+            self.record(CallStatus::Cancelled, None, None, false);
         }
     }
 }
@@ -1151,11 +1170,26 @@ fn tool_function(
                     } else {
                         CallStatus::Ok
                     };
-                    guard.end(status, reply.error.as_deref(), None);
+                    if let Some(usage) =
+                        reply.usage.as_ref().filter(|_| tool.name == "infer")
+                    {
+                        *state.usage.lock().expect("not poisoned") += usage;
+                    }
+                    let cost = (tool.name == "infer")
+                        .then_some(reply.usage.as_ref())
+                        .flatten()
+                        .map(|usage| usage.cost.total);
+                    guard.end(
+                        status,
+                        reply.error.as_deref(),
+                        cost,
+                        tool.name == "infer"
+                            && reply.usage_complete == Some(false),
+                    );
                     Ok(ok([to_lua(&lua, &reply.value)?]))
                 }
                 Err(error) => {
-                    guard.end(CallStatus::Error, Some(&error), None);
+                    guard.end(CallStatus::Error, Some(&error), None, false);
                     fail(&lua, error)
                 }
             }
@@ -1481,12 +1515,12 @@ fn jev_function(
             };
             match answer {
                 Ok((value, cost)) => {
-                    guard.end(CallStatus::Ok, None, Some(cost));
+                    guard.end(CallStatus::Ok, None, Some(cost), false);
                     Ok(ok([to_lua(&lua, &value)?]))
                 }
                 Err((error, cost)) => {
                     let text = error.to_string();
-                    guard.end(CallStatus::Error, Some(&text), cost);
+                    guard.end(CallStatus::Error, Some(&text), cost, false);
                     fail(&lua, text)
                 }
             }

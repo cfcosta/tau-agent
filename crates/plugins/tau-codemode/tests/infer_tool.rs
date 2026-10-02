@@ -479,6 +479,17 @@ fn attempts_and_failed_usage_are_shared_across_scripts() {
         assert_eq!(calls[0].0["usage"]["cacheWrite"], 7);
         assert_eq!(calls[0].0["usage"]["output"], 8);
         assert_eq!(calls[0].0["usage"]["cost"]["total"], 0.5);
+        let details = result[0].details.as_ref().expect("codemode details");
+        assert_eq!(details["usage"]["cost"]["total"], 0.5);
+        assert_eq!(details["calls"][0]["cost"], 0.5);
+        assert_eq!(details["calls"][0]["status"], "ok");
+        let denied = result[1].details.as_ref().expect("second script details");
+        assert_eq!(denied["calls"][0]["cost"], 0.0);
+        assert_eq!(denied["calls"][0]["status"], "error");
+        assert_eq!(
+            outcome.usage.cost.total, 0.5,
+            "agent usage charges each reported attempt once"
+        );
         let traces = trace_records(&store, &outcome.run.0).await;
         let retry = traces
             .iter()
@@ -496,6 +507,30 @@ fn attempts_and_failed_usage_are_shared_across_scripts() {
             2,
             "rejected call opens no session"
         );
+        model.assert_exhausted();
+    });
+}
+
+#[test]
+fn invalid_answer_keeps_its_reported_cost_on_failed_row() {
+    block_on(async {
+        let script = "return tools.infer({ task = 'integer', context = json.null, schema = { type = 'integer' } })";
+        let model = ScriptedModel::new()
+            .turn(outer_call(script))
+            .turn(|turn| turn.text("not an integer").usage(5, 2).cost(0.37))
+            .turn(|turn| turn.text("done"));
+        let store = Store::memory().await.unwrap();
+        let outcome = Agent::new(model.clone())
+            .plugin(Codemode::new(None))
+            .run("go", &store)
+            .await
+            .unwrap();
+        let result = results(&store, &outcome.run.0).await;
+        let details = result[0].details.as_ref().unwrap();
+        assert_eq!(details["calls"][0]["status"], "error");
+        assert_eq!(details["calls"][0]["cost"], 0.37);
+        assert_eq!(details["usage"]["cost"]["total"], 0.37);
+        assert_eq!(outcome.usage.cost.total, 0.37);
         model.assert_exhausted();
     });
 }

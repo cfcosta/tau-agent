@@ -55,7 +55,7 @@ use crate::{
     CallStatus,
     PLUGIN,
     description::NAME,
-    live::JevUpdate,
+    live::{InferUpdate, JevUpdate},
     modules,
     result::{MAX_ARGS_CHARS, MAX_ERROR_CHARS, preview},
     store::{Record, Snapshot, Writes},
@@ -68,6 +68,7 @@ pub struct CodemodeUi;
 /// Inspector disclosure state; only opened source and test details are rendered.
 pub struct InspectorUi {
     open: BTreeSet<String>,
+    pub open_traces: BTreeSet<(String, String)>,
     handle: Handle,
 }
 
@@ -75,6 +76,7 @@ impl PluginUi for InspectorUi {
     fn new(handle: Handle, _: &mut Context<Self>) -> Self {
         Self {
             open: BTreeSet::new(),
+            open_traces: BTreeSet::new(),
             handle,
         }
     }
@@ -176,6 +178,12 @@ pub struct State {
     pub inference: Vec<crate::inference_trace::Record>,
 }
 
+/// Disclosure state is local to this window and never stored in a run.
+#[derive(Default)]
+pub struct Ui {
+    pub open_traces: BTreeSet<(String, String)>,
+}
+
 impl Fold for State {
     type Record = Record;
 
@@ -197,37 +205,55 @@ impl Fold for State {
 impl State {
     /// A start stays incomplete until a matching durable finish arrives.
     pub fn inference_statuses(&self) -> BTreeMap<String, &'static str> {
-        let mut statuses = BTreeMap::new();
-        for record in &self.inference {
-            match record {
-                crate::inference_trace::Record::Started {
-                    trace_id, ..
-                }
-                | crate::inference_trace::Record::Attempt {
-                    trace_id, ..
-                } => {
-                    statuses
-                        .entry(trace_id.clone())
-                        .or_insert("interrupted / incomplete");
-                }
-                crate::inference_trace::Record::Finished {
-                    trace_id,
-                    complete,
-                    ..
-                } => {
-                    statuses.insert(
-                        trace_id.clone(),
-                        if *complete {
-                            "finished"
-                        } else {
-                            "interrupted / incomplete"
-                        },
-                    );
-                }
+        inference_traces(self)
+            .into_iter()
+            .map(|(id, trace)| (id, trace.status()))
+            .collect()
+    }
+}
+
+/// The durable records belonging to one private inference trace.
+#[derive(Default)]
+pub struct TraceView<'a> {
+    pub started: Option<&'a crate::inference_trace::Record>,
+    pub reservations: Vec<u32>,
+    pub finished: Option<&'a crate::inference_trace::Record>,
+}
+
+impl TraceView<'_> {
+    pub fn status(&self) -> &'static str {
+        match (self.started, self.finished) {
+            (Some(_), Some(crate::inference_trace::Record::Finished { complete: true, error: None, attempts, .. }))
+                if attempts.iter().map(|attempt| attempt.number).eq(self.reservations.iter().copied())
+                    && attempts.iter().all(|attempt| attempt.outcome == crate::inference_trace::AttemptOutcome::Finished
+                        && matches!(attempt.usage_provenance, crate::inference_trace::UsageProvenance::SdkReported | crate::inference_trace::UsageProvenance::SdkZeroOrDefault)) => "finished",
+            (Some(_), Some(crate::inference_trace::Record::Finished { complete: true, error: Some(_), attempts, .. }))
+                if attempts.iter().map(|attempt| attempt.number).eq(self.reservations.iter().copied())
+                    && attempts.iter().all(|attempt| attempt.outcome == crate::inference_trace::AttemptOutcome::Finished
+                        && matches!(attempt.usage_provenance, crate::inference_trace::UsageProvenance::SdkReported | crate::inference_trace::UsageProvenance::SdkZeroOrDefault)) => "failed",
+            _ => "interrupted / incomplete",
+        }
+    }
+}
+
+/// Group the already folded records; a missing phase remains visible.
+pub fn inference_traces(state: &State) -> BTreeMap<String, TraceView<'_>> {
+    let mut traces = BTreeMap::<String, TraceView<'_>>::new();
+    for record in &state.inference {
+        let trace = traces.entry(record.trace_id().to_owned()).or_default();
+        match record {
+            crate::inference_trace::Record::Started { .. } => {
+                trace.started = Some(record)
+            }
+            crate::inference_trace::Record::Attempt { number, .. } => {
+                trace.reservations.push(*number)
+            }
+            crate::inference_trace::Record::Finished { .. } => {
+                trace.finished = Some(record)
             }
         }
-        statuses
     }
+    traces
 }
 
 /// One call a script made, as its card lists it.
@@ -243,8 +269,11 @@ pub struct Row {
     pub ms: Option<u64>,
     /// Cut at [`MAX_ERROR_CHARS`].
     pub error: Option<String>,
-    /// US dollars, for calls that cost something (Jev).
+    /// Reported US dollars for Jev or all admitted infer attempts.
     pub cost: Option<f64>,
+    pub usage_uncertain: bool,
+    /// Latest nested infer progress, while its call is still running.
+    pub progress: Option<String>,
     /// What plugins decided about it.
     pub marks: Vec<NestedMark>,
 }
@@ -298,6 +327,10 @@ pub fn live_rows(call_id: &str, data: &CallData) -> Vec<Row> {
                 ms: None,
                 error,
                 cost: None,
+                usage_uncertain: false,
+                progress: (status == CallStatus::Running)
+                    .then(|| call.partial.clone())
+                    .flatten(),
                 marks: Vec::new(),
             };
             ((n, 0, 0), row)
@@ -323,6 +356,25 @@ pub fn live_rows(call_id: &str, data: &CallData) -> Vec<Row> {
         }
     }
     keyed.extend(jev);
+    // ToolEnd events and Codemode updates use independent channels. The
+    // infer update is the authoritative full row, whichever arrived first.
+    for update in data.updates.iter().filter_map(InferUpdate::from_details) {
+        let Some(mut latest) = row_of(&update.row) else {
+            continue;
+        };
+        if latest.status == CallStatus::Running {
+            latest.ms = None;
+        }
+        if let Some((_, row)) =
+            keyed.iter_mut().find(|(_, row)| row.id == latest.id)
+        {
+            latest.progress = row.progress.take();
+            if latest.status != CallStatus::Running {
+                latest.progress = None;
+            }
+            *row = latest;
+        }
+    }
     // Stable: calls whose ids say nothing keep the order they came in.
     keyed.sort_by_key(|(key, _)| *key);
     keyed.into_iter().map(|(_, row)| row).collect()
@@ -342,6 +394,11 @@ fn row_of(row: &Value) -> Option<Row> {
         ms: row.get("ms").and_then(Value::as_u64),
         error: row.get("error").and_then(Value::as_str).map(str::to_owned),
         cost: row.get("cost").and_then(Value::as_f64),
+        usage_uncertain: row
+            .get("usage_uncertain")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        progress: None,
         marks: Vec::new(),
     })
 }
@@ -432,14 +489,13 @@ pub fn first_line(code: &str) -> &str {
         .unwrap_or_default()
 }
 
-/// What Jev cost a finished script, from its details' `usage`.
+/// Reported Jev and inference cost, from finished details' `usage`.
 pub fn cost(details: &Value) -> f64 {
     details["usage"]["cost"]["total"].as_f64().unwrap_or(0.0)
 }
 
 /// The header's line: `3 calls · 1.2 s · $0.0004`. While the script
-/// runs (no details yet), the calls so far and what its Jev requests
-/// have cost so far.
+/// runs (no details yet), the calls so far and their reported cost.
 pub fn label(calls: &Calls, details: Option<&Value>) -> String {
     let n = calls.rows.len();
     let mut parts = vec![match (n, calls.complete) {
@@ -460,6 +516,9 @@ pub fn label(calls: &Calls, details: Option<&Value>) -> String {
         if cost > 0.0 {
             parts.push(fine_usd(cost));
         }
+    }
+    if calls.rows.iter().any(|row| row.usage_uncertain) {
+        parts.push("reported partial · final usage unknown".to_owned());
     }
     parts.join(" · ")
 }
@@ -559,7 +618,7 @@ impl UiPlugin for CodemodeUi {
                         .flex()
                         .flex_col()
                         .gap(sp(4.))
-                        .child(store_section(state, &t))
+                        .child(store_section(state, view))
                         .child(modules_section(
                             &state.modules,
                             view.run.map(|run| &run.id),
@@ -764,12 +823,28 @@ fn call_row(row: &Row, t: &Theme) -> Div {
                         .truncate(),
                 )
                 .children(row.cost.filter(|cost| *cost > 0.0).map(|cost| {
-                    mono(fine_usd(cost), Type::MICRO, t.dim).flex_shrink_0()
+                    mono(
+                        format!(
+                            "{}{}",
+                            fine_usd(cost),
+                            if row.usage_uncertain {
+                                " reported partial"
+                            } else {
+                                ""
+                            }
+                        ),
+                        Type::MICRO,
+                        t.dim,
+                    )
+                    .flex_shrink_0()
                 }))
                 .child(mono(when, Type::MICRO, t.dim).flex_shrink_0()),
         )
         .when_some(row.error.clone(), |row, error| {
             row.child(mono(error, Type::MICRO, t.red).pl(sp(6.)))
+        })
+        .when_some(row.progress.clone(), |row, progress| {
+            row.child(mono(progress, Type::MICRO, t.muted).pl(sp(6.)))
         })
         .when_some(blocked, |row, (plugin, reason)| {
             row.child(
@@ -790,8 +865,10 @@ fn call_row(row: &Row, t: &Theme) -> Div {
 }
 
 /// The store a run's scripts kept, key by key.
-fn store_section(state: &State, t: &Theme) -> Div {
-    let inference = state.inference_statuses();
+fn store_section(state: &State, view: &ViewCx<'_, CodemodeUi>) -> Div {
+    let t = view.theme();
+    let inference = inference_traces(state);
+    let run = view.run.map_or(String::new(), |run| run.id.to_string());
     div()
         .flex()
         .flex_col()
@@ -823,8 +900,43 @@ fn store_section(state: &State, t: &Theme) -> Div {
         })
         .when(!inference.is_empty(), |section| {
             section.child(heading("Inference traces", t)).children(
-                inference.into_iter().map(|(id, status)| {
-                    mono(format!("{id} · {status}"), Type::CAPTION, t.text_soft)
+                inference.into_iter().map(|(id, trace)| {
+                    let key = (run.clone(), id.clone());
+                    let open = view.read_ui().open_traces.contains(&key);
+                    let ui_state = view.ui.clone();
+                    let refresh = view.handle.clone();
+                    let header = div()
+                        .id(SharedString::from(format!(
+                            "inference-trace-{run}-{id}"
+                        )))
+                        .cursor_pointer()
+                        .flex()
+                        .items_center()
+                        .gap(sp(2.))
+                        .child(icon(
+                            if open { Icon::Down } else { Icon::Chevron },
+                            IconSize::SMALL,
+                            t.dim,
+                        ))
+                        .child(mono(
+                            format!("{id} · {}", trace.status()),
+                            Type::CAPTION,
+                            t.text_soft,
+                        ))
+                        .on_click(move |_, _, cx| {
+                            ui_state.update(cx, |ui, _| {
+                                if !ui.open_traces.remove(&key) {
+                                    ui.open_traces.insert(key.clone());
+                                }
+                            });
+                            refresh.refresh(cx);
+                        });
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(sp(1.))
+                        .child(header)
+                        .when(open, |row| row.child(trace_detail(&trace, t)))
                 }),
             )
         })
@@ -1138,4 +1250,114 @@ fn version_row(
         }
     }
     row
+}
+
+/// Text rendered by the inspector's trace fold. Closed folds expose none
+/// of the private fields. Compact JSON avoids pretty-print amplification.
+pub fn trace_sections(
+    trace: &TraceView<'_>,
+    open: bool,
+) -> Vec<(&'static str, String)> {
+    if !open {
+        return Vec::new();
+    }
+    let mut sections = Vec::new();
+    if let Some(crate::inference_trace::Record::Started {
+        task,
+        context,
+        schema,
+        model,
+        effort,
+        ..
+    }) = trace.started
+    {
+        sections.push((
+            "Model",
+            format!(
+                "{model} · reasoning: {}",
+                effort.as_deref().unwrap_or("default")
+            ),
+        ));
+        sections.push(("Task", task.clone()));
+        sections.push(("Context", context.to_string()));
+        if let Some(schema) = schema {
+            sections.push(("Schema", schema.to_string()));
+        }
+    } else {
+        sections.push((
+            "Trace",
+            "Missing start record; task and context unavailable.".into(),
+        ));
+    }
+    if let Some(crate::inference_trace::Record::Finished {
+        attempts,
+        total_usage,
+        selected,
+        raw_output,
+        raw_output_truncated,
+        error,
+        complete,
+        ..
+    }) = trace.finished
+    {
+        sections.push((
+            "Attempts",
+            serde_json::to_string(attempts).unwrap_or_default(),
+        ));
+        sections.push((
+            "Reported usage",
+            format!(
+                "{} tokens · {}{}",
+                total_usage.total_tokens,
+                fine_usd(total_usage.cost.total),
+                if *complete {
+                    ""
+                } else {
+                    " · final usage unknown"
+                }
+            ),
+        ));
+        if attempts.iter().any(|attempt| {
+            attempt.usage_provenance
+                == crate::inference_trace::UsageProvenance::SdkZeroOrDefault
+        }) {
+            sections.push(("Usage provenance", "SDK zero or default usage does not establish zero provider usage.".into()));
+        }
+        sections.push((
+            "Raw answer",
+            raw_output
+                .clone()
+                .unwrap_or_else(|| "Raw answer unavailable.".into()),
+        ));
+        if *raw_output_truncated {
+            sections.push((
+                "Raw answer limit",
+                "Raw answer was truncated in the trace.".into(),
+            ));
+        }
+        if let Some(selected) = selected {
+            sections.push(("Selected value", selected.to_string()));
+        }
+        if let Some(error) = error {
+            sections.push(("Error", error.clone()));
+        }
+    } else {
+        sections.push(("Trace", format!("{} attempt reservations · no terminal trace; final usage unknown.", trace.reservations.len())));
+    }
+    sections
+}
+
+fn trace_detail(trace: &TraceView<'_>, t: &Theme) -> Div {
+    div().flex().flex_col().gap(sp(2.)).pl(sp(5.)).children(
+        trace_sections(trace, true)
+            .into_iter()
+            .map(|(name, value)| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(1.))
+                    .child(heading(name, t))
+                    .child(code_block(None, &value, t))
+            }),
+    )
 }

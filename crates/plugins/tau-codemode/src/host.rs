@@ -55,11 +55,21 @@ pub struct ToolCall {
 pub struct ToolReply {
     pub value: Value,
     pub error: Option<String>,
+    /// Authoritative usage from the reserved inference tool. The engine
+    /// includes it in display totals; the agent loop charged it already.
+    pub usage: Option<Usage>,
+    /// Whether every admitted inference attempt has final SDK usage.
+    pub usage_complete: Option<bool>,
 }
 
 impl ToolReply {
     pub fn success(value: Value) -> Self {
-        Self { value, error: None }
+        Self {
+            value,
+            error: None,
+            usage: None,
+            usage_complete: None,
+        }
     }
 }
 

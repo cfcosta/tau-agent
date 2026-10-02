@@ -48,3 +48,26 @@ impl JevUpdate {
         })
     }
 }
+
+/// A reserved infer call's row. Its nested ToolEnd loses details in the
+/// live view, so Codemode reports its own final row as well.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InferUpdate {
+    pub row: Value,
+}
+
+impl InferUpdate {
+    pub fn new(row: &CallRow) -> Self {
+        Self { row: row.to_json() }
+    }
+
+    pub fn to_details(&self) -> Value {
+        json!({ "infer": self.row })
+    }
+
+    pub fn from_details(details: &Value) -> Option<Self> {
+        Some(Self {
+            row: details.get("infer")?.clone(),
+        })
+    }
+}

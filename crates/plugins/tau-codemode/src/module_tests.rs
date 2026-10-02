@@ -211,6 +211,8 @@ impl Host for FixtureHost {
                 Ok(ToolReply {
                     value: expected.value.clone().unwrap(),
                     error,
+                    usage: None,
+                    usage_complete: None,
                 })
             }
             _ => Err(error.unwrap_or_else(|| "fake call failed".into())),
