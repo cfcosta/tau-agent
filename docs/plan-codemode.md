@@ -48,7 +48,7 @@ to large inputs.
 - [x] **14:** Store [bounded private traces and durable same-run budget provenance](reference/codemode-inference-traces.md), failing closed on uncertain usage.
 - [x] **15:** Show [inference progress, observed usage, uncertainty and private failures](reference/codemode-inference.md) with live/history parity and no duplicate charge.
 - [x] **16:** Add [bounded mapping with ordered settled results](reference/codemode-map.md).
-- [ ] **17:** Evaluate structured results and inference against the baseline.
+- [x] **17:** [Evaluate production VM and tool baselines](reference/codemode-evaluation.md) with independent goldens, explicit inference simulation and optional observed host timings; provider metrics remain unmeasured.
 
 M2 is the first shipping checkpoint. Subsequent milestones depend on its
 correctness and evaluation, not on assumed token savings.

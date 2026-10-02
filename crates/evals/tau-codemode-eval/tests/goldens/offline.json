@@ -1,0 +1,188 @@
+{
+  "format_version": 1,
+  "evidence": "offline_deterministic_scripts",
+  "cases": [
+    {
+      "fixture": "structured-search",
+      "mode": "text_only_reference",
+      "result": [
+        {
+          "path": "src/a: one.rs",
+          "line": 1,
+          "text": "// TODO: repair retries"
+        },
+        {
+          "path": "src/雪.rs",
+          "line": 2,
+          "text": "// TODO: handle empty arrays"
+        }
+      ],
+      "correct": true,
+      "incomplete": false,
+      "tool_calls": 1,
+      "provider_round_trips": 0,
+      "simulated_round_trips": 0,
+      "repairs": 0,
+      "latency_ms": null,
+      "reported_usage": {
+        "uncached_input_tokens": null,
+        "cached_input_tokens": null,
+        "cache_write_tokens": null,
+        "output_tokens": null,
+        "usd": null
+      },
+      "failure": null
+    },
+    {
+      "fixture": "structured-search",
+      "mode": "structured_tools",
+      "result": [
+        {
+          "path": "src/a: one.rs",
+          "line": 1,
+          "text": "// TODO: repair retries"
+        },
+        {
+          "path": "src/雪.rs",
+          "line": 2,
+          "text": "// TODO: handle empty arrays"
+        }
+      ],
+      "correct": true,
+      "incomplete": false,
+      "tool_calls": 1,
+      "provider_round_trips": 0,
+      "simulated_round_trips": 0,
+      "repairs": 0,
+      "latency_ms": null,
+      "reported_usage": {
+        "uncached_input_tokens": null,
+        "cached_input_tokens": null,
+        "cache_write_tokens": null,
+        "output_tokens": null,
+        "usd": null
+      },
+      "failure": null
+    },
+    {
+      "fixture": "complete-test-log",
+      "mode": "text_only_reference",
+      "result": [
+        {
+          "test": "decode_empty",
+          "message": "empty array became object"
+        }
+      ],
+      "correct": false,
+      "incomplete": true,
+      "tool_calls": 1,
+      "provider_round_trips": 0,
+      "simulated_round_trips": 0,
+      "repairs": 0,
+      "latency_ms": null,
+      "reported_usage": {
+        "uncached_input_tokens": null,
+        "cached_input_tokens": null,
+        "cache_write_tokens": null,
+        "output_tokens": null,
+        "usd": null
+      },
+      "failure": null
+    },
+    {
+      "fixture": "complete-test-log",
+      "mode": "structured_tools",
+      "result": [
+        {
+          "test": "decode_empty",
+          "message": "empty array became object"
+        },
+        {
+          "test": "cancel_loop",
+          "message": "loop ignored cancellation"
+        },
+        {
+          "test": "charge_once",
+          "message": "usage was charged twice"
+        }
+      ],
+      "correct": true,
+      "incomplete": false,
+      "tool_calls": 1,
+      "provider_round_trips": 0,
+      "simulated_round_trips": 0,
+      "repairs": 0,
+      "latency_ms": null,
+      "reported_usage": {
+        "uncached_input_tokens": null,
+        "cached_input_tokens": null,
+        "cache_write_tokens": null,
+        "output_tokens": null,
+        "usd": null
+      },
+      "failure": null
+    },
+    {
+      "fixture": "compatibility-extraction",
+      "mode": "text_only_reference",
+      "result": [
+        {
+          "component": "connection option",
+          "before": "retry_count",
+          "after": "max_attempts"
+        },
+        {
+          "component": "lookup function",
+          "before": "raises NotFound",
+          "after": "returns null"
+        }
+      ],
+      "correct": true,
+      "incomplete": false,
+      "tool_calls": 1,
+      "provider_round_trips": 0,
+      "simulated_round_trips": 0,
+      "repairs": 0,
+      "latency_ms": null,
+      "reported_usage": {
+        "uncached_input_tokens": null,
+        "cached_input_tokens": null,
+        "cache_write_tokens": null,
+        "output_tokens": null,
+        "usd": null
+      },
+      "failure": null
+    },
+    {
+      "fixture": "compatibility-extraction",
+      "mode": "scripted_infer_simulator",
+      "result": [
+        {
+          "component": "connection option",
+          "before": "retry_count",
+          "after": "max_attempts"
+        },
+        {
+          "component": "lookup function",
+          "before": "raises NotFound",
+          "after": "returns null"
+        }
+      ],
+      "correct": true,
+      "incomplete": false,
+      "tool_calls": 2,
+      "provider_round_trips": 0,
+      "simulated_round_trips": 1,
+      "repairs": 0,
+      "latency_ms": null,
+      "reported_usage": {
+        "uncached_input_tokens": null,
+        "cached_input_tokens": null,
+        "cache_write_tokens": null,
+        "output_tokens": null,
+        "usd": null
+      },
+      "failure": null
+    }
+  ]
+}

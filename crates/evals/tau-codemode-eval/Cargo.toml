@@ -7,8 +7,15 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tau-agent = { path = "../../tau-agent" }
+tau-ai = { path = "../../tau-ai" }
+tau-codemode = { path = "../../plugins/tau-codemode" }
+tau-tools = { path = "../../plugins/tau-tools" }
+tempfile.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true

@@ -5,3 +5,4 @@
 //! middle, and end so a head/tail display cannot substitute for full access.
 
 pub mod fixtures;
+pub mod runner;

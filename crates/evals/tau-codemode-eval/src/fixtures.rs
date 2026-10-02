@@ -29,19 +29,24 @@ fn file(path: &str, text: &str) -> File {
 
 /// Paths and matched text that must not be reconstructed from display lines.
 pub fn search() -> Fixture {
+    search_with_path("src/a: one.rs")
+}
+
+/// A search case with a caller-chosen first path for path-format properties.
+pub fn search_with_path(first_path: &str) -> Fixture {
     Fixture {
         name: "structured-search".into(),
         task: "Find the literal TODO: in every .rs file. Return an array of \
                {path, line, text} records, ordered by path then line."
             .into(),
         files: vec![
-            file("src/a: one.rs", "// TODO: repair retries\nlet n = 1;\n"),
+            file(first_path, "// TODO: repair retries\nlet n = 1;\n"),
             file("src/雪.rs", "let n = 2;\n// TODO: handle empty arrays\n"),
             file("src/clean.rs", "// T O D O is not a match\n"),
             file("notes.txt", "TODO: not a Rust file\n"),
         ],
         expected: json!([
-            {"path": "src/a: one.rs", "line": 1, "text": "// TODO: repair retries"},
+            {"path": first_path, "line": 1, "text": "// TODO: repair retries"},
             {"path": "src/雪.rs", "line": 2, "text": "// TODO: handle empty arrays"}
         ]),
     }

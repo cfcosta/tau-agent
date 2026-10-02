@@ -1,5 +1,7 @@
 //! Property inventory:
 //! - log padding preserves the golden answer (differential TSV oracle);
+//! - varied colon-bearing paths preserve search records (independent scan);
+//! - padded logs distinguish complete scans from one display window;
 //! - fixture serialization preserves every input and answer (round trip).
 //!
 //! Noise counts are bounded integers, valid by construction. Shrinking
@@ -25,11 +27,57 @@ fn failures(text: &str) -> Value {
     )
 }
 
+fn search_records(fixture: &fixtures::Fixture) -> Value {
+    let mut records = Vec::new();
+    for file in &fixture.files {
+        if !file.path.ends_with(".rs") {
+            continue;
+        }
+        for (index, line) in file.text.lines().enumerate() {
+            if line.contains("TODO:") {
+                records.push(
+                    json!({"path": file.path, "line": index + 1, "text": line}),
+                );
+            }
+        }
+    }
+    records.sort_by(|a, b| {
+        a["path"]
+            .as_str()
+            .cmp(&b["path"].as_str())
+            .then(a["line"].as_u64().cmp(&b["line"].as_u64()))
+    });
+    Value::Array(records)
+}
+
 #[hegel::test]
 fn padding_preserves_every_failure(tc: TestCase) {
     let noise_lines = tc.draw(gs::integers::<usize>().max_value(4_000));
     let fixture = fixtures::test_log(noise_lines);
     assert_eq!(failures(&fixture.files[0].text), fixture.expected);
+}
+
+#[hegel::test]
+fn colon_paths_preserve_complete_search_answers(tc: TestCase) {
+    // Valid path segments are generated directly. Shorter segments shrink
+    // toward a small counterexample while the colon remains present.
+    let segment: String = tc.draw(gs::from_regex("[a-z]{1,12}"));
+    let path = format!("src/{segment}: case.rs");
+    let fixture = fixtures::search_with_path(&path);
+    assert_eq!(search_records(&fixture), fixture.expected);
+}
+
+#[hegel::test]
+fn padded_display_is_partial_but_full_scan_is_complete(tc: TestCase) {
+    // Padding is valid by construction and shrinks to the first size that
+    // still hides the middle marker from a 2,000-line head window.
+    let padding =
+        tc.draw(gs::integers::<usize>().min_value(2_100).max_value(4_000));
+    let fixture = fixtures::test_log(padding);
+    let text = &fixture.files[0].text;
+    let display = text.lines().take(2_000).collect::<Vec<_>>().join("\n");
+    assert_eq!(failures(text), fixture.expected);
+    assert_ne!(failures(&display), fixture.expected);
 }
 
 #[hegel::test]
@@ -61,21 +109,7 @@ fn display_windows_omit_required_evidence() {
 #[test]
 fn search_answer_matches_a_literal_reference_scan() {
     let fixture = fixtures::search();
-    let mut result = Vec::new();
-    for file in &fixture.files {
-        if !file.path.ends_with(".rs") {
-            continue;
-        }
-        for (index, line) in file.text.lines().enumerate() {
-            if line.contains("TODO:") {
-                result.push(
-                    json!({"path": file.path, "line": index + 1, "text": line}),
-                );
-            }
-        }
-    }
-    result.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
-    assert_eq!(Value::Array(result), fixture.expected);
+    assert_eq!(search_records(&fixture), fixture.expected);
 }
 
 #[test]
