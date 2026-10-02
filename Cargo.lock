@@ -9163,6 +9163,7 @@ dependencies = [
  "futures-util",
  "gpui-pre",
  "hegeltest",
+ "jsonschema",
  "mlua",
  "serde",
  "serde_json",

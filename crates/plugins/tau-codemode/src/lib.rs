@@ -27,6 +27,8 @@ mod engine;
 pub mod host;
 pub mod image;
 #[cfg(feature = "host")]
+pub mod inference;
+#[cfg(feature = "host")]
 pub mod jev;
 #[cfg(feature = "host")]
 pub mod json;
