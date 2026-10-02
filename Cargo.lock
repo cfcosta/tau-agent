@@ -9178,6 +9178,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-codemode-eval"
+version = "0.1.0"
+dependencies = [
+ "hegeltest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tau-compaction"
 version = "0.1.0"
 dependencies = [

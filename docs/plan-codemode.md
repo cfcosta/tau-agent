@@ -23,7 +23,7 @@ Live evaluations require an explicit budget and remain opt-in.
 ### Foundation
 
 - [x] **01:** Specify the contracts and this implementation sequence.
-- [ ] **02:** Add deterministic evaluation fixtures and independent oracles.
+- [x] **02:** Add deterministic evaluation fixtures and independent oracles.
 
 ### M1: Structured results
 
