@@ -125,6 +125,7 @@ tau-jev = { path = "crates/plugins/tau-jev", version = "0.1.0" }
 tau-mcp = { path = "crates/plugins/tau-mcp", version = "0.1.0" }
 tau-memory = { path = "crates/plugins/tau-memory", version = "0.1.0" }
 tau-ai = { path = "crates/tau-ai", version = "0.1.0" }
+tau-artifacts = { path = "crates/tau-artifacts", version = "0.1.0" }
 tau-store = { path = "crates/tau-store", version = "0.1.0" }
 tau-terminal = { path = "crates/tau-terminal", version = "0.1.0" }
 tau-testing = { path = "crates/tau-testing", version = "0.1.0" }

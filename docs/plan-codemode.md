@@ -65,7 +65,7 @@ correctness and evaluation, not on assumed token savings.
 
 ### M4: Complete data outside the prompt
 
-- [ ] **25:** Store immutable artifact bytes with quotas and atomic publication.
+- [x] **25:** Store [immutable artifact bytes with quotas and atomic publication](reference/codemode-artifact-storage.md).
 - [ ] **26:** Add scoped references and bounded range reads.
 - [ ] **27:** Let file reads produce complete artifacts.
 - [ ] **28:** Connect complete command-output spills to artifacts.

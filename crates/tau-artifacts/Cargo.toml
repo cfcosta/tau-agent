@@ -1,0 +1,20 @@
+[package]
+name = "tau-artifacts"
+description = "Private, quota-bound byte artifacts with opaque references."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+libc.workspace = true
+serde.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+hegeltest.workspace = true
+serde_json.workspace = true
