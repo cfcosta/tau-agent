@@ -86,6 +86,13 @@ seven, for `Agent::tools`. `bash`, and so both, is unix-only.
 - **Errors:** a non-zero exit, a timeout or an abort returns `Err`, for
   example `Command exited with code N`.
 - **Progress:** partial output is sent as `ToolUpdate`, throttled.
+- **Artifact:** with artifact storage configured, a run with observed
+  output bytes publishes the complete captured stream when its source
+  reaches the drain boundary. `artifact` contains its grant, digest,
+  byte size, and source. Publication failure leaves `artifact: null`
+  and sets `artifact_error`; an incomplete source cannot grant its
+  captured bytes. A complete run with zero output bytes has
+  `artifact: null` and `artifact_error: null`.
 
 ### bash: terminal mode (the `terminal` feature)
 

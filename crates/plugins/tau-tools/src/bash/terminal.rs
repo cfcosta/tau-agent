@@ -52,9 +52,17 @@ use tau_agent::{
     error::ToolError,
     tool::{ToolCtx, ToolOutput},
 };
+use tau_artifacts::Bytes;
 use tau_terminal::{Command, Event, Finished, Replay};
 
-use super::{Accumulator, BashArgs, Outcome, exit_code_of, finish};
+use super::{
+    Accumulator,
+    BashArgs,
+    CommandEnd,
+    Outcome,
+    exit_code_of,
+    finish_observed_output,
+};
 use crate::truncate::{MAX_BYTES, MAX_LINES};
 
 /// The key of the terminal's details, in updates and in the result.
@@ -73,7 +81,16 @@ pub(super) async fn run(
     args: &BashArgs,
     timeout: Option<Duration>,
     ctx: ToolCtx,
+    artifacts: &Option<Bytes>,
 ) -> Result<ToolOutput, ToolError> {
+    let accumulator = || {
+        let acc = Accumulator::new(MAX_LINES, MAX_BYTES, std::env::temp_dir());
+        if artifacts.is_some() {
+            acc.with_full_capture()
+        } else {
+            acc
+        }
+    };
     let mut run = match Command::new(shell)
         .arg("-c")
         .arg(&args.command)
@@ -82,19 +99,28 @@ pub(super) async fn run(
     {
         Ok(run) => run,
         Err(error) => {
-            return finish(
-                Accumulator::new(MAX_LINES, MAX_BYTES, std::env::temp_dir()),
-                Outcome::SpawnFailed,
-                None,
-                args.timeout,
-                None,
-                Some(format!("failed to start {}: {error}", shell.display())),
-            );
+            return finish_observed_output(
+                accumulator(),
+                artifacts,
+                &ctx,
+                false,
+                CommandEnd {
+                    outcome: Outcome::SpawnFailed,
+                    exit_code: None,
+                    timeout: args.timeout,
+                    details: None,
+                    error: Some(format!(
+                        "failed to start {}: {error}",
+                        shell.display()
+                    )),
+                },
+            )
+            .await;
         }
     };
     let killer = run.killer();
 
-    let mut acc = Accumulator::new(MAX_LINES, MAX_BYTES, std::env::temp_dir());
+    let mut acc = accumulator();
     let mut stream = Stream::default();
     let mut screen = String::new();
     let mut outcome = Outcome::Done;
@@ -147,14 +173,20 @@ pub(super) async fn run(
         Ok(finished) => finished,
         Err(error) => {
             stream.flush(&ctx, &acc.preview(""));
-            return finish(
+            return finish_observed_output(
                 acc,
-                outcome,
-                None,
-                args.timeout,
-                None,
-                Some(format!("terminal: {error}")),
-            );
+                artifacts,
+                &ctx,
+                false,
+                CommandEnd {
+                    outcome,
+                    exit_code: None,
+                    timeout: args.timeout,
+                    details: None,
+                    error: Some(format!("terminal: {error}")),
+                },
+            )
+            .await;
         }
     };
     acc.append(finished.text.as_bytes());
@@ -167,7 +199,20 @@ pub(super) async fn run(
         Outcome::Cancelled | Outcome::TimedOut | Outcome::SpawnFailed => None,
     };
     let details = result_details(&finished, outcome, exit_code, stream.seq);
-    finish(acc, outcome, exit_code, args.timeout, Some(details), None)
+    finish_observed_output(
+        acc,
+        artifacts,
+        &ctx,
+        true,
+        CommandEnd {
+            outcome,
+            exit_code,
+            timeout: args.timeout,
+            details: Some(details),
+            error: None,
+        },
+    )
+    .await
 }
 
 /// The raw bytes on their way to callers.

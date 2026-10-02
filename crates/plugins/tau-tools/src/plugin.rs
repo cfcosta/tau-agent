@@ -133,6 +133,11 @@ impl Plugin for CodingTools {
                         .with_artifacts(bytes.clone()),
                 )
                     as Arc<dyn AgentTool>,
+                (Tool::Bash, Some(bytes)) => Arc::new(
+                    bash::Bash::new(self.root.clone())
+                        .with_artifacts(bytes.clone()),
+                )
+                    as Arc<dyn AgentTool>,
                 _ => tool.build(&self.root),
             })
             .collect();

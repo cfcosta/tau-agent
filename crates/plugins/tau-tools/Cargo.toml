@@ -22,6 +22,7 @@ host = [
   "dep:libc",
   "dep:regex",
   "dep:schemars",
+  "dep:sha2",
   "dep:similar",
   "dep:tokio",
   "dep:tokio-util",
@@ -47,6 +48,7 @@ image = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 similar = { workspace = true, optional = true }

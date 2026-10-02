@@ -38,17 +38,20 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 use tau_agent::{
     error::ToolError,
     output::Spill,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
+use tau_artifacts::Bytes;
 use tokio::{
     io::AsyncReadExt,
     sync::{Notify, mpsc, oneshot},
 };
 
 use crate::{
+    artifact_grant::publish_artifact,
     path::Root,
     truncate::{self, Limit, MAX_BYTES, MAX_LINES},
 };
@@ -86,6 +89,7 @@ pub struct Bash {
     shell: Option<PathBuf>,
     parameters: Value,
     output_schema: Value,
+    artifacts: Option<Bytes>,
     /// Whether commands run under a pseudo-terminal.
     #[cfg(feature = "terminal")]
     terminal: bool,
@@ -100,6 +104,7 @@ impl Bash {
             shell: None,
             parameters,
             output_schema: output_schema(),
+            artifacts: None,
             #[cfg(feature = "terminal")]
             terminal: true,
         }
@@ -116,6 +121,12 @@ impl Bash {
     /// Uses `path` as the shell instead of the default search order.
     pub fn with_shell(mut self, path: impl Into<PathBuf>) -> Self {
         self.shell = Some(path.into());
+        self
+    }
+
+    /// Publish complete observed output through this run's artifact grants.
+    pub fn with_artifacts(mut self, bytes: Bytes) -> Self {
+        self.artifacts = Some(bytes);
         self
     }
 
@@ -199,6 +210,7 @@ fn is_executable(path: &Path) -> bool {
 pub enum ChunkEvent {
     Data(Vec<u8>),
     Eof,
+    ReadError,
 }
 
 /// Reads [`ChunkEvent`]s from `rx` (a merge of stdout and stderr,
@@ -215,12 +227,14 @@ pub async fn drain_until_idle<F>(
     exited: impl Future<Output = ()>,
     idle: Duration,
     mut on_chunk: F,
-) where
+) -> bool
+where
     F: FnMut(&[u8]),
 {
     tokio::pin!(exited);
     let mut has_exited = false;
     let mut eof_count = 0u8;
+    let mut source_complete = true;
     let sleep = tokio::time::sleep(idle);
     tokio::pin!(sleep);
     let mut idle_armed = false;
@@ -243,7 +257,15 @@ pub async fn drain_until_idle<F>(
                             break;
                         }
                     }
-                    None => break,
+                    Some(ChunkEvent::ReadError) => {
+                        source_complete = false;
+                        eof_count += 1;
+                        if eof_count >= 2 { break; }
+                    }
+                    None => {
+                        source_complete = false;
+                        break;
+                    },
                 }
             }
             _ = &mut exited, if !has_exited => {
@@ -260,14 +282,17 @@ pub async fn drain_until_idle<F>(
                     tokio::task::yield_now().await;
                 }
                 while let Ok(event) = rx.try_recv() {
-                    if let ChunkEvent::Data(bytes) = event {
-                        on_chunk(&bytes);
+                    match event {
+                        ChunkEvent::Data(bytes) => on_chunk(&bytes),
+                        ChunkEvent::ReadError => source_complete = false,
+                        ChunkEvent::Eof => {},
                     }
                 }
                 break;
             }
         }
     }
+    source_complete
 }
 
 /// Reads `pipe` in a loop, sending each chunk (and a final `Eof`) to
@@ -280,8 +305,12 @@ where
         let mut buf = [0u8; 8192];
         loop {
             match pipe.read(&mut buf).await {
-                Ok(0) | Err(_) => {
+                Ok(0) => {
                     let _ = tx.send(ChunkEvent::Eof);
+                    return;
+                }
+                Err(_) => {
+                    let _ = tx.send(ChunkEvent::ReadError);
                     return;
                 }
                 Ok(n) => {
@@ -364,11 +393,15 @@ pub struct Accumulator {
 
     total_decoded_bytes: usize,
     total_raw_bytes: usize,
+    observed_hash: Sha256,
     completed_lines: usize,
     has_open_line: bool,
 
     raw_buffer: Vec<u8>,
     spill: Option<(PathBuf, std::fs::File)>,
+    spill_error: Option<String>,
+    spill_bytes_written: u64,
+    capture_full_output: bool,
     finished: bool,
 }
 
@@ -388,12 +421,22 @@ impl Accumulator {
             tail_starts_at_line_boundary: true,
             total_decoded_bytes: 0,
             total_raw_bytes: 0,
+            observed_hash: Sha256::new(),
             completed_lines: 0,
             has_open_line: false,
             raw_buffer: Vec::new(),
             spill: None,
+            spill_error: None,
+            spill_bytes_written: 0,
+            capture_full_output: false,
             finished: false,
         }
+    }
+
+    /// Start a raw spill even when the display would fit within its limits.
+    pub fn with_full_capture(mut self) -> Self {
+        self.capture_full_output = true;
+        self
     }
 
     /// Appends a chunk of raw output. Panics if called after [`finish`](Self::finish).
@@ -403,14 +446,26 @@ impl Accumulator {
             return;
         }
         self.total_raw_bytes += chunk.len();
+        self.observed_hash.update(chunk);
         let decoded = self.decode(chunk);
         self.push_decoded(&decoded);
 
-        if self.spill.is_some() || self.should_spill() {
+        if self.capture_full_output
+            || self.spill.is_some()
+            || self.should_spill()
+        {
             self.ensure_spill();
-            if let Some((_, file)) = &mut self.spill {
+            if self.spill_error.is_none()
+                && let Some((_, file)) = &mut self.spill
+            {
                 use std::io::Write;
-                let _ = file.write_all(chunk);
+                match file.write_all(chunk) {
+                    Ok(()) => self.spill_bytes_written += chunk.len() as u64,
+                    Err(error) => {
+                        self.spill_error =
+                            Some(format!("spill write failed: {error}"))
+                    }
+                }
             }
         } else {
             self.raw_buffer.extend_from_slice(chunk);
@@ -426,8 +481,18 @@ impl Accumulator {
         self.finished = true;
         let rest = self.flush_decoder();
         self.push_decoded(&rest);
-        if self.should_spill() {
+        if self.capture_full_output && self.total_raw_bytes > 0
+            || self.should_spill()
+        {
             self.ensure_spill();
+        }
+        if self.spill_error.is_none()
+            && let Some((_, file)) = &mut self.spill
+        {
+            use std::io::Write;
+            if let Err(error) = file.flush().and_then(|()| file.sync_all()) {
+                self.spill_error = Some(format!("spill sync failed: {error}"));
+            }
         }
     }
 
@@ -488,6 +553,41 @@ impl Accumulator {
         self.spill.as_ref().map(|(path, _)| path.as_path())
     }
 
+    /// Open only a finished spill whose length matches every observed raw byte.
+    fn complete_spill(&self) -> Result<Option<VerifiedSpill>, String> {
+        if let Some(error) = &self.spill_error {
+            return Err(error.clone());
+        }
+        let Some((path, file)) = &self.spill else {
+            return if self.total_raw_bytes == 0 {
+                Ok(None)
+            } else {
+                Err("complete output spill is unavailable".into())
+            };
+        };
+        if !self.finished {
+            return Err("output spill is unfinished".into());
+        }
+        let actual = file.metadata().map_err(|error| error.to_string())?.len();
+        if actual != self.total_raw_bytes as u64
+            || self.spill_bytes_written != self.total_raw_bytes as u64
+        {
+            return Err(format!(
+                "output spill is incomplete: observed {} bytes, wrote {}, stored {}",
+                self.total_raw_bytes, self.spill_bytes_written, actual
+            ));
+        }
+        let file =
+            std::fs::File::open(path).map_err(|error| error.to_string())?;
+        Ok(Some(VerifiedSpill {
+            file,
+            expected_bytes: self.total_raw_bytes as u64,
+            expected_hash: self.observed_hash.clone().finalize().into(),
+            read_bytes: 0,
+            read_hash: Sha256::new(),
+        }))
+    }
+
     fn total_lines(&self) -> usize {
         self.completed_lines + usize::from(self.has_open_line)
     }
@@ -499,15 +599,30 @@ impl Accumulator {
     }
 
     fn ensure_spill(&mut self) {
-        if self.spill.is_some() {
+        if self.spill.is_some() || self.spill_error.is_some() {
             return;
         }
         let file = Spill::new(&self.spill_dir, "tau-bash").create("log");
-        if let Ok((path, mut file)) = file {
-            use std::io::Write;
-            let _ = file.write_all(&self.raw_buffer);
-            self.raw_buffer.clear();
-            self.spill = Some((path, file));
+        match file {
+            Ok((path, mut file)) => {
+                use std::io::Write;
+                match file.write_all(&self.raw_buffer) {
+                    Ok(()) => {
+                        self.spill_bytes_written += self.raw_buffer.len() as u64
+                    }
+                    Err(error) => {
+                        self.spill_error =
+                            Some(format!("spill write failed: {error}"))
+                    }
+                }
+                self.raw_buffer.clear();
+                self.spill = Some((path, file));
+            }
+            Err(error) => {
+                self.spill_error =
+                    Some(format!("spill creation failed: {error}"));
+                self.raw_buffer.clear();
+            }
         }
     }
 
@@ -601,6 +716,37 @@ impl Accumulator {
     }
 }
 
+/// Verify the full source as artifact storage reads it. An equal-length edit
+/// after the initial metadata check fails before any object is published.
+struct VerifiedSpill {
+    file: std::fs::File,
+    expected_bytes: u64,
+    expected_hash: [u8; 32],
+    read_bytes: u64,
+    read_hash: Sha256,
+}
+
+impl std::io::Read for VerifiedSpill {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.file.read(buffer)?;
+        if count == 0 {
+            let actual_hash: [u8; 32] =
+                self.read_hash.clone().finalize().into();
+            if self.read_bytes != self.expected_bytes
+                || actual_hash != self.expected_hash
+            {
+                return Err(std::io::Error::other(
+                    "output spill changed during publication",
+                ));
+            }
+        } else {
+            self.read_bytes += count as u64;
+            self.read_hash.update(&buffer[..count]);
+        }
+        Ok(count)
+    }
+}
+
 /// `text`, then `status` on its own paragraph; just `status` if `text`
 /// is empty (pi's `appendStatus`, `bash.ts:341`).
 fn append_status(text: &str, status: impl std::fmt::Display) -> String {
@@ -660,6 +806,23 @@ enum Outcome {
     SpawnFailed,
 }
 
+/// Process status and the details returned with the command result.
+struct CommandEnd {
+    outcome: Outcome,
+    exit_code: Option<i32>,
+    timeout: Option<f64>,
+    details: Option<Value>,
+    error: Option<String>,
+}
+
+/// Captured bytes and their immutable artifact publication result.
+struct CapturedOutput {
+    acc: Accumulator,
+    source_complete: bool,
+    artifact: Value,
+    artifact_error: Value,
+}
+
 fn output_schema() -> Value {
     json!({
         "type": "object",
@@ -677,12 +840,16 @@ fn output_schema() -> Value {
             "returned_bytes": {"type": "integer", "minimum": 0},
             "last_line_partial": {"type": "boolean"},
             "spill_path": {"type": ["string", "null"]},
+            "artifact": {"type": ["object", "null"]},
+            "artifact_error": {"type": ["string", "null"]},
+            "source_complete": {"type": "boolean"},
             "error": {"type": ["string", "null"]}
         },
         "required": ["status", "exit_code", "output", "truncated",
             "truncated_by", "line_limit_exceeded", "byte_limit_exceeded",
             "total_lines", "total_bytes", "returned_lines",
-            "returned_bytes", "last_line_partial", "spill_path", "error"],
+            "returned_bytes", "last_line_partial", "spill_path", "artifact",
+            "artifact_error", "source_complete", "error"],
         "additionalProperties": false
     })
 }
@@ -696,21 +863,34 @@ impl Bash {
         let timeout = validate_timeout(args.timeout)?;
 
         if ctx.cancel.is_cancelled() {
-            return finish(
-                Accumulator::new(MAX_LINES, MAX_BYTES, std::env::temp_dir()),
-                Outcome::Cancelled,
-                None,
-                args.timeout,
-                None,
-                None,
-            );
+            return finish_observed_output(
+                self.accumulator(),
+                &self.artifacts,
+                &ctx,
+                false,
+                CommandEnd {
+                    outcome: Outcome::Cancelled,
+                    exit_code: None,
+                    timeout: args.timeout,
+                    details: None,
+                    error: None,
+                },
+            )
+            .await;
         }
 
         let shell = self.resolve_shell();
         #[cfg(feature = "terminal")]
         if self.terminal {
-            return terminal::run(&shell, self.root.dir(), &args, timeout, ctx)
-                .await;
+            return terminal::run(
+                &shell,
+                self.root.dir(),
+                &args,
+                timeout,
+                ctx,
+                &self.artifacts,
+            )
+            .await;
         }
         let mut command = tokio::process::Command::new(&shell);
         command
@@ -725,21 +905,23 @@ impl Bash {
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
-                return finish(
-                    Accumulator::new(
-                        MAX_LINES,
-                        MAX_BYTES,
-                        std::env::temp_dir(),
-                    ),
-                    Outcome::SpawnFailed,
-                    None,
-                    args.timeout,
-                    None,
-                    Some(format!(
-                        "failed to start {}: {error}",
-                        shell.display()
-                    )),
-                );
+                return finish_observed_output(
+                    self.accumulator(),
+                    &self.artifacts,
+                    &ctx,
+                    false,
+                    CommandEnd {
+                        outcome: Outcome::SpawnFailed,
+                        exit_code: None,
+                        timeout: args.timeout,
+                        details: None,
+                        error: Some(format!(
+                            "failed to start {}: {error}",
+                            shell.display()
+                        )),
+                    },
+                )
+                .await;
             }
         };
         let pid = child.id().ok_or("spawned child has no pid")?;
@@ -764,8 +946,7 @@ impl Bash {
             });
         }
 
-        let mut acc =
-            Accumulator::new(MAX_LINES, MAX_BYTES, std::env::temp_dir());
+        let mut acc = self.accumulator();
         let mut throttle = ProgressThrottle::new(THROTTLE_WINDOW);
 
         let outcome = {
@@ -786,18 +967,22 @@ impl Bash {
                 tokio::time::sleep(timeout.unwrap_or(Duration::from_secs(0)));
             tokio::pin!(sleep);
 
-            let outcome = tokio::select! {
-                () = &mut drain_fut => Outcome::Done,
-                () = ctx.cancel.cancelled() => Outcome::Cancelled,
-                () = &mut sleep, if timeout.is_some() => Outcome::TimedOut,
+            let (outcome, source_complete) = tokio::select! {
+                complete = &mut drain_fut => (Outcome::Done, complete),
+                () = ctx.cancel.cancelled() => (Outcome::Cancelled, false),
+                () = &mut sleep, if timeout.is_some() => (Outcome::TimedOut, false),
             };
 
-            if !matches!(outcome, Outcome::Done) {
+            let source_complete = if !matches!(outcome, Outcome::Done) {
                 kill_group(pid);
-                drain_fut.await;
-            }
-            outcome
+                drain_fut.await
+            } else {
+                source_complete
+            };
+            (outcome, source_complete)
         };
+
+        let (outcome, source_complete) = outcome;
 
         let exit_code = match outcome {
             Outcome::Done => Some(code_rx.await.unwrap_or(1)),
@@ -805,23 +990,104 @@ impl Bash {
                 None
             }
         };
-        finish(acc, outcome, exit_code, args.timeout, None, None)
+        finish_observed_output(
+            acc,
+            &self.artifacts,
+            &ctx,
+            source_complete,
+            CommandEnd {
+                outcome,
+                exit_code,
+                timeout: args.timeout,
+                details: None,
+                error: None,
+            },
+        )
+        .await
+    }
+
+    fn accumulator(&self) -> Accumulator {
+        let acc = Accumulator::new(MAX_LINES, MAX_BYTES, std::env::temp_dir());
+        if self.artifacts.is_some() {
+            acc.with_full_capture()
+        } else {
+            acc
+        }
     }
 }
 
-/// The tool's result once the output is read: `acc`'s
-/// [`truncate::truncate_tail`] with the spill notice, then the status
-/// `outcome` and `exit_code` call for (`docs/reference/tools.md`,
-/// "bash", "Error strings"). `details`, when given, stay on the result,
-/// failed or not.
-fn finish(
+/// Finalize the observed stream before copying it into immutable storage.
+async fn finish_observed_output(
     mut acc: Accumulator,
-    outcome: Outcome,
-    exit_code: Option<i32>,
-    timeout: Option<f64>,
-    details: Option<Value>,
-    error: Option<String>,
+    artifacts: &Option<Bytes>,
+    ctx: &ToolCtx,
+    source_complete: bool,
+    end: CommandEnd,
 ) -> Result<ToolOutput, ToolError> {
+    acc.finish();
+    let artifact = if source_complete && acc.total_raw_bytes > 0 {
+        match artifacts {
+            Some(bytes) => match acc.complete_spill() {
+                Ok(Some(file)) => {
+                    publish_artifact(bytes, file, "bash output", ctx)
+                        .await
+                        .map(|grant| {
+                            json!({
+                                "id": grant.artifact.id,
+                                "digest": grant.artifact.digest,
+                                "size_bytes": grant.artifact.size_bytes,
+                                "source": grant.source,
+                            })
+                        })
+                        .map_err(|error| error.to_string())
+                }
+                Ok(None) => Err("complete output spill is unavailable".into()),
+                Err(error) => Err(error),
+            },
+            None => Err("artifact storage is unavailable".into()),
+        }
+    } else if !source_complete && acc.total_raw_bytes > 0 {
+        Err("output source did not reach its drain boundary".into())
+    } else {
+        Ok(Value::Null)
+    };
+    let (artifact, artifact_error) = match artifact {
+        Ok(value) => (value, Value::Null),
+        Err(error) => (Value::Null, json!(error)),
+    };
+    build_command_result(
+        CapturedOutput {
+            acc,
+            source_complete,
+            artifact,
+            artifact_error,
+        },
+        end,
+    )
+}
+
+/// The tool's result once the output is read: `captured.acc`'s
+/// [`truncate::truncate_tail`] with the spill notice, then the status
+/// `end.outcome` and `end.exit_code` call for (`docs/reference/tools.md`,
+/// "bash", "Error strings"). `end.details`, when given, stay on the result,
+/// failed or not.
+fn build_command_result(
+    captured: CapturedOutput,
+    end: CommandEnd,
+) -> Result<ToolOutput, ToolError> {
+    let CapturedOutput {
+        mut acc,
+        source_complete,
+        artifact,
+        artifact_error,
+    } = captured;
+    let CommandEnd {
+        outcome,
+        exit_code,
+        timeout,
+        details,
+        error,
+    } = end;
     acc.finish();
     let snapshot = acc.snapshot();
     let truncated = snapshot.truncated();
@@ -849,6 +1115,9 @@ fn finish(
         "returned_bytes": snapshot.output_bytes,
         "last_line_partial": snapshot.last_line_partial,
         "spill_path": spill_path,
+        "artifact": artifact,
+        "artifact_error": artifact_error,
+        "source_complete": source_complete,
         "error": error,
     });
     let mut content = snapshot.content;
@@ -933,8 +1202,22 @@ mod tests {
         acc.append(&bytes[..split]);
         acc.append(&bytes[split..]);
         let native_cut = acc.snapshot().by;
-        let result =
-            finish(acc, Outcome::Done, Some(0), None, None, None).unwrap();
+        let result = build_command_result(
+            CapturedOutput {
+                acc,
+                source_complete: true,
+                artifact: Value::Null,
+                artifact_error: Value::Null,
+            },
+            CommandEnd {
+                outcome: Outcome::Done,
+                exit_code: Some(0),
+                timeout: None,
+                details: None,
+                error: None,
+            },
+        )
+        .unwrap();
         let value = result.structured.unwrap();
         let full = std::str::from_utf8(&bytes).unwrap();
         let expected = truncate::truncate_tail(full, max_lines, max_bytes);
@@ -1075,6 +1358,73 @@ mod tests {
         assert!(
             neither.spill_path().is_none(),
             "within every limit must not spill"
+        );
+    }
+
+    #[test]
+    fn complete_spill_rejects_missing_short_and_failed_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut missing =
+            Accumulator::new(1, 1, dir.path()).with_full_capture();
+        missing.append(b"complete\n");
+        missing.finish();
+        let path = missing.spill_path().unwrap().to_owned();
+        std::fs::remove_file(path).unwrap();
+        assert!(missing.complete_spill().is_err());
+
+        let mut short = Accumulator::new(1, 1, dir.path()).with_full_capture();
+        short.append(b"complete\n");
+        short.finish();
+        let path = short.spill_path().unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_len(2)
+            .unwrap();
+        assert!(short.complete_spill().err().unwrap().contains("incomplete"));
+
+        let mut changed =
+            Accumulator::new(1, 1, dir.path()).with_full_capture();
+        changed.append(b"original");
+        changed.finish();
+        let path = changed.spill_path().unwrap();
+        std::fs::write(path, b"replaced").unwrap();
+        let mut reader = changed.complete_spill().ok().flatten().unwrap();
+        assert!(
+            std::io::Read::read_to_end(&mut reader, &mut Vec::new())
+                .unwrap_err()
+                .to_string()
+                .contains("changed")
+        );
+
+        let mut failed = Accumulator::new(1, 1, dir.path()).with_full_capture();
+        failed.spill = Some((
+            PathBuf::from("/dev/full"),
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open("/dev/full")
+                .unwrap(),
+        ));
+        failed.append(b"cannot be stored");
+        failed.finish();
+        assert!(failed.complete_spill().is_err());
+        assert_eq!(failed.total_raw_bytes, b"cannot be stored".len());
+    }
+
+    #[test]
+    fn spill_creation_failure_never_becomes_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let absent = dir.path().join("absent");
+        let mut acc = Accumulator::new(1, 1, absent).with_full_capture();
+        acc.append(b"output");
+        acc.finish();
+        assert!(acc.spill_path().is_none());
+        assert!(
+            acc.complete_spill()
+                .err()
+                .unwrap()
+                .contains("creation failed")
         );
     }
 

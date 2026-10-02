@@ -68,7 +68,7 @@ correctness and evaluation, not on assumed token savings.
 - [x] **25:** Store [immutable artifact bytes with quotas and atomic publication](reference/codemode-artifact-storage.md).
 - [x] **26:** Add [scoped references and bounded byte range reads](reference/codemode-artifact-ranges.md) with explicit decoding and completeness.
 - [x] **27:** Let [file reads produce scoped complete artifacts](reference/codemode-artifact-files.md), or explicit publication errors.
-- [ ] **28:** Connect complete command-output spills to artifacts.
+- [x] **28:** Connect [verified complete observed command-output spills](reference/codemode-command-artifacts.md) to scoped artifacts, without conflating EOF with command success.
 - [ ] **29:** Add artifact inspection and history-aware retention.
 - [ ] **30:** Evaluate the complete matrix, including changed inputs.
 

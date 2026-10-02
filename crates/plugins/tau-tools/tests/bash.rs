@@ -218,6 +218,49 @@ fn keeps_truncate_tail_of_the_full_output_and_spills_it_whole(tc: TestCase) {
     }
 }
 
+/// Property inventory: a generated TSV log remains byte-for-byte readable
+/// after arbitrary chunking, even when a UTF-8 character crosses a chunk;
+/// each row also agrees with an independently parsed TSV oracle.
+/// Generator: rows use a fixed alphabet without tabs/newlines, so every
+/// generated case is valid TSV. Cuts shrink toward fewer and smaller chunks.
+/// The workspace hegel.toml controls case counts and CI's deterministic
+/// profile; no per-test override is needed.
+#[hegel::test]
+fn full_capture_preserves_chunked_tsv_bytes_and_rows(tc: TestCase) {
+    let fields: Vec<Vec<char>> = tc.draw(
+        gs::vecs(
+            gs::vecs(gs::sampled_from(vec!['a', 'é', '日', '🙂'])).max_size(80),
+        )
+        .min_size(1)
+        .max_size(80),
+    );
+    let mut expected_rows = Vec::new();
+    let mut expected = Vec::new();
+    for (index, field) in fields.iter().enumerate() {
+        let field: String = field.iter().collect();
+        expected_rows.push((index, field.clone()));
+        expected.extend(format!("{index}\t{field}\n").as_bytes());
+    }
+    let chunks = chunk_at(&expected, &tc);
+    let dir = tempfile::tempdir().unwrap();
+    let mut acc = Accumulator::new(3, 24, dir.path()).with_full_capture();
+    for chunk in chunks {
+        acc.append(&chunk);
+    }
+    acc.finish();
+    let spill = std::fs::read(acc.spill_path().unwrap()).unwrap();
+    assert_eq!(spill, expected);
+    let parsed_rows: Vec<(usize, String)> = std::str::from_utf8(&spill)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let (index, field) = line.split_once('\t').unwrap();
+            (index.parse().unwrap(), field.to_owned())
+        })
+        .collect();
+    assert_eq!(parsed_rows, expected_rows);
+}
+
 /// What `bash` shows is `truncate_tail` of the full output even once the
 /// rolling tail has been trimmed. A last line that starts before the
 /// rolling tail is not dropped: its end shows after the cut marker, all
@@ -436,7 +479,7 @@ fn parameters_schema_matches_the_documented_shape() {
     let result_schema = bash.output_schema().unwrap();
     assert_eq!(result_schema["type"], "object");
     assert_eq!(result_schema["additionalProperties"], false);
-    assert_eq!(result_schema["required"].as_array().unwrap().len(), 14);
+    assert_eq!(result_schema["required"].as_array().unwrap().len(), 17);
 }
 
 // -- Real processes (normal, unpaused runtime) --------------------------
