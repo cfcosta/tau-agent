@@ -50,6 +50,7 @@ use crate::{
     PLUGIN,
     description::NAME,
     live::JevUpdate,
+    modules,
     result::{MAX_ARGS_CHARS, MAX_ERROR_CHARS, preview},
     store::{Record, Snapshot, Writes},
 };
@@ -66,6 +67,8 @@ pub struct State {
     pub store: Snapshot,
     /// The writes folded: one per script that wrote something.
     pub writes: usize,
+    /// Immutable module versions and the current version of each name.
+    pub modules: modules::Library,
 }
 
 impl Fold for State {
@@ -73,9 +76,15 @@ impl Fold for State {
 
     /// Folds one of the plugin's records: a script's store writes.
     fn apply(&mut self, record: Record, _run: &mut dyn RunCx) {
-        let Record::Store(writes) = record;
-        writes.apply(&mut self.store);
-        self.writes += 1;
+        match record {
+            Record::Store(writes) => {
+                writes.apply(&mut self.store);
+                self.writes += 1;
+            }
+            Record::Module(record) => {
+                let _ = self.modules.apply(&record);
+            }
+        }
     }
 }
 

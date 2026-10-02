@@ -35,6 +35,7 @@ pub struct Writes {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Record {
     Store(Writes),
+    Module(crate::modules::Record),
 }
 
 impl Writes {
@@ -56,10 +57,17 @@ impl Writes {
 /// shape are skipped.
 pub fn fold(records: &[Value]) -> Snapshot {
     let mut snapshot = Snapshot::new();
-    for Record::Store(writes) in
-        tau_agent::plugin::read_records(crate::PLUGIN, records)
-    {
-        writes.apply(&mut snapshot);
+    for record in records.iter().filter(|record| {
+        matches!(
+            record.get("kind").and_then(Value::as_str),
+            Some("store" | "module")
+        )
+    }) {
+        if let Some(Record::Store(writes)) =
+            tau_agent::plugin::read_record(crate::PLUGIN, record)
+        {
+            writes.apply(&mut snapshot);
+        }
     }
     snapshot
 }

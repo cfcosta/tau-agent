@@ -55,7 +55,7 @@ correctness and evaluation, not on assumed token savings.
 
 ### M3: Reusable modules
 
-- [ ] **18:** Add versioned scratch-module records and their fold.
+- [x] **18:** Add [immutable scratch-module records and their fold](reference/codemode-modules-records.md).
 - [ ] **19:** Load registered modules into fresh VMs.
 - [ ] **20:** Add definition, listing, and source/signature inspection.
 - [ ] **21:** Exercise modules against controlled fake tools.

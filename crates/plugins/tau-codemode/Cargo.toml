@@ -29,6 +29,7 @@ gpui = { package = "gpui-pre", version = "=0.3.7" }
 mlua = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
 tau-jev.workspace = true
