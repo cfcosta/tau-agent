@@ -142,6 +142,11 @@ impl Budget {
             usage: state.usage.clone(),
         }
     }
+
+    /// Shared deadline for admission, provider work, and answer validation.
+    pub fn deadline(&self) -> Instant {
+        self.deadline
+    }
 }
 
 /// One admitted attempt; dropping it frees its concurrency slot.

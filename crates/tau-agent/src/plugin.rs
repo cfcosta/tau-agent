@@ -448,6 +448,11 @@ impl RunPlan {
         &self.model
     }
 
+    /// The run's requested reasoning effort, if one was configured.
+    pub fn reasoning(&self) -> Option<ReasoningEffort> {
+        self.reasoning
+    }
+
     /// Whether the run is a root run, a fork or a sub-agent.
     pub fn kind(&self) -> &RunKind {
         &self.kind

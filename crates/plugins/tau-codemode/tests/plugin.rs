@@ -545,7 +545,7 @@ return { tools.codemode == nil, table.concat(names, ",") }
             value,
             json!([
                 true,
-                "echo,module_define,module_inspect,module_list,module_select"
+                "echo,infer,module_define,module_inspect,module_list,module_select"
             ])
         );
     });

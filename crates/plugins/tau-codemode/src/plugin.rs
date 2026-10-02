@@ -18,17 +18,42 @@
 //! `Sequential` tool called by both may run alongside the other
 //! script's calls, as two tools that call tools would.
 
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tau_agent::{
     error::{PluginError, ToolError},
-    plugin::{Plugin, PluginCtx, PluginRun, RunPlan},
+    plugin::{
+        AskAttemptEnd,
+        AskObserver,
+        AskPermit,
+        Plugin,
+        PluginCtx,
+        PluginRun,
+        RunPlan,
+    },
     tool::{AgentTool, Catalog, ExecutionMode, Exposure, ToolCtx, ToolOutput},
 };
-use tau_ai::message::{ImageContent, InputBlock, TextContent, Usage};
+use tau_ai::{
+    message::{
+        ImageContent,
+        InputBlock,
+        Message,
+        StopReason,
+        TextContent,
+        Usage,
+        UserContent,
+        UserMessage,
+    },
+    responses::request::{ReasoningEffort, Settings},
+};
 use tau_jev::Jev;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     Host,
@@ -40,6 +65,8 @@ use crate::{
     ToolEntry,
     ToolReply,
     description::{self, NAME},
+    inference::InferRequest,
+    inference_budget::{Budget, Limits, Permit},
     modules,
     options,
     run,
@@ -61,6 +88,8 @@ Luau signatures. Others may be callable too: find them with \
 pub struct Codemode {
     tool: Arc<CodemodeTool>,
     module_writes: Arc<tokio::sync::Mutex<()>>,
+    inference_limits: Limits,
+    inference_model: Option<String>,
 }
 
 impl Codemode {
@@ -70,7 +99,21 @@ impl Codemode {
         Self {
             tool: Arc::new(CodemodeTool::new(jev)),
             module_writes: Arc::new(tokio::sync::Mutex::new(())),
+            inference_limits: Limits::default(),
+            inference_model: None,
         }
+    }
+
+    /// Set the limits shared by inference calls in each agent run.
+    pub fn with_inference_limits(mut self, limits: Limits) -> Self {
+        self.inference_limits = limits;
+        self
+    }
+
+    /// Override the host model for inference calls.
+    pub fn with_inference_model(mut self, model: impl Into<String>) -> Self {
+        self.inference_model = Some(model.into());
+        self
     }
 
     /// The tool the plugin adds.
@@ -82,6 +125,205 @@ impl Codemode {
 impl Default for Codemode {
     fn default() -> Self {
         Self::new(None)
+    }
+}
+
+fn infer_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "ok": {"type": "boolean"},
+            "value": {},
+            "trace_id": {"type": "null"},
+            "usage": {"type": "object"},
+            "error": {"type": ["string", "null"]}
+        },
+        "required": ["ok", "value", "trace_id", "usage", "error"],
+        "additionalProperties": false
+    })
+}
+
+/// This tool exists only in one run's plan, so its budget cannot leak to
+/// another run that shares the Codemode plugin.
+struct InferTool {
+    budget: Arc<Budget>,
+    model: String,
+    reasoning: Option<ReasoningEffort>,
+    parameters: Value,
+    output_schema: Value,
+}
+
+struct InferObserver {
+    budget: Arc<Budget>,
+    usage: Arc<Mutex<Usage>>,
+}
+
+struct InferAttempt {
+    permit: Permit,
+    usage: Arc<Mutex<Usage>>,
+}
+
+#[async_trait]
+impl AskObserver for InferObserver {
+    async fn admit(
+        &self,
+        _attempt: u32,
+        cancel: &CancellationToken,
+    ) -> Result<Box<dyn AskPermit>, String> {
+        Ok(Box::new(InferAttempt {
+            permit: self.budget.admit(cancel).await?,
+            usage: self.usage.clone(),
+        }))
+    }
+}
+
+impl AskPermit for InferAttempt {
+    fn report(&mut self, usage: &Usage, _end: AskAttemptEnd) {
+        self.permit.report(usage);
+        *self.usage.lock().unwrap() += usage;
+    }
+}
+
+impl InferTool {
+    fn output(
+        &self,
+        value: Value,
+        usage: Usage,
+        error: Option<String>,
+        output_limit: bool,
+    ) -> Result<ToolOutput, ToolError> {
+        let body = json!({
+            "ok": error.is_none(),
+            "value": value,
+            "trace_id": null,
+            "usage": usage,
+            "error": error,
+        });
+        let output = ToolOutput {
+            content: vec![text_block(body.to_string())],
+            details: Some(json!({"provider_output_limit": output_limit})),
+            structured: Some(body),
+        };
+        if output
+            .structured
+            .as_ref()
+            .is_some_and(|body| body["ok"] == false)
+        {
+            Err(ToolError::output(output))
+        } else {
+            Ok(output)
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for InferTool {
+    fn name(&self) -> &str {
+        "infer"
+    }
+
+    fn description(&self) -> &str {
+        "Ask an isolated model with an explicit task and JSON context. Returns {ok, value, trace_id, usage, error}."
+    }
+
+    fn parameters(&self) -> &Value {
+        &self.parameters
+    }
+
+    fn output_schema(&self) -> Option<&Value> {
+        Some(&self.output_schema)
+    }
+
+    fn exposure(&self) -> Exposure {
+        Exposure::Nested
+    }
+
+    async fn call(
+        &self,
+        args: Value,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let request = match InferRequest::parse(args) {
+            Ok(request) => request,
+            Err(error) => {
+                return self.output(
+                    Value::Null,
+                    Usage::default(),
+                    Some(error),
+                    false,
+                );
+            }
+        };
+        let Some(plugin) = ctx.plugin().cloned() else {
+            return self.output(
+                Value::Null,
+                Usage::default(),
+                Some("infer requires its plugin context".into()),
+                false,
+            );
+        };
+        let output_limit = plugin.supports_output_token_limit();
+        let settings = Settings {
+            model: self.model.clone(),
+            instructions: Some("Answer only the user's independent inference request. Do not assume prior conversation, access tools, or request tool execution.".into()),
+            tools: Vec::new(),
+            reasoning_model: tau_ai::model::find(&self.model).is_some_and(|model| model.reasoning),
+            reasoning: self.reasoning,
+            text_format: request.text_format(),
+            max_output_tokens: output_limit.then_some(2048),
+            ..Settings::default()
+        };
+        let input = [Message::User(UserMessage {
+            content: UserContent::Text(request.input_text()),
+            timestamp: plugin.now(),
+        })];
+        let usage = Arc::new(Mutex::new(Usage::default()));
+        let observer = InferObserver {
+            budget: self.budget.clone(),
+            usage: usage.clone(),
+        };
+        let response = tokio::select! {
+            biased;
+            _ = ctx.cancel.cancelled() => Err("inference cancelled".to_owned()),
+            _ = tokio::time::sleep_until(self.budget.deadline()) => Err("inference deadline reached".to_owned()),
+            answer = plugin.ask_observed(settings, &input, &observer) => answer.map_err(|error| error.to_string()),
+        };
+        let reported = usage.lock().unwrap().clone();
+        let result = response.and_then(|answer| {
+            if ctx.cancel.is_cancelled() {
+                return Err("inference cancelled".into());
+            }
+            if tokio::time::Instant::now() >= self.budget.deadline() {
+                return Err("inference deadline reached".into());
+            }
+            if answer.tool_calls().next().is_some() {
+                return Err(
+                    "inference returned tool calls that cannot be executed"
+                        .into(),
+                );
+            }
+            match answer.stop_reason {
+                StopReason::Stop => request.decode_answer(&answer.text()),
+                StopReason::Length => {
+                    Err("inference output was truncated".into())
+                }
+                StopReason::ToolUse => {
+                    Err("inference requested a tool that cannot be executed"
+                        .into())
+                }
+                StopReason::Error | StopReason::Aborted => {
+                    Err(answer.error_message.unwrap_or_else(|| {
+                        format!("inference stopped: {:?}", answer.stop_reason)
+                    }))
+                }
+            }
+        });
+        match result {
+            Ok(value) => self.output(value, reported, None, output_limit),
+            Err(error) => {
+                self.output(Value::Null, reported, Some(error), output_limit)
+            }
+        }
     }
 }
 
@@ -111,6 +353,20 @@ impl Plugin for Codemode {
                 );
             }
         }
+        if plan.tools().iter().any(|tool| tool.name() == "infer") {
+            return Err("codemode cannot add infer: a tool with that name already exists".into());
+        }
+        let budget =
+            Budget::new(self.inference_limits).map_err(PluginError::from)?;
+        let model = self.inference_model.as_deref().unwrap_or(plan.model());
+        let infer = Arc::new(InferTool {
+            budget,
+            model: model.to_owned(),
+            reasoning: plan.reasoning,
+            parameters: InferRequest::parameters(),
+            output_schema: infer_output_schema(),
+        });
+        plan.add_tool(infer);
         let tools: Vec<ToolEntry> = plan
             .tools()
             .iter()

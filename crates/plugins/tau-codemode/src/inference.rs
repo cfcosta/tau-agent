@@ -3,6 +3,8 @@
 use serde_json::{Value, json};
 use tau_agent::schema::{inline_refs, strip_nulls_for_optional, to_strict};
 
+mod format;
+
 const MAX_TASK_BYTES: usize = 16 * 1024;
 const MAX_CONTEXT_BYTES: usize = 256 * 1024;
 const MAX_SCHEMA_BYTES: usize = 64 * 1024;
@@ -88,8 +90,12 @@ impl InferRequest {
     /// The provider's strict output format, when the schema has a supported rewrite.
     pub fn text_format(&self) -> Option<Value> {
         let schema = self.schema.as_ref()?;
+        format::within_inline_budget(schema).then_some(())?;
         let inlined = inline_refs(schema).ok()?;
         let strict = to_strict(&inlined).ok()?;
+        (serde_json::to_vec(&strict).ok()?.len()
+            <= format::MAX_STRICT_SCHEMA_BYTES)
+            .then_some(())?;
         Some(json!({
             "type": "json_schema",
             "name": "infer_answer",
@@ -106,8 +112,8 @@ impl InferRequest {
         let Some(schema) = &self.schema else {
             return Ok(Value::String(answer.to_owned()));
         };
-        let answer: Value = serde_json::from_str(answer)
-            .map_err(|error| format!("answer is not JSON: {error}"))?;
+        let answer: Value = crate::json::decode(answer.as_bytes())
+            .map_err(|error| format!("answer is not valid JSON: {error}"))?;
         let answer = if self.text_format().is_some() {
             let inlined =
                 inline_refs(schema).expect("strict schema was inlined");
@@ -136,39 +142,94 @@ fn check_json_size(
     Ok(())
 }
 
-/// Prevent the validator from resolving a file or network resource.
+/// Prevent the validator from resolving a file or network resource, while
+/// checking the depth of every JSON value, including annotation data.
 fn check_schema_resources(value: &Value, depth: usize) -> Result<(), String> {
+    check_schema_value(value, depth, SchemaLocation::Schema)
+}
+
+#[derive(Clone, Copy)]
+enum SchemaLocation {
+    Schema,
+    NamedSchemas,
+    SchemaList,
+    Data,
+}
+
+fn check_schema_value(
+    value: &Value,
+    depth: usize,
+    location: SchemaLocation,
+) -> Result<(), String> {
     if depth > MAX_SCHEMA_DEPTH {
         return Err(format!("schema exceeds {MAX_SCHEMA_DEPTH} levels"));
     }
     match value {
         Value::Object(fields) => {
             for (key, child) in fields {
-                match key.as_str() {
-                    "$ref" => {
-                        if !child
-                            .as_str()
-                            .is_some_and(|reference| reference.starts_with('#'))
-                        {
-                            return Err(
-                                "schema permits only local # references".into(),
-                            );
+                if matches!(location, SchemaLocation::Schema) {
+                    match key.as_str() {
+                        "$ref" => {
+                            if !child.as_str().is_some_and(|reference| {
+                                reference.starts_with('#')
+                            }) {
+                                return Err(
+                                    "schema permits only local # references"
+                                        .into(),
+                                );
+                            }
                         }
+                        "$id" | "$anchor" | "$dynamicAnchor"
+                        | "$dynamicRef" | "$recursiveRef"
+                        | "$recursiveAnchor" => {
+                            return Err(format!(
+                                "schema resource keyword {key} is unsupported"
+                            ));
+                        }
+                        _ => {}
                     }
-                    "$id" | "$anchor" | "$dynamicAnchor" | "$dynamicRef"
-                    | "$recursiveRef" | "$recursiveAnchor" => {
-                        return Err(format!(
-                            "schema resource keyword {key} is unsupported"
-                        ));
-                    }
-                    _ => {}
                 }
-                check_schema_resources(child, depth + 1)?;
+                let child_location = match location {
+                    SchemaLocation::Schema => match key.as_str() {
+                        "properties" | "patternProperties" | "$defs"
+                        | "definitions" | "dependentSchemas"
+                        | "dependencies" => SchemaLocation::NamedSchemas,
+                        "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
+                            SchemaLocation::SchemaList
+                        }
+                        "additionalProperties"
+                        | "unevaluatedProperties"
+                        | "propertyNames"
+                        | "items"
+                        | "contains"
+                        | "not"
+                        | "if"
+                        | "then"
+                        | "else"
+                        | "additionalItems"
+                        | "unevaluatedItems"
+                        | "contentSchema" => SchemaLocation::Schema,
+                        _ => SchemaLocation::Data,
+                    },
+                    SchemaLocation::NamedSchemas => SchemaLocation::Schema,
+                    SchemaLocation::SchemaList | SchemaLocation::Data => {
+                        SchemaLocation::Data
+                    }
+                };
+                check_schema_value(child, depth + 1, child_location)?;
             }
         }
         Value::Array(items) => {
             for item in items {
-                check_schema_resources(item, depth + 1)?;
+                let child_location = match location {
+                    SchemaLocation::SchemaList | SchemaLocation::Schema => {
+                        SchemaLocation::Schema
+                    }
+                    SchemaLocation::NamedSchemas | SchemaLocation::Data => {
+                        SchemaLocation::Data
+                    }
+                };
+                check_schema_value(item, depth + 1, child_location)?;
             }
         }
         _ => {}

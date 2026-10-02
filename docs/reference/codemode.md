@@ -309,6 +309,7 @@ Globals:
 - `describe_namespace(name)`: `{ name, description, instructions, tools }` for a namespace such as an MCP server, or `nil`.
 - `json.null` is JSON null; `array({})` is an empty JSON array.
 - `return value` appends the value like `text`.
+
 ```
 
 Then, when the plugin has Jev, a `Jev:` section with the `jev`
@@ -317,6 +318,38 @@ functions and their Luau types. Then:
 ```
 Some tools may not be declared to you, such as MCP tools that are only for scripts. They are still callable on `tools` and listed in `ALL_TOOLS`. Find one with `search_tools(query)`, and read a server's instructions with `describe_namespace(name)`.
 ```
+
+### Independent inference
+
+`tools.infer({ task = "...", context = json.null, schema = ... })` asks the
+model to answer a self-contained task. `context` is required and can be any
+JSON value; `schema` is optional. Without a schema, `value` is plain answer
+text. With one, `value` is JSON validated against that schema. The tool returns
+`{ ok, value, trace_id, usage, error }`. An inference failure returns a readable
+`error` and `ok = false`; the script can inspect it and continue. The nested
+call's row still has `status = "error"`.
+
+Each inference opens an independent model session with only the task and
+explicit context. It declares no tools, and the agent model never sees a root
+`infer` definition. The host model and reasoning effort are the defaults; a
+Codemode plugin may override the inference model. The provider output ceiling
+is requested only when its transport supports that capability. The output
+metadata reports `provider_output_limit` either way.
+
+Inference attempts across all scripts in one run share a budget, including
+retries. Defaults are 16 calls, 4 concurrent attempts, a 60-second deadline,
+100,000 reported tokens, and US$1.00 in reported cost. Admission checks those
+limits before opening a session. Queued, cancelled, and rejected attempts do
+not count as calls. A started attempt counts even if it fails. Reported usage
+from every completed attempt is charged once, including retryable failures.
+Token and cost thresholds stop later admissions; simultaneous attempts may
+finish above a threshold. Script timeout and run cancellation drop active
+inference and free its concurrency slot. See
+[inference budget](codemode-inference-budget.md) and
+[inference request](codemode-inference-request.md) for the exact limits.
+
+These limits apply to `tools.infer`. Jev has its separate legacy concurrency
+and run accounting rules below.
 
 ### Signatures in the run's context
 
