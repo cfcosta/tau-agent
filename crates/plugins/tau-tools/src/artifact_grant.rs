@@ -50,6 +50,9 @@ pub struct ArtifactGrant {
     pub artifact: ArtifactMetadata,
     pub owner_run_id: String,
     pub source: String,
+    /// The observed source reached its drain boundary when published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_complete: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,9 +120,9 @@ pub async fn publish_artifact<R: std::io::Read + Send + 'static>(
     let cancel = ctx.cancel.child_token();
     let _cancel_on_drop = CancelOnDrop(cancel.clone());
     let work = tokio::task::spawn_blocking(move || {
-        storage.publish_reader(reader, &cancel)
+        storage.publish_leased_reader(reader, &cancel)
     });
-    let artifact = tokio::select! {
+    let (artifact, _publication_lease) = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => return Err(ToolError::from(crate::ABORTED)),
         result = work => result?.map_err(ToolError::other)?,
@@ -135,6 +138,7 @@ pub async fn publish_artifact<R: std::io::Read + Send + 'static>(
         },
         owner_run_id: ctx.run.to_string(),
         source: source.to_owned(),
+        source_complete: Some(true),
     };
     plugin
         .record(&ArtifactRecord::ArtifactGrant(grant.clone()))

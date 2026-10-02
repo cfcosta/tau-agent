@@ -865,6 +865,7 @@ impl Bash {
         if ctx.cancel.is_cancelled() {
             return finish_observed_output(
                 self.accumulator(),
+                None,
                 &self.artifacts,
                 &ctx,
                 false,
@@ -907,6 +908,7 @@ impl Bash {
             Err(error) => {
                 return finish_observed_output(
                     self.accumulator(),
+                    None,
                     &self.artifacts,
                     &ctx,
                     false,
@@ -992,6 +994,7 @@ impl Bash {
         };
         finish_observed_output(
             acc,
+            None,
             &self.artifacts,
             &ctx,
             source_complete,
@@ -1019,15 +1022,18 @@ impl Bash {
 /// Finalize the observed stream before copying it into immutable storage.
 async fn finish_observed_output(
     mut acc: Accumulator,
+    mut artifact_source: Option<Accumulator>,
     artifacts: &Option<Bytes>,
     ctx: &ToolCtx,
     source_complete: bool,
     end: CommandEnd,
 ) -> Result<ToolOutput, ToolError> {
     acc.finish();
-    let artifact = if source_complete && acc.total_raw_bytes > 0 {
+    let source = artifact_source.as_mut().unwrap_or(&mut acc);
+    source.finish();
+    let artifact = if source_complete && source.total_raw_bytes > 0 {
         match artifacts {
-            Some(bytes) => match acc.complete_spill() {
+            Some(bytes) => match source.complete_spill() {
                 Ok(Some(file)) => {
                     publish_artifact(bytes, file, "bash output", ctx)
                         .await
@@ -1046,7 +1052,7 @@ async fn finish_observed_output(
             },
             None => Err("artifact storage is unavailable".into()),
         }
-    } else if !source_complete && acc.total_raw_bytes > 0 {
+    } else if !source_complete && source.total_raw_bytes > 0 {
         Err("output source did not reach its drain boundary".into())
     } else {
         Ok(Value::Null)
@@ -1120,6 +1126,18 @@ fn build_command_result(
         "source_complete": source_complete,
         "error": error,
     });
+    let mut details = details.unwrap_or_else(|| json!({}));
+    if let Some(fields) = details.as_object_mut() {
+        fields.insert("artifact".into(), structured["artifact"].clone());
+        fields.insert(
+            "artifact_error".into(),
+            structured["artifact_error"].clone(),
+        );
+        fields.insert(
+            "source_complete".into(),
+            structured["source_complete"].clone(),
+        );
+    }
     let mut content = snapshot.content;
     if truncated && let Some(path) = acc.spill_path() {
         content.push_str(&format!("\n\nFull output: {}", path.display()));
@@ -1127,7 +1145,7 @@ fn build_command_result(
 
     let failed = |text: String| {
         ToolError::output(ToolOutput {
-            details: details.clone(),
+            details: Some(details.clone()),
             structured: Some(structured.clone()),
             ..ToolOutput::text(text)
         })
@@ -1152,7 +1170,7 @@ fn build_command_result(
             let display = or_no_output(content);
             if exit_code == 0 {
                 Ok(ToolOutput {
-                    details,
+                    details: Some(details.clone()),
                     structured: Some(structured),
                     ..ToolOutput::text(display)
                 })

@@ -2,7 +2,7 @@ use std::{
     fs,
     io::{self, Cursor, Read},
     os::unix::fs::PermissionsExt,
-    sync::{Arc, Barrier},
+    sync::{Arc, Barrier, Mutex, mpsc},
     thread,
 };
 
@@ -493,4 +493,133 @@ fn deserialization_rejects_paths_and_invalid_digests() {
     value["digest"] = serde_json::json!("../bad");
     assert!(serde_json::from_value::<Artifact>(value).is_err());
     assert_eq!(objects(&directory).len(), 1);
+}
+
+#[test]
+fn prune_preserves_roots_reclaims_orphans_and_recomputes_quota_after_restart() {
+    let (directory, bytes) = storage(Quotas {
+        max_artifact_bytes: 6,
+        total_bytes: 10,
+    });
+    let retained = bytes
+        .publish_reader(Cursor::new(b"parent"), &CancellationToken::new())
+        .unwrap();
+    let orphan = bytes
+        .publish_reader(Cursor::new(b"lost"), &CancellationToken::new())
+        .unwrap();
+    let lease = bytes.lock_publication().unwrap();
+    let report = bytes.prune_with_roots([retained.clone()], &lease).unwrap();
+    drop(lease);
+    assert_eq!(report.removed_objects, 1);
+    assert_eq!(report.reclaimed_bytes, 4);
+    let reopened = Bytes::new(
+        directory.path(),
+        Quotas {
+            max_artifact_bytes: 6,
+            total_bytes: 10,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        reopened
+            .read_range(
+                &retained,
+                0,
+                6,
+                Encoding::Utf8,
+                &CancellationToken::new()
+            )
+            .unwrap()
+            .data,
+        "parent"
+    );
+    assert!(matches!(
+        reopened.read_range(
+            &orphan,
+            0,
+            1,
+            Encoding::Base64,
+            &CancellationToken::new()
+        ),
+        Err(Error::MissingArtifact)
+    ));
+    assert!(
+        reopened
+            .publish_reader(Cursor::new(b"next"), &CancellationToken::new())
+            .is_ok()
+    );
+}
+
+#[test]
+fn invalid_root_aborts_before_sweeping_any_object() {
+    let (directory, bytes, retained) = published(b"root");
+    let orphan = bytes
+        .publish_reader(Cursor::new(b"orphan"), &CancellationToken::new())
+        .unwrap();
+    let mut corrupt = serde_json::to_value(&retained).unwrap();
+    corrupt["digest"] = serde_json::json!(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    let corrupt: Artifact = serde_json::from_value(corrupt).unwrap();
+    let lease = bytes.lock_publication().unwrap();
+    assert!(matches!(
+        bytes.prune_with_roots([corrupt], &lease),
+        Err(Error::InvalidRoot)
+    ));
+    drop(lease);
+    assert_eq!(objects(&directory).len(), 2);
+    assert!(
+        bytes
+            .read_range(
+                &orphan,
+                0,
+                1,
+                Encoding::Base64,
+                &CancellationToken::new()
+            )
+            .is_ok()
+    );
+}
+
+#[test]
+fn publication_lease_serializes_grant_before_prune_inventory() {
+    let (_directory, bytes) = storage(Quotas::default());
+    let (artifact, lease) = bytes
+        .publish_leased_reader(
+            Cursor::new(b"pending grant"),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+    let grants = Arc::new(Mutex::new(Vec::<Artifact>::new()));
+    let worker_bytes = bytes.clone();
+    let worker_grants = grants.clone();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        let maintenance = worker_bytes.lock_publication().unwrap();
+        let roots = worker_grants.lock().unwrap().clone();
+        done_tx
+            .send(worker_bytes.prune_with_roots(roots, &maintenance))
+            .unwrap();
+    });
+    started_rx.recv().unwrap();
+    assert!(done_rx.try_recv().is_err());
+    grants.lock().unwrap().push(artifact.clone()); // simulated durable grant
+    drop(lease);
+    assert_eq!(done_rx.recv().unwrap().unwrap().removed_objects, 0);
+    worker.join().unwrap();
+    assert_eq!(
+        bytes
+            .read_range(
+                &artifact,
+                0,
+                1024,
+                Encoding::Utf8,
+                &CancellationToken::new()
+            )
+            .unwrap()
+            .data,
+        "pending grant"
+    );
 }

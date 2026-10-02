@@ -22,6 +22,11 @@ staging bytes and display text do not count. A crash may leave an unreferenced
 staging file, which is ignored by accounting and is not removed automatically
 because another process may still be writing it.
 
+`publish_leased_reader` holds the publication lock through a caller's durable
+grant write. Explicit `Host::prune_artifacts(repo)` maintenance collects roots
+from complete retained history before deleting unreferenced published objects.
+See [artifact retention and inspection](codemode-artifact-retention.md).
+
 Artifact deserialization validates the canonical ID and lowercase digest
 before any internal file resolution. The public bounded read method requires
 immutable metadata resolved by its caller; it does not authorize access by

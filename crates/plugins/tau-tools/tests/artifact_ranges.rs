@@ -213,6 +213,7 @@ impl AgentTool for ReadFileFixture {
                 let mut captured = json!({
                     "structured": output.structured,
                     "content": output.content,
+                    "details": output.details,
                 });
                 if args["page"] == true {
                     let id = captured["structured"]["artifact"]["id"]
@@ -584,6 +585,39 @@ fn read_artifacts_recover_bytes_past_line_and_byte_display_limits() {
                     .contains("not granted")
             );
         }
+    });
+}
+
+#[test]
+fn published_read_keeps_display_truncation_details() {
+    block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let source = (1..=2_500)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(directory.path().join("long.txt"), &source).unwrap();
+        let bytes =
+            Bytes::new(directory.path().join("artifacts"), Quotas::default())
+                .unwrap();
+        let fixture =
+            FixtureCodingTools::new(Root::new(directory.path()), bytes);
+        let store = Store::memory().await.unwrap();
+        Agent::new(file_model(json!({"path":"long.txt"}), false))
+            .plugin(fixture.clone())
+            .run("long read", &store)
+            .await
+            .unwrap();
+        let captured =
+            fixture.file_results.lock().unwrap().last().unwrap().clone();
+        assert_eq!(captured["details"]["truncation"]["truncatedBy"], "lines");
+        assert_eq!(captured["details"]["truncation"]["outputLines"], 2_000);
+        assert_eq!(
+            captured["details"]["artifact"]["id"],
+            captured["structured"]["artifact"]["id"]
+        );
+        assert_eq!(captured["details"]["artifact_error"], Value::Null);
+        assert_eq!(captured["details"]["source_complete"], true);
     });
 }
 

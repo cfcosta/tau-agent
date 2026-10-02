@@ -253,6 +253,14 @@ impl AgentTool for Read {
             }
             Err(error) => structured["artifact_error"] = json!(error),
         }
+        let details = output.details.get_or_insert_with(|| json!({}));
+        details["artifact"] =
+            structured.get("artifact").cloned().unwrap_or(Value::Null);
+        details["artifact_error"] = structured
+            .get("artifact_error")
+            .cloned()
+            .unwrap_or(Value::Null);
+        details["source_complete"] = json!(true);
         Ok(output)
     }
 }

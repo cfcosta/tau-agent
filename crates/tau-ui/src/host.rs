@@ -95,6 +95,8 @@ use crate::{
     workspace::{Workspace, WorkspaceEvent},
 };
 
+mod artifacts;
+
 /// Writes `settings` to `path`, making its directory.
 pub(crate) fn write_settings(
     path: &Path,

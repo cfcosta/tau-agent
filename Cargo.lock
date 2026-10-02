@@ -9608,6 +9608,7 @@ dependencies = [
  "tau-vcs",
  "tempfile",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 

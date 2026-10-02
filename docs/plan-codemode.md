@@ -69,7 +69,7 @@ correctness and evaluation, not on assumed token savings.
 - [x] **26:** Add [scoped references and bounded byte range reads](reference/codemode-artifact-ranges.md) with explicit decoding and completeness.
 - [x] **27:** Let [file reads produce scoped complete artifacts](reference/codemode-artifact-files.md), or explicit publication errors.
 - [x] **28:** Connect [verified complete observed command-output spills](reference/codemode-command-artifacts.md) to scoped artifacts, without conflating EOF with command success.
-- [ ] **29:** Add artifact inspection and history-aware retention.
+- [x] **29:** Add [scoped artifact inspection and explicit history-aware retention](reference/codemode-artifact-retention.md), protecting publication-to-grant races and failing closed on incomplete roots.
 - [ ] **30:** Evaluate the complete matrix, including changed inputs.
 
 ## Planned contracts

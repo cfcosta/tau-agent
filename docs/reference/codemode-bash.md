@@ -19,6 +19,9 @@ Every command outcome uses the same object:
   "returned_bytes": 6,
   "last_line_partial": false,
   "spill_path": null,
+  "artifact": null,
+  "artifact_error": "artifact storage is unavailable",
+  "source_complete": true,
   "error": null
 }
 ```
@@ -28,13 +31,21 @@ command has an integer `exit_code`, including nonzero and signal-derived codes.
 Timeout, cancellation, and spawn failure have a null exit code. `output` is the
 Accumulator snapshot: the same bounded command output as the direct text result,
 without the spill notice, status message, or `(no output)` placeholder. The
-line and byte counts describe decoded output; `spill_path` points to the
-raw spill when truncation occurred. `truncated_by` is the existing rolling
-snapshot's primary cut label (`lines`, `bytes`, or null). That label can depend
-on chunk boundaries when both limits apply. `line_limit_exceeded` and
+line and byte counts describe decoded output; `spill_path` identifies the
+existing direct-output spill when truncation occurred. PTY direct spills
+contain rendered text; command artifacts preserve the separate raw PTY stream.
+`truncated_by` is the rolling snapshot's primary cut label (`lines`, `bytes`,
+or null). Its label can depend on chunk boundaries and retained windows,
+even when only the full-output byte bound was exceeded. `line_limit_exceeded` and
 `byte_limit_exceeded` independently report which full-output bounds were
 exceeded. `error` contains the explicit spawn or terminal I/O error when one
 occurs.
+
+The schema has 17 required fields. `artifact` contains scoped immutable metadata
+or null; `artifact_error` explains unavailable publication. The example shows
+unconfigured storage. `source_complete` describes the observed drain boundary,
+not command success. See [command artifacts](codemode-command-artifacts.md) and
+[scoped range reads](codemode-artifact-ranges.md).
 
 The direct result retains its existing text and terminal `details.term`. Failed
 commands return `ToolError::Output` with the same displayed text and the

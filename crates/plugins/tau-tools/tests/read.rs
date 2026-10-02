@@ -184,10 +184,12 @@ fn a_long_file_says_where_to_continue() {
         "{}",
         &text[text.len() - 100..]
     );
-    assert_eq!(
-        output.details.unwrap()["truncation"]["truncatedBy"],
-        "lines"
-    );
+    let details = output.details.unwrap();
+    assert_eq!(details["truncation"]["truncatedBy"], "lines");
+    assert_eq!(details["truncation"]["outputLines"], 2000);
+    assert_eq!(details["artifact"], Value::Null);
+    assert_eq!(details["artifact_error"], "artifact storage is unavailable");
+    assert_eq!(details["source_complete"], true);
 }
 
 /// The error strings of `read`: an offset past the end, and a missing

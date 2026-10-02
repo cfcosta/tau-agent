@@ -3,7 +3,7 @@
 When `CodingTools` is configured with `with_artifacts(bytes)`, `bash` captures
 the complete output it observes into a private spill file. Pipe mode captures
 the merged stdout and stderr bytes in arrival order. Terminal mode captures
-the terminal's rendered plain text, not its raw VT stream or replay snapshot.
+the original raw PTY bytes; its rendered plain text remains the model's view.
 The displayed tail, truncation limits, spill path and `Full output:` notice
 retain their existing behavior. The original spill remains in place after
 publication.

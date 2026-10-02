@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!: i64\", body AS \"body!: String\"\n               FROM messages WHERE run_id = ?1 ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "body!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "body"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "3223c87f5ae5fe8a9de611048a34d2da2272d6dc4d16b0c135b3460304020449"
+}

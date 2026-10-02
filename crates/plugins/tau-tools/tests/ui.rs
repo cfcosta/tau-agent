@@ -3,8 +3,11 @@
 
 use hegel::generators as gs;
 use serde_json::json;
-use tau_tools::ui::{diff_of, output_lines};
-use tau_ui_plugin::{CallData, CallResult};
+use tau_tools::{
+    artifact_grant::ArtifactRecord,
+    ui::{ArtifactStatus, State, artifact_status, diff_of, output_lines},
+};
+use tau_ui_plugin::{CallData, CallResult, Fold, testing::FakeRun};
 
 /// A result's diff reads back line for line, counted as it adds and
 /// removes; a failed call shows none.
@@ -74,4 +77,146 @@ fn output_is_the_result_or_the_output_so_far() {
         error: false,
     });
     assert_eq!(output_lines(&data), ["c"]);
+}
+
+#[test]
+fn artifact_grant_fold_reloads_and_cards_report_bounded_metadata() {
+    let grant = json!({"kind":"artifact_grant","artifact":{
+        "id":"0199b283-f06a-722b-8c75-476700ee3488",
+        "digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size_bytes":1234},"owner_run_id":"run-1","source":"bash output",
+        "source_complete":true});
+    let mut state = State::default();
+    state.apply(
+        serde_json::from_value::<ArtifactRecord>(grant).unwrap(),
+        &mut FakeRun::default(),
+    );
+    let restored: State =
+        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    assert_eq!(restored.grants.len(), 1);
+    assert_eq!(
+        restored.grants.values().next().unwrap().source_complete,
+        Some(true)
+    );
+    let data = CallData {
+        result: Some(CallResult {
+            text: "bounded tail".into(),
+            details: Some(json!({"artifact":{
+            "id":"0199b283-f06a-722b-8c75-476700ee3488",
+            "digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes":1234,"source":"bash output"},"source_complete":true})),
+            error: false,
+        }),
+        ..CallData::default()
+    };
+    assert!(matches!(
+        artifact_status(&data),
+        Some(ArtifactStatus::Available {
+            source_complete: Some(true),
+            ..
+        })
+    ));
+    let missing = CallData {
+        result: Some(CallResult {
+            text: String::new(),
+            details: Some(
+                json!({"artifact":null,"artifact_error":"quota exceeded"}),
+            ),
+            error: true,
+        }),
+        ..CallData::default()
+    };
+    assert_eq!(
+        artifact_status(&missing),
+        Some(ArtifactStatus::Unavailable("quota exceeded".into()))
+    );
+}
+
+#[cfg(feature = "host")]
+#[test]
+fn restarted_inspector_preview_reads_only_its_runs_grant() {
+    use std::{io::Cursor, sync::Arc};
+
+    use tau_agent::tool::RunId;
+    use tau_artifacts::{Bytes, Quotas};
+    use tau_store::{Entry, NewRun, RunKind, Store, TurnUsage};
+    use tau_tools::ui::ToolsUi;
+    use tau_ui_plugin::{
+        HOST_RECORD,
+        HostCx,
+        HostRecord,
+        RepoCtx,
+        Services,
+        UiPlugin,
+    };
+    use tokio_util::sync::CancellationToken;
+
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime
+        .block_on(Store::open(dir.path().join("runs.db")))
+        .unwrap();
+    let bytes =
+        Bytes::new(project.join("artifacts"), Quotas::default()).unwrap();
+    let artifact = bytes
+        .publish_reader(
+            Cursor::new(b"preview after restart"),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+    drop(bytes);
+    for id in ["allowed", "other"] {
+        runtime.block_on(async {
+            store
+                .create_run(&NewRun {
+                    id,
+                    workflow_id: None,
+                    agent: "test",
+                    kind: RunKind::Root,
+                    model: "fake",
+                    turns: 0,
+                })
+                .await
+                .unwrap();
+            store
+                .append_turn(
+                    id,
+                    &[Entry::Plugin {
+                        plugin: HOST_RECORD.into(),
+                        body: json!(HostRecord {
+                            repo: "repo".into(),
+                            ..HostRecord::default()
+                        })
+                        .to_string(),
+                    }],
+                    TurnUsage::default(),
+                )
+                .await
+                .unwrap();
+        });
+    }
+    runtime.block_on(store.append_turn("allowed", &[Entry::Plugin { plugin: tau_tools::ui::NAME.into(),
+        body: json!({"kind":"artifact_grant","artifact":artifact.clone(),"owner_run_id":"allowed","source":"read file","source_complete":true}).to_string()
+    }], TurnUsage::default())).unwrap();
+    let cx = HostCx::new(
+        store,
+        runtime.handle().clone(),
+        Services::default(),
+        dir.path().into(),
+        vec![RepoCtx {
+            name: "repo".into(),
+            checkout: project.clone(),
+            dir: project,
+        }],
+        Arc::new(|_| {}),
+    );
+    let action = |run: &str| json!({"action":"read","run":RunId(run.into()),"id":artifact.id(),"offset":0,"encoding":"utf8"});
+    let allowed = ToolsUi.act(&(), action("allowed"), &cx).unwrap().unwrap();
+    assert_eq!(allowed["range"]["data"], "preview after restart");
+    let denied = ToolsUi.act(&(), action("other"), &cx).unwrap().unwrap();
+    assert!(denied["error"].as_str().unwrap().contains("not granted"));
 }

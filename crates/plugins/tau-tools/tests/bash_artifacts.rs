@@ -203,10 +203,14 @@ fn full_output_pages_cover_first_middle_and_last_markers_in_both_modes() {
             assert_eq!(got["bash"]["source_complete"], true);
             assert_eq!(got["bash"]["status"], "exited");
             assert_eq!(got["bash"]["truncated"], true);
-            assert_eq!(got["bash"]["artifact"]["size_bytes"], expected.len());
             let restored = decoded(&got);
-            assert_eq!(restored, expected.as_bytes());
+            assert_eq!(got["bash"]["artifact"]["size_bytes"], restored.len());
             let restored = std::str::from_utf8(&restored).unwrap();
+            if terminal {
+                assert_eq!(restored.replace("\r\n", "\n"), expected);
+            } else {
+                assert_eq!(restored, expected);
+            }
             let lines: Vec<&str> = restored.lines().collect();
             assert!(lines[0].contains("FIRST"));
             assert!(lines[1202].contains("MIDDLE"));
@@ -378,7 +382,7 @@ fn storage_failure_has_no_grant_and_grants_follow_run_scope() {
 
 #[cfg(feature = "terminal")]
 #[test]
-fn terminal_artifact_contains_plain_text_not_vt_replay() {
+fn terminal_artifact_contains_raw_pty_bytes_not_rendered_text() {
     block_on(async {
         let dir = tempfile::tempdir().unwrap();
         let storage =
@@ -394,7 +398,12 @@ fn terminal_artifact_contains_plain_text_not_vt_replay() {
         .await
         .unwrap();
         let got = fixture.last();
-        assert_eq!(decoded(&got), b"RED\n");
+        let raw = decoded(&got);
+        assert!(
+            raw.windows(b"\x1b[31mRED\x1b[0m".len())
+                .any(|window| window == b"\x1b[31mRED\x1b[0m")
+        );
+        assert!(raw.ends_with(b"\r\n"));
         assert_eq!(got["bash"]["source_complete"], true);
     });
 }

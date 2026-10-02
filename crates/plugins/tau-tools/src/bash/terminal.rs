@@ -101,6 +101,7 @@ pub(super) async fn run(
         Err(error) => {
             return finish_observed_output(
                 accumulator(),
+                None,
                 artifacts,
                 &ctx,
                 false,
@@ -121,6 +122,7 @@ pub(super) async fn run(
     let killer = run.killer();
 
     let mut acc = accumulator();
+    let mut raw_artifact = artifacts.as_ref().map(|_| accumulator());
     let mut stream = Stream::default();
     let mut screen = String::new();
     let mut outcome = Outcome::Done;
@@ -135,6 +137,7 @@ pub(super) async fn run(
         tokio::select! {
             event = run.next() => match event {
                 Some(Event::Output(bytes)) => {
+                    if let Some(raw) = raw_artifact.as_mut() { raw.append(&bytes); }
                     if stream.pending.is_empty() {
                         flush_at
                             .as_mut()
@@ -175,6 +178,7 @@ pub(super) async fn run(
             stream.flush(&ctx, &acc.preview(""));
             return finish_observed_output(
                 acc,
+                raw_artifact,
                 artifacts,
                 &ctx,
                 false,
@@ -201,6 +205,7 @@ pub(super) async fn run(
     let details = result_details(&finished, outcome, exit_code, stream.seq);
     finish_observed_output(
         acc,
+        raw_artifact,
         artifacts,
         &ctx,
         true,

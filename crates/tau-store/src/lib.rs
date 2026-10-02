@@ -44,6 +44,8 @@ pub enum StoreError {
     UnknownRun(String),
     #[error("run {0} is still running")]
     StillRunning(String),
+    #[error("retained run history is malformed: {0}")]
+    CorruptHistory(String),
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -808,6 +810,65 @@ impl Store {
                 created_at: row.created_at,
             })
             .collect())
+    }
+
+    /// Every persisted run, including subagents. Retention maintenance must
+    /// never use the paginated sidebar history as its root inventory.
+    pub async fn retained_runs(&self) -> Result<Vec<RunRecord>> {
+        let rows = sqlx::query!(
+            r#"SELECT id AS "id!: String", workflow_id, agent, kind,
+                      parent_run_id, fork_seq, model, status,
+                      input_tokens, output_tokens, cost_usd, turns, result,
+                      error, title, created_at
+               FROM runs ORDER BY id"#
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let valid = matches!(
+                    (&*row.kind, &row.parent_run_id, row.fork_seq),
+                    ("root", None, None)
+                        | ("fork", Some(_), Some(_))
+                        | ("subagent", Some(_), _)
+                );
+                if !valid {
+                    return Err(StoreError::CorruptHistory(row.id));
+                }
+                Ok(RunRecord {
+                    kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq),
+                    id: row.id,
+                    workflow_id: row.workflow_id,
+                    agent: row.agent,
+                    model: row.model,
+                    status: Status::parse(&row.status),
+                    input_tokens: row.input_tokens,
+                    output_tokens: row.output_tokens,
+                    cost_usd: row.cost_usd,
+                    turns: row.turns,
+                    result: row.result,
+                    error: row.error,
+                    title: row.title,
+                    created_at: row.created_at,
+                })
+            })
+            .collect()
+    }
+
+    /// All original message bodies in one run, including those hidden by a
+    /// later context rewrite. Callers must inspect them as opaque JSON.
+    pub async fn retention_entries(
+        &self,
+        run: &str,
+    ) -> Result<Vec<(i64, String)>> {
+        let rows = sqlx::query!(
+            r#"SELECT seq AS "seq!: i64", body AS "body!: String"
+               FROM messages WHERE run_id = ?1 ORDER BY seq"#,
+            run
+        )
+        .fetch_all(&self.reader)
+        .await?;
+        Ok(rows.into_iter().map(|row| (row.seq, row.body)).collect())
     }
 
     /// `plugin`'s records in the run itself, not inherited, with the

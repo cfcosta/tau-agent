@@ -6,6 +6,7 @@
 //! callers must supply immutable metadata from an authorized scope.
 
 use std::{
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions, Permissions},
     io::{self, Read, Seek, SeekFrom, Write},
     os::{
@@ -139,6 +140,8 @@ pub enum Error {
     InvalidArtifact,
     #[error("artifact bytes are missing")]
     MissingArtifact,
+    #[error("retention roots conflict or their bytes do not match")]
+    InvalidRoot,
     #[error("artifact range limit must be between 1 and 65536 bytes")]
     InvalidLimit,
     #[error("artifact offset is beyond the end")]
@@ -161,6 +164,19 @@ struct Storage {
     objects: PathBuf,
     lock_path: PathBuf,
     quotas: Quotas,
+}
+
+/// Holds the publication lock until a caller has durably recorded the grant.
+/// Dropping it after an error leaves an orphan for explicit maintenance.
+pub struct PublicationLease {
+    _guard: PublicationLock,
+    lock_path: PathBuf,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PruneReport {
+    pub removed_objects: u64,
+    pub reclaimed_bytes: u64,
 }
 
 impl Bytes {
@@ -190,9 +206,21 @@ impl Bytes {
     /// Publish raw bytes. A failure leaves no published object or reference.
     pub fn publish_reader<R: Read>(
         &self,
-        mut reader: R,
+        reader: R,
         cancellation: &CancellationToken,
     ) -> Result<Artifact> {
+        let (artifact, _lease) =
+            self.publish_leased_reader(reader, cancellation)?;
+        Ok(artifact)
+    }
+
+    /// Keep the publication lock across the subsequent grant write. A prune
+    /// acquiring the same lock sees either the recorded grant or no object.
+    pub fn publish_leased_reader<R: Read>(
+        &self,
+        mut reader: R,
+        cancellation: &CancellationToken,
+    ) -> Result<(Artifact, PublicationLease)> {
         let mut staging = NamedTempFile::new_in(&self.0.objects)?;
         let mut digest = Sha256::new();
         let mut size_bytes = 0_u64;
@@ -260,7 +288,102 @@ impl Bytes {
             let _ = fs::remove_file(&path);
             return Err(Error::Io(error));
         }
-        Ok(artifact)
+        Ok((
+            artifact,
+            PublicationLease {
+                _guard: _lock,
+                lock_path: self.0.lock_path.clone(),
+            },
+        ))
+    }
+
+    /// Mark trusted, complete retained-history roots and sweep published
+    /// objects. This function cannot decide whether caller roots are complete.
+    /// The caller must collect them while holding this lease, under the same
+    /// lock used by publication and grant recording.
+    pub fn prune_with_roots(
+        &self,
+        roots: impl IntoIterator<Item = Artifact>,
+        lease: &PublicationLease,
+    ) -> Result<PruneReport> {
+        if lease.lock_path != self.0.lock_path {
+            return Err(Error::InvalidRoot);
+        }
+        let mut marked = HashMap::<String, Artifact>::new();
+        for artifact in roots {
+            artifact.validate()?;
+            if let Some(previous) =
+                marked.insert(artifact.id.clone(), artifact.clone())
+                && previous != artifact
+            {
+                return Err(Error::InvalidRoot);
+            }
+        }
+        // Check every root before unlinking a single object. An unreadable or
+        // damaged retained object makes the entire maintenance pass fail closed.
+        for artifact in marked.values() {
+            let mut file =
+                self.open_object(artifact).map_err(|_| Error::InvalidRoot)?;
+            let mut digest = Sha256::new();
+            let mut chunk = [0_u8; CHUNK_BYTES];
+            loop {
+                let count = file.read(&mut chunk)?;
+                if count == 0 {
+                    break;
+                }
+                digest.update(&chunk[..count]);
+            }
+            let actual: String = digest
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            if actual != artifact.digest {
+                return Err(Error::InvalidRoot);
+            }
+        }
+        let mut objects = Vec::new();
+        let mut seen = HashSet::new();
+        for entry in fs::read_dir(&self.0.objects)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(id) =
+                name.to_str().and_then(|name| name.strip_suffix(".blob"))
+            else {
+                continue; // Staging files are never swept: an old writer may still own one.
+            };
+            let uuid =
+                Uuid::parse_str(id).map_err(|_| Error::InvalidArtifact)?;
+            if uuid.get_version_num() != 7
+                || uuid.hyphenated().to_string() != id
+                || !seen.insert(id.to_owned())
+            {
+                return Err(Error::InvalidArtifact);
+            }
+            let metadata = fs::symlink_metadata(entry.path())?;
+            if !metadata.is_file() {
+                return Err(Error::InvalidArtifact);
+            }
+            if !marked.contains_key(id) {
+                objects.push((entry.path(), metadata.len()));
+            }
+        }
+        let mut report = PruneReport::default();
+        for (path, size) in objects {
+            fs::remove_file(path)?;
+            report.removed_objects += 1;
+            report.reclaimed_bytes += size;
+        }
+        File::open(&self.0.objects)?.sync_all()?;
+        Ok(report)
+    }
+
+    /// Lock before collecting persisted roots; keep this through pruning.
+    pub fn lock_publication(&self) -> Result<PublicationLease> {
+        Ok(PublicationLease {
+            _guard: PublicationLock::acquire(&self.0.lock_path)?,
+            lock_path: self.0.lock_path.clone(),
+        })
     }
 
     fn open_object(&self, artifact: &Artifact) -> Result<File> {
@@ -370,13 +493,11 @@ fn retained_bytes(objects: &Path) -> Result<u64> {
         else {
             continue; // Ignore private staging files left by a crashed writer.
         };
-        let Ok(uuid) = Uuid::parse_str(id) else {
-            continue;
-        };
+        let uuid = Uuid::parse_str(id).map_err(|_| Error::InvalidArtifact)?;
         if uuid.get_version_num() != 7 || uuid.hyphenated().to_string() != id {
-            continue;
+            return Err(Error::InvalidArtifact);
         }
-        let metadata = entry.metadata()?;
+        let metadata = fs::symlink_metadata(entry.path())?;
         if !metadata.is_file() {
             return Err(Error::InvalidArtifact);
         }

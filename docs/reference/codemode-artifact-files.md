@@ -39,6 +39,14 @@ The display still succeeds when only artifact publication fails. A failed
 read remains a failed read. Cancellation returns `Operation aborted` and
 does not return a structured artifact reference.
 
+The direct result's `details` keeps display truncation metadata and adds
+`artifact`, `artifact_error`, and `source_complete`. For `read`,
+`source_complete: true` means the display reader reached the selected range
+and continuation boundary. It does not mean full immutable bytes are
+available: an `artifact_error` means publication failed. Use the artifact
+reference and persisted grant to identify bytes available through
+`artifact_read`.
+
 The display and artifact pass use the same opened file descriptor. The
 reader checks the descriptor and resolved path's file identity, size, and
 modification/change times before publication and at the end of streaming.
