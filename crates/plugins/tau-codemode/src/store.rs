@@ -36,6 +36,7 @@ pub struct Writes {
 pub enum Record {
     Store(Writes),
     Module(crate::modules::Record),
+    RepositoryPin(crate::modules::RepositoryPin),
     Inference(crate::inference_trace::Record),
 }
 

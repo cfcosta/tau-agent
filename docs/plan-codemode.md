@@ -60,7 +60,7 @@ correctness and evaluation, not on assumed token savings.
 - [x] **20:** Add [owned definition, listing, inspection and selection tools](reference/codemode-module-tools.md) with per-VM import pins.
 - [x] **21:** [Exercise exact-version modules with bounded fake-tool tests](reference/codemode-module-tests.md), without live side effects.
 - [x] **22:** Add [scratch-module inspection and trusted exact-version rollback](reference/codemode-modules-ui.md) to the UI.
-- [ ] **23:** Add repository storage and pinned version selection.
+- [x] **23:** Add [immutable repository storage, owner-specific pins and scratch-first discovery](reference/codemode-repository-modules.md), with persisted phone-safe source inspection and separate quotas.
 - [ ] **24:** Add approval-controlled repository publication.
 
 ### M4: Complete data outside the prompt

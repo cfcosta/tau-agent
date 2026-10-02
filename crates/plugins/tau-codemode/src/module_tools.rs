@@ -20,6 +20,7 @@ use crate::{
         Library,
         ModuleTest,
         Record,
+        RepositoryPin,
         TestReport,
     },
     store,
@@ -84,7 +85,7 @@ impl ModuleTool {
                 metadata_schema(),
             ),
             "module_test" => (
-                "Run assertions against an exact registered module version in a fresh isolated VM. Only supplied ordered fake calls are available; the report is saved on that version.",
+                "Run assertions against a registered scratch module version in a fresh isolated VM. Exact repository dependencies are available; only supplied ordered fake calls are available. The report is saved on the scratch version.",
                 json!({"type":"object","properties":{
                     "name":{"type":"string"},"version":{"type":"string"},
                     "code":{"type":"string"},
@@ -155,6 +156,15 @@ fn library(records: &[Value]) -> Library {
 async fn current(plugin: &PluginCtx) -> Result<Library, ToolError> {
     let records = plugin.records().await.map_err(ToolError::other)?;
     Ok(library(&records))
+}
+
+async fn visible_modules(
+    plugin: &PluginCtx,
+) -> Result<(Library, Option<RepositoryPin>), ToolError> {
+    let records = plugin.records().await.map_err(ToolError::other)?;
+    let pin = modules::pin_for_run(&records, &plugin.run.0)
+        .map_err(ToolError::from)?;
+    Ok((library(&records), pin))
 }
 
 fn definition<'a>(
@@ -267,28 +277,50 @@ impl AgentTool for ModuleTool {
                 Ok(output(metadata(&definition)))
             }
             "module_list" => {
-                let library = current(plugin).await?;
-                let values = library
-                    .selected()
-                    .iter()
-                    .map(|(name, version)| {
-                        let definition = library
-                            .versions()
-                            .get(version)
-                            .expect("selected module has a definition");
-                        debug_assert_eq!(name, definition.name());
-                        metadata(definition)
+                let (library, pin) = visible_modules(plugin).await?;
+                let mut selected = pin
+                    .as_ref()
+                    .map(|pin| pin.selected.clone())
+                    .unwrap_or_default();
+                selected.extend(library.selected().clone());
+                let values = selected
+                    .keys()
+                    .map(|name| {
+                        metadata(
+                            modules::resolve_visible(
+                                &library,
+                                pin.as_ref(),
+                                name,
+                                None,
+                            )
+                            .expect("selected module has a definition"),
+                        )
                     })
                     .collect::<Vec<_>>();
                 Ok(output(Value::Array(values)))
             }
             "module_inspect" => {
-                let library = current(plugin).await?;
-                let definition = definition(
+                let (library, pin) = visible_modules(plugin).await?;
+                let name = field(&args, "name")?;
+                modules::validate_name(name).map_err(ToolError::from)?;
+                let version = args
+                    .get("version")
+                    .map(|value| {
+                        value.as_str().ok_or("module version must be a string")
+                    })
+                    .transpose()?;
+                let definition = modules::resolve_visible(
                     &library,
-                    field(&args, "name")?,
-                    args.get("version").and_then(Value::as_str),
-                )?;
+                    pin.as_ref(),
+                    name,
+                    version,
+                )
+                .ok_or_else(|| match version {
+                    Some(version) => {
+                        format!("module {name}@{version} is not registered")
+                    }
+                    None => format!("module {name} is not selected"),
+                })?;
                 let mut value = metadata(definition);
                 value["source"] = Value::String(definition.source().into());
                 value["tests"] =
@@ -309,9 +341,12 @@ impl AgentTool for ModuleTool {
                     args.get("tools").cloned().unwrap_or_else(|| json!([])),
                 )
                 .map_err(|error| format!("module test tools: {error}"))?;
-                let library = current(plugin).await?;
+                let (library, pin) = visible_modules(plugin).await?;
                 let definition =
                     definition(&library, &name, version.as_deref())?.clone();
+                let mut available =
+                    pin.map(|pin| pin.versions).unwrap_or_default();
+                available.extend(library.versions().clone());
                 // Validate source and fixture quotas before acquiring a VM slot.
                 let empty = TestReport {
                     name: name.clone(),
@@ -333,7 +368,7 @@ impl AgentTool for ModuleTool {
                 .map_err(ToolError::from)?;
                 let report = crate::module_tests::run_test(
                     &definition,
-                    &library,
+                    &available,
                     code.clone(),
                     fixtures.clone(),
                     ctx.cancel.clone(),

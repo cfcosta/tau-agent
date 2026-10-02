@@ -20,6 +20,7 @@
 
 use std::{
     collections::BTreeSet,
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -71,6 +72,7 @@ use crate::{
     inference_trace::{self, Attempt, AttemptOutcome, UsageProvenance},
     modules,
     options,
+    repository_modules::RepositoryModules,
     run,
     signature::{self, CATALOG_BUDGET_TOKENS},
     store,
@@ -93,6 +95,7 @@ pub struct Codemode {
     inference_limits: Limits,
     inference_model: Option<String>,
     module_test_slots: Arc<tokio::sync::Semaphore>,
+    repository: Option<RepositoryModules>,
 }
 
 impl Codemode {
@@ -100,11 +103,12 @@ impl Codemode {
     /// `jev` is nil and the description says so.
     pub fn new(jev: Option<Arc<dyn Jev>>) -> Self {
         Self {
-            tool: Arc::new(CodemodeTool::new(jev)),
+            tool: Arc::new(CodemodeTool::new(jev, false)),
             module_writes: Arc::new(tokio::sync::Mutex::new(())),
             inference_limits: Limits::default(),
             inference_model: None,
             module_test_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            repository: None,
         }
     }
 
@@ -117,6 +121,13 @@ impl Codemode {
     /// Override the host model for inference calls.
     pub fn with_inference_model(mut self, model: impl Into<String>) -> Self {
         self.inference_model = Some(model.into());
+        self
+    }
+
+    /// Use tau's private per-repository module directory, outside the checkout.
+    pub fn with_repository(mut self, path: impl Into<PathBuf>) -> Self {
+        self.repository = Some(RepositoryModules::new(path));
+        self.tool = Arc::new(CodemodeTool::new(self.tool.jev.clone(), true));
         self
     }
 
@@ -603,6 +614,21 @@ impl Plugin for Codemode {
             return Err("codemode cannot add infer: a tool with that name already exists".into());
         }
         let records = ctx.records().await.map_err(PluginError::from)?;
+        if let Some(repository) = &self.repository
+            && modules::pin_for_run(&records, &ctx.run.0)
+                .map_err(PluginError::from)?
+                .is_none()
+        {
+            let scratch = modules::fold(&records);
+            let pin = repository
+                .snapshot(&ctx.run.0, &scratch)
+                .map_err(PluginError::from)?;
+            let record = store::Record::RepositoryPin(pin);
+            ctx.record(&record).await.map_err(PluginError::from)?;
+            ctx.report(
+                serde_json::to_value(&record).map_err(PluginError::from)?,
+            );
+        }
         let restored = inference_trace::restore_budget(&records, &ctx.run)
             .map_err(PluginError::from)?;
         let budget = Budget::restored(self.inference_limits, restored)
@@ -657,13 +683,15 @@ pub struct CodemodeTool {
     jev: Option<Arc<dyn Jev>>,
     description: String,
     parameters: Value,
+    repository_required: bool,
 }
 
 impl CodemodeTool {
-    fn new(jev: Option<Arc<dyn Jev>>) -> Self {
+    fn new(jev: Option<Arc<dyn Jev>>, repository_required: bool) -> Self {
         Self {
             description: description::description(jev.is_some()),
             jev,
+            repository_required,
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -729,6 +757,7 @@ impl AgentTool for CodemodeTool {
             ctx: ctx.clone(),
             jev: self.jev.clone(),
             plugin: plugin.clone(),
+            repository_required: self.repository_required,
         });
         let outcome = run(
             host,
@@ -951,6 +980,7 @@ struct LoopHost {
     catalog: Catalog,
     jev: Option<Arc<dyn Jev>>,
     plugin: PluginCtx,
+    repository_required: bool,
 }
 
 #[async_trait]
@@ -964,12 +994,14 @@ impl Host for LoopHost {
             format!("codemode could not read its modules: {error}")
         })?;
         let library = modules::fold(&records);
-        let version = version
-            .or_else(|| library.selected().get(name).map(String::as_str));
-        Ok(version
-            .and_then(|version| library.versions().get(version))
-            .filter(|definition| definition.name() == name)
-            .cloned())
+        let pin = modules::pin_for_run(&records, &self.plugin.run.0)?;
+        if self.repository_required && pin.is_none() {
+            return Err("repository pin is missing for this run".into());
+        }
+        Ok(
+            modules::resolve_visible(&library, pin.as_ref(), name, version)
+                .cloned(),
+        )
     }
     fn tools(&self) -> Vec<ToolEntry> {
         let namespaces = self.catalog.namespaces();

@@ -16,13 +16,7 @@ use crate::{
     ToolCall,
     ToolEntry,
     ToolReply,
-    modules::{
-        Definition,
-        ExpectedCall,
-        Library,
-        MAX_TEST_REPORT_BYTES,
-        TestReport,
-    },
+    modules::{Definition, ExpectedCall, MAX_TEST_REPORT_BYTES, TestReport},
     options::{Options, Source},
     result::Item,
     run,
@@ -50,7 +44,7 @@ struct FixtureHost {
 impl FixtureHost {
     fn new(
         definition: &Definition,
-        library: &Library,
+        available: &BTreeMap<String, Definition>,
         fixtures: Vec<ExpectedCall>,
     ) -> Self {
         let mut definitions = BTreeMap::new();
@@ -60,10 +54,8 @@ impl FixtureHost {
                 continue;
             }
             for (name, version) in module.dependencies() {
-                if let Some(child) = library
-                    .versions()
-                    .get(version)
-                    .filter(|child| child.name() == name)
+                if let Some(child) =
+                    available.get(version).filter(|child| child.name() == name)
                 {
                     pending.push(child.clone());
                 }
@@ -223,7 +215,7 @@ impl Host for FixtureHost {
 /// Wait for a shared VM slot with cancellation, then run one fresh sandbox.
 pub(crate) async fn run_test(
     definition: &Definition,
-    library: &Library,
+    available: &BTreeMap<String, Definition>,
     code: String,
     fixtures: Vec<ExpectedCall>,
     cancel: CancellationToken,
@@ -234,7 +226,7 @@ pub(crate) async fn run_test(
         () = cancel.cancelled() => return Err("module test cancelled while waiting for a VM".into()),
     };
     let host =
-        Arc::new(FixtureHost::new(definition, library, fixtures.clone()));
+        Arc::new(FixtureHost::new(definition, available, fixtures.clone()));
     // Eagerly load the exact target and its pinned graph before user assertions.
     // Keep the original assertion code in ModuleTest; this prelude is runtime-only.
     let source = format!(
@@ -362,7 +354,7 @@ mod tests {
         cancel.cancel();
         let result = run_test(
             &definition,
-            &library,
+            library.versions(),
             "while true do end".into(),
             vec![],
             cancel,
@@ -383,7 +375,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let queued = run_test(
             &definition,
-            &library,
+            library.versions(),
             "return true".into(),
             vec![],
             cancel.clone(),
@@ -401,7 +393,7 @@ mod tests {
         assert_eq!(slots.available_permits(), 2);
         let report = run_test(
             &definition,
-            &library,
+            library.versions(),
             "return true".into(),
             vec![],
             CancellationToken::new(),
@@ -419,7 +411,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let work = run_test(
             &definition,
-            &library,
+            library.versions(),
             "while true do end".into(),
             vec![],
             cancel.clone(),
@@ -440,7 +432,7 @@ mod tests {
         let (definition, library) = arithmetic();
         let report = run_test(
             &definition,
-            &library,
+            library.versions(),
             "pcall(function() text(string.rep('x', 65537)) end)".into(),
             vec![],
             CancellationToken::new(),
@@ -457,7 +449,7 @@ mod tests {
     async fn fake_errors_are_raised_or_returned_with_error_status() {
         let (definition, library) = arithmetic();
         let slots = Arc::new(tokio::sync::Semaphore::new(2));
-        let raised = run_test(&definition, &library,
+        let raised = run_test(&definition, library.versions(),
             "local ok, message = pcall(function() tools.fake({}) end); assert(not ok and string.find(message, 'blocked'))".into(),
             vec![ExpectedCall { name: "fake".into(), args: json!({}), value: None, error: Some("blocked".into()) }],
             CancellationToken::new(), slots.clone()).await.unwrap();
@@ -465,7 +457,7 @@ mod tests {
         assert_eq!(raised.calls[0]["status"], "error");
         let structured = run_test(
             &definition,
-            &library,
+            library.versions(),
             "assert(tools.fake({}).status == 'down')".into(),
             vec![ExpectedCall {
                 name: "fake".into(),
@@ -514,7 +506,7 @@ mod tests {
         );
         let report = run_test(
             &definition,
-            &library,
+            library.versions(),
             code,
             vec![ExpectedCall {
                 name: "fake".into(),
@@ -557,7 +549,7 @@ mod tests {
         let report = runtime
             .block_on(run_test(
                 &definition,
-                &library,
+                library.versions(),
                 code,
                 vec![],
                 CancellationToken::new(),

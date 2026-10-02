@@ -7,6 +7,12 @@ inspector shows it in full so a selection can be checked exactly. For each
 version, the inspector shows its signatures and pinned dependency versions.
 The source is behind **Show source** and is rendered only when opened.
 
+The repository section uses the current run's persisted pin. It shows each
+selected alias and other exact versions captured for dependencies, with full
+version, dependencies, signatures, and source disclosures. It remains available
+when the repository filesystem is absent. Repository rows have no selection
+button; **Select version** applies only to scratch versions.
+
 Tests stay attached to the exact version they exercised. A row says whether a
 controlled test passed or failed. Opening it shows its test source, bounded
 fake call expectations, returned output, call report, and error. The UI marks

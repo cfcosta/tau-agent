@@ -44,6 +44,7 @@ use tau_ui_plugin::{
     CallData,
     CallResult,
     CardMark,
+    Fold,
     Handle,
     HostCx,
     PluginUi as _,
@@ -67,6 +68,58 @@ fn module_definition(name: &str, source: &str) -> Definition {
         BTreeMap::new(),
     )
     .unwrap()
+}
+
+#[test]
+fn repository_pin_fold_keeps_source_for_hostless_inspection() {
+    let dependency = module_definition("base", "return { n = 40 }");
+    let definition = Definition::new(
+        "alpha".into(),
+        "return { n = require('base').n + 2 }".into(),
+        json!({"run":"() -> number"}),
+        BTreeMap::from([("base".into(), dependency.version().into())]),
+    )
+    .unwrap();
+    let pin = modules::RepositoryPin {
+        owner: "run-1".into(),
+        selected: BTreeMap::from([(
+            "alpha".into(),
+            definition.version().into(),
+        )]),
+        versions: BTreeMap::from([
+            (definition.version().into(), definition.clone()),
+            (dependency.version().into(), dependency.clone()),
+        ]),
+    };
+    let mut state = State::default();
+    state.apply(
+        store::Record::RepositoryPin(pin),
+        &mut tau_ui_plugin::testing::FakeRun::default(),
+    );
+    let reloaded: State =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    let saved = &reloaded.repository_pins["run-1"];
+    assert_eq!(saved, &state.repository_pins["run-1"]);
+    assert_eq!(
+        saved.resolve("alpha", None).unwrap().source(),
+        definition.source()
+    );
+    assert_eq!(
+        saved.resolve("alpha", None).unwrap().signatures(),
+        definition.signatures()
+    );
+    assert_eq!(saved.selected["alpha"], definition.version());
+    assert_eq!(
+        saved.resolve("alpha", None).unwrap().dependencies(),
+        definition.dependencies()
+    );
+    assert_eq!(
+        saved
+            .resolve("base", Some(dependency.version()))
+            .unwrap()
+            .source(),
+        dependency.source()
+    );
 }
 
 // Property inventory: generated define/select/test sequences have the same

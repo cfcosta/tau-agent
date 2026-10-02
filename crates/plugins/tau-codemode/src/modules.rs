@@ -11,6 +11,9 @@ pub const MAX_SIGNATURES_BYTES: usize = 16 * 1024;
 pub const MAX_DEPENDENCIES: usize = 32;
 pub const MAX_REGISTERED_BYTES: usize = 1024 * 1024;
 pub const MAX_VERSIONS: usize = 128;
+/// Repository pins have their own quota, independent of scratch modules.
+pub const MAX_PINNED_VERSIONS: usize = 256;
+pub const MAX_PINNED_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_TEST_CODE_BYTES: usize = 64 * 1024;
 pub const MAX_TEST_FIXTURES: usize = 128;
 pub const MAX_TEST_FIXTURE_BYTES: usize = 1024 * 1024;
@@ -284,6 +287,121 @@ pub struct Library {
 }
 
 pub type Snapshot = Library;
+
+/// Immutable host-approved definitions captured for one run. The full source
+/// is persisted so UI and phone folds do not need repository filesystem access.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RepositoryPin {
+    pub owner: String,
+    pub selected: BTreeMap<String, String>,
+    pub versions: BTreeMap<String, Definition>,
+}
+
+impl RepositoryPin {
+    pub fn verify(&self) -> Result<(), String> {
+        if self.owner.is_empty() || self.versions.len() > MAX_PINNED_VERSIONS {
+            return Err(
+                "repository pin has an invalid owner or too many versions"
+                    .into(),
+            );
+        }
+        let mut bytes = 0usize;
+        for (version, definition) in &self.versions {
+            definition.verify()?;
+            if version != definition.version() {
+                return Err(
+                    "repository pin version key differs from content".into()
+                );
+            }
+            bytes += definition_bytes(definition);
+            if bytes > MAX_PINNED_BYTES {
+                return Err("repository pin exceeds 16 MiB".into());
+            }
+        }
+        for (name, version) in &self.selected {
+            validate_name(name)?;
+            if self
+                .versions
+                .get(version)
+                .is_none_or(|definition| definition.name() != name)
+            {
+                return Err(format!(
+                    "repository selection {name}@{version} is missing or mismatched"
+                ));
+            }
+        }
+        for definition in self.versions.values() {
+            for (name, version) in definition.dependencies() {
+                if self
+                    .versions
+                    .get(version)
+                    .is_none_or(|dependency| dependency.name() != name)
+                {
+                    return Err(format!(
+                        "repository dependency {name}@{version} is missing or mismatched"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn resolve(
+        &self,
+        name: &str,
+        version: Option<&str>,
+    ) -> Option<&Definition> {
+        let version =
+            version.or_else(|| self.selected.get(name).map(String::as_str))?;
+        self.versions
+            .get(version)
+            .filter(|definition| definition.name() == name)
+    }
+}
+
+/// Only a pin owned by this run is active. An inherited pin belongs to its
+/// original run and must not override a fork's newly selected aliases.
+pub fn pin_for_run(
+    records: &[Value],
+    owner: &str,
+) -> Result<Option<RepositoryPin>, String> {
+    let mut found = None;
+    for value in records {
+        if value.get("kind").and_then(Value::as_str) != Some("repository_pin")
+            || value.get("owner").and_then(Value::as_str) != Some(owner)
+        {
+            continue;
+        }
+        let crate::store::Record::RepositoryPin(pin) =
+            serde_json::from_value(value.clone())
+                .map_err(|error| format!("corrupt repository pin: {error}"))?
+        else {
+            return Err("corrupt repository pin record".into());
+        };
+        pin.verify()?;
+        if found.as_ref().is_some_and(|previous| previous != &pin) {
+            return Err("conflicting repository pins for run".into());
+        }
+        found = Some(pin);
+    }
+    Ok(found)
+}
+
+/// Resolve a visible module with the same scratch-first precedence as `require`.
+/// The caller supplies only the pin owned by the current run.
+pub fn resolve_visible<'a>(
+    scratch: &'a Library,
+    pin: Option<&'a RepositoryPin>,
+    name: &str,
+    version: Option<&str>,
+) -> Option<&'a Definition> {
+    let scratch_version =
+        version.or_else(|| scratch.selected().get(name).map(String::as_str));
+    scratch_version
+        .and_then(|version| scratch.versions().get(version))
+        .filter(|definition| definition.name() == name)
+        .or_else(|| pin.and_then(|pin| pin.resolve(name, version)))
+}
 
 impl Library {
     pub fn versions(&self) -> &BTreeMap<String, Definition> {

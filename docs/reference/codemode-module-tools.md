@@ -5,6 +5,12 @@ codemode script and are never declared as separate model tools. Their names,
 descriptions, and JSON schemas stay fixed for the run. The list of modules
 changes through stored records, not through tool registration.
 
+`module_list` also reports selected aliases from the current run's repository
+pin. Explicit scratch selections take precedence. `module_inspect` can read
+the same-owner pin by selected alias or exact version, with scratch definitions
+taking precedence. Both are read-only; repository versions cannot be selected
+with `module_select` or used as the root of `module_test`.
+
 | Tool             | Arguments                                      | Structured result                                                                                   |
 | ---------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `module_define`  | `{ name, source, signatures?, dependencies? }` | `{ name, version, signatures, dependencies }`                                                       |

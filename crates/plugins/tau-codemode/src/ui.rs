@@ -174,6 +174,8 @@ pub struct State {
     pub writes: usize,
     /// Immutable module versions and the current version of each name.
     pub modules: modules::Library,
+    /// Full immutable repository source snapshots, keyed by owning run ID.
+    pub repository_pins: BTreeMap<String, modules::RepositoryPin>,
     /// Private inference records; a start without a finish is interrupted.
     pub inference: Vec<crate::inference_trace::Record>,
 }
@@ -196,6 +198,11 @@ impl Fold for State {
             }
             Record::Module(record) => {
                 let _ = self.modules.apply(&record);
+            }
+            Record::RepositoryPin(pin) => {
+                if pin.verify().is_ok() {
+                    self.repository_pins.insert(pin.owner.clone(), pin);
+                }
             }
             Record::Inference(record) => self.inference.push(record),
         }
@@ -549,7 +556,10 @@ impl UiPlugin for CodemodeUi {
         #[cfg(feature = "host")]
         {
             let jev = run.services.get::<Arc<dyn Jev>>().cloned();
-            Ok(vec![Box::new(crate::Codemode::new(jev))])
+            Ok(vec![Box::new(
+                crate::Codemode::new(jev)
+                    .with_repository(run.repo.dir.join("codemode-modules")),
+            )])
         }
         // Without its host half, a run gets no `codemode` tool.
         #[cfg(not(feature = "host"))]
@@ -619,6 +629,20 @@ impl UiPlugin for CodemodeUi {
                         .flex_col()
                         .gap(sp(4.))
                         .child(store_section(state, view))
+                        .when_some(
+                            view.run.and_then(|run| {
+                                state.repository_pins.get(run.id.0.as_ref())
+                            }),
+                            |section, pin| {
+                                section.child(repository_section(
+                                    pin,
+                                    &open,
+                                    view.ui.clone(),
+                                    view.handle.clone(),
+                                    &t,
+                                ))
+                            },
+                        )
                         .child(modules_section(
                             &state.modules,
                             view.run.map(|run| &run.id),
@@ -1028,7 +1052,7 @@ fn modules_section(
                 definition,
                 true,
                 library.tests(selected),
-                run,
+                Some(run),
                 open,
                 (ui_state.clone(), handle.clone()),
                 t,
@@ -1052,7 +1076,7 @@ fn modules_section(
                     definition,
                     false,
                     library.tests(definition.version()),
-                    run,
+                    Some(run),
                     open,
                     (ui_state.clone(), handle.clone()),
                     t,
@@ -1063,11 +1087,60 @@ fn modules_section(
     section
 }
 
+/// Draw only definitions captured in this run's persisted repository pin.
+fn repository_section(
+    pin: &modules::RepositoryPin,
+    open: &BTreeSet<String>,
+    ui_state: Entity<InspectorUi>,
+    handle: Handle,
+    t: &Theme,
+) -> Div {
+    let mut section = div().flex().flex_col().gap(sp(2.)).child(heading(
+        &format!("Repository modules · {} selected", pin.selected.len()),
+        t,
+    ));
+    for (name, version) in &pin.selected {
+        if let Some(definition) = pin.resolve(name, Some(version)) {
+            section = section.child(heading(name, t)).child(version_row(
+                definition,
+                true,
+                &[],
+                None,
+                open,
+                (ui_state.clone(), handle.clone()),
+                t,
+            ));
+        }
+    }
+    for definition in pin.versions.values() {
+        if pin
+            .selected
+            .get(definition.name())
+            .is_some_and(|version| version == definition.version())
+        {
+            continue;
+        }
+        section =
+            section
+                .child(heading(definition.name(), t))
+                .child(version_row(
+                    definition,
+                    false,
+                    &[],
+                    None,
+                    open,
+                    (ui_state.clone(), handle.clone()),
+                    t,
+                ));
+    }
+    section
+}
+
 fn version_row(
     definition: &modules::Definition,
     selected: bool,
     tests: &[modules::ModuleTest],
-    run: &RunId,
+    run: Option<&RunId>,
     open: &BTreeSet<String>,
     controls: (Entity<InspectorUi>, Handle),
     t: &Theme,
@@ -1106,9 +1179,9 @@ fn version_row(
                     .min_w(px(0.))
                     .truncate(),
                 )
-                .when(!selected, |header| {
+                .when(!selected && run.is_some(), |header| {
                     let (run, name, version, handle) = (
-                        run.clone(),
+                        run.expect("scratch row has a run").clone(),
                         name.to_owned(),
                         version.to_owned(),
                         handle.clone(),
@@ -1180,6 +1253,9 @@ fn version_row(
         let signatures = serde_json::to_string(definition.signatures())
             .expect("signatures are JSON");
         row = row.child(code_block(Some("json"), &signatures, t));
+    }
+    if run.is_none() {
+        return row;
     }
     row = row.child(mono(format!("Controlled tests · {}", tests.len()), Type::MICRO, t.text_soft))
         .child(mono("Tests use supplied fake calls and exact module versions; passing is evidence for those inputs, not proof of live behavior.", Type::MICRO, t.dim));

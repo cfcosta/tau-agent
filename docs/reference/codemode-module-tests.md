@@ -1,5 +1,12 @@
 # Codemode module tests
 
+`module_test` accepts only registered scratch roots. To test a repository
+root, explicitly inspect its source and dependencies and define a scratch
+copy first. A scratch root may depend on exact repository versions captured
+in the current run's pin; the fake VM loads only that root's exact dependency
+closure. Repository definitions remain outside scratch version and byte
+quotas, and test evidence remains attached to the scratch root.
+
 `tools.module_test({ name, version?, code, tools? })` runs `code` as Luau in a
 fresh codemode VM. `version` defaults to the selected version. The test should
 load its subject with `require(name)` or `require(name, version)`. Before the
