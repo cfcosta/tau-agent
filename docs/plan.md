@@ -4,6 +4,12 @@ This plan covers the scope, size, milestones and risks for tau-agent. The
 fixed decisions behind it are in [`decisions/`](decisions/). Sizes and
 durations are estimates for one senior Rust engineer, and exclude tests.
 
+## Follow-on work
+
+The approved [Codemode development plan](plan-codemode.md) tracks
+structured tool results, bounded inference, reusable modules, and artifacts
+as separate tested commits.
+
 ## Scope
 
 ### Core crates (~7.5k lines)
