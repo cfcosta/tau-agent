@@ -29,7 +29,7 @@ Live evaluations require an explicit budget and remain opt-in.
 
 - [x] **03:** Add bounded `json.encode` and `json.decode` to Luau.
 - [x] **04:** Preserve nested-call status separately from its returned value.
-- [ ] **05:** Add structured directory entries to `ls`.
+- [x] **05:** Add [structured directory entries](reference/codemode-ls.md) to `ls`.
 - [ ] **06:** Add structured paths and completeness metadata to `find`.
 - [ ] **07:** Add structured matches and context lines to `grep`.
 - [ ] **08:** Add structured text and range metadata to `read`.

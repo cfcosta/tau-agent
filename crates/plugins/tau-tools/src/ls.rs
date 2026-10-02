@@ -8,7 +8,7 @@ use std::{collections::HashSet, fs::Metadata, path::Path, time::UNIX_EPOCH};
 use async_trait::async_trait;
 use ignore::WalkBuilder;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::{
     error::ToolError,
@@ -39,15 +39,62 @@ pub struct LsArgs {
 /// Lists a directory's contents (`docs/reference/tools.md`, "ls").
 pub struct Ls {
     root: Root,
-    schema: Value,
+    parameters: Value,
+    output_schema: Value,
 }
 
 impl Ls {
     pub fn new(root: Root) -> Self {
-        let schema = serde_json::to_value(schemars::schema_for!(LsArgs))
+        let parameters = serde_json::to_value(schemars::schema_for!(LsArgs))
             .expect("a generated schema is valid JSON");
-        Self { root, schema }
+        Self {
+            root,
+            parameters,
+            output_schema: ls_output_schema(),
+        }
     }
+}
+
+/// The machine-readable result, independent of the text shown to the model.
+#[derive(Debug, Serialize)]
+struct StructuredListing {
+    dir: String,
+    entries: Vec<Entry>,
+    truncated: bool,
+    complete: bool,
+}
+
+fn ls_output_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "dir": { "type": "string" },
+            "entries": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "kind": {
+                            "type": "string",
+                            "enum": ["dir", "file", "symlink", "symlink_dir"]
+                        },
+                        "size": { "type": "integer", "minimum": 0 },
+                        "modified": { "type": "integer" },
+                        "items": { "type": "integer", "minimum": 0 },
+                        "target": { "type": "string" },
+                        "ignored": { "type": "boolean" }
+                    },
+                    "required": ["name", "kind"],
+                    "additionalProperties": false
+                }
+            },
+            "truncated": { "type": "boolean" },
+            "complete": { "type": "boolean" }
+        },
+        "required": ["dir", "entries", "truncated", "complete"],
+        "additionalProperties": false
+    })
 }
 
 #[async_trait]
@@ -61,7 +108,11 @@ impl AgentTool for Ls {
     }
 
     fn parameters(&self) -> &Value {
-        &self.schema
+        &self.parameters
+    }
+
+    fn output_schema(&self) -> Option<&Value> {
+        Some(&self.output_schema)
     }
 
     async fn call(
@@ -72,11 +123,12 @@ impl AgentTool for Ls {
         let args: LsArgs = serde_json::from_value(args)?;
         let root = self.root.clone();
         let cancel = ctx.cancel.clone();
-        let (text, listing) =
+        let (text, listing, structured) =
             tokio::task::spawn_blocking(move || run(&root, args, &cancel))
                 .await??;
         let mut output = ToolOutput::text(text);
         output.details = listing.map(serde_json::to_value).transpose()?;
+        output.structured = Some(serde_json::to_value(structured)?);
         Ok(output)
     }
 }
@@ -85,7 +137,7 @@ fn run(
     root: &Root,
     args: LsArgs,
     cancel: &CancellationToken,
-) -> Result<(String, Option<Listing>), ToolError> {
+) -> Result<(String, Option<Listing>, StructuredListing), ToolError> {
     if cancel.is_cancelled() {
         return Err(ToolError::from(ABORTED));
     }
@@ -104,17 +156,24 @@ fn run(
     }
     let limit = args.limit.unwrap_or(DEFAULT_LIMIT) as usize;
 
-    let mut names: Vec<String> = match std::fs::read_dir(&dir_path) {
-        Ok(read_dir) => read_dir
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect(),
+    let read_dir = match std::fs::read_dir(&dir_path) {
+        Ok(read_dir) => read_dir,
         Err(err) => {
             return Err(ToolError::from(format!(
                 "Cannot read directory: {err}"
             )));
         }
     };
+    let mut complete = true;
+    let mut names = Vec::new();
+    for result in read_dir {
+        match result {
+            Ok(entry) => {
+                names.push(entry.file_name().to_string_lossy().into_owned())
+            }
+            Err(_) => complete = false,
+        }
+    }
     // Case-insensitively, and names equal but for case in byte order,
     // as pi gets them: libuv's `scandir` returns names in `strcmp`
     // order, which pi's stable sort keeps for ties. `read_dir`'s own
@@ -126,6 +185,7 @@ fn run(
     });
 
     let kept = unignored(&dir_path);
+    complete &= kept.is_some();
     let mut results: Vec<String> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
     let mut limit_reached = false;
@@ -138,22 +198,38 @@ fn run(
             break;
         }
         let full = dir_path.join(name);
-        let Ok(meta) = std::fs::metadata(&full) else {
-            continue;
+        let meta = match std::fs::metadata(&full) {
+            Ok(meta) => meta,
+            Err(_) => {
+                complete = false;
+                continue;
+            }
         };
         let suffix = if meta.is_dir() { "/" } else { "" };
         results.push(format!("{name}{suffix}"));
-        entries.push(entry(name, &full, &meta, &kept));
+        let (record, entry_complete) = entry(name, &full, &meta, &kept);
+        complete &= entry_complete;
+        entries.push(record);
     }
 
     if results.is_empty() {
-        return Ok(("(empty directory)".to_owned(), None));
+        return Ok((
+            "(empty directory)".to_owned(),
+            None,
+            StructuredListing {
+                dir: dir_path.to_string_lossy().into_owned(),
+                entries,
+                truncated: limit_reached,
+                complete: complete && !limit_reached,
+            },
+        ));
     }
 
     let raw = results.join("\n");
     let truncation = truncate_head(&raw, usize::MAX, MAX_BYTES);
     let truncated = truncation.truncated();
     let mut text = truncation.content;
+    let structured_entries = entries.clone();
     // The byte cap cuts whole lines: the model saw as many entries
     // as it got lines.
     entries.truncate(text.lines().count());
@@ -171,12 +247,19 @@ fn run(
     if !notices.is_empty() {
         text.push_str(&format!("\n\n[{}]", notices.join(". ")));
     }
+    let dir = dir_path.to_string_lossy().into_owned();
+    let structured = StructuredListing {
+        dir: dir.clone(),
+        entries: structured_entries,
+        truncated: limit_reached || truncated,
+        complete: complete && !limit_reached && !truncated,
+    };
     let listing = Listing {
-        dir: dir_path.to_string_lossy().into_owned(),
+        dir,
         entries,
         truncated: limit_reached || truncated,
     };
-    Ok((text, Some(listing)))
+    Ok((text, Some(listing), structured))
 }
 
 /// What the listing says of `name`. `meta` follows symlinks, as the
@@ -186,12 +269,24 @@ fn entry(
     full: &Path,
     meta: &Metadata,
     kept: &Option<HashSet<String>>,
-) -> Entry {
-    let target = std::fs::symlink_metadata(full)
-        .is_ok_and(|link| link.file_type().is_symlink())
-        .then(|| std::fs::read_link(full).ok())
-        .flatten()
-        .map(|target| target.to_string_lossy().into_owned());
+) -> (Entry, bool) {
+    let mut complete = true;
+    let target = match std::fs::symlink_metadata(full) {
+        Ok(link) if link.file_type().is_symlink() => {
+            match std::fs::read_link(full) {
+                Ok(target) => Some(target.to_string_lossy().into_owned()),
+                Err(_) => {
+                    complete = false;
+                    None
+                }
+            }
+        }
+        Ok(_) => None,
+        Err(_) => {
+            complete = false;
+            None
+        }
+    };
     let kind = match (&target, meta.is_dir()) {
         (Some(_), true) => EntryKind::SymlinkDir,
         (Some(_), false) => EntryKind::Symlink,
@@ -203,20 +298,38 @@ fn entry(
         .ok()
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .and_then(|age| i64::try_from(age.as_secs()).ok());
-    let items = meta
-        .is_dir()
-        .then(|| std::fs::read_dir(full).ok())
-        .flatten()
-        .map(|read_dir| read_dir.count() as u64);
-    Entry {
-        name: name.to_owned(),
-        kind,
-        size: meta.is_file().then_some(meta.len()),
-        modified,
-        items,
-        target,
-        ignored: kept.as_ref().is_some_and(|kept| !kept.contains(name)),
-    }
+    let items = if meta.is_dir() {
+        match std::fs::read_dir(full) {
+            Ok(read_dir) => {
+                let mut count = 0;
+                for child in read_dir {
+                    count += 1;
+                    if child.is_err() {
+                        complete = false;
+                    }
+                }
+                Some(count)
+            }
+            Err(_) => {
+                complete = false;
+                None
+            }
+        }
+    } else {
+        None
+    };
+    (
+        Entry {
+            name: name.to_owned(),
+            kind,
+            size: meta.is_file().then_some(meta.len()),
+            modified,
+            items,
+            target,
+            ignored: kept.as_ref().is_some_and(|kept| !kept.contains(name)),
+        },
+        complete,
+    )
 }
 
 /// The names in `dir` that `.gitignore` keeps, with the rules `find`

@@ -7,6 +7,7 @@ use serde_json::json;
 use tau_agent::{
     error::ToolError,
     tool::{AgentTool, ToolCtx, ToolOutput},
+    validation::ArgumentSchema,
 };
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
@@ -39,6 +40,13 @@ fn listing(root: &Root, args: serde_json::Value) -> Listing {
             .expect("ls runs");
     serde_json::from_value(output.details.expect("a listing"))
         .expect("the details are a listing")
+}
+
+fn structured(root: &Root, args: serde_json::Value) -> serde_json::Value {
+    block_on(Ls::new(root.clone()).call(args, ToolCtx::detached()))
+        .expect("ls runs")
+        .structured
+        .expect("a structured listing")
 }
 
 /// The tool's identity and pinned description string, verbatim from
@@ -283,4 +291,189 @@ fn details_stop_where_the_text_does() {
     let listing = listing(&root, json!({"limit": 2}));
     assert_eq!(listing.entries.len(), 2);
     assert!(listing.truncated);
+}
+
+/// Structured results always retain the empty-directory value, including
+/// when a zero limit prevents listing entries.
+#[test]
+fn structured_empty_and_zero_limit_results_are_objects() {
+    let empty = tempfile::tempdir().unwrap();
+    let empty_root = Root::new(empty.path());
+    let empty_value = structured(&empty_root, json!({}));
+    assert_eq!(empty_value["dir"], empty.path().to_string_lossy().as_ref());
+    assert_eq!(empty_value["entries"], json!([]));
+    assert_eq!(empty_value["truncated"], false);
+    assert_eq!(empty_value["complete"], true);
+
+    let populated = tempfile::tempdir().unwrap();
+    std::fs::write(populated.path().join("a.txt"), "x").unwrap();
+    let populated_root = Root::new(populated.path());
+    let zero_limit = structured(&populated_root, json!({"limit": 0}));
+    assert_eq!(zero_limit["entries"], json!([]));
+    assert_eq!(zero_limit["truncated"], true);
+    assert_eq!(zero_limit["complete"], false);
+}
+
+/// The exact entry limit is complete; only finding an additional name
+/// marks the bounded result incomplete.
+#[test]
+fn structured_entry_limit_distinguishes_exact_from_exceeded() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    let root = Root::new(dir.path());
+
+    let exact = structured(&root, json!({"limit": 3}));
+    assert_eq!(exact["entries"].as_array().unwrap().len(), 3);
+    assert_eq!(exact["truncated"], false);
+    assert_eq!(exact["complete"], true);
+
+    let exceeded = structured(&root, json!({"limit": 2}));
+    let names: Vec<&str> = exceeded["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["a.txt", "b.txt"]);
+    assert_eq!(exceeded["truncated"], true);
+    assert_eq!(exceeded["complete"], false);
+}
+
+/// Structured names come from filesystem records, not rendered lines;
+/// newline, colon, and multibyte characters remain part of one name.
+#[test]
+fn structured_names_preserve_newlines_punctuation_and_unicode() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = "line\nbreak: café.txt";
+    std::fs::write(dir.path().join(name), "x").unwrap();
+    let root = Root::new(dir.path());
+
+    let value = structured(&root, json!({}));
+    assert_eq!(value["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(value["entries"][0]["name"], name);
+    assert_eq!(value["complete"], true);
+}
+
+/// Symlink records preserve Entry's followed kind and link target.
+#[cfg(unix)]
+#[test]
+fn structured_symlink_metadata_matches_details_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("target")).unwrap();
+    std::os::unix::fs::symlink("target", dir.path().join("shortcut")).unwrap();
+    let root = Root::new(dir.path());
+
+    let value = structured(&root, json!({}));
+    let shortcut = value["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "shortcut")
+        .unwrap();
+    assert_eq!(shortcut["kind"], "symlink_dir");
+    assert_eq!(shortcut["target"], "target");
+    assert_eq!(shortcut["items"], 0);
+}
+
+/// The schema advertised by AgentTool accepts the structured success
+/// value through tau-agent's existing schema validation API.
+#[test]
+fn structured_output_validates_against_its_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
+    let tool = Ls::new(Root::new(dir.path()));
+    let schema = ArgumentSchema::new(
+        tool.output_schema().expect("ls has an output schema"),
+    )
+    .expect("the output schema compiles");
+    let output =
+        block_on(tool.call(json!({}), ToolCtx::detached())).expect("ls runs");
+    let value = output.structured.expect("a structured listing");
+
+    schema
+        .validate(&value)
+        .expect("the listing matches its schema");
+}
+
+/// Property inventory: structured names equal the independent, sorted names
+/// read back from the temporary filesystem. This checks record identity
+/// without using the text renderer as an oracle.
+///
+/// The generator uses safe ASCII fragments and appends the drawn index, so
+/// every generated name is valid and unique without filtering or rejection;
+/// shrinking shortens fragments and the index still prevents collisions.
+/// The test uses 100 cases locally and in CI. Workspace hegel.toml already
+/// selects the fixed-seed, derandomized CI profile; change suite-wide counts
+/// there, and use a per-test count only for a deliberately different cost.
+#[hegel::composite]
+fn safe_ls_names(tc: &TestCase) -> Vec<String> {
+    let fragments: Vec<String> = tc.draw(
+        gs::vecs(
+            gs::text()
+                .alphabet("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+                .min_size(1)
+                .max_size(12),
+        )
+        .max_size(12),
+    );
+    fragments
+        .into_iter()
+        .enumerate()
+        .map(|(index, fragment)| format!("{fragment}-{index}"))
+        .collect()
+}
+
+#[hegel::test(test_cases = 100)]
+fn structured_names_match_sorted_filesystem_oracle(tc: TestCase) {
+    let names = tc.draw(safe_ls_names());
+    let dir = tempfile::tempdir().unwrap();
+    for name in &names {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+
+    let mut expected: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .into_string()
+                .expect("generated filenames are valid UTF-8")
+        })
+        .collect();
+    expected.sort_by(|a, b| {
+        a.to_lowercase()
+            .cmp(&b.to_lowercase())
+            .then_with(|| a.cmp(b))
+    });
+
+    let actual = structured(&Root::new(dir.path()), json!({}));
+    let actual_names: Vec<&str> = actual["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(actual_names, expected);
+    assert_eq!(actual["complete"], true);
+}
+
+/// The structured inventory is gathered before the presentation's byte cap,
+/// so byte truncation cannot discard records that fit the entry limit.
+#[test]
+fn structured_entries_survive_presentation_byte_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    const COUNT: usize = 270;
+    for index in 0..COUNT {
+        let name = format!("{index:03}-{}", "x".repeat(200));
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    let root = Root::new(dir.path());
+    let value = structured(&root, json!({"limit": 500}));
+
+    assert_eq!(value["entries"].as_array().unwrap().len(), COUNT);
+    assert_eq!(value["truncated"], true);
+    assert_eq!(value["complete"], false);
 }
