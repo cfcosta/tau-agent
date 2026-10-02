@@ -31,7 +31,7 @@ Live evaluations require an explicit budget and remain opt-in.
 - [x] **04:** Preserve nested-call status separately from its returned value.
 - [x] **05:** Add [structured directory entries](reference/codemode-ls.md) to `ls`.
 - [x] **06:** Add [structured paths and completeness](reference/codemode-find.md) to `find`.
-- [ ] **07:** Add structured matches and context lines to `grep`.
+- [x] **07:** Add [structured matches and context](reference/codemode-grep.md) to `grep`.
 - [ ] **08:** Add structured text and range metadata to `read`.
 - [ ] **09:** Add structured exit status and output metadata to `bash`.
 

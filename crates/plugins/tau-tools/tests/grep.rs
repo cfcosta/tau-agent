@@ -25,12 +25,25 @@ fn text_of(output: &ToolOutput) -> &str {
 }
 
 fn call(root: &Root, args: serde_json::Value) -> Result<String, ToolError> {
+    call_output(root, args).map(|out| text_of(&out).to_owned())
+}
+
+fn call_output(
+    root: &Root,
+    args: serde_json::Value,
+) -> Result<ToolOutput, ToolError> {
     block_on(async {
         Grep::new(root.clone())
             .call(args, ToolCtx::detached())
             .await
-            .map(|out| text_of(&out).to_owned())
     })
+}
+
+fn structured_of(output: &ToolOutput) -> &serde_json::Value {
+    output
+        .structured
+        .as_ref()
+        .expect("grep returns structured output")
 }
 
 /// The tool's identity and pinned description string, verbatim from
@@ -54,6 +67,282 @@ file paths and line numbers. Respects .gitignore. Output is truncated to \
         schema["properties"]["ignoreCase"]["description"],
         json!("Case-insensitive search (default: false)")
     );
+
+    let output_schema = tool.output_schema().expect("grep output schema");
+    let output_validator =
+        tau_agent::validation::ArgumentSchema::new(output_schema)
+            .expect("output schema is valid JSON Schema");
+    std::fs::write(dir.path().join("a.txt"), "needle").unwrap();
+    let output =
+        call_output(&Root::new(dir.path()), json!({"pattern": "needle"}))
+            .unwrap();
+    assert!(output_validator.validate(structured_of(&output)).is_ok());
+    let required = output_schema["required"].as_array().unwrap();
+    assert_eq!(required.len(), 9);
+    for field in [
+        "root",
+        "lines",
+        "match_count",
+        "truncated",
+        "complete",
+        "limit_reached",
+        "bytes_truncated",
+        "lines_truncated",
+        "skipped",
+    ] {
+        assert!(required.contains(&json!(field)), "missing required {field}");
+    }
+}
+
+#[test]
+fn structured_context_records_keep_kind_and_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("context.txt");
+    std::fs::write(&file, "before\nneedle one\nbetween\nneedle two\nafter")
+        .unwrap();
+
+    let output = call_output(
+        &Root::new(dir.path()),
+        json!({"pattern": "needle", "context": 1}),
+    )
+    .unwrap();
+    let structured = structured_of(&output);
+    let lines = structured["lines"].as_array().unwrap();
+    let actual: Vec<_> = lines
+        .iter()
+        .map(|line| {
+            (
+                line["line"].as_u64().unwrap(),
+                line["kind"].as_str().unwrap(),
+                line["text"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            (1, "before", "before"),
+            (2, "match", "needle one"),
+            (3, "after", "between"),
+            (4, "match", "needle two"),
+            (5, "after", "after"),
+        ]
+    );
+}
+
+#[test]
+fn structured_literal_and_regex_matches_follow_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("patterns.txt"), "NEE.LE\nNEEXLE\nNEE?LE")
+        .unwrap();
+    let root = Root::new(dir.path());
+
+    let regex = call_output(&root, json!({"pattern": "NEE.LE"})).unwrap();
+    let regex_lines = structured_of(&regex)["lines"].as_array().unwrap();
+    assert_eq!(regex_lines.len(), 3);
+    assert_eq!(regex_lines[1]["text"], "NEEXLE");
+
+    let literal =
+        call_output(&root, json!({"pattern": "NEE.LE", "literal": true}))
+            .unwrap();
+    let literal_lines = structured_of(&literal)["lines"].as_array().unwrap();
+    assert_eq!(literal_lines.len(), 1);
+    assert_eq!(literal_lines[0]["text"], "NEE.LE");
+}
+
+#[test]
+fn structured_match_limit_distinguishes_exact_from_exceeded() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("limits.txt");
+    let root = Root::new(dir.path());
+
+    std::fs::write(&file, "needle\nneedle").unwrap();
+    let exact =
+        call_output(&root, json!({"pattern": "needle", "limit": 2})).unwrap();
+    let exact = structured_of(&exact);
+    assert_eq!(exact["match_count"], 2);
+    assert_eq!(exact["limit_reached"], false);
+    assert_eq!(exact["complete"], true);
+
+    std::fs::write(&file, "needle\nneedle\nneedle").unwrap();
+    let exceeded =
+        call_output(&root, json!({"pattern": "needle", "limit": 2})).unwrap();
+    let exceeded = structured_of(&exceeded);
+    assert_eq!(exceeded["match_count"], 2);
+    assert_eq!(exceeded["lines"].as_array().unwrap().len(), 2);
+    assert_eq!(exceeded["limit_reached"], true);
+    assert_eq!(exceeded["truncated"], true);
+    assert_eq!(exceeded["complete"], false);
+}
+
+#[test]
+fn structured_long_lines_keep_the_existing_500_character_cut() {
+    let dir = tempfile::tempdir().unwrap();
+    let line = format!("needle{}", "é".repeat(600));
+    std::fs::write(dir.path().join("long.txt"), &line).unwrap();
+    let output =
+        call_output(&Root::new(dir.path()), json!({"pattern": "needle"}))
+            .unwrap();
+    let structured = structured_of(&output);
+    let record = &structured["lines"][0];
+    let expected_prefix: String = line.chars().take(500).collect();
+    assert_eq!(record["text"], format!("{expected_prefix}... [truncated]"));
+    assert_eq!(record["truncated"], true);
+    assert_eq!(structured["lines_truncated"], true);
+    assert_eq!(structured["truncated"], true);
+    assert_eq!(structured["complete"], false);
+}
+
+#[test]
+fn structured_byte_cut_keeps_only_complete_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let content = (0..120)
+        .map(|_| format!("needle{}", "x".repeat(494)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(dir.path().join("many.txt"), content).unwrap();
+
+    let output = call_output(
+        &Root::new(dir.path()),
+        json!({"pattern": "needle", "limit": 200}),
+    )
+    .unwrap();
+    let structured = structured_of(&output);
+    let lines = structured["lines"].as_array().unwrap();
+    assert!(
+        text_of(&output)
+            .contains(&format!("{} limit reached", format_size(MAX_BYTES)))
+    );
+    assert_eq!(structured["match_count"], 120);
+    assert!(structured["bytes_truncated"].as_bool().unwrap());
+    assert!(structured["truncated"].as_bool().unwrap());
+    assert!(!structured["complete"].as_bool().unwrap());
+    assert!(lines.len() < 120);
+    assert!(lines.iter().all(|line| {
+        line["text"].as_str().unwrap().len() == 500
+            && line["truncated"] == false
+    }));
+}
+
+#[test]
+fn structured_non_utf8_input_is_skipped_without_changing_text() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a-invalid.bin"), b"needle\xff").unwrap();
+    std::fs::write(dir.path().join("z-valid.txt"), "needle").unwrap();
+    let root = Root::new(dir.path());
+
+    let output = call_output(&root, json!({"pattern": "needle"})).unwrap();
+    assert_eq!(text_of(&output), "z-valid.txt:1: needle");
+    let structured = structured_of(&output);
+    assert_eq!(structured["skipped"], 1);
+    assert_eq!(structured["complete"], false);
+    assert_eq!(structured["truncated"], false);
+
+    let no_matches = call_output(&root, json!({"pattern": "absent"})).unwrap();
+    assert_eq!(text_of(&no_matches), "No matches found");
+    assert_eq!(structured_of(&no_matches)["lines"], json!([]));
+    assert_eq!(structured_of(&no_matches)["skipped"], 1);
+    assert_eq!(structured_of(&no_matches)["complete"], false);
+}
+
+#[test]
+fn structured_paths_preserve_colons_newlines_and_unicode() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = "odd:\n雪.txt";
+    std::fs::write(dir.path().join(name), "needle").unwrap();
+    let root = Root::new(dir.path());
+
+    let output = call_output(&root, json!({"pattern": "needle"})).unwrap();
+    let record = &structured_of(&output)["lines"][0];
+    assert_eq!(record["path"], name);
+    assert_eq!(record["line"], 1);
+    assert_eq!(record["text"], "needle");
+    assert_eq!(text_of(&output), format!("{name}:1: needle"));
+}
+
+/// Property inventory: `literal_marker_records_match_naive_scan` uses a
+/// differential oracle (`str::contains`) to check match identity and
+/// path/line ordering independently of the grep crates. This matters
+/// because structured records must survive presentation formatting.
+///
+/// Generator plan: each valid line has at most two newline-free fragments
+/// on either side of an optional literal marker; at most 16 lines split
+/// over two fixed files. Hegel shrinks toward fewer lines and shorter
+/// fragments, without rejection. CI uses Hegel's `ci` profile
+/// (derandomized, database disabled); the per-property 50 cases are bounded
+/// for filesystem work, while suite-wide defaults belong in `hegel.toml`.
+#[hegel::composite]
+fn marker_lines(tc: &TestCase) -> Vec<String> {
+    let count = tc.draw(gs::integers::<usize>().max_value(16));
+    let mut lines = Vec::with_capacity(count);
+    for _ in 0..count {
+        let prefix: Vec<&str> = tc.draw(
+            gs::vecs(gs::sampled_from(vec!["a", "b", "雪", ":"])).max_size(2),
+        );
+        let has_marker = tc.draw(gs::booleans());
+        let suffix: Vec<&str> = tc.draw(
+            gs::vecs(gs::sampled_from(vec!["x", "y", "é", "."])).max_size(2),
+        );
+        lines.push(format!(
+            "{}{}{}",
+            prefix.concat(),
+            if has_marker { "needle" } else { "" },
+            suffix.concat()
+        ));
+    }
+    lines
+}
+
+#[hegel::test(test_cases = 50)]
+fn literal_marker_records_match_naive_scan(tc: TestCase) {
+    let lines = tc.draw(marker_lines());
+    let a_lines: Vec<&str> =
+        lines.iter().step_by(2).map(String::as_str).collect();
+    let b_lines: Vec<&str> = lines
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .map(String::as_str)
+        .collect();
+    let contents =
+        [("a.txt", a_lines.join("\n")), ("b.txt", b_lines.join("\n"))];
+    let dir = tempfile::tempdir().unwrap();
+    for (name, content) in &contents {
+        std::fs::write(dir.path().join(name), content).unwrap();
+    }
+
+    let output = call_output(
+        &Root::new(dir.path()),
+        json!({"pattern": "needle", "literal": true}),
+    )
+    .unwrap();
+    let actual: Vec<_> = structured_of(&output)["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| {
+            (
+                line["path"].as_str().unwrap().to_owned(),
+                line["line"].as_u64().unwrap(),
+                line["text"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let mut expected = Vec::new();
+    for (path, content) in &contents {
+        for (index, line) in lines_of(content).into_iter().enumerate() {
+            if line.contains("needle") {
+                expected.push((
+                    (*path).to_owned(),
+                    index as u64 + 1,
+                    line.to_owned(),
+                ));
+            }
+        }
+    }
+    assert_eq!(actual, expected);
+    assert_eq!(structured_of(&output)["match_count"], expected.len());
+    assert_eq!(structured_of(&output)["complete"], true);
 }
 
 /// The pieces a generated line is built from: the search tokens in
@@ -398,6 +687,11 @@ fn no_matches_found() {
     let root = Root::new(dir.path());
     let output = call(&root, json!({"pattern": "zzz"})).unwrap();
     assert_eq!(output, "No matches found");
+    let result = call_output(&root, json!({"pattern": "zzz"})).unwrap();
+    let structured = structured_of(&result);
+    assert_eq!(structured["lines"], json!([]));
+    assert_eq!(structured["match_count"], 0);
+    assert_eq!(structured["complete"], true);
 }
 
 /// A path that does not exist is an error, not an empty result.

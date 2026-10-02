@@ -37,7 +37,7 @@ use ignore::{
     overrides::{Override, OverrideBuilder},
 };
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::{
     error::ToolError,
@@ -87,13 +87,21 @@ pub struct GrepArgs {
 pub struct Grep {
     root: Root,
     schema: Value,
+    output_schema: Value,
 }
 
 impl Grep {
     pub fn new(root: Root) -> Self {
         let schema = serde_json::to_value(schemars::schema_for!(GrepArgs))
             .expect("a generated schema is valid JSON");
-        Self { root, schema }
+        let output_schema =
+            serde_json::to_value(schemars::schema_for!(GrepOutput))
+                .expect("a generated schema is valid JSON");
+        Self {
+            root,
+            schema,
+            output_schema,
+        }
     }
 }
 
@@ -111,6 +119,10 @@ impl AgentTool for Grep {
         &self.schema
     }
 
+    fn output_schema(&self) -> Option<&Value> {
+        Some(&self.output_schema)
+    }
+
     async fn call(
         &self,
         args: Value,
@@ -119,18 +131,52 @@ impl AgentTool for Grep {
         let args: GrepArgs = serde_json::from_value(args)?;
         let root = self.root.clone();
         let cancel = ctx.cancel.clone();
-        let text =
+        let result =
             tokio::task::spawn_blocking(move || run(&root, args, &cancel))
                 .await??;
-        Ok(ToolOutput::text(text))
+        Ok(ToolOutput {
+            structured: Some(
+                serde_json::to_value(result.structured)
+                    .expect("grep output is valid JSON"),
+            ),
+            ..ToolOutput::text(result.text)
+        })
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 enum LineKind {
     Before,
     Match,
     After,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct GrepLine {
+    path: String,
+    line: u64,
+    text: String,
+    kind: LineKind,
+    truncated: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct GrepOutput {
+    root: String,
+    lines: Vec<GrepLine>,
+    match_count: usize,
+    truncated: bool,
+    complete: bool,
+    limit_reached: bool,
+    bytes_truncated: bool,
+    lines_truncated: bool,
+    skipped: usize,
+}
+
+struct GrepResult {
+    text: String,
+    structured: GrepOutput,
 }
 
 struct LineEntry {
@@ -213,11 +259,16 @@ fn format_path(search_path: &Path, file: &Path, is_dir: bool) -> String {
     }
 }
 
+struct WalkedFiles {
+    files: Vec<PathBuf>,
+    skipped: usize,
+}
+
 fn files_under(
     search_path: &Path,
     overrides: Override,
     cancel: &CancellationToken,
-) -> Result<Vec<PathBuf>, ToolError> {
+) -> Result<WalkedFiles, ToolError> {
     let mut walk = WalkBuilder::new(search_path);
     // `.gitignore` applies whether or not the tree sits inside an
     // actual git repository (`ignore`'s default requires one). The
@@ -230,16 +281,30 @@ fn files_under(
         .git_exclude(false)
         .overrides(overrides);
     let files = Mutex::new(Vec::new());
+    let skipped = AtomicUsize::new(0);
     walk.build_parallel().run(|| {
         let files = &files;
+        let skipped = &skipped;
         Box::new(move |result| {
             if cancel.is_cancelled() {
                 return WalkState::Quit;
             }
-            if let Ok(entry) = result
-                && entry.file_type().is_some_and(|t| t.is_file())
-            {
-                files.lock().expect("not poisoned").push(entry.into_path());
+            match result {
+                Ok(entry) => match entry.file_type() {
+                    Some(file_type) if file_type.is_file() => {
+                        files
+                            .lock()
+                            .expect("not poisoned")
+                            .push(entry.into_path());
+                    }
+                    Some(_) => {}
+                    None => {
+                        skipped.fetch_add(1, Ordering::Relaxed);
+                    }
+                },
+                Err(_) => {
+                    skipped.fetch_add(1, Ordering::Relaxed);
+                }
             }
             WalkState::Continue
         })
@@ -249,7 +314,10 @@ fn files_under(
     }
     let mut files = files.into_inner().expect("not poisoned");
     files.sort();
-    Ok(files)
+    Ok(WalkedFiles {
+        files,
+        skipped: skipped.load(Ordering::Relaxed),
+    })
 }
 
 /// The match and context lines of one file, or `None` when it cannot be
@@ -276,14 +344,23 @@ fn search_file(
     Ok(Some(collected))
 }
 
-/// Searches `files` on every core, in their order, and returns each
-/// file's lines (`None` for a file not searched).
+/// Searches `files` on every core, in their order, and records whether
+/// each file was searched, skipped, or never started.
 ///
 /// Workers take files in order. Once the files finished so far, counted
 /// from the first without a gap, hold more than `limit` matches, the
 /// output is settled (it keeps `limit` matches and knows the limit was
 /// reached), so no worker starts another file. The result is the same
 /// as searching one file after another.
+enum FileSearch {
+    /// This file was not started after the match limit settled.
+    NotStarted,
+    /// Reading failed or the file was not UTF-8.
+    Skipped,
+    /// The file was searched, including files with no matches.
+    Searched(Vec<LineEntry>),
+}
+
 fn search_files(
     files: &[PathBuf],
     matcher: &RegexMatcher,
@@ -291,17 +368,15 @@ fn search_files(
     limit: usize,
     workers: usize,
     cancel: &CancellationToken,
-) -> Result<Vec<Option<Vec<LineEntry>>>, ToolError> {
+) -> Result<Vec<FileSearch>, ToolError> {
     struct Progress {
-        results: Vec<Option<Vec<LineEntry>>>,
-        done: Vec<bool>,
+        results: Vec<FileSearch>,
         /// Files `..settled` are all done.
         settled: usize,
         settled_matches: usize,
     }
     let progress = Mutex::new(Progress {
-        results: (0..files.len()).map(|_| None).collect(),
-        done: vec![false; files.len()],
+        results: (0..files.len()).map(|_| FileSearch::NotStarted).collect(),
         settled: 0,
         settled_matches: 0,
     });
@@ -323,21 +398,26 @@ fn search_files(
             let Some(file) = files.get(index) else {
                 return Ok(());
             };
-            let lines = search_file(&mut searcher, matcher, file)?;
+            let result = match search_file(&mut searcher, matcher, file)? {
+                Some(lines) => FileSearch::Searched(lines),
+                None => FileSearch::Skipped,
+            };
             let mut progress = progress.lock().expect("not poisoned");
-            progress.results[index] = lines;
-            progress.done[index] = true;
+            progress.results[index] = result;
             while progress.settled < files.len()
-                && progress.done[progress.settled]
+                && !matches!(
+                    &progress.results[progress.settled],
+                    FileSearch::NotStarted
+                )
             {
                 let settled = progress.settled;
-                let matches =
-                    progress.results[settled].as_ref().map_or(0, |lines| {
-                        lines
-                            .iter()
-                            .filter(|l| l.kind == LineKind::Match)
-                            .count()
-                    });
+                let matches = match &progress.results[settled] {
+                    FileSearch::Searched(lines) => lines
+                        .iter()
+                        .filter(|l| l.kind == LineKind::Match)
+                        .count(),
+                    FileSearch::NotStarted | FileSearch::Skipped => 0,
+                };
                 progress.settled_matches += matches;
                 progress.settled += 1;
             }
@@ -370,7 +450,7 @@ fn run(
     root: &Root,
     args: GrepArgs,
     cancel: &CancellationToken,
-) -> Result<String, ToolError> {
+) -> Result<GrepResult, ToolError> {
     if cancel.is_cancelled() {
         return Err(ToolError::from(ABORTED));
     }
@@ -387,17 +467,24 @@ fn run(
 
     let matcher = matcher(&args)?;
 
-    let files = if is_dir {
+    let walked_files = if is_dir {
         let overrides = match args.glob.as_deref() {
             Some(pattern) => build_glob(&search_path, pattern)?,
             None => Override::empty(),
         };
         files_under(&search_path, overrides, cancel)?
     } else {
-        vec![search_path.clone()]
+        WalkedFiles {
+            files: vec![search_path.clone()],
+            skipped: 0,
+        }
     };
+    let WalkedFiles {
+        files,
+        skipped: walker_skipped,
+    } = walked_files;
 
-    let mut output_lines: Vec<String> = Vec::new();
+    let mut output_lines: Vec<PresentedLine> = Vec::new();
     let mut match_count = 0usize;
     let mut limit_reached = false;
     let mut lines_truncated = false;
@@ -405,8 +492,13 @@ fn run(
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
     let results =
         search_files(&files, &matcher, context, limit, workers, cancel)?;
+    let skipped = results.iter().fold(walker_skipped, |count, result| {
+        count + usize::from(matches!(result, FileSearch::Skipped))
+    });
     'files: for (file, collected) in files.iter().zip(results) {
-        let Some(collected) = collected else { continue };
+        let FileSearch::Searched(collected) = collected else {
+            continue;
+        };
         if collected.is_empty() {
             continue;
         }
@@ -450,12 +542,30 @@ fn run(
     }
 
     if match_count == 0 {
-        return Ok("No matches found".to_owned());
+        return Ok(GrepResult {
+            text: "No matches found".to_owned(),
+            structured: GrepOutput {
+                root: search_path.to_string_lossy().into_owned(),
+                lines: Vec::new(),
+                match_count,
+                truncated: false,
+                complete: skipped == 0,
+                limit_reached,
+                bytes_truncated: false,
+                lines_truncated: false,
+                skipped,
+            },
+        });
     }
 
-    let raw = output_lines.join("\n");
+    let raw = output_lines
+        .iter()
+        .map(|line| line.display.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     let truncation = truncate_head(&raw, usize::MAX, MAX_BYTES);
-    let truncated = truncation.truncated();
+    let bytes_truncated = truncation.truncated();
+    let retained_bytes = truncation.content.len();
     let mut text = truncation.content;
 
     let mut notices = Vec::new();
@@ -465,7 +575,7 @@ fn run(
             limit * 2
         ));
     }
-    if truncated {
+    if bytes_truncated {
         notices.push(format!("{} limit reached", format_size(MAX_BYTES)));
     }
     if lines_truncated {
@@ -476,11 +586,47 @@ fn run(
     if !notices.is_empty() {
         text.push_str(&format!("\n\n[{}]", notices.join(". ")));
     }
-    Ok(text)
+
+    // Keep a structured line only when its whole original display record
+    // fits in the presentation prefix. A byte cut can split a rendered path
+    // (which may itself contain newlines), but it never creates a partial
+    // structured record.
+    let record_count = output_lines.len();
+    let mut lines = Vec::new();
+    let mut offset = 0;
+    for (index, line) in output_lines.into_iter().enumerate() {
+        let end = offset + line.display.len();
+        if end <= retained_bytes {
+            lines.push(line.record);
+        }
+        offset = end + usize::from(index + 1 < record_count);
+    }
+    let truncated = limit_reached || bytes_truncated || lines_truncated;
+    let complete =
+        skipped == 0 && !limit_reached && !bytes_truncated && !lines_truncated;
+    Ok(GrepResult {
+        text,
+        structured: GrepOutput {
+            root: search_path.to_string_lossy().into_owned(),
+            lines,
+            match_count,
+            truncated,
+            complete,
+            limit_reached,
+            bytes_truncated,
+            lines_truncated,
+            skipped,
+        },
+    })
+}
+
+struct PresentedLine {
+    record: GrepLine,
+    display: String,
 }
 
 fn push_line(
-    out: &mut Vec<String>,
+    out: &mut Vec<PresentedLine>,
     rel: &str,
     entry: &LineEntry,
     lines_truncated: &mut bool,
@@ -494,7 +640,17 @@ fn push_line(
     } else {
         '-'
     };
-    out.push(format!("{rel}{sep}{}{sep} {text}", entry.number));
+    let display = format!("{rel}{sep}{}{sep} {text}", entry.number);
+    out.push(PresentedLine {
+        record: GrepLine {
+            path: rel.to_owned(),
+            line: entry.number,
+            text,
+            kind: entry.kind,
+            truncated: was_truncated,
+        },
+        display,
+    });
 }
 
 #[cfg(test)]
@@ -528,7 +684,7 @@ mod tests {
             )
             .unwrap()
             .iter()
-            .map(Option::is_some)
+            .map(|result| matches!(result, FileSearch::Searched(_)))
             .collect::<Vec<_>>()
         };
         assert_eq!(searched(1), [true, true, false, false]);
