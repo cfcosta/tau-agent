@@ -26,13 +26,26 @@ fn text_of(output: &ToolOutput) -> &str {
     }
 }
 
-fn call(root: &Root, args: serde_json::Value) -> Result<String, ToolError> {
+fn call_output(
+    root: &Root,
+    args: serde_json::Value,
+) -> Result<ToolOutput, ToolError> {
     block_on(async {
         Find::new(root.clone())
             .call(args, ToolCtx::detached())
             .await
-            .map(|out| text_of(&out).to_owned())
     })
+}
+
+fn call(root: &Root, args: serde_json::Value) -> Result<String, ToolError> {
+    call_output(root, args).map(|out| text_of(&out).to_owned())
+}
+
+fn structured_of(output: &ToolOutput) -> &serde_json::Value {
+    output
+        .structured
+        .as_ref()
+        .expect("find returns structured output")
 }
 
 /// The tool's identity and pinned description string, verbatim from
@@ -55,6 +68,29 @@ truncated to 1000 results or 50KB (whichever is hit first)."
         schema["properties"]["limit"]["description"],
         json!("Maximum number of results (default: 1000)")
     );
+
+    let output_schema = tool.output_schema().unwrap();
+    assert_eq!(output_schema["type"], "object");
+    assert_eq!(
+        output_schema["required"],
+        json!([
+            "root",
+            "paths",
+            "truncated",
+            "complete",
+            "limit_reached",
+            "bytes_truncated",
+            "skipped"
+        ])
+    );
+    let properties = &output_schema["properties"];
+    assert_eq!(properties["root"]["type"], "string");
+    assert_eq!(properties["paths"]["type"], "array");
+    assert_eq!(properties["paths"]["items"]["type"], "string");
+    for field in ["truncated", "complete", "limit_reached", "bytes_truncated"] {
+        assert_eq!(properties[field]["type"], "boolean", "{field}");
+    }
+    assert_eq!(properties["skipped"]["type"], "integer");
 }
 
 /// The candidate files a generated tree draws from: a mix of root and
@@ -84,6 +120,14 @@ const PATTERNS: &[&str] = &[
     "sub/*.rs",
     "d.txt",
     ".hidden.txt",
+];
+
+/// Alphabet used to generate portable, single-component file names and glob
+/// prefixes. It excludes path separators, control characters, and glob syntax.
+const SAFE_STEM_CHARS: &[char] = &[
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o',
+    'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3',
+    '4', '5', '6', '7', '8', '9', '_', '-', '.',
 ];
 
 /// A hand-written `.gitignore` subset: either no `.gitignore`, one
@@ -119,6 +163,44 @@ fn find_case(tc: &TestCase) -> FindCase {
         gitignore,
         pattern,
         limit,
+    }
+}
+
+#[hegel::composite]
+fn safe_stem(tc: &TestCase) -> String {
+    let chars = tc.draw(
+        gs::vecs(gs::sampled_from(SAFE_STEM_CHARS.to_vec()))
+            .min_size(1)
+            .max_size(10),
+    );
+    chars.into_iter().collect()
+}
+
+#[derive(Debug, hegel::PrettyPrintable)]
+struct GeneratedFindCase {
+    filenames: Vec<String>,
+    prefix: String,
+    use_prefix: bool,
+}
+
+#[hegel::composite]
+fn generated_find_case(tc: &TestCase) -> GeneratedFindCase {
+    let stems = tc.draw(gs::vecs(safe_stem()).max_size(12));
+    let mut filenames: Vec<String> = stems
+        .into_iter()
+        .map(|stem| format!("{stem}.txt"))
+        .collect();
+    filenames.sort();
+    filenames.dedup();
+
+    let prefix_chars = tc
+        .draw(gs::vecs(gs::sampled_from(SAFE_STEM_CHARS.to_vec())).max_size(4));
+    let prefix = prefix_chars.into_iter().collect();
+    let use_prefix = tc.draw(gs::booleans());
+    GeneratedFindCase {
+        filenames,
+        prefix,
+        use_prefix,
     }
 }
 
@@ -183,6 +265,22 @@ fn effective_pattern(pattern: &str) -> (bool, String) {
 /// hand-written `.gitignore` subset; "limit reached" appears only when
 /// more results existed (`docs/reference/tools.md`, "find";
 /// `docs/reference/testing.md`, "tau-tools").
+// Property inventory: find_matches_a_naive_walk is differential against
+// an independent recursive filesystem walk plus a narrow .gitignore model;
+// it checks display text, selected paths, ordering, and entry-limit reporting.
+// generated_file_names_match_the_naive_prefix_oracle independently checks
+// generated filename sets against a plain starts_with oracle for the safe
+// prefix*.txt / *.txt glob subset. These laws catch path selection and
+// ordering regressions without reusing the production walker or glob matcher.
+//
+// Generator plan: generated stems use a bounded ASCII alphabet with no path
+// separators, control characters, or glob metacharacters. A vector is sorted
+// and deduplicated after drawing, so every case is a valid filesystem tree and
+// shrinking keeps it valid without rejection. Prefixes use the same alphabet.
+//
+// CI: Hegel auto-selects its ci profile (derandomized, with database use
+// disabled); workspace-wide case counts belong in hegel.toml. This property
+// runs 50 cases because each one creates a temporary directory and files.
 #[hegel::test(test_cases = 50)]
 fn find_matches_a_naive_walk(tc: TestCase) {
     let case = tc.draw(find_case());
@@ -206,9 +304,12 @@ fn find_matches_a_naive_walk(tc: TestCase) {
     }
     let root = Root::new(dir.path());
 
-    let actual =
-        call(&root, json!({"pattern": case.pattern, "limit": case.limit}))
-            .unwrap();
+    let output = call_output(
+        &root,
+        json!({"pattern": case.pattern, "limit": case.limit}),
+    )
+    .unwrap();
+    let actual = text_of(&output);
 
     // Oracle: a naive walk plus the same globset pattern, not `ignore`.
     let mut all_files = Vec::new();
@@ -270,6 +371,58 @@ fn find_matches_a_naive_walk(tc: TestCase) {
         "pattern = {:?}, present = {:?}, gitignore = {:?}, limit = {}",
         case.pattern, case.present, case.gitignore, case.limit
     );
+    let structured = structured_of(&output);
+    assert_eq!(structured["paths"], json!(matched));
+    assert_eq!(structured["limit_reached"], limit_reached);
+    assert_eq!(structured["bytes_truncated"], false);
+    assert_eq!(structured["truncated"], limit_reached);
+    assert_eq!(structured["complete"], !limit_reached);
+    assert_eq!(structured["skipped"], 0);
+}
+
+/// Compares real results against a minimal naive oracle for generated file
+/// names and a safe subset of prefix globs. The oracle enumerates with
+/// read_dir and checks string prefixes directly, independently of ignore and
+/// globset.
+#[hegel::test(test_cases = 50)]
+fn generated_file_names_match_the_naive_prefix_oracle(tc: TestCase) {
+    let case = tc.draw(generated_find_case());
+    let dir = tempfile::tempdir().unwrap();
+    for filename in &case.filenames {
+        std::fs::write(dir.path().join(filename), "x").unwrap();
+    }
+
+    let prefix = if case.use_prefix {
+        case.prefix.as_str()
+    } else {
+        ""
+    };
+    let pattern = if case.use_prefix {
+        format!("{prefix}*.txt")
+    } else {
+        "*.txt".to_owned()
+    };
+    let root = Root::new(dir.path());
+    let output = call_output(&root, json!({"pattern": pattern})).unwrap();
+
+    let mut expected: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|filename| {
+            filename.starts_with(prefix) && filename.ends_with(".txt")
+        })
+        .collect();
+    expected.sort();
+
+    assert_eq!(structured_of(&output)["paths"], json!(expected));
+    let expected_text = if expected.is_empty() {
+        "No files found matching pattern".to_owned()
+    } else {
+        expected.join("\n")
+    };
+    assert_eq!(text_of(&output), expected_text);
+    assert_eq!(structured_of(&output)["complete"], true);
+    assert_eq!(structured_of(&output)["truncated"], false);
 }
 
 /// A nested `.gitignore` applies only to its own subtree, not to
@@ -354,8 +507,109 @@ fn global_gitignore_is_not_consulted() {
 fn no_files_found() {
     let dir = tempfile::tempdir().unwrap();
     let root = Root::new(dir.path());
-    let output = call(&root, json!({"pattern": "*.zzz"})).unwrap();
-    assert_eq!(output, "No files found matching pattern");
+    let output = call_output(&root, json!({"pattern": "*.zzz"})).unwrap();
+    assert_eq!(text_of(&output), "No files found matching pattern");
+    assert_eq!(
+        structured_of(&output),
+        &json!({
+            "root": dir.path().to_string_lossy(),
+            "paths": [],
+            "truncated": false,
+            "complete": true,
+            "limit_reached": false,
+            "bytes_truncated": false,
+            "skipped": 0
+        })
+    );
+}
+
+/// Zero, exact, and exceeded entry limits keep their existing display text and
+/// report the selected records and completeness separately.
+#[test]
+fn zero_exact_and_exceeded_limits_report_structured_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    let root = Root::new(dir.path());
+
+    let zero =
+        call_output(&root, json!({"pattern": "*.txt", "limit": 0})).unwrap();
+    assert_eq!(
+        text_of(&zero),
+        "\n\n[0 results limit reached. Use limit=0 for more, or refine pattern]"
+    );
+    assert_eq!(structured_of(&zero)["paths"], json!([]));
+    assert_eq!(structured_of(&zero)["limit_reached"], true);
+    assert_eq!(structured_of(&zero)["truncated"], true);
+    assert_eq!(structured_of(&zero)["complete"], false);
+
+    let exact =
+        call_output(&root, json!({"pattern": "*.txt", "limit": 3})).unwrap();
+    assert_eq!(text_of(&exact), "a.txt\nb.txt\nc.txt");
+    assert_eq!(
+        structured_of(&exact)["paths"],
+        json!(["a.txt", "b.txt", "c.txt"])
+    );
+    assert_eq!(structured_of(&exact)["limit_reached"], false);
+    assert_eq!(structured_of(&exact)["truncated"], false);
+    assert_eq!(structured_of(&exact)["complete"], true);
+
+    let exceeded =
+        call_output(&root, json!({"pattern": "*.txt", "limit": 2})).unwrap();
+    assert_eq!(
+        text_of(&exceeded),
+        "a.txt\nb.txt\n\n[2 results limit reached. Use limit=4 for more, or refine pattern]"
+    );
+    assert_eq!(structured_of(&exceeded)["paths"], json!(["a.txt", "b.txt"]));
+    assert_eq!(structured_of(&exceeded)["limit_reached"], true);
+    assert_eq!(structured_of(&exceeded)["truncated"], true);
+    assert_eq!(structured_of(&exceeded)["complete"], false);
+}
+
+/// Complete path records survive display formatting even when a valid path
+/// contains colons, punctuation, Unicode, or a newline.
+#[test]
+fn structured_paths_preserve_punctuation_unicode_and_newlines() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut expected = vec![
+        "colon:é.txt".to_owned(),
+        "line\nbreak.txt".to_owned(),
+        "space (x)! [y].txt".to_owned(),
+    ];
+    expected.sort();
+    for name in &expected {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    let root = Root::new(dir.path());
+
+    let output = call_output(&root, json!({"pattern": "*"})).unwrap();
+    assert_eq!(text_of(&output), expected.join("\n"));
+    assert_eq!(structured_of(&output)["paths"], json!(expected));
+    assert_eq!(structured_of(&output)["complete"], true);
+}
+
+/// The byte cut applies only to the display text. Structured paths retain
+/// every complete record selected before that presentation cut.
+#[test]
+fn byte_truncation_keeps_complete_structured_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_count = 220usize;
+    for index in 0..file_count {
+        let name = format!("{index:03}_{}.txt", "x".repeat(242));
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    let root = Root::new(dir.path());
+
+    let output = call_output(&root, json!({"pattern": "*.txt"})).unwrap();
+    let structured = structured_of(&output);
+    assert!(text_of(&output).len() <= MAX_BYTES + 64);
+    assert_eq!(structured["paths"].as_array().unwrap().len(), file_count);
+    assert_eq!(structured["bytes_truncated"], true);
+    assert_eq!(structured["truncated"], true);
+    assert_eq!(structured["limit_reached"], false);
+    assert_eq!(structured["complete"], false);
+    assert_eq!(structured["skipped"], 0);
 }
 
 /// A path that does not exist is an error.

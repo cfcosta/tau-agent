@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use globset::{GlobBuilder, GlobMatcher};
 use ignore::WalkBuilder;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::{
     error::ToolError,
@@ -45,17 +45,50 @@ pub struct FindArgs {
     pub limit: Option<u32>,
 }
 
+/// Program-visible result from `find`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct FindOutput {
+    /// The resolved path searched by this call.
+    pub root: String,
+    /// Matched paths relative to `root`, in the tool's existing order.
+    pub paths: Vec<String>,
+    /// Whether the entry or display-byte limit omitted part of the result.
+    pub truncated: bool,
+    /// Whether the walk and both result limits returned a complete result.
+    pub complete: bool,
+    /// Whether another matching path existed beyond the entry limit.
+    pub limit_reached: bool,
+    /// Whether the formatted text exceeded its byte limit.
+    pub bytes_truncated: bool,
+    /// Number of filesystem entries the walker could not read.
+    pub skipped: usize,
+}
+
+struct FindResult {
+    text: String,
+    output: FindOutput,
+}
+
 /// Finds files by glob pattern (`docs/reference/tools.md`, "find").
 pub struct Find {
     root: Root,
-    schema: Value,
+    parameters_schema: Value,
+    output_schema: Value,
 }
 
 impl Find {
     pub fn new(root: Root) -> Self {
-        let schema = serde_json::to_value(schemars::schema_for!(FindArgs))
-            .expect("a generated schema is valid JSON");
-        Self { root, schema }
+        let parameters_schema =
+            serde_json::to_value(schemars::schema_for!(FindArgs))
+                .expect("a generated schema is valid JSON");
+        let output_schema =
+            serde_json::to_value(schemars::schema_for!(FindOutput))
+                .expect("a generated schema is valid JSON");
+        Self {
+            root,
+            parameters_schema,
+            output_schema,
+        }
     }
 }
 
@@ -70,7 +103,11 @@ impl AgentTool for Find {
     }
 
     fn parameters(&self) -> &Value {
-        &self.schema
+        &self.parameters_schema
+    }
+
+    fn output_schema(&self) -> Option<&Value> {
+        Some(&self.output_schema)
     }
 
     async fn call(
@@ -81,10 +118,15 @@ impl AgentTool for Find {
         let args: FindArgs = serde_json::from_value(args)?;
         let root = self.root.clone();
         let cancel = ctx.cancel.clone();
-        let text =
+        let result =
             tokio::task::spawn_blocking(move || run(&root, args, &cancel))
                 .await??;
-        Ok(ToolOutput::text(text))
+        let mut output = ToolOutput::text(result.text);
+        output.structured = Some(
+            serde_json::to_value(result.output)
+                .expect("FindOutput serializes to valid JSON"),
+        );
+        Ok(output)
     }
 }
 
@@ -121,8 +163,9 @@ fn relative_posix(search_path: &Path, file: &Path) -> String {
 fn walk_files(
     search_path: &Path,
     cancel: &CancellationToken,
-) -> Result<Vec<PathBuf>, ToolError> {
+) -> Result<(Vec<PathBuf>, usize), ToolError> {
     let mut files = Vec::new();
+    let mut skipped = 0;
     // `.gitignore` applies whether or not the tree sits inside an
     // actual git repository (`ignore`'s default requires one). The
     // user's personal global gitignore and `.git/info/exclude` are
@@ -137,14 +180,17 @@ fn walk_files(
         if cancel.is_cancelled() {
             return Err(ToolError::from(ABORTED));
         }
-        let Ok(entry) = result else { continue };
+        let Ok(entry) = result else {
+            skipped += 1;
+            continue;
+        };
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
         files.push(entry.into_path());
     }
     files.sort();
-    Ok(files)
+    Ok((files, skipped))
 }
 
 /// `pattern` as a glob whose `*` stops at a `/`.
@@ -159,7 +205,7 @@ fn run(
     root: &Root,
     args: FindArgs,
     cancel: &CancellationToken,
-) -> Result<String, ToolError> {
+) -> Result<FindResult, ToolError> {
     if cancel.is_cancelled() {
         return Err(ToolError::from(ABORTED));
     }
@@ -175,10 +221,10 @@ fn run(
     let glob = glob(&pattern)?;
 
     let is_dir = search_path.is_dir();
-    let files = if is_dir {
+    let (files, skipped) = if is_dir {
         walk_files(&search_path, cancel)?
     } else {
-        vec![search_path.clone()]
+        (vec![search_path.clone()], 0)
     };
 
     let mut matched: Vec<String> = Vec::new();
@@ -207,27 +253,44 @@ fn run(
         matched.push(rel);
     }
 
-    if matched.is_empty() && !limit_reached {
-        return Ok("No files found matching pattern".to_owned());
-    }
-
     let raw = matched.join("\n");
     let truncation = truncate_head(&raw, usize::MAX, MAX_BYTES);
-    let truncated = truncation.truncated();
-    let mut text = truncation.content;
+    let bytes_truncated = truncation.truncated();
+    let text = if matched.is_empty() && !limit_reached {
+        "No files found matching pattern".to_owned()
+    } else {
+        let mut text = truncation.content;
 
-    let mut notices = Vec::new();
-    if limit_reached {
-        notices.push(format!(
-            "{limit} results limit reached. Use limit={} for more, or refine pattern",
-            limit * 2
-        ));
-    }
-    if truncated {
-        notices.push(format!("{} limit reached", format_size(MAX_BYTES)));
-    }
-    if !notices.is_empty() {
-        text.push_str(&format!("\n\n[{}]", notices.join(". ")));
-    }
-    Ok(text)
+        let mut notices = Vec::new();
+        if limit_reached {
+            notices.push(format!(
+                "{limit} results limit reached. Use limit={} for more, or refine pattern",
+                limit * 2
+            ));
+        }
+        if bytes_truncated {
+            notices.push(format!("{} limit reached", format_size(MAX_BYTES)));
+        }
+        if !notices.is_empty() {
+            text.push_str(&format!("\n\n[{}]", notices.join(". ")));
+        }
+        text
+    };
+
+    // Preserve the selected path records before display truncation. Text
+    // lines are ambiguous when a valid path itself contains a newline.
+    let truncated = limit_reached || bytes_truncated;
+    let complete = !truncated && skipped == 0;
+    Ok(FindResult {
+        text,
+        output: FindOutput {
+            root: search_path.to_string_lossy().into_owned(),
+            paths: matched,
+            truncated,
+            complete,
+            limit_reached,
+            bytes_truncated,
+            skipped,
+        },
+    })
 }
