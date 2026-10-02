@@ -47,7 +47,7 @@ to large inputs.
 - [ ] **13:** Add `tools.infer` as a nested tool owned by Codemode.
 - [ ] **14:** Store private inference traces and provenance.
 - [ ] **15:** Show inference progress, usage, and failures in the card.
-- [ ] **16:** Add bounded mapping with ordered results.
+- [x] **16:** Add [bounded mapping with ordered settled results](reference/codemode-map.md).
 - [ ] **17:** Evaluate structured results and inference against the baseline.
 
 M2 is the first shipping checkpoint. Subsequent milestones depend on its

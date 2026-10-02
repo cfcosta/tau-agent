@@ -27,7 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures_util::future::join_all;
+use futures_util::{StreamExt, future::join_all, stream};
 use mlua::{
     Function,
     Lua,
@@ -878,6 +878,22 @@ fn install(lua: &Lua, state: &Arc<State>) -> mlua::Result<()> {
             AS_IS,
         )?,
     )?;
+    let s = Arc::clone(state);
+    globals.set(
+        "map",
+        lifted(
+            lua.create_async_function(move |lua, args: MultiValue| {
+                let s = Arc::clone(&s);
+                async move {
+                    match run_map(&lua, &s, args).await? {
+                        Ok(results) => Ok(ok([LuaValue::Table(results)])),
+                        Err(message) => fail(&lua, message),
+                    }
+                }
+            })?,
+            AS_IS,
+        )?,
+    )?;
 
     // Discovery.
     let all = lua.create_table()?;
@@ -1205,6 +1221,118 @@ async fn run_parallel(
         state.disown(thread);
     }
     Ok(Ok(results))
+}
+
+/// Maps a dense, marked array with at most `concurrency` running callbacks.
+/// Each callback thread is created only when its buffered future is polled.
+async fn run_map(
+    lua: &Lua,
+    state: &Arc<State>,
+    args: MultiValue,
+) -> mlua::Result<Result<Table, String>> {
+    let mut args = args.into_iter();
+    let Some(LuaValue::Table(items)) = args.next() else {
+        return Ok(Err("map: items must be an array".into()));
+    };
+    if !items
+        .metatable()
+        .is_some_and(|meta| meta == lua.array_metatable())
+    {
+        return Ok(Err("map: items must be a marked array".into()));
+    }
+    let Some(LuaValue::Function(callback)) = args.next() else {
+        return Ok(Err("map: fn must be a function".into()));
+    };
+    let concurrency = match args.next().unwrap_or(LuaValue::Nil) {
+        LuaValue::Nil => 4,
+        LuaValue::Integer(n) if (1..=32).contains(&n) => n as usize,
+        LuaValue::Number(n)
+            if n.fract() == 0.0 && (1.0..=32.0).contains(&n) =>
+        {
+            n as usize
+        }
+        _ => {
+            return Ok(Err(
+                "map: concurrency must be an integer from 1 to 32".into()
+            ));
+        }
+    };
+    if args.next().is_some() {
+        return Ok(Err(
+            "map: expected items, fn, and optional concurrency".into()
+        ));
+    }
+
+    let mut count = 0;
+    for pair in items.clone().pairs::<LuaValue, LuaValue>() {
+        let (key, _) = pair?;
+        count += 1;
+        if count > 10_000 {
+            return Ok(Err("map: items cannot exceed 10000 elements".into()));
+        }
+        let index = match key {
+            LuaValue::Integer(n) => n,
+            LuaValue::Number(n) if n.fract() == 0.0 => n as i64,
+            _ => return Ok(Err("map: items must be a dense array".into())),
+        };
+        if !(1..=10_000).contains(&index) {
+            return Ok(Err("map: items must be a dense array".into()));
+        }
+    }
+    // `count` keys all within 1..=count proves there are no holes or
+    // mixed keys; Lua tables cannot hold duplicate keys.
+    let mut values = Vec::with_capacity(count);
+    for index in 1..=count {
+        let item = items.raw_get::<LuaValue>(index)?;
+        if item.is_nil() {
+            return Ok(Err("map: items must be a dense array".into()));
+        }
+        values.push(item);
+    }
+
+    let callbacks =
+        stream::iter(values.into_iter().enumerate().map(|(index, item)| {
+            let callback = callback.clone();
+            let state = Arc::clone(state);
+            async move {
+                let thread = lua.create_thread(callback)?;
+                state.own(&thread);
+                let result = thread
+                    .clone()
+                    .into_async::<MultiValue>((item, index + 1))?
+                    .await;
+                state.disown(&thread);
+                Ok::<_, mlua::Error>((index, result))
+            }
+        }))
+        .buffer_unordered(concurrency);
+    futures_util::pin_mut!(callbacks);
+    let mut settled = vec![None; count];
+    while let Some(result) = callbacks.next().await {
+        let (index, result) = result?;
+        settled[index] = Some(result);
+    }
+    let list = lua.create_table_with_capacity(count, 0)?;
+    for result in settled.into_iter().flatten() {
+        let entry = lua.create_table()?;
+        match result {
+            Ok(mut returned) => {
+                entry.set("ok", true)?;
+                let value = match returned.pop_front() {
+                    None | Some(LuaValue::Nil) => lua.null(),
+                    Some(value) => value,
+                };
+                entry.set("value", value)?;
+            }
+            Err(error) => {
+                entry.set("ok", false)?;
+                entry.set("error", error_text(&error))?;
+            }
+        }
+        list.push(entry)?;
+    }
+    list.set_metatable(Some(lua.array_metatable()))?;
+    Ok(Ok(list))
 }
 
 #[cfg(test)]
