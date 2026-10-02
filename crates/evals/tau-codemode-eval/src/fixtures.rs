@@ -134,3 +134,65 @@ pub fn corpus() -> Vec<Fixture> {
         repeated_workflow(true),
     ]
 }
+
+/// Original and changed inputs used by the Agent-owned matrix.
+pub fn matrix_corpus() -> Vec<Fixture> {
+    let mut changed_search = search_with_path("src/Å: next step.rs");
+    changed_search.name = "structured-search-changed".into();
+    changed_search.files[0].text =
+        "// TODO: repair the changed path\nlet n = 3;\n".into();
+    changed_search.expected[0]["text"] =
+        json!("// TODO: repair the changed path");
+
+    let changed_log = changed_log_with_page_marker(2_400, "雪");
+
+    let mut changed_semantic = semantic_changes();
+    changed_semantic.name = "compatibility-extraction-changed".into();
+    changed_semantic.files[0].text = changed_semantic.files[0]
+        .text
+        .replace("retry_count", "retry_limit")
+        .replace("max_attempts", "retry_ceiling")
+        .replace("blue", "green");
+    changed_semantic.expected[0]["before"] = json!("retry_limit");
+    changed_semantic.expected[0]["after"] = json!("retry_ceiling");
+
+    vec![
+        search(),
+        changed_search,
+        test_log(2_400),
+        changed_log,
+        semantic_changes(),
+        changed_semantic,
+        repeated_workflow(false),
+        repeated_workflow(true),
+    ]
+}
+
+/// A changed log with a valid Unicode marker crossing the first artifact page.
+pub fn changed_log_with_page_marker(
+    noise_lines: usize,
+    marker: &str,
+) -> Fixture {
+    let mut changed_log = test_log(noise_lines);
+    changed_log.name = "complete-test-log-changed".into();
+    changed_log.files[0].text = changed_log.files[0]
+        .text
+        .replace("decode_empty", "decode_雪")
+        .replace("cancel_loop", "cancel_🚀")
+        .replace("charge_once", "charge_final");
+    // Put a multibyte marker across the first 8,192-byte page boundary.
+    // The UTF-8 range reader must end before it and advance on the next page.
+    let first_line_end = changed_log.files[0].text.find('\n').unwrap() + 1;
+    let page_prefix = "PASS\tpage_boundary\t";
+    let padding = 8_191 - first_line_end - page_prefix.len();
+    let marker_line =
+        format!("{page_prefix}{}{marker} marker\n", "x".repeat(padding));
+    changed_log.files[0]
+        .text
+        .insert_str(first_line_end, &marker_line);
+    changed_log.expected[0]["test"] = json!("decode_雪");
+    changed_log.expected[1]["test"] = json!("cancel_🚀");
+    changed_log.expected[2]["test"] = json!("charge_final");
+
+    changed_log
+}

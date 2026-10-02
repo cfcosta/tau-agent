@@ -1,5 +1,12 @@
 # Coding tools (`tau-tools`, optional)
 
+Related artifact references: [storage](codemode-artifact-storage.md),
+[file artifacts](codemode-artifact-files.md),
+[ranges](codemode-artifact-ranges.md),
+[command artifacts](codemode-command-artifacts.md), and
+[retention](codemode-artifact-retention.md). The offline
+[evaluation matrix](codemode-evaluation.md) exercises owned grants and pages.
+
 These specs follow pi's built-in tools
 (`packages/coding-agent/src/core/tools/`). Keep the limits and error
 strings as written here. Models have seen them in pi's transcripts. pi

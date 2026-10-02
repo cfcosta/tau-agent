@@ -1,14 +1,14 @@
 # Codemode development plan
 
-Status: approved for implementation. Each numbered task is a separate jj
-commit, with tests and the applicable reference update. Completed boxes
-identify implemented tasks, not planned APIs.
+Status: all 30 tasks are implemented and checked offline. Each numbered task
+has a separate jj commit, tests, and the applicable reference update. The
+references describe the shipped APIs. No live provider evaluation was run.
 
 ## Scope
 
-Codemode will combine structured tool results, bounded inference, reusable
-Luau modules, and large-data artifacts. It will keep fresh VMs and fixed
-model-visible tool definitions. It will not modify Tau's runtime.
+Codemode combines structured tool results, bounded inference, reusable
+Luau modules, and large-data artifacts. It keeps fresh VMs and fixed
+model-visible tool definitions. It does not self-modify Tau's runtime.
 
 Direct tools keep their text output, error behavior, and display limits.
 Programs receive a separate structured value. A structured error can remain
@@ -16,7 +16,8 @@ readable in a script, but its call status must remain an error.
 
 Scratch modules are available immediately within a conversation. Repository
 publication requires the person's approval of the exact source version.
-Live evaluations require an explicit budget and remain opt-in.
+Live evaluations require explicit authorization and a budget. The current
+evaluator has no supported live transport and rejects live mode before use.
 
 ## Tasks
 
@@ -70,7 +71,7 @@ correctness and evaluation, not on assumed token savings.
 - [x] **27:** Let [file reads produce scoped complete artifacts](reference/codemode-artifact-files.md), or explicit publication errors.
 - [x] **28:** Connect [verified complete observed command-output spills](reference/codemode-command-artifacts.md) to scoped artifacts, without conflating EOF with command success.
 - [x] **29:** Add [scoped artifact inspection and explicit history-aware retention](reference/codemode-artifact-retention.md), protecting publication-to-grant races and failing closed on incomplete roots.
-- [ ] **30:** Evaluate the complete matrix, including changed inputs.
+- [x] **30:** [Evaluate production module/artifact workflows on original and changed inputs](reference/codemode-evaluation.md), with independent goldens, scoped paging, bounded summaries and honest development/maintenance amortization; real provider measurements remain unmeasured.
 
 ## Planned contracts
 
@@ -106,7 +107,7 @@ existing text fallback. Images retain their explicit `image()` behavior.
 Completeness applies to the observed operation and its bounds. A limit,
 unreadable entry, or byte cut must not imply a complete observation.
 Structured results originate from the operation's records, not from parsing
-its formatted display. M4 will supply range access to omitted bytes.
+its formatted display. M4 supplies scoped range access to omitted bytes.
 
 ### Inference
 
@@ -170,8 +171,18 @@ The existing `hegel.toml` supplies test profiles and reproducible CI runs.
 Examples cover operational errors and protocol behavior that properties do
 not describe conveniently.
 
-The evaluation records task correctness, uncached/cached input tokens,
-output tokens, total inference cost, round trips, latency, and repair
-attempts. It compares current codemode, improved codemode, hand-written
-modules, and agent-written modules. It includes changed inputs and counts
-module creation, testing, and maintenance costs.
+The offline evaluation records task correctness, actual native tool calls,
+simulated model operations, development/testing/maintenance stages, failed
+reuse attempts, and optional observed host latency. It compares explicit
+text and structured policies, assistant-scripted reference modules, and
+caller-supplied immutable modules. Caller authorship and usage claims remain
+unverified. Provider tokens, cost, latency, and savings remain unmeasured;
+missing measurements are null. Changed inputs and independent goldens check
+reuse instead of assuming frozen answers continue to work.
+
+Final validation: 882 tests passed across the seven affected core/evaluation
+crates, with eight existing opt-in tests ignored; 25 `tau-ui` library tests
+passed. Canonical formatting, affected-crate all-target Clippy, host-disabled
+library Clippy, UI compilation, deterministic/timed offline matrix CLI runs,
+and relative reference links passed. Host-only integration tests are not
+phone targets. No live evaluation, automatic pruning, or push was performed.

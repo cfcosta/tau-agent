@@ -1,5 +1,15 @@
 # Codemode (`tau-codemode`)
 
+Related reference pages: [evaluation](codemode-evaluation.md),
+[module records](codemode-modules-records.md),
+[module loading](codemode-module-loading.md),
+[module tools](codemode-module-tools.md),
+[module tests](codemode-module-tests.md),
+[inference](codemode-inference.md),
+[inference request](codemode-inference-request.md),
+[inference budget](codemode-inference-budget.md), and
+[inference traces](codemode-inference-traces.md).
+
 - Status: built (`crates/plugins/tau-codemode`): the engine, behind a
   `Host` trait, the `Codemode` plugin that wires it to `ToolCtx::call`,
   and its interface, `CodemodeUi` (a `UiPlugin`, after

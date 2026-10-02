@@ -90,6 +90,25 @@ fn serialized_workloads_preserve_inputs_and_answers(tc: TestCase) {
     assert_eq!(decoded, fixture);
 }
 
+#[hegel::test]
+fn unicode_page_boundary_markers_preserve_failure_oracle(tc: TestCase) {
+    // Inventory: changing padding and Unicode marker preserves the independent
+    // TSV oracle while a multibyte codepoint crosses the first 8 KiB page.
+    // The marker is selected from valid UTF-8 codepoints by construction;
+    // shrinking reduces the padding and marker index, not the boundary rule.
+    // Workspace hegel.toml supplies local and CI case counts.
+    let noise_lines =
+        tc.draw(gs::integers::<usize>().min_value(2_100).max_value(4_000));
+    let marker_index = tc.draw(gs::integers::<usize>().max_value(2));
+    let marker = ["雪", "🚀", "é"][marker_index];
+    let fixture = fixtures::changed_log_with_page_marker(noise_lines, marker);
+    let text = &fixture.files[0].text;
+    let marker_text = format!("{marker} marker");
+    assert_eq!(text.find(marker_text.as_str()), Some(8_191));
+    assert_eq!(failures(text), fixture.expected);
+    assert!(text.len() > 50 * 1024);
+}
+
 #[test]
 fn display_windows_omit_required_evidence() {
     let fixture = fixtures::test_log(2_400);

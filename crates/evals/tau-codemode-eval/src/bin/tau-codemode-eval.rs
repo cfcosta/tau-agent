@@ -2,10 +2,9 @@
 
 use std::{env, fs, path::PathBuf};
 
-use tau_codemode_eval::runner::{
-    LiveLimits,
-    evaluate_offline_with_timings,
-    reject_live,
+use tau_codemode_eval::{
+    matrix::{evaluate_matrix, load_manifest},
+    runner::{LiveLimits, evaluate_offline_with_timings, reject_live},
 };
 
 fn parse_positive<T: std::str::FromStr>(
@@ -18,42 +17,79 @@ fn parse_positive<T: std::str::FromStr>(
         .map_err(|_| format!("invalid value for {name}"))
 }
 
-fn parse_arguments() -> Result<(Option<PathBuf>, bool, bool, LiveLimits), String>
-{
+struct Arguments {
+    output: Option<PathBuf>,
+    live: bool,
+    timings: bool,
+    matrix: bool,
+    manifest: Option<PathBuf>,
+    limits: LiveLimits,
+}
+
+fn parse_arguments() -> Result<Arguments, String> {
     let mut args = env::args().skip(1);
     let mut output = None;
     let mut live = false;
     let mut timings = false;
+    let mut matrix = false;
+    let mut manifest = None;
     let mut limits = LiveLimits::default();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--output" => output = Some(PathBuf::from(args.next().ok_or("missing value for --output")?)),
             "--live" => live = true,
             "--timings" => timings = true,
+            "--matrix" => matrix = true,
+            "--module-manifest" => manifest = Some(PathBuf::from(args.next().ok_or("missing value for --module-manifest")?)),
             "--max-provider-attempts" => limits.max_provider_attempts = Some(parse_positive(args.next(), &arg)?),
             "--max-usd" => limits.max_usd = Some(parse_positive(args.next(), &arg)?),
             "--max-seconds" => limits.max_seconds = Some(parse_positive(args.next(), &arg)?),
             "--max-output-tokens" => limits.max_output_tokens = Some(parse_positive(args.next(), &arg)?),
-            "--help" => return Err("usage: tau-codemode-eval [--output PATH] [--timings] [--live --max-provider-attempts N --max-usd USD --max-seconds N --max-output-tokens N]".into()),
+            "--help" => return Err("usage: tau-codemode-eval [--output PATH] [--timings] [--matrix [--module-manifest PATH]] [--live --max-provider-attempts N --max-usd USD --max-seconds N --max-output-tokens N]".into()),
             _ => return Err(format!("unknown argument: {arg}")),
         }
     }
-    Ok((output, live, timings, limits))
+    if manifest.is_some() && !matrix {
+        return Err("--module-manifest requires --matrix".into());
+    }
+    Ok(Arguments {
+        output,
+        live,
+        timings,
+        matrix,
+        manifest,
+        limits,
+    })
 }
 
 fn main() -> Result<(), String> {
-    let (output, live, timings, limits) = parse_arguments()?;
+    let Arguments {
+        output,
+        live,
+        timings,
+        matrix,
+        manifest,
+        limits,
+    } = parse_arguments()?;
     if live {
         return reject_live(limits);
     }
     if limits != LiveLimits::default() {
         return Err("provider limits require --live".into());
     }
+    let supplied = manifest.as_deref().map(load_manifest).transpose()?;
+    let matrix_report = if matrix {
+        Some(evaluate_matrix(supplied.as_ref(), timings)?)
+    } else {
+        None
+    };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| error.to_string())?;
-    let report = runtime.block_on(evaluate_offline_with_timings(timings))?;
+    let mut report =
+        runtime.block_on(evaluate_offline_with_timings(timings))?;
+    report.matrix = matrix_report;
     let json = serde_json::to_string_pretty(&report)
         .map_err(|error| error.to_string())?;
     if let Some(path) = output {

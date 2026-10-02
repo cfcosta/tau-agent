@@ -33,7 +33,7 @@ use tau_tools::{grep::Grep, path::Root, read::Read};
 
 use crate::fixtures::{self, Fixture};
 
-const SEARCH_TEXT: &str = r#"
+pub(crate) const SEARCH_TEXT: &str = r#"
 local display = tools.grep({pattern = 'TODO:', glob = '*.rs', literal = true})
 local found = array({})
 for line in string.gmatch(display, '[^\n]+') do
@@ -43,7 +43,7 @@ end
 return {result = found, incomplete = string.find(display, 'limit reached', 1, true) ~= nil}
 "#;
 
-const SEARCH_STRUCTURED: &str = r#"
+pub(crate) const SEARCH_STRUCTURED: &str = r#"
 local listing = tools.grep({pattern = 'TODO:', glob = '*.rs', literal = true})
 local settled = map(array(listing.lines), function(line)
     if line.kind ~= 'match' or line.truncated then error('partial match') end
@@ -57,7 +57,7 @@ end
 return {result = found, incomplete = not listing.complete}
 "#;
 
-const LOG_TEXT: &str = r#"
+pub(crate) const LOG_TEXT: &str = r#"
 local display = tools.read({path = 'tests.log'})
 local failures = array({})
 for line in string.gmatch(display, '[^\n]+') do
@@ -67,7 +67,7 @@ end
 return {result = failures, incomplete = string.find(display, 'Use offset=', 1, true) ~= nil}
 "#;
 
-const LOG_STRUCTURED: &str = r#"
+pub(crate) const LOG_STRUCTURED: &str = r#"
 local matches = tools.grep({pattern = '^FAIL\\t', path = 'tests.log', limit = 100})
 local failures = array({})
 for _, line in ipairs(matches.lines) do
@@ -81,7 +81,7 @@ return {result = failures, incomplete = not matches.complete}
 
 // A task-specific text parser is a legitimate old-program reference; it does
 // not represent the entire older VM's capability.
-const SEMANTIC_TEXT: &str = r#"
+pub(crate) const SEMANTIC_TEXT: &str = r#"
 local text = tools.read({path = 'changes.md'})
 local changes = array({})
 local before, after = string.match(text, 'option `([^`]+)` was removed%. Clients must use `([^`]+)` instead')
@@ -92,7 +92,7 @@ end
 return {result = changes, incomplete = string.find(text, 'Use offset=', 1, true) ~= nil}
 "#;
 
-const SEMANTIC_SIMULATOR: &str = r#"
+pub(crate) const SEMANTIC_SIMULATOR: &str = r#"
 local document = tools.read({path = 'changes.md'})
 if not document.complete then error('semantic context is incomplete') end
 local changes = tools.infer({
@@ -138,6 +138,8 @@ pub enum Mode {
     TextOnlyReference,
     StructuredTools,
     ScriptedInferSimulator,
+    AssistantScriptedModule,
+    ExternalImmutableModule,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -170,6 +172,8 @@ pub struct EvalReport {
     pub format_version: u32,
     pub evidence: String,
     pub cases: Vec<CaseReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matrix: Option<crate::matrix::MatrixReport>,
 }
 
 struct OfflineHost {
@@ -281,7 +285,10 @@ fn answer_scripted_semantic_request(
     }
 }
 
-fn stage_files(root: &Path, fixture: &Fixture) -> Result<(), String> {
+pub(crate) fn stage_files(
+    root: &Path,
+    fixture: &Fixture,
+) -> Result<(), String> {
     for file in &fixture.files {
         let relative = Path::new(&file.path);
         if relative.is_absolute()
@@ -299,7 +306,7 @@ fn stage_files(root: &Path, fixture: &Fixture) -> Result<(), String> {
     Ok(())
 }
 
-async fn grade_case(
+pub(crate) async fn grade_case(
     fixture: &Fixture,
     mode: Mode,
     source: &str,
@@ -404,6 +411,7 @@ pub async fn evaluate_offline_with_timings(
         format_version: 1,
         evidence: evidence.into(),
         cases,
+        matrix: None,
     })
 }
 

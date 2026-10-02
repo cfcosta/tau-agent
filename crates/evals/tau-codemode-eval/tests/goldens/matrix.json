@@ -1,0 +1,368 @@
+{
+  "evidence": "offline_agent_deterministic",
+  "policy": [
+    {
+      "fixture": "structured-search",
+      "mode": "text_only_reference",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "structured-search",
+      "mode": "structured_tools",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "structured-search-changed",
+      "mode": "text_only_reference",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "structured-search-changed",
+      "mode": "structured_tools",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "complete-test-log",
+      "mode": "text_only_reference",
+      "correct": false,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "complete-test-log",
+      "mode": "structured_tools",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "complete-test-log-changed",
+      "mode": "text_only_reference",
+      "correct": false,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "complete-test-log-changed",
+      "mode": "structured_tools",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "compatibility-extraction",
+      "mode": "text_only_reference",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "compatibility-extraction",
+      "mode": "scripted_infer_simulator",
+      "correct": true,
+      "tool_calls": 2,
+      "simulated_round_trips": 1,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "compatibility-extraction-changed",
+      "mode": "text_only_reference",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "compatibility-extraction-changed",
+      "mode": "scripted_infer_simulator",
+      "correct": false,
+      "tool_calls": 2,
+      "simulated_round_trips": 1,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "workflow-original",
+      "mode": "text_only_reference",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "workflow-original",
+      "mode": "structured_tools",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "workflow-changed",
+      "mode": "text_only_reference",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    },
+    {
+      "fixture": "workflow-changed",
+      "mode": "structured_tools",
+      "correct": true,
+      "tool_calls": 1,
+      "simulated_round_trips": 0,
+      "provider_round_trips": 0
+    }
+  ],
+  "module": {
+    "origin": "assistant_scripted_reference",
+    "version": "ccc985a48315007cbbf25f5c6920cdf396f117da4cdc30d10982661bfa437ba5",
+    "development_calls": {
+      "module_define": 1,
+      "module_test": 1,
+      "module_select": 1
+    },
+    "maintenance_calls": {
+      "module_test": 1,
+      "module_inspect": 1,
+      "module_select": 1
+    },
+    "development_model_operations": 2,
+    "maintenance_model_operations": 2,
+    "successful_reuse_runs": 8,
+    "observed_provider_usage_per_run": null,
+    "cases": [
+      {
+        "fixture": "structured-search",
+        "correct": true,
+        "result": [
+          {
+            "path": "src/a: one.rs",
+            "line": 1,
+            "text": "// TODO: repair retries"
+          },
+          {
+            "path": "src/雪.rs",
+            "line": 2,
+            "text": "// TODO: handle empty arrays"
+          }
+        ],
+        "read_calls": 0,
+        "grep_calls": 1,
+        "artifact_pages_at_least_two": false,
+        "log_evidence_matches_file": null,
+        "reported_usage": {
+          "uncached_input_tokens": null,
+          "cached_input_tokens": null,
+          "cache_write_tokens": null,
+          "output_tokens": null,
+          "usd": null
+        },
+        "provider_round_trips": 0
+      },
+      {
+        "fixture": "structured-search-changed",
+        "correct": true,
+        "result": [
+          {
+            "path": "src/Å: next step.rs",
+            "line": 1,
+            "text": "// TODO: repair the changed path"
+          },
+          {
+            "path": "src/雪.rs",
+            "line": 2,
+            "text": "// TODO: handle empty arrays"
+          }
+        ],
+        "read_calls": 0,
+        "grep_calls": 1,
+        "artifact_pages_at_least_two": false,
+        "log_evidence_matches_file": null,
+        "reported_usage": {
+          "uncached_input_tokens": null,
+          "cached_input_tokens": null,
+          "cache_write_tokens": null,
+          "output_tokens": null,
+          "usd": null
+        },
+        "provider_round_trips": 0
+      },
+      {
+        "fixture": "complete-test-log",
+        "correct": true,
+        "result": [
+          {
+            "test": "decode_empty",
+            "message": "empty array became object"
+          },
+          {
+            "test": "cancel_loop",
+            "message": "loop ignored cancellation"
+          },
+          {
+            "test": "charge_once",
+            "message": "usage was charged twice"
+          }
+        ],
+        "read_calls": 1,
+        "grep_calls": 0,
+        "artifact_pages_at_least_two": true,
+        "log_evidence_matches_file": true,
+        "reported_usage": {
+          "uncached_input_tokens": null,
+          "cached_input_tokens": null,
+          "cache_write_tokens": null,
+          "output_tokens": null,
+          "usd": null
+        },
+        "provider_round_trips": 0
+      },
+      {
+        "fixture": "complete-test-log-changed",
+        "correct": true,
+        "result": [
+          {
+            "test": "decode_雪",
+            "message": "empty array became object"
+          },
+          {
+            "test": "cancel_🚀",
+            "message": "loop ignored cancellation"
+          },
+          {
+            "test": "charge_final",
+            "message": "usage was charged twice"
+          }
+        ],
+        "read_calls": 1,
+        "grep_calls": 0,
+        "artifact_pages_at_least_two": true,
+        "log_evidence_matches_file": true,
+        "reported_usage": {
+          "uncached_input_tokens": null,
+          "cached_input_tokens": null,
+          "cache_write_tokens": null,
+          "output_tokens": null,
+          "usd": null
+        },
+        "provider_round_trips": 0
+      },
+      {
+        "fixture": "compatibility-extraction",
+        "correct": true,
+        "result": [
+          {
+            "component": "connection option",
+            "before": "retry_count",
+            "after": "max_attempts"
+          },
+          {
+            "component": "lookup function",
+            "before": "raises NotFound",
+            "after": "returns null"
+          }
+        ],
+        "read_calls": 1,
+        "grep_calls": 0,
+        "artifact_pages_at_least_two": false,
+        "log_evidence_matches_file": null,
+        "reported_usage": {
+          "uncached_input_tokens": null,
+          "cached_input_tokens": null,
+          "cache_write_tokens": null,
+          "output_tokens": null,
+          "usd": null
+        },
+        "provider_round_trips": 0
+      },
+      {
+        "fixture": "compatibility-extraction-changed",
+        "correct": true,
+        "result": [
+          {
+            "component": "connection option",
+            "before": "retry_limit",
+            "after": "retry_ceiling"
+          },
+          {
+            "component": "lookup function",
+            "before": "raises NotFound",
+            "after": "returns null"
+          }
+        ],
+        "read_calls": 1,
+        "grep_calls": 0,
+        "artifact_pages_at_least_two": false,
+        "log_evidence_matches_file": null,
+        "reported_usage": {
+          "uncached_input_tokens": null,
+          "cached_input_tokens": null,
+          "cache_write_tokens": null,
+          "output_tokens": null,
+          "usd": null
+        },
+        "provider_round_trips": 0
+      },
+      {
+        "fixture": "workflow-original",
+        "correct": true,
+        "result": {
+          "command": "printf 'checked-v1\\n'"
+        },
+        "read_calls": 1,
+        "grep_calls": 0,
+        "artifact_pages_at_least_two": false,
+        "log_evidence_matches_file": null,
+        "reported_usage": {
+          "uncached_input_tokens": null,
+          "cached_input_tokens": null,
+          "cache_write_tokens": null,
+          "output_tokens": null,
+          "usd": null
+        },
+        "provider_round_trips": 0
+      },
+      {
+        "fixture": "workflow-changed",
+        "correct": true,
+        "result": {
+          "command": "printf 'checked-v2\\n'"
+        },
+        "read_calls": 1,
+        "grep_calls": 0,
+        "artifact_pages_at_least_two": false,
+        "log_evidence_matches_file": null,
+        "reported_usage": {
+          "uncached_input_tokens": null,
+          "cached_input_tokens": null,
+          "cache_write_tokens": null,
+          "output_tokens": null,
+          "usd": null
+        },
+        "provider_round_trips": 0
+      }
+    ],
+    "attempted_reuse_runs": 8
+  },
+  "provider_attempts": 0,
+  "observed_provider_usage": null,
+  "observed_provider_latency_ms": null,
+  "observed_provider_cost_usd": null
+}

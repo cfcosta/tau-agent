@@ -10,9 +10,13 @@ publish.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tau-agent = { path = "../../tau-agent" }
 tau-ai = { path = "../../tau-ai" }
+tau-artifacts.workspace = true
 tau-codemode = { path = "../../plugins/tau-codemode" }
+tau-store.workspace = true
+tau-testing.workspace = true
 tau-tools = { path = "../../plugins/tau-tools" }
 tempfile.workspace = true
 tokio.workspace = true

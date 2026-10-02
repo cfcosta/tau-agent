@@ -1,88 +1,54 @@
 # Codemode evaluation
 
-`tau-codemode-eval` runs a fixed offline corpus through the production codemode
-VM. Its host calls the production `tau-tools` `grep` and `read` implementations
-on staged fixture files. The semantic mode uses a labeled, scripted `infer`
-simulator with a handcrafted response record and the production `InferRequest`
-schema validator and fixed infer reply shape. It does not exercise the Agent
-inference transport, durable budget or private trace pipeline; those have
-separate integration tests. No provider is opened by the offline command.
+`tau-codemode-eval` has one JSON report API. Its default report (`format_version: 1`) and `tests/goldens/offline.json` retain the original six-case offline baseline. `--matrix` adds a `matrix` member without changing those baseline rows. The checked-in `crates/evals/tau-codemode-eval/tests/goldens/matrix.json` is an authored expected projection: the matrix test compares it with actual deterministic execution. It includes correctness, results, call categories, simulated operations, and null provider metrics. The full report also includes exact artifact page counts and content hashes.
 
-## Commands
+## CLI
 
-From the repository root:
+| Option                              | Effect                                                                       |
+| ----------------------------------- | ---------------------------------------------------------------------------- |
+| `--matrix`                          | Run original and changed policy cases plus the Agent-owned reference module. |
+| `--module-manifest PATH`            | With `--matrix`, add one externally supplied immutable module source.        |
+| `--output PATH`                     | Write pretty JSON and a final newline; otherwise write to standard output.   |
+| `--timings`                         | Include observed host VM wall milliseconds. Results vary by machine.         |
+| `--live` plus all four budget flags | Reject with `live evaluation is unsupported`; no transport is opened.        |
 
-```sh
-nix develop -c cargo run -p tau-codemode-eval --bin tau-codemode-eval
-nix develop -c cargo run -p tau-codemode-eval --bin tau-codemode-eval -- --output /tmp/codemode-evaluation.json
-nix develop -c cargo run -p tau-codemode-eval --bin tau-codemode-eval -- --timings
-```
+Budget flags are `--max-provider-attempts`, `--max-usd`, `--max-seconds`, and `--max-output-tokens`. Each must be positive for the live gate; complete budgets still fail closed. Budget flags without `--live` are rejected. `--module-manifest` without `--matrix` is rejected.
 
-The default writes a pretty-printed `EvalReport` JSON object to standard
-output. `--output PATH` writes the same bytes, ending in a newline, to `PATH`.
-The report is deterministic for the fixed corpus. The golden is
-`crates/evals/tau-codemode-eval/tests/goldens/offline.json`.
-`--timings` fills each case's `latency_ms` with the production VM outcome's
-observed wall time. It changes `evidence` from `offline_deterministic_scripts`
-to `offline_observed_host_runtime`; that report varies with the host and does
-not match the deterministic golden.
+## Matrix modes
 
-## Modes and evidence
+| Mode                        | Execution path                                                                                        | Evidence                                                                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `text_only_reference`       | Fixed Luau program in the VM with display-only `grep`/`read` output                                   | Legacy **display policy** reference. It does not bound the capability of an old VM that could page files or use shell tools.      |
+| `structured_tools`          | Fixed Luau program in the VM with production structured `grep`/`read` output                          | Actual local tool calls and VM result.                                                                                            |
+| `scripted_infer_simulator`  | Fixed Luau program and a scripted, exact-input `infer` simulator                                      | SIMULATED semantic result and schema validation; no provider inference. Changed semantic input has no simulator record and fails. |
+| `assistant_scripted_module` | `Agent` with `ScriptedModel`, production `Codemode`, `CodingTools.with_artifacts(Bytes)`, and `Store` | Actual module definition, fake-tool test, selection, require, artifact publication and paging. Parent model turns are SIMULATED.  |
+| `external_immutable_module` | Same Agent path, using exact caller-supplied source                                                   | Origin is the manifest's `human` or `agent` claim and remains unverified. The source is not newly generated by this command.      |
 
-| Mode                       | Program and evidence                                                                                                                                                                                                                                                                    |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `text_only_reference`      | Assistant-scripted Luau programs consume the tools' display text. Search parses ordinary `path:line: text` records, including a colon in a path. The log program reads one display window and marks the partial result incomplete. The semantic program is a task-specific text parser. |
-| `structured_tools`         | Assistant-scripted Luau programs consume production structured `grep` records and `complete` flags. Search transforms records with codemode `map`; log filters all failure lines with grep.                                                                                             |
-| `scripted_infer_simulator` | An assistant-scripted Luau program reads structured text, then calls a scripted `infer` tool. The simulator accepts one exact document and task, validates its response against the supplied schema, and rejects changed documents.                                                     |
+The module function receives a task table. `kind` is `search`, `log`, `semantic`, or `workflow`; `path`, `pattern`, and `glob` are supplied where relevant. It reads current staged files through production tools. The built-in reference source contains no fixture answer table. `Fixture.expected` is read only after the VM returns. `correct` requires exact result equality and a complete result. For logs it also requires at least two observed `artifact_read` calls, an owned artifact ID, and matching byte count, weighted byte checksum, and publisher SHA-256 digest against the independent staged file. The checksum is noncryptographic. Full log text stays inside the VM and is not returned to the parent transcript.
 
-The fixture `expected` value is read only when grading the completed VM
-output. Programs and simulator responses are fixed independently of that
-value. `correct` requires an exact answer and `incomplete == false`; a partial
-answer is not credited as success. A changed fixture answer in the wrong-answer
-test is detected. The golden test compares actual VM and tool output to a
-checked-in reference JSON report.
+The corpus has original and changed search paths with Unicode, colons, and spaces; long logs with first, middle, and last failures and Unicode names; breaking semantic changes alongside a nonbreaking distractor; and config inputs where `verify_command` replaces `test_command`. The changed log places a multibyte marker across an 8,192-byte page boundary. The log exceeds direct line and byte display limits. Module log execution obtains an owned grant from `read` and advances through real `artifact_read` ranges. The report's `log_evidence_matches_file` records byte count, checksum, and publisher digest comparison; this is consistency evidence rather than a byte-for-byte host reconstruction. Native artifact range tests independently check exact paging. A fork from the owning checkpoint reads the grant; an unrelated run and a separate Store are denied. These results appear in `scope_checks`.
 
-The text-only mode is a display-policy reference, **not** an upper bound on
-older codemode capability. An older program could use `bash`/`grep` or page
-`read` to inspect the complete log despite a single truncated display. A
-difference between these fixed programs establishes their behavior on these
-fixtures; it does not establish that older codemode could not solve them.
+## Module manifest
 
-## Report fields
+The manifest is a JSON object with `origin` (`human` or `agent`), `name`, `version`, `source`, and optional `signatures`, `dependencies`, `dependency_sources`, `development_usage`, and `maintenance_usage`. The file is stream-read with a 2 MiB cap. Up to 127 dependency sources plus the root fit the scratch library's 128-version ceiling; their normalized serialized definitions together must fit 1 MiB. Each definition has a 64 KiB source limit, a 16 KiB signature limit, and at most 32 dependency pins. Each `dependency_sources` entry has its own exact `name`, `version`, `source`, `signatures`, and dependency pins. Entries are ordered so each dependency refers only to an earlier entry; root pins must resolve to supplied entries. `version` is the production `Definition` content hash of the exact name, source, signatures, and dependency map. Validation rejects cycles, duplicate sources, a mismatched hash, invalid module name, missing pin, over-quota content, and a non-object signature value before execution. Reported USD must be finite and nonnegative; overflowing token totals are unavailable. Each source is compiled through `module_define`; the command does not synthesize or edit it. A root module function must accept current task parameters and return `{result=..., incomplete=false}`. For logs it must also return bounded failures, `bytes` (byte length), `checksum` (sum of one-based byte position times byte value modulo 1,000,000,007), `publisher_digest`, and `artifact_id` from the owned `read` grant. It must not use frozen fixture answers or answer lookups keyed to a fixture variant. The evaluator cannot prove that arbitrary external source obeys this semantic constraint; its result and provenance remain labeled external and unverified.
 
-`format_version` is `1`. `cases` contains one row per fixture and mode.
+The development stage actually calls `module_define`, `module_test` with a fake `read`, and `module_select`. The maintenance stage tests the changed `verify_command` input with a fake `read` and selects the tested version. Both test reports must pass before any reuse case runs. A compile failure, failed test, or failed selection yields zero successful reuse runs and null warm amortization. Each reuse case calls `require` in a new production VM; reuse that calls `module_define`, `module_test`, `module_select`, or `infer` is marked incomplete. Modules are scratch conversation records. There is no repository promotion or self approval path in this command.
 
-| Field                                                           | Meaning                                                                                                                                                                                                                                                    |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fixture`, `mode`, `result`, `correct`, `incomplete`, `failure` | Case identity, decoded VM answer, grading, partial-state flag, and VM/tool error.                                                                                                                                                                          |
-| `tool_calls`                                                    | Observed nested codemode call count, including scripted `infer`.                                                                                                                                                                                           |
-| `provider_round_trips`                                          | Actual provider attempts observed; always zero offline.                                                                                                                                                                                                    |
-| `simulated_round_trips`                                         | Observed calls named `infer` to the scripted semantic simulator; each call is counted separately from provider attempts.                                                                                                                                   |
-| `repairs`                                                       | Observed argument or schema repairs; zero in these fixed programs.                                                                                                                                                                                         |
-| `latency_ms`                                                    | `null` by default. With `--timings`, the production VM's `Outcome.wall` rounded down to milliseconds, from an `Instant` spanning script execution and awaited tool I/O. It excludes fixture staging and report serialization. Small runs can round to `0`. |
-| `reported_usage`                                                | Separate uncached input, cached input, cache-write, output, and USD fields. Each is `null` offline because no provider reported usage.                                                                                                                     |
+## Report fields and arithmetic
 
-The default report provides deterministic correctness evidence. The optional
-timed report adds nondeterministic host runtime evidence, not provider latency.
-Neither report measures provider token savings, cost savings, or latency
-savings. Prompt byte counts
-and scripted answers are not substituted for provider usage. Repository,
-artifact, and module-amortization experiments are outside this corpus.
+`matrix.policy_cases` contains the display, structured, and simulated-infer rows. `matrix.modules[*]` contains source origin, immutable version, development and maintenance status, per-case results, scope denials, and amortization. `StageCalls.codemode` counts the observed outer tool call. `StageCalls.nested` counts names in production Codemode result details, including artifact pages and module calls. `StageCalls.simulated_model_operations` counts ScriptedModel requests. `StageCalls.simulated_sdk_usage` contains the ScriptedModel SDK's token estimates, split into uncached input, cache-read input, cache-write input, and output; its USD field is null. `StageCalls.telemetry_complete` records whether the production result included every nested call; incomplete telemetry cannot pass a stage or case. These are separate quantities. `provider_attempts` and per-case `provider_round_trips` are zero for this offline command. `observed_provider_usage`, `observed_provider_latency_ms`, and `observed_provider_cost_usd` remain null. `CaseReport.latency_ms` is null by default; `--timings` reads the production Codemode result detail field `wall_ms` when present and otherwise leaves it null. It is VM wall time, not provider latency.
 
-## Live gate
+`attempted_reuse_runs` counts every executed case; `successful_reuse_runs` counts only correct cases. `cold_cumulative_calls` is development plus maintenance plus every attempted reuse case through the first correct one, including preceding failures. It is null if no case succeeds. `warm_cumulative_calls` is development plus maintenance plus all attempted reuse cases, including failed ones. `calls_per_successful_run` divides warm cumulative calls by the number of correct reuse cases. A failed stage or zero correct cases has no successful reuse denominator. `scope_checks.calls` separately counts three evaluation-only artifact grant probes and is excluded from cold, warm, and per-success amortization. The optional manifest's `development_usage` and `maintenance_usage` are caller-reported, unverified values. Their uncached input, cache-read input, cache-write input, and output token channels remain separate; missing any channel makes `externally_reported_development_per_run` null. Each token channel is an exact `{total_tokens, reuse_runs}` fraction, so integer division cannot discard tokens. USD is null unless both stages report it. This externally reported fraction is not observed provider usage and is never added to an unmeasured reuse cost. `observed_provider_usage_per_run` remains null.
 
-`--live` requires positive values for `--max-provider-attempts`, `--max-usd`,
-`--max-seconds`, and `--max-output-tokens`. A complete guarded provider
-transport is not installed, so a fully budgeted `--live` invocation returns
-`live evaluation is unsupported` before constructing a provider. There is no
-automatic live fallback.
+Each scripted Codemode call has a 30-second VM deadline and the default 10,000-output-token ceiling. Log source returns at most 128 failures with names and messages of at most 256 bytes each; excess makes the result incomplete. Production module source, fake-test, artifact-byte, and VM memory quotas also apply. Artifacts and modules are immutable snapshots. Grants belong to an Agent conversation scope. The evaluation holds its temporary files and artifact store only for the matrix run; dropping their temporary directories is its explicit cleanup. There is no model garbage collection, automatic repository approval, or network access in the offline path.
+
+## Expected regressions
+
+- A single display window misses required log failures. The structured grep and paged module recover them.
+- The exact-input infer simulator rejects changed semantic evidence; this is a simulator limitation, not measured model accuracy.
+- A supplied module hardcoded to `test_command` can pass the original development fake test but fails the changed maintenance fake test and earns no reuse credit.
+- A malformed module fails at definition; an incomplete external usage claim yields null amortization.
 
 ## Checks
 
-From the workspace:
-
-```sh
-nix develop -c cargo test -p tau-codemode-eval -p tau-codemode -p tau-tools
-nix develop -c cargo clippy -p tau-codemode-eval --all-targets -- -D warnings
-nix develop -c cargo check -p tau-codemode-eval --no-default-features
-```
+The package tests compare the actual deterministic JSON report with both checked-in goldens, verify changed-input and failure cases, and run Hegel properties governed by workspace `hegel.toml`. Focused checks are `cargo test -p tau-codemode-eval` and `cargo clippy -p tau-codemode-eval --all-targets -- -D warnings` inside the repository's Nix development shell. The dispatcher runs the full feature suite.
