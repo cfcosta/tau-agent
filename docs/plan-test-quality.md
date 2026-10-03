@@ -15,7 +15,7 @@ replacement; probe results are distinct from full-suite mutation scores.
 Audit numbers refer to the approved 40-test shortlist.
 
 - [x] **01 — MCP names:** independent plain/collision/length naming oracle (#2).
-- [ ] **02 — Recovery:** independent status/body/precedence expectations (#3).
+- [x] **02 — Recovery:** independent status/body/precedence expectations (#3).
 - [ ] **03 — Token estimates:** independent Unicode/image/per-message accounting (#4).
 - [ ] **04 — Store UI:** compare durable and UI folds to an operation model (#5).
 - [ ] **05 — Request frames:** preserve original generated maps through both encodings (#6).
@@ -52,9 +52,10 @@ ones. It will not claim exhaustive mutation coverage or unmeasured savings.
 These are individual injected faults in disposable workspaces, not a full
 mutation campaign. Only failure of the named replacement counts as detection.
 
-| Batch | Injected fault                         | Replacement that failed                    |
-| ----- | -------------------------------------- | ------------------------------------------ |
-| 01    | Plain-name prefix loses one underscore | `short_ascii_pairs_keep_exact_plain_names` |
+| Batch | Injected fault                              | Replacement that failed                                    |
+| ----- | ------------------------------------------- | ---------------------------------------------------------- |
+| 01    | Plain-name prefix loses one underscore      | `short_ascii_pairs_keep_exact_plain_names`                 |
+| 02    | Recovery treats HTTP 429 as a request fault | `status_boundaries_apply_to_every_unrecognized_body_shape` |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before

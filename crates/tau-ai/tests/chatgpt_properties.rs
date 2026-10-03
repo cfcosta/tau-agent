@@ -63,12 +63,57 @@ const CODES: [(&str, Recovery); 9] = [
     ),
 ];
 
+fn expected_status_fallback(status: u16) -> Recovery {
+    match status {
+        401 => Recovery::SignInAgain,
+        403 => Recovery::Restricted,
+        408 | 409 | 429 | 500..=599 => Recovery::RetryLater,
+        _ => Recovery::FixRequest,
+    }
+}
+
 fn client_id() -> impl PrintableGenerator<String> {
     gs::from_regex("oaiapp_[A-Za-z0-9]{1,24}").fullmatch(true)
 }
 
 fn some_text() -> impl PrintableGenerator<String> {
     gs::text().min_size(1).max_size(40)
+}
+
+#[hegel::composite]
+fn unrecognized_error_body(tc: &TestCase) -> String {
+    match tc.draw(gs::integers::<u8>().min_value(0).max_value(3)) {
+        0 => {
+            let suffix = tc.draw(
+                gs::text()
+                    .alphabet("abcdefghijklmnopqrstuvwxyz0123456789 ")
+                    .max_size(50),
+            );
+            format!("not-json:{suffix}")
+        }
+        1 => {
+            let message = tc.draw(
+                gs::text()
+                    .alphabet("abcdefghijklmnopqrstuvwxyz0123456789 ")
+                    .max_size(20),
+            );
+            json!({"error": {"message": message}}).to_string()
+        }
+        2 => {
+            let suffix = tc.draw(
+                gs::text()
+                    .alphabet("abcdefghijklmnopqrstuvwxyz0123456789_")
+                    .max_size(24),
+            );
+            let code = format!("future_{suffix}");
+            json!({"error": {"code": code}}).to_string()
+        }
+        _ => {
+            let wrong_type = tc
+                .draw(gs::sampled_from(vec!["null", "true", "7", "[]", "{}"]));
+            format!(r#"{{"error":{{"code":{wrong_type}}}}}"#)
+        }
+    }
 }
 
 fn map(url: &Url) -> HashMap<String, String> {
@@ -240,11 +285,14 @@ fn any_other_state_is_refused_first(tc: TestCase) {
     ));
 }
 
+/// Property inventory: the literal `CODES` table is the independent recovery
+/// oracle. Drawn codes keep their exact spelling in the JSON body; status and
+/// table index shrink within 0..=700 and the finite documented-code list.
 #[hegel::test(test_cases = 300)]
 fn documented_codes_decide_the_recovery_whatever_the_status(tc: TestCase) {
     let at = tc.draw(gs::integers::<usize>().max_value(CODES.len() - 1));
     let (code, recovery) = CODES[at];
-    let status = tc.draw(gs::integers::<u16>().min_value(400).max_value(599));
+    let status = tc.draw(gs::integers::<u16>().min_value(0).max_value(700));
     let param = tc.draw(gs::optional(some_text()));
     let body = json!({"error": {
         "code": code,
@@ -260,7 +308,6 @@ fn documented_codes_decide_the_recovery_whatever_the_status(tc: TestCase) {
     assert_eq!(error.recovery(), recovery);
     assert_eq!(error.code(), Some(code));
     assert_eq!(error.body, body.to_string(), "kept verbatim");
-    assert_eq!(Recovery::of_code(code), Some(recovery));
 }
 
 #[hegel::test(test_cases = 300)]
@@ -278,17 +325,52 @@ fn admission_details_are_classified_by_status(tc: TestCase) {
     assert_eq!(error.code(), None);
 }
 
+/// Property inventory: bodies without a documented code use the literal
+/// status table below. Status shrinks within 0..=700; body generation selects
+/// malformed, missing, unknown, or wrong-type codes, with ASCII bodies capped
+/// at 60 bytes so shrinking leaves small, readable counterexamples.
 #[hegel::test(test_cases = 300)]
 fn bodies_without_a_code_fall_back_to_the_status(tc: TestCase) {
-    let status = tc.draw(gs::integers::<u16>().min_value(400).max_value(599));
-    let body = tc.draw(gs::sampled_from(vec![
-        String::new(),
-        "<html>bad gateway</html>".to_owned(),
-        json!({"error": {"message": "no code"}}).to_string(),
-        json!({"error": {"code": "some_future_code"}}).to_string(),
-    ]));
+    let status = tc.draw(gs::integers::<u16>().min_value(0).max_value(700));
+    let body = tc.draw(unrecognized_error_body());
+    assert!(body.len() <= 60, "generated body exceeds its byte bound");
     let error = ApiError::new(status, None, body.as_bytes());
-    assert_eq!(error.recovery(), Recovery::of_status(status));
+    assert_eq!(error.recovery(), expected_status_fallback(status));
+    assert_eq!(error.body, body, "kept verbatim");
+}
+
+#[test]
+fn status_boundaries_apply_to_every_unrecognized_body_shape() {
+    const STATUSES: [u16; 10] =
+        [400, 401, 403, 408, 409, 429, 499, 500, 599, 600];
+    const BODIES: [(&str, &str); 11] = [
+        ("empty malformed body", ""),
+        ("malformed text", "not-json"),
+        ("malformed html", "<html>bad gateway</html>"),
+        ("missing code", r#"{"error":{}}"#),
+        ("missing code with message", r#"{"error":{"message":"m"}}"#),
+        (
+            "unknown string code",
+            r#"{"error":{"code":"future_missing"}}"#,
+        ),
+        ("null code", r#"{"error":{"code":null}}"#),
+        ("boolean code", r#"{"error":{"code":true}}"#),
+        ("number code", r#"{"error":{"code":7}}"#),
+        ("array code", r#"{"error":{"code":[]}}"#),
+        ("object code", r#"{"error":{"code":{}}}"#),
+    ];
+
+    for status in STATUSES {
+        for (shape, body) in BODIES {
+            let error = ApiError::new(status, None, body.as_bytes());
+            assert_eq!(
+                error.recovery(),
+                expected_status_fallback(status),
+                "status {status}, body shape {shape}"
+            );
+            assert_eq!(error.body.as_str(), body, "status {status}, {shape}");
+        }
+    }
 }
 
 #[hegel::composite]
