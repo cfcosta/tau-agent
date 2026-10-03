@@ -2230,7 +2230,12 @@ diff --git a/crates/tau-testing/src/fake_openai.rs b/crates/tau-testing/src/fake
     )
 }
 
-fn edit(path: &str, new_text: &str, diff: &str) -> (Value, ToolOutput) {
+/// An `edit` call and its result. `lines` are the hunk's lines; the
+/// hunk header that counts them goes on top, as the tool writes it.
+fn edit(path: &str, new_text: &str, lines: &str) -> (Value, ToolOutput) {
+    let old = lines.lines().filter(|l| !l.starts_with('+')).count();
+    let new = lines.lines().filter(|l| !l.starts_with('-')).count();
+    let diff = format!("@@ -131,{old} +131,{new} @@\n{lines}");
     (
         json!({ "path": path, "edits": [{ "oldText": "", "newText": new_text }] }),
         ToolOutput {
