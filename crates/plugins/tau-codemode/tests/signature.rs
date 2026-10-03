@@ -2,7 +2,8 @@
 //!
 //! | Property | Oracle |
 //! | --- | --- |
-//! | every schema renders to a type Luau parses; `$ref` cycles end | Luau's parser |
+//! | supported schemas preserve recursive and normalized types | independently constructed `Type` |
+//! | broader schema syntax renders to Luau that parses; `$ref` cycles end | Luau's parser |
 //! | objects keep every property; required ones have no `?` | construction |
 //! | the catalog fits its budget and lists or omits every tool | construction |
 
@@ -16,6 +17,8 @@ use tau_codemode::{
     signature::{
         CALL_TOOL_RESULT_TYPES,
         MAX_INPUT_TYPE_CHARS,
+        Property,
+        Type,
         catalog,
         input_type,
         quote,
@@ -280,8 +283,222 @@ fn parses(lua: &Lua, ty: &str) -> bool {
         .is_ok()
 }
 
+struct SupportedSchema {
+    schema: Value,
+    expected: Type,
+}
+
+fn primitive_schema(tc: &TestCase) -> SupportedSchema {
+    let name = tc.draw(gs::sampled_from(vec![
+        "string", "number", "integer", "boolean", "null",
+    ]));
+    let expected = match name {
+        "string" => Type::Name("string".into()),
+        "number" | "integer" => Type::Name("number".into()),
+        "boolean" => Type::Name("boolean".into()),
+        "null" => Type::Nil,
+        _ => unreachable!(),
+    };
+    SupportedSchema {
+        schema: json!({ "type": name }),
+        expected,
+    }
+}
+
+fn string_literal_schema(tc: &TestCase) -> SupportedSchema {
+    let stem = tc.draw(gs::text().max_size(8));
+    if tc.draw(gs::booleans()) {
+        SupportedSchema {
+            schema: json!({ "const": stem }),
+            expected: Type::Literal(stem),
+        }
+    } else {
+        // The suffixes keep enum members distinct through every shrink.
+        let literals = [format!("{stem}0"), format!("{stem}1")];
+        SupportedSchema {
+            schema: json!({ "enum": literals }),
+            expected: Type::Union(
+                literals.into_iter().map(Type::Literal).collect(),
+            ),
+        }
+    }
+}
+
+fn distinct_primitive_union(tc: &TestCase) -> SupportedSchema {
+    let names = ["string", "number", "boolean", "null"];
+    let first = tc.draw(gs::integers::<usize>().max_value(2));
+    let second =
+        tc.draw(gs::integers::<usize>().min_value(first + 1).max_value(3));
+    let members = [first, second];
+    let mut expected = Vec::new();
+    let mut has_nil = false;
+    for index in members {
+        match names[index] {
+            "null" => has_nil = true,
+            name => expected.push(Type::Name(name.into())),
+        }
+    }
+    let expected = if expected.len() == 1 {
+        expected.remove(0)
+    } else {
+        Type::Union(expected)
+    };
+    SupportedSchema {
+        schema: json!({ "anyOf": members.map(|index| json!({ "type": names[index] })) }),
+        expected: if has_nil {
+            Type::Optional(Box::new(expected))
+        } else {
+            expected
+        },
+    }
+}
+
+/// At depth two, a binary object has at most seven nodes; an anyOf has three.
+fn supported_schema(tc: &TestCase, depth: u8) -> SupportedSchema {
+    if depth == 0 {
+        return if tc.draw(gs::booleans()) {
+            primitive_schema(tc)
+        } else {
+            string_literal_schema(tc)
+        };
+    }
+    match tc.draw(gs::integers::<u8>().max_value(3)) {
+        0 => primitive_schema(tc),
+        1 => string_literal_schema(tc),
+        2 => {
+            let item = supported_schema(tc, depth - 1);
+            SupportedSchema {
+                schema: json!({ "type": "array", "items": item.schema }),
+                expected: Type::Array(Box::new(item.expected)),
+            }
+        }
+        _ if tc.draw(gs::booleans()) => distinct_primitive_union(tc),
+        _ => {
+            let left = supported_schema(tc, depth - 1);
+            let right = supported_schema(tc, depth - 1);
+            let left_required = tc.draw(gs::booleans());
+            let right_required = tc.draw(gs::booleans());
+            let mut required = Vec::new();
+            if left_required {
+                required.push("zeta");
+            }
+            if right_required {
+                required.push("alpha");
+            }
+            SupportedSchema {
+                schema: json!({
+                    "type": "object",
+                    "properties": { "zeta": left.schema, "alpha": right.schema },
+                    "required": required,
+                }),
+                expected: Type::Table {
+                    properties: vec![
+                        Property {
+                            name: "alpha".into(),
+                            ty: right.expected,
+                            required: right_required,
+                            description: None,
+                        },
+                        Property {
+                            name: "zeta".into(),
+                            ty: left.expected,
+                            required: left_required,
+                            description: None,
+                        },
+                    ],
+                    indexer: None,
+                },
+            }
+        }
+    }
+}
+
+// Property inventory: supported schemas map to an independently built Type and
+// render as Luau. The root forces primitive, object, and local-ref properties;
+// its definition is a generated leaf/subtree. Depth <= 2 and <= 16 schema nodes
+// are guaranteed by construction; shrinking shortens text and branches while
+// preserving distinct enum/anyOf members and a valid backward definition ref.
+#[hegel::test]
+fn supported_schemas_preserve_recursive_types_and_local_references(
+    tc: TestCase,
+) {
+    let primitive = primitive_schema(&tc);
+    let object_child = supported_schema(&tc, 0);
+    let object_required = tc.draw(gs::booleans());
+    let object = SupportedSchema {
+        schema: json!({
+            "type": "object",
+            "properties": { "inside": object_child.schema },
+            "required": if object_required { vec!["inside"] } else { vec![] },
+        }),
+        expected: Type::Table {
+            properties: vec![Property {
+                name: "inside".into(),
+                ty: object_child.expected,
+                required: object_required,
+                description: None,
+            }],
+            indexer: None,
+        },
+    };
+    let definition = supported_schema(&tc, 2);
+    let primitive_required = tc.draw(gs::booleans());
+    let object_required = tc.draw(gs::booleans());
+    let ref_required = tc.draw(gs::booleans());
+    let mut required = Vec::new();
+    if primitive_required {
+        required.push("zeta");
+    }
+    if object_required {
+        required.push("alpha");
+    }
+    if ref_required {
+        required.push("middle");
+    }
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "zeta": primitive.schema,
+            "alpha": object.schema,
+            "middle": { "$ref": "#/$defs/target" },
+        },
+        "required": required,
+        "$defs": { "target": definition.schema },
+    });
+    let expected = Type::Table {
+        properties: vec![
+            Property {
+                name: "alpha".into(),
+                ty: object.expected,
+                required: object_required,
+                description: None,
+            },
+            Property {
+                name: "middle".into(),
+                ty: definition.expected,
+                required: ref_required,
+                description: None,
+            },
+            Property {
+                name: "zeta".into(),
+                ty: primitive.expected,
+                required: primitive_required,
+                description: None,
+            },
+        ],
+        indexer: None,
+    };
+    let actual = schema_type(&schema);
+    assert_eq!(actual, expected, "schema: {schema}");
+    let rendered = actual.render(0);
+    assert!(
+        parses(&Lua::new(), &rendered),
+        "does not parse:\n{rendered}"
+    );
+}
+
 #[hegel::test(test_cases = 300)]
-fn every_schema_renders_to_a_type_luau_parses(tc: TestCase) {
+fn broader_schema_syntax_renders_to_luau_that_parses(tc: TestCase) {
     let mut root = tc.draw(schema(3));
     // Definitions that refer to each other, cycles included.
     let defs: Vec<Value> = tc.draw(gs::vecs(schema(2)).max_size(4));

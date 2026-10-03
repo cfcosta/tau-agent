@@ -23,7 +23,7 @@ Audit numbers refer to the approved 40-test shortlist.
 - [x] **07 — Schema generators:** replace compile-only coverage with valid/invalid value laws (#8).
 - [x] **08 — Evaluator and fixtures:** execute real owned module/tools/artifact paths on generated inputs; retain corpus-integrity checks (#1, #30–34).
 - [x] **09 — Markup:** require exact generated span text and marks (#9).
-- [ ] **10 — Signatures:** verify semantic type structure as well as Luau syntax (#10).
+- [x] **10 — Signatures:** verify semantic type structure as well as Luau syntax (#10).
 - [ ] **11 — Module imports:** dependency/version/import histories and initialization counts (#11).
 - [ ] **12 — Fake module tests:** ordered fixtures, exact initialization and failure propagation (#12).
 - [ ] **13 — Services:** clone/mutate/query histories against immutable snapshots (#13).
@@ -64,6 +64,7 @@ mutation campaign. Only failure of the named replacement counts as detection.
 | 08    | Native grep ignores the Rust glob                   | `reference_module_search_matches_sorted_rust_line_scan`              |
 | 08    | Artifact pages replace `é` with ASCII `e`           | `owned_utf8_artifact_pages_reconstruct_source_bytes`                 |
 | 09    | Markup parser treats all nonempty text as plain     | `spans_recognize_generated_bold_and_code_sections`                   |
+| 10    | Supported object schemas always become `any`        | `supported_schemas_preserve_recursive_types_and_local_references`    |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before
