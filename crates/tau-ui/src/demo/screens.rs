@@ -259,6 +259,43 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),
     ("ask-note", |ws, _, cx| ask(ws, "ask-note", cx)),
     ("ask-review", |ws, _, cx| ask(ws, "ask-review", cx)),
+    // tau-direnv (ADR 0025): the question in the composer's place, the
+    // environment loading, a load that failed, and the repository
+    // menu's toggle.
+    ("envrc-consent", |ws, _, cx| {
+        envrc(
+            ws,
+            tau_direnv::Record::Asked {
+                repo: "tau-agent".into(),
+                envrc: "watch_file flake.nix flake.lock nix/*.nix\n\
+                        watch_file rust-toolchain.toml\n\nuse flake\n"
+                    .into(),
+            },
+            cx,
+        )
+    }),
+    ("envrc-loading", |ws, _, cx| {
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |now| now.as_millis() as u64)
+            .saturating_sub(41_000);
+        envrc(ws, tau_direnv::Record::Loading { since }, cx)
+    }),
+    ("envrc-failed", |ws, _, cx| {
+        envrc(
+            ws,
+            tau_direnv::Record::Failed {
+                status: "direnv exited 1".into(),
+                output: "error: flake 'path:/…/runs/fix-retry' does not \
+                         provide attribute 'devShells.x86_64-linux.default'"
+                    .into(),
+            },
+            cx,
+        )
+    }),
+    ("envrc-menu", |ws, _, cx| {
+        ws.toggle_repo_menu("tau-agent", cx);
+    }),
     // tau-vcs's cards, open: the log with a change picked; status, show
     // and diff with a file open.
     ("log", |ws, _, cx| {
@@ -655,6 +692,24 @@ fn ask(workspace: &mut Workspace, open: &str, cx: &mut Context<Workspace>) {
         draft.key(&ask, Key::Right);
         draft.key(&ask, Key::Digit(2));
     });
+}
+
+/// tau-agent's main chat with tau-direnv's `record` folded in.
+fn envrc(
+    workspace: &mut Workspace,
+    record: tau_direnv::Record,
+    cx: &mut Context<Workspace>,
+) {
+    let run = run_id();
+    workspace.navigate(Route::Run(run.clone()), cx);
+    workspace.apply(
+        HostUpdate::PluginFold {
+            run,
+            plugin: tau_direnv::NAME.into(),
+            body: serde_json::to_value(record).expect("a record serializes"),
+        },
+        cx,
+    );
 }
 
 /// Main's queue as the canvas draws it: the demo's fork, clean, then a

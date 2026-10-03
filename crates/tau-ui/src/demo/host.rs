@@ -162,6 +162,15 @@ impl DemoHost {
                     tau_mcp::NAME.to_owned(),
                     PluginValue::typed(tau_mcp::demo::servers()),
                 );
+                // It has an `.envrc`, as the real one does, and direnv
+                // is there.
+                repo.plugins.insert(
+                    tau_direnv::NAME.to_owned(),
+                    PluginValue::typed(tau_direnv::RepoData {
+                        envrc: true,
+                        direnv: true,
+                    }),
+                );
             }
         }
         catalog
