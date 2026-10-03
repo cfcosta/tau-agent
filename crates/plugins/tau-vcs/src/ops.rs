@@ -731,6 +731,18 @@ impl WorkingCopy {
     }
 }
 
+/// The paths `@` holds in conflict, after a snapshot, in path order:
+/// what `vcs_status` lists as unresolved.
+pub(crate) fn conflicts(worker: &mut Worker) -> Result<Vec<String>, VcsError> {
+    let snapshot = session::snapshot(worker)?;
+    Ok(snapshot
+        .wc
+        .tree()
+        .conflicts()
+        .map(|(path, _)| path.as_internal_file_string().to_owned())
+        .collect())
+}
+
 pub(crate) fn working_copy(
     worker: &mut Worker,
 ) -> Result<WorkingCopy, VcsError> {

@@ -154,6 +154,13 @@ impl Vcs {
         self.call(crate::ops::working_copy).await
     }
 
+    /// The paths `@` holds in conflict, after a snapshot: what
+    /// `vcs_status` lists as unresolved. `@` sits on the run's newest
+    /// commit, so these are the conflicts its stack leaves.
+    pub async fn conflicts(&self) -> Result<Vec<String>, VcsError> {
+        self.call(crate::ops::conflicts).await
+    }
+
     /// `@`'s diff against its parent, as text for a model, cut at the
     /// tools' size.
     pub async fn working_copy_diff(&self) -> Result<String, VcsError> {

@@ -154,6 +154,32 @@ fn a_conflict_shows_in_the_preview_and_lands_as_data() {
     assert!(text.contains("<<<<<<<"), "{text}");
 }
 
+/// What a confirmed landing left in conflict stays on the parent's
+/// stack (`Vcs::conflicts`) until a commit resolves it, and a resolution
+/// in `@` counts before it is committed.
+#[test]
+fn conflicts_stay_on_the_stack_until_resolved() {
+    let home = tempfile::tempdir().unwrap();
+    let (project, trunk) = project(home.path());
+    let parent = run(&project, "parent", &trunk);
+    let child = run(&project, "child", &trunk);
+    assert!(block(parent.vcs.conflicts()).is_empty());
+    parent.write("a.txt", "parent\n");
+    parent.turn();
+    child.write("a.txt", "child\n");
+    let child_head = child.turn();
+    block(parent.vcs.land(&child_head, parent.bookmark(), true));
+    assert_eq!(block(parent.vcs.conflicts()), ["a.txt"]);
+    // Another file changed leaves the conflict where it is.
+    parent.write("b.txt", "b\n");
+    parent.turn();
+    assert_eq!(block(parent.vcs.conflicts()), ["a.txt"]);
+    parent.write("a.txt", "both\n");
+    assert!(block(parent.vcs.conflicts()).is_empty(), "resolved in @");
+    parent.turn();
+    assert!(block(parent.vcs.conflicts()).is_empty());
+}
+
 /// The parent's uncommitted work stays uncommitted, on top of what
 /// landed (ADR 0014): the model makes the commits.
 #[test]
