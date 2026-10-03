@@ -161,29 +161,47 @@ fn run(effort: Option<&str>, jev: bool) -> RunCtx {
     }
 }
 
-/// As a run starts, tau-reasoning says it is off without a key or when
-/// the effort was picked by hand, and builds its agent plugin only
-/// otherwise.
-#[hegel::test(test_cases = 50)]
-fn it_says_whether_it_is_on(tc: hegel::TestCase) {
-    let jev = tc.draw(gs::booleans());
-    let effort = tc.draw(gs::optional(gs::sampled_from(vec!["low", "high"])));
-    let run = run(effort, jev);
+/// Property inventory: Every key/effort pair follows the startup status and
+/// agent-plugin contract. The oracle is the explicit status branch plus the
+/// expected plugin count/name; inputs are the fixed 2 × 8 Cartesian table,
+/// with no rejection or shrinking so every contract case always runs.
+#[test]
+fn startup_status_and_plugin_presence_follow_key_and_effort() {
+    let efforts = [
+        None,
+        Some("none"),
+        Some("minimal"),
+        Some("low"),
+        Some("medium"),
+        Some("high"),
+        Some("xhigh"),
+        Some("max"),
+    ];
     let settings = Default::default();
-    let bodies = ReasoningPlugin.starting(&(), &run, &settings);
-    let mut state = State::default();
-    for body in &bodies {
-        state.apply(body.clone(), &mut FakeRun::default());
+
+    for jev in [false, true] {
+        for effort in efforts {
+            let run = run(effort, jev);
+            let mut state = State::default();
+            let mut anchors = FakeRun::default();
+            for body in ReasoningPlugin.starting(&(), &run, &settings) {
+                state.apply(body, &mut anchors);
+            }
+            let status = state.starting.unwrap();
+            match (jev, effort) {
+                (_, Some(effort)) => {
+                    assert!(status.starts_with("off"), "{status}");
+                    assert!(status.ends_with(effort), "{status}");
+                }
+                (false, None) => assert_eq!(status, tau_ui_plugin::NO_KEY),
+                (true, None) => assert!(!status.starts_with("off"), "{status}"),
+            }
+
+            let should_auto_pick = jev && effort.is_none();
+            let plugins =
+                ReasoningPlugin.agent_plugins(&(), &run, &settings).unwrap();
+            assert_eq!(plugins.len(), usize::from(should_auto_pick));
+            assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
+        }
     }
-    let status = state.starting.unwrap();
-    let on = jev && effort.is_none();
-    assert_eq!(!status.starts_with("off"), on, "{status}");
-    if let Some(effort) = effort {
-        assert!(status.ends_with(effort), "{status}");
-    } else if !jev {
-        assert_eq!(status, tau_ui_plugin::NO_KEY);
-    }
-    let plugins = ReasoningPlugin.agent_plugins(&(), &run, &settings).unwrap();
-    assert_eq!(plugins.len(), usize::from(on));
-    assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
 }

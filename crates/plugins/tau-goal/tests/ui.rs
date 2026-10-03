@@ -131,23 +131,26 @@ fn run(kind: RunKind, jev: bool) -> RunCtx {
     }
 }
 
-/// tau-goal checks a run, and builds its agent plugin, only with a key
-/// and not in a sub-agent; as a run starts it says which.
-#[hegel::test(test_cases = 50)]
-fn it_says_whether_it_checks(tc: hegel::TestCase) {
-    let jev = tc.draw(gs::booleans());
-    let kind = tc.draw(
-        gs::sampled_from(vec![RunKind::Main, RunKind::Chat, RunKind::SubAgent])
-            .print_as_debug(),
-    );
-    let run = run(kind, jev);
-    let on = jev && kind != RunKind::SubAgent;
-    let mut state = State::default();
-    for record in GoalUi.starting(&(), &run, &()) {
-        state.apply(record, &mut FakeRun::default());
+/// Property inventory: Every key/run-kind pair follows the starting-check and
+/// agent-plugin contract. The oracle is key presence outside SubAgent plus
+/// the expected plugin count/name; inputs are the fixed 2 × 3 Cartesian table,
+/// with no rejection or shrinking so every contract case always runs.
+#[test]
+fn starting_checks_and_plugin_presence_follow_key_and_run_kind() {
+    for jev in [false, true] {
+        for kind in [RunKind::Main, RunKind::Chat, RunKind::SubAgent] {
+            let run = run(kind, jev);
+            let should_check = jev && kind != RunKind::SubAgent;
+            let mut state = State::default();
+            let mut anchors = FakeRun::default();
+            for record in GoalUi.starting(&(), &run, &()) {
+                state.apply(record, &mut anchors);
+            }
+            assert_eq!(state.checks, should_check);
+
+            let plugins = GoalUi.agent_plugins(&(), &run, &()).unwrap();
+            assert_eq!(plugins.len(), usize::from(should_check));
+            assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
+        }
     }
-    assert_eq!(state.checks, on);
-    let plugins = GoalUi.agent_plugins(&(), &run, &()).unwrap();
-    assert_eq!(plugins.len(), usize::from(on));
-    assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
 }
