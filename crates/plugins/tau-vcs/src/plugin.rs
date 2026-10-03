@@ -52,7 +52,16 @@ const LS: &str = "ls";
 pub struct VcsPlugin {
     vcs: Vcs,
     write: bool,
-    landing: bool,
+    landing: LandTool,
+}
+
+/// Whether the plugin declares `vcs_land`, and what a call does.
+#[derive(Debug, Clone)]
+enum LandTool {
+    Undeclared,
+    Proposes,
+    /// Declared, and every call fails with this.
+    Refused(Arc<str>),
 }
 
 impl VcsPlugin {
@@ -60,14 +69,22 @@ impl VcsPlugin {
         Self {
             vcs,
             write: true,
-            landing: false,
+            landing: LandTool::Undeclared,
         }
     }
 
     /// Adds `vcs_land`, for a run that lands on a parent or merges into
     /// trunk when it finishes (ADR 0014).
     pub fn landing(mut self) -> Self {
-        self.landing = true;
+        self.landing = LandTool::Proposes;
+        self
+    }
+
+    /// Adds `vcs_land` to a run that does not land, so its tools match
+    /// those of the runs that do and it can read their prompt cache
+    /// (ADR 0022). Every call fails with `refusal`, which says why.
+    pub fn refusing_landing(mut self, refusal: impl Into<Arc<str>>) -> Self {
+        self.landing = LandTool::Refused(refusal.into());
         self
     }
 
@@ -105,8 +122,16 @@ impl Plugin for VcsPlugin {
                 tool(Resolve(vcs.clone())),
                 tool(Undo(vcs.clone())),
             ]);
-            if self.landing {
-                tools.push(tool(Land(vcs.clone())));
+            let refusal = match &self.landing {
+                LandTool::Undeclared => None,
+                LandTool::Proposes => Some(None),
+                LandTool::Refused(refusal) => Some(Some(refusal.clone())),
+            };
+            if let Some(refusal) = refusal {
+                tools.push(tool(Land {
+                    vcs: vcs.clone(),
+                    refusal,
+                }));
             }
         }
         tools

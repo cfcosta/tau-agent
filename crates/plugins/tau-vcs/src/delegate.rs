@@ -88,42 +88,106 @@ impl Delegate {
         + Sync
         + 'static,
     ) -> Self {
-        let efforts: Vec<&str> = ReasoningEffort::ALL
-            .iter()
-            .map(|effort| effort.as_str())
-            .collect();
         Self {
             parent,
             identity,
             child: Arc::new(child),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": "What the sub-agent does. It sees \
-                            this conversation, so name the task and what \
-                            sets it apart from the others you delegate.",
-                    },
-                    "model": {
-                        "type": "string",
-                        "enum": models,
-                        "description": "The model it runs on; yours if \
-                            left out.",
-                    },
-                    "effort": {
-                        "type": "string",
-                        "enum": efforts,
-                        "description": "Its reasoning effort; yours if \
-                            left out.",
-                    },
-                },
-                "required": ["task"],
-                "additionalProperties": false,
-            }),
+            parameters: parameters(models),
             running: Arc::new(Semaphore::new(MAX_RUNNING)),
             landing: Arc::default(),
         }
+    }
+}
+
+/// The `delegate` tool's arguments, with `models` as the ones a call
+/// may pick.
+fn parameters(models: &[String]) -> Value {
+    let efforts: Vec<&str> = ReasoningEffort::ALL
+        .iter()
+        .map(|effort| effort.as_str())
+        .collect();
+    json!({
+        "type": "object",
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "What the sub-agent does. It sees \
+                    this conversation, so name the task and what \
+                    sets it apart from the others you delegate.",
+            },
+            "model": {
+                "type": "string",
+                "enum": models,
+                "description": "The model it runs on; yours if \
+                    left out.",
+            },
+            "effort": {
+                "type": "string",
+                "enum": efforts,
+                "description": "Its reasoning effort; yours if \
+                    left out.",
+            },
+        },
+        "required": ["task"],
+        "additionalProperties": false,
+    })
+}
+
+/// What `delegate` says it does.
+const DESCRIPTION: &str = "Hand a task to a sub-agent. It forks this \
+    conversation, so it knows what you know and `task` can be short. It \
+    works in a chat of its own on a copy of your committed code: commit \
+    your work with `vcs_commit` first. Call it several times in one turn \
+    to run up to 4 sub-agents side by side, each on its own part. As \
+    each finishes, its commits land on top of yours and its answer comes \
+    back; changes that clash with an earlier one land as conflicts for \
+    you to resolve. If it fails, its changes are dropped. It runs on \
+    your model and effort unless `model` or `effort` say otherwise; \
+    another model cannot reuse your prompt cache, so it reads this whole \
+    conversation at full price.";
+
+/// What a call to `delegate` below the main chat answers.
+pub const ONLY_MAIN_DELEGATES: &str = "Only the main chat delegates; do \
+    this work here or ask the person to start a chat.";
+
+/// `delegate` on a run below the main chat: a chat or a sub-agent. Runs
+/// nest one level (ADR 0016), so every call fails with
+/// [`ONLY_MAIN_DELEGATES`]. It is declared all the same, with the main
+/// chat's description and arguments, so the run's tools match main's
+/// and it can read main's prompt cache (ADR 0022).
+pub struct RefusingDelegate {
+    parameters: Value,
+}
+
+impl RefusingDelegate {
+    /// `models` are the ids the main chat's `delegate` offers.
+    pub fn new(models: &[String]) -> Self {
+        Self {
+            parameters: parameters(models),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for RefusingDelegate {
+    fn name(&self) -> &str {
+        DELEGATE
+    }
+
+    fn description(&self) -> &str {
+        DESCRIPTION
+    }
+
+    fn parameters(&self) -> &Value {
+        &self.parameters
+    }
+
+    async fn call(
+        &self,
+        _args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        Err(ONLY_MAIN_DELEGATES.into())
     }
 }
 
@@ -215,17 +279,7 @@ impl AgentTool for Delegate {
     }
 
     fn description(&self) -> &str {
-        "Hand a task to a sub-agent. It forks this conversation, so it \
-         knows what you know and `task` can be short. It works in a chat \
-         of its own on a copy of your committed code: commit your work \
-         with `vcs_commit` first. Call it several times in one turn to \
-         run up to 4 sub-agents side by side, each on its own part. As \
-         each finishes, its commits land on top of yours and its answer \
-         comes back; changes that clash with an earlier one land as \
-         conflicts for you to resolve. If it fails, its changes are \
-         dropped. It runs on your model and effort unless `model` or \
-         `effort` say otherwise; another model cannot reuse your prompt \
-         cache, so it reads this whole conversation at full price."
+        DESCRIPTION
     }
 
     fn parameters(&self) -> &Value {

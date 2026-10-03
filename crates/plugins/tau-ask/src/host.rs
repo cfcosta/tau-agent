@@ -111,15 +111,32 @@ impl Waiting {
     }
 }
 
+/// What `ask` answers on a sub-agent, which no one watches.
+pub const NO_ONE_TO_ASK: &str = "A sub-agent has no one to ask: decide \
+    yourself, and say in your answer what you assumed and why.";
+
 /// tau-ask's agent plugin: the `ask` tool, and at a run's start, the
 /// calls an earlier run left waiting closed.
 pub struct AskPlugin {
     waiting: Waiting,
+    refuses: bool,
 }
 
 impl AskPlugin {
     pub fn new(waiting: Waiting) -> Self {
-        Self { waiting }
+        Self {
+            waiting,
+            refuses: false,
+        }
+    }
+
+    /// For a sub-agent, which has no one to ask: `ask` is declared all
+    /// the same, so the run's tools match its caller's and it can read
+    /// their prompt cache (ADR 0022), and every call fails with
+    /// [`NO_ONE_TO_ASK`].
+    pub fn refusing(mut self) -> Self {
+        self.refuses = true;
+        self
     }
 }
 
@@ -130,7 +147,9 @@ impl Plugin for AskPlugin {
     }
 
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
-        vec![Arc::new(AskTool::new(self.waiting.clone()))]
+        let mut tool = AskTool::new(self.waiting.clone());
+        tool.refuses = self.refuses;
+        vec![Arc::new(tool)]
     }
 
     /// Closes the calls the run's history left waiting: a run that went
@@ -160,6 +179,8 @@ impl Plugin for AskPlugin {
 pub struct AskTool {
     waiting: Waiting,
     parameters: Value,
+    /// Every call fails with [`NO_ONE_TO_ASK`].
+    refuses: bool,
 }
 
 impl AskTool {
@@ -169,6 +190,7 @@ impl AskTool {
         Self {
             waiting,
             parameters,
+            refuses: false,
         }
     }
 }
@@ -239,6 +261,9 @@ impl AgentTool for AskTool {
         args: Value,
         ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
+        if self.refuses {
+            return Err(NO_ONE_TO_ASK.into());
+        }
         let ask: Ask = serde_json::from_value(args)?;
         ask.check().map_err(ToolError::Message)?;
         let Some(plugin) = ctx.plugin() else {

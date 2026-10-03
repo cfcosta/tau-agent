@@ -82,7 +82,16 @@ fn host_over(
     llm: ScriptedModel,
     root: &Path,
 ) -> (Host, UnboundedReceiver<RunEvent>) {
-    let agent = Agent::new(llm).name("coder");
+    host_of(runtime, store, Agent::new(llm).name("coder"), root)
+}
+
+/// A host whose runs start from `agent`.
+fn host_of(
+    runtime: tokio::runtime::Runtime,
+    store: Store,
+    agent: Agent,
+    root: &Path,
+) -> (Host, UnboundedReceiver<RunEvent>) {
     let config = HostConfig {
         account: test_account(),
         credentials: Credentials::new(
@@ -2249,12 +2258,15 @@ fn landing_keeps_a_chat_whose_final_commit_failed() {
 }
 
 /// Runs nest one level: the main chat can delegate, and a chat under it,
-/// which could only nest a sub-agent under itself, is not given the
-/// tool.
+/// which could only nest a sub-agent under itself, has the tool only so
+/// its tools match main's: a call is refused, saying why.
 #[test]
 fn only_the_main_chat_delegates() {
     let llm = ScriptedModel::new()
         .turn(|t| t.text("main"))
+        .turn(|t| {
+            t.tool_call("delegate", serde_json::json!({ "task": "nest" }))
+        })
         .turn(|t| t.text("chat"));
     let (host, mut events) = host(llm.clone());
     let main = on_main(&host, "hello main");
@@ -2265,23 +2277,29 @@ fn only_the_main_chat_delegates() {
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
-    let tools = |n: usize| -> Vec<String> {
-        llm.requests()[n]
-            .settings
-            .tools
-            .iter()
-            .map(|tool| tool.name.clone())
-            .collect()
-    };
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 3, "no sub-agent ran");
+    let refused = requests[2]
+        .transcript
+        .iter()
+        .find_map(|message| match message {
+            tau_ai::message::Message::ToolResult(result)
+                if result.tool_name == "delegate" =>
+            {
+                Some(result.clone())
+            }
+            _ => None,
+        })
+        .expect("the delegate call's result");
+    assert!(refused.is_error);
     assert!(
-        tools(0).iter().any(|name| name == "delegate"),
+        refused.content.iter().any(|block| matches!(
+            block,
+            tau_ai::message::InputBlock::Text(text)
+                if text.text.contains(tau_vcs::ONLY_MAIN_DELEGATES)
+        )),
         "{:?}",
-        tools(0)
-    );
-    assert!(
-        !tools(1).iter().any(|name| name == "delegate"),
-        "{:?}",
-        tools(1)
+        refused.content
     );
 }
 
@@ -2468,4 +2486,121 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
     );
     assert_eq!(ending(&dropped), Some(Ending::Dropped));
     assert_eq!(ending(&main), None);
+}
+
+/// Main, a chat and a sub-agent of one repository send byte-identical
+/// instructions and tools, in the same order, so each can read the
+/// others' prompt cache: `delegate` and `vcs_land` are on every run, and
+/// say why where they do not apply. Kind-specific guidance goes in the
+/// first message instead.
+#[test]
+fn main_chats_and_sub_agents_send_the_same_prefix() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "delegate",
+                serde_json::json!({ "task": "look around" }),
+            )
+        })
+        .turn(|t| t.text("looked"))
+        .turn(|t| t.text("main done"))
+        .turn(|t| t.text("chat done"));
+    let (host, mut events) = host(llm.clone());
+    let main = on_main(&host, "delegate something");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let chat = host
+        .start("hello chat", &ModelChoice::default(), REPO)
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 4);
+    let (main, sub_agent, chat) = (&requests[0], &requests[1], &requests[3]);
+    let names = |request: &tau_testing::scripted::Request| -> Vec<String> {
+        request
+            .settings
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect()
+    };
+    assert!(names(main).iter().any(|name| name == "delegate"));
+    assert!(names(main).iter().any(|name| name == "vcs_land"));
+    for (kind, other) in [("sub-agent", sub_agent), ("chat", chat)] {
+        assert_eq!(names(other), names(main), "{kind}'s tool order");
+        assert_eq!(other.settings.tools, main.settings.tools, "{kind}'s tools");
+        assert_eq!(
+            other.settings.instructions, main.settings.instructions,
+            "{kind}'s instructions"
+        );
+    }
+}
+
+/// Over OpenAI's transport, against a fake whose prompt cache lives on
+/// the connection: a main chat resumed within the idle window goes back
+/// to its connection and reads its whole prefix; a chat forked from it
+/// takes that connection for its first request and reads main's prefix;
+/// and main, resumed again, takes back the connection it served.
+#[test]
+fn conversations_go_back_to_their_connections() {
+    use tau_ai::{client::OpenAi, ws::proto::pool::Limits};
+    use tau_testing::fake_openai::{FakeOpenAi, LocalConnector, Reply};
+
+    let fake = FakeOpenAi::new(vec![
+        Reply::text("resp_1", "hello"),
+        Reply::text("resp_2", "again"),
+        Reply::text("resp_3", "chat"),
+        Reply::text("resp_4", "main once more"),
+    ])
+    .report_cache();
+    let address = fake.listen();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(Store::memory()).unwrap();
+    let client = {
+        let _guard = runtime.enter();
+        OpenAi::with_connector(LocalConnector(address), Limits::default())
+    };
+    let agent = Agent::new(client.clone()).name("coder");
+    let root = tempfile::tempdir().unwrap().keep();
+    let (host, mut events) = host_of(runtime, store, agent, &root);
+
+    let main = on_main(&host, "hi");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    host.resume(&main, "and again", &ModelChoice::default())
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let chat = host.start("a chat", &ModelChoice::default(), REPO).unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    host.resume(&main, "main once more", &ModelChoice::default())
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+
+    let received = fake.received();
+    assert_eq!(received.len(), 4);
+    let key = |at: usize| received[at].body["prompt_cache_key"].clone();
+    assert_eq!(key(0), main.0.as_ref());
+    assert_eq!(key(1), main.0.as_ref());
+    assert_eq!(key(2), chat.id.0.as_ref());
+    assert_eq!(key(3), main.0.as_ref());
+    // Main's second run: its connection, by delta, all of it cached.
+    assert_eq!(received[1].connection, received[0].connection);
+    assert!(received[1].body.get("previous_response_id").is_some());
+    assert!(received[1].cached_tokens >= received[0].input_tokens);
+    // The chat's first request: main's connection and main's prefix.
+    assert_eq!(received[2].connection, received[0].connection);
+    assert!(received[2].cached_tokens >= received[1].input_tokens);
+    // Main again: the connection it served before the chat took it.
+    assert_eq!(received[3].connection, received[0].connection);
+    let stats = host.block_on(client.stats()).unwrap();
+    assert_eq!(stats.connections_opened, 1);
+    assert_eq!(stats.handoffs, 1);
 }

@@ -210,7 +210,14 @@ pub struct LandArgs {}
 /// Proposes landing the run's commits: on the run it was forked from, or
 /// into trunk for a top-level run (ADR 0014). The person confirms;
 /// nothing moves here.
-pub struct Land(pub Vcs);
+///
+/// A run that does not land declares it all the same, so its tools match
+/// those of the runs that do and it can read their prompt cache: then
+/// `refusal` says why, and every call fails with it.
+pub struct Land {
+    pub vcs: Vcs,
+    pub refusal: Option<Arc<str>>,
+}
 
 #[async_trait]
 impl TypedTool for Land {
@@ -226,7 +233,10 @@ impl TypedTool for Land {
         if ctx.cancel.is_cancelled() {
             return Err(ABORTED.into());
         }
-        let working_copy = self.0.working_copy().await?;
+        if let Some(refusal) = &self.refusal {
+            return Err(refusal.to_string().into());
+        }
+        let working_copy = self.vcs.working_copy().await?;
         if !working_copy.paths.is_empty() {
             return Err(
                 VcsError::Uncommitted(working_copy.paths.join(", ")).into()

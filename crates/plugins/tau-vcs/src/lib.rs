@@ -59,7 +59,7 @@ mod vcs;
 #[cfg(feature = "host")]
 pub use clone::{CloneError, TransferError, clone_bare};
 #[cfg(feature = "host")]
-pub use delegate::Delegate;
+pub use delegate::{Delegate, ONLY_MAIN_DELEGATES, RefusingDelegate};
 pub use details::{ChangeInfo, ChangeKind, FileChange, Landing, TooLarge};
 #[cfg(feature = "host")]
 pub use diff::MAX_DIFF_BYTES;

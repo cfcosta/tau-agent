@@ -53,6 +53,7 @@ use tau_vcs::{
     Landing,
     Link,
     Project,
+    RefusingDelegate,
     RunWorkspace,
     VcsPlugin,
     delegate::ChildModel,
@@ -311,6 +312,16 @@ const INSTRUCTIONS: &str = "You are tau, a coding agent working in the \
     reviewer would want a boundary, each with a Conventional Commits \
     message, and commit everything before you finish. Be concise, and say \
     which tests you ran.";
+
+/// What `vcs_land` answers on a main chat, which commits on trunk.
+const MAIN_DOES_NOT_LAND: &str = "The main chat commits straight to \
+    trunk, so it has nothing to land: commit with `vcs_commit` and you \
+    are done.";
+
+/// What `vcs_land` answers on a sub-agent, which lands as it returns.
+const SUB_AGENTS_DO_NOT_LAND: &str = "A sub-agent's commits land on its \
+    caller when it returns, so it has nothing to propose: commit with \
+    `vcs_commit`, then answer.";
 
 fn identity() -> Identity {
     Identity {
@@ -674,12 +685,17 @@ impl Host {
             Bytes::new(project.root().join("artifacts"), Quotas::default())?;
         // A run and its sub-agents work the same way, each in its own
         // workspace: tools, then what plugins add, which hear each turn's
-        // commit. Only the run itself can delegate, so sub-agents do not
-        // nest.
-        // `lands`: the run proposes its own landing with `vcs_land`
-        // (ADR 0014). Sub-agents land as they return, without it.
+        // commit. Every run declares the same tools, in the same order,
+        // so each reads the others' prompt cache (ADR 0022): only the
+        // main chat can delegate, so sub-agents do not nest, and the
+        // others' `delegate` refuses.
+        // `refusal`: `None` when the run proposes its own landing with
+        // `vcs_land` (ADR 0014); else why it does not, which its
+        // `vcs_land` answers.
         let on_workspace =
-            move |agent: Agent, workspace: RunWorkspace, lands: bool| {
+            move |agent: Agent,
+                  workspace: RunWorkspace,
+                  refusal: Option<&'static str>| {
                 let hooks = TurnHooks::default();
                 let workspace = {
                     let hooks = hooks.clone();
@@ -691,7 +707,10 @@ impl Host {
                     })
                 };
                 let vcs = VcsPlugin::new(workspace.vcs().clone());
-                let vcs = if lands { vcs.landing() } else { vcs };
+                let vcs = match refusal {
+                    None => vcs.landing(),
+                    Some(refusal) => vcs.refusing_landing(refusal),
+                };
                 let dir = workspace.dir();
                 // The repository's instructions come after the workspace,
                 // which makes the directory as the run starts.
@@ -713,21 +732,26 @@ impl Host {
             workspace
         };
         let agent = for_model(choice, &workspace);
+        let models: Vec<String> =
+            plan_models().into_iter().map(|model| model.id).collect();
         let delegate = {
             let child_on_workspace = on_workspace.clone();
             let registered = registered.clone();
             let caller = choice.clone();
-            let models: Vec<String> =
-                plan_models().into_iter().map(|model| model.id).collect();
+            let models = models.clone();
             Delegate::new(
                 workspace.clone(),
                 identity(),
-                &models,
+                &models.clone(),
                 move |child, asked| {
                     let choice = child_choice(&caller, asked)?;
-                    let agent = for_model(&choice, &child);
-                    let (agent, services) =
-                        child_on_workspace(agent, child, false);
+                    let agent = for_model(&choice, &child)
+                        .tool(RefusingDelegate::new(&models));
+                    let (agent, services) = child_on_workspace(
+                        agent,
+                        child,
+                        Some(SUB_AGENTS_DO_NOT_LAND),
+                    );
                     registered(
                         agent,
                         tau_ui_plugin::RunKind::SubAgent,
@@ -738,13 +762,17 @@ impl Host {
                 },
             )
         };
-        let agent = if main { agent.tool(delegate) } else { agent };
+        let (agent, refusal) = if main {
+            (agent.tool(delegate), Some(MAIN_DOES_NOT_LAND))
+        } else {
+            (agent.tool(RefusingDelegate::new(&models)), None)
+        };
         // tau's turn resolving a landing's conflicts on main stops only
         // once they are resolved, or after one more try (ADR 0024).
         let hold = (main && resolving).then(|| lanes::ResolveHold {
             vcs: workspace.vcs().clone(),
         });
-        let (agent, services) = on_workspace(agent, workspace, !main);
+        let (agent, services) = on_workspace(agent, workspace, refusal);
         let agent = match hold {
             Some(hold) => agent.plugin(hold),
             None => agent,

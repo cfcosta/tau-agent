@@ -211,8 +211,8 @@ impl UiPlugin for AskUi {
         NAME
     }
 
-    /// The `ask` tool, for a run a person watches: a sub-agent has no
-    /// one to ask.
+    /// The `ask` tool. A sub-agent has no one to ask: its `ask` refuses,
+    /// and is there so its tools match its caller's.
     fn agent_plugins(
         &self,
         host: &Host,
@@ -220,13 +220,21 @@ impl UiPlugin for AskUi {
         _settings: &(),
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         #[cfg(feature = "host")]
-        if run.kind != tau_ui_plugin::RunKind::SubAgent {
-            return Ok(vec![Box::new(crate::host::AskPlugin::new(
-                host.clone(),
-            ))]);
+        {
+            let plugin = crate::host::AskPlugin::new(host.clone());
+            Ok(vec![Box::new(
+                if run.kind == tau_ui_plugin::RunKind::SubAgent {
+                    plugin.refusing()
+                } else {
+                    plugin
+                },
+            )])
         }
-        let _ = (host, run);
-        Ok(Vec::new())
+        #[cfg(not(feature = "host"))]
+        {
+            let _ = (host, run);
+            Ok(Vec::new())
+        }
     }
 
     fn catalog(
