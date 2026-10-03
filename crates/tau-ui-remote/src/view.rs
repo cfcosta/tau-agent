@@ -75,6 +75,11 @@ pub struct RunView {
     /// clean. Nothing lands on it and no chat forks it meanwhile.
     #[serde(default)]
     pub main_conflicts: Option<crate::queue::MainConflicts>,
+    /// What landing it on its parent would do, as the host last worked
+    /// it out in the background: a finished fork's. Gone once it goes
+    /// on.
+    #[serde(default)]
+    pub forecast: Option<crate::attention::Forecast>,
 }
 
 /// How a chat ended for good: what [`RunView::ending`] holds.
@@ -85,6 +90,9 @@ pub enum Ending {
     /// It was dropped: its own changes were abandoned.
     Dropped,
 }
+
+/// Why a stored run stopped when tau closed while it was going.
+pub const INTERRUPTED: &str = "interrupted: tau closed during the run";
 
 /// One run event, as the Events tab lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -683,6 +691,7 @@ impl RunView {
             ending: None,
             landing_queue: Vec::new(),
             main_conflicts: None,
+            forecast: None,
         }
     }
 
@@ -1270,6 +1279,8 @@ impl RunView {
             RunEvent::RunStart { agent, .. } => {
                 self.agent = agent.to_string();
                 self.status = RunStatus::Running;
+                // What it would land changes with what it does next.
+                self.forecast = None;
                 // A resumed chat starts again with what it cost so far.
                 self.cost_before = self.usage.cost;
             }

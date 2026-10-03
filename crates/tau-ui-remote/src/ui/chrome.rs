@@ -19,17 +19,20 @@ use gpui::{
 use super::{
     Edge,
     Material,
+    attention_color,
+    attention_icon,
+    attention_tint,
     dot,
     icon,
     icon_button,
     live_dot,
     logo,
     mono,
-    status_icon,
     status_look,
 };
 use crate::{
     assets::Icon,
+    attention::Attention,
     catalog::ProjectStatus,
     repos::{RepoRows, TreeRow},
     route::{Route, Tab},
@@ -406,6 +409,7 @@ fn repo_group(
     let name = rows.repo.name.clone();
     let menu = ws.repo_menu.as_deref() == Some(name.as_str());
     let hovered = menu || ws.hovered_repo.as_deref() == Some(name.as_str());
+    let need_you = ws.need_you(&name, cx);
     let action = |id: &'static str, glyph: Option<Icon>, t: &Theme| {
         div()
             .id(id)
@@ -467,7 +471,10 @@ fn repo_group(
                     },
                 )))
             } else {
-                row.when(rows.live > 0, |row| {
+                row.when(need_you > 0, |row| {
+                    row.child(need_you_pill(need_you, Type::MICRO, t))
+                })
+                .when(rows.live > 0, |row| {
                     row.child(
                         div()
                             .flex()
@@ -568,6 +575,21 @@ fn repo_group(
     group.child(body)
 }
 
+/// How many of a repository's chats need the person: they ask, would
+/// conflict, or are ready to land.
+fn need_you_pill(count: usize, size: Type, t: &Theme) -> Div {
+    div()
+        .flex_shrink_0()
+        .px(sp(1.75))
+        .rounded(radius::FULL)
+        .border_1()
+        .border_color(t.blue_border)
+        .bg(t.blue.opacity(0.1))
+        .typeset(size)
+        .text_color(t.blue)
+        .child(format!("{count} need you"))
+}
+
 /// A child the workspace has no conversation for: a fork opens the
 /// comparison with its run.
 fn child_row(
@@ -615,10 +637,10 @@ fn indent(depth: usize) -> f32 {
     2.5 + 4.5 * depth.min(4) as f32
 }
 
-/// A conversation in the tree: whether it is working, its title, and
-/// its unread replies; hovering it offers to close it, unless it is its
-/// repository's main chat. A fork sits under its run, with the fork
-/// mark.
+/// A conversation in the tree: what it needs of the person (its icon,
+/// and a line under its title), its title, and its unread replies;
+/// hovering it offers to close it, unless it is its repository's main
+/// chat. A fork sits under its run.
 fn run_row(
     ws: &Workspace,
     run: &RunView,
@@ -632,18 +654,48 @@ fn run_row(
     let hovered = ws.hovered_run.as_ref() == Some(&run.id);
     let unread = ws.unread(run);
     let (hover_id, close_id) = (run.id.clone(), run.id.clone());
+    let attention = ws.attention(run, cx);
+    let landed = attention == Attention::Landed;
     // What plugins add to the row: a line under the title, and a count
     // at the end.
     let note = ws.run_rows(run, cx).into_iter().next();
     // A main chat with changes GitHub lacks says so, with Push (ADR
     // 0023).
     let push = super::push::row(ws, run, t, cx);
+    // The line under the title: what the run needs of the person, else
+    // what Push would send, else a plugin's (a goal's), else that it
+    // works.
+    let plugin_line = push
+        .as_ref()
+        .map(|(line, _)| (line.to_string(), t.muted))
+        .or_else(|| {
+            note.as_ref().and_then(|note| {
+                let color = if note.tone == crate::view::Tone::Warn {
+                    t.dim
+                } else {
+                    t.tone(note.tone)
+                };
+                Some((note.line.clone()?, color))
+            })
+        });
+    let line = match (&attention, plugin_line) {
+        (Attention::Working { .. }, Some(line)) => Some(line),
+        (attention, plugin) => attention
+            .line()
+            .map(|line| (line, attention_color(attention, t)))
+            .or(plugin),
+    };
+    let strong = active || unread > 0 || attention.needs_you();
     let title = div()
         .truncate()
-        .text_color(if active { t.text } else { t.text_soft })
-        .when(active || unread > 0, |title| {
-            title.font_weight(weight::EMPHASIS)
+        .text_color(if landed {
+            t.muted
+        } else if active || attention.needs_you() {
+            t.text
+        } else {
+            t.text_soft
         })
+        .when(strong, |title| title.font_weight(weight::EMPHASIS))
         .child(run.title.clone());
     div()
         .id(SharedString::from(format!("run-{}", run.id)))
@@ -652,30 +704,20 @@ fn run_row(
         .items_center()
         .gap(sp(2.5))
         .min_h(px(34.))
-        .py(sp(
-            if push.is_some()
-                || note.as_ref().and_then(|note| note.line.as_ref()).is_some()
-            {
-                1.5
-            } else {
-                0.
-            },
-        ))
+        .py(sp(line.as_ref().map_or(0., |_| 1.5)))
         .pl(sp(indent(depth)))
         .pr(sp(2.))
         .rounded(radius::CONTROL)
         .cursor_pointer()
+        .when_some(
+            attention_tint(&attention, t).filter(|_| !active),
+            |row, tint| row.bg(tint),
+        )
         .when(active, |row| row.pressed(t))
         .when(!active, |row| {
             row.hover(|style| style.bg(gpui::white().opacity(0.03)))
         })
-        .map(|row| {
-            if nested {
-                row.child(icon(Icon::Fork, IconSize::SMALL, t.blue))
-            } else {
-                row.child(status_icon(run, t, IconSize::SMALL))
-            }
-        })
+        .child(attention_icon(&attention, run, nested, t, IconSize::SMALL))
         .child(
             div()
                 .flex_1()
@@ -684,35 +726,15 @@ fn run_row(
                 .flex_col()
                 .gap(sp(0.25))
                 .child(title)
-                .when_some(push.as_ref(), |column, (line, _)| {
+                .when_some(line, |column, (line, color)| {
                     column.child(
                         div()
                             .truncate()
                             .typeset(Type::MICRO)
-                            .text_color(t.muted)
-                            .child(line.clone()),
+                            .text_color(color)
+                            .child(line),
                     )
-                })
-                .when_some(
-                    note.as_ref()
-                        .filter(|_| push.is_none())
-                        .and_then(|note| Some((note.tone, note.line.clone()?))),
-                    |column, (tone, line)| {
-                        column.child(
-                            div()
-                                .truncate()
-                                .typeset(Type::MICRO)
-                                .text_color(
-                                    if tone == crate::view::Tone::Warn {
-                                        t.dim
-                                    } else {
-                                        t.tone(tone)
-                                    },
-                                )
-                                .child(line),
-                        )
-                    },
-                ),
+                }),
         )
         .map(|row| {
             if let Some((_, button)) = push {
@@ -733,6 +755,8 @@ fn run_row(
                             ws.close_run(&close_id, cx)
                         })),
                 )
+            } else if landed {
+                row.child(mono("landed", Type::MICRO, t.dim))
             } else if unread > 0 {
                 row.child(super::count_pill(unread, t))
             } else if let Some((glyph, tone, count)) =
@@ -748,8 +772,6 @@ fn run_row(
                         .child(icon(glyph, IconSize::SMALL, t.tone(tone)))
                         .child(mono(count, Type::MICRO, t.tone(tone))),
                 )
-            } else if nested && run.status.is_live() {
-                row.child(live_dot(t.accent, 6.))
             } else {
                 row
             }
@@ -1064,6 +1086,7 @@ fn phone_group(
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let name = rows.repo.name.clone();
+    let need_you = ws.need_you(&name, cx);
     let head = div()
         .id(SharedString::from(format!("phone-repo-{name}")))
         .flex()
@@ -1088,6 +1111,9 @@ fn phone_group(
                 .font_weight(weight::STRONG)
                 .child(name.clone()),
         )
+        .when(need_you > 0, |row| {
+            row.child(need_you_pill(need_you, Type::CAPTION, t))
+        })
         .when(rows.live > 0, |row| {
             row.child(
                 div()
@@ -1205,6 +1231,7 @@ fn phone_run_row(
     let (color, label) = status_look(&run.status, t);
     let route = Route::Run(run.id.clone());
     let unread = ws.unread(run);
+    let attention = ws.attention(run, cx);
     let meta = if run.status.is_live() {
         format!("{label} · turn {}", run.turn)
     } else {
@@ -1220,6 +1247,12 @@ fn phone_run_row(
         Some((line, tone)) => (line, t.tone(tone)),
         None => (meta, color),
     };
+    // What the run needs of the person says it first, as the sidebar
+    // does; a working run keeps its plugin's line.
+    let (meta, color) = match (&attention, attention.line()) {
+        (Attention::Working { .. }, _) | (_, None) => (meta, color),
+        (attention, Some(line)) => (line, attention_color(attention, t)),
+    };
     let badge = note.as_ref().and_then(|note| {
         Some((note.count.clone()?, t.tone(note.tone), note.icon))
     });
@@ -1233,7 +1266,8 @@ fn phone_run_row(
         .border_b_1()
         .border_color(t.border)
         .cursor_pointer()
-        .child(status_icon(run, t, IconSize::BASE))
+        .when_some(attention_tint(&attention, t), |row, tint| row.bg(tint))
+        .child(attention_icon(&attention, run, false, t, IconSize::BASE))
         .child(
             div()
                 .flex_1()

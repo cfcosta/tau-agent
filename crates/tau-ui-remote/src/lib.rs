@@ -35,6 +35,7 @@
 //! with [`Workspace::update_pairing`].
 
 pub mod attach;
+pub mod attention;
 pub mod catalog;
 pub mod models;
 pub mod motion;

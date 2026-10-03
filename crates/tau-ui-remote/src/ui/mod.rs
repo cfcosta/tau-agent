@@ -21,6 +21,7 @@ pub use tau_ui_kit::prose::*;
 
 use crate::{
     assets::Icon,
+    attention::Attention,
     theme::{IconSize, Theme},
     view::{RunStatus, RunView},
 };
@@ -80,5 +81,52 @@ pub fn status_icon(
         RunStatus::Interrupted => {
             icon(Icon::Pause, size, t.muted).into_any_element()
         }
+    }
+}
+
+/// The icon a run's row shows for what it needs: its state's own, or,
+/// when it needs nothing in particular, its status's (`nested` rows
+/// under a run show the fork mark then).
+pub fn attention_icon(
+    attention: &Attention,
+    run: &RunView,
+    nested: bool,
+    t: &Theme,
+    size: IconSize,
+) -> gpui::AnyElement {
+    let glyph = |glyph, color| icon(glyph, size, color).into_any_element();
+    match attention {
+        Attention::Asks { .. } => glyph(Icon::Question, t.blue),
+        Attention::ReadyToLand { .. } => glyph(Icon::Landable, t.green),
+        Attention::WouldConflict { .. } => glyph(Icon::Warning, t.red),
+        Attention::Interrupted => glyph(Icon::Interrupted, t.muted),
+        Attention::Landed => glyph(Icon::Check, t.dim),
+        Attention::Idle if nested => glyph(Icon::Fork, t.blue),
+        Attention::Working { .. } | Attention::Failed | Attention::Idle => {
+            status_icon(run, t, size)
+        }
+    }
+}
+
+/// The color of a run's line for what it needs.
+pub fn attention_color(attention: &Attention, t: &Theme) -> Hsla {
+    match attention {
+        Attention::Asks { .. } => t.blue,
+        Attention::ReadyToLand { .. } => t.green,
+        Attention::WouldConflict { .. } | Attention::Failed => t.red,
+        Attention::Landed => t.dim,
+        Attention::Working { .. }
+        | Attention::Interrupted
+        | Attention::Idle => t.muted,
+    }
+}
+
+/// The tint behind a run's row while it waits on the person to answer
+/// or to land it.
+pub fn attention_tint(attention: &Attention, t: &Theme) -> Option<Hsla> {
+    match attention {
+        Attention::Asks { .. } => Some(t.blue.opacity(0.06)),
+        Attention::ReadyToLand { .. } => Some(t.green.opacity(0.06)),
+        _ => None,
     }
 }

@@ -53,6 +53,12 @@ pub enum HostUpdate {
         run: RunId,
         preview: Result<Landing, String>,
     },
+    /// What landing a finished fork would do, worked out in the
+    /// background; none when it cannot land now.
+    Forecast {
+        run: RunId,
+        forecast: Option<crate::attention::Forecast>,
+    },
     /// What landing a child run did.
     Landed {
         run: RunId,

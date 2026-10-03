@@ -873,6 +873,14 @@ impl Workspace {
             HostUpdate::LandingPreview { run, preview } => {
                 self.set_landing_preview(&run, preview, cx)
             }
+            HostUpdate::Forecast { run, forecast } => {
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| view.id == run)
+                {
+                    view.forecast = forecast;
+                }
+                cx.notify();
+            }
             HostUpdate::Landed { run, landing } => {
                 self.landed(&run, landing, cx)
             }
