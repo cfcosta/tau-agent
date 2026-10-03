@@ -381,15 +381,6 @@ impl Api {
     }
 }
 
-/// A file in a tree to create: its path, whether it is executable, and
-/// its blob, or `None` to delete it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TreeFile {
-    pub path: String,
-    pub executable: bool,
-    pub blob: Option<String>,
-}
-
 /// A pull request GitHub opened.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Opened {
@@ -451,135 +442,6 @@ impl Api {
             ),
             _ => format!("GitHub could not {what} ({status}: {message})"),
         })
-    }
-
-    /// Uploads a file's content, returning its blob.
-    pub async fn create_blob(
-        &self,
-        token: &str,
-        repo: &str,
-        content: &[u8],
-    ) -> Result<String, String> {
-        let body = json!({
-            "content": base64(content),
-            "encoding": "base64",
-        });
-        let value = self
-            .expect(
-                reqwest::Method::POST,
-                token,
-                &format!("/repos/{repo}/git/blobs"),
-                &body,
-                "upload a file",
-            )
-            .await?;
-        sha(&value)
-    }
-
-    /// The tree of `commit`.
-    pub async fn commit_tree(
-        &self,
-        token: &str,
-        repo: &str,
-        commit: &str,
-    ) -> Result<String, String> {
-        let (status, value) = self
-            .get(token, &format!("/repos/{repo}/git/commits/{commit}"))
-            .await?;
-        if status != 200 {
-            return Err(format!(
-                "GitHub does not have commit {commit} ({status}); fetch the \
-                 repository and try again"
-            ));
-        }
-        value["tree"]["sha"]
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| "GitHub sent a commit without a tree".into())
-    }
-
-    /// A tree: `base` with `files` changed.
-    pub async fn create_tree(
-        &self,
-        token: &str,
-        repo: &str,
-        base: &str,
-        files: &[TreeFile],
-    ) -> Result<String, String> {
-        let entries: Vec<Value> = files
-            .iter()
-            .map(|file| {
-                json!({
-                    "path": file.path,
-                    "mode": if file.executable { "100755" } else { "100644" },
-                    "type": "blob",
-                    "sha": file.blob,
-                })
-            })
-            .collect();
-        let body = json!({ "base_tree": base, "tree": entries });
-        let value = self
-            .expect(
-                reqwest::Method::POST,
-                token,
-                &format!("/repos/{repo}/git/trees"),
-                &body,
-                "make a tree",
-            )
-            .await?;
-        sha(&value)
-    }
-
-    pub async fn create_commit(
-        &self,
-        token: &str,
-        repo: &str,
-        message: &str,
-        tree: &str,
-        parent: &str,
-    ) -> Result<String, String> {
-        let body =
-            json!({ "message": message, "tree": tree, "parents": [parent] });
-        let value = self
-            .expect(
-                reqwest::Method::POST,
-                token,
-                &format!("/repos/{repo}/git/commits"),
-                &body,
-                "make a commit",
-            )
-            .await?;
-        sha(&value)
-    }
-
-    /// Points `branch` at `commit`, making it if it is new.
-    pub async fn set_branch(
-        &self,
-        token: &str,
-        repo: &str,
-        branch: &str,
-        commit: &str,
-    ) -> Result<(), String> {
-        let (status, _) = self
-            .send(
-                reqwest::Method::POST,
-                token,
-                &format!("/repos/{repo}/git/refs"),
-                &json!({ "ref": format!("refs/heads/{branch}"), "sha": commit }),
-            )
-            .await?;
-        if (200..300).contains(&status) {
-            return Ok(());
-        }
-        self.expect(
-            reqwest::Method::PATCH,
-            token,
-            &format!("/repos/{repo}/git/refs/heads/{branch}"),
-            &json!({ "sha": commit, "force": true }),
-            "move the branch",
-        )
-        .await
-        .map(drop)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -665,19 +527,6 @@ impl Api {
             Checks::Running
         })
     }
-}
-
-fn sha(value: &Value) -> Result<String, String> {
-    value["sha"]
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| "GitHub sent no id".into())
-}
-
-/// Standard base64, as GitHub's blobs take it.
-fn base64(bytes: &[u8]) -> String {
-    use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn repo_choice(repo: &Value) -> Option<RepoChoice> {
@@ -914,16 +763,6 @@ async fn list_repos(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn base64_matches_the_standard() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foo"), "Zm9v");
-        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-        assert_eq!(base64(&[0xff, 0xfe]), "//4=");
-    }
 
     /// Every value encodes to unreserved characters and `%XX` escapes
     /// only, and decodes back to itself.

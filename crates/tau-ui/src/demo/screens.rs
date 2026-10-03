@@ -98,6 +98,34 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.set_phones(phones(), cx);
         ws.navigate(Route::Phones, cx);
     }),
+    // The main chat ahead of GitHub (ADR 0023): its header and sidebar
+    // row; the card of a push that went; GitHub's main moved.
+    ("push", |ws, _, cx| ws.navigate(Route::Run(run_id()), cx)),
+    ("pushed", |ws, _, cx| {
+        ws.navigate(Route::Run(run_id()), cx);
+        let result = Ok(pushed());
+        ws.apply(
+            HostUpdate::Pushed {
+                repo: "tau-agent".into(),
+                result,
+            },
+            cx,
+        );
+    }),
+    ("push-rejected", |ws, _, cx| {
+        ws.navigate(Route::Run(run_id()), cx);
+        let result = Err(crate::push::PushFailure::Moved {
+            branch: "main".into(),
+            ahead: 3,
+        });
+        ws.apply(
+            HostUpdate::Pushed {
+                repo: "tau-agent".into(),
+                result,
+            },
+            cx,
+        );
+    }),
     // A pull request from the demo run, written and opened.
     ("pr", |ws, _, cx| pull_request_at(ws, pull_request(), cx)),
     ("pr-opened", |ws, _, cx| {

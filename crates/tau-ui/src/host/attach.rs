@@ -114,6 +114,7 @@ pub(super) fn show_drain(
         queue,
         conflicts,
     } = report;
+    let has_landed = !landed.is_empty();
     workspace.update(cx, |ws, cx| {
         for (run, landing) in landed {
             ws.apply(
@@ -142,6 +143,13 @@ pub(super) fn show_drain(
             cx,
         );
     });
+    // Landing on a main chat moves trunk: what it would push to GitHub
+    // changes too.
+    if has_landed {
+        let catalog = host.catalog();
+        workspace
+            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
+    }
     if let (Some(files), Some(hook)) = (notify, host.conflicts_hook.clone()) {
         hook(&main, &repo, &files, cx);
     }
@@ -548,6 +556,30 @@ impl Host {
                         if opened {
                             watch_checks(host, run, workspace, cx).await;
                         }
+                    })
+                    .detach();
+                }
+                WorkspaceEvent::Push { repo, fetch } => {
+                    let (job_repo, fetch) = (repo.clone(), *fetch);
+                    let job = {
+                        let host = handler.clone();
+                        handler.runtime.spawn_blocking(move || {
+                            host.push_main(&job_repo, fetch)
+                        })
+                    };
+                    let (host, repo, workspace) =
+                        (handler.clone(), repo.clone(), workspace.downgrade());
+                    cx.spawn(async move |cx| {
+                        let result = job.await.unwrap_or_else(|error| {
+                            Err(crate::push::PushFailure::Failed(error.to_string()))
+                        });
+                        // The count ahead of GitHub, and trunk after a
+                        // fetch, change with it.
+                        let catalog = host.catalog();
+                        let _ = workspace.update(cx, |ws, cx| {
+                            ws.apply(HostUpdate::catalog(catalog), cx);
+                            ws.apply(HostUpdate::Pushed { repo, result }, cx);
+                        });
                     })
                     .detach();
                 }

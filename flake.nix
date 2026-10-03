@@ -160,15 +160,17 @@
                   pkgs.makeWrapper
                 ];
                 buildInputs = guiLibs ++ [ libghostty-vt ];
-                # The tests make fixture repositories with git; the app
-                # itself does not need it.
+                # The tests make fixture repositories with git and push to
+                # them.
                 nativeCheckInputs = [ pkgs.git ];
 
                 # GPUI opens Vulkan, Wayland and X11 with dlopen, so the
-                # binary needs them on its library path.
+                # binary needs them on its library path. jj-lib's push
+                # runs `git`, the one thing tau runs it for (ADR 0023).
                 postFixup = ''
                   wrapProgram $out/bin/tau-ui \
-                    --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibs}
+                    --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibs} \
+                    --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
                 '';
 
                 meta = {

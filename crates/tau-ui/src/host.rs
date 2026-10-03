@@ -246,6 +246,7 @@ mod landing;
 mod lanes;
 mod onboarding;
 mod pull_request;
+mod push;
 pub mod queue;
 mod repos;
 mod startup;
@@ -562,6 +563,16 @@ impl Host {
                     Repo::new(&listed.name, listed.path.display().to_string());
                 repo.main =
                     listed.main.as_deref().map(|main| RunId(main.into()));
+                // What the main chat would push, for a repository from
+                // GitHub (ADR 0023).
+                if listed.github.is_some()
+                    && let ProjectState::Ready(project) = slot.project.peek()
+                {
+                    repo.unpushed = project
+                        .unpushed()
+                        .map_or(0, |changes| changes.len() as u32);
+                    repo.trunk = project.trunk_name().ok();
+                }
                 repo.plugins = self.registered_repo_data(slot);
                 Some(repo)
             })

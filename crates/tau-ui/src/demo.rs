@@ -764,6 +764,34 @@ pub fn setup(step: SetupStep) -> Setup {
 }
 
 /// The pull request the finished demo run would open.
+/// What the demo's main chat pushed to GitHub: three changes.
+pub fn pushed() -> crate::push::Pushed {
+    use crate::push::{Pushed, PushedChange};
+    let change = |id: &str, title: &str| PushedChange {
+        change_id: id.into(),
+        title: title.into(),
+    };
+    Pushed {
+        branch: "main".into(),
+        from: Some("0fe6b403f1c2a9e8d7b6a5c4e3f2a1b0c9d8e7f6".into()),
+        to: "8cc5b9ce2d4f6a8b0c1e3f5a7b9d1e3f5a7c9e1b".into(),
+        changes: vec![
+            change(
+                "kmqzrtyvwlpnosux",
+                "feat(host): load AGENTS.md into the system prompt",
+            ),
+            change(
+                "vtponmlkzyxwsrqp",
+                "fix(host): refuse to reopen a landed chat",
+            ),
+            change(
+                "ywrnqpzokmlstuvx",
+                "feat(vcs): sweep orphan workspaces at start",
+            ),
+        ],
+    }
+}
+
 pub fn pull_request() -> PullRequest {
     PullRequest {
         repo: "cfcosta/tau-agent".into(),
@@ -1008,6 +1036,13 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 };
                 workspace.update(cx, |ws, cx| ws.apply(update, cx));
             }
+            WorkspaceEvent::Push { repo, .. } => {
+                let pushed = HostUpdate::Pushed {
+                    repo: repo.clone(),
+                    result: Ok(pushed()),
+                };
+                later(vec![(1200, Answer::Host(pushed))], cx)
+            }
             WorkspaceEvent::CreatePullRequest { run, .. } => {
                 let opened = HostUpdate::PullRequestState {
                     run: run.clone(),
@@ -1238,8 +1273,11 @@ pub fn catalog() -> Catalog {
             failed: 3,
         }),
         repos: vec![
+            // Its main chat has changes GitHub does not have yet.
             Repo {
                 main: Some(run_id()),
+                unpushed: 3,
+                trunk: Some("main".into()),
                 ..Repo::new("tau-agent", "~/Code/cfcosta/tau-agent")
             },
             Repo {

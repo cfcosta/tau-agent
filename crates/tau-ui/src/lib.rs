@@ -28,6 +28,7 @@ use tau_ui_remote::{
     phones,
     plugins,
     pull_request,
+    push,
     queue,
     route,
     setup,
