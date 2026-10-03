@@ -147,6 +147,38 @@ fn a_note_says_what_changed() {
     );
 }
 
+/// An effort kept over Jev's pick to keep the cache gets a note even
+/// when it does not change, saying what switching would have cost, and
+/// the status says it was kept.
+#[test]
+fn a_kept_effort_says_what_it_saved() {
+    let mut state = State::default();
+    let mut anchors = FakeRun::default();
+    fold(
+        &mut state,
+        &choice(true, "medium", Some("medium")),
+        &mut anchors,
+    );
+    let mut kept = choice(true, "high", Some("medium"));
+    kept["kept_for_cache"] = 48_213.into();
+    fold(&mut state, &kept, &mut anchors);
+    assert_eq!(anchors.anchors.len(), 2);
+    let Note::Choice { text, outcome, .. } = &state.notes[&anchors.anchors[1]]
+    else {
+        panic!("a choice note");
+    };
+    assert_eq!(text, "kept **medium** reasoning for this message");
+    assert_eq!(
+        outcome,
+        "but this message stays at medium: switching to high would \
+         resend 48k tokens uncached."
+    );
+    assert_eq!(state.status.as_deref(), Some("kept medium"));
+    assert_eq!(tau_reasoning::ui::tokens_text(900), "900");
+    assert_eq!(tau_reasoning::ui::tokens_text(1_499), "1k");
+    assert_eq!(tau_reasoning::ui::tokens_text(1_500), "2k");
+}
+
 fn run(effort: Option<&str>, jev: bool) -> RunCtx {
     let mut services = Services::default();
     if jev {

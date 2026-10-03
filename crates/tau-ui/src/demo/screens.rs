@@ -334,6 +334,21 @@ pub static SCREENS: &[(&str, Screen)] = &[
     }),
     // The demo streams tau-reasoning's note in right after the task.
     ("note-open", |ws, _, cx| ws.toggle_note(&run_id(), 1, cx)),
+    // tau-reasoning keeping a long conversation's effort over Jev's
+    // pick: its note, then its choices page.
+    ("effort-kept", |ws, _, cx| {
+        ws.navigate(Route::Run(run_id()), cx);
+        effort_kept(ws, cx);
+    }),
+    ("effort-kept-page", |ws, _, cx| {
+        effort_kept(ws, cx);
+        let page = Route::Plugin {
+            plugin: tau_reasoning::NAME.into(),
+            page: "choices".into(),
+            params: [("run".to_owned(), run_id().0.to_string())].into(),
+        };
+        ws.navigate(page, cx)
+    }),
     ("composer-lines", |ws, _, cx| {
         ws.navigate(Route::Run(run_id()), cx);
         ws.set_composer(
@@ -521,6 +536,29 @@ fn rules_at(
 
 /// The demo run working on [`GOAL`], with the records tau-goal
 /// published by `state`.
+/// A message of the demo run that kept medium reasoning over Jev's pick
+/// of high, its conversation's prefix being 48k tokens.
+fn effort_kept(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    let body = serde_json::json!({
+        "kind": "choice", "verdict": "chose", "effort": "high",
+        "confidence": 0.81, "threshold": 0.7, "cost": 0.00002,
+        "runs_at": "medium", "kept_for_cache": 48_213,
+        "levels": [
+            { "effort": "none", "suits": "no thought", "p": 0.01 },
+            { "effort": "low", "suits": "small edits", "p": 0.03 },
+            { "effort": "medium", "suits": "routine code", "p": 0.11 },
+            { "effort": "high", "suits": "refactors", "p": 0.81 },
+            { "effort": "xhigh", "suits": "audits, proofs", "p": 0.04 },
+        ],
+    });
+    let event = RunEvent::PluginReport {
+        run: run_id(),
+        plugin: tau_reasoning::NAME.into(),
+        body,
+    };
+    workspace.apply(HostUpdate::Event(event), cx);
+}
+
 fn goal_at(
     workspace: &mut Workspace,
     state: &str,

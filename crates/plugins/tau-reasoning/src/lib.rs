@@ -15,6 +15,14 @@
 //! records what Jev answered and what the message runs at, as a
 //! [`Choice`], so interfaces can show why.
 //!
+//! A run that goes on with a conversation (a resumed run) or inherits
+//! one (a fork) keeps the effort the conversation last ran at, even when
+//! Jev is sure of another, once the conversation's prefix reaches
+//! [`STICKY_TOKENS`] ([`Reasoning::sticky_after`]): a change of effort
+//! resends the whole prefix uncached. The [`Choice`] says so
+//! ([`Choice::kept_for_cache`]). An effort someone chose stands all the
+//! same. See [`runs_at`].
+//!
 //! By default the effort stays fixed while the run works: no model
 //! keeps its cache across a change of effort, so each change costs a
 //! full, uncached resend (`docs/reference/openai-websocket.md`). With
@@ -35,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_agent::{
     error::PluginError,
+    output::estimate_tokens,
     plugin::{
         FinishedRun,
         Plugin,
@@ -58,6 +67,10 @@ pub const NAME: &str = "tau-reasoning";
 
 /// How confident Jev must be for its level to be used.
 pub const DEFAULT_THRESHOLD: f64 = 0.7;
+
+/// From how many tokens of prefix a conversation keeps the effort it
+/// last ran at, whatever Jev picks.
+pub const STICKY_TOKENS: u64 = 20_000;
 
 /// A message this long or shorter brings the task and the proposal it
 /// answers: on its own it says little about the work.
@@ -226,6 +239,11 @@ pub struct Choice {
     /// mid-run.
     #[serde(default)]
     pub lease: Option<String>,
+    /// Jev was sure of `effort`, but the message keeps the effort the
+    /// conversation last ran at, `runs_at`: switching would resend this
+    /// many tokens of prefix uncached.
+    #[serde(default)]
+    pub kept_for_cache: Option<u64>,
 }
 
 fn user_turn() -> String {
@@ -242,19 +260,26 @@ pub enum Verdict {
     Kept,
 }
 
-/// A message's task and the agent's last words, which the next message
-/// is read with.
+/// A message's task, the agent's last words, which the next message is
+/// read with, and the effort the run's last request went out at.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Context {
     pub task: String,
     pub proposal: String,
+    /// `None` for the model's default.
+    pub runs_at: Option<String>,
 }
 
 impl Context {
-    pub fn new(task: &str, said: &str) -> Self {
+    pub fn new(
+        task: &str,
+        said: &str,
+        runs_at: Option<ReasoningEffort>,
+    ) -> Self {
         Self {
             task: clip(task, TASK_HEAD, TASK_TAIL),
             proposal: clip(said, 0, SAID_SEEN),
+            runs_at: runs_at.map(|effort| effort.as_str().to_owned()),
         }
     }
 }
@@ -326,21 +351,62 @@ pub struct Scored {
     pub p: f64,
 }
 
-/// The effort the run's last scored message ran at, from the plugin's
-/// records, if one of `levels` still takes it.
-fn previous(records: &[Value], levels: &[Level]) -> Option<ReasoningEffort> {
-    let last = read_records::<Record>(NAME, records)
+/// The effort the conversation last ran at, from the plugin's records
+/// along the run's fork chain: what its last run's requests went out at,
+/// or its last choice's. `Some(None)` for the model's default; `None`
+/// when nothing ran yet, or it ran at an effort none of `levels` takes,
+/// as on another model.
+pub fn last_effort(
+    records: &[Value],
+    levels: &[Level],
+) -> Option<Option<ReasoningEffort>> {
+    let ran_at = read_records::<Record>(NAME, records)
         .into_iter()
         .rev()
         .find_map(|record| match record {
-            Record::Choice(choice) => Some(choice),
+            Record::Choice(choice) => Some(choice.ran_at().map(str::to_owned)),
+            Record::Context(context) => Some(context.runs_at),
             _ => None,
         })?;
-    let effort = ReasoningEffort::parse(last.ran_at()?)?;
-    levels
-        .iter()
-        .any(|level| level.effort == effort)
-        .then_some(effort)
+    match ran_at {
+        None => Some(None),
+        Some(name) => {
+            let effort = ReasoningEffort::parse(&name)?;
+            levels
+                .iter()
+                .any(|level| level.effort == effort)
+                .then_some(Some(effort))
+        }
+    }
+}
+
+/// The effort a message runs at, once Jev answered, and the tokens of
+/// prefix it kept the cache of, if it did.
+///
+/// - `picked`: the effort Jev is sure of, or `None` when it was unsure
+///   or failed.
+/// - `last`: what the conversation last ran at ([`last_effort`]).
+/// - `prefix`: the tokens of the conversation's prefix, which a change of
+///   effort resends uncached.
+///
+/// Jev's pick runs unless the conversation ran at another effort and its
+/// prefix holds at least `sticky_after` tokens: then the message keeps
+/// that effort. Without a pick, the message runs as the last one did.
+pub fn runs_at(
+    picked: Option<ReasoningEffort>,
+    last: Option<Option<ReasoningEffort>>,
+    prefix: u64,
+    sticky_after: u64,
+) -> (Option<ReasoningEffort>, Option<u64>) {
+    match (picked, last) {
+        (Some(picked), Some(last))
+            if prefix >= sticky_after && last != Some(picked) =>
+        {
+            (last, Some(prefix))
+        }
+        (Some(picked), _) => (Some(picked), None),
+        (None, last) => (last.flatten(), None),
+    }
 }
 
 /// `text`, with its middle cut out when it is longer than `head` and
@@ -420,6 +486,7 @@ pub struct Reasoning {
     levels: Option<Vec<Level>>,
     threshold: f64,
     redecide: bool,
+    sticky_after: u64,
 }
 
 impl Reasoning {
@@ -429,7 +496,16 @@ impl Reasoning {
             levels: None,
             threshold: DEFAULT_THRESHOLD,
             redecide: false,
+            sticky_after: STICKY_TOKENS,
         }
+    }
+
+    /// From how many tokens of prefix a run that goes on with or
+    /// inherits a conversation keeps the effort it last ran at
+    /// ([`runs_at`]). [`STICKY_TOKENS`] by default.
+    pub fn sticky_after(mut self, tokens: u64) -> Self {
+        self.sticky_after = tokens;
+        self
     }
 
     /// Whether Jev picks the effort again between turns, when its lease
@@ -459,6 +535,7 @@ impl Reasoning {
             levels: self.levels.clone().unwrap_or_else(|| levels_for(model)),
             threshold: self.threshold,
             redecides: self.redecide,
+            sticky_after: self.sticky_after,
         }
     }
 }
@@ -483,9 +560,17 @@ pub struct Picker {
     /// Whether Jev picks the effort again between turns
     /// ([`Reasoning::redecide`]).
     redecides: bool,
+    /// See [`Reasoning::sticky_after`].
+    sticky_after: u64,
 }
 
 impl Picker {
+    /// From how many tokens of prefix a conversation keeps the effort it
+    /// last ran at ([`Reasoning::sticky_after`]).
+    pub fn sticky_after(&self) -> u64 {
+        self.sticky_after
+    }
+
     /// Whether the model has efforts to choose from.
     pub fn scores(&self) -> bool {
         !self.levels.is_empty()
@@ -565,6 +650,7 @@ impl Picker {
             step: user_turn(),
             turn: None,
             lease: lease.map(|lease| lease.as_str().to_owned()),
+            kept_for_cache: None,
         };
         Ok(Asked {
             choice,
@@ -660,6 +746,8 @@ struct Steps {
     picker: Picker,
     task: String,
     instructions: String,
+    /// The effort the run's last request went out at, for its context.
+    effort: Option<ReasoningEffort>,
     lease: Option<Lease>,
     /// Whether the next request is the one `start` already chose for.
     first: bool,
@@ -688,6 +776,7 @@ impl Plugin for Reasoning {
                 .chars()
                 .take(INSTRUCTIONS_SEEN)
                 .collect(),
+            effort: plan.reasoning,
             lease: None,
             first: true,
             rewritten: false,
@@ -704,8 +793,12 @@ impl Plugin for Reasoning {
             &steps.instructions,
             last_context(plan.records()).as_ref(),
         );
-        // Unsure or failed, the message goes on as the last one did.
-        let previous = previous(plan.records(), &steps.picker.levels);
+        // Unsure or failed, the message goes on as the last one did; on a
+        // long conversation, it keeps that effort even when Jev is sure.
+        let last = last_effort(plan.records(), &steps.picker.levels);
+        let previous = last.flatten();
+        let prefix = plan.inherited_tokens()
+            + estimate_tokens(plan.instructions.as_deref().unwrap_or_default());
         match steps.picker.ask(state).await {
             Ok(Asked {
                 mut choice,
@@ -714,12 +807,13 @@ impl Plugin for Reasoning {
                 usage,
             }) => {
                 ctx.charge(&usage);
-                plan.reasoning = if choice.chose() {
-                    Some(effort)
-                } else {
-                    previous
-                };
+                let picked = choice.chose().then_some(effort);
+                let (effort, kept) =
+                    runs_at(picked, last, prefix, steps.picker.sticky_after);
+                plan.reasoning = effort;
+                steps.effort = effort;
                 steps.lease = lease;
+                choice.kept_for_cache = kept;
                 choice.runs_at =
                     plan.reasoning.map(|effort| effort.as_str().to_owned());
                 let body = tau_ui_plugin::placed(
@@ -730,6 +824,7 @@ impl Plugin for Reasoning {
             }
             Err(error) => {
                 plan.reasoning = previous;
+                steps.effort = previous;
                 steps.lease = Some(Lease::ToolChain);
                 // Recorded as well, so the run shows it when reopened.
                 let body = tau_ui_plugin::placed(
@@ -757,6 +852,7 @@ impl PluginRun for Steps {
         view: &RequestView<'_>,
         ctx: &PluginCtx,
     ) -> Result<Option<ReasoningEffort>, PluginError> {
+        self.effort = view.effort;
         if std::mem::take(&mut self.first)
             || !self.picker.redecides
             || !lease_ended(self.lease, self.rewritten, view.transcript)
@@ -791,6 +887,7 @@ impl PluginRun for Steps {
                     tau_ui_plugin::PLACE_NOW,
                 );
                 ctx.publish(&body).await;
+                self.effort = runs_at;
                 Ok(chosen.filter(|effort| Some(*effort) != view.effort))
             }
             Err(error) => {
@@ -824,7 +921,8 @@ impl PluginRun for Steps {
     }
 
     async fn finish(&mut self, run: &FinishedRun<'_>, ctx: &PluginCtx) {
-        let context = Record::Context(Context::new(&self.task, run.text));
+        let context =
+            Record::Context(Context::new(&self.task, run.text, self.effort));
         if let Err(error) = ctx.record(&context).await {
             eprintln!("{NAME}: the run's context could not be stored: {error}");
         }

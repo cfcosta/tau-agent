@@ -664,3 +664,181 @@ fn a_stored_run_replays_through_the_policy() {
         ]
     );
 }
+
+/// The sticky-effort rule, as the plugin's docs say it, by cases: a
+/// reference for [`tau_reasoning::runs_at`].
+fn reference_runs_at(
+    picked: Option<ReasoningEffort>,
+    last: Option<Option<ReasoningEffort>>,
+    prefix: u64,
+    sticky_after: u64,
+) -> (Option<ReasoningEffort>, Option<u64>) {
+    let Some(picked) = picked else {
+        // Unsure or failed: as the last message ran, or the default.
+        return (last.unwrap_or(None), None);
+    };
+    let Some(last) = last else {
+        // Nothing ran yet: nothing to keep.
+        return (Some(picked), None);
+    };
+    if prefix < sticky_after || last == Some(picked) {
+        (Some(picked), None)
+    } else {
+        (last, Some(prefix))
+    }
+}
+
+/// An effort, drawn by its place in [`ReasoningEffort::ALL`].
+fn effort(tc: &hegel::TestCase) -> ReasoningEffort {
+    use hegel::generators as gs;
+    ReasoningEffort::ALL[tc.draw(gs::integers::<usize>().max_value(6))]
+}
+
+/// For any pick, last effort, prefix and threshold, the message runs as
+/// the reference says; what it runs at is Jev's pick or the last effort,
+/// and only a kept effort says how many tokens it kept.
+#[hegel::test(test_cases = 500)]
+fn sticky_effort_follows_the_rule(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    let picked = tc.draw(gs::booleans()).then(|| effort(&tc));
+    let last = tc
+        .draw(gs::booleans())
+        .then(|| tc.draw(gs::booleans()).then(|| effort(&tc)));
+    let sticky_after = tc.draw(gs::integers::<u64>().max_value(100_000));
+    // The threshold itself and just under it, as often as anything else.
+    let prefix = match tc.draw(gs::integers::<u8>().max_value(2)) {
+        0 => sticky_after,
+        1 => sticky_after.saturating_sub(1),
+        _ => tc.draw(gs::integers::<u64>().max_value(200_000)),
+    };
+    let got = tau_reasoning::runs_at(picked, last, prefix, sticky_after);
+    assert_eq!(got, reference_runs_at(picked, last, prefix, sticky_after));
+    let (runs, kept) = got;
+    assert!(runs == picked || Some(runs) == last || picked.is_none());
+    if let Some(tokens) = kept {
+        assert_eq!(tokens, prefix);
+        assert!(prefix >= sticky_after);
+        assert_ne!(runs, picked);
+    }
+}
+
+/// Runs a conversation on gpt-6-sol: a first message whose answer is
+/// `answer_words` words long, at `first` (an effort the person chose, or
+/// Jev's `first_pick`, by its place among the model's levels), then a
+/// resumed message, or a fork, with Jev sure of `next_pick`. Returns the efforts the two messages ran at
+/// and the second's choice.
+fn conversation(
+    first: Option<ReasoningEffort>,
+    first_pick: usize,
+    answer_words: usize,
+    fork: bool,
+    next_pick: usize,
+    sticky_after: u64,
+) -> (Option<ReasoningEffort>, Option<ReasoningEffort>, Choice) {
+    let answer = "word ".repeat(answer_words);
+    let llm = ScriptedModel::new()
+        .turn(move |t| t.text(answer.clone()))
+        .turn(|t| t.text("next"));
+    // Jev is asked only where nobody chose: last pick first off.
+    let mut picks = vec![next_pick];
+    if first.is_none() {
+        picks.push(first_pick);
+    }
+    let picks = Arc::new(std::sync::Mutex::new(picks));
+    let jev = FakeJev::new(move |request| {
+        let level = picks.lock().unwrap().pop().expect("a pick");
+        let answers = BTreeMap::from([(
+            "effort".to_owned(),
+            Answer::Score {
+                score: level as f64,
+                probabilities: BTreeMap::from([(level.to_string(), 1.0)]),
+                confidence: 0.9,
+            },
+        )]);
+        Ok(tau_jev::fake::response(answers, request))
+    });
+    let reports = block_on(async {
+        let store = Store::memory().await.unwrap();
+        let plugin = Reasoning::new(Arc::new(jev)).sticky_after(sticky_after);
+        let auto = Agent::new(llm.clone())
+            .model("gpt-6-sol")
+            .instructions("You are a coding agent.")
+            .plugin(plugin);
+        let starter = match first {
+            Some(effort) => auto.clone().reasoning(effort),
+            None => auto.clone(),
+        };
+        let outcome = starter.run("design the pool", &store).await.unwrap();
+        let mut run = if fork {
+            auto.fork(&outcome.checkpoint())
+                .start("and the lanes", &store)
+        } else {
+            auto.resume(&outcome.run).start("and the lanes", &store)
+        };
+        let events: Vec<RunEvent> = run.events().collect().await;
+        run.outcome().await.unwrap();
+        events
+            .into_iter()
+            .filter_map(|event| match event {
+                RunEvent::PluginReport { plugin, body, .. }
+                    if &*plugin == NAME =>
+                {
+                    Record::parse(&body).and_then(Record::into_choice)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    });
+    let asked: Vec<_> = llm
+        .requests()
+        .iter()
+        .map(|request| request.settings.reasoning)
+        .collect();
+    (
+        asked[0],
+        asked[1],
+        reports.last().cloned().expect("a choice"),
+    )
+}
+
+/// A resumed message or a fork keeps the effort the conversation last
+/// ran at, Jev's or one the person chose, once its prefix reaches the
+/// threshold, and says how many tokens that kept; under it, Jev's pick
+/// runs.
+#[hegel::test(test_cases = 20)]
+fn a_long_conversation_keeps_its_effort(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    let levels: Vec<ReasoningEffort> = tau_reasoning::levels_for("gpt-6-sol")
+        .into_iter()
+        .map(|level| level.effort)
+        .collect();
+    let first = tc
+        .draw(gs::optional(gs::integers::<usize>().max_value(5)))
+        .map(|n| levels[n]);
+    let first_pick = tc.draw(gs::integers::<usize>().max_value(5));
+    let next_pick = tc.draw(gs::integers::<usize>().max_value(5));
+    let answer_words = tc.draw(gs::sampled_from(vec![10, 4_000]));
+    let fork = tc.draw(gs::booleans());
+    let sticky_after = 1_000;
+    let (ran, next, choice) = conversation(
+        first,
+        first_pick,
+        answer_words,
+        fork,
+        next_pick,
+        sticky_after,
+    );
+    assert_eq!(ran, first.or(Some(levels[first_pick])));
+    let picked = levels[next_pick];
+    let long = answer_words >= 1_000;
+    let expected = if long { ran } else { Some(picked) };
+    assert_eq!(next, expected);
+    assert_eq!(choice.runs_at.as_deref(), expected.map(|e| e.as_str()));
+    match choice.kept_for_cache {
+        Some(tokens) => {
+            assert!(long && ran != Some(picked));
+            assert!(tokens >= sticky_after);
+        }
+        None => assert!(!long || ran == Some(picked)),
+    }
+}

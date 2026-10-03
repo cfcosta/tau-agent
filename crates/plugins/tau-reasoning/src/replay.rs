@@ -10,6 +10,7 @@
 //! the reasoning tokens it would have spent were never spent.
 
 use serde_json::Value;
+use tau_agent::{context::estimate_context_tokens, output::estimate_tokens};
 use tau_ai::{
     message::{InputBlock, Message, UserContent},
     responses::request::ReasoningEffort,
@@ -24,6 +25,7 @@ use crate::{
     Record,
     lease_ended,
     message_state,
+    runs_at,
     step_state,
 };
 
@@ -86,19 +88,20 @@ pub async fn replay(
         match message {
             Message::User(user) if answered(&transcript) => {
                 if let Some(said) = transcript.iter().rev().find_map(said) {
-                    context = Some(Context::new(&task, &said));
+                    context = Some(Context::new(&task, &said, effort));
                 }
                 task = user_text(&user.content);
                 starts = true;
             }
             Message::Assistant(_) => {
-                let step = if starts { "user_turn" } else { "tool_step" };
-                let asks = starts
+                let start = std::mem::take(&mut starts);
+                let step = if start { "user_turn" } else { "tool_step" };
+                let asks = start
                     || picker.redecides()
                         && lease_ended(lease, false, &transcript);
                 let asked = if !asks {
                     None
-                } else if std::mem::take(&mut starts) {
+                } else if start {
                     let state =
                         message_state(&task, instructions, context.as_ref());
                     Some(picker.ask(state).await)
@@ -107,10 +110,26 @@ pub async fn replay(
                         step_state(&task, instructions, effort, &transcript);
                     Some(picker.ask(state).await)
                 };
+                // As a message comes in, a long conversation keeps the
+                // effort it ran at, as the plugin's `start` does.
+                let last = (!decisions.is_empty()).then_some(effort);
+                let prefix = estimate_context_tokens(&transcript)
+                    + estimate_tokens(instructions);
                 let asked = asked.map(|asked| {
-                    asked.map(|asked| {
-                        if asked.choice.chose() {
-                            effort = Some(asked.effort);
+                    asked.map(|mut asked| {
+                        let picked =
+                            asked.choice.chose().then_some(asked.effort);
+                        if start {
+                            let (runs, kept) = runs_at(
+                                picked,
+                                last,
+                                prefix,
+                                picker.sticky_after(),
+                            );
+                            effort = runs;
+                            asked.choice.kept_for_cache = kept;
+                        } else if picked.is_some() {
+                            effort = picked;
                         }
                         lease = asked.lease;
                         asked.choice

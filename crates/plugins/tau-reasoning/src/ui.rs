@@ -172,15 +172,18 @@ impl Fold for State {
             .clone()
             .or_else(|| chose.then(|| choice.effort.clone()));
         let before = std::mem::replace(&mut self.ran_at, runs_at.clone());
+        let kept = choice.kept_for_cache;
         self.status = Some(match &runs_at {
+            Some(effort) if kept.is_some() => format!("kept {effort}"),
             Some(effort) if chose => format!("chose {effort}"),
             Some(effort) => format!("stayed at {effort}"),
             None => "kept the default".to_owned(),
         });
         self.plan = Some(runs_at.clone().unwrap_or_else(|| "default".into()));
         self.choices.push(choice.clone());
-        // Only a change gets a note: the first pick, or a new effort.
-        if runs_at == before {
+        // Only a change gets a note: the first pick, or a new effort; and
+        // an effort kept over Jev's, to keep the cache.
+        if runs_at == before && kept.is_none() {
             return;
         }
         let name = |effort: &Option<String>| match effort {
@@ -188,15 +191,30 @@ impl Fold for State {
             None => "the model's default".to_owned(),
         };
         let text = match &before {
+            _ if kept.is_some() => {
+                format!("kept {} reasoning for {what}", name(&runs_at))
+            }
             None if chose => {
                 format!("picked {} reasoning for {what}", name(&runs_at))
             }
             _ => format!("reasoning {} → {}", name(&before), name(&runs_at)),
         };
-        let mut outcome = match &runs_at {
-            Some(effort) if chose => format!("so {what} runs at {effort}."),
-            Some(effort) => format!("so {what} stays at {effort}."),
-            None => format!("so {what} runs at the model's default."),
+        let stays = match &runs_at {
+            Some(effort) => format!("stays at {effort}"),
+            None => "stays at the model's default".to_owned(),
+        };
+        let mut outcome = match (&runs_at, kept) {
+            (_, Some(tokens)) => format!(
+                "but {what} {stays}: switching to {} would resend {} \
+                 tokens uncached.",
+                choice.effort,
+                tokens_text(tokens)
+            ),
+            (Some(effort), None) if chose => {
+                format!("so {what} runs at {effort}.")
+            }
+            (Some(_), None) => format!("so {what} {stays}."),
+            (None, None) => format!("so {what} runs at the model's default."),
         };
         // With deciding again on, how long Jev said the effort holds.
         if let Some(lease) = choice.lease.as_deref().and_then(Lease::parse) {
@@ -212,6 +230,16 @@ impl Fold for State {
             },
         );
         run.transcript(&key);
+    }
+}
+
+/// A count of tokens as a note says it: `48k`, or `900` under a
+/// thousand.
+pub fn tokens_text(tokens: u64) -> String {
+    if tokens < 1_000 {
+        tokens.to_string()
+    } else {
+        format!("{}k", (tokens + 500) / 1_000)
     }
 }
 
@@ -578,10 +606,13 @@ fn chart(choice: &Choice, t: &Theme, compact: bool) -> Div {
                     .child(level.suits.clone()),
             )
     });
-    let verdict = if choice.confidence >= choice.threshold {
-        "is applied"
-    } else {
-        "is not applied"
+    let verdict = match choice.kept_for_cache {
+        Some(tokens) => format!(
+            "is held back: it would resend {} tokens uncached",
+            tokens_text(tokens)
+        ),
+        None if choice.confidence >= choice.threshold => "is applied".into(),
+        None => "is not applied".into(),
     };
     div()
         .flex()
