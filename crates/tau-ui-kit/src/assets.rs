@@ -52,6 +52,12 @@ pub enum Icon {
     Land,
     /// Pushes main to GitHub.
     Push,
+    /// A run asks the person a question.
+    Question,
+    /// A run is ready to land: its changes come down onto its parent.
+    Landable,
+    /// A run tau's closing cut off.
+    Interrupted,
 }
 
 impl Icon {
@@ -96,6 +102,9 @@ impl Icon {
             Self::External => "icons/external.svg",
             Self::Land => "icons/land.svg",
             Self::Push => "icons/push.svg",
+            Self::Question => "icons/question.svg",
+            Self::Landable => "icons/landable.svg",
+            Self::Interrupted => "icons/interrupted.svg",
         }
     }
 
@@ -188,10 +197,17 @@ impl Icon {
             Self::Info => {
                 r#"<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>"#
             }
+            Self::Question => {
+                r#"<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 113.5 2.3c-.6.3-1 .9-1 1.6V14M12 17h.01"/>"#
+            }
+            Self::Landable => r#"<path d="M12 4v12M6 10l6 6 6-6M5 20h14"/>"#,
+            Self::Interrupted => {
+                r#"<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>"#
+            }
         }
     }
 
-    const ALL: [Self; 39] = [
+    const ALL: [Self; 42] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -231,6 +247,9 @@ impl Icon {
         Self::External,
         Self::Land,
         Self::Push,
+        Self::Question,
+        Self::Landable,
+        Self::Interrupted,
     ];
 
     fn svg(self) -> String {
