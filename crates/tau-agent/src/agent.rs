@@ -35,6 +35,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    context::{estimate_context_tokens, estimate_message_tokens},
     event::{RunEvent, StopReason},
     limits::Limits,
     plugin::{Plugin, RunPlan, RunShared},
@@ -892,6 +893,10 @@ async fn run_task(
         agent.0.model.clone(),
         kind,
         workflow.clone(),
+    );
+    plan.set_inherited_tokens(
+        estimate_context_tokens(&history)
+            + prelude.iter().map(estimate_message_tokens).sum::<u64>(),
     );
     for (tool, owner, schema) in tools {
         plan.push_tool(tool, owner, Some(schema));

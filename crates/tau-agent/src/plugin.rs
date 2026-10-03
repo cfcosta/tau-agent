@@ -334,6 +334,7 @@ pub struct RunPlan {
     workflow: Option<Arc<str>>,
     records: Vec<Value>,
     last_rewrite: Option<Value>,
+    inherited_tokens: u64,
     tools: Vec<Arc<dyn AgentTool>>,
     /// Per tool: the plugin that added it, and its schema once compiled.
     owners: Vec<PlanTool>,
@@ -390,6 +391,7 @@ impl RunPlan {
             workflow,
             records: Vec::new(),
             last_rewrite: None,
+            inherited_tokens: 0,
             tools: Vec::new(),
             owners: Vec::new(),
             starting: None,
@@ -474,6 +476,19 @@ impl RunPlan {
     /// the compaction's record here.
     pub fn last_rewrite(&self) -> Option<&Value> {
         self.last_rewrite.as_ref()
+    }
+
+    /// The estimated tokens of the transcript the run inherits (a fork)
+    /// or goes on with (a resumed run), before its input: what its first
+    /// request would resend uncached if its instructions, tools or effort
+    /// changed (`docs/reference/openai-websocket.md`, "Prompt cache"). 0
+    /// for a run that starts blank.
+    pub fn inherited_tokens(&self) -> u64 {
+        self.inherited_tokens
+    }
+
+    pub(crate) fn set_inherited_tokens(&mut self, tokens: u64) {
+        self.inherited_tokens = tokens;
     }
 
     pub(crate) fn set_records(&mut self, records: Vec<Value>) {

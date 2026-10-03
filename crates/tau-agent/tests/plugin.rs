@@ -1774,3 +1774,58 @@ mod side_ask_tests {
         });
     }
 }
+
+/// Records the tokens each run's plan says it inherits.
+struct Inherits(Arc<Mutex<Vec<u64>>>);
+
+#[async_trait]
+impl Plugin for Inherits {
+    fn name(&self) -> &str {
+        "inherits"
+    }
+
+    async fn start(
+        &self,
+        plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        self.0.lock().unwrap().push(plan.inherited_tokens());
+        Ok(Box::new(()))
+    }
+}
+
+/// A run that starts blank inherits nothing; a resumed run and a fork
+/// of the same run inherit the same transcript, and its size, by the
+/// context estimate, before their input.
+#[test]
+fn plugins_see_what_a_run_inherits() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("a long answer ".repeat(50)))
+        .turn(|t| t.text("resumed"))
+        .turn(|t| t.text("forked"));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm).plugin(Inherits(seen.clone()));
+        let first = agent.run("start", &store).await.unwrap();
+        let checkpoint = first.checkpoint();
+        agent.fork(&checkpoint).run("fork", &store).await.unwrap();
+        agent.resume(&first.run).run("again", &store).await.unwrap();
+        let transcript = store.transcript(&first.run.0).await.unwrap();
+        let messages: Vec<tau_ai::message::Message> = transcript
+            .into_iter()
+            .filter_map(|entry| match entry {
+                tau_store::Entry::Message { body, .. } => {
+                    serde_json::from_str(&body).ok()
+                }
+                _ => None,
+            })
+            .collect();
+        // What the fork and the resumed run inherited: the first run's
+        // two messages, before the resumed run added its own.
+        let expected =
+            tau_agent::context::estimate_context_tokens(&messages[..2]);
+        assert!(expected > 0);
+        assert_eq!(*seen.lock().unwrap(), vec![0, expected, expected]);
+    });
+}
