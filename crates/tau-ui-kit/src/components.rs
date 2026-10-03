@@ -1024,7 +1024,30 @@ pub fn code_block(lang: Option<&str>, text: &str, t: &Theme) -> Div {
         .bg(t.card)
         .border_1()
         .border_color(t.border)
-        .child(mono(text.to_owned(), Type::SMALL, t.text_soft))
+        .child(
+            match lang
+                .and_then(crate::syntax::Lang::of_name)
+                .filter(|_| !text.is_empty())
+            {
+                Some(lang) => {
+                    let parts = crate::syntax::highlight_cached(lang, text);
+                    div()
+                        .typeset(Type::SMALL.mono())
+                        .text_color(t.text_soft)
+                        .child(
+                            gpui::StyledText::new(text.to_owned()).with_runs(
+                                crate::syntax::runs(
+                                    text,
+                                    &parts,
+                                    t.text_soft,
+                                    &t.syntax,
+                                ),
+                            ),
+                        )
+                }
+                None => mono(text.to_owned(), Type::SMALL, t.text_soft),
+            },
+        )
         .children(lang.map(|lang| {
             div().absolute().top(sp(1.5)).right(sp(2.5)).child(mono(
                 lang.to_owned(),

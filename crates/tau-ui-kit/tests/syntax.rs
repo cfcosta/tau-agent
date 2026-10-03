@@ -16,8 +16,18 @@ const SAMPLES: [(Lang, &str, &str, Kind); 10] = [
     (Lang::Nix, "{ a = \"hi\"; }", "\"hi\"", Kind::String),
     (Lang::Python, "def f():\n    return 1", "def", Kind::Keyword),
     (Lang::Rust, "fn main() { let x = 1; }", "fn", Kind::Keyword),
-    (Lang::Toml, "[package]\nname = \"tau\"", "\"tau\"", Kind::String),
-    (Lang::Tsx, "const a = <div>{x}</div>;", "const", Kind::Keyword),
+    (
+        Lang::Toml,
+        "[package]\nname = \"tau\"",
+        "\"tau\"",
+        Kind::String,
+    ),
+    (
+        Lang::Tsx,
+        "const a = <div>{x}</div>;",
+        "const",
+        Kind::Keyword,
+    ),
     (Lang::TypeScript, "let n: number = 1;", "let", Kind::Keyword),
 ];
 
@@ -56,7 +66,8 @@ fn code() -> impl hegel::PrintableGenerator<String> {
 /// character boundaries; runs cover it exactly.
 #[hegel::test(test_cases = 300)]
 fn parts_are_ordered_and_inside(tc: hegel::TestCase) {
-    let lang = Lang::ALL[tc.draw(gs::integers::<usize>().max_value(Lang::ALL.len() - 1))];
+    let lang = Lang::ALL
+        [tc.draw(gs::integers::<usize>().max_value(Lang::ALL.len() - 1))];
     let text = tc.draw(code());
     let spans = highlight(lang, &text);
     let mut at = 0;
@@ -75,7 +86,8 @@ fn parts_are_ordered_and_inside(tc: hegel::TestCase) {
 /// Line by line, the parts are the whole text's, cut at line ends.
 #[hegel::test(test_cases = 300)]
 fn lines_cut_the_whole(tc: hegel::TestCase) {
-    let lang = Lang::ALL[tc.draw(gs::integers::<usize>().max_value(Lang::ALL.len() - 1))];
+    let lang = Lang::ALL
+        [tc.draw(gs::integers::<usize>().max_value(Lang::ALL.len() - 1))];
     let text = tc.draw(code());
     let lines: Vec<&str> = text.split('\n').collect();
     let per_line = highlight_lines(lang, &lines);

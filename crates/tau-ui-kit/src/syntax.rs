@@ -6,7 +6,13 @@
 //! Text in no language this knows, or too long to be worth it, gets no
 //! spans and stays plain.
 
-use std::{cell::RefCell, collections::HashMap, ops::Range, sync::LazyLock};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    ops::Range,
+    sync::{Arc, LazyLock},
+};
 
 use gpui::{Hsla, TextRun, font};
 use tree_sitter_highlight::{
@@ -84,9 +90,10 @@ impl Lang {
                 tree_sitter_bash::LANGUAGE,
                 tree_sitter_bash::HIGHLIGHT_QUERY.to_owned(),
             ),
-            Lang::Go => {
-                (tree_sitter_go::LANGUAGE, tree_sitter_go::HIGHLIGHTS_QUERY.into())
-            }
+            Lang::Go => (
+                tree_sitter_go::LANGUAGE,
+                tree_sitter_go::HIGHLIGHTS_QUERY.into(),
+            ),
             Lang::JavaScript => (
                 js::LANGUAGE,
                 format!("{}\n{}", js::JSX_HIGHLIGHT_QUERY, js::HIGHLIGHT_QUERY),
@@ -224,7 +231,8 @@ pub fn highlight(lang: Lang, text: &str) -> Vec<(Range<usize>, Kind)> {
     let config = &CONFIGS[&lang];
     HIGHLIGHTER.with_borrow_mut(|highlighter| {
         let Ok(events) =
-            highlighter.highlight(config, text.as_bytes(), None, None, |_| None)
+            highlighter
+                .highlight(config, text.as_bytes(), None, None, |_| None)
         else {
             return Vec::new();
         };
@@ -232,7 +240,9 @@ pub fn highlight(lang: Lang, text: &str) -> Vec<(Range<usize>, Kind)> {
         let mut stack: Vec<Kind> = Vec::new();
         for event in events {
             match event {
-                Ok(HighlightEvent::HighlightStart(h)) => stack.push(NAMES[h.0].1),
+                Ok(HighlightEvent::HighlightStart(h)) => {
+                    stack.push(NAMES[h.0].1)
+                }
                 Ok(HighlightEvent::HighlightEnd) => {
                     stack.pop();
                 }
@@ -255,13 +265,44 @@ pub fn highlight(lang: Lang, text: &str) -> Vec<(Range<usize>, Kind)> {
     })
 }
 
+/// Texts [`highlight_cached`] keeps the parts of, per thread, before it
+/// starts over.
+const CACHED: usize = 256;
+
+thread_local! {
+    static CACHE: RefCell<HashMap<(Lang, u64), Arc<Spans>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// A text's highlighted parts.
+pub type Spans = Vec<(Range<usize>, Kind)>;
+
+/// [`highlight`], kept for texts drawn again each frame, such as a
+/// reply's code blocks.
+pub fn highlight_cached(lang: Lang, text: &str) -> Arc<Spans> {
+    let mut hasher = std::hash::DefaultHasher::new();
+    text.hash(&mut hasher);
+    let key = (lang, hasher.finish());
+    if let Some(spans) = CACHE.with_borrow(|cache| cache.get(&key).cloned()) {
+        return spans;
+    }
+    let spans = Arc::new(highlight(lang, text));
+    CACHE.with_borrow_mut(|cache| {
+        if cache.len() >= CACHED {
+            cache.clear();
+        }
+        cache.insert(key, spans.clone());
+    });
+    spans
+}
+
+/// Each line's highlighted parts, by byte offsets in that line.
+pub type Lines = Vec<Vec<(Range<usize>, Kind)>>;
+
 /// `text` highlighted line by line: each line's parts, by byte offsets
 /// in that line. The lines are parsed together, so a string or comment
 /// across lines is colored on each.
-pub fn highlight_lines(
-    lang: Lang,
-    lines: &[impl AsRef<str>],
-) -> Vec<Vec<(Range<usize>, Kind)>> {
+pub fn highlight_lines(lang: Lang, lines: &[impl AsRef<str>]) -> Lines {
     let text = lines
         .iter()
         .map(AsRef::as_ref)
@@ -303,13 +344,10 @@ pub fn runs(
     look: &SyntaxLook,
 ) -> Vec<TextRun> {
     let run = |len: usize, kind: Option<Kind>| {
-        let mut face = font(MONO);
-        if kind == Some(Kind::Comment) {
-            face = face.italic();
-        }
         TextRun {
             len,
-            font: face,
+            // No italic comments: the bundled mono face has none.
+            font: font(MONO),
             color: kind.map_or(plain, |kind| look.color(kind)),
             background_color: None,
             underline: None,
@@ -319,7 +357,8 @@ pub fn runs(
     let mut out = Vec::new();
     let mut at = 0;
     for (range, kind) in spans {
-        let range = range.start.max(at).min(text.len())..range.end.min(text.len());
+        let range =
+            range.start.max(at).min(text.len())..range.end.min(text.len());
         if range.start >= range.end {
             continue;
         }
