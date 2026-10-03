@@ -153,6 +153,20 @@ pub static SCREENS: &[(&str, Screen)] = &[
         );
         ws.navigate(Route::Run(run), cx);
     }),
+    // A chat tau closing cut off: it waits to be resumed.
+    ("interrupted", |ws, _, cx| {
+        let Some(mut view) = ws.run(&fork_id()).cloned() else {
+            return;
+        };
+        view.id = RunId("interrupted".into());
+        view.title = "Atomic landing".into();
+        view.items
+            .retain(|item| !matches!(item, crate::view::Item::Stop { .. }));
+        view.status = crate::view::RunStatus::Interrupted;
+        let run = view.id.clone();
+        ws.apply(HostUpdate::History(vec![view]), cx);
+        ws.navigate(Route::Run(run), cx);
+    }),
     // tau-ask's panel in the composer's place (ADR 0019): a question
     // with previews; a checklist with a note being written; the review.
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),

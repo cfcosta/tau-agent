@@ -56,7 +56,8 @@ pub fn item(
     if index == run.items.len() {
         let card = match run.ending {
             Some(_) => super::ending::landed_card(ws, run, t, cx),
-            None => super::landing::card(ws, run, t, compact, cx),
+            None => super::interrupted::card(run, t, cx)
+                .or_else(|| super::landing::card(ws, run, t, compact, cx)),
         };
         return div()
             .px(side)

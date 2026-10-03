@@ -262,7 +262,8 @@ impl Workspace {
                             || matches!(
                                 run.ending,
                                 Some(Ending::Landed { .. })
-                            ),
+                            )
+                            || run.status == RunStatus::Interrupted,
                     );
                     (run.id.clone(), run.items.len() + card)
                 });
