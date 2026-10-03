@@ -318,6 +318,97 @@ mod tests {
 
     use super::*;
 
+    const MARKUP_ALPHABET: &str = "abcdefghijklmnopqrstuvwxyz é雪😀";
+
+    #[derive(Debug, Clone, Copy)]
+    enum MarkedKind {
+        Bold,
+        Code,
+    }
+
+    #[derive(Debug)]
+    struct MarkedSection {
+        kind: MarkedKind,
+        body: String,
+    }
+
+    #[derive(Debug)]
+    struct MarkupDescription {
+        leading_plain: Option<String>,
+        sections: Vec<MarkedSection>,
+        interstitial_plain: Option<String>,
+        trailing_plain: Option<String>,
+    }
+
+    fn marked_body() -> impl hegel::PrintableGenerator<String> {
+        gs::text().alphabet(MARKUP_ALPHABET).min_size(1).max_size(8)
+    }
+
+    fn plain_fragment() -> impl hegel::PrintableGenerator<String> {
+        gs::text().alphabet(MARKUP_ALPHABET).max_size(8)
+    }
+
+    fn append_expected_plain(spans: &mut Vec<(String, Mark)>, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some((previous, Mark::Plain)) = spans.last_mut() {
+            previous.push_str(text);
+        } else {
+            spans.push((text.to_owned(), Mark::Plain));
+        }
+    }
+
+    /// Prints a semantic description and builds its expected spans directly
+    /// from that description, without asking `spans` to define the oracle.
+    fn print_markup(
+        description: &MarkupDescription,
+    ) -> (String, Vec<(String, Mark)>) {
+        let mut rendered = String::new();
+        let mut expected = Vec::new();
+
+        if let Some(leading) = &description.leading_plain {
+            rendered.push_str(leading);
+            append_expected_plain(&mut expected, leading);
+        }
+
+        for (index, section) in description.sections.iter().enumerate() {
+            if index > 0 {
+                rendered.push_str(" / ");
+                append_expected_plain(&mut expected, " / ");
+                if let Some(interstitial) = &description.interstitial_plain {
+                    rendered.push_str(interstitial);
+                    append_expected_plain(&mut expected, interstitial);
+                }
+            }
+
+            match section.kind {
+                MarkedKind::Bold => {
+                    rendered.push_str("**");
+                    rendered.push_str(&section.body);
+                    rendered.push_str("**");
+                    expected.push((section.body.clone(), Mark::Bold));
+                }
+                MarkedKind::Code => {
+                    rendered.push('`');
+                    rendered.push_str(&section.body);
+                    rendered.push('`');
+                    expected.push((
+                        format!("\u{2009}{}\u{2009}", section.body),
+                        Mark::Code,
+                    ));
+                }
+            }
+        }
+
+        if let Some(trailing) = &description.trailing_plain {
+            rendered.push_str(trailing);
+            append_expected_plain(&mut expected, trailing);
+        }
+
+        (rendered, expected)
+    }
+
     /// Spans written back with their marks, the chips' padding taken
     /// off, are the text they came from.
     fn rewrite(spans: &[(String, Mark)]) -> String {
@@ -342,7 +433,9 @@ mod tests {
     /// no `**` and a code span no backtick, and two plain spans never
     /// sit side by side.
     #[hegel::test(test_cases = 500)]
-    fn spans_write_back_to_their_text(tc: hegel::TestCase) {
+    fn arbitrary_text_spans_write_back_without_losing_text(
+        tc: hegel::TestCase,
+    ) {
         let text: String = tc
             .draw(
                 gs::vecs(gs::sampled_from(vec![
@@ -367,6 +460,63 @@ mod tests {
                     && pair[1].1 == Mark::Plain)),
             "{found:?}"
         );
+    }
+
+    /// Property inventory: `spans_recognize_generated_bold_and_code_sections`
+    /// compares parsed spans with the independent `MarkupDescription` AST
+    /// printer and exact expected-span oracle. Bodies and optional plain
+    /// fragments use at most 8 characters from a bounded alphabet without
+    /// markup delimiters; code also has a fixed `**` variant. Every AST has
+    /// Bold and Code witnesses, while 0..5 optional marks and optional plain
+    /// fragments shrink away to those mandatory witnesses. Adjacent expected
+    /// plain fragments merge.
+    #[hegel::test(test_cases = 500)]
+    fn spans_recognize_generated_bold_and_code_sections(tc: hegel::TestCase) {
+        let leading_plain: Option<String> =
+            tc.draw(gs::optional(plain_fragment()));
+        let bold_body: String = tc.draw(marked_body());
+        let code_body: String =
+            tc.draw(hegel::one_of!(gs::just("**".to_owned()), marked_body(),));
+        let optional_marks: Vec<(bool, String)> = tc.draw(
+            gs::vecs(hegel::tuples!(gs::booleans(), marked_body())).max_size(5),
+        );
+        let interstitial_plain: Option<String> =
+            tc.draw(gs::optional(plain_fragment()));
+        let trailing_plain: Option<String> =
+            tc.draw(gs::optional(plain_fragment()));
+
+        let mut sections = vec![
+            MarkedSection {
+                kind: MarkedKind::Bold,
+                body: bold_body,
+            },
+            MarkedSection {
+                kind: MarkedKind::Code,
+                body: code_body,
+            },
+        ];
+        sections.extend(optional_marks.into_iter().map(|(is_bold, body)| {
+            MarkedSection {
+                kind: if is_bold {
+                    MarkedKind::Bold
+                } else {
+                    MarkedKind::Code
+                },
+                body,
+            }
+        }));
+
+        let description = MarkupDescription {
+            leading_plain,
+            sections,
+            interstitial_plain,
+            trailing_plain,
+        };
+        let (rendered, expected) = print_markup(&description);
+        let found = spans(&rendered);
+
+        assert_eq!(found, expected, "description: {description:?}");
+        assert_eq!(rewrite(&found), rendered, "description: {description:?}");
     }
 
     /// Text with no backtick and no `**` is one plain span.

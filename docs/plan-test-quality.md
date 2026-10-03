@@ -22,7 +22,7 @@ Audit numbers refer to the approved 40-test shortlist.
 - [x] **06 — Costs:** combine independent formula/apply/increment coverage and exhaust zero usage (#7, #21, #39).
 - [x] **07 — Schema generators:** replace compile-only coverage with valid/invalid value laws (#8).
 - [x] **08 — Evaluator and fixtures:** execute real owned module/tools/artifact paths on generated inputs; retain corpus-integrity checks (#1, #30–34).
-- [ ] **09 — Markup:** require exact generated span text and marks (#9).
+- [x] **09 — Markup:** require exact generated span text and marks (#9).
 - [ ] **10 — Signatures:** verify semantic type structure as well as Luau syntax (#10).
 - [ ] **11 — Module imports:** dependency/version/import histories and initialization counts (#11).
 - [ ] **12 — Fake module tests:** ordered fixtures, exact initialization and failure propagation (#12).
@@ -63,6 +63,7 @@ mutation campaign. Only failure of the named replacement counts as detection.
 | 07    | Argument validation accepts every coerced value     | `removing_a_required_leaf_is_rejected_at_its_key_path`               |
 | 08    | Native grep ignores the Rust glob                   | `reference_module_search_matches_sorted_rust_line_scan`              |
 | 08    | Artifact pages replace `é` with ASCII `e`           | `owned_utf8_artifact_pages_reconstruct_source_bytes`                 |
+| 09    | Markup parser treats all nonempty text as plain     | `spans_recognize_generated_bold_and_code_sections`                   |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before
