@@ -48,6 +48,8 @@ pub mod run_workspace;
 #[cfg(feature = "host")]
 mod session;
 #[cfg(feature = "host")]
+pub mod sweep;
+#[cfg(feature = "host")]
 pub mod tools;
 pub mod ui;
 #[cfg(feature = "host")]
