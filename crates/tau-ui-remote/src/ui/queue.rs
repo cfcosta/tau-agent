@@ -141,10 +141,15 @@ fn queue_card(
                     .id(SharedString::from(format!("queued-{}", waiting.run)))
                     .flex_1()
                     .min_w(px(0.))
-                    .truncate()
+                    .flex()
                     .cursor_pointer()
-                    .child(title)
-                    .child(div().text_color(t.muted).child(changes))
+                    .child(div().min_w(px(0.)).truncate().child(title))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(t.muted)
+                            .child(changes),
+                    )
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         ws.navigate(crate::route::Route::Run(open.clone()), cx)
                     })),

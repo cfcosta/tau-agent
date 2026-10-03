@@ -66,11 +66,11 @@ pub fn item(
             .px(side)
             .pt(sp(3.))
             .pb(edge)
+            .w_full()
             .flex()
             .flex_col()
             .gap(sp(4.))
-            .children(queue)
-            .children(card)
+            .children(queue.into_iter().chain(card).map(|card| card.w_full()))
             .into_any_element();
     }
     let Some(item) = run.items.get(index) else {

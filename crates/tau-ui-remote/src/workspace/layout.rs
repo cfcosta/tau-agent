@@ -251,8 +251,9 @@ impl Workspace {
     pub(super) fn sync_transcript(&mut self) {
         let width = self.transcript.viewport_bounds().size.width;
         self.transcript_width = (width > px(0.)).then_some(width);
-        // One more row, past the items, for an open landing's card, or
-        // a landed chat's.
+        // One more row, past the items, for an open landing's card, a
+        // landed chat's, a queued chat's, or a main chat's queue and
+        // conflicts.
         let now =
             self.current()
                 .filter(|_| self.route != Route::NewRun)
@@ -263,7 +264,13 @@ impl Workspace {
                                 run.ending,
                                 Some(Ending::Landed { .. })
                             )
-                            || run.status == RunStatus::Interrupted,
+                            || run.status == RunStatus::Interrupted
+                            || self.queued(&run.id).is_some()
+                            || !run.landing_queue.is_empty()
+                            || run
+                                .main_conflicts
+                                .as_ref()
+                                .is_some_and(|c| !c.dismissed),
                     );
                     (run.id.clone(), run.items.len() + card)
                 });
@@ -298,7 +305,11 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<gpui::Stateful<gpui::Div>> {
         let target = ui::landing::target(self, run)?;
-        if run.status.is_live() || self.closed.contains(&run.id) {
+        // A queued chat's card says where it waits instead.
+        if run.status.is_live()
+            || self.closed.contains(&run.id)
+            || self.queued(&run.id).is_some()
+        {
             return None;
         }
         let label = format!("Land on {target}");
