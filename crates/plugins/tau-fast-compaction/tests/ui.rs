@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use hegel::generators::{self as gs, Generator as _};
+use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_fast_compaction::{
     NAME,
@@ -168,35 +168,38 @@ fn run(jev: bool) -> RunCtx {
 
 /// It prunes only with a key; as a run starts it says which, and where
 /// it steps in on the context meter.
-#[hegel::test(test_cases = 20)]
-fn it_says_whether_it_is_on(tc: hegel::TestCase) {
-    let jev = tc.draw(gs::booleans());
-    let run = run(jev);
-    let mut state = State::default();
-    for body in FastCompactionUi.starting(&(), &run, &()) {
-        state.apply(body, &mut FakeRun::default());
+/// Finite inventory: absent and present Jev each exercise every run-start
+/// assertion.
+#[test]
+fn it_says_whether_it_is_on() {
+    for jev in [false, true] {
+        let run = run(jev);
+        let mut state = State::default();
+        for body in FastCompactionUi.starting(&(), &run, &()) {
+            state.apply(body, &mut FakeRun::default());
+        }
+        assert_eq!(state.on, Some(jev));
+        let status = state.status().unwrap();
+        assert_eq!(status == tau_ui_plugin::NO_KEY, !jev, "{status}");
+        let plugins = FastCompactionUi.agent_plugins(&(), &run, &()).unwrap();
+        assert_eq!(plugins.len(), usize::from(jev));
+        assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
+        assert!(FastCompactionUi.rewrites_keep_transcript());
     }
-    assert_eq!(state.on, Some(jev));
-    let status = state.status().unwrap();
-    assert_eq!(status == tau_ui_plugin::NO_KEY, !jev, "{status}");
-    let plugins = FastCompactionUi.agent_plugins(&(), &run, &()).unwrap();
-    assert_eq!(plugins.len(), usize::from(jev));
-    assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
-    assert!(FastCompactionUi.rewrites_keep_transcript());
 }
 
-/// What each decision reads as, drawn from any decision.
-#[hegel::test(test_cases = 20)]
-fn kept_calls_read_as_kept(tc: hegel::TestCase) {
-    let decision = tc.draw(
-        gs::sampled_from(vec![
-            Decision::Pinned,
-            Decision::Keep,
-            Decision::DropResult,
-            Decision::DropCall,
-        ])
-        .print_as_debug(),
-    );
-    let kept = matches!(decision, Decision::Pinned | Decision::Keep);
-    assert_eq!(decision.card_label() == "kept", kept);
+/// Finite inventory: all four decisions must match their exact card label.
+/// The literal table is the independent oracle; enumeration needs no
+/// generated inputs or shrinking.
+#[test]
+fn each_decision_has_its_exact_card_label() {
+    let cases = [
+        (Decision::Pinned, "kept"),
+        (Decision::Keep, "kept"),
+        (Decision::DropResult, "result dropped"),
+        (Decision::DropCall, "call dropped"),
+    ];
+    for (decision, expected) in cases {
+        assert_eq!(decision.card_label(), expected, "{decision:?}");
+    }
 }

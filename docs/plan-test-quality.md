@@ -29,7 +29,7 @@ Audit numbers refer to the approved 40-test shortlist.
 - [x] **13 — Services:** clone/mutate/query histories against immutable snapshots (#13).
 - [x] **14 — Paths:** exact independent path model with idempotence secondary (#14–15).
 - [x] **15 — Retry rules:** exhaustive statuses, richer known/unknown header generation and preserved boundary regressions (#16–20).
-- [ ] **16 — Compaction UI:** exhaustive activation and exact decision labels (#22–23).
+- [x] **16 — Compaction UI:** exhaustive activation and exact decision labels (#22–23).
 - [ ] **17 — Reasoning/goal UI:** exhaustive activation combinations (#24–25).
 - [ ] **18 — Callback defaults:** explicit configured/listening port boundaries (#26).
 - [ ] **19 — Session reasoning:** model-class tables and change/no-op/unset histories (#27–28, #40).
@@ -70,6 +70,7 @@ mutation campaign. Only failure of the named replacement counts as detection.
 | 13    | Cloning services drops all typed values              | `cloned_snapshots_isolate_typed_writes_and_keep_last_values`          |
 | 14    | Every nonempty path resolves to `/`                  | `resolves_generated_paths_to_the_modeled_normalized_absolute_path`    |
 | 15    | Millisecond retry headers are interpreted as seconds | `parse_retry_after_is_a_trimmed_whole_number`                         |
+| 16    | Dropped results display as kept                      | `each_decision_has_its_exact_card_label`                              |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before
