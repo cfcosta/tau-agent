@@ -71,12 +71,12 @@ run of the connection it came on. Errors look like this:
 
 ## Limits and lanes
 
-| Limit                              | Value                                              | tau-agent behaviour                                                                                                                |
-| ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| In-flight responses per connection | 16, across all lanes                               | One response in flight per connection. A run's lane takes a connection by conversation affinity (see "Connection pool").           |
-| Named `stream_id`s per connection  | 32 (the default lane doesn't count)                | Not reached: tau sends no `stream_id`, so `websocket_stream_limit_reached` never comes and has no handling.                        |
-| Ordering                           | FIFO within one `stream_id`; lanes run in parallel | One run = one lane, on one connection at a time. Parallel runs never queue behind each other.                                      |
-| Connection age                     | 60 min                                             | The pool rotates at 55 min. The error is `websocket_connection_limit_reached`.                                                     |
+| Limit                              | Value                                              | tau-agent behaviour                                                                                                      |
+| ---------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| In-flight responses per connection | 16, across all lanes                               | One response in flight per connection. A run's lane takes a connection by conversation affinity (see "Connection pool"). |
+| Named `stream_id`s per connection  | 32 (the default lane doesn't count)                | Not reached: tau sends no `stream_id`, so `websocket_stream_limit_reached` never comes and has no handling.              |
+| Ordering                           | FIFO within one `stream_id`; lanes run in parallel | One run = one lane, on one connection at a time. Parallel runs never queue behind each other.                            |
+| Connection age                     | 60 min                                             | The pool rotates at 55 min. The error is `websocket_connection_limit_reached`.                                           |
 
 ## Connection pool
 

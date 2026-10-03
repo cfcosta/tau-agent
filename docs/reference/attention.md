@@ -18,19 +18,19 @@ for a main chat, the files a turn left in conflict on it
 (`RunView::main_conflicts`, while marked; `dismissed` only hides the
 card). Each state has its icon and a line under the title:
 
-| State           | Line                        | Color  | When                                   |
-| --------------- | --------------------------- | ------ | -------------------------------------- |
-| `Landed`        | `landed` at the row's end   | dim    | it landed on its parent and closed     |
-| `Dropped`       | `dropped` at the row's end  | dim    | it was dropped and closed              |
-| `Asks`          | Asks you a question         | blue   | live, and a plugin waits on an answer  |
-| `Working`       | Working · turn N            | muted  | live                                   |
-| `ConflictsOnMain` | Conflicts on main · N files | red  | a main chat a turn left conflicts on   |
-| `Interrupted`   | Interrupted · tau closed    | muted  | it was going when tau closed           |
-| `Failed`        | (none; the red warning)     | red    | it stopped with an error               |
-| `Queued`        | Queued · lands after main's turn, or Queued · needs confirmation | amber | it waits in its main chat's landing queue |
-| `WouldConflict` | Would conflict in N files   | red    | a stopped fork whose landing conflicts |
-| `ReadyToLand`   | Ready to land · N changes   | green  | a stopped fork with changes to land    |
-| `Idle`          | (none)                      |        | anything else                          |
+| State             | Line                                                             | Color | When                                      |
+| ----------------- | ---------------------------------------------------------------- | ----- | ----------------------------------------- |
+| `Landed`          | `landed` at the row's end                                        | dim   | it landed on its parent and closed        |
+| `Dropped`         | `dropped` at the row's end                                       | dim   | it was dropped and closed                 |
+| `Asks`            | Asks you a question                                              | blue  | live, and a plugin waits on an answer     |
+| `Working`         | Working · turn N                                                 | muted | live                                      |
+| `ConflictsOnMain` | Conflicts on main · N files                                      | red   | a main chat a turn left conflicts on      |
+| `Interrupted`     | Interrupted · tau closed                                         | muted | it was going when tau closed              |
+| `Failed`          | (none; the red warning)                                          | red   | it stopped with an error                  |
+| `Queued`          | Queued · lands after main's turn, or Queued · needs confirmation | amber | it waits in its main chat's landing queue |
+| `WouldConflict`   | Would conflict in N files                                        | red   | a stopped fork whose landing conflicts    |
+| `ReadyToLand`     | Ready to land · N changes                                        | green | a stopped fork with changes to land       |
+| `Idle`            | (none)                                                           |       | anything else                             |
 
 The first that holds, top to bottom, wins. A working chat keeps a
 plugin's line (a goal's) when it has one. Asking and ready-to-land
