@@ -153,6 +153,11 @@ pub const CONTEXT_TRIGGER: Point<AtRun, f32> =
     Point::new("tau.run.context.trigger");
 /// A line and small print on a run's row in the sidebar: a goal's.
 pub const RUN_ROW: Point<AtRun, RowNote> = Point::new("tau.sidebar.run.row");
+/// What a live run waits on the person to answer, while it waits: a
+/// question tau-ask holds the run for. The first contribution says it.
+/// The run's row says the run asks, and a notification shows the
+/// question while tau's window is not focused.
+pub const ASKS: Point<AtRun, String> = Point::new("tau.run.asks");
 /// A message the person sent, drawn by the plugin that reads it as its
 /// own (a `/goal`); the first contribution draws it.
 pub const USER_MESSAGE: Point<AtMessage> = Point::new("tau.run.user_message");
@@ -177,7 +182,7 @@ pub const PICKER_AUTO: Point<AtApp, String> = Point::new("tau.picker.auto");
 pub const COMPOSER: Point<AtRun> = Point::new("tau.run.composer");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 20] = [
+pub const ALL: [&str; 21] = [
     CARD.name,
     TRANSCRIPT.name,
     REWRITE.name,
@@ -190,6 +195,7 @@ pub const ALL: [&str; 20] = [
     PLAN.name,
     CONTEXT_TRIGGER.name,
     RUN_ROW.name,
+    ASKS.name,
     USER_MESSAGE.name,
     SIDEBAR.name,
     SIDEBAR_REPO.name,

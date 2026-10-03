@@ -302,6 +302,12 @@ impl UiPlugin for AskUi {
                     tone: Tone::Warn,
                 })
             })
+            // The run asks the person while a live call waits: its
+            // first question says what.
+            .contribute(points::ASKS, |at: &AtRun, view| {
+                let waiting = view.state?.waiting().filter(|_| at.run.live)?;
+                Some(waiting.ask.questions.first()?.question.clone())
+            })
     }
 }
 

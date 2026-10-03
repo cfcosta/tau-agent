@@ -109,6 +109,11 @@ place (`points::COMPOSER`) and takes the keys:
   header has on a computer.
 - The card of an `ask` call shows the headers, and each answer with
   its note, from the call's own arguments and result.
+- **Elsewhere:** while a live run's call waits, tau-ask contributes its
+  first question at `points::ASKS`. The run's row in the sidebar and on
+  a phone says "Asks you a question", and a desktop notification shows
+  the question while tau's window is not focused
+  ([attention.md](attention.md)).
 
 ## Code
 
