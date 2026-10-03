@@ -1,13 +1,8 @@
-//! Property inventory: path and marker metamorphisms preserve an independent
-//! literal-search oracle; changed inputs expose stale modules; complete artifact
-//! reconstruction equals independent bytes; accounting sums observed stages.
-//! Generators build valid relative paths and UTF-8 markers directly, so Hegel
-//! shrinks components and suffixes without filtering. Workspace hegel.toml
-//! controls local and CI counts; no per-test override is needed.
+//! Integration regressions keep stable goldens, changed-input checks, artifact
+//! reconstruction, and accounting. Private VM properties live in src/matrix.rs.
 
 use std::{collections::BTreeMap, process::Command};
 
-use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_codemode::modules::Definition;
 use tau_codemode_eval::{
@@ -393,31 +388,4 @@ fn manifest_validation_enforces_scratch_quota_and_dependency_order() {
             .unwrap_err()
             .contains("finite and nonnegative")
     );
-}
-
-#[hegel::test]
-fn generated_path_and_marker_inputs_preserve_literal_search_oracle(
-    tc: TestCase,
-) {
-    let segment: String = tc.draw(gs::from_regex("[a-z]{1,8}"));
-    let suffix: String = tc.draw(gs::from_regex("[a-z]{0,8}"));
-    let marker = format!("TODO:{suffix}");
-    let path = format!("src/{segment}: 雪 case.rs");
-    let mut fixture = fixtures::search_with_path(&path);
-    fixture.files[0].text = format!("// {marker}\nlet n = 1;\n");
-    // Independent literal scan, not the VM's grep or the fixture's expected.
-    let marker_ref = &marker;
-    let found: Vec<Value> = fixture
-        .files
-        .iter()
-        .flat_map(|file| {
-            file.text
-                .lines()
-                .enumerate()
-                .filter(move |(_, text)| text.contains(marker_ref))
-                .map(move |(line, text)| json!({"path":&file.path,"line":line+1,"text":text}))
-        })
-        .collect();
-    assert_eq!(found.first().unwrap()["path"], path);
-    assert_eq!(found.first().unwrap()["text"], format!("// {marker}"));
 }

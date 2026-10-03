@@ -1104,47 +1104,193 @@ mod properties {
 
     use super::*;
 
-    /// Inventory: adding valid colon/Unicode path segments and a marker
-    /// suffix preserves the independent search oracle through the real VM.
-    /// Generated segments and suffixes are valid by construction; Hegel
-    /// shrinks their lengths while keeping the path and marker structure.
-    /// Workspace hegel.toml controls local and CI case counts.
-    #[hegel::test]
-    fn changed_paths_and_markers_match_independent_scan(tc: TestCase) {
+    /// Inventory: the selected reference module returns the complete sorted
+    /// literal search scan. Oracle: scan every .rs line independently of the
+    /// fixture constructor and VM. Generator: short valid path/marker suffixes,
+    /// with fixed match, partial-match, and absent-match branches; shrinking
+    /// shortens suffixes but preserves punctuation, Unicode, and each branch.
+    /// Twelve cases bound the expensive owned Agent/module/filesystem pipeline.
+    #[hegel::test(test_cases = 12)]
+    fn reference_module_search_matches_sorted_rust_line_scan(tc: TestCase) {
         let segment: String = tc.draw(gs::from_regex("[a-z]{1,8}"));
         let suffix: String = tc.draw(gs::from_regex("[a-z]{0,8}"));
-        let path = format!("src/{segment}: 雪.rs");
-        let mut fixture = fixtures::search_with_path(&path);
+        let path = format!("src/{segment}: 雪 case.rs");
         let marker = format!("TODO:{suffix}");
-        fixture.files[0].text = format!("// {marker}\nlet n = 1;\n");
-        fixture.expected[0] =
-            json!({"path":path,"line":1,"text":format!("// {marker}")});
-        let oracle = fixture
-            .files
-            .iter()
-            .filter(|file| file.path.ends_with(".rs"))
-            .flat_map(|file| {
-                file.text.lines().enumerate()
-                    .filter(|(_, text)| text.contains("TODO:"))
-                    .map(move |(index, text)| json!({"path":file.path,"line":index+1,"text":text}))
-            })
-            .collect::<Vec<_>>();
-        let mut oracle = oracle;
-        oracle.sort_by(|a, b| {
-            a["path"]
-                .as_str()
-                .cmp(&b["path"].as_str())
-                .then(a["line"].as_u64().cmp(&b["line"].as_u64()))
-        });
-        assert_eq!(fixture.expected, json!(oracle));
-        let case = block_on_io(grade_case(
-            &fixture,
-            Mode::StructuredTools,
-            crate::runner::SEARCH_STRUCTURED,
+        let mut fixtures = Vec::new();
+        let mut oracles = Vec::new();
+        for branch in 0..3 {
+            let mut fixture = fixtures::search_with_path(&path);
+            fixture.name = format!("structured-search-generated-{branch}");
+            fixture.files = vec![
+                fixtures::File {
+                    path: path.clone(),
+                    text: if branch == 0 {
+                        format!("// {marker}\nlet n = 1;\n// TODO: second\n")
+                    } else {
+                        "let n = 1;\n// T O D O absent\n".into()
+                    },
+                },
+                fixtures::File {
+                    path: "src/Å: next.rs".into(),
+                    text: if branch < 2 {
+                        format!("let n = 2;\n// {marker}\n")
+                    } else {
+                        "let n = 2;\n// no marker\n".into()
+                    },
+                },
+                fixtures::File {
+                    path: "src/clean.rs".into(),
+                    text: "// T O D O is absent\n".into(),
+                },
+                fixtures::File {
+                    path: "notes.txt".into(),
+                    text: format!("{marker} is not a Rust match\n"),
+                },
+            ];
+            assert_eq!(
+                task_for(&fixture),
+                json!({"kind":"search","pattern":"TODO:","glob":"*.rs"})
+            );
+            let mut rows: Vec<Value> = fixture
+                .files
+                .iter()
+                .filter(|file| file.path.ends_with(".rs"))
+                .flat_map(|file| {
+                    file.text
+                        .lines()
+                        .enumerate()
+                        .filter(|(_, line)| line.contains("TODO:"))
+                        .map(move |(index, line)| {
+                            json!({"path":file.path,"line":index+1,"text":line})
+                        })
+                })
+                .collect();
+            rows.sort_by(|left, right| {
+                left["path"]
+                    .as_str()
+                    .cmp(&right["path"].as_str())
+                    .then(left["line"].as_u64().cmp(&right["line"].as_u64()))
+            });
+            let oracle = json!(rows);
+            fixture.expected = oracle.clone();
+            oracles.push(oracle);
+            fixtures.push(fixture);
+        }
+        let signatures = json!({});
+        let dependencies = BTreeMap::new();
+        // One enable_all runtime owns the Store for development and every case.
+        let report = block_on_io(run_module(
+            ModuleSpec {
+                source: REFERENCE_SOURCE,
+                name: "reference_search_property",
+                signatures: &signatures,
+                dependencies: &dependencies,
+                origin: "assistant_scripted_reference",
+                external: None,
+            },
+            &fixtures,
             false,
         ))
         .unwrap();
-        assert!(case.correct, "{case:?}");
+        assert!(
+            report.development_passed && report.maintenance_passed,
+            "{report:?}"
+        );
+        assert_eq!(report.cases.len(), oracles.len());
+        for (case, expected) in report.cases.iter().zip(oracles) {
+            assert_eq!(case.case.result, Some(expected), "{case:?}");
+            assert!(!case.case.incomplete, "{case:?}");
+            assert!(case.case.correct, "{case:?}");
+            assert_eq!(case.calls.nested.get("grep"), Some(&1), "{case:?}");
+            assert!(case.calls.telemetry_complete, "{case:?}");
+        }
+    }
+
+    /// Inventory: owned UTF-8 artifact pages reconstruct exact source bytes.
+    /// Oracle: the generated file's original UTF-8 bytes, independent of the
+    /// reader and VM. Generator: 4..=64 byte pages and a <=2 KiB file; each
+    /// case forces 2/3/4-byte markers before, at, and after a page boundary.
+    /// Shrinking narrows the page while retaining all nine boundary shapes.
+    /// Twelve cases bound the expensive owned Agent/filesystem VM path.
+    #[hegel::test(test_cases = 12)]
+    fn owned_utf8_artifact_pages_reconstruct_source_bytes(tc: TestCase) {
+        let width = tc.draw(gs::integers::<usize>().min_value(4).max_value(64));
+        // A single enable_all runtime owns every Store and artifact grant.
+        block_on_io(async {
+            for marker in ["é", "雪", "🚀"] {
+                for displacement in [-1_isize, 0, 1] {
+                    let marker_offset = match displacement {
+                        -1 => width - 1,
+                        0 => width,
+                        1 => width + 1,
+                        _ => unreachable!(),
+                    };
+                    let content = format!(
+                        "{}{}{}",
+                        "a".repeat(marker_offset),
+                        marker,
+                        "z".repeat(width * 2 + 1)
+                    );
+                    assert!(content.len() <= 2 * 1024);
+                    let root = tempfile::tempdir().unwrap();
+                    std::fs::write(root.path().join("input.txt"), &content)
+                        .unwrap();
+                    let bytes = Bytes::new(
+                        root.path().join("artifacts"),
+                        Quotas::default(),
+                    )
+                    .unwrap();
+                    let store = Store::memory().await.unwrap();
+                    let code = format!(
+                        "local display=tools.read({{path='input.txt'}})\n\
+                         assert(display.artifact ~= nil)\n\
+                         local offset, chunks, pages = 0, {{}}, 0\n\
+                         while true do\n\
+                           local page=tools.artifact_read({{id=display.artifact.id,offset=offset,limit={width},encoding='utf8'}})\n\
+                           assert(page.offset == offset)\n\
+                           assert(#page.data <= {width})\n\
+                           table.insert(chunks,page.data)\n\
+                           pages=pages+1\n\
+                           assert(pages <= 1024)\n\
+                           if page.next_offset == nil or page.next_offset == json.null then\n\
+                             assert(page.eof)\n\
+                             break\n\
+                           end\n\
+                           assert(not page.eof and page.next_offset > offset)\n\
+                           offset=page.next_offset\n\
+                         end\n\
+                         return {{result=table.concat(chunks),pages=pages,bytes=display.artifact.size_bytes}}"
+                    );
+                    let model = scripted_codemode_model(code);
+                    let run = Agent::new(model.clone())
+                        .plugin(Codemode::new(None))
+                        .plugin(
+                            CodingTools::new(Root::new(root.path()))
+                                .only(&[Tool::Read])
+                                .with_artifacts(bytes),
+                        )
+                        .run("reconstruct owned UTF-8 artifact", &store)
+                        .await
+                        .unwrap();
+                    let result =
+                        last_codemode_result(&store, &run.run.0).await.unwrap();
+                    assert!(!result.is_error, "{result:?}");
+                    let calls = observed_calls(&result, &model, &run.usage);
+                    assert!(calls.telemetry_complete, "{calls:?}");
+                    assert_eq!(calls.nested.get("read"), Some(&1));
+                    let value = decode_result_envelope(&result).unwrap();
+                    let actual = value["result"].as_str().unwrap();
+                    assert_eq!(actual.as_bytes(), content.as_bytes());
+                    assert_eq!(value["bytes"], json!(content.len()));
+                    let pages = value["pages"].as_u64().unwrap();
+                    assert!(pages >= 2);
+                    assert_eq!(
+                        calls.nested.get("artifact_read"),
+                        Some(&(pages as usize))
+                    );
+                }
+            }
+        });
     }
 
     /// Inventory: switching the config key preserves the current command.

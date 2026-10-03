@@ -1,12 +1,13 @@
 //! Property inventory:
-//! - log padding preserves the golden answer (differential TSV oracle);
-//! - varied colon-bearing paths preserve search records (independent scan);
-//! - padded logs distinguish complete scans from one display window;
-//! - fixture serialization preserves every input and answer (round trip).
+//! - corpus integrity: independent TSV and Rust-line readers verify saved
+//!   answers while generated padding, path, and Unicode marker preserve the
+//!   display-window and byte-boundary facts. Bounds are 2,100..=4,000 noise
+//!   lines and short valid paths; shrinking shortens both, retaining signals.
+//! - serialization: every finite corpus kind, including changed variants,
+//!   round-trips all fields and still matches an independent saved-answer
+//!   oracle. The complete finite corpus is enumerated, not sampled.
 //!
-//! Noise counts are bounded integers, valid by construction. Shrinking
-//! removes padding while retaining all three failures. Workspace Hegel
-//! profiles supply reproducible CI cases and the local failure database.
+//! Workspace Hegel profiles supply case counts and reproducible CI behavior.
 
 use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
@@ -51,62 +52,66 @@ fn search_records(fixture: &fixtures::Fixture) -> Value {
 }
 
 #[hegel::test]
-fn padding_preserves_every_failure(tc: TestCase) {
-    let noise_lines = tc.draw(gs::integers::<usize>().max_value(4_000));
-    let fixture = fixtures::test_log(noise_lines);
-    assert_eq!(failures(&fixture.files[0].text), fixture.expected);
-}
-
-#[hegel::test]
-fn colon_paths_preserve_complete_search_answers(tc: TestCase) {
-    // Valid path segments are generated directly. Shorter segments shrink
-    // toward a small counterexample while the colon remains present.
-    let segment: String = tc.draw(gs::from_regex("[a-z]{1,12}"));
-    let path = format!("src/{segment}: case.rs");
-    let fixture = fixtures::search_with_path(&path);
-    assert_eq!(search_records(&fixture), fixture.expected);
-}
-
-#[hegel::test]
-fn padded_display_is_partial_but_full_scan_is_complete(tc: TestCase) {
-    // Padding is valid by construction and shrinks to the first size that
-    // still hides the middle marker from a 2,000-line head window.
-    let padding =
-        tc.draw(gs::integers::<usize>().min_value(2_100).max_value(4_000));
-    let fixture = fixtures::test_log(padding);
-    let text = &fixture.files[0].text;
-    let display = text.lines().take(2_000).collect::<Vec<_>>().join("\n");
-    assert_eq!(failures(text), fixture.expected);
-    assert_ne!(failures(&display), fixture.expected);
-}
-
-#[hegel::test]
-fn serialized_workloads_preserve_inputs_and_answers(tc: TestCase) {
-    let noise_lines = tc.draw(gs::integers::<usize>().max_value(100));
-    let fixture = fixtures::test_log(noise_lines);
-    let serialized = serde_json::to_vec(&fixture).unwrap();
-    let decoded: fixtures::Fixture =
-        serde_json::from_slice(&serialized).unwrap();
-    assert_eq!(decoded, fixture);
-}
-
-#[hegel::test]
-fn unicode_page_boundary_markers_preserve_failure_oracle(tc: TestCase) {
-    // Inventory: changing padding and Unicode marker preserves the independent
-    // TSV oracle while a multibyte codepoint crosses the first 8 KiB page.
-    // The marker is selected from valid UTF-8 codepoints by construction;
-    // shrinking reduces the padding and marker index, not the boundary rule.
-    // Workspace hegel.toml supplies local and CI case counts.
+fn generated_corpus_keeps_saved_answers_and_boundary_evidence(tc: TestCase) {
     let noise_lines =
         tc.draw(gs::integers::<usize>().min_value(2_100).max_value(4_000));
+    let segment: String = tc.draw(gs::from_regex("[a-z]{1,12}"));
+    let path = format!("src/{segment}: case.rs");
+    let search = fixtures::search_with_path(&path);
+    assert_eq!(search.files[0].path, path);
+    assert_eq!(search_records(&search), search.expected);
+
+    let log = fixtures::test_log(noise_lines);
+    let text = &log.files[0].text;
+    let display = text.lines().take(2_000).collect::<Vec<_>>().join("\n");
+    assert_eq!(failures(text), log.expected);
+    assert_ne!(failures(&display), log.expected);
+
     let marker_index = tc.draw(gs::integers::<usize>().max_value(2));
     let marker = ["雪", "🚀", "é"][marker_index];
-    let fixture = fixtures::changed_log_with_page_marker(noise_lines, marker);
-    let text = &fixture.files[0].text;
+    let changed = fixtures::changed_log_with_page_marker(noise_lines, marker);
+    let text = &changed.files[0].text;
     let marker_text = format!("{marker} marker");
     assert_eq!(text.find(marker_text.as_str()), Some(8_191));
-    assert_eq!(failures(text), fixture.expected);
+    assert_eq!(failures(text), changed.expected);
     assert!(text.len() > 50 * 1024);
+}
+
+#[test]
+fn serialized_corpus_kinds_keep_inputs_and_independent_answers() {
+    let corpus = fixtures::matrix_corpus();
+    assert_eq!(corpus.len(), 8);
+    for fixture in &corpus {
+        let serialized = serde_json::to_vec(fixture).unwrap();
+        let decoded: fixtures::Fixture =
+            serde_json::from_slice(&serialized).unwrap();
+        assert_eq!(&decoded, fixture);
+        let expected = if fixture.name.starts_with("structured-search") {
+            search_records(fixture)
+        } else if fixture.name.starts_with("complete-test-log") {
+            failures(&fixture.files[0].text)
+        } else if fixture.name.starts_with("compatibility-extraction") {
+            let document = &fixture.files[0].text;
+            let (before, after) = if fixture.name.ends_with("-changed") {
+                ("retry_limit", "retry_ceiling")
+            } else {
+                ("retry_count", "max_attempts")
+            };
+            assert!(document.contains(&format!("`{before}` was removed")));
+            assert!(document.contains(&format!("`{after}` instead")));
+            assert!(document.contains("returns null when no item exists"));
+            json!([
+                {"component":"connection option","before":before,"after":after},
+                {"component":"lookup function","before":"raises NotFound","after":"returns null"}
+            ])
+        } else {
+            let config: Value =
+                serde_json::from_str(&fixture.files[0].text).unwrap();
+            json!({"command":config.get("verify_command").or_else(|| config.get("test_command")).unwrap()})
+        };
+        assert_eq!(fixture.expected, expected);
+        assert_eq!(decoded.expected, expected);
+    }
 }
 
 #[test]
