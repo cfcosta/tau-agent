@@ -1,6 +1,8 @@
-//! `FakeOpenAi`: a turmoil host that speaks the Responses WebSocket
-//! protocol, for transport tests (`docs/reference/testing.md`, "Fake
-//! OpenAI server").
+//! `FakeOpenAi`: a server that speaks the Responses WebSocket protocol,
+//! for transport tests (`docs/reference/testing.md`, "Fake OpenAI
+//! server"): a turmoil host ([`FakeOpenAi::install`]), or a local TCP
+//! listener on a thread of its own ([`FakeOpenAi::listen`]) for tests
+//! that run tau on a real runtime, such as the host's.
 //!
 //! It keeps OpenAI's continuation rules: each connection holds the
 //! responses it produced, a request whose `previous_response_id` the
@@ -27,19 +29,33 @@
 //! their usage too.
 
 use std::{
-    cell::RefCell,
     collections::{HashMap, VecDeque},
-    rc::Rc,
+    io,
+    net::SocketAddr,
+    sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use tokio::time::{Instant, sleep_until};
-use tokio_tungstenite::tungstenite::{
-    Message,
-    handshake::server::{ErrorResponse, Request, Response},
-    http::{HeaderValue, StatusCode},
+use tau_ai::{
+    event::Accumulator,
+    message::{AssistantMessage, Timestamp},
+    responses::{input::response_items, stream::StreamProcessor},
+    ws::io::connection::Connector,
+};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    time::{Instant, sleep_until},
+};
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::{
+        Message,
+        client::IntoClientRequest,
+        handshake::server::{ErrorResponse, Request, Response},
+        http::{self, HeaderValue, StatusCode},
+    },
 };
 
 /// What the server does with one request.
@@ -67,6 +83,68 @@ pub enum Reply {
     /// answering other requests, so responses overlap as they do on a
     /// real connection. The request counts as in flight until then.
     Delay(Duration, Box<Reply>),
+}
+
+impl Reply {
+    /// A response whose one output is the message `text`, held under
+    /// `response_id` with the output items tau's next request will
+    /// carry for it.
+    pub fn text(response_id: &str, text: &str) -> Self {
+        let frames = vec![
+            json!({"type": "response.created", "response": {"id": response_id}}),
+            json!({"type": "response.output_item.added", "output_index": 0,
+                   "item": {"type": "message", "id": format!("msg_{response_id}"),
+                            "role": "assistant", "content": []}}),
+            json!({"type": "response.content_part.added", "output_index": 0,
+                   "content_index": 0, "part": {"type": "output_text", "text": ""}}),
+            json!({"type": "response.output_text.delta", "output_index": 0,
+                   "content_index": 0, "delta": text}),
+            json!({"type": "response.output_item.done", "output_index": 0,
+                   "item": {"type": "message", "id": format!("msg_{response_id}"),
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": text}]}}),
+            json!({"type": "response.completed", "response": {
+                "id": response_id, "status": "completed",
+                "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            }}),
+        ];
+        let message = streamed(&frames, 0);
+        Self::Respond {
+            output_items: response_items(&message),
+            frames,
+            response_id: response_id.to_owned(),
+        }
+    }
+}
+
+/// The message tau builds from `frames`.
+fn streamed(frames: &[Value], timestamp: Timestamp) -> AssistantMessage {
+    let mut processor = StreamProcessor::new("fake".into(), timestamp);
+    let mut accumulator = Accumulator::new();
+    for frame in frames {
+        for event in processor.push(frame) {
+            accumulator.push(event).expect("a well-formed stream");
+        }
+    }
+    accumulator.finish().expect("a finished stream")
+}
+
+/// Connects to a fake that [`FakeOpenAi::listen`]s on `address`.
+#[derive(Debug, Clone, Copy)]
+pub struct LocalConnector(pub SocketAddr);
+
+impl Connector for LocalConnector {
+    type Stream = tokio::net::TcpStream;
+
+    async fn connect(&self) -> io::Result<Self::Stream> {
+        tokio::net::TcpStream::connect(self.0).await
+    }
+
+    fn request(&self) -> http::Request<()> {
+        format!("ws://{}/v1/responses", self.0)
+            .into_client_request()
+            .expect("a valid URL")
+    }
 }
 
 /// OpenAI's limits per connection (`docs/reference/openai-websocket.md`,
@@ -118,7 +196,7 @@ struct State {
 /// A fake OpenAI endpoint. Clones share state.
 #[derive(Debug, Clone, Default)]
 pub struct FakeOpenAi {
-    state: Rc<RefCell<State>>,
+    state: Arc<Mutex<State>>,
 }
 
 /// The port the fake listens on.
@@ -127,8 +205,12 @@ pub const PORT: u16 = 80;
 impl FakeOpenAi {
     pub fn new(replies: Vec<Reply>) -> Self {
         let fake = Self::default();
-        fake.state.borrow_mut().replies = replies.into();
+        fake.state().replies = replies.into();
         fake
+    }
+
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().expect("not poisoned")
     }
 
     /// Registers the fake as the host `name` in `sim`.
@@ -142,28 +224,69 @@ impl FakeOpenAi {
                 loop {
                     let (stream, _) = listener.accept().await?;
                     let connection = {
-                        let mut state = fake.state.borrow_mut();
+                        let mut state = fake.state();
                         state.connections += 1;
                         state.connections
                     };
-                    let fake = fake.clone();
-                    tokio::task::spawn_local(async move {
-                        let upgrade = fake.clone();
-                        // tungstenite's callback type, not ours.
-                        #[allow(clippy::result_large_err)]
-                        let answer = move |request: &Request, response| {
-                            upgrade.upgrade(request, response)
-                        };
-                        if let Ok(socket) =
-                            tokio_tungstenite::accept_hdr_async(stream, answer)
-                                .await
-                        {
-                            fake.serve(connection, socket).await;
-                        }
-                    });
+                    tokio::task::spawn_local(
+                        fake.clone().accept(connection, stream),
+                    );
                 }
             }
         });
+    }
+
+    /// Serves on a local TCP port, on a thread of its own, for tests that
+    /// run tau on a real runtime. Returns the address; connect to it with
+    /// [`LocalConnector`].
+    pub fn listen(&self) -> SocketAddr {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("a local port");
+        let address = listener.local_addr().expect("a bound address");
+        listener
+            .set_nonblocking(true)
+            .expect("a nonblocking listener");
+        let fake = self.clone();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a runtime");
+            let local = tokio::task::LocalSet::new();
+            local.block_on(&runtime, async move {
+                let listener = tokio::net::TcpListener::from_std(listener)
+                    .expect("a tokio listener");
+                while let Ok((stream, _)) = listener.accept().await {
+                    let connection = {
+                        let mut state = fake.state();
+                        state.connections += 1;
+                        state.connections
+                    };
+                    tokio::task::spawn_local(
+                        fake.clone().accept(connection, stream),
+                    );
+                }
+            });
+        });
+        address
+    }
+
+    /// Upgrades one accepted stream and serves it.
+    async fn accept<S>(self, connection: u32, stream: S)
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let upgrade = self.clone();
+        // tungstenite's callback type, not ours.
+        #[allow(clippy::result_large_err)]
+        let answer = move |request: &Request, response| {
+            upgrade.upgrade(request, response)
+        };
+        if let Ok(socket) =
+            tokio_tungstenite::accept_hdr_async(stream, answer).await
+        {
+            self.serve(connection, socket).await;
+        }
     }
 
     /// Has completed responses report the prompt's tokens and those read
@@ -171,20 +294,20 @@ impl FakeOpenAi {
     /// `input_tokens_details.cached_tokens`), in place of the scripted
     /// counts.
     pub fn report_cache(self) -> Self {
-        self.state.borrow_mut().report_cache = true;
+        self.state().report_cache = true;
         self
     }
 
     /// Answers the next upgrade with `refusal` instead of accepting it.
     /// Refusals queue up.
     pub fn refuse_upgrade(&self, refusal: Refusal) {
-        self.state.borrow_mut().refusals.push_back(refusal);
+        self.state().refusals.push_back(refusal);
     }
 
     /// The `Authorization` header of every upgrade, refused or not, in
     /// order.
     pub fn authorizations(&self) -> Vec<Option<String>> {
-        self.state.borrow().authorizations.clone()
+        self.state().authorizations.clone()
     }
 
     // tungstenite's callback type, not ours.
@@ -194,7 +317,7 @@ impl FakeOpenAi {
         request: &Request,
         response: Response,
     ) -> Result<Response, ErrorResponse> {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state();
         state.authorizations.push(
             request
                 .headers()
@@ -223,25 +346,24 @@ impl FakeOpenAi {
 
     /// Every request received so far, in order.
     pub fn received(&self) -> Vec<Received> {
-        self.state.borrow().received.clone()
+        self.state().received.clone()
     }
 
     /// Limits the client broke: more than [`MAX_IN_FLIGHT`] requests in
     /// flight on one connection. A correct client never does.
     pub fn violations(&self) -> Vec<String> {
-        self.state.borrow().violations.clone()
+        self.state().violations.clone()
     }
 
     /// Connections accepted so far.
     pub fn connections(&self) -> u32 {
-        self.state.borrow().connections
+        self.state().connections
     }
 
-    async fn serve(
-        &self,
-        connection: u32,
-        mut socket: tokio_tungstenite::WebSocketStream<turmoil::net::TcpStream>,
-    ) {
+    async fn serve<S>(&self, connection: u32, mut socket: WebSocketStream<S>)
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         let accepted = Instant::now();
         // Responses held by this connection: id -> full item list.
         let mut held: HashMap<String, Vec<Value>> = HashMap::new();
@@ -263,7 +385,7 @@ impl FakeOpenAi {
                             rebuilt: p.rebuilt,
                             prompt: p.prompt,
                             cached: p.cached,
-                            report: self.state.borrow().report_cache,
+                            report: self.state().report_cache,
                         };
                         if !answer(&mut socket, &mut held, &mut seen, p.reply, served).await {
                             return;
@@ -287,7 +409,7 @@ impl FakeOpenAi {
             let input = body["input"].as_array().cloned().unwrap_or_default();
 
             if pending.len() >= MAX_IN_FLIGHT {
-                self.state.borrow_mut().violations.push(format!(
+                self.state().violations.push(format!(
                     "connection {connection}: a request beyond {MAX_IN_FLIGHT} in flight"
                 ));
                 let frame = error_frame("fake_in_flight_limit_exceeded");
@@ -297,10 +419,10 @@ impl FakeOpenAi {
                 continue;
             }
 
-            let mut reply = self.state.borrow_mut().replies.pop_front();
+            let mut reply = self.state().replies.pop_front();
             if matches!(reply, Some(Reply::Evict)) {
                 held.clear();
-                reply = self.state.borrow_mut().replies.pop_front();
+                reply = self.state().replies.pop_front();
             }
 
             let rebuilt = match body.get("previous_response_id") {
@@ -316,7 +438,7 @@ impl FakeOpenAi {
                 Some(prompt) => (prompt.tokens(), prompt.cached(&seen)),
                 None => (0, 0),
             };
-            self.state.borrow_mut().received.push(Received {
+            self.state().received.push(Received {
                 connection,
                 body: body.clone(),
                 rebuilt_input: rebuilt.clone(),
@@ -327,7 +449,7 @@ impl FakeOpenAi {
             let Some(rebuilt) = rebuilt else {
                 // Not held: the scripted reply stays for the resend.
                 if let Some(reply) = reply {
-                    self.state.borrow_mut().replies.push_front(reply);
+                    self.state().replies.push_front(reply);
                 }
                 held.clear();
                 let frame = error_frame("previous_response_not_found");
@@ -352,7 +474,7 @@ impl FakeOpenAi {
                         rebuilt,
                         prompt,
                         cached: cached_tokens,
-                        report: self.state.borrow().report_cache,
+                        report: self.state().report_cache,
                     };
                     if !answer(&mut socket, &mut held, &mut seen, reply, served)
                         .await
@@ -485,8 +607,8 @@ fn with_cache_usage(mut frame: Value, served: &Served) -> Value {
 
 /// Sends `reply` to the request `served`. Returns false once the
 /// connection is done.
-async fn answer(
-    socket: &mut tokio_tungstenite::WebSocketStream<turmoil::net::TcpStream>,
+async fn answer<S: AsyncRead + AsyncWrite + Unpin>(
+    socket: &mut WebSocketStream<S>,
     held: &mut HashMap<String, Vec<Value>>,
     seen: &mut Vec<Prompt>,
     reply: Option<Reply>,
@@ -549,8 +671,8 @@ async fn answer(
     }
 }
 
-async fn send(
-    socket: &mut tokio_tungstenite::WebSocketStream<turmoil::net::TcpStream>,
+async fn send<S: AsyncRead + AsyncWrite + Unpin>(
+    socket: &mut WebSocketStream<S>,
     frame: Value,
 ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
     socket.send(Message::text(frame.to_string())).await
