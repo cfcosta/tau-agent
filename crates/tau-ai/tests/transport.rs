@@ -28,7 +28,7 @@ use tau_ai::{
         io::{connection::Connector, driver::Transport},
         proto::{
             lane::{CONNECTION_LIMIT_REACHED, PREVIOUS_RESPONSE_NOT_FOUND},
-            pool::{Limits, PoolStats},
+            pool::{Affinity, Limits, PoolStats},
         },
     },
 };
@@ -266,7 +266,7 @@ fn run_over_transport_body(tc: TestCase) {
         let outcome = outcome.clone();
         sim.client("client", async move {
             let transport = Transport::start(SimConnector, limits());
-            let lane = transport.open_lane().await.unwrap();
+            let lane = transport.open_lane(Affinity::default()).await.unwrap();
             let mut transcript = vec![user("start")];
             let mut inputs = Vec::new();
             let mut got = Vec::new();
@@ -431,7 +431,7 @@ fn clean_run_is_all_deltas(tc: TestCase) {
         let stats = stats.clone();
         sim.client("client", async move {
             let transport = Transport::start(SimConnector, Limits::default());
-            let lane = transport.open_lane().await.unwrap();
+            let lane = transport.open_lane(Affinity::default()).await.unwrap();
             let settings = Settings {
                 model: "gpt-5.5".into(),
                 ..Settings::default()
@@ -524,7 +524,7 @@ fn runs_get_a_connection_each(tc: TestCase) {
         // one. One at a time, so the fake's reply order is the lanes'.
         let mut open = Vec::new();
         for (model, timestamp) in labels {
-            let lane = transport.open_lane().await.unwrap();
+            let lane = transport.open_lane(Affinity::default()).await.unwrap();
             let response =
                 lane.request(body(&settings, input.clone()), model, timestamp);
             let message = collect(response).await;
@@ -577,7 +577,7 @@ fn dropping_responses(tc: TestCase) {
         ],
         async move {
             let transport = Transport::start(SimConnector, Limits::default());
-            let lane = transport.open_lane().await.unwrap();
+            let lane = transport.open_lane(Affinity::default()).await.unwrap();
             let settings = Settings {
                 model: "gpt-5.5".into(),
                 ..Settings::default()
@@ -635,9 +635,9 @@ fn dropping_a_lane_frees_its_connection() {
     let seen = stats.clone();
     simulate(vec![], async move {
         let transport = Transport::start(SimConnector, Limits::default());
-        let first = transport.open_lane().await.unwrap();
+        let first = transport.open_lane(Affinity::default()).await.unwrap();
         drop(first);
-        let _second = transport.open_lane().await.unwrap();
+        let _second = transport.open_lane(Affinity::default()).await.unwrap();
         *seen.borrow_mut() = Some(transport.stats().await.unwrap());
         Ok(())
     });
@@ -664,7 +664,7 @@ fn server_error_fails_with_start_and_error() {
         }],
         async move {
             let transport = Transport::start(SimConnector, Limits::default());
-            let lane = transport.open_lane().await.unwrap();
+            let lane = transport.open_lane(Affinity::default()).await.unwrap();
             let settings = Settings {
                 model: "gpt-5.5".into(),
                 ..Settings::default()
@@ -711,7 +711,7 @@ fn lost_connection_ends_the_skip(tc: TestCase) {
         ],
         async move {
             let transport = Transport::start(SimConnector, Limits::default());
-            let lane = transport.open_lane().await.unwrap();
+            let lane = transport.open_lane(Affinity::default()).await.unwrap();
             let settings = Settings {
                 model: "gpt-5.5".into(),
                 ..Settings::default()
@@ -763,7 +763,8 @@ fn concurrent_runs_get_a_connection_each(tc: TestCase) {
         let transport = Transport::start(SimConnector, Limits::default());
         let mut handles = Vec::new();
         for _ in 0..lanes {
-            handles.push(transport.open_lane().await.unwrap());
+            handles
+                .push(transport.open_lane(Affinity::default()).await.unwrap());
         }
         let settings = Settings {
             model: "gpt-5.5".into(),
@@ -817,7 +818,7 @@ fn runs_one_after_another_reuse_a_connection(tc: TestCase) {
             ..Settings::default()
         };
         for _ in 0..runs {
-            let lane = transport.open_lane().await.unwrap();
+            let lane = transport.open_lane(Affinity::default()).await.unwrap();
             let mut response = lane.request(
                 body(&settings, to_input(&[user("hi")])),
                 "gpt-5.5".into(),
@@ -860,7 +861,7 @@ fn the_next_run_skips_a_cancelled_tail(tc: TestCase) {
             ..Settings::default()
         };
         let input = to_input(&[user("hi")]);
-        let first = transport.open_lane().await.unwrap();
+        let first = transport.open_lane(Affinity::default()).await.unwrap();
         let mut response =
             first.request(body(&settings, input.clone()), "gpt-5.5".into(), 0);
         assert!(matches!(
@@ -869,7 +870,7 @@ fn the_next_run_skips_a_cancelled_tail(tc: TestCase) {
         ));
         drop(response);
         drop(first);
-        let second = transport.open_lane().await.unwrap();
+        let second = transport.open_lane(Affinity::default()).await.unwrap();
         let response = second.request(body(&settings, input), label.0, label.1);
         *seen.borrow_mut() = Some(collect(response).await);
         Ok(())

@@ -31,7 +31,7 @@ use crate::{
         },
         proto::{
             continuation::{Body, Fields},
-            pool::{Limits, PoolStats},
+            pool::{Affinity, Limits, PoolStats},
         },
     },
 };
@@ -65,7 +65,10 @@ impl OpenAi {
     }
 
     /// Opens a session for one run. If the model is in the model table,
-    /// whether it reasons comes from there.
+    /// whether it reasons comes from there. The session's lane goes by
+    /// the settings' [`Lineage`](crate::responses::request::Lineage):
+    /// onto a connection that already serves the run's conversation, or
+    /// for a fork, its parent's (see [`crate::ws::proto::pool`]).
     pub async fn session(
         &self,
         mut settings: Settings,
@@ -74,8 +77,15 @@ impl OpenAi {
         if let Some(model) = model {
             settings.reasoning_model = model.reasoning;
         }
+        let affinity = match &settings.lineage {
+            Some(lineage) => Affinity::new(
+                lineage.path.as_str(),
+                lineage.parent.as_deref().map(Into::into),
+            ),
+            None => Affinity::default(),
+        };
         Ok(Session {
-            lane: self.transport.open_lane().await?,
+            lane: self.transport.open_lane(affinity).await?,
             fields: Arc::new(session_fields(&settings)),
             settings,
             model,

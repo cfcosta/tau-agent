@@ -7,6 +7,7 @@ use hegel::{
 };
 use serde_json::{Value, json};
 use tau_ai::responses::request::{
+    Lineage,
     PROMPT_CACHE_KEY_MAX_CHARS,
     ReasoningEffort,
     Settings,
@@ -54,7 +55,10 @@ fn settings_unprinted(tc: &TestCase) -> Settings {
         text_format: tc.draw(gs::optional(gs::just(json!({"type": "json_schema", "name": "T", "schema": {}, "strict": true})))),
         max_output_tokens: tc.draw(gs::optional(gs::integers::<u32>().min_value(1).max_value(8192))),
         service_tier: tc.draw(gs::optional(gs::sampled_from(vec!["flex".to_owned(), "priority".to_owned()]))),
-        prompt_cache_key: tc.draw(gs::optional(generators::text(100))),
+        lineage: tc.draw(gs::optional(generators::text(100))).map(|path| Lineage {
+            path,
+            parent: None,
+        }),
     }
 }
 
@@ -148,7 +152,7 @@ fn wire_limits_are_clamped(tc: TestCase) {
             .map(|limit| json!(limit))
             .as_ref()
     );
-    if let Some(key) = &settings.prompt_cache_key {
+    if let Some(key) = settings.lineage.as_ref().map(|lineage| &lineage.path) {
         let sent = body["prompt_cache_key"].as_str().unwrap();
         assert_eq!(
             sent.chars().count(),

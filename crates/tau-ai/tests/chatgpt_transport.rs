@@ -18,7 +18,7 @@ use tau_ai::{
     client::OpenAi,
     event::AssistantEvent,
     message::{Message, UserContent, UserMessage},
-    responses::request::{Settings, ToolDefinition},
+    responses::request::{Lineage, Settings, ToolDefinition},
     retry::{Class, Recovery},
 };
 use tau_testing::{
@@ -191,11 +191,12 @@ fn clones_share_one_refresh() {
 /// it does not take, `store: false`, and no `stream_id`.
 #[hegel::test(test_cases = 5)]
 fn unsupported_fields_never_go_out(tc: TestCase) {
-    let prompt_cache_key =
-        tc.draw(gs::optional(gs::text().min_size(1).max_size(80)));
+    let lineage = tc
+        .draw(gs::optional(gs::text().min_size(1).max_size(80)))
+        .map(|path| Lineage { path, parent: None });
     let tools = tc.draw(gs::booleans());
     let settings = Settings {
-        prompt_cache_key,
+        lineage,
         tools: if tools {
             vec![ToolDefinition {
                 name: "get_weather".into(),

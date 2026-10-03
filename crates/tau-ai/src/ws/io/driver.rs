@@ -2,8 +2,8 @@
 //! routes server frames to lanes, and turns them into [`AssistantEvent`]s
 //! for the runs.
 //!
-//! A connection carries one lane, so a frame goes to the lane of the
-//! connection it came on. Frames for a lane with no request in flight
+//! A connection carries one lane at a time, so a frame goes to the lane
+//! the connection carries. Frames for a lane with no request in flight
 //! are ignored.
 //!
 //! A connection that could not open because it was refused (a
@@ -65,7 +65,15 @@ use crate::{
     ws::proto::{
         continuation::Body,
         lane::Event,
-        pool::{ConnectionId, LaneId, Limits, Pool, PoolAction, PoolStats},
+        pool::{
+            Affinity,
+            ConnectionId,
+            LaneId,
+            Limits,
+            Pool,
+            PoolAction,
+            PoolStats,
+        },
     },
 };
 
@@ -105,7 +113,7 @@ pub struct Stopped;
 
 #[derive(Debug)]
 enum Command {
-    OpenLane(oneshot::Sender<LaneId>),
+    OpenLane(Affinity, oneshot::Sender<LaneId>),
     CloseLane(LaneId),
     Request {
         lane: LaneId,
@@ -147,11 +155,14 @@ impl Transport {
         self.refusal.lock().expect("not poisoned").clone()
     }
 
-    /// Opens a lane for a new run.
-    pub async fn open_lane(&self) -> Result<LaneHandle, Stopped> {
+    /// Opens a lane for a new run of `affinity`'s conversation.
+    pub async fn open_lane(
+        &self,
+        affinity: Affinity,
+    ) -> Result<LaneHandle, Stopped> {
         let (reply, answer) = oneshot::channel();
         self.commands
-            .send(Command::OpenLane(reply))
+            .send(Command::OpenLane(affinity, reply))
             .map_err(|_| Stopped)?;
         let lane = answer.await.map_err(|_| Stopped)?;
         Ok(LaneHandle {
@@ -331,8 +342,8 @@ impl<C: Connector> Driver<C> {
 
     fn command(&mut self, command: Command) {
         match command {
-            Command::OpenLane(reply) => {
-                let (lane, actions) = self.pool.open_lane();
+            Command::OpenLane(affinity, reply) => {
+                let (lane, actions) = self.pool.open_lane(affinity);
                 self.apply(actions);
                 let _ = reply.send(lane);
             }

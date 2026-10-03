@@ -11,7 +11,8 @@
 //!   so a full resend can replay its reasoning. pi only asks for it when a
 //!   reasoning effort is set; without it, a full resend after a lost
 //!   continuation would drop the reasoning.
-//! - `prompt_cache_key` is cut to 64 characters, OpenAI's limit.
+//! - `prompt_cache_key` is the run's path ([`Lineage::path`]), cut to 64
+//!   characters, OpenAI's limit.
 //!
 //! Every field except `input` depends only on [`Settings`], so two turns
 //! of one run differ only in `input`. The delta rule depends on that.
@@ -76,6 +77,20 @@ impl ReasoningEffort {
     }
 }
 
+/// The conversation a run belongs to, for the prompt cache
+/// (`docs/reference/openai-websocket.md`, "Prompt cache").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Lineage {
+    /// The run's path of work: its `prompt_cache_key`, and the
+    /// conversation its connection serves. In tau, the id of the run
+    /// whose conversation it is.
+    pub path: String,
+    /// The path the run forked from, for a fork that has not answered
+    /// yet: its first request may take that path's connection, which
+    /// holds the prefix it inherited.
+    pub parent: Option<String>,
+}
+
 /// Everything about a request except its input. Fixed for a run.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Settings {
@@ -91,7 +106,9 @@ pub struct Settings {
     /// Optional provider output ceiling. The provider decides how to enforce it.
     pub max_output_tokens: Option<u32>,
     pub service_tier: Option<String>,
-    pub prompt_cache_key: Option<String>,
+    /// The run's conversation: sent as `prompt_cache_key`, and the
+    /// connection the run's requests go on.
+    pub lineage: Option<Lineage>,
 }
 
 /// Builds the `response.create` body for `input`.
@@ -146,9 +163,12 @@ pub fn fields(settings: &Settings) -> Fields {
     if let Some(tier) = &settings.service_tier {
         body.insert("service_tier".into(), json!(tier));
     }
-    if let Some(key) = &settings.prompt_cache_key {
-        let clamped: String =
-            key.chars().take(PROMPT_CACHE_KEY_MAX_CHARS).collect();
+    if let Some(lineage) = &settings.lineage {
+        let clamped: String = lineage
+            .path
+            .chars()
+            .take(PROMPT_CACHE_KEY_MAX_CHARS)
+            .collect();
         body.insert("prompt_cache_key".into(), json!(clamped));
     }
     body

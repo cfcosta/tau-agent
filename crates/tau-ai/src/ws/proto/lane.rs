@@ -147,6 +147,18 @@ impl Lane {
         self.request.is_some()
     }
 
+    /// Takes the lane's continuation, as it leaves its connection: the
+    /// connection keeps it for the next lane of the same conversation.
+    pub fn take_continuation(&mut self) -> Option<Continuation> {
+        self.continuation.take()
+    }
+
+    /// Sets what the lane continues from, as it comes onto a connection:
+    /// what that connection's last lane left, or nothing.
+    pub fn set_continuation(&mut self, continuation: Option<Continuation>) {
+        self.continuation = continuation;
+    }
+
     /// Submits the run's next request, given as it would be sent in full.
     pub fn submit(&mut self, full_body: Body) -> Result<Action, LaneError> {
         if self.request.is_some() {
