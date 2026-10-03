@@ -31,6 +31,7 @@ use crate::{
         Land,
         Log,
         New,
+        Resolve,
         Restore,
         Show,
         Status,
@@ -44,7 +45,7 @@ use crate::{
 /// marks.
 const LS: &str = "ls";
 
-/// The version-control tools on one workspace, as a plugin. All nine by
+/// The version-control tools on one workspace, as a plugin. All ten by
 /// default; [`read_only`](Self::read_only) keeps the four that change
 /// nothing but snapshots.
 #[derive(Debug, Clone)]
@@ -101,6 +102,7 @@ impl Plugin for VcsPlugin {
                 tool(Commit(vcs.clone())),
                 tool(New(vcs.clone())),
                 tool(Restore(vcs.clone())),
+                tool(Resolve(vcs.clone())),
                 tool(Undo(vcs.clone())),
             ]);
             if self.landing {

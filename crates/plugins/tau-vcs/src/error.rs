@@ -19,8 +19,12 @@ pub enum VcsError {
     EmptyDescription,
     #[error("The working copy has no parent")]
     NoParent,
-    #[error("Name at least one path to restore (\".\" restores everything)")]
+    #[error("Name at least one path (\".\" matches everything)")]
     NoPaths,
+    #[error(
+        "{0} has markers or a non-file conflict. Edit it or use vcs_restore to select a committed side; vcs_resolve accepts only markerless file contents."
+    )]
+    NeedsConflictEdit(String),
     #[error("The operation to undo is a merge; ask the user to undo it")]
     UndoMerge,
     #[error("There is nothing to undo")]

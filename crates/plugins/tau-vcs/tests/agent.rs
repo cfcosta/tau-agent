@@ -43,8 +43,21 @@ fn a_run_commits_through_the_tools() {
         .iter()
         .map(|t| t.name.clone())
         .collect();
-    assert_eq!(names.len(), 9);
-    assert_eq!(names[0], "vcs_status");
+    assert_eq!(
+        names,
+        [
+            "vcs_status",
+            "vcs_diff",
+            "vcs_log",
+            "vcs_show",
+            "vcs_describe",
+            "vcs_commit",
+            "vcs_new",
+            "vcs_restore",
+            "vcs_resolve",
+            "vcs_undo",
+        ]
+    );
 
     let results: Vec<(String, bool, String)> = entries
         .into_iter()

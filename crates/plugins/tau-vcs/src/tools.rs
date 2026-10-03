@@ -301,6 +301,33 @@ impl TypedTool for Restore {
     }
 }
 
+/// `vcs_resolve`'s arguments: explicitly selected files or directories.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ResolveArgs {
+    pub paths: Vec<String>,
+}
+
+/// Accepts the current clean materialization of markerless file conflicts.
+pub struct Resolve(pub Vcs);
+
+#[async_trait]
+impl TypedTool for Resolve {
+    type Args = ResolveArgs;
+    const NAME: &'static str = "vcs_resolve";
+    const DESCRIPTION: &'static str = "Explicitly accept the current file contents of markerless conflicts in paths. Unchanged files otherwise stay conflicted. Refuses files with conflict markers or non-file conflicts without resolving any selected path; edit markers or use vcs_restore to choose a committed side instead. Commit the resolution with vcs_commit.";
+
+    async fn call(
+        &self,
+        args: ResolveArgs,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        run(&self.0, &ctx, move |worker| {
+            ops::resolve_conflicts(worker, args.paths)
+        })
+        .await
+    }
+}
+
 /// `vcs_undo`'s arguments: none.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UndoArgs {}
@@ -312,7 +339,7 @@ pub struct Undo(pub Vcs);
 impl TypedTool for Undo {
     type Args = UndoArgs;
     const NAME: &'static str = "vcs_undo";
-    const DESCRIPTION: &'static str = "Undo the last vcs_describe, vcs_commit, vcs_new or vcs_restore made in this workspace. Call it again to undo the one before. File edits made since are kept. Refuses when the last operation was not made by these tools.";
+    const DESCRIPTION: &'static str = "Undo the last vcs_describe, vcs_commit, vcs_new, vcs_restore or vcs_resolve made in this workspace. Call it again to undo the one before. File edits made since are kept. Refuses when the last operation was not made by these tools.";
 
     async fn call(
         &self,

@@ -6,9 +6,13 @@ use std::collections::HashSet;
 
 use futures_util::StreamExt as _;
 use jj_lib::{
-    backend::CommitId,
+    backend::{CommitId, CopyId, TreeValue},
     commit::Commit,
+    conflicts,
+    files::{self, MergeResult},
     matchers::{EverythingMatcher, FilesMatcher},
+    merge::Merge,
+    merged_tree_builder::MergedTreeBuilder,
     object_id::ObjectId as _,
     op_store::{OperationId, RefTarget},
     operation::Operation,
@@ -187,7 +191,9 @@ pub(crate) fn status(worker: &mut Worker) -> Result<Report, VcsError> {
         .collect();
     if !conflicts.is_empty() {
         text.push_str(
-            "\nUnresolved conflicts (edit the markers out of these files):",
+            "\nUnresolved conflicts (some files have no markers; edit markers, \
+             use vcs_restore to select a committed side, or vcs_resolve to \
+             accept a markerless file's current contents):",
         );
         for path in &conflicts {
             text.push_str(&format!("\n{path}"));
@@ -793,6 +799,82 @@ pub(crate) fn restore(
     })
 }
 
+/// Explicitly accept jj-lib's clean materialization of selected conflicts.
+/// Marked or non-file conflicts require an edit or a committed-side restore.
+/// The native builder writes only after every selected conflict validates.
+pub(crate) fn resolve_conflicts(
+    worker: &mut Worker,
+    paths: Vec<String>,
+) -> Result<Report, VcsError> {
+    if paths.is_empty() {
+        return Err(VcsError::NoPaths);
+    }
+    let paths = repo_paths(worker, &paths)?;
+    let matcher = session::matcher(paths);
+    let (snapshot, resolved) = session::mutate(worker, "resolve", |tx, wc| {
+        let tree = wc.tree();
+        let mut builder = MergedTreeBuilder::new(tree.clone());
+        let mut resolved = Vec::new();
+        for (path, value) in tree.conflicts_matching(matcher.as_ref()) {
+            let value = value?;
+            let file =
+                block_on(conflicts::try_materialize_file_conflict_value(
+                    tree.store(),
+                    &path,
+                    &value,
+                    tree.labels(),
+                ))?
+                .ok_or_else(|| {
+                    VcsError::NeedsConflictEdit(
+                        path.as_internal_file_string().to_owned(),
+                    )
+                })?;
+            let MergeResult::Resolved(content) = files::merge_hunks(
+                &file.contents,
+                tree.store().merge_options(),
+            ) else {
+                return Err(VcsError::NeedsConflictEdit(
+                    path.as_internal_file_string().to_owned(),
+                ));
+            };
+            let id = block_on(
+                tree.store().write_file(&path, &mut content.as_slice()),
+            )?;
+            builder.set_or_remove(
+                path.clone(),
+                Merge::normal(TreeValue::File {
+                    id,
+                    // The same native executable choice and copy metadata used
+                    // to materialize this file in jj's working copy.
+                    executable: file.executable.unwrap_or(false),
+                    copy_id: file.copy_id.unwrap_or_else(CopyId::placeholder),
+                }),
+            );
+            resolved.push(path.as_internal_file_string().to_owned());
+        }
+        if !resolved.is_empty() {
+            let new_tree = block_on(builder.write_tree())?;
+            session::write_commit(tx, |repo| {
+                repo.rewrite_commit(wc).set_tree(new_tree.clone())
+            })?;
+        }
+        Ok(resolved)
+    })?;
+    let (line, info) = wc_line(&snapshot)?;
+    let text = if resolved.is_empty() {
+        format!("No unresolved conflicts in those paths.\n{line}")
+    } else {
+        format!(
+            "Accepted markerless file contents:\n{}\n{line}",
+            resolved.join("\n")
+        )
+    };
+    Ok(Report {
+        text,
+        details: json!({ "resolved": resolved, "working_copy": info }),
+    })
+}
+
 pub(crate) fn undo(worker: &mut Worker) -> Result<Report, VcsError> {
     let name = workspace_name(worker)?;
     let (snapshot, undone) = session::mutate(worker, "undo", |tx, wc| {
@@ -887,7 +969,8 @@ fn carry_edits(
 
 /// The `tau.vcs.tool` values of the model's write tools: the
 /// operations `vcs_undo` may undo.
-const UNDOABLE: [&str; 5] = ["describe", "commit", "new", "restore", "undo"];
+const UNDOABLE: [&str; 6] =
+    ["describe", "commit", "new", "restore", "resolve", "undo"];
 
 /// The newest operation `vcs_undo` may undo: made by these tools in
 /// this workspace, skipping snapshots and operations already undone.

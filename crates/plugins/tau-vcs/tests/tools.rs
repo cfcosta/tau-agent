@@ -63,7 +63,7 @@ impl Repo {
     }
 }
 
-/// The plugin offers the nine tools, read ones first, all sequential;
+/// The plugin offers the ten tools, read ones first, all sequential;
 /// `read_only` keeps the first four.
 #[test]
 fn the_plugin_offers_every_tool() {
@@ -84,6 +84,7 @@ fn the_plugin_offers_every_tool() {
             "vcs_commit",
             "vcs_new",
             "vcs_restore",
+            "vcs_resolve",
             "vcs_undo",
         ]
     );
@@ -560,6 +561,36 @@ fn open_an_existing_repository() {
     let output = block_on(log.call(json!({}), ToolCtx::detached())).unwrap();
     let details = output.details.unwrap();
     assert_eq!(details["changes"][1]["description"], json!("Add a\n"));
+}
+
+/// Explicit acceptance stays scoped to the workspace, needs named paths,
+/// and is an idempotent no-op when the selected files are already resolved.
+#[test]
+fn explicit_resolution_keeps_the_shared_path_and_cancellation_guards() {
+    let repo = Repo::new();
+    for paths in [
+        json!([]),
+        json!(["../outside.txt"]),
+        json!(["/outside.txt"]),
+    ] {
+        assert!(repo.call("vcs_resolve", json!({"paths": paths})).is_err());
+    }
+    let (_, details) = repo.ok("vcs_resolve", json!({"paths": ["."]}));
+    assert_eq!(details["resolved"], json!([]));
+    let tool = repo
+        .tools
+        .iter()
+        .find(|tool| tool.name() == "vcs_resolve")
+        .unwrap();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    cancel.cancel();
+    let error = block_on(tool.call(
+        json!({"paths": ["."]}),
+        ToolCtx::detached().cancelled_by(cancel),
+    ))
+    .unwrap_err()
+    .to_string();
+    assert_eq!(error, "Operation aborted");
 }
 
 /// A cancelled run gets the shared abort message before any work.

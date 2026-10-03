@@ -3,6 +3,7 @@
 
 use futures_util::StreamExt as _;
 use jj_lib::{
+    backend::MergedTreeValue,
     conflicts::{
         ConflictMarkerStyle,
         ConflictMaterializeOptions,
@@ -10,6 +11,7 @@ use jj_lib::{
     },
     diff_presentation::unified::{GitDiffPart, git_diff_part},
     matchers::Matcher,
+    merge::Merge,
     merged_tree::MergedTree,
     repo::Repo,
     settings::UserSettings,
@@ -22,6 +24,21 @@ use crate::{ChangeKind, FileChange, error::VcsError};
 /// The most bytes of diff text a tool returns: 50 KiB, as `tau-tools`.
 pub const MAX_DIFF_BYTES: usize = 50 * 1024;
 
+/// Compare native merge meaning, not incidental arity or addend order.
+/// The native delta `before - after + absent` cancels to absent exactly
+/// when its tree-value terms agree. jj-lib owns flattening/cancellation;
+/// file presence, executable bits and copy provenance stay in the values.
+fn tree_values_match(
+    before: &MergedTreeValue,
+    after: &MergedTreeValue,
+) -> bool {
+    before == after
+        || Merge::from_vec(vec![before.clone(), after.clone(), Merge::absent()])
+            .flatten()
+            .simplify()
+            .is_absent()
+}
+
 /// The paths that differ between `from` and `to` under `matcher`.
 pub(crate) fn changed_paths(
     from: &MergedTree,
@@ -33,6 +50,11 @@ pub(crate) fn changed_paths(
         let mut changes = Vec::new();
         while let Some(entry) = stream.next().await {
             let values = entry.values?;
+            // Native snapshots can cancel or reorder conflict terms
+            // without editing the file or resolving its conflict.
+            if tree_values_match(&values.before, &values.after) {
+                continue;
+            }
             changes.push(FileChange {
                 path: entry.path.as_internal_file_string().to_owned(),
                 kind: kind(values.before.is_absent(), values.after.is_absent()),
@@ -64,6 +86,9 @@ pub(crate) fn unified(
         while let Some(entry) = stream.next().await {
             let path = entry.path;
             let values = entry.values?;
+            if tree_values_match(&values.before, &values.after) {
+                continue;
+            }
             let name = path.as_internal_file_string().to_owned();
             let change =
                 kind(values.before.is_absent(), values.after.is_absent());
@@ -182,6 +207,98 @@ mod tests {
     use hegel::generators as gs;
 
     use super::*;
+
+    type Leaf = Option<(u8, bool, u8)>;
+
+    fn native_terms(terms: &[Leaf]) -> MergedTreeValue {
+        use jj_lib::backend::{CopyId, FileId, TreeValue};
+        Merge::from_vec(
+            terms
+                .iter()
+                .map(|value| {
+                    value.map(|(blob, executable, copy)| TreeValue::File {
+                        // Synthetic identities for a pure algebra test; no store reads.
+                        id: FileId::new(vec![blob; 20]),
+                        executable,
+                        copy_id: CopyId::new(vec![copy]),
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn signed_terms(terms: &[Leaf]) -> std::collections::BTreeMap<Leaf, i32> {
+        let mut counts = std::collections::BTreeMap::new();
+        for (index, value) in terms.iter().enumerate() {
+            *counts.entry(*value).or_default() +=
+                if index % 2 == 0 { 1 } else { -1 };
+        }
+        counts.retain(|_, count| *count != 0);
+        counts
+    }
+
+    /// An independent signed-term map checks native cancellation, including
+    /// file presence, executable bits and copy provenance. Reordering adds
+    /// or padding with a cancelling pair is not an edit; a new blob is.
+    #[hegel::test(test_cases = 200)]
+    fn tree_values_match_the_signed_term_model(tc: hegel::TestCase) {
+        let leaf = || {
+            gs::optional(hegel::tuples!(
+                gs::integers::<u8>().max_value(3),
+                gs::booleans(),
+                gs::integers::<u8>().max_value(2)
+            ))
+        };
+        let sides: usize = tc.draw(gs::integers().max_value(3));
+        let before: Vec<Leaf> = tc.draw(
+            gs::vecs(leaf())
+                .min_size(2 * sides + 1)
+                .max_size(2 * sides + 1),
+        );
+        let other_sides: usize = tc.draw(gs::integers().max_value(3));
+        let after: Vec<Leaf> = tc.draw(
+            gs::vecs(leaf())
+                .min_size(2 * other_sides + 1)
+                .max_size(2 * other_sides + 1),
+        );
+        let pair: Leaf = tc.draw(leaf());
+        assert_eq!(
+            tree_values_match(&native_terms(&before), &native_terms(&after)),
+            signed_terms(&before) == signed_terms(&after)
+        );
+        let mut padded = before.clone();
+        padded.extend([pair, pair]);
+        assert!(tree_values_match(
+            &native_terms(&before),
+            &native_terms(&padded)
+        ));
+        let mut reordered = padded;
+        let last = reordered.len() - 1;
+        reordered.swap(0, last); // both are addends, not a role change
+        assert!(tree_values_match(
+            &native_terms(&before),
+            &native_terms(&reordered)
+        ));
+        let mut changed = before.clone();
+        *changed.last_mut().unwrap() = Some((4, false, 0));
+        assert!(!tree_values_match(
+            &native_terms(&before),
+            &native_terms(&changed)
+        ));
+        // A nontrivial reordered conflict survives even the smallest draws.
+        let witness = [Some((0, false, 0)), Some((1, false, 0)), None];
+        let swapped = [None, Some((1, false, 0)), Some((0, false, 0))];
+        assert!(tree_values_match(
+            &native_terms(&witness),
+            &native_terms(&swapped)
+        ));
+        for partner in [None, Some((0, true, 0)), Some((0, false, 1))] {
+            assert!(!tree_values_match(
+                &native_terms(&[Some((0, false, 0))]),
+                &native_terms(&[partner])
+            ));
+        }
+    }
 
     /// Text around [`MAX_DIFF_BYTES`] long: runs of one character, some
     /// of them several bytes wide, each maybe ending a line. Long runs

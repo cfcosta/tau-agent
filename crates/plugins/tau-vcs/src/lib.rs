@@ -9,7 +9,7 @@
 //!
 //! - Reading: `vcs_status`, `vcs_diff`, `vcs_log`, `vcs_show`.
 //! - Writing: `vcs_describe`, `vcs_commit`, `vcs_new`, `vcs_restore`,
-//!   `vcs_undo`.
+//!   `vcs_resolve`, `vcs_undo`.
 //! - Landing, when asked for ([`VcsPlugin::landing`]): `vcs_land`.
 //!
 //! A [`Project`] is a repository tau owns, cloned from the user's, with

@@ -74,8 +74,8 @@ pub struct Landing {
     /// landing, newest first. Empty when the child had nothing the
     /// parent lacks.
     pub changes: Vec<ChangeInfo>,
-    /// Paths that hold conflict markers in the parent's new newest
-    /// commit: what the parent's next turn has to resolve.
+    /// Unresolved paths in the parent's new newest commit, whether jj's
+    /// native materialization contains markers or not.
     pub conflicts: Vec<String>,
     /// The parent's newest commit after the landing, in hex.
     pub head: String,

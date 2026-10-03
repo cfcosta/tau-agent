@@ -90,8 +90,12 @@ one move: **restack**.
   lists the files that would conflict before anything changes. The
   user confirms or leaves the child open. A confirmed
   landing puts the conflicts in as jj conflicts: the parent's next
-  `vcs_status` shows them, and its model edits the markers out like
-  any other file. A child the parent waited on cannot conflict, so it
+  `vcs_status` shows their structured state. jj may materialize a
+  conflict without markers; unchanged bytes do not decide it. The model
+  edits marked conflicts, selects a committed side with `vcs_restore`,
+  or explicitly accepts markerless contents with `vcs_resolve`.
+  Cancelling redundant native merge terms does not count as touching a
+  path. A child the parent waited on cannot conflict, so it
   never asks.
 - **Idle runs only.** The host rewrites only runs that are idle, lands
   only between turns, and updates each workspace it touched before

@@ -31,7 +31,7 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
   when you set up the agent, not inside a tool.
 - `Vcs::init` makes a non-colocated repository: the Git store is in
   `.jj/repo/store/git`, and there is no `.git` beside `.jj`.
-- `VcsPlugin::new(vcs)` adds all nine tools. `read_only()` keeps only
+- `VcsPlugin::new(vcs)` adds all ten tools. `read_only()` keeps only
   `vcs_status`, `vcs_diff`, `vcs_log` and `vcs_show`.
 - The plugin keeps no state per run. Every run of the agent works in
   the one workspace that `vcs` opened.
@@ -152,8 +152,13 @@ A changed path is a `FileChange`:
   `too_large` (`{ "path", "size" }`, the size in bytes), `diff` (`@`'s
   diff as `vcs_diff` gives it, which the text leaves out) and
   `truncated`.
-- Conflicts are data. jj keeps them in commits, and the files hold
-  conflict markers that the model edits like any other text.
+- Conflicts are structured jj data. Some materialize without markers,
+  including empty-v-deleted files. Unchanged contents, including a
+  same-byte rewrite, remain conflicted. Edits can remove markers;
+  `vcs_restore` can select a committed side; `vcs_resolve` can explicitly
+  accept a markerless file's current native materialization.
+- Cancelling redundant native merge terms does not list an untouched
+  path as changed, in status, diff, commits, or turn snapshots.
 
 ### vcs_diff: `{ change?, paths? }`
 
@@ -243,6 +248,19 @@ A changed path is a `FileChange`:
 - The files on disk are updated. Details: `restored` (the paths that
   changed) and `working_copy`.
 
+### vcs_resolve: `{ paths }`
+
+- Explicitly accepts the current native materialization of selected
+  markerless file conflicts, including empty and binary files. File
+  presence and executable mode follow jj-lib's checkout materialization.
+- At least one path is required. `.` matches everything; directories
+  select their conflicted descendants. Paths already resolved are no-ops.
+- A marked or non-file conflict refuses the entire selected resolution.
+  Its markers require an edit, or a committed-side selection through
+  `vcs_restore`. Nothing else is implicitly accepted.
+- Details: `resolved` (accepted paths) and `working_copy`. The resolution
+  remains in `@` until `vcs_commit`; `vcs_undo` can undo the resolution.
+
 ### vcs_undo: `{}`
 
 - Undoes the newest operation that these tools made in this workspace,
@@ -278,23 +296,24 @@ unmarked.
 In these messages, `<rev>` and `<path>` stand for the argument as the
 model gave it, and the real message puts it in backquotes.
 
-| Tool          | Condition                          | Message                                                                                         |
-| ------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
-| all           | cancelled before starting          | `Operation aborted`                                                                             |
-| all           | jj-lib panicked                    | `jj-lib panicked: <message>`                                                                    |
-| all           | stale working copy                 | `The working copy is stale: another process changed this workspace's commit. ...`               |
-| ids           | not an id                          | `<rev> is not a change id or a commit id. ... revsets are not accepted.`                        |
-| ids           | unknown change or commit           | `No change matches <rev>`, `No commit matches <rev>`                                            |
-| ids           | ambiguous prefix                   | `Change id prefix <rev> is ambiguous; give more of it` (or `Commit id prefix`)                  |
-| ids           | divergent change                   | `Change <rev> is divergent; pass a commit id instead`                                           |
-| ids           | abandoned change                   | `Change <rev> is hidden (abandoned)`                                                            |
-| paths         | absolute, outside the workspace    | `<path> is outside the repository`                                                              |
-| paths         | `..` or not a valid path           | `<path> is not a path inside the repository`                                                    |
-| write tools   | `@` is immutable                   | `The working-copy commit <id> is immutable`                                                     |
-| `vcs_commit`  | empty message                      | `The description must not be empty`                                                             |
-| `vcs_restore` | no paths                           | `Name at least one path to restore ("." restores everything)`                                   |
-| `vcs_undo`    | newest operation is not the tools' | `The last operation was not made by the vcs tools in this workspace ("<description>"); ...`     |
-| `vcs_undo`    | concurrent operations              | `The operation log has concurrent operations here; ask the user to undo from the operation log` |
+| Tool            | Condition                          | Message                                                                                                                                                |
+| --------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| all             | cancelled before starting          | `Operation aborted`                                                                                                                                    |
+| all             | jj-lib panicked                    | `jj-lib panicked: <message>`                                                                                                                           |
+| all             | stale working copy                 | `The working copy is stale: another process changed this workspace's commit. ...`                                                                      |
+| ids             | not an id                          | `<rev> is not a change id or a commit id. ... revsets are not accepted.`                                                                               |
+| ids             | unknown change or commit           | `No change matches <rev>`, `No commit matches <rev>`                                                                                                   |
+| ids             | ambiguous prefix                   | `Change id prefix <rev> is ambiguous; give more of it` (or `Commit id prefix`)                                                                         |
+| ids             | divergent change                   | `Change <rev> is divergent; pass a commit id instead`                                                                                                  |
+| ids             | abandoned change                   | `Change <rev> is hidden (abandoned)`                                                                                                                   |
+| paths           | absolute, outside the workspace    | `<path> is outside the repository`                                                                                                                     |
+| paths           | `..` or not a valid path           | `<path> is not a path inside the repository`                                                                                                           |
+| write tools     | `@` is immutable                   | `The working-copy commit <id> is immutable`                                                                                                            |
+| `vcs_commit`    | empty message                      | `The description must not be empty`                                                                                                                    |
+| restore/resolve | no paths                           | `Name at least one path ("." matches everything)`                                                                                                      |
+| `vcs_resolve`   | marked or non-file conflict        | `<path> has markers or a non-file conflict. Edit it or use vcs_restore to select a committed side; vcs_resolve accepts only markerless file contents.` |
+| `vcs_undo`      | newest operation is not the tools' | `The last operation was not made by the vcs tools in this workspace ("<description>"); ...`                                                            |
+| `vcs_undo`      | concurrent operations              | `The operation log has concurrent operations here; ask the user to undo from the operation log`                                                        |
 
 ## Projects
 
@@ -462,8 +481,9 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   dropped first, one level at a time.
 - With `confirm` off, nothing changes. The `Landing` it returns says
   what would happen: the changes as they would be (`changes`, newest
-  first), the paths that would hold conflict markers in the new head
-  (`conflicts`), and the new head. Confirmed, conflicts land as jj
+  first), the unresolved paths in the new head (`conflicts`), whether
+  their native materialization has markers or not, and the new head.
+  Confirmed, conflicts land as jj
   conflicts for the parent's next turn to resolve.
 
 ## Moving onto trunk

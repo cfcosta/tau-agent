@@ -61,14 +61,21 @@ fn writes_refuse_an_immutable_working_copy() {
     };
     tag_working_copy(dir.path());
 
-    let describe = find("vcs_describe");
-    let err = tau_testing::block_on(
-        describe.call(json!({"message": "nope"}), ToolCtx::detached()),
-    )
-    .unwrap_err()
-    .to_string();
-    assert!(err.starts_with("The working-copy commit "), "{err}");
-    assert!(err.ends_with(" is immutable"), "{err}");
+    for (name, args) in [
+        ("vcs_describe", json!({"message": "nope"})),
+        ("vcs_commit", json!({"message": "nope"})),
+        ("vcs_new", json!({})),
+        ("vcs_restore", json!({"paths": ["file.txt"]})),
+        ("vcs_resolve", json!({"paths": ["file.txt"]})),
+        ("vcs_undo", json!({})),
+    ] {
+        let err =
+            tau_testing::block_on(find(name).call(args, ToolCtx::detached()))
+                .unwrap_err()
+                .to_string();
+        assert!(err.starts_with("The working-copy commit "), "{name}: {err}");
+        assert!(err.ends_with(" is immutable"), "{name}: {err}");
+    }
 
     // Reading still works, and shows the flag.
     let log = find("vcs_log");

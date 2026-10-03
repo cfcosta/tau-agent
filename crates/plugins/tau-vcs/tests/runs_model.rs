@@ -308,10 +308,21 @@ impl Machine {
 
     /// The files in `run`'s workspace are `@`'s tree: resolved files as
     /// they are, conflicts as jj materializes them (see
-    /// `a_landed_conflict_shows_markers`).
+    /// `a_markerless_landed_conflict_can_be_explicitly_accepted`).
     fn check_files(&self, run: usize) {
         let disk = self.disk(run);
-        let tree = &self.runs[run].wc;
+        let r = &self.runs[run];
+        let tree = &r.wc;
+        // Pending writes have not reached the repository. A stale workspace
+        // has the rewritten repository tree but still the old disk bytes.
+        let stored = r.stale.as_ref().unwrap_or(&r.seen);
+        let id = self.project.workspace_head(&r.name).unwrap().unwrap();
+        assert_eq!(
+            self.project.conflicts(&id).unwrap(),
+            conflicts(stored),
+            "stored conflicts in {}",
+            r.name
+        );
         for path in PATHS {
             let term = get(tree, path);
             let on_disk = disk.get(path);
@@ -438,44 +449,6 @@ impl Machine {
         (true, dragged)
     }
 
-    /// The paths jj holds in conflict at `commit` (a full hex id).
-    fn jj_conflicts(&self, commit: &str) -> BTreeSet<String> {
-        use jj_lib::{
-            backend::CommitId,
-            config::{ConfigLayer, ConfigSource, StackedConfig},
-            default_backend_factories::{
-                default_backend_factories,
-                default_working_copy_factories,
-            },
-            repo::Repo as _,
-            settings::UserSettings,
-            workspace::Workspace,
-        };
-        let mut config = StackedConfig::with_defaults();
-        let mut user = ConfigLayer::empty(ConfigSource::User);
-        user.set_value("user.name", "model").unwrap();
-        user.set_value("user.email", "model@localhost").unwrap();
-        config.add_layer(user);
-        let settings = UserSettings::from_config(config).unwrap();
-        let workspace = Workspace::load(
-            &settings,
-            &self.home.path().join("p").join("main"),
-            &default_backend_factories(),
-            &default_working_copy_factories(),
-        )
-        .unwrap();
-        let repo =
-            pollster::block_on(workspace.repo_loader().load_at_head()).unwrap();
-        let id = CommitId::try_from_hex(commit).unwrap();
-        repo.store()
-            .get_commit(&id)
-            .unwrap()
-            .tree()
-            .conflicts()
-            .map(|(path, _)| path.as_internal_file_string().to_owned())
-            .collect()
-    }
-
     /// The commit `run`'s working copy stands on, as jj has it.
     fn wc_parent(&self, run: usize) -> Option<String> {
         let wc = self
@@ -508,60 +481,45 @@ fn write_edits(
                 Err(e) => panic!("{e}"),
             },
         }
-        if conflicts(&tree).contains(&(*path).to_owned()) {
-            tc.event("an edit resolves a conflict");
+        if get(&tree, path).value().is_none() {
+            tc.event("a pending edit touches a conflict");
         }
         set(&mut tree, path, Term::resolved(*value));
     }
     tree
 }
 
-/// Settles what a snapshot made of conflicts jj wrote without markers.
-/// One the edits left alone may be taken as resolved, and one rewritten
-/// with the very text jj wrote stays a conflict: an open question
-/// (`a_turn_keeps_a_conflict_it_did_not_touch`). Either reading is
-/// accepted, as `conflicted`, the paths jj holds in conflict now, tells.
-fn settle(
+/// Snapshot intent comes from final bytes, not transient writes. Deleting
+/// and recreating a file before a native snapshot is not explicit acceptance.
+/// This prediction uses only the last observed reference tree and edits.
+fn retain_same_materializations(
     tc: &TestCase,
-    was: &Tree,
-    tree: &mut Tree,
-    conflicted: &BTreeSet<String>,
+    seen: &Tree,
+    candidate: &mut Tree,
 ) {
     for path in PATHS {
-        let old = get(was, path);
-        let Some(value) = old.materialized().filter(|_| old.value().is_none())
-        else {
-            continue;
-        };
-        let now = get(tree, path);
-        let kept = conflicted.contains(path);
-        if now == old && !kept {
-            tc.event("an untouched conflict resolves itself");
-            set(tree, path, Term::resolved(value));
-        } else if now == Term::resolved(value) && kept {
-            tc.event("writing a conflict's own text keeps it");
-            set(tree, path, old);
+        let old = get(seen, path);
+        if old.value().is_none()
+            && let Some(value) = old.materialized()
+            && get(candidate, path).value() == Some(value)
+        {
+            tc.event("same final materialized bytes keep the conflict");
+            set(candidate, path, old);
         }
     }
 }
 
-/// The paths a snapshot lists as changed from `base` are those the model
-/// changed, and maybe conflicts it holds as they were: after a few
-/// restacks, jj lists an untouched conflict that stays a conflict,
-/// perhaps written as another form of the same merge.
+/// Listed paths follow the independent tree model exactly. Cancelling
+/// redundant native merge terms is not a change to an untouched conflict.
 fn check_paths(listed: &[String], base: &Tree, tree: &Tree, what: &str) {
-    for path in PATHS {
-        let (old, new) = (get(base, path), get(tree, path));
-        let is_listed = listed.iter().any(|p| p == path);
-        if old != new {
-            assert!(is_listed, "{what}: {path} changed, but is not listed");
-        } else if is_listed {
-            assert!(
-                new.value().is_none(),
-                "{what}: {path} is listed, but did not change"
-            );
-        }
-    }
+    let mut expected: Vec<String> = PATHS
+        .iter()
+        .copied()
+        .filter(|path| get(base, path) != get(tree, path))
+        .map(str::to_owned)
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(listed, expected, "{what}: changed paths");
 }
 
 impl Machine {
@@ -569,29 +527,28 @@ impl Machine {
     /// when another workspace's operation rewrote its `@`, the files move
     /// to the rewritten tree first, with what was edited since the last
     /// snapshot merged on top, as a rebase would
-    /// (`session::snapshot_locked`). Returns the files as jj last saw
-    /// them (its last snapshot or checkout, which a `write` with no tool
-    /// after it leaves behind) and after the edits, each as the tool
-    /// reads them: a conflict jj wrote without markers is settled against
-    /// what jj saw (`settle`).
+    /// (`session::snapshot_locked`). Predicts the tree independently:
+    /// untouched and same-byte conflicts keep their original terms;
+    /// no observed SUT conflict set changes the expected tree.
     fn edit_then_freshen(
         &mut self,
         tc: &TestCase,
         run: usize,
         edits: &[(&'static str, Val)],
-    ) -> (Tree, Tree) {
+    ) -> Tree {
         let dir = self.project.workspace_dir(&self.runs[run].name);
         let r = &mut self.runs[run];
-        let tree = write_edits(tc, &dir, &r.wc.clone(), edits);
+        let mut tree = write_edits(tc, &dir, &r.wc.clone(), edits);
+        retain_same_materializations(tc, &r.seen, &mut tree);
         let Some(stale) = r.stale.take() else {
-            return (r.seen.clone(), tree);
+            return tree;
         };
         tc.event("a stale workspace catches up");
         if tree != r.seen {
             tc.event("edits on a stale workspace merge onto the rewrite");
         }
         // jj now sees the rewritten tree.
-        (stale.clone(), rebase_tree(&stale, &r.seen, &tree))
+        rebase_tree(&stale, &r.seen, &tree)
     }
 
     /// A turn in `run`: `edits` to its files, then a commit of all of
@@ -603,7 +560,7 @@ impl Machine {
         edits: &[(&'static str, Val)],
     ) {
         let head = self.runs[run].head;
-        let (was, mut tree) = self.edit_then_freshen(tc, run, edits);
+        let tree = self.edit_then_freshen(tc, run, edits);
         self.runs[run].turns += 1;
         let r = &self.runs[run];
         let turn = block_on(r.vcs.commit_all(
@@ -611,8 +568,6 @@ impl Machine {
             r.bookmark.clone(),
         ))
         .unwrap();
-        let conflicted = self.jj_conflicts(&turn.commit_id);
-        settle(tc, &was, &mut tree, &conflicted);
         self.runs[run].wc = tree.clone();
         self.runs[run].seen = tree.clone();
         check_paths(&turn.paths, &self.commits[head].tree, &tree, "the turn");
@@ -681,7 +636,7 @@ impl Machine {
         edits: &[(&'static str, Val)],
     ) {
         let head = self.runs[run].head;
-        let (was, mut tree) = self.edit_then_freshen(tc, run, edits);
+        let tree = self.edit_then_freshen(tc, run, edits);
         let r = &self.runs[run];
         let since = r.since.clone();
         let snapshot = block_on(r.vcs.end_turn(
@@ -705,8 +660,6 @@ impl Machine {
             }
             None => self.commits[head].tree.clone(),
         };
-        let conflicted = self.jj_conflicts(&snapshot.commit_id);
-        settle(tc, &was, &mut tree, &conflicted);
         check_paths(&snapshot.paths, &base, &tree, "the snapshot");
         assert_eq!(snapshot.head, self.commits[head].commit_id);
         if tree != self.commits[head].tree {
@@ -1006,6 +959,8 @@ impl Machine {
         let trunk = self.trunk;
         let head = self.runs[MAIN].head;
         let trunk_id = self.commits[trunk].commit_id.clone();
+        let r = &mut self.runs[MAIN];
+        retain_same_materializations(tc, &r.seen, &mut r.wc);
         let r = &self.runs[MAIN];
         let files = self.disk(MAIN);
         let wc = self.wc_parent(MAIN);
@@ -1022,20 +977,9 @@ impl Machine {
             "a preview moved trunk"
         );
         assert_eq!(self.wc_parent(MAIN), wc, "a preview moved @");
-        // The preview snapshotted `@`: settle what that made of the
-        // conflicts jj wrote without markers, as a turn's commit does. A
-        // `write` of exactly the text jj wrote for one keeps the conflict
-        // (`a_turn_keeps_a_conflict_it_did_not_touch`), and the catch-up
-        // then reports it.
-        let snapshot = self
-            .project
-            .workspace_head(DEFAULT_WORKSPACE)
-            .unwrap()
-            .unwrap();
-        let conflicted = self.jj_conflicts(&snapshot);
+        // The preview snapshots without deciding untouched conflicts.
+        // The reference tree does not depend on the observed conflict set.
         let r = &mut self.runs[MAIN];
-        let was = r.seen.clone();
-        settle(tc, &was, &mut r.wc, &conflicted);
         r.seen = r.wc.clone();
         let r = &self.runs[MAIN];
         let moved =
@@ -1549,6 +1493,25 @@ fn chats_follow_an_update_like_the_model(tc: TestCase) {
     }
 }
 
+/// Retain the minimized native history where catch-up reordered two
+/// markerless conflict addends without editing or deciding the file.
+#[test]
+fn a_catchup_snapshot_does_not_count_reordered_conflict_terms() {
+    hegel::Hegel::new(|tc| {
+        let mut m = Machine::new();
+        m.do_turn(&tc, MAIN, &[("a.txt", None)]);
+        m.do_snapshot(&tc, MAIN, &[("dir/b.txt", Some(""))]);
+        m.do_fork(&tc, MAIN, 0);
+        m.do_upstream(&tc, &[("dir/b.txt", None)]);
+        m.the_project_is_the_model(tc.clone());
+        m.do_catch_up(&tc);
+        m.do_snapshot(&tc, MAIN, &[]);
+        m.the_project_is_the_model(tc);
+    })
+    .settings(hegel::Settings::new().test_cases(1))
+    .run();
+}
+
 #[test]
 fn rebasing_a_path_follows_jjs_trivial_merge() {
     let r = |v: &'static str| Term::resolved(Some(v));
@@ -1568,21 +1531,13 @@ fn rebasing_a_path_follows_jjs_trivial_merge() {
 
 // Questions the model found, pinned as examples.
 
-/// A landing reports `c.txt` as conflicted when the parent added it
-/// empty and the child added it with text. jj writes the child's text
-/// with no markers (it reads the missing base as empty, and that merges
-/// cleanly), yet the tree keeps the conflict: `vcs_status` tells the
-/// model to "edit the markers out" of a file that has none, and every
-/// later commit carries the conflict until something rewrites the file.
-///
-/// Open question: ADR 0009 says the parent's model "edits the markers
-/// out like any other file", which assumes markers. Should the landing
-/// resolve conflicts that materialize cleanly, write markers anyway, or
-/// the tools tell the model to rewrite such files? Until that is
-/// decided, this expects markers and is ignored.
+/// Keep jj's markerless materialization and structured conflict until
+/// an explicit acceptance, rather than inventing markers or deciding
+/// file presence from unchanged bytes.
 #[test]
-#[ignore = "open question: a landed conflict that jj materializes without markers"]
-fn a_landed_conflict_shows_markers() {
+fn a_markerless_landed_conflict_can_be_explicitly_accepted() {
+    use serde_json::json;
+    use tau_agent::{plugin::Plugin as _, tool::ToolCtx};
     let m = Machine::new();
     let trunk = m.commits[0].commit_id.clone();
     let parent = m.project.add_workspace("p", &trunk).unwrap();
@@ -1597,21 +1552,35 @@ fn a_landed_conflict_shows_markers() {
         block_on(parent.land(&head.commit_id, "tau/p", true)).unwrap();
     assert_eq!(landing.conflicts, ["c.txt"]);
     let text = std::fs::read_to_string(dir.join("c.txt")).unwrap();
-    assert!(text.contains("<<<<<<<"), "c.txt holds {text:?}");
+    assert_eq!(text, "two\n");
+    for transient_delete in [false, true] {
+        if transient_delete {
+            std::fs::remove_file(dir.join("c.txt")).unwrap();
+        }
+        std::fs::write(dir.join("c.txt"), "two\n").unwrap();
+        let copy = block_on(parent.working_copy()).unwrap();
+        assert!(copy.paths.is_empty(), "same final bytes are not acceptance");
+        let wc = m.project.workspace_head("p").unwrap().unwrap();
+        assert_eq!(m.project.conflicts(&wc).unwrap(), ["c.txt"]);
+    }
+    let tool = tau_vcs::VcsPlugin::new(parent.clone())
+        .tools()
+        .into_iter()
+        .find(|tool| tool.name() == "vcs_resolve")
+        .unwrap();
+    block_on(tool.call(json!({"paths": ["c.txt"]}), ToolCtx::detached()))
+        .unwrap();
+    let turn =
+        block_on(parent.commit_all("accept markerless contents", "tau/p"))
+            .unwrap();
+    assert_eq!(turn.paths, ["c.txt"]);
+    assert!(m.project.conflicts(&turn.commit_id).unwrap().is_empty());
+    assert_eq!(std::fs::read(dir.join("c.txt")).unwrap(), b"two\n");
 }
 
-/// The same question, other side: a landing leaves `dir/b.txt` in
-/// conflict (the parent made it empty, the child deleted it), and jj
-/// writes it empty, without markers. The parent's next turn touches
-/// only `a.txt`, yet its commit resolves `dir/b.txt` to the empty file:
-/// the conflict is decided by a turn that never looked at it. In
-/// `a_landed_conflict_shows_markers` the same kind of conflict is kept
-/// instead; which one happens depends on jj's working-copy state. And
-/// a turn that writes exactly the text jj wrote for such a conflict
-/// keeps the conflict (the file matches its materialized form), so the
-/// right answer cannot resolve it: only different text does.
+/// Resolving a.txt cannot decide dir/b.txt's empty-v-deleted conflict.
+/// Its native markerless materialization is not an implicit approval.
 #[test]
-#[ignore = "open question: a landed conflict that jj materializes without markers"]
 fn a_turn_keeps_a_conflict_it_did_not_touch() {
     let m = Machine::new();
     let trunk = m.commits[0].commit_id.clone();
@@ -1634,4 +1603,5 @@ fn a_turn_keeps_a_conflict_it_did_not_touch() {
     std::fs::remove_file(dir.join("a.txt")).unwrap();
     let turn = block_on(parent.commit_all("p3", "tau/p")).unwrap();
     assert_eq!(turn.paths, ["a.txt"], "the turn only deleted a.txt");
+    assert_eq!(m.project.conflicts(&turn.commit_id).unwrap(), ["dir/b.txt"]);
 }

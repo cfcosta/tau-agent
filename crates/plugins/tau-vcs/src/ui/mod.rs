@@ -173,7 +173,7 @@ impl UiPlugin for VcsUi {
     fn catalog(&self, _host: &(), _cx: &HostCx, _settings: &()) -> PluginInfo {
         PluginInfo {
             description: "status diff log show describe commit new restore \
-                          undo, on the run's workspace"
+                          resolve undo, on the run's workspace"
                 .into(),
             seams: vec![Seam::Tools],
             page: None,
