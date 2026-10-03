@@ -91,9 +91,6 @@ pub enum Ending {
     Dropped,
 }
 
-/// Why a stored run stopped when tau closed while it was going.
-pub const INTERRUPTED: &str = "interrupted: tau closed during the run";
-
 /// One run event, as the Events tab lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogLine {

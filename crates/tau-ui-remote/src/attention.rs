@@ -1,13 +1,14 @@
 //! Whether a chat needs the person, as its row in the sidebar and on a
 //! phone says it: working, asking, ready to land, would conflict,
-//! interrupted, landed.
+//! interrupted, landed, dropped.
 //!
 //! [`Attention::of`] is the one place that decides it, from a run's
 //! [`Facts`]. The workspace gathers the facts
 //! ([`Workspace::attention`]): the run's status and turn, what a plugin
-//! holds it for ([`points::ASKS`]), and the landing forecast the host
-//! works out in the background ([`RunView::forecast`]). All of them
-//! travel in a snapshot, so a phone shows the same states.
+//! holds it for ([`points::ASKS`]), the landing forecast the host works
+//! out in the background ([`RunView::forecast`]), and how it ended for
+//! good ([`RunView::ending`]). All of them travel in a snapshot, so a
+//! phone shows the same states.
 
 use gpui::App;
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,7 @@ use tau_agent::event::StopReason;
 use tau_ui_plugin::points;
 
 use crate::{
-    view::{INTERRUPTED, Item, RunStatus, RunView},
+    view::{Ending, RunStatus, RunView},
     workspace::Workspace,
 };
 
@@ -57,11 +58,6 @@ impl Status {
     pub fn of(status: &RunStatus) -> Self {
         match status {
             RunStatus::Planning | RunStatus::Running => Self::Live,
-            RunStatus::Finished(StopReason::Error(error))
-                if error == INTERRUPTED =>
-            {
-                Self::Interrupted
-            }
             RunStatus::Interrupted => Self::Interrupted,
             RunStatus::Finished(StopReason::Error(_)) => Self::Failed,
             RunStatus::Finished(_) => Self::Stopped,
@@ -81,8 +77,8 @@ pub struct Facts {
     /// What landing it on its parent would do, when the host worked it
     /// out.
     pub forecast: Option<Forecast>,
-    /// It landed on its parent, which closed it.
-    pub landed: bool,
+    /// How it ended for good: landed on its parent, or dropped.
+    pub ending: Option<Ending>,
 }
 
 /// Whether a run needs the person, and why. Rows never move for it:
@@ -103,6 +99,8 @@ pub enum Attention {
     Failed,
     /// It landed on its parent and closed.
     Landed,
+    /// It was dropped: its changes abandoned, and it closed.
+    Dropped,
     /// Nothing: it waits for the person's next message, at their pace.
     Idle,
 }
@@ -110,7 +108,8 @@ pub enum Attention {
 impl Attention {
     /// The one place a run's attention is decided. In order:
     ///
-    /// 1. A landed run is landed, whatever else it says.
+    /// 1. A run that landed or was dropped says so, whatever else it
+    ///    says: it takes no more messages.
     /// 2. A live run asks, when a plugin holds it for an answer, and
     ///    otherwise works.
     /// 3. A run tau's closing interrupted, or that failed, says so: its
@@ -123,8 +122,10 @@ impl Attention {
     /// chat's "conflicts on main" after step 2: each a variant here and
     /// a fact in [`Facts`].
     pub fn of(facts: &Facts) -> Self {
-        if facts.landed {
-            return Self::Landed;
+        match facts.ending {
+            Some(Ending::Landed { .. }) => return Self::Landed,
+            Some(Ending::Dropped) => return Self::Dropped,
+            None => {}
         }
         match facts.status {
             Status::Live => {
@@ -175,7 +176,9 @@ impl Attention {
                 format!("Would conflict in {}", count(files.len(), "file"))
             }
             Self::Interrupted => "Interrupted · tau closed".to_owned(),
-            Self::Failed | Self::Landed | Self::Idle => return None,
+            Self::Failed | Self::Landed | Self::Dropped | Self::Idle => {
+                return None;
+            }
         })
     }
 }
@@ -206,20 +209,8 @@ impl Workspace {
             turn: run.turn,
             asks,
             forecast: run.forecast.clone(),
-            landed: self.is_closed(&run.id) && self.has_landed(run),
+            ending: run.ending.clone(),
         }
-    }
-
-    /// Whether `run`'s changes landed on its parent: the parent's chat
-    /// has the landing's card.
-    fn has_landed(&self, run: &RunView) -> bool {
-        let Some(parent) = run.origin.parent().and_then(|id| self.run(id))
-        else {
-            return false;
-        };
-        parent.items.iter().any(
-            |item| matches!(item, Item::Landed(card) if card.from == run.id),
-        )
     }
 
     /// How many of `repo`'s open chats need the person: they ask, would

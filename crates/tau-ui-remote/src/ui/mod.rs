@@ -101,6 +101,7 @@ pub fn attention_icon(
         Attention::WouldConflict { .. } => glyph(Icon::Warning, t.red),
         Attention::Interrupted => glyph(Icon::Interrupted, t.muted),
         Attention::Landed => glyph(Icon::Check, t.dim),
+        Attention::Dropped => glyph(Icon::Close, t.dim),
         Attention::Idle if nested => glyph(Icon::Fork, t.blue),
         Attention::Working { .. } | Attention::Failed | Attention::Idle => {
             status_icon(run, t, size)
@@ -114,7 +115,7 @@ pub fn attention_color(attention: &Attention, t: &Theme) -> Hsla {
         Attention::Asks { .. } => t.blue,
         Attention::ReadyToLand { .. } => t.green,
         Attention::WouldConflict { .. } | Attention::Failed => t.red,
-        Attention::Landed => t.dim,
+        Attention::Landed | Attention::Dropped => t.dim,
         Attention::Working { .. }
         | Attention::Interrupted
         | Attention::Idle => t.muted,

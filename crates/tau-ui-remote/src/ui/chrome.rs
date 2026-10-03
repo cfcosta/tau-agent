@@ -640,7 +640,8 @@ fn indent(depth: usize) -> f32 {
 /// A conversation in the tree: what it needs of the person (its icon,
 /// and a line under its title), its title, and its unread replies;
 /// hovering it offers to close it, unless it is its repository's main
-/// chat. A fork sits under its run.
+/// chat or it ended for good (a dim row saying it landed or was
+/// dropped). A fork sits under its run.
 fn run_row(
     ws: &Workspace,
     run: &RunView,
@@ -655,7 +656,12 @@ fn run_row(
     let unread = ws.unread(run);
     let (hover_id, close_id) = (run.id.clone(), run.id.clone());
     let attention = ws.attention(run, cx);
-    let landed = attention == Attention::Landed;
+    // A chat that landed or was dropped stays listed, dim, saying so.
+    let ended = match attention {
+        Attention::Landed => Some("landed"),
+        Attention::Dropped => Some("dropped"),
+        _ => None,
+    };
     // What plugins add to the row: a line under the title, and a count
     // at the end.
     let note = ws.run_rows(run, cx).into_iter().next();
@@ -679,6 +685,7 @@ fn run_row(
             })
         });
     let line = match (&attention, plugin_line) {
+        _ if ended.is_some() => None,
         (Attention::Working { .. }, Some(line)) => Some(line),
         (attention, plugin) => attention
             .line()
@@ -688,7 +695,7 @@ fn run_row(
     let strong = active || unread > 0 || attention.needs_you();
     let title = div()
         .truncate()
-        .text_color(if landed {
+        .text_color(if ended.is_some() {
             t.muted
         } else if active || attention.needs_you() {
             t.text
@@ -739,6 +746,8 @@ fn run_row(
         .map(|row| {
             if let Some((_, button)) = push {
                 row.child(button)
+            } else if let Some(ended) = ended {
+                row.child(mono(ended, Type::MICRO, t.dim))
             } else if hovered && !ws.is_main(&run.id) {
                 row.child(
                     div()
@@ -755,8 +764,6 @@ fn run_row(
                             ws.close_run(&close_id, cx)
                         })),
                 )
-            } else if landed {
-                row.child(mono("landed", Type::MICRO, t.dim))
             } else if unread > 0 {
                 row.child(super::count_pill(unread, t))
             } else if let Some((glyph, tone, count)) =
@@ -1250,6 +1257,8 @@ fn phone_run_row(
     // What the run needs of the person says it first, as the sidebar
     // does; a working run keeps its plugin's line.
     let (meta, color) = match (&attention, attention.line()) {
+        (Attention::Landed, _) => ("landed".to_owned(), t.dim),
+        (Attention::Dropped, _) => ("dropped".to_owned(), t.dim),
         (Attention::Working { .. }, _) | (_, None) => (meta, color),
         (attention, Some(line)) => (line, attention_color(attention, t)),
     };

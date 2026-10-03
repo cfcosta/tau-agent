@@ -49,6 +49,7 @@ impl Kind {
             | Attention::WouldConflict { .. }
             | Attention::Interrupted
             | Attention::Landed
+            | Attention::Dropped
             | Attention::Idle => None,
         }
     }

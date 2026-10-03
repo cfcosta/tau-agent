@@ -2493,7 +2493,7 @@ fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
             (Some(5), 2, 8)
         );
         let chats: Vec<&str> = ws
-            .open_children(rows.runs[0])
+            .listed_children(rows.runs[0])
             .map(|run| run.title.as_str())
             .collect();
         assert_eq!(chats[0], "chat 6", "newest first");
@@ -2511,7 +2511,7 @@ fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
         ws.close_run(&main, cx);
         assert!(!ws.is_closed(&main));
         ws.close_run(&RunId("chat-6".into()), cx);
-        assert_eq!(ws.open_children(ws.run(&main).unwrap()).count(), 6);
+        assert_eq!(ws.listed_children(ws.run(&main).unwrap()).count(), 6);
     });
     let closed: Vec<RunId> = events
         .borrow()

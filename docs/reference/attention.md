@@ -8,14 +8,17 @@ tau notifies the desktop while its window is not focused. Code:
 ## A chat's state
 
 `Attention::of(&Facts)` is the one place a chat's state is decided.
-`Workspace::attention` gathers the facts: the run's status and turn,
-what a plugin holds it for (`points::ASKS`), the landing forecast
-(`RunView::forecast`), and whether it landed (closed, with its card in
-its parent). Each state has its icon and a line under the title:
+`Workspace::attention` gathers the facts: the run's status and turn
+(`RunStatus::Interrupted` for a run tau's closing cut off), what a
+plugin holds it for (`points::ASKS`), the landing forecast
+(`RunView::forecast`), and how it ended for good (`RunView::ending`:
+landed or dropped). Each state has its icon and a line under the
+title:
 
 | State           | Line                        | Color  | When                                   |
 | --------------- | --------------------------- | ------ | -------------------------------------- |
 | `Landed`        | `landed` at the row's end   | dim    | it landed on its parent and closed     |
+| `Dropped`       | `dropped` at the row's end  | dim    | it was dropped and closed              |
 | `Asks`          | Asks you a question         | blue   | live, and a plugin waits on an answer  |
 | `Working`       | Working · turn N            | muted  | live                                   |
 | `Interrupted`   | Interrupted · tau closed    | muted  | it was going when tau closed           |
@@ -32,6 +35,9 @@ live ones: each a variant of `Attention` and a fact in `Facts`.
 
 - **Order:** a state never moves a row. Main stays first; the rest
   keep newest first.
+- **Ended chats stay listed:** a chat that landed or was dropped is
+  closed, but its row stays, dim, with no line and no close button. A
+  chat closed by hand leaves the sidebar.
 - **The pill:** a repository's row says "N need you": its open chats
   that ask, would conflict, or are ready to land.
 - **Phones** fold the same facts from the snapshot and the updates

@@ -1,8 +1,9 @@
 //! The sidebar says what each chat needs of the person: a chat that
 //! asks, one ready to land, one that would conflict, one tau's closing
-//! cut off, one that works. The repository counts those that need the
-//! person, the rows keep their order, and a phone that takes the
-//! computer's snapshot says the same.
+//! cut off, one that works, and, still listed, one that landed or was
+//! dropped. The repository counts those that need the person, the rows
+//! keep their order, and a phone that takes the computer's snapshot says
+//! the same.
 
 use gpui::{TestAppContext, VisualTestContext};
 use tau_agent::{event::StopReason, tool::RunId};
@@ -12,7 +13,7 @@ use tau_ui_remote::{
     catalog::{Catalog, Repo},
     repos::TreeRow,
     update::HostUpdate,
-    view::{INTERRUPTED, Origin, RunView},
+    view::{Ending, Origin, RunView},
 };
 
 const REPO: &str = "tau-agent";
@@ -33,6 +34,13 @@ fn chat(name: &str, stop: Option<StopReason>) -> RunView {
     if let Some(stop) = stop {
         view.finish_stored(stop, 0.0, 0.0);
     }
+    view
+}
+
+/// A chat tau's closing cut off, as history rebuilds it.
+fn interrupted() -> RunView {
+    let mut view = chat("interrupted", None);
+    view.interrupted_stored(0.0, 0.0);
     view
 }
 
@@ -58,7 +66,7 @@ fn runs() -> Vec<RunView> {
         chat("asks", None),
         chat("ready", Some(StopReason::Stop)),
         chat("conflict", Some(StopReason::Stop)),
-        chat("interrupted", Some(StopReason::Error(INTERRUPTED.into()))),
+        interrupted(),
     ]
 }
 
@@ -182,7 +190,8 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
     assert_eq!(on_phone, (said, 3));
 
     // Answered, the chat works again; landed, the chat that was ready
-    // says so, and no longer needs the person.
+    // says so, and no longer needs the person; dropped, the one that
+    // would conflict says that. Both stay listed where they were.
     workspace.update(&mut cx, |ws, cx| {
         ws.apply(
             HostUpdate::PluginFold {
@@ -209,8 +218,68 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
             },
             cx,
         );
-        let view = ws.run(&id("ready")).unwrap().clone();
-        assert_eq!(ws.attention(&view, cx), Attention::Landed);
-        assert_eq!(ws.need_you(REPO, cx), 1);
+        ws.apply(
+            HostUpdate::Dropped {
+                run: id("conflict"),
+                result: Ok(()),
+            },
+            cx,
+        );
+        assert!(ws.is_closed(&id("ready")) && ws.is_closed(&id("conflict")));
+        assert_eq!(ws.need_you(REPO, cx), 0);
+        let said = rows(ws, cx);
+        let order: Vec<&str> =
+            said.iter().map(|(title, _)| title.as_str()).collect();
+        assert_eq!(order, order_before);
+        let said_of = |title: &str| {
+            said.iter()
+                .find(|(row, _)| row == title)
+                .map(|(_, attention)| attention.clone())
+        };
+        assert_eq!(said_of("ready"), Some(Attention::Landed));
+        assert_eq!(said_of("conflict"), Some(Attention::Dropped));
+    });
+}
+
+/// A chat closed by hand, without landing or dropping it, leaves the
+/// sidebar; one that ended for good stays, as history loads it.
+#[gpui::test]
+fn closed_chats_leave_the_sidebar_unless_they_ended(cx: &mut TestAppContext) {
+    cx.update(tau_ui_remote::init);
+    let mut landed = chat("landed", Some(StopReason::Stop));
+    landed.ending = Some(Ending::Landed {
+        on: id("main"),
+        changes: 2,
+    });
+    let mut dropped = chat("dropped", Some(StopReason::Stop));
+    dropped.ending = Some(Ending::Dropped);
+    let main = runs().remove(0);
+    let runs = vec![
+        main,
+        chat("closed", Some(StopReason::Stop)),
+        landed,
+        dropped,
+    ];
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("tau", runs, catalog(), window, cx)
+    });
+    let workspace = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        let closed = Catalog {
+            closed_runs: vec![id("landed"), id("dropped"), id("closed")],
+            ..catalog()
+        };
+        ws.set_catalog(closed, cx);
+        let said = rows(ws, cx);
+        let said_of = |title: &str| {
+            said.iter()
+                .find(|(row, _)| row == title)
+                .map(|(_, attention)| attention.clone())
+        };
+        assert_eq!(said_of("closed"), None, "{said:?}");
+        assert_eq!(said_of("landed"), Some(Attention::Landed));
+        assert_eq!(said_of("dropped"), Some(Attention::Dropped));
     });
 }

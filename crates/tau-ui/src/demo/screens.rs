@@ -657,7 +657,7 @@ fn land_queue(ws: &mut Workspace, cx: &mut Context<Workspace>) {
 /// working, asking, ready to land, would conflict, interrupted, and one
 /// that landed and closed.
 fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
-    use tau_ui_remote::{attention::Forecast, view::INTERRUPTED};
+    use tau_ui_remote::attention::Forecast;
     let main = run_id();
     let chat = |name: &str, title: &str, stop: Option<StopReason>| {
         let mut view =
@@ -678,11 +678,12 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     // Oldest first: each goes on top of the list.
     let chats = [
         chat("raise-turn-limit", "Raise turn limit", done()),
-        chat(
-            "atomic-landing",
-            "Atomic landing",
-            Some(StopReason::Error(INTERRUPTED.into())),
-        ),
+        {
+            // tau closed while it ran.
+            let mut view = chat("atomic-landing", "Atomic landing", None);
+            view.interrupted_stored(0.12, 0.0);
+            view
+        },
         chat("sidebar-states", "Sidebar run states", done()),
         chat("load-agents", "Load AGENTS.md", done()),
         chat("sweep-workspaces", "Sweep orphan workspaces", None),
@@ -745,6 +746,8 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     if !workspace.is_repo_open("tau-agent") {
         workspace.toggle_repo_open("tau-agent", cx);
     }
+    // Every chat listed, down to the landed one, the oldest.
+    workspace.show_older_runs("tau-agent", cx);
     // On main; a phone shows its list of runs.
     workspace.navigate(Route::Run(main), cx);
     workspace.navigate(Route::Home, cx);

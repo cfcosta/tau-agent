@@ -104,20 +104,21 @@ impl Workspace {
             .any(|repo| repo.main.as_ref() == Some(run))
     }
 
-    /// `run`'s open forks and sub-agents that have a view of their own,
-    /// newest first.
-    pub fn open_children<'a>(
+    /// `run`'s forks and sub-agents the sidebar lists under it, newest
+    /// first: those with a view of their own that are open, or that
+    /// landed or were dropped, which stay listed, dim, saying so.
+    pub fn listed_children<'a>(
         &'a self,
         run: &'a RunView,
     ) -> impl Iterator<Item = &'a RunView> {
         self.runs.iter().filter(move |view| {
             view.origin.parent() == Some(&run.id)
-                && !self.closed.contains(&view.id)
+                && (!self.closed.contains(&view.id) || view.ending.is_some())
         })
     }
 
     /// A repository's listed runs as its tree has them: each run, then
-    /// its open conversations newest first (the main chat's, at most
+    /// its listed conversations newest first (the main chat's, at most
     /// `rows.main_children`), each with what is under it, then its
     /// children with no conversation here. A filter's matches are listed
     /// alone.
@@ -143,7 +144,7 @@ impl Workspace {
             return;
         }
         // A fork is a conversation of its own: it opens like one.
-        let children: Vec<&RunView> = self.open_children(run).collect();
+        let children: Vec<&RunView> = self.listed_children(run).collect();
         let shown = limit.unwrap_or(children.len());
         for child in children.into_iter().take(shown) {
             self.tree_rows(tree, child, depth + 1, None, false);
@@ -202,7 +203,7 @@ impl Workspace {
                 // With a main chat, the chats under it are what gets long.
                 let main = repo.main.as_ref().and_then(|id| self.run(id));
                 let chats =
-                    main.map_or(0, |main| self.open_children(main).count());
+                    main.map_or(0, |main| self.listed_children(main).count());
                 let total = all.len() + chats;
                 let named = repo.name.to_lowercase().contains(&filter);
                 if filter.is_empty() || named {

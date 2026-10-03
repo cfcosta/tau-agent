@@ -7,7 +7,11 @@ use hegel::{
     TestCase,
     generators::{self as gs, Generator as _},
 };
-use tau_ui_remote::attention::{Attention, Facts, Forecast, Status};
+use tau_agent::tool::RunId;
+use tau_ui_remote::{
+    attention::{Attention, Facts, Forecast, Status},
+    view::Ending,
+};
 
 #[hegel::composite]
 fn facts(tc: &TestCase) -> Facts {
@@ -34,7 +38,17 @@ fn facts(tc: &TestCase) -> Facts {
             .draw(gs::booleans())
             .then(|| tc.draw(gs::from_regex(r"[A-Z][a-z ]{0,20}\?"))),
         forecast,
-        landed: tc.draw(gs::booleans()),
+        ending: tc.draw(
+            gs::sampled_from(vec![
+                None,
+                Some(Ending::Landed {
+                    on: RunId("main".into()),
+                    changes: 2,
+                }),
+                Some(Ending::Dropped),
+            ])
+            .print_as_debug(),
+        ),
     }
 }
 
@@ -49,8 +63,10 @@ fn allowed(facts: &Facts) -> Vec<(u8, Attention)> {
         .unwrap_or_default();
     let changes = facts.forecast.as_ref().map_or(0, |f| f.changes);
     let mut allowed = vec![(7, Attention::Idle)];
-    if facts.landed {
-        allowed.push((0, Attention::Landed));
+    match facts.ending {
+        Some(Ending::Landed { .. }) => allowed.push((0, Attention::Landed)),
+        Some(Ending::Dropped) => allowed.push((0, Attention::Dropped)),
+        None => {}
     }
     if let (true, Some(question)) = (live, &facts.asks) {
         allowed.push((
@@ -79,7 +95,7 @@ fn allowed(facts: &Facts) -> Vec<(u8, Attention)> {
 }
 
 /// A run's attention is the most pressing state its facts allow: landed
-/// over everything, a question over work, a cut-off or failed run over
+/// or dropped over everything, a question over work, a cut-off or failed run over
 /// what landing it would do, a conflict over a clean landing.
 #[hegel::test(test_cases = 500)]
 fn attention_is_the_most_pressing_state_the_facts_allow(tc: TestCase) {
@@ -138,7 +154,12 @@ fn each_state_reads_as_the_design_words_it() {
         line(Attention::Interrupted).as_deref(),
         Some("Interrupted · tau closed")
     );
-    for quiet in [Attention::Failed, Attention::Landed, Attention::Idle] {
+    for quiet in [
+        Attention::Failed,
+        Attention::Landed,
+        Attention::Dropped,
+        Attention::Idle,
+    ] {
         assert_eq!(line(quiet), None);
     }
 }
@@ -159,4 +180,24 @@ fn nothing_to_land_and_a_question_nobody_waits_on_are_idle() {
         ..Facts::default()
     };
     assert_eq!(Attention::of(&stored), Attention::Idle);
+}
+
+/// A run's status says where it is: a cut-off run by its own status, and
+/// an error, whatever its words, is a failure.
+#[test]
+fn a_run_status_reads_as_where_it_is() {
+    use tau_agent::event::StopReason;
+    use tau_ui_remote::view::RunStatus;
+    assert_eq!(Status::of(&RunStatus::Planning), Status::Live);
+    assert_eq!(Status::of(&RunStatus::Running), Status::Live);
+    assert_eq!(Status::of(&RunStatus::Interrupted), Status::Interrupted);
+    assert_eq!(
+        Status::of(&RunStatus::Finished(StopReason::Error(
+            "interrupted: tau closed during the run".into()
+        ))),
+        Status::Failed
+    );
+    for stop in [StopReason::Stop, StopReason::Cancelled] {
+        assert_eq!(Status::of(&RunStatus::Finished(stop)), Status::Stopped);
+    }
 }
