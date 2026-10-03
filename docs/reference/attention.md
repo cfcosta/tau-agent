@@ -11,9 +11,12 @@ tau notifies the desktop while its window is not focused. Code:
 `Workspace::attention` gathers the facts: the run's status and turn
 (`RunStatus::Interrupted` for a run tau's closing cut off), what a
 plugin holds it for (`points::ASKS`), the landing forecast
-(`RunView::forecast`), and how it ended for good (`RunView::ending`:
-landed or dropped). Each state has its icon and a line under the
-title:
+(`RunView::forecast`), how it ended for good (`RunView::ending`:
+landed or dropped), its place in its main chat's landing queue
+(`Workspace::queued`, from the parent's `RunView::landing_queue`), and,
+for a main chat, the files a turn left in conflict on it
+(`RunView::main_conflicts`, while marked; `dismissed` only hides the
+card). Each state has its icon and a line under the title:
 
 | State           | Line                        | Color  | When                                   |
 | --------------- | --------------------------- | ------ | -------------------------------------- |
@@ -21,17 +24,19 @@ title:
 | `Dropped`       | `dropped` at the row's end  | dim    | it was dropped and closed              |
 | `Asks`          | Asks you a question         | blue   | live, and a plugin waits on an answer  |
 | `Working`       | Working · turn N            | muted  | live                                   |
+| `ConflictsOnMain` | Conflicts on main · N files | red  | a main chat a turn left conflicts on   |
 | `Interrupted`   | Interrupted · tau closed    | muted  | it was going when tau closed           |
 | `Failed`        | (none; the red warning)     | red    | it stopped with an error               |
+| `Queued`        | Queued · lands after main's turn, or Queued · needs confirmation | amber | it waits in its main chat's landing queue |
 | `WouldConflict` | Would conflict in N files   | red    | a stopped fork whose landing conflicts |
 | `ReadyToLand`   | Ready to land · N changes   | green  | a stopped fork with changes to land    |
 | `Idle`          | (none)                      |        | anything else                          |
 
 The first that holds, top to bottom, wins. A working chat keeps a
 plugin's line (a goal's) when it has one. Asking and ready-to-land
-rows are tinted. The landing queue's `Queued` belongs before the
-forecast states, and the main chat's "conflicts on main" after the
-live ones: each a variant of `Attention` and a fact in `Facts`.
+rows are tinted. A queued chat needs confirmation when it would
+conflict in a file the person did not confirm
+(`Waiting::needs_confirmation`).
 
 - **Order:** a state never moves a row. Main stays first; the rest
   keep newest first.
@@ -39,7 +44,8 @@ live ones: each a variant of `Attention` and a fact in `Facts`.
   closed, but its row stays, dim, with no line and no close button. A
   chat closed by hand leaves the sidebar.
 - **The pill:** a repository's row says "N need you": its open chats
-  that ask, would conflict, or are ready to land.
+  that ask, would conflict, are ready to land, or wait in the queue
+  for a confirmation, and a main chat with conflicts on it.
 - **Phones** fold the same facts from the snapshot and the updates
   they get, so their list says the same.
 

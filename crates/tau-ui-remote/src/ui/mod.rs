@@ -98,7 +98,10 @@ pub fn attention_icon(
     match attention {
         Attention::Asks { .. } => glyph(Icon::Question, t.blue),
         Attention::ReadyToLand { .. } => glyph(Icon::Landable, t.green),
-        Attention::WouldConflict { .. } => glyph(Icon::Warning, t.red),
+        Attention::WouldConflict { .. } | Attention::ConflictsOnMain { .. } => {
+            glyph(Icon::Warning, t.red)
+        }
+        Attention::Queued(_) => glyph(Icon::History, t.accent),
         Attention::Interrupted => glyph(Icon::Interrupted, t.muted),
         Attention::Landed => glyph(Icon::Check, t.dim),
         Attention::Dropped => glyph(Icon::Close, t.dim),
@@ -114,7 +117,10 @@ pub fn attention_color(attention: &Attention, t: &Theme) -> Hsla {
     match attention {
         Attention::Asks { .. } => t.blue,
         Attention::ReadyToLand { .. } => t.green,
-        Attention::WouldConflict { .. } | Attention::Failed => t.red,
+        Attention::WouldConflict { .. }
+        | Attention::ConflictsOnMain { .. }
+        | Attention::Failed => t.red,
+        Attention::Queued(_) => t.accent,
         Attention::Landed | Attention::Dropped => t.dim,
         Attention::Working { .. }
         | Attention::Interrupted

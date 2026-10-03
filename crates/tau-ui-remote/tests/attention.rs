@@ -9,7 +9,7 @@ use hegel::{
 };
 use tau_agent::tool::RunId;
 use tau_ui_remote::{
-    attention::{Attention, Facts, Forecast, Status},
+    attention::{Attention, Facts, Forecast, Queued, Status},
     view::Ending,
 };
 
@@ -49,6 +49,16 @@ fn facts(tc: &TestCase) -> Facts {
             ])
             .print_as_debug(),
         ),
+        queued: tc.draw(gs::booleans()).then(|| Queued {
+            position: tc
+                .draw(gs::integers::<usize>().min_value(1).max_value(4)),
+            needs_confirmation: tc.draw(gs::booleans()),
+        }),
+        main_conflicts: tc.draw(gs::booleans()).then(|| {
+            let files =
+                tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
+            (0..files).map(|n| format!("lib/{n}.rs")).collect()
+        }),
     }
 }
 
@@ -62,7 +72,7 @@ fn allowed(facts: &Facts) -> Vec<(u8, Attention)> {
         .map(|forecast| forecast.conflicts.clone())
         .unwrap_or_default();
     let changes = facts.forecast.as_ref().map_or(0, |f| f.changes);
-    let mut allowed = vec![(7, Attention::Idle)];
+    let mut allowed = vec![(9, Attention::Idle)];
     match facts.ending {
         Some(Ending::Landed { .. }) => allowed.push((0, Attention::Landed)),
         Some(Ending::Dropped) => allowed.push((0, Attention::Dropped)),
@@ -79,24 +89,37 @@ fn allowed(facts: &Facts) -> Vec<(u8, Attention)> {
     if live {
         allowed.push((2, Attention::Working { turn: facts.turn }));
     }
+    if let Some(files) = &facts.main_conflicts {
+        allowed.push((
+            3,
+            Attention::ConflictsOnMain {
+                files: files.clone(),
+            },
+        ));
+    }
     if facts.status == Status::Interrupted {
-        allowed.push((3, Attention::Interrupted));
+        allowed.push((4, Attention::Interrupted));
     }
     if facts.status == Status::Failed {
-        allowed.push((4, Attention::Failed));
+        allowed.push((5, Attention::Failed));
+    }
+    if let (true, Some(queued)) = (stopped, facts.queued) {
+        allowed.push((6, Attention::Queued(queued)));
     }
     if stopped && !conflicts.is_empty() {
-        allowed.push((5, Attention::WouldConflict { files: conflicts }));
+        allowed.push((7, Attention::WouldConflict { files: conflicts }));
     }
     if stopped && changes > 0 {
-        allowed.push((6, Attention::ReadyToLand { changes }));
+        allowed.push((8, Attention::ReadyToLand { changes }));
     }
     allowed
 }
 
 /// A run's attention is the most pressing state its facts allow: landed
-/// or dropped over everything, a question over work, a cut-off or failed run over
-/// what landing it would do, a conflict over a clean landing.
+/// or dropped over everything, a question over work, work over conflicts
+/// left on main, those over a cut-off or failed run, that over a place in
+/// the landing queue, and that over what landing it would do, a conflict
+/// over a clean landing.
 #[hegel::test(test_cases = 500)]
 fn attention_is_the_most_pressing_state_the_facts_allow(tc: TestCase) {
     let facts = tc.draw(facts().print_as_debug());
@@ -108,7 +131,8 @@ fn attention_is_the_most_pressing_state_the_facts_allow(tc: TestCase) {
     let attention = Attention::of(&facts);
     assert_eq!(attention, expected);
     // The repository's pill counts the chats that ask, would conflict,
-    // or are ready to land: nothing else.
+    // are ready to land, wait in the queue for a confirmation, or hold
+    // conflicts on main: nothing else.
     assert_eq!(
         attention.needs_you(),
         matches!(
@@ -116,7 +140,12 @@ fn attention_is_the_most_pressing_state_the_facts_allow(tc: TestCase) {
             Attention::Asks { .. }
                 | Attention::WouldConflict { .. }
                 | Attention::ReadyToLand { .. }
-        )
+                | Attention::ConflictsOnMain { .. }
+        ) || expected
+            == Attention::Queued(Queued {
+                position: facts.queued.map_or(0, |q| q.position),
+                needs_confirmation: true,
+            })
     );
 }
 
@@ -153,6 +182,27 @@ fn each_state_reads_as_the_design_words_it() {
     assert_eq!(
         line(Attention::Interrupted).as_deref(),
         Some("Interrupted · tau closed")
+    );
+    assert_eq!(
+        line(Attention::ConflictsOnMain {
+            files: vec!["a.rs".into(), "b.rs".into()]
+        })
+        .as_deref(),
+        Some("Conflicts on main · 2 files")
+    );
+    let queued = |needs_confirmation| {
+        Attention::Queued(Queued {
+            position: 1,
+            needs_confirmation,
+        })
+    };
+    assert_eq!(
+        line(queued(false)).as_deref(),
+        Some("Queued · lands after main's turn")
+    );
+    assert_eq!(
+        line(queued(true)).as_deref(),
+        Some("Queued · needs confirmation")
     );
     for quiet in [
         Attention::Failed,

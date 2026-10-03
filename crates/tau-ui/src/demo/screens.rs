@@ -654,8 +654,9 @@ fn land_queue(ws: &mut Workspace, cx: &mut Context<Workspace>) {
 }
 
 /// tau-agent's main chat with a chat in each state its row can show:
-/// working, asking, ready to land, would conflict, interrupted, and one
-/// that landed and closed.
+/// working, asking, ready to land, queued to land, would conflict,
+/// interrupted, and one that landed and closed; and docbert's main chat
+/// with conflicts a turn left on it.
 fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     use tau_ui_remote::attention::Forecast;
     let main = run_id();
@@ -685,6 +686,7 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
             view
         },
         chat("sidebar-states", "Sidebar run states", done()),
+        chat("queue-landings", "Queue landings", done()),
         chat("load-agents", "Load AGENTS.md", done()),
         chat("sweep-workspaces", "Sweep orphan workspaces", None),
         chat("chat-prs", "Base chat PRs on origin", None),
@@ -743,8 +745,39 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         },
         cx,
     );
-    if !workspace.is_repo_open("tau-agent") {
-        workspace.toggle_repo_open("tau-agent", cx);
+    // One waits for main's turn to land.
+    workspace.apply(
+        HostUpdate::LandingQueue {
+            main: main.clone(),
+            queue: vec![crate::queue::Waiting {
+                run: "queue-landings".into(),
+                title: "Queue landings".into(),
+                changes: 3,
+                conflicts: Vec::new(),
+                confirmed: Vec::new(),
+            }],
+            conflicts: None,
+        },
+        cx,
+    );
+    // docbert's main: a turn left conflicts on it.
+    workspace.apply(
+        HostUpdate::LandingQueue {
+            main: RunId("docbert-main".into()),
+            queue: Vec::new(),
+            conflicts: Some(crate::queue::MainConflicts {
+                files: vec!["src/rerank.rs".into(), "src/index.rs".into()],
+                from: Some("rerank-latency".into()),
+                prompt: "Landing `rerank-latency` left conflicts.".into(),
+                dismissed: false,
+            }),
+        },
+        cx,
+    );
+    for repo in ["tau-agent", "docbert"] {
+        if !workspace.is_repo_open(repo) {
+            workspace.toggle_repo_open(repo, cx);
+        }
     }
     // Every chat listed, down to the landed one, the oldest.
     workspace.show_older_runs("tau-agent", cx);

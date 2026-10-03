@@ -283,3 +283,141 @@ fn closed_chats_leave_the_sidebar_unless_they_ended(cx: &mut TestAppContext) {
         assert_eq!(said_of("dropped"), Some(Attention::Dropped));
     });
 }
+
+/// Chats waiting in main's landing queue say where they wait, and main
+/// says what a turn left in conflict on it, while marked, even once the
+/// person put its card away. A phone says the same.
+#[gpui::test]
+fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
+    use tau_ui_remote::{
+        attention::Queued,
+        queue::{MainConflicts, Waiting},
+    };
+    cx.update(tau_ui_remote::init);
+    let main = runs().remove(0);
+    let runs = vec![
+        main,
+        chat("clean", Some(StopReason::Stop)),
+        chat("confirm", Some(StopReason::Stop)),
+        chat("idle", Some(StopReason::Stop)),
+    ];
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("tau", runs, catalog(), window, cx)
+    });
+    let workspace = window.root(cx).unwrap();
+    let phone = cx.add_window(|window, cx| {
+        Workspace::new("phone", Vec::new(), Catalog::default(), window, cx)
+    });
+    let phone = phone.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let waiting = |run: &str, conflicts: &[&str], confirmed: &[&str]| Waiting {
+        run: run.into(),
+        title: run.into(),
+        changes: 2,
+        conflicts: conflicts.iter().map(|f| f.to_string()).collect(),
+        confirmed: confirmed.iter().map(|f| f.to_string()).collect(),
+    };
+    let files = vec!["a.rs".to_owned(), "b.rs".to_owned()];
+    let marked = |dismissed| MainConflicts {
+        files: files.clone(),
+        from: Some("clean".into()),
+        prompt: "Resolve them.".into(),
+        dismissed,
+    };
+    let said = workspace.update(&mut cx, |ws, cx| {
+        ws.apply(
+            HostUpdate::LandingQueue {
+                main: id("main"),
+                queue: vec![
+                    waiting("clean", &[], &[]),
+                    waiting("confirm", &["c.rs"], &[]),
+                ],
+                conflicts: Some(marked(false)),
+            },
+            cx,
+        );
+        rows(ws, cx)
+    });
+    let said_of = |title: &str| {
+        said.iter()
+            .find(|(row, _)| row == title)
+            .map(|(_, attention)| attention.clone())
+            .unwrap_or_else(|| panic!("no row {title}: {said:?}"))
+    };
+    assert_eq!(
+        said_of("main"),
+        Attention::ConflictsOnMain {
+            files: files.clone()
+        }
+    );
+    assert_eq!(
+        said_of("clean"),
+        Attention::Queued(Queued {
+            position: 1,
+            needs_confirmation: false
+        })
+    );
+    assert_eq!(
+        said_of("confirm"),
+        Attention::Queued(Queued {
+            position: 2,
+            needs_confirmation: true
+        })
+    );
+    assert_eq!(said_of("idle"), Attention::Idle);
+    // Main's conflicts and the chat waiting for a confirmation need the
+    // person; the clean one waits on main alone.
+    let need_you = workspace.update(&mut cx, |ws, cx| ws.need_you(REPO, cx));
+    assert_eq!(need_you, 2);
+
+    let snapshot = workspace.read_with(&cx, |ws, _| ws.snapshot());
+    phone.update(&mut cx, |ws, cx| ws.apply(snapshot, cx));
+    cx.run_until_parked();
+    let on_phone = phone.update(&mut cx, |ws, cx| rows(ws, cx));
+    assert_eq!(on_phone, said);
+
+    // Put away, the card goes and the mark stays; resolved, main is
+    // idle again, and the queue's chats say so as it drains.
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply(
+            HostUpdate::LandingQueue {
+                main: id("main"),
+                queue: vec![waiting("confirm", &["c.rs"], &["c.rs"])],
+                conflicts: Some(marked(true)),
+            },
+            cx,
+        );
+        let view = ws.run(&id("main")).unwrap().clone();
+        assert_eq!(
+            ws.attention(&view, cx),
+            Attention::ConflictsOnMain {
+                files: files.clone()
+            }
+        );
+        ws.apply(
+            HostUpdate::LandingQueue {
+                main: id("main"),
+                queue: vec![waiting("confirm", &["c.rs"], &["c.rs"])],
+                conflicts: None,
+            },
+            cx,
+        );
+        let said = rows(ws, cx);
+        let said_of = |title: &str| {
+            said.iter()
+                .find(|(row, _)| row == title)
+                .map(|(_, attention)| attention.clone())
+        };
+        assert_eq!(said_of("main"), Some(Attention::Idle));
+        assert_eq!(said_of("clean"), Some(Attention::Idle));
+        assert_eq!(
+            said_of("confirm"),
+            Some(Attention::Queued(Queued {
+                position: 1,
+                needs_confirmation: false
+            }))
+        );
+        assert_eq!(ws.need_you(REPO, cx), 0);
+    });
+}

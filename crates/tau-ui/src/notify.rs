@@ -45,7 +45,11 @@ impl Kind {
             Attention::Asks { .. } => Some(Self::Asks),
             Attention::ReadyToLand { .. } => Some(Self::ReadyToLand),
             Attention::Failed => Some(Self::Failed),
+            // Conflicts on main are said through the host's hook, once
+            // per turn that leaves them ([`conflicts_on_main`]).
             Attention::Working { .. }
+            | Attention::ConflictsOnMain { .. }
+            | Attention::Queued(_)
             | Attention::WouldConflict { .. }
             | Attention::Interrupted
             | Attention::Landed
