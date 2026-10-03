@@ -5,7 +5,14 @@ use hegel::generators as gs;
 use serde_json::json;
 use tau_tools::{
     artifact_grant::ArtifactRecord,
-    ui::{ArtifactStatus, State, artifact_status, diff_of, output_lines},
+    ui::{
+        ArtifactStatus,
+        ReadView,
+        State,
+        artifact_status,
+        diff_of,
+        output_lines,
+    },
 };
 use tau_ui_plugin::{CallData, CallResult, Fold, testing::FakeRun};
 
@@ -130,6 +137,69 @@ fn artifact_grant_fold_reloads_and_cards_report_bounded_metadata() {
         artifact_status(&missing),
         Some(ArtifactStatus::Unavailable("quota exceeded".into()))
     );
+}
+
+/// A `read` card numbers the lines the model got from where they start
+/// in the file, leaves out the notice after them, and says which part of
+/// the file it holds.
+#[hegel::test(test_cases = 200)]
+fn a_read_numbers_its_lines(tc: hegel::TestCase) {
+    let total: usize =
+        tc.draw(gs::integers::<usize>().min_value(1).max_value(50));
+    let first: usize =
+        tc.draw(gs::integers::<usize>().min_value(1).max_value(total));
+    let returned: usize =
+        tc.draw(gs::integers::<usize>().max_value(total - first + 1));
+    let lines: Vec<String> = (first..first + returned)
+        .map(|n| format!("line {n}"))
+        .collect();
+    let text = format!(
+        "{}\n\n[Showing lines {first}-{} of {total}.]",
+        lines.join("\n"),
+        first + returned
+    );
+    let data = CallData {
+        result: Some(CallResult {
+            text,
+            details: Some(json!({
+                "kind": "text",
+                "offset": first,
+                "total_lines": total,
+                "returned_lines": returned,
+            })),
+            error: false,
+        }),
+        ..CallData::default()
+    };
+    let read = ReadView::of(&data).unwrap();
+    assert_eq!(read.first, first);
+    assert_eq!(read.lines, lines);
+    let label = read.label();
+    if first == 1 && returned == total {
+        assert!(label.ends_with(if total == 1 { " line" } else { " lines" }));
+    } else {
+        assert!(label.starts_with(&format!("{first}–")), "{label}");
+        assert!(label.ends_with(&format!(" of {total}")), "{label}");
+    }
+}
+
+/// An image, or a failed read, has no lines to show.
+#[test]
+fn a_read_without_text_has_no_lines() {
+    let of = |details, error| {
+        ReadView::of(&CallData {
+            result: Some(CallResult {
+                text: "Read image file [image/png]".into(),
+                details: Some(details),
+                error,
+            }),
+            ..CallData::default()
+        })
+    };
+    assert_eq!(of(json!({"kind": "image"}), false), None);
+    assert_eq!(of(json!({}), true), None);
+    // An older result, without the counts, reads as the whole file.
+    assert_eq!(of(json!({}), false).unwrap().label(), "1 line");
 }
 
 #[cfg(feature = "host")]

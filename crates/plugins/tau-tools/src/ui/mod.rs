@@ -11,7 +11,7 @@ pub mod term;
 #[cfg(feature = "terminal")]
 pub mod term_card;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use gpui::{Div, div, prelude::*, px};
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,8 @@ pub struct Ui {
     #[cfg(feature = "terminal")]
     pub terms: term_card::TermCards,
     previews: BTreeMap<String, Value>,
+    /// The `read` cards opened past their first lines.
+    reads: BTreeSet<(tau_agent::tool::RunId, String)>,
 }
 
 /// Serializable grant fold shared by live and reloaded runs, including phones.
@@ -176,6 +178,142 @@ fn artifact_line(status: &ArtifactStatus, t: &Theme) -> Div {
         .px(sp(3.))
         .py(sp(1.))
         .child(tau_ui_kit::components::mono(label, Type::MICRO, t.muted))
+}
+
+/// The lines a card shows of a `read` before it is opened.
+pub const PEEK: usize = 4;
+
+/// What a `read` gave the model: its lines, numbered from `first`, of a
+/// file `total` lines long.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ReadView {
+    pub first: usize,
+    pub total: usize,
+    pub lines: Vec<String>,
+}
+
+impl ReadView {
+    /// A finished text read's; none for a failed call or an image. A
+    /// result without the counts reads as the whole file.
+    pub fn of(data: &CallData) -> Option<Self> {
+        let result = data.result.as_ref().filter(|result| !result.error)?;
+        let details = result.details.as_ref();
+        let count = |key| {
+            details
+                .and_then(|details| details.get(key))
+                .and_then(Value::as_u64)
+                .map(|n| n as usize)
+        };
+        if details
+            .and_then(|details| details.get("kind"))
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind != "text")
+        {
+            return None;
+        }
+        // The notice the model got after them is not the file's.
+        let lines: Vec<String> = result
+            .text
+            .lines()
+            .take(count("returned_lines").unwrap_or(usize::MAX))
+            .map(str::to_owned)
+            .collect();
+        Some(Self {
+            first: count("offset").unwrap_or(1).max(1),
+            total: count("total_lines").unwrap_or(lines.len()),
+            lines,
+        })
+    }
+
+    /// The header's word on it: `71 lines`, or `120–179 of 612`.
+    pub fn label(&self) -> String {
+        let shown = self.lines.len();
+        if self.first == 1 && shown == self.total {
+            return match shown {
+                1 => "1 line".into(),
+                n => format!("{} lines", tau_ui_kit::format::grouped(n)),
+            };
+        }
+        let last = (self.first + shown).saturating_sub(1).max(self.first);
+        format!(
+            "{}–{} of {}",
+            tau_ui_kit::format::grouped(self.first),
+            tau_ui_kit::format::grouped(last),
+            tau_ui_kit::format::grouped(self.total)
+        )
+    }
+}
+
+/// A `read`'s first lines, numbered, and the row that shows the rest.
+fn peek(
+    read: &ReadView,
+    open: bool,
+    call_id: &str,
+    toggle: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    t: &Theme,
+) -> Div {
+    let shown = if open {
+        read.lines.len()
+    } else {
+        read.lines.len().min(PEEK)
+    };
+    let rest = read.lines.len() - read.lines.len().min(PEEK);
+    let last = read.first + read.lines.len();
+    let gutter = px(8. * last.to_string().len() as f32);
+    div()
+        .flex()
+        .flex_col()
+        .py(sp(1.5))
+        .bg(t.bg)
+        .font_family(MONO)
+        .typeset(Type::CAPTION)
+        .line_height(px(20.))
+        .children(read.lines[..shown].iter().enumerate().map(|(i, line)| {
+            div()
+                .flex()
+                .gap(sp(3.))
+                .px(sp(3.))
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .w(gutter)
+                        .flex()
+                        .justify_end()
+                        .text_color(t.dim.opacity(0.7))
+                        .child((read.first + i).to_string()),
+                )
+                .child(
+                    div()
+                        .text_color(t.text_soft)
+                        .child(line.replace('\t', "    ")),
+                )
+        }))
+        .when(rest > 0, |body| {
+            body.child(
+                div()
+                    .id(gpui::SharedString::from(format!("read-{call_id}")))
+                    .flex()
+                    .items_center()
+                    .min_h(px(28.))
+                    .px(sp(3.))
+                    .pl(gutter + sp(6.))
+                    .cursor_pointer()
+                    .text_color(t.dim)
+                    .hover(|row| row.text_color(t.text_soft))
+                    .child(if open {
+                        "show less".to_owned()
+                    } else {
+                        format!(
+                            "+ {} more {}",
+                            tau_ui_kit::format::grouped(rest),
+                            if rest == 1 { "line" } else { "lines" }
+                        )
+                    })
+                    .on_click(toggle),
+            )
+        })
 }
 
 /// The diff a call's result carries, when it carries one.
@@ -505,9 +643,51 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
             })
         }
         "read" => {
-            let status = artifact_status(data)?;
+            let read = ReadView::of(data)?;
+            let key = (at.run.id.clone(), at.call_id.clone());
+            let open = view.ui.read(view.cx).reads.contains(&key);
+            let (ui, handle) = (view.ui.clone(), view.handle.clone());
+            let toggle = move |_: &gpui::ClickEvent,
+                               _: &mut gpui::Window,
+                               cx: &mut gpui::App| {
+                ui.update(cx, |ui, _| {
+                    if !ui.reads.remove(&key) {
+                        ui.reads.insert(key.clone());
+                    }
+                });
+                handle.refresh(cx);
+            };
+            // Provenance is the inspector's; the card says only that
+            // keeping it failed.
+            let missing = data
+                .result
+                .as_ref()
+                .and_then(|result| result.details.as_ref())
+                .and_then(|details| details.get("artifact_error"))
+                .and_then(Value::as_str)
+                .map(|error| ArtifactStatus::Unavailable(error.to_owned()));
             Some(CardView {
-                body: Some(artifact_line(&status, &t).into_any_element()),
+                label: Some(read.label()),
+                body: (!read.lines.is_empty() || missing.is_some()).then(
+                    || {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .when(!read.lines.is_empty(), |body| {
+                                body.child(peek(
+                                    &read,
+                                    open,
+                                    &at.call_id,
+                                    toggle,
+                                    &t,
+                                ))
+                            })
+                            .when_some(missing.as_ref(), |body, status| {
+                                body.child(artifact_line(status, &t))
+                            })
+                            .into_any_element()
+                    },
+                ),
                 ..CardView::default()
             })
         }
