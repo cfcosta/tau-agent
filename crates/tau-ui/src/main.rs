@@ -61,6 +61,14 @@ struct Args {
     reduce_motion: bool,
 }
 
+/// `host`, telling the desktop when a turn leaves conflicts on a main
+/// chat ([`tau_ui::notify::conflicts_on_main`]).
+fn with_notices(host: Host) -> Host {
+    host.on_conflicts_on_main(std::sync::Arc::new(
+        tau_ui::notify::conflicts_on_main,
+    ))
+}
+
 fn args() -> Args {
     let args: Vec<String> = std::env::args().collect();
     let flag = |name: &str| args.iter().any(|arg| arg == name);
@@ -172,7 +180,7 @@ fn main() {
                 Some((host, events)) => {
                     workspace
                         .update(cx, |ws, cx| ws.navigate(Route::NewRun, cx));
-                    host.attach(&workspace, events, cx);
+                    with_notices(host).attach(&workspace, events, cx);
                     if let Some(prompt) = args.prompt.clone() {
                         workspace
                             .update(cx, |ws, cx| ws.submit_prompt(prompt, cx));
@@ -206,7 +214,7 @@ fn main() {
                                 entity.update(cx, |ws, cx| {
                                     ws.set_catalog(catalog, cx)
                                 });
-                                host.attach(&entity, events, cx);
+                                with_notices(host).attach(&entity, events, cx);
                             }
                             Err(error) => {
                                 eprintln!(

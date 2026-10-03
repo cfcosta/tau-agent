@@ -78,8 +78,10 @@ open forks get new forecasts, so a forecast follows main's head.
 - `Notifier` sends one notice each time a chat's state turns into one
   of these; a chat seen for the first time gets none, and a turn while
   the window is focused is kept quiet for good.
-- `notify::conflicts_on_main(main, repo, files, cx)` is the hook for
-  conflicts left on main; whoever finds them calls it.
+- `notify::conflicts_on_main(main, repo, files, cx)` says conflicts
+  left on main. tau-ui's `main` passes it to
+  `Host::on_conflicts_on_main` before `attach`, so the host calls it
+  each time a turn of main ends with conflicts still on it (ADR 0024).
 - The desktop gets them through `notify-rust` over zbus (no libdbus).
   Clicking one brings tau's window up and opens its chat.
 - `"notifications": false` in `interface.json` turns them off.

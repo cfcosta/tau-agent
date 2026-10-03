@@ -296,15 +296,21 @@ pub fn follow(
 }
 
 /// Says that a turn of `main`, `repo`'s main chat, left conflicts in
-/// `files` files, unless tau's window is focused or nothing follows the
-/// workspace ([`follow`]).
-pub fn conflicts_on_main(main: &RunId, repo: &str, files: usize, cx: &mut App) {
+/// `files`, unless tau's window is focused or nothing follows the
+/// workspace ([`follow`]). The host calls it through its conflicts hook
+/// (`Host::on_conflicts_on_main`).
+pub fn conflicts_on_main(
+    main: &RunId,
+    repo: &str,
+    files: &[String],
+    cx: &mut App,
+) {
     if !cx.has_global::<Notifications>() {
         return;
     }
     cx.update_global::<Notifications, _>(|notifications, cx| {
         let quiet = notifications.focused(cx) || !notifications.on();
         let Notifications { notifier, sink, .. } = notifications;
-        notifier.conflicts_left(main, repo, files, quiet, sink.as_mut());
+        notifier.conflicts_left(main, repo, files.len(), quiet, sink.as_mut());
     });
 }
