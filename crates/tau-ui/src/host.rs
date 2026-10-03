@@ -681,6 +681,8 @@ impl Host {
         // after theirs, and context compaction goes by the run's model.
         let registered = self.registered(repo);
         let project = repo.project()?;
+        // What the plugins give the run's commands: an environment.
+        let launcher = self.launcher_of(repo);
         let artifacts =
             Bytes::new(project.root().join("artifacts"), Quotas::default())?;
         // A run and its sub-agents work the same way, each in its own
@@ -712,17 +714,23 @@ impl Host {
                     Some(refusal) => vcs.refusing_landing(refusal),
                 };
                 let dir = workspace.dir();
+                let tools = CodingTools::new(Root::new(dir.clone()))
+                    .with_artifacts(artifacts.clone());
+                let tools = match &launcher {
+                    Some(launcher) => tools.with_launcher(launcher.clone()),
+                    None => tools,
+                };
+                let services = Services::default()
+                    .with(hooks)
+                    .with(tau_ui_plugin::WorkspaceDir(dir.clone()));
                 // The repository's instructions come after the workspace,
                 // which makes the directory as the run starts.
                 let agent = agent
-                    .plugin(
-                        CodingTools::new(Root::new(dir.clone()))
-                            .with_artifacts(artifacts.clone()),
-                    )
+                    .plugin(tools)
                     .plugin(vcs)
                     .plugin(workspace)
                     .plugin(RepoInstructions { dir });
-                (agent, Services::default().with(hooks))
+                (agent, services)
             };
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
         // A main chat commits on trunk: it has nothing to land.

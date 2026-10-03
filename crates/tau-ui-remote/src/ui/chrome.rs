@@ -509,7 +509,7 @@ fn repo_group(
         .flex_col()
         .flex_shrink_0()
         .child(head)
-        .when(menu, |group| group.child(repo_menu(&name, t, cx)));
+        .when(menu, |group| group.child(repo_menu(ws, &name, t, cx)));
     if !rows.open {
         return group;
     }
@@ -793,10 +793,19 @@ fn run_row(
 
 /// A repository's menu, under its row.
 fn repo_menu(
+    ws: &Workspace,
     name: &str,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
+    // What plugins keep per repository: their entries, after tau's.
+    let plugins = ws.contributions(
+        tau_ui_plugin::points::REPO_MENU,
+        &tau_ui_plugin::points::AtRepo {
+            repo: name.to_owned(),
+        },
+        cx,
+    );
     let entry = |id: &'static str, glyph: Icon, label: String, color| {
         div()
             .id(id)
@@ -826,7 +835,7 @@ fn repo_menu(
     );
     let menu = div()
         .id("repo-menu")
-        .w(px(232.))
+        .min_w(px(232.))
         .flex()
         .flex_col()
         .p(sp(1.5))
@@ -865,6 +874,10 @@ fn repo_menu(
                     ws.show_in_files(&files, cx)
                 })),
         )
+        .when(!plugins.is_empty(), |menu| {
+            menu.child(div().h(px(1.)).my(sp(1.)).bg(t.border))
+                .children(plugins)
+        })
         .child(div().h(px(1.)).my(sp(1.)).bg(t.border))
         .child(
             entry(

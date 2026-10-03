@@ -135,6 +135,28 @@ impl Host {
             .unwrap_or_else(|| plugin.default_settings())
     }
 
+    /// What commands in `repo` start through: every plugin's launcher,
+    /// joined in the registry's order; none when no plugin gives one.
+    pub(super) fn launcher_of(
+        &self,
+        repo: &RepoSlot,
+    ) -> Option<Arc<dyn tau_agent::launch::Launcher>> {
+        let ctx = self.repo_ctx(repo);
+        let mut launchers: Vec<Arc<dyn tau_agent::launch::Launcher>> = self
+            .hosted
+            .iter()
+            .filter_map(|hosted| {
+                let settings = self.plugin_settings(hosted.plugin.as_ref());
+                hosted.plugin.launcher(&hosted.state, &ctx, &settings)
+            })
+            .collect();
+        match launchers.len() {
+            0 => None,
+            1 => launchers.pop(),
+            _ => Some(Arc::new(tau_agent::launch::Launchers(launchers))),
+        }
+    }
+
     /// What adds each plugin's agent plugins, in the registry's order, to
     /// an agent in `repo`: the run's, or a sub-agent's, on its model, with
     /// what its workspace offers (`services`). A plugin that cannot build
@@ -155,6 +177,15 @@ impl Host {
             })
             .collect();
         let jev = self.jev();
+        // The repository's own commands (its MCP servers) start through
+        // what the plugins give it, in its main workspace.
+        let repo_launcher = self.launcher_of(repo).and_then(|launcher| {
+            let project = repo.project.wait()?;
+            Some(tau_ui_plugin::RepoLauncher {
+                launcher,
+                dir: project.workspace_dir(DEFAULT_WORKSPACE),
+            })
+        });
         let repo = self.repo_ctx(repo);
         move |agent: Agent,
               kind: RunKind,
@@ -162,6 +193,9 @@ impl Host {
               mut services: Services| {
             if let Some(jev) = &jev {
                 services = services.with(jev.clone());
+            }
+            if let Some(launcher) = &repo_launcher {
+                services = services.with(launcher.clone());
             }
             let run = RunCtx {
                 kind,
