@@ -904,7 +904,7 @@ pub fn phone_run_bar(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let (color, label) = status_look(&run.status, t);
+    let (color, label) = super::run_look(run, t);
     let id = run.id.clone();
     div()
         .h(px(56.))

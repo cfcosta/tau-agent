@@ -5,6 +5,7 @@
 
 pub mod chrome;
 pub mod components;
+pub mod ending;
 pub mod inspector;
 pub mod landing;
 pub mod screens;
@@ -27,6 +28,15 @@ pub fn status_look(status: &RunStatus, t: &Theme) -> (Hsla, SharedString) {
         RunStatus::Planning => (t.blue, "planning".into()),
         RunStatus::Running => (t.accent, "running".into()),
         RunStatus::Finished(stop) => stop_look(stop, t),
+    }
+}
+
+/// The dot color and words `run` reads as: its status, or read-only
+/// for a chat that landed or was dropped.
+pub fn run_look(run: &RunView, t: &Theme) -> (Hsla, SharedString) {
+    match run.ending {
+        Some(_) => (t.dim, ending::READ_ONLY.into()),
+        None => status_look(&run.status, t),
     }
 }
 

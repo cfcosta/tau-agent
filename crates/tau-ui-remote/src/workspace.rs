@@ -83,6 +83,7 @@ use crate::{
         ChildKind,
         ChildRun,
         CodeState,
+        Ending,
         Item,
         LandedCard,
         LandingRecord,
@@ -1537,6 +1538,8 @@ impl Workspace {
             return;
         }
         match self.current().filter(|_| self.route != Route::NewRun) {
+            // A chat that landed or was dropped is read-only.
+            Some(run) if run.ending.is_some() => return,
             Some(run) if run.status.is_live() => {
                 let run = run.id.clone();
                 self.queued.insert(run.clone(), text.clone());
@@ -1564,7 +1567,12 @@ impl Workspace {
         text: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(at) = self.runs.iter().position(|view| &view.id == run) else {
+        // A chat that landed or was dropped takes no more messages.
+        let Some(at) = self
+            .runs
+            .iter()
+            .position(|view| &view.id == run && view.ending.is_none())
+        else {
             return;
         };
         let mut view = self.runs.remove(at);

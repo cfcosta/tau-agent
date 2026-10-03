@@ -2984,3 +2984,52 @@ fn the_demo_keeps_rules_in_the_constitution(cx: &mut TestAppContext) {
         assert_eq!(rules.rules[before].text, "Keep the changelog current.");
     });
 }
+
+/// A chat that landed or was dropped is read-only: a message sent from
+/// its screen goes nowhere, neither resuming nor steering it.
+#[gpui::test]
+fn an_ended_chat_takes_no_messages(cx: &mut TestAppContext) {
+    use tau_ui_remote::view::{Ending, Origin, RunView};
+    let (workspace, mut cx, events) = open(cx);
+    for (id, ending) in [
+        (
+            "landed-chat",
+            Ending::Landed {
+                on: demo::run_id(),
+                changes: 2,
+            },
+        ),
+        ("dropped-chat", Ending::Dropped),
+    ] {
+        let run = tau_agent::tool::RunId(id.into());
+        let mut view = RunView::new(run.clone(), id, "coder", "gpt-5.5")
+            .in_repo("tau-agent")
+            .with_origin(Origin::Fork {
+                from: demo::run_id(),
+                turn: 1,
+            });
+        view.finish_stored(StopReason::Stop, 0.0, 0.0);
+        view.ending = Some(ending);
+        workspace.update(&mut cx, |ws, cx| {
+            ws.apply(
+                tau_ui_remote::update::HostUpdate::History(vec![view]),
+                cx,
+            );
+            ws.navigate(Route::Run(run.clone()), cx);
+            ws.submit_prompt("one more thing".into(), cx);
+        });
+        cx.run_until_parked();
+    }
+    let sent: Vec<_> = events
+        .borrow()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                WorkspaceEvent::Resume { .. } | WorkspaceEvent::Steer { .. }
+            )
+        })
+        .cloned()
+        .collect();
+    assert!(sent.is_empty(), "{sent:?}");
+}

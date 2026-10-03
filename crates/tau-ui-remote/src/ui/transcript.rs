@@ -51,13 +51,18 @@ pub fn item(
 ) -> AnyElement {
     let edge = sp(if compact { 4. } else { 5. });
     let side = sp(if compact { 4. } else { 6. });
-    // Past the items, the landing card, while a landing is open.
+    // Past the items, the landing card, while a landing is open, or
+    // where a landed chat's work went.
     if index == run.items.len() {
+        let card = match run.ending {
+            Some(_) => super::ending::landed_card(ws, run, t, cx),
+            None => super::landing::card(ws, run, t, compact, cx),
+        };
         return div()
             .px(side)
             .pt(sp(3.))
             .pb(edge)
-            .children(super::landing::card(ws, run, t, compact, cx))
+            .children(card)
             .into_any_element();
     }
     let Some(item) = run.items.get(index) else {

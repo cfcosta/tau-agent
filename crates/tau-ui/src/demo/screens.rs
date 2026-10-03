@@ -128,6 +128,31 @@ pub static SCREENS: &[(&str, Screen)] = &[
         let preview = Ok(landing_preview(true));
         ws.apply(HostUpdate::LandingPreview { run, preview }, cx);
     }),
+    // A chat that landed, or was dropped: read-only, with a way to a
+    // new chat from main in the composer's place.
+    ("landed", |ws, _, cx| {
+        let run = fork_id();
+        let landing = Ok(landing_preview(false));
+        ws.apply(
+            HostUpdate::Landed {
+                run: run.clone(),
+                landing,
+            },
+            cx,
+        );
+        ws.navigate(Route::Run(run), cx);
+    }),
+    ("dropped", |ws, _, cx| {
+        let run = fork_id();
+        ws.apply(
+            HostUpdate::Dropped {
+                run: run.clone(),
+                result: Ok(()),
+            },
+            cx,
+        );
+        ws.navigate(Route::Run(run), cx);
+    }),
     // tau-ask's panel in the composer's place (ADR 0019): a question
     // with previews; a checklist with a note being written; the review.
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),

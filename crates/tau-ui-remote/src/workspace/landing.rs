@@ -85,12 +85,19 @@ impl Workspace {
             title: child.title.clone(),
             landing,
         });
+        let changes = card.changes.len();
         if let Some(view) = self.runs.iter_mut().find(|view| view.id == parent)
         {
             view.items.retain(
                 |item| !matches!(item, Item::ForkReady { fork } if fork == run),
             );
             view.items.push(Item::Landed(card));
+        }
+        if let Some(view) = self.runs.iter_mut().find(|view| &view.id == run) {
+            view.ending = Some(Ending::Landed {
+                on: parent.clone(),
+                changes,
+            });
         }
         self.close_run(run, cx);
         self.navigate(Route::Run(parent), cx);
@@ -135,6 +142,9 @@ impl Workspace {
             view.items.retain(
                 |item| !matches!(item, Item::ForkReady { fork } if fork == run),
             );
+        }
+        if let Some(view) = self.runs.iter_mut().find(|view| &view.id == run) {
+            view.ending = Some(Ending::Dropped);
         }
         self.close_run(run, cx);
         if let Some(parent) = parent {

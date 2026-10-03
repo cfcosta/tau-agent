@@ -251,12 +251,19 @@ impl Workspace {
     pub(super) fn sync_transcript(&mut self) {
         let width = self.transcript.viewport_bounds().size.width;
         self.transcript_width = (width > px(0.)).then_some(width);
-        // One more row, past the items, for an open landing's card.
+        // One more row, past the items, for an open landing's card, or
+        // a landed chat's.
         let now =
             self.current()
                 .filter(|_| self.route != Route::NewRun)
                 .map(|run| {
-                    let card = usize::from(self.landings.contains_key(&run.id));
+                    let card = usize::from(
+                        self.landings.contains_key(&run.id)
+                            || matches!(
+                                run.ending,
+                                Some(Ending::Landed { .. })
+                            ),
+                    );
                     (run.id.clone(), run.items.len() + card)
                 });
         match (&now, &self.listed) {
@@ -324,6 +331,33 @@ impl Workspace {
                 .font_weight(weight::STRONG)
                 .child("New run");
         };
+        // A chat that ended is read-only: its title, and a tag saying so.
+        if run.ending.is_some() {
+            return div()
+                .h(px(48.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(sp(3.))
+                .px(sp(6.))
+                .border_b_1()
+                .border_color(t.border)
+                .child(
+                    div()
+                        .typeset(Type::LEAD)
+                        .font_weight(weight::STRONG)
+                        .text_color(t.muted)
+                        .child(run.title.clone()),
+                )
+                .child(
+                    ui::mono(ui::ending::READ_ONLY, Type::MICRO, t.dim)
+                        .px(sp(1.5))
+                        .py(sp(0.5))
+                        .rounded(radius::CONTROL)
+                        .border_1()
+                        .border_color(t.border),
+                );
+        }
         let (color, label) = ui::status_look(&run.status, t);
         let live = run.status.is_live();
         let done = self.catalog.pull_requests
@@ -531,9 +565,18 @@ impl Workspace {
                 {
                     self.composer_back.set(true);
                 }
-                instead.unwrap_or_else(|| {
-                    self.composer(compact, t, cx).into_any_element()
-                })
+                // A chat that ended takes no more messages.
+                let ended = self
+                    .current()
+                    .filter(|_| self.route != Route::NewRun)
+                    .and_then(|run| ui::ending::note(run, compact, t, cx));
+                match (instead, ended) {
+                    (_, Some(note)) => note.into_any_element(),
+                    (Some(instead), None) => instead,
+                    (None, None) => {
+                        self.composer(compact, t, cx).into_any_element()
+                    }
+                }
             })
     }
 
