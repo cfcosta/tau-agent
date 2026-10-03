@@ -1839,6 +1839,37 @@ fn summarized(output: ToolOutput, summary: &str) -> ToolOutput {
     }
 }
 
+/// The file the retry demo reads, for its card to show and color.
+const RETRY_RS: &str = r#"//! How long to wait before trying a request again.
+
+use std::time::Duration;
+
+/// Backoff between attempts, doubling up to `max_delay`.
+#[derive(Debug, Clone)]
+pub struct RetryPolicy {
+    pub base: Duration,
+    pub max_delay: Duration,
+    pub attempts: u32,
+}
+
+impl RetryPolicy {
+    /// The wait before attempt `n`, counting from 1.
+    pub fn delay(&self, n: u32) -> Duration {
+        let factor = 2u32.saturating_pow(n.saturating_sub(1));
+        self.base.saturating_mul(factor).min(self.max_delay)
+    }
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            base: Duration::from_millis(250),
+            max_delay: Duration::from_secs(30),
+            attempts: 5,
+        }
+    }
+}"#;
+
 fn lines(count: usize) -> ToolOutput {
     ToolOutput::text(
         (1..=count)
@@ -2343,7 +2374,7 @@ pub fn script() -> Vec<Step> {
         "c3",
         "read",
         json!({ "path": "crates/tau-ai/src/retry.rs" }),
-        lines(188),
+        ToolOutput::text(RETRY_RS),
     );
     s.say(
         "`RetryPolicy::delay` only knows the attempt number. I'll pass the \

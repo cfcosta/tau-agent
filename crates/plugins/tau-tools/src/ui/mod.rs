@@ -11,7 +11,10 @@ pub mod term;
 #[cfg(feature = "terminal")]
 pub mod term_card;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use gpui::{Div, div, prelude::*, px};
 use serde::{Deserialize, Serialize};
@@ -19,6 +22,7 @@ use serde_json::{Value, json};
 use tau_agent::plugin::Plugin;
 use tau_ui_kit::{
     diff,
+    syntax,
     theme::{Design as _, MONO, Theme, Tone, Type, sp},
 };
 use tau_ui_plugin::{
@@ -56,6 +60,8 @@ pub struct Ui {
     previews: BTreeMap<String, Value>,
     /// The `read` cards opened past their first lines.
     reads: BTreeSet<(tau_agent::tool::RunId, String)>,
+    /// Each `read` card's lines, highlighted once.
+    colors: BTreeMap<(tau_agent::tool::RunId, String), Arc<syntax::Lines>>,
 }
 
 /// Serializable grant fold shared by live and reloaded runs, including phones.
@@ -216,7 +222,7 @@ impl ReadView {
             .text
             .lines()
             .take(count("returned_lines").unwrap_or(usize::MAX))
-            .map(str::to_owned)
+            .map(|line| line.replace('\t', "    "))
             .collect();
         Some(Self {
             first: count("offset").unwrap_or(1).max(1),
@@ -247,6 +253,7 @@ impl ReadView {
 /// A `read`'s first lines, numbered, and the row that shows the rest.
 fn peek(
     read: &ReadView,
+    colors: Option<&syntax::Lines>,
     open: bool,
     call_id: &str,
     toggle: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
@@ -285,9 +292,21 @@ fn peek(
                         .child((read.first + i).to_string()),
                 )
                 .child(
-                    div()
-                        .text_color(t.text_soft)
-                        .child(line.replace('\t', "    ")),
+                    div().text_color(t.text_soft).child(
+                        match colors.and_then(|colors| colors.get(i)) {
+                            Some(parts) if !line.is_empty() => {
+                                gpui::StyledText::new(line.clone())
+                                    .with_runs(syntax::runs(
+                                        line,
+                                        parts,
+                                        t.text_soft,
+                                        &t.syntax,
+                                    ))
+                                    .into_any_element()
+                            }
+                            _ => line.clone().into_any_element(),
+                        },
+                    ),
                 )
         }))
         .when(rest > 0, |body| {
@@ -646,6 +665,25 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
             let read = ReadView::of(data)?;
             let key = (at.run.id.clone(), at.call_id.clone());
             let open = view.ui.read(view.cx).reads.contains(&key);
+            let colors = at
+                .data
+                .args
+                .get("path")
+                .and_then(Value::as_str)
+                .and_then(syntax::Lang::of_path)
+                .map(|lang| {
+                    view.ui.update(view.cx, |ui, _| {
+                        ui.colors
+                            .entry(key.clone())
+                            .or_insert_with(|| {
+                                Arc::new(syntax::highlight_lines(
+                                    lang,
+                                    &read.lines,
+                                ))
+                            })
+                            .clone()
+                    })
+                });
             let (ui, handle) = (view.ui.clone(), view.handle.clone());
             let toggle = move |_: &gpui::ClickEvent,
                                _: &mut gpui::Window,
@@ -676,6 +714,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
                             .when(!read.lines.is_empty(), |body| {
                                 body.child(peek(
                                     &read,
+                                    colors.as_deref(),
                                     open,
                                     &at.call_id,
                                     toggle,
