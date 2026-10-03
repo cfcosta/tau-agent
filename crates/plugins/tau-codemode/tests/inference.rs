@@ -1,20 +1,76 @@
-//! Property inventory: accepting JSON schemas preserve exact trees (round trip);
-//! typed schemas reject values of another type (independent validator oracle).
-//! Generator plan: Hegel JSON trees (at most three children per branch), an
-//! accepting `true` schema, and typed scalars. Oversize answers and integer
-//! literals outside Luau's exact range fail; other trees round trip. Shrinking
-//! removes children and reduces integer magnitudes.
+//! Property inventory:
+//! - `accepts_generated_required_objects_and_rejects_a_missing_property` uses
+//!   an object-shape predicate over 1..=4 required integer keys.
+//! - `accepts_generated_integers_without_coercing_numeric_strings` uses an
+//!   integer-token predicate for values in -1000..=1000.
+//! - `accepts_booleans_without_coercing_strings` exhausts booleans
+//!   and their string-form invalid partners.
+//! - `accepts_bounded_numbers_and_rejects_outside_the_interval` uses literal
+//!   inclusive bounds and both neighboring out-of-range values.
+//! - `accepts_bounded_enum_numbers_and_rejects_a_neighbor` checks the numeric
+//!   range and singleton enum independently for values in -999..=999.
+//! - `accepts_string_arrays_and_rejects_a_numeric_member` checks 1..=4 string
+//!   members, each at most 16 bytes, against a numeric-member mutation.
+//! - `accepts_nullable_strings_and_rejects_numbers` and
+//!   `accepts_nonnullable_strings_and_rejects_null` use independent type
+//!   predicates for nullable and nonnullable schemas.
+//! - `a_true_schema_decodes_bounded_generated_json_trees_exactly` remains a
+//!   separate general JSON parse/tree-preservation property.
+//!
+//! Generator plan: build every accepted value from bounded primitives; object
+//! keys are sampled as subsequences of four distinct canonical names. The
+//! rejected partner is a single known mutation (missing key, wrong primitive,
+//! enum neighbor, or wrong array member). Shrinking reduces integers, strings,
+//! arrays, and key subsequences while rebuilding each valid/invalid pair.
+//! Fixed tables cover the 64 KiB answer boundary, schema JSON depths 64/65,
+//! and the codec's default recursion guard at 127/128 nested arrays. The answer
+//! parser does not apply the schema's 64-level guard. Fixed exact-integer
+//! examples retain the ±2^53 and float/string cases.
 //! CI uses the workspace hegel.toml profile; no per-test count override.
 
 use hegel::{TestCase, extras::serde_json as json_gs, generators as gs};
 use serde_json::{Value, json};
 use tau_codemode::inference::InferRequest;
 
+const ASCII_TEXT: &str =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
 fn request(schema: Value) -> InferRequest {
     InferRequest::parse(
         json!({"task": "answer", "context": null, "schema": schema}),
     )
     .unwrap()
+}
+
+fn is_json_integer(value: &Value) -> bool {
+    value.as_f64().is_some_and(|number| number.fract() == 0.0)
+}
+
+fn assert_schema_pair_matches_predicate(
+    schema: Value,
+    accepted: Value,
+    rejected: Value,
+    accepts: impl Fn(&Value) -> bool,
+    rejection_reason: &str,
+) {
+    assert!(
+        accepts(&accepted),
+        "accepted example violates independent oracle"
+    );
+    assert!(
+        !accepts(&rejected),
+        "invalid partner does not violate independent oracle: {rejection_reason}"
+    );
+
+    let request = request(schema);
+    let accepted_json = serde_json::to_string(&accepted).unwrap();
+    assert_eq!(request.decode_answer(&accepted_json).unwrap(), accepted);
+
+    let rejected_json = serde_json::to_string(&rejected).unwrap();
+    assert!(
+        request.decode_answer(&rejected_json).is_err(),
+        "schema accepted invalid partner ({rejection_reason}): {rejected_json}"
+    );
 }
 
 // This oracle examines serde_json's preserved integer scalars, independent of
@@ -73,11 +129,6 @@ fn enforces_byte_limits() {
         .is_err()
     );
     assert!(InferRequest::parse(json!({"task": "x", "context": null, "schema": {"description": "x".repeat(64 * 1024)}})).is_err());
-    assert!(
-        request(json!(true))
-            .decode_answer(&"x".repeat(64 * 1024 + 1))
-            .is_err()
-    );
     let mut deep = json!(true);
     for _ in 0..70 {
         deep = json!({"items": deep});
@@ -88,6 +139,55 @@ fn enforces_byte_limits() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn answer_text_limit_includes_65536_bytes() {
+    let request = request(json!(true));
+    for (answer_bytes, accepted) in [(65_536, true), (65_537, false)] {
+        // The JSON string text includes both quote bytes. InferRequest accepts
+        // exactly MAX_ANSWER_BYTES and rejects only a larger answer.
+        let text = "x".repeat(answer_bytes - 2);
+        let answer = serde_json::to_string(&text).unwrap();
+        assert_eq!(answer.len(), answer_bytes);
+        if accepted {
+            assert_eq!(request.decode_answer(&answer).unwrap(), json!(text));
+        } else {
+            assert!(request.decode_answer(&answer).is_err());
+        }
+    }
+}
+
+#[test]
+fn answer_decoder_obeys_the_json_codec_recursion_guard() {
+    let request = request(json!(true));
+    for depth in [64, 65, 127, 128] {
+        let mut value = json!(null);
+        for _ in 0..depth {
+            value = json!([value]);
+        }
+        let answer = serde_json::to_string(&value).unwrap();
+        if depth < 128 {
+            assert_eq!(request.decode_answer(&answer).unwrap(), value);
+        } else {
+            assert!(request.decode_answer(&answer).is_err());
+        }
+    }
+}
+
+#[test]
+fn schema_annotation_depth_obeys_the_64_level_guard() {
+    for depth in [64, 65] {
+        let mut annotation = Value::Null;
+        for _ in 1..depth {
+            annotation = json!([annotation]);
+        }
+        let parsed = InferRequest::parse(json!({
+            "task": "answer", "context": null,
+            "schema": {"type": "null", "x-depth": annotation}
+        }));
+        assert_eq!(parsed.is_ok(), depth == 64, "depth {depth}: {parsed:?}");
+    }
 }
 
 #[test]
@@ -291,7 +391,7 @@ fn handles_provider_format_and_fallback() {
 }
 
 #[hegel::test]
-fn accepting_schema_returns_the_exact_generated_json_tree(tc: TestCase) {
+fn a_true_schema_decodes_bounded_generated_json_trees_exactly(tc: TestCase) {
     let value: Value = tc.draw(json_gs::values());
     let answer = serde_json::to_string(&value).unwrap();
     let result = request(json!(true)).decode_answer(&answer);
@@ -323,12 +423,204 @@ fn integer_boundary_does_not_reject_float_or_numeric_string() {
 }
 
 #[hegel::test]
-fn typed_schema_never_coerces_a_string_to_a_number(tc: TestCase) {
-    let number: i32 = tc.draw(gs::integers());
-    let answer = json!(number.to_string()).to_string();
-    assert!(
-        request(json!({"type": "integer"}))
-            .decode_answer(&answer)
-            .is_err()
+fn accepts_generated_required_objects_and_rejects_a_missing_property(
+    tc: TestCase,
+) {
+    let key_indices: Vec<usize> = tc.draw(
+        gs::subsequences(vec![0_usize, 1, 2, 3])
+            .min_size(1)
+            .max_size(4),
+    );
+    let mut properties = serde_json::Map::new();
+    let mut fields = serde_json::Map::new();
+    let required: Vec<String> = key_indices
+        .iter()
+        .map(|index| format!("field{index}"))
+        .collect();
+    for name in &required {
+        let value: i64 =
+            tc.draw(gs::integers().min_value(-1000_i64).max_value(1000));
+        assert!(
+            properties
+                .insert(
+                    name.clone(),
+                    json!({
+                        "type": "integer",
+                        "minimum": -1000,
+                        "maximum": 1000
+                    }),
+                )
+                .is_none()
+        );
+        assert!(fields.insert(name.clone(), json!(value)).is_none());
+    }
+
+    let schema = json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false
+    });
+    let accepted = Value::Object(fields);
+    let mut rejected_fields = accepted.as_object().unwrap().clone();
+    assert!(rejected_fields.remove(&required[0]).is_some());
+    let rejected = Value::Object(rejected_fields);
+    let required_for_oracle = required.clone();
+    assert_schema_pair_matches_predicate(
+        schema,
+        accepted,
+        rejected,
+        move |value| {
+            value.as_object().is_some_and(|fields| {
+                fields.len() == required_for_oracle.len()
+                    && required_for_oracle.iter().all(|name| {
+                        fields.get(name).is_some_and(|value| {
+                            is_json_integer(value)
+                                && value.as_f64().is_some_and(|number| {
+                                    (-1000.0..=1000.0).contains(&number)
+                                })
+                        })
+                    })
+            })
+        },
+        "one required property is absent",
+    );
+}
+
+#[hegel::test]
+fn accepts_generated_integers_without_coercing_numeric_strings(tc: TestCase) {
+    let integer: i64 =
+        tc.draw(gs::integers().min_value(-1000_i64).max_value(1000));
+    let accepted = json!(integer);
+    let rejected = json!(integer.to_string());
+    assert_schema_pair_matches_predicate(
+        json!({"type": "integer"}),
+        accepted,
+        rejected,
+        is_json_integer,
+        "the JSON value is a numeric string, not an integer token",
+    );
+}
+
+#[test]
+fn accepts_booleans_without_coercing_strings() {
+    for boolean in [false, true] {
+        assert_schema_pair_matches_predicate(
+            json!({"type": "boolean"}),
+            json!(boolean),
+            json!(boolean.to_string()),
+            Value::is_boolean,
+            "the JSON value is a string, not a boolean",
+        );
+    }
+}
+
+#[hegel::test]
+fn accepts_bounded_numbers_and_rejects_outside_the_interval(tc: TestCase) {
+    let center = tc.draw(gs::integers::<i64>().min_value(-999).max_value(999));
+    let radius = tc.draw(gs::integers::<i64>().min_value(1).max_value(8));
+    let minimum = center - radius;
+    let maximum = center + radius;
+    let accepted = json!(center as f64 + 0.25);
+    for invalid in [minimum - 1, maximum + 1] {
+        assert_schema_pair_matches_predicate(
+            json!({"type": "number", "minimum": minimum, "maximum": maximum}),
+            accepted.clone(),
+            json!(invalid),
+            |value| {
+                value.as_f64().is_some_and(|number| {
+                    (minimum as f64..=maximum as f64).contains(&number)
+                })
+            },
+            "the number lies just outside the inclusive bounds",
+        );
+    }
+}
+
+#[hegel::test]
+fn accepts_bounded_enum_numbers_and_rejects_a_neighbor(tc: TestCase) {
+    let number: i64 =
+        tc.draw(gs::integers().min_value(-999_i64).max_value(999));
+    let accepted = json!(number);
+    let rejected = json!(number + 1);
+    assert_schema_pair_matches_predicate(
+        json!({
+            "type": "number",
+            "minimum": -1000,
+            "maximum": 1000,
+            "enum": [number]
+        }),
+        accepted,
+        rejected,
+        move |value| {
+            value.as_f64().is_some_and(|value| {
+                (-1000.0..=1000.0).contains(&value) && value == number as f64
+            })
+        },
+        "the neighboring number is in range but absent from the enum",
+    );
+}
+
+#[hegel::test]
+fn accepts_string_arrays_and_rejects_a_numeric_member(tc: TestCase) {
+    let values: Vec<String> = tc.draw(
+        gs::vecs(gs::text().alphabet(ASCII_TEXT).max_size(16))
+            .min_size(1)
+            .max_size(4),
+    );
+    let accepted = json!(values);
+    let mut rejected_values = accepted.as_array().unwrap().clone();
+    rejected_values[0] = json!(0);
+    let rejected = Value::Array(rejected_values);
+    assert_schema_pair_matches_predicate(
+        json!({
+            "type": "array",
+            "items": {"type": "string", "maxLength": 16},
+            "minItems": 1,
+            "maxItems": 4
+        }),
+        accepted,
+        rejected,
+        |value| {
+            value.as_array().is_some_and(|items| {
+                (1..=4).contains(&items.len())
+                    && items.iter().all(|item| {
+                        item.as_str().is_some_and(|text| text.len() <= 16)
+                    })
+            })
+        },
+        "the first array member is numeric rather than a string",
+    );
+}
+
+#[hegel::test]
+fn accepts_nullable_strings_and_rejects_numbers(tc: TestCase) {
+    let text: Option<String> =
+        tc.draw(gs::optional(gs::text().alphabet(ASCII_TEXT).max_size(16)));
+    let accepted = match text {
+        Some(text) => json!(text),
+        None => Value::Null,
+    };
+    assert_schema_pair_matches_predicate(
+        json!({"type": ["string", "null"], "maxLength": 16}),
+        accepted,
+        json!(0),
+        |value| {
+            value.is_null()
+                || value.as_str().is_some_and(|text| text.len() <= 16)
+        },
+        "a number is neither a string nor null",
+    );
+}
+
+#[hegel::test]
+fn accepts_nonnullable_strings_and_rejects_null(tc: TestCase) {
+    let text: String = tc.draw(gs::text().alphabet(ASCII_TEXT).max_size(16));
+    assert_schema_pair_matches_predicate(
+        json!({"type": "string", "maxLength": 16}),
+        json!(text),
+        Value::Null,
+        |value| value.as_str().is_some_and(|text| text.len() <= 16),
+        "null is not a string",
     );
 }

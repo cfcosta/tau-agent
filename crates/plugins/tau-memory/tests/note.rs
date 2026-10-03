@@ -1,11 +1,62 @@
-//! Notes read back as they were written, and links come from the front
-//! matter and the body alike.
+//! Property inventory:
+//! - `slug_matches_the_independent_whole_word_prefix` compares generated
+//!   semantic ASCII words with a test-owned lowercase/prefix oracle. It draws
+//!   1..=6 words of 1..=70 ASCII alphanumeric bytes, with the first word
+//!   starting with `x` and bounded to 64 so every case has an ordinary,
+//!   nonfallback result;
+//!   separators include punctuation, whitespace, `é`, and `雪`. Shrinking
+//!   shortens the word vector and words while preserving the input grammar.
+//! - `slug_obeys_64_byte_whole_word_boundaries_and_fallback` fixes lengths 63,
+//!   64, and 65, no-ASCII fallback, an overlong first word followed by a short
+//!   word, and prefixes where a later whole word does not fit. Expected slugs
+//!   are explicit table values; `is_id` and idempotence remain secondary laws.
+//!
+//! Existing note round trips and plain ASCII wiki-link properties are retained.
 
 mod common;
 
 use common::{id, note};
 use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_memory::note::{Link, LinkType, Note, is_id, slug, wiki_links};
+
+const ASCII_WORDS: &str =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+#[hegel::composite]
+fn generated_ordinary_title(tc: &TestCase) -> (Vec<String>, String) {
+    let first_suffix: String =
+        tc.draw(gs::text().alphabet(ASCII_WORDS).max_size(63));
+    let first = format!("x{first_suffix}");
+    let remaining: Vec<String> = tc.draw(
+        gs::vecs(gs::text().alphabet(ASCII_WORDS).min_size(1).max_size(70))
+            .max_size(5),
+    );
+    let words: Vec<String> = std::iter::once(first).chain(remaining).collect();
+    let separator: &str = tc.draw(gs::sampled_from(vec![
+        " ", "-", "_", ".", "/", ":", "é", "雪", "\t",
+    ]));
+    let title = words.join(separator);
+    (words, title)
+}
+
+fn expected_slug(words: &[String]) -> String {
+    let mut expected = String::new();
+    for word in words {
+        let separator_bytes = usize::from(!expected.is_empty());
+        if expected.len() + separator_bytes + word.len() > 64 {
+            break;
+        }
+        if separator_bytes == 1 {
+            expected.push('-');
+        }
+        expected.push_str(&word.to_ascii_lowercase());
+    }
+    if expected.is_empty() {
+        "note".into()
+    } else {
+        expected
+    }
+}
 
 #[hegel::test(test_cases = 300)]
 fn a_note_reads_back_as_written(tc: TestCase) {
@@ -35,22 +86,44 @@ fn a_bare_link_in_the_body_relates(tc: TestCase) {
 }
 
 #[hegel::test]
-fn a_slug_is_an_id(tc: TestCase) {
-    let title: String = tc.draw(gs::text().max_size(200));
-    let id = slug(&title);
-    assert!(is_id(&id), "{id:?} from {title:?}");
+fn slug_matches_the_independent_whole_word_prefix(tc: TestCase) {
+    let (words, title) = tc.draw(generated_ordinary_title());
+    let expected = expected_slug(&words);
+    assert_ne!(expected, "note", "generated first word must not fall back");
+    let actual = slug(&title);
+    assert_eq!(actual, expected, "from {title:?} and words {words:?}");
+
+    // These remain secondary invariants; the expected slug above is computed
+    // without either production helper.
+    assert!(is_id(&actual), "{actual:?} from {title:?}");
+    assert_eq!(slug(&actual), actual);
 }
 
-/// A slug is its own slug, and an id of words joined by single dashes
-/// is its own slug too.
-#[hegel::test]
-fn a_slug_is_a_fixed_point(tc: TestCase) {
-    let title: String = tc.draw(gs::text().max_size(200));
-    let id = slug(&title);
-    assert_eq!(slug(&id), id);
-    let words: String =
-        tc.draw(gs::from_regex("[a-z0-9]{1,10}(?:-[a-z0-9]{1,10}){0,4}"));
-    assert_eq!(slug(&words), words);
+#[test]
+fn slug_obeys_64_byte_whole_word_boundaries_and_fallback() {
+    let exactly_fits = format!("{} {}", "A".repeat(30), "B".repeat(33));
+    let exactly_fits_prefix = format!("{}-{}", "a".repeat(30), "b".repeat(33));
+    let overflow_after_prefix =
+        format!("{} {} {}", "A".repeat(20), "B".repeat(20), "C".repeat(25));
+    let cases = [
+        ("A".repeat(63), "a".repeat(63)),
+        ("B".repeat(64), "b".repeat(64)),
+        ("C".repeat(65), "note".to_owned()),
+        (format!("{} short", "D".repeat(65)), "note".to_owned()),
+        (exactly_fits, exactly_fits_prefix),
+        (
+            overflow_after_prefix,
+            format!("{}-{}", "a".repeat(20), "b".repeat(20)),
+        ),
+        ("é 雪".to_owned(), "note".to_owned()),
+    ];
+
+    for (title, expected) in cases {
+        let actual = slug(&title);
+        assert_eq!(actual, expected, "from {title:?}");
+        assert!(is_id(&actual), "{actual:?} from {title:?}");
+        assert_eq!(slug(&actual), actual);
+    }
 }
 
 /// `[[id]]` links come back in order, each once; brackets around what
