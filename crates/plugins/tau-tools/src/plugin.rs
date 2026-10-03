@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use tau_agent::{plugin::Plugin, tool::AgentTool};
+use tau_agent::{launch::Launcher, plugin::Plugin, tool::AgentTool};
 use tau_artifacts::Bytes;
 
 use crate::{
@@ -78,11 +78,23 @@ impl Tool {
 /// [`only`](Self::only) and [`without`](Self::without) pick a subset.
 /// The tools are offered in pi's order, whatever order they were picked
 /// in.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CodingTools {
     root: Root,
     tools: Vec<Tool>,
     artifacts: Option<Bytes>,
+    launcher: Option<Arc<dyn Launcher>>,
+}
+
+impl std::fmt::Debug for CodingTools {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodingTools")
+            .field("root", &self.root)
+            .field("tools", &self.tools)
+            .field("artifacts", &self.artifacts)
+            .field("launcher", &self.launcher.is_some())
+            .finish()
+    }
 }
 
 impl CodingTools {
@@ -91,7 +103,15 @@ impl CodingTools {
             root,
             tools: Tool::ALL.to_vec(),
             artifacts: None,
+            launcher: None,
         }
+    }
+
+    /// Starts `bash`'s commands through `launcher`: the environment
+    /// plugins give the run (`tau_agent::launch`).
+    pub fn with_launcher(mut self, launcher: Arc<dyn Launcher>) -> Self {
+        self.launcher = Some(launcher);
+        self
     }
 
     /// Attach private byte storage for the nested artifact reader.
@@ -124,6 +144,17 @@ impl Plugin for CodingTools {
     }
 
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
+        let bash = || {
+            let bash = bash::Bash::new(self.root.clone());
+            let bash = match &self.artifacts {
+                Some(bytes) => bash.with_artifacts(bytes.clone()),
+                None => bash,
+            };
+            match &self.launcher {
+                Some(launcher) => bash.with_launcher(launcher.clone()),
+                None => bash,
+            }
+        };
         let mut tools: Vec<Arc<dyn AgentTool>> = self
             .tools
             .iter()
@@ -133,11 +164,7 @@ impl Plugin for CodingTools {
                         .with_artifacts(bytes.clone()),
                 )
                     as Arc<dyn AgentTool>,
-                (Tool::Bash, Some(bytes)) => Arc::new(
-                    bash::Bash::new(self.root.clone())
-                        .with_artifacts(bytes.clone()),
-                )
-                    as Arc<dyn AgentTool>,
+                (Tool::Bash, _) => Arc::new(bash()) as Arc<dyn AgentTool>,
                 _ => tool.build(&self.root),
             })
             .collect();

@@ -50,6 +50,7 @@ use base64::Engine as _;
 use serde_json::{Value, json};
 use tau_agent::{
     error::ToolError,
+    launch::Launch,
     tool::{ToolCtx, ToolOutput},
 };
 use tau_artifacts::Bytes;
@@ -77,6 +78,7 @@ pub const COALESCE_BYTES: usize = 64 << 10;
 /// Runs `args.command` with `shell -c` in `dir` under a pseudo-terminal.
 pub(super) async fn run(
     shell: &Path,
+    launch: &Launch,
     dir: &Path,
     args: &BashArgs,
     timeout: Option<Duration>,
@@ -91,12 +93,16 @@ pub(super) async fn run(
             acc
         }
     };
-    let mut run = match Command::new(shell)
+    let command = Command::new(shell)
         .arg("-c")
         .arg(&args.command)
-        .current_dir(dir)
-        .spawn()
-    {
+        .through(launch.prefix.iter().cloned())
+        .current_dir(dir);
+    let command = launch
+        .env
+        .iter()
+        .fold(command, |command, (key, value)| command.env(key, value));
+    let mut run = match command.spawn() {
         Ok(run) => run,
         Err(error) => {
             return finish_observed_output(

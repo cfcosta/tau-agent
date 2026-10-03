@@ -27,6 +27,7 @@
 pub mod terminal;
 
 use std::{
+    ffi::OsStr,
     future::Future,
     path::{Path, PathBuf},
     process::Stdio,
@@ -41,6 +42,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tau_agent::{
     error::ToolError,
+    launch::{Launch, Launcher},
     output::Spill,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
@@ -72,6 +74,10 @@ directory. Returns stdout and stderr. Output is truncated to last 2000 \
 lines or 50KB (whichever is hit first). If truncated, full output is \
 saved to a temp file. Optionally provide a timeout in seconds.";
 
+/// Why a command timed out before it started.
+const WAITED_TOO_LONG: &str = "Command timed out waiting for the \
+repository's environment to load";
+
 /// `{ command, timeout? }` (`docs/reference/tools.md`, "bash").
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct BashArgs {
@@ -90,6 +96,9 @@ pub struct Bash {
     parameters: Value,
     output_schema: Value,
     artifacts: Option<Bytes>,
+    /// What commands start through, when the host gives one: the
+    /// repository's environment (`docs/reference/environment.md`).
+    launcher: Option<Arc<dyn Launcher>>,
     /// Whether commands run under a pseudo-terminal.
     #[cfg(feature = "terminal")]
     terminal: bool,
@@ -105,6 +114,7 @@ impl Bash {
             parameters,
             output_schema: output_schema(),
             artifacts: None,
+            launcher: None,
             #[cfg(feature = "terminal")]
             terminal: true,
         }
@@ -127,6 +137,14 @@ impl Bash {
     /// Publish complete observed output through this run's artifact grants.
     pub fn with_artifacts(mut self, bytes: Bytes) -> Self {
         self.artifacts = Some(bytes);
+        self
+    }
+
+    /// Starts commands through `launcher`, which may hold the first one
+    /// back while the environment loads; the command's timeout counts
+    /// that wait.
+    pub fn with_launcher(mut self, launcher: Arc<dyn Launcher>) -> Self {
+        self.launcher = Some(launcher);
         self
     }
 
@@ -806,6 +824,9 @@ enum Outcome {
     SpawnFailed,
 }
 
+/// Why a command never started: how it ended, and what it says.
+type Unstarted = (Outcome, Option<&'static str>);
+
 /// Process status and the details returned with the command result.
 struct CommandEnd {
     outcome: Outcome,
@@ -881,10 +902,31 @@ impl Bash {
         }
 
         let shell = self.resolve_shell();
+        let (launch, timeout) = match self.launch(timeout, &ctx).await {
+            Ok(launched) => launched,
+            Err((outcome, error)) => {
+                return finish_observed_output(
+                    self.accumulator(),
+                    None,
+                    &self.artifacts,
+                    &ctx,
+                    false,
+                    CommandEnd {
+                        outcome,
+                        exit_code: None,
+                        timeout: args.timeout,
+                        details: None,
+                        error: error.map(str::to_owned),
+                    },
+                )
+                .await;
+            }
+        };
         #[cfg(feature = "terminal")]
         if self.terminal {
             return terminal::run(
                 &shell,
+                &launch,
                 self.root.dir(),
                 &args,
                 timeout,
@@ -893,10 +935,12 @@ impl Bash {
             )
             .await;
         }
-        let mut command = tokio::process::Command::new(&shell);
+        let (program, words) = launch
+            .argv(shell.as_os_str(), [OsStr::new("-c"), args.command.as_ref()]);
+        let mut command = tokio::process::Command::new(&program);
         command
-            .arg("-c")
-            .arg(&args.command)
+            .args(&words)
+            .envs(launch.env.iter().map(|(key, value)| (key, value)))
             .current_dir(self.root.dir())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -919,7 +963,7 @@ impl Bash {
                         details: None,
                         error: Some(format!(
                             "failed to start {}: {error}",
-                            shell.display()
+                            Path::new(&program).display()
                         )),
                     },
                 )
@@ -1007,6 +1051,35 @@ impl Bash {
             },
         )
         .await
+    }
+
+    /// What the command starts through, and the time left of its
+    /// `timeout` once the launcher answered. A cancel or the timeout
+    /// while it waits ends the command before it starts.
+    async fn launch(
+        &self,
+        timeout: Option<Duration>,
+        ctx: &ToolCtx,
+    ) -> Result<(Launch, Option<Duration>), Unstarted> {
+        let Some(launcher) = &self.launcher else {
+            return Ok((Launch::default(), timeout));
+        };
+        let started = tokio::time::Instant::now();
+        let deadline = tokio::time::sleep(timeout.unwrap_or_default());
+        tokio::pin!(deadline);
+        tokio::select! {
+            launch = launcher.launch(self.root.dir()) => {
+                let left = timeout.map(|timeout| {
+                    timeout.saturating_sub(started.elapsed())
+                });
+                Ok((launch, left))
+            }
+            () = ctx.cancel.cancelled() => Err((Outcome::Cancelled, None)),
+            () = &mut deadline, if timeout.is_some() => Err((
+                Outcome::TimedOut,
+                Some(WAITED_TOO_LONG),
+            )),
+        }
     }
 
     fn accumulator(&self) -> Accumulator {
