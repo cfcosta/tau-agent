@@ -159,6 +159,9 @@ A changed path is a `FileChange`:
   accept a markerless file's current native materialization.
 - Cancelling redundant native merge terms does not list an untouched
   path as changed, in status, diff, commits, or turn snapshots.
+- The host reads the same conflicted paths with `Vcs::conflicts`
+  (after a snapshot): `@` sits on the run's newest commit, so they are
+  what the run's stack leaves in conflict.
 
 ### vcs_diff: `{ change?, paths? }`
 
@@ -506,6 +509,51 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
 - A child cannot land or be dropped while it has children still open:
   running, or holding changes it does not have. They land or are
   dropped first, one level at a time.
+- Land in the interface does not call `Host::land` directly: it puts
+  the chat in its main chat's landing queue
+  ([ADR 0024](../decisions/0024-landings-queue-while-the-parent-works.md)),
+  `Host::queue_landing`, which lands it at once when main is idle and
+  nothing waits before it. The queue is `host::queue::Lane`, a pure
+  state machine; the host carries out the `Action`s it returns. Each
+  change is a `landing-queue` record on the main chat (`Record`:
+  `queued`, `previewed`, `left`, `resolving`, `conflicted`,
+  `dismissed`, `clean`), and `Lane::restore` folds them back, so a
+  restart keeps the queue. A queued chat (`queue::Waiting`) carries the
+  files its last preview found in conflict and the files the person
+  confirmed: those of the preview they saw before clicking Land
+  (`Host::preview_landing` keeps it), or, for a chat queued already,
+  what its last preview in the queue found.
+- `queue::drain` lands what may land: never while main runs, while
+  tau's resolving turn is about to start, or while main is marked
+  conflicted. It reads main's stack first (`Host::main_conflicts`:
+  catch up, then `Vcs::conflicts`), then previews the first chat again.
+  Clean, or conflicting only in confirmed files, it lands through
+  `Host::land`; conflicts start main's resolving turn and stop the drain
+  until that turn ends. New conflicts stop the drain and leave the chat
+  first, needing confirmation. A chat that landed or was dropped
+  meanwhile leaves the queue; one that cannot land leaves it, and its
+  card says why. The host drains after Land, Unqueue and Drop, after each
+  turn of main (`Host::main_turn_ended`), and at start
+  (`Host::drain_all`), one drain at a time.
+- A preview works while main runs: it reads main as it is, without
+  catching it up or making workspaces. `Host::land` holds the start
+  lock, so no turn of main starts in the middle of a landing.
+- tau's resolving turn (`Host::start_resolving`) gets a plugin that
+  holds its stop once while main's working copy still has conflicts:
+  `Conflicts remain in a.rs, b.rs. Resolve them and commit.` A main turn
+  that ends with conflicts marks main (`Record::Conflicted`), and the
+  host calls the hook given to `Host::on_conflicts_on_main`. While
+  marked, nothing lands on main, and `Host::start` and `Host::fork`
+  refuse with `main has conflicts in a.rs; resolve them first`. The mark
+  goes once main's stack is clean, checked at each turn end of main and
+  each drain. Resolve again starts tau's turn again with the last
+  resolving message; "I'll write to main" stores `dismissed`, which
+  hides the card and keeps the mark.
+- The interface shows the queue and the mark on the main chat's view
+  (`RunView::landing_queue`, `RunView::main_conflicts`), sent as
+  `HostUpdate::LandingQueue`; `Workspace::queued` gives a chat's place.
+  Preview, Land, Unqueue and Drop run on the host's blocking pool and
+  answer with `HostUpdate`s.
 - With `confirm` off, nothing changes. The `Landing` it returns says
   what would happen: the changes as they would be (`changes`, newest
   first), the unresolved paths in the new head (`conflicts`), whether

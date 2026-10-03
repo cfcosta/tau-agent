@@ -3,6 +3,9 @@
 - Status: accepted. Amends [0009](0009-child-runs-land-on-their-parent.md):
   its commit per turn, who resolves a landing's conflicts, and where a
   top-level run lands.
+  Amended by [0024](0024-landings-queue-while-the-parent-works.md):
+  the resolving turn is checked, and conflicts it leaves hold the
+  parent.
 - Date: 2026-09-30
 
 ## Context

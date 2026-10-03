@@ -8,6 +8,8 @@
   [0015](0015-delegates-fork-their-caller.md): a sub-agent forks its
   caller's transcript, and several run at once.
   Amended by [0016](0016-runs-nest-one-level.md): runs nest one level.
+  Amended by [0024](0024-landings-queue-while-the-parent-works.md):
+  a landing onto a busy parent waits in its queue instead of failing.
 - Date: 2026-09-29
 - Options, with commit graphs:
   [Landing Child Runs](https://claude.ai/artifact/XhxBri4hxYF34fAprH98hC);
