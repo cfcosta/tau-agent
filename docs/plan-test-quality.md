@@ -1,0 +1,48 @@
+# Property-test quality work
+
+Status: implementation in progress. The source audit selected 40 of 392 Hegel
+property entry points (10.2%). Ordinary example tests are outside this pass.
+The replacements use behavioral laws, independent oracles, valid constructed
+inputs, readable shrinking, and deterministic execution. Known regressions
+remain. A lower test count or a speedup is not itself the goal.
+
+Each batch receives its own checked Jujutsu commit. Replacements land before
+old coverage is removed. Focused fault probes run against the intended
+replacement; probe results are distinct from full-suite mutation scores.
+
+## Batches
+
+Audit numbers refer to the approved 40-test shortlist.
+
+- [ ] **01 — MCP names:** independent plain/collision/length naming oracle (#2).
+- [ ] **02 — Recovery:** independent status/body/precedence expectations (#3).
+- [ ] **03 — Token estimates:** independent Unicode/image/per-message accounting (#4).
+- [ ] **04 — Store UI:** compare durable and UI folds to an operation model (#5).
+- [ ] **05 — Request frames:** preserve original generated maps through both encodings (#6).
+- [ ] **06 — Costs:** combine independent formula/apply/increment coverage and exhaust zero usage (#7, #21, #39).
+- [ ] **07 — Schema generators:** replace compile-only coverage with valid/invalid value laws (#8).
+- [ ] **08 — Evaluator and fixtures:** execute real owned module/tools/artifact paths on generated inputs; retain corpus-integrity checks (#1, #30–34).
+- [ ] **09 — Markup:** require exact generated span text and marks (#9).
+- [ ] **10 — Signatures:** verify semantic type structure as well as Luau syntax (#10).
+- [ ] **11 — Module imports:** dependency/version/import histories and initialization counts (#11).
+- [ ] **12 — Fake module tests:** ordered fixtures, exact initialization and failure propagation (#12).
+- [ ] **13 — Services:** clone/mutate/query histories against immutable snapshots (#13).
+- [ ] **14 — Paths:** exact independent path model with idempotence secondary (#14–15).
+- [ ] **15 — Retry rules:** exhaustive statuses, richer known/unknown header generation and preserved boundary regressions (#16–20).
+- [ ] **16 — Compaction UI:** exhaustive activation and exact decision labels (#22–23).
+- [ ] **17 — Reasoning/goal UI:** exhaustive activation combinations (#24–25).
+- [ ] **18 — Callback defaults:** explicit configured/listening port boundaries (#26).
+- [ ] **19 — Session reasoning:** model-class tables and change/no-op/unset histories (#27–28, #40).
+- [ ] **20 — Goal commands:** consolidate parsed/general condition laws without rejection (#29).
+- [ ] **21 — Inference and slugs:** schema/value acceptance pairs and exact word/length models (#35–38).
+
+## Validation
+
+Canonical formatting is `nix fmt`; Rust checks run through `nix develop`.
+Affected tests and strict Clippy run before each commit. Common/UI changes
+also receive host-disabled library checks where supported. Filesystem and
+Store tests use enabled I/O; a SQLx Store stays on one persistent runtime.
+No live provider calls or pushes are required or authorized by this work.
+
+The finished record will distinguish executed checks/probes from proposed
+ones. It will not claim exhaustive mutation coverage or unmeasured savings.
