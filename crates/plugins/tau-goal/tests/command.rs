@@ -30,17 +30,22 @@ fn written(tc: &TestCase) -> (String, Command) {
     ));
     let dollar = tc.draw(gs::booleans());
     let budget_first = tc.draw(gs::booleans());
-    let words = tc.draw(
+    let first_word = tc.draw(hegel::one_of!(
+        gs::from_regex(r"[a-z0-9$.,:][a-z0-9$.,:-]{0,7}"),
+        gs::just(String::from("clear")),
+    ));
+    let remaining_words = tc.draw(
         gs::vecs(hegel::one_of!(
             gs::from_regex(r"[a-z0-9$.,:-]{1,8}"),
             gs::just(String::from("clear")),
             gs::just(String::from("--budget")),
         ))
-        .min_size(1)
-        .max_size(5),
+        .max_size(4),
     );
-    // A condition cannot start with a limit: it would be read as one.
-    tc.assume(!words[0].starts_with("--"));
+    // The first word cannot be a limit, so every shrunk command has a condition.
+    let words = std::iter::once(first_word)
+        .chain(remaining_words)
+        .collect::<Vec<_>>();
 
     let mut limits = Vec::new();
     if let Some(n) = continuations {
@@ -77,13 +82,25 @@ fn written(tc: &TestCase) -> (String, Command) {
     (text, command)
 }
 
-/// A command written out with any limits, in either order, with any
-/// whitespace between its words, reads as those limits and the
-/// condition's words joined by single spaces; `clear` alone clears.
+/// Property inventory:
+/// - `a_written_command_reads_as_itself` requires parsing to return the
+///   independently assembled `Command`, then checks each set condition against
+///   the original condition. Optional `u32` and finite nonnegative `f64`
+///   limits, whitespace choices, and one to five words of at most eight
+///   characters vary; shrinking keeps the first word non-flag.
+/// - `any_condition_reads_back_from_the_models_input` uses the original string
+///   as the `set_input`/`set_message` oracle. A Unicode letter plus at most 39
+///   arbitrary Unicode characters guarantees a nonblank condition of at most
+///   40 characters as it shrinks; fixed collisions run on every case.
 #[hegel::test]
 fn a_written_command_reads_as_itself(tc: TestCase) {
     let (text, command) = written(&tc);
-    assert_eq!(Command::parse(&text), Some(command), "{text:?}");
+    let parsed = Command::parse(&text);
+    assert_eq!(parsed.as_ref(), Some(&command), "{text:?}");
+
+    if let Command::Set { condition, .. } = &command {
+        assert_eq!(set_message(&set_input(condition)), Some(condition.clone()));
+    }
 }
 
 /// A `--budget` is accepted exactly when it is a finite number of at
@@ -112,28 +129,33 @@ fn a_budget_is_a_finite_amount_not_below_zero(tc: TestCase) {
     }
 }
 
-/// The condition a `/goal` sets reads back from the input the model
-/// gets for it, whatever the person typed around it.
-#[hegel::test]
-fn a_set_condition_reads_back_from_the_models_input(tc: TestCase) {
-    let typed = if tc.draw(gs::booleans()) {
-        format!("/goal {}", tc.draw(gs::text()))
-    } else {
-        written(&tc).0
-    };
-    let Some(Command::Set { condition, .. }) = Command::parse(&typed) else {
-        tc.reject();
-    };
-    assert_eq!(set_message(&set_input(&condition)), Some(condition));
-}
-
 /// Any condition reads back from the input the model gets for it: one
 /// that would not read back written as is is quoted.
 #[hegel::test]
 fn any_condition_reads_back_from_the_models_input(tc: TestCase) {
-    let condition = tc.draw(gs::text());
-    tc.assume(!condition.trim().is_empty());
+    let first_letter = tc.draw(gs::characters().categories(&["L"]));
+    let remaining_characters = tc.draw(gs::vecs(gs::characters()).max_size(39));
+    let condition = std::iter::once(first_letter)
+        .chain(remaining_characters)
+        .collect::<String>();
     assert_eq!(set_message(&set_input(&condition)), Some(condition));
+
+    // Keep the important quoting collisions in this property on every run.
+    for collision in [
+        "clear",
+        "--budget 5 tests pass",
+        "--continuations 3 x",
+        "tests\npass",
+        r#""quoted""#,
+        "tests  pass",
+        " tests pass",
+    ] {
+        assert_eq!(
+            set_message(&set_input(collision)).as_deref(),
+            Some(collision),
+            "{collision:?}",
+        );
+    }
 }
 
 /// An ordinary condition is written as is, as a person would type it,

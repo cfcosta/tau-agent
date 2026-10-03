@@ -33,7 +33,7 @@ Audit numbers refer to the approved 40-test shortlist.
 - [x] **17 — Reasoning/goal UI:** exhaustive activation combinations (#24–25).
 - [x] **18 — Callback defaults:** explicit configured/listening port boundaries (#26).
 - [x] **19 — Session reasoning:** model-class tables and change/no-op/unset histories (#27–28, #40).
-- [ ] **20 — Goal commands:** consolidate parsed/general condition laws without rejection (#29).
+- [x] **20 — Goal commands:** consolidate parsed/general condition laws without rejection (#29).
 - [ ] **21 — Inference and slugs:** schema/value acceptance pairs and exact word/length models (#35–38).
 
 ## Validation
@@ -75,6 +75,7 @@ mutation campaign. Only failure of the named replacement counts as detection.
 | 17    | Reasoning UI ignores a manual effort                 | `startup_status_and_plugin_presence_follow_key_and_effort`            |
 | 18    | Redirect URIs hard-code port 7                       | `the_default_callback_binds_loopback_and_uses_the_listener_port`      |
 | 19    | Session effort changes are ignored                   | `session_reasoning_history_follows_effective_wire_fields`             |
+| 20    | Goal input never quotes ambiguous conditions         | `any_condition_reads_back_from_the_models_input`                      |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before
