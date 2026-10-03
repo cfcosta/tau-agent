@@ -144,7 +144,7 @@ fn usage_for_unprinted(tc: &TestCase, model: &'static Model) -> Usage {
         output,
         cache_read,
         cache_write,
-        reasoning: None,
+        reasoning: Some(output),
         total_tokens: input + output + cache_read + cache_write,
         cost: Default::default(),
     }
@@ -162,18 +162,24 @@ fn add(a: &Usage, b: &Usage) -> Usage {
     }
 }
 
-/// Zero usage costs zero, at every service tier.
-#[hegel::test(test_cases = 100)]
-fn zero_usage_is_zero_cost(tc: TestCase) {
-    let model = untiered_model();
-    let tier = tc.draw(service_tier());
+/// Zero usage costs exactly zero for every model and service tier.
+#[test]
+fn zero_usage_costs_zero_for_every_model_and_service_tier() {
     let usage = Usage::default();
-    let result = cost::cost(model, &usage, tier);
-    assert_eq!(result.input, 0.0);
-    assert_eq!(result.output, 0.0);
-    assert_eq!(result.cache_read, 0.0);
-    assert_eq!(result.cache_write, 0.0);
-    assert_eq!(result.total, 0.0);
+    for model in model::models() {
+        for tier in [
+            ServiceTier::Default,
+            ServiceTier::Flex,
+            ServiceTier::PriorityOrFast,
+        ] {
+            let result = cost::cost(model, &usage, tier);
+            assert_eq!(result.input, 0.0, "{} {tier:?}", model.id);
+            assert_eq!(result.output, 0.0, "{} {tier:?}", model.id);
+            assert_eq!(result.cache_read, 0.0, "{} {tier:?}", model.id);
+            assert_eq!(result.cache_write, 0.0, "{} {tier:?}", model.id);
+            assert_eq!(result.total, 0.0, "{} {tier:?}", model.id);
+        }
+    }
 }
 
 /// How many tokens each part of a usage may have so that two usages, and
@@ -221,79 +227,141 @@ fn cost_is_additive_within_a_tier(tc: TestCase) {
     assert_close(cost_a.total + cost_b.total, cost_sum.total, "total");
 }
 
-/// Cost is monotone in each token count: adding tokens to any one field
-/// never decreases that field's cost (every rate is non-negative, so
-/// this is `cost` restated as "the rates never invent a discount").
-#[hegel::test(test_cases = 500)]
-fn cost_is_monotone_in_each_token_count(tc: TestCase) {
-    let model = tc.draw(
-        gs::sampled_from(vec![untiered_model(), tiered_model()])
-            .print_as_debug(),
+#[derive(Clone, Copy, Debug)]
+enum TokenField {
+    Input,
+    Output,
+    CacheRead,
+    CacheWrite,
+}
+
+fn usage_with_increment(
+    usage: &Usage,
+    field: TokenField,
+    increment: u64,
+) -> Usage {
+    let mut increased = usage.clone();
+    let tokens = match field {
+        TokenField::Input => &mut increased.input,
+        TokenField::Output => &mut increased.output,
+        TokenField::CacheRead => &mut increased.cache_read,
+        TokenField::CacheWrite => &mut increased.cache_write,
+    };
+    *tokens = tokens
+        .checked_add(increment)
+        .expect("bounded token increment fits in u64");
+    increased.total_tokens = increased
+        .total_tokens
+        .checked_add(increment)
+        .expect("bounded total-token increment fits in u64");
+    increased
+}
+
+fn field_cost(costs: [f64; 4], field: TokenField) -> f64 {
+    match field {
+        TokenField::Input => costs[0],
+        TokenField::Output => costs[1],
+        TokenField::CacheRead => costs[2],
+        TokenField::CacheWrite => costs[3],
+    }
+}
+
+fn uses_long_context_rates(model: &Model, usage: &Usage) -> bool {
+    model.pricing.long_context.is_some_and(|long| {
+        usage.input + usage.cache_read + usage.cache_write
+            > long.input_tokens_above
+    })
+}
+
+fn assert_matches_reference(model: &Model, usage: &Usage, tier: ServiceTier) {
+    let [input, output, cache_read, cache_write] =
+        reference(model, usage, tier);
+    let expected_total = input + output + cache_read + cache_write;
+
+    let result = cost::cost(model, usage, tier);
+    assert_close(result.input, input, "cost input");
+    assert_close(result.output, output, "cost output");
+    assert_close(result.cache_read, cache_read, "cost cache_read");
+    assert_close(result.cache_write, cache_write, "cost cache_write");
+    assert_close(result.total, expected_total, "cost total");
+
+    let before_apply = usage.clone();
+    let mut applied = usage.clone();
+    cost::apply(model, &mut applied, tier);
+    assert_close(applied.cost.input, input, "apply input");
+    assert_close(applied.cost.output, output, "apply output");
+    assert_close(applied.cost.cache_read, cache_read, "apply cache_read");
+    assert_close(applied.cost.cache_write, cache_write, "apply cache_write");
+    assert_close(applied.cost.total, expected_total, "apply total");
+
+    assert_eq!(applied.input, before_apply.input, "apply changed input");
+    assert_eq!(applied.output, before_apply.output, "apply changed output");
+    assert_eq!(
+        applied.cache_read, before_apply.cache_read,
+        "apply changed cache_read"
     );
-    let max = within_base_tier(model);
-    let base = tc.draw(generators::usage_with_max_tokens(max));
-    let extra = tc.draw(gs::integers::<u64>().max_value(max));
-    let tier = ServiceTier::Default;
-
-    let base_cost = cost::cost(model, &base, tier);
-
-    let mut with_more_input = base.clone();
-    with_more_input.input += extra;
-    assert!(cost::cost(model, &with_more_input, tier).input >= base_cost.input);
-
-    let mut with_more_output = base.clone();
-    with_more_output.output += extra;
-    assert!(
-        cost::cost(model, &with_more_output, tier).output >= base_cost.output
+    assert_eq!(
+        applied.cache_write, before_apply.cache_write,
+        "apply changed cache_write"
     );
-
-    let mut with_more_cache_read = base.clone();
-    with_more_cache_read.cache_read += extra;
-    assert!(
-        cost::cost(model, &with_more_cache_read, tier).cache_read
-            >= base_cost.cache_read
+    assert_eq!(
+        applied.reasoning, before_apply.reasoning,
+        "apply changed reasoning"
     );
-
-    let mut with_more_cache_write = base.clone();
-    with_more_cache_write.cache_write += extra;
-    assert!(
-        cost::cost(model, &with_more_cache_write, tier).cache_write
-            >= base_cost.cache_write
+    assert_eq!(
+        applied.total_tokens, before_apply.total_tokens,
+        "apply changed total_tokens"
     );
 }
 
-/// **Differential:** every model, every service tier, usages around the
-/// long-context threshold: each part matches the reference formula, and
-/// `total` is their sum.
+/// Property inventory: `cost` and `apply` match the independent literal
+/// reference for every model/tier and threshold-adjacent usage; four paired
+/// 1..=100 token increments also match after any pricing-tier switch. Usage
+/// components stay bounded by 1<<30 (or are split around the model threshold),
+/// and Hegel shrinks each draw while the composite preserves those bounds.
+/// Monotonicity is checked from the reference only when both usages select the
+/// same effective pricing rates.
 #[hegel::test(test_cases = 1000)]
 fn cost_matches_the_reference_formula(tc: TestCase) {
     let model = tc.draw(any_model());
     let tier = tc.draw(service_tier());
     let usage = tc.draw(usage_for(model));
+    assert_matches_reference(model, &usage, tier);
 
-    let result = cost::cost(model, &usage, tier);
-    let [input, output, cache_read, cache_write] =
-        reference(model, &usage, tier);
-    assert_close(result.input, input, "input");
-    assert_close(result.output, output, "output");
-    assert_close(result.cache_read, cache_read, "cache_read");
-    assert_close(result.cache_write, cache_write, "cache_write");
-    assert_close(
-        result.total,
-        input + output + cache_read + cache_write,
-        "total",
-    );
-}
+    let increments = [
+        (
+            TokenField::Input,
+            tc.draw(gs::integers::<u64>().min_value(1).max_value(100)),
+        ),
+        (
+            TokenField::Output,
+            tc.draw(gs::integers::<u64>().min_value(1).max_value(100)),
+        ),
+        (
+            TokenField::CacheRead,
+            tc.draw(gs::integers::<u64>().min_value(1).max_value(100)),
+        ),
+        (
+            TokenField::CacheWrite,
+            tc.draw(gs::integers::<u64>().min_value(1).max_value(100)),
+        ),
+    ];
+    let base_rates = uses_long_context_rates(model, &usage);
+    let base_costs = reference(model, &usage, tier);
 
-/// `cost::apply` fills `usage.cost` with exactly what `cost::cost`
-/// returns.
-#[hegel::test(test_cases = 100)]
-fn apply_fills_usage_cost(tc: TestCase) {
-    let model = untiered_model();
-    let mut usage = tc.draw(generators::usage_with_max_tokens(1 << 30));
-    let expected = cost::cost(model, &usage, ServiceTier::Default);
-    cost::apply(model, &mut usage, ServiceTier::Default);
-    assert_eq!(usage.cost, expected);
+    for (field, increment) in increments {
+        let increased = usage_with_increment(&usage, field, increment);
+        assert_matches_reference(model, &increased, tier);
+
+        if base_rates == uses_long_context_rates(model, &increased) {
+            let increased_costs = reference(model, &increased, tier);
+            assert!(
+                field_cost(increased_costs, field)
+                    >= field_cost(base_costs, field),
+                "{field:?} reference cost decreased at unchanged pricing rates"
+            );
+        }
+    }
 }
 
 /// **Tier switch, at the threshold:** pi's comparison is
