@@ -14,7 +14,7 @@ replacement; probe results are distinct from full-suite mutation scores.
 
 Audit numbers refer to the approved 40-test shortlist.
 
-- [ ] **01 — MCP names:** independent plain/collision/length naming oracle (#2).
+- [x] **01 — MCP names:** independent plain/collision/length naming oracle (#2).
 - [ ] **02 — Recovery:** independent status/body/precedence expectations (#3).
 - [ ] **03 — Token estimates:** independent Unicode/image/per-message accounting (#4).
 - [ ] **04 — Store UI:** compare durable and UI folds to an operation model (#5).
@@ -46,3 +46,17 @@ No live provider calls or pushes are required or authorized by this work.
 
 The finished record will distinguish executed checks/probes from proposed
 ones. It will not claim exhaustive mutation coverage or unmeasured savings.
+
+### Executed focused fault probes
+
+These are individual injected faults in disposable workspaces, not a full
+mutation campaign. Only failure of the named replacement counts as detection.
+
+| Batch | Injected fault                         | Replacement that failed                    |
+| ----- | -------------------------------------- | ------------------------------------------ |
+| 01    | Plain-name prefix loses one underscore | `short_ascii_pairs_keep_exact_plain_names` |
+
+Shared Cargo target artifacts can have newer timestamps than sources copied
+into another workspace. Checks refresh local Rust source timestamps before
+building; ambiguous probe artifacts require a clean rebuild. This changes no
+source content. The cost probe required such a rebuild.
