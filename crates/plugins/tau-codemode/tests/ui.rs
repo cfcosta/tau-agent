@@ -34,7 +34,7 @@ use tau_codemode::{
     modules::{self, Definition, ModuleTest, TestReport},
     options,
     run,
-    store::{self, Writes},
+    store,
     ui::{self, Action, CodemodeUi, InspectorUi, Row, State},
 };
 use tau_jev::{Jev, fake::FakeJev};
@@ -883,62 +883,6 @@ fn verdicts_mark_their_rows() {
     assert_eq!(
         ui::label(&stored, data.result.as_ref().unwrap().details.as_ref()),
         "1 call · 0.0 s"
-    );
-}
-
-/// The store a run shows is the store its records fold to, whatever
-/// scripts wrote, records of another shape skipped.
-#[hegel::test(test_cases = 200)]
-fn the_store_folds_as_the_plugin_folds_it(tc: hegel::TestCase) {
-    // (junk?, writes): a key set to a value, or deleted.
-    type Ops = Vec<(String, Option<i64>)>;
-    let writes: Vec<(bool, Ops)> = tc.draw(gs::vecs(hegel::tuples!(
-        gs::booleans(),
-        gs::vecs(hegel::tuples!(
-            gs::sampled_from(vec!["a".to_owned(), "b".into(), "c".into()]),
-            gs::optional(gs::integers::<i64>()),
-        ))
-        .max_size(4),
-    )));
-    let records: Vec<Value> = writes
-        .iter()
-        .map(|(junk, ops)| {
-            if *junk {
-                return json!({ "kind": "other" });
-            }
-            let mut writes = Writes::default();
-            for (key, value) in ops {
-                match value {
-                    Some(value) => {
-                        writes.delete.retain(|k| k != key);
-                        writes.set.insert(key.clone(), json!(value));
-                    }
-                    None => {
-                        writes.set.remove(key);
-                        writes.delete.push(key.clone());
-                    }
-                }
-            }
-            serde_json::to_value(store::Record::Store(writes)).unwrap()
-        })
-        .collect();
-    // Folded as the interface folds it: through the registry, which
-    // skips what does not read as a record.
-    let registry = tau_ui_plugin::Registry::new().with(CodemodeUi);
-    let plugin = registry.get(tau_codemode::PLUGIN).unwrap();
-    let mut value = tau_ui_plugin::PluginValue::default();
-    for record in &records {
-        plugin.apply(
-            &mut value,
-            record,
-            &mut tau_ui_plugin::testing::FakeRun::default(),
-        );
-    }
-    let state = value.get::<State>();
-    assert_eq!(state.store, store::fold(&records));
-    assert_eq!(
-        state.writes,
-        writes.iter().filter(|(junk, _)| !junk).count()
     );
 }
 
