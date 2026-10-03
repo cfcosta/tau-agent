@@ -5,6 +5,7 @@ pub mod agent;
 pub mod context;
 pub mod error;
 pub mod event;
+pub mod launch;
 pub mod limits;
 pub mod output;
 pub mod plugin;
