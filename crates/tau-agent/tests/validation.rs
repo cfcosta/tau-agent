@@ -53,12 +53,23 @@ fn assert_semantically_equal(a: &Value, b: &Value) {
 // Properties (testing.md, `tau-agent` property inventory)
 // =============================================================================
 
-/// Coercion leaves a value that already validates unchanged.
+/// Property inventory: `jsonschema::is_valid` is the independent validity
+/// oracle, while `validate` and `coerce` must preserve each valid input exactly.
+/// `arg_schema(3)` bounds schema depth and `arg_value_for_schema` constructs its
+/// partner; shrinking redraws the value for the shrunk schema, preserving validity.
 #[hegel::test(test_cases = 300)]
 fn coercion_leaves_a_valid_value_unchanged(tc: TestCase) {
     let schema = tc.draw(generators::arg_schema(3));
     let value = tc.draw(generators::arg_value_for_schema(schema.clone()));
+    assert!(
+        jsonschema::is_valid(&schema, &value),
+        "{value} is invalid under {schema}"
+    );
     let compiled = compile(&schema);
+    let validated = compiled.validate(&value).unwrap_or_else(|error| {
+        panic!("valid input {value} was rejected: {error}")
+    });
+    assert_eq!(validated, value);
     assert_eq!(compiled.coerce(&value), value);
 }
 
@@ -679,13 +690,91 @@ fn incompatible_schema_is_a_schema_error_not_a_panic() {
     assert!(!error.to_string().is_empty());
 }
 
-/// Every generated schema over the shapes [`generators::arg_schema`]
-/// draws compiles: the generator never has to fall back to `tc.assume`
-/// (`docs/reference/testing.md`, "Build valid values directly").
+/// Property inventory: a false JSON Schema is a fixed impossible schema, and
+/// both `jsonschema::is_valid` and `ArgumentSchema::validate` must reject every
+/// generated JSON value. The standard JSON-value generator shrinks toward small
+/// values without filtering.
 #[hegel::test(test_cases = 300)]
-fn every_generated_schema_compiles(tc: TestCase) {
-    let schema = tc.draw(generators::arg_schema(3));
-    let _ = compile(&schema);
+fn compiled_false_schema_rejects_every_generated_value(tc: TestCase) {
+    let schema = Value::Bool(false);
+    let value = tc.draw(json_gs::values());
+    assert!(!jsonschema::is_valid(&schema, &value));
+    let compiled = compile(&schema);
+    assert!(
+        compiled.validate(&value).is_err(),
+        "false schema accepted {value}"
+    );
+}
+
+/// Property inventory: the independent JSON Schema oracle accepts the
+/// constructed object and rejects its missing-key partner; `ArgumentSchema`
+/// must report `k` as the missing-property path. The bounded leaf kind is drawn
+/// from five JSON types and its value is built alongside it; shrinking preserves
+/// the required property and simplifies leaf contents without rejection.
+#[hegel::test(test_cases = 300)]
+fn removing_a_required_leaf_is_rejected_at_its_key_path(tc: TestCase) {
+    let (leaf_schema, leaf_value) = match tc.draw(gs::sampled_from(vec![
+        "string", "boolean", "null", "object", "array",
+    ])) {
+        "string" => (
+            json!({"type": "string", "maxLength": 8}),
+            Value::String(tc.draw(gs::text().max_size(8))),
+        ),
+        "boolean" => (
+            json!({"type": "boolean"}),
+            Value::Bool(tc.draw(gs::booleans())),
+        ),
+        "null" => (json!({"type": "null"}), Value::Null),
+        "object" => (
+            json!({
+                "type": "object",
+                "properties": {"nested": {"type": "string", "maxLength": 8}},
+                "required": ["nested"],
+                "maxProperties": 1,
+                "additionalProperties": false,
+            }),
+            json!({"nested": tc.draw(gs::text().max_size(8))}),
+        ),
+        "array" => (
+            json!({"type": "array", "items": {"type": "string", "maxLength": 8}, "maxItems": 3}),
+            Value::Array(
+                tc.draw(gs::vecs(gs::text().max_size(8)).max_size(3))
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        ),
+        _ => unreachable!("leaf types are selected from the fixed list"),
+    };
+    let schema = json!({
+        "type": "object",
+        "properties": {"k": leaf_schema},
+        "required": ["k"],
+        "additionalProperties": false,
+    });
+    let valid = json!({"k": leaf_value});
+    assert!(
+        jsonschema::is_valid(&schema, &valid),
+        "{valid} is invalid under {schema}"
+    );
+    let compiled = compile(&schema);
+    assert_eq!(compiled.validate(&valid).unwrap(), valid);
+
+    let mut missing_required = valid.clone();
+    missing_required
+        .as_object_mut()
+        .expect("constructed root is an object")
+        .remove("k")
+        .expect("the constructed value contains required key k");
+    assert!(!jsonschema::is_valid(&schema, &missing_required));
+    let error = compiled
+        .validate(&missing_required)
+        .expect_err("the required property was removed");
+    let expected = "Validation failed:\n  - k: \"k\" is a required property";
+    assert!(
+        error.to_string().starts_with(expected),
+        "want {expected:?}, got: {error}"
+    );
 }
 
 /// `SchemaError` and `ValidationError` behave like ordinary errors:

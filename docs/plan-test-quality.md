@@ -20,7 +20,7 @@ Audit numbers refer to the approved 40-test shortlist.
 - [x] **04 — Store UI:** compare durable and UI folds to an operation model (#5).
 - [x] **05 — Request frames:** preserve original generated maps through both encodings (#6).
 - [x] **06 — Costs:** combine independent formula/apply/increment coverage and exhaust zero usage (#7, #21, #39).
-- [ ] **07 — Schema generators:** replace compile-only coverage with valid/invalid value laws (#8).
+- [x] **07 — Schema generators:** replace compile-only coverage with valid/invalid value laws (#8).
 - [ ] **08 — Evaluator and fixtures:** execute real owned module/tools/artifact paths on generated inputs; retain corpus-integrity checks (#1, #30–34).
 - [ ] **09 — Markup:** require exact generated span text and marks (#9).
 - [ ] **10 — Signatures:** verify semantic type structure as well as Luau syntax (#10).
@@ -60,6 +60,7 @@ mutation campaign. Only failure of the named replacement counts as detection.
 | 04    | Durable writes stop applying deletes                | `store_and_ui_folds_match_the_operation_model_at_each_prefix`        |
 | 05    | Both encoders receive a decoder that discards input | `a_json_body_round_trips`                                            |
 | 06    | Cost application overwrites reported total tokens   | `cost_matches_the_reference_formula` (clean rebuild)                 |
+| 07    | Argument validation accepts every coerced value     | `removing_a_required_leaf_is_rejected_at_its_key_path`               |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before
