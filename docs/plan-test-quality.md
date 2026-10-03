@@ -1,6 +1,7 @@
 # Property-test quality work
 
-Status: implementation in progress. The source audit selected 40 of 392 Hegel
+Status: complete. All 21 implementation batches have checked Jujutsu commits.
+The source audit selected 40 of 392 Hegel
 property entry points (10.2%). Ordinary example tests are outside this pass.
 The replacements use behavioral laws, independent oracles, valid constructed
 inputs, readable shrinking, and deterministic execution. Known regressions
@@ -44,8 +45,41 @@ also receive host-disabled library checks where supported. Filesystem and
 Store tests use enabled I/O; a SQLx Store stays on one persistent runtime.
 No live provider calls or pushes are required or authorized by this work.
 
-The finished record will distinguish executed checks/probes from proposed
-ones. It will not claim exhaustive mutation coverage or unmeasured savings.
+Merged validation passed:
+
+- 1,147 library/integration tests across the 13 affected crates; 8 existing
+  opt-in tests ignored.
+- 25 `tau-ui` library tests: **1,172 passed in total**.
+- Canonical formatting and affected-crate all-target strict Clippy.
+- Host-disabled library strict Clippy for `tau-codemode`, `tau-tools`, and
+  `tau-ui-plugin`; `tau-ui` compilation.
+- 24 deliberately injected faults detected by the named replacements below.
+
+The final source census is 379 Hegel attributes and 1,237 ordinary
+Rust/Tokio/SQLx attributes. These count entry points, not generated cases or
+executed tests. The 40 audited responsibilities remain covered through stronger
+properties, consolidated models, or exhaustive tables. No production behavior,
+dependencies, evaluation goldens, or unrelated regressions changed.
+
+This is not a full mutation campaign or runtime comparison. The larger checked
+suite does not establish a speedup, mutation-score increase, or provider savings.
+Ordinary-test quality triage remains outside this pass.
+
+### CI and failure replay
+
+Keep the shipped `hegel.toml` settings: development locally and fixed-seed CI
+without an example database. Generated domains are bounded in the test
+inventories; slow owned VM/session properties have explicit 12/24-case budgets.
+Do not substitute timing thresholds or disabled-I/O runtimes. Keep a Store on
+one persistent enabled-I/O runtime.
+
+Run affected library/integration tests through `nix develop -c cargo test
+-p CRATE --lib --tests`, and strict checks through `nix develop -c cargo clippy
+-p CRATE --all-targets -- -D warnings`. For host-disabled builds, check libraries
+only, not existing host-only integration targets. Run `nix fmt` before committing.
+Use Hegel's reported shrunk inputs and the focused test name to replay failures;
+retain confirmed regressions as explicit cases. See [Testing](reference/testing.md)
+for the repository-wide profiles and replay conventions.
 
 ### Executed focused fault probes
 
