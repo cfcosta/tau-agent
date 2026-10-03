@@ -190,6 +190,10 @@ fn a_long_file_says_where_to_continue() {
     assert_eq!(details["artifact"], Value::Null);
     assert_eq!(details["artifact_error"], "artifact storage is unavailable");
     assert_eq!(details["source_complete"], true);
+    assert_eq!(details["kind"], "text");
+    assert_eq!(details["offset"], 1);
+    assert_eq!(details["total_lines"], 2500);
+    assert_eq!(details["returned_lines"], 2000);
 }
 
 /// The error strings of `read`: an offset past the end, and a missing

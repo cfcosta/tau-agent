@@ -261,6 +261,12 @@ impl AgentTool for Read {
             .cloned()
             .unwrap_or(Value::Null);
         details["source_complete"] = json!(true);
+        // What the card numbers its lines by and counts.
+        for key in ["kind", "offset", "total_lines", "returned_lines"] {
+            if let Some(value) = structured.get(key) {
+                details[key] = value.clone();
+            }
+        }
         Ok(output)
     }
 }
