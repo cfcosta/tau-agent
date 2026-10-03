@@ -69,59 +69,179 @@ fn macos_variants_are_found_from_the_typed_name(tc: TestCase) {
     );
 }
 
-/// A path as a model may type it: segments that are names, `.`, `..`,
-/// empty (a doubled `/`), a literal `~`, or hold unicode spaces, joined
-/// by `/`, with an optional prefix (`/`, `@`, `~/`, `file://`).
-#[hegel::composite]
-fn typed_path(tc: &TestCase) -> String {
-    let segments: Vec<&str> = tc.draw(
-        gs::vecs(gs::sampled_from(vec![
-            "a",
-            "b.rs",
-            ".",
-            "..",
-            "",
-            "~",
-            "~x",
-            "@y",
-            "é",
-            "a\u{00A0}b",
-        ]))
-        .max_size(6),
-    );
-    let prefix =
-        tc.draw(gs::sampled_from(vec!["", "/", "@", "~/", "file:///", "./"]));
-    format!("{prefix}{}", segments.join("/"))
+#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
+enum PathPrefix {
+    Relative,
+    Absolute,
+    AtRelative,
+    AtAbsolute,
+    TildeHome,
+    HomeDirectory,
+    FileUrlAbsolute,
+    LiteralTildeWord,
 }
 
-/// Whatever is typed, `resolve` gives an absolute path with no `.` or
-/// `..` left in it.
-#[hegel::test(test_cases = 300)]
-fn resolved_paths_are_absolute_and_normal(tc: TestCase) {
-    let typed = tc.draw(typed_path());
-    let (_dir, root) = root();
-    let resolved = root.resolve(&typed);
-    assert!(resolved.is_absolute(), "{typed:?} -> {resolved:?}");
-    assert!(
-        resolved
-            .components()
-            .all(|c| !matches!(c, Component::CurDir | Component::ParentDir)),
-        "{typed:?} -> {resolved:?}"
-    );
-    if typed.contains("..") {
-        tc.event("parent components");
+#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
+enum SegmentKind {
+    AsciiWord,
+    CurrentDirectory,
+    ParentDirectory,
+    UnicodeSpaceWord,
+}
+
+#[hegel::composite]
+fn path_prefix(tc: &TestCase) -> PathPrefix {
+    tc.draw(gs::sampled_from(vec![
+        PathPrefix::Relative,
+        PathPrefix::Absolute,
+        PathPrefix::AtRelative,
+        PathPrefix::AtAbsolute,
+        PathPrefix::TildeHome,
+        PathPrefix::HomeDirectory,
+        PathPrefix::FileUrlAbsolute,
+        PathPrefix::LiteralTildeWord,
+    ]))
+}
+
+#[hegel::composite]
+fn path_segment(tc: &TestCase) -> (String, String) {
+    match tc.draw(gs::sampled_from(vec![
+        SegmentKind::AsciiWord,
+        SegmentKind::CurrentDirectory,
+        SegmentKind::ParentDirectory,
+        SegmentKind::UnicodeSpaceWord,
+    ])) {
+        SegmentKind::AsciiWord => {
+            let word = tc
+                .draw(gs::text().alphabet("abcxyz012").min_size(1).max_size(6));
+            (word.clone(), word)
+        }
+        SegmentKind::CurrentDirectory => (".".into(), ".".into()),
+        SegmentKind::ParentDirectory => ("..".into(), "..".into()),
+        SegmentKind::UnicodeSpaceWord => {
+            let (source, expected) = tc.draw(gs::sampled_from(vec![
+                ("a\u{00A0}b", "a b"),
+                ("c\u{2000}d", "c d"),
+                ("e\u{200A}f", "e f"),
+                ("g\u{202F}h", "g h"),
+                ("i\u{205F}j", "i j"),
+                ("k\u{3000}l", "k l"),
+            ]));
+            (source.into(), expected.into())
+        }
     }
 }
 
-/// Resolving is idempotent: a resolved path, typed again, resolves to
-/// itself.
+#[hegel::composite]
+fn path_segments(tc: &TestCase) -> Vec<(String, String)> {
+    let mut segments: Vec<(String, String)> =
+        tc.draw(gs::vecs(path_segment()).max_size(5));
+    let file_word: String =
+        tc.draw(gs::text().alphabet("abcxyz012").min_size(1).max_size(6));
+    let file = format!("{file_word}.txt");
+    segments.push((file.clone(), file));
+    segments
+}
+
+fn raw_path(prefix: PathPrefix, segments: &[(String, String)]) -> String {
+    let suffix = segments
+        .iter()
+        .map(|(source, _)| source.as_str())
+        .collect::<Vec<_>>()
+        .join("/");
+    match prefix {
+        PathPrefix::Relative => suffix,
+        PathPrefix::Absolute => format!("/{suffix}"),
+        PathPrefix::AtRelative => format!("@{suffix}"),
+        PathPrefix::AtAbsolute => format!("@/{suffix}"),
+        PathPrefix::TildeHome => format!("~/{suffix}"),
+        PathPrefix::HomeDirectory => format!("/home/someone/{suffix}"),
+        PathPrefix::FileUrlAbsolute => format!("file:///{suffix}"),
+        PathPrefix::LiteralTildeWord => format!("~draft.md/{suffix}"),
+    }
+}
+
+fn absolute_components(path: &str) -> Vec<String> {
+    assert!(path.starts_with('/'));
+    path.split('/')
+        .filter(|component| !component.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn normalized_component(components: &mut Vec<String>, segment: &str) {
+    // The description supplies the independently known component spelling.
+    match segment {
+        "" | "." => {}
+        ".." => {
+            components.pop();
+        }
+        _ => components.push(segment.to_owned()),
+    }
+}
+
+fn modeled_path(
+    root_path: &str,
+    prefix: PathPrefix,
+    segments: &[(String, String)],
+) -> PathBuf {
+    let mut components = match prefix {
+        PathPrefix::Relative
+        | PathPrefix::AtRelative
+        | PathPrefix::LiteralTildeWord => absolute_components(root_path),
+        PathPrefix::TildeHome | PathPrefix::HomeDirectory => {
+            absolute_components("/home/someone")
+        }
+        PathPrefix::Absolute
+        | PathPrefix::AtAbsolute
+        | PathPrefix::FileUrlAbsolute => Vec::new(),
+    };
+    if matches!(prefix, PathPrefix::LiteralTildeWord) {
+        normalized_component(&mut components, "~draft.md");
+    }
+    for (_, expected) in segments {
+        normalized_component(&mut components, expected);
+    }
+
+    let mut path = PathBuf::from("/");
+    for component in components {
+        path.push(component);
+    }
+    path
+}
+
+/// Property inventory: `resolve` equals an independent absolute component
+/// stack model, including prefix expansion, Unicode spaces, and dot segments.
+/// Prefixes are selected directly; up to five generated segments precede a
+/// guaranteed nonempty ASCII filename (six segments total), with no filtering.
+/// Shrinking shortens the segment list and words while preserving that filename.
 #[hegel::test(test_cases = 300)]
-fn resolving_a_resolved_path_changes_nothing(tc: TestCase) {
-    let typed = tc.draw(typed_path());
+fn resolves_generated_paths_to_the_modeled_normalized_absolute_path(
+    tc: TestCase,
+) {
+    let prefix = tc.draw(path_prefix());
+    let segments = tc.draw(path_segments());
+    let typed = raw_path(prefix, &segments);
+    tc.event(format!("{prefix:?}"));
+
     let (_dir, root) = root();
+    let expected =
+        modeled_path(root.dir().to_str().unwrap(), prefix, &segments);
     let resolved = root.resolve(&typed);
-    let again = root.resolve(resolved.to_str().unwrap());
-    assert_eq!(again, resolved, "{typed:?}");
+    assert_eq!(resolved, expected, "{prefix:?}: {typed:?}");
+    assert!(resolved.is_absolute(), "{typed:?} -> {resolved:?}");
+    assert!(
+        resolved.components().all(|component| !matches!(
+            component,
+            Component::CurDir | Component::ParentDir
+        )),
+        "{typed:?} -> {resolved:?}"
+    );
+    assert_eq!(
+        root.resolve(resolved.to_str().unwrap()),
+        resolved,
+        "resolving {typed:?} twice"
+    );
 }
 
 fn root() -> (tempfile::TempDir, Root) {
@@ -140,6 +260,10 @@ fn tilde_expands_only_as_a_directory() {
         root.resolve("~/notes.md"),
         PathBuf::from("/home/someone/notes.md")
     );
+    assert_eq!(
+        root.resolve("~/../../tilde-root-boundary"),
+        PathBuf::from("/tilde-root-boundary")
+    );
     assert_eq!(root.resolve("~draft.md"), dir.path().join("~draft.md"));
     assert_eq!(root.resolve("@~draft.md"), dir.path().join("~draft.md"));
 }
@@ -156,11 +280,23 @@ fn inputs_are_normalized() {
         dir.path().join("a b c")
     );
     assert_eq!(
+        root.resolve("a\u{2000}b\u{200A}c\u{202F}d\u{205F}e"),
+        dir.path().join("a b c d e")
+    );
+    assert_eq!(
         root.resolve("file:///etc/hosts"),
         PathBuf::from("/etc/hosts")
     );
+    assert_eq!(
+        root.resolve("file:///../../url-root"),
+        PathBuf::from("/url-root")
+    );
     assert_eq!(root.resolve("./a/../b/./c"), dir.path().join("b/c"));
     assert_eq!(root.resolve("/tmp/x"), PathBuf::from("/tmp/x"));
+    assert_eq!(
+        root.resolve("/../../root-boundary"),
+        PathBuf::from("/root-boundary")
+    );
     assert_eq!(root.dir(), dir.path());
 }
 
