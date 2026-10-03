@@ -6,7 +6,7 @@ CREATE TABLE runs (
   parent_run_id TEXT REFERENCES runs (id),  -- fork source or calling agent
   fork_seq      INTEGER,                    -- fork: inherit parent messages with seq <= fork_seq
   model         TEXT NOT NULL,
-  status        TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'cancelled', 'limit')),
+  status        TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'cancelled', 'limit', 'interrupted')),  -- interrupted: the process closed while it ran
   input_tokens  INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
   cost_usd      REAL    NOT NULL DEFAULT 0,

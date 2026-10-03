@@ -49,7 +49,7 @@ CREATE TABLE runs (
   parent_run_id TEXT REFERENCES runs (id),  -- fork source or calling agent
   fork_seq      INTEGER,                    -- fork: inherit parent messages with seq <= fork_seq
   model         TEXT NOT NULL,
-  status        TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'cancelled', 'limit')),
+  status        TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'cancelled', 'limit', 'interrupted')),
   input_tokens  INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
   cost_usd      REAL    NOT NULL DEFAULT 0,
@@ -95,6 +95,17 @@ CREATE TABLE plugin_costs (
 - `Store::plugin_costs` reads one run's breakdown;
   `Store::plugin_spend` sums each plugin's cost over the runs started
   since a time, for the Plugins screen.
+
+## Runs left running
+
+A run's status is `running` while a process runs it. When that process
+closes in its middle, nothing finishes the run: it stays `running`. A
+process opening the store calls `Store::interrupt_running` before it
+starts any run, which marks every such run `interrupted` (without
+touching when it was last active) and returns their ids. An interrupted
+run reopens like any finished one (`Store::reopen_run`). tau-ui shows it
+as interrupted and offers to resume it, telling the model it was cut
+off.
 
 ## Connections
 

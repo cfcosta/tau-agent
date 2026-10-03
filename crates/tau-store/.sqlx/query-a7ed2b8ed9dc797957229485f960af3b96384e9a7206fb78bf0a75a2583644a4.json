@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE runs SET status = 'interrupted'\n               WHERE status = 'running'\n               RETURNING id AS \"id!: String\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "runs",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a7ed2b8ed9dc797957229485f960af3b96384e9a7206fb78bf0a75a2583644a4"
+}

@@ -417,6 +417,26 @@ impl StoreMachine {
         }
     }
 
+    /// A process opening the store marks the runs left running as
+    /// interrupted, and no others; it says which. An interrupted run
+    /// reopens like any finished one.
+    #[rule]
+    fn interrupt(&mut self, _tc: TestCase) {
+        let ids = self
+            .runtime
+            .block_on(self.store.interrupt_running())
+            .unwrap();
+        let mut running: Vec<String> = Vec::new();
+        for (id, m) in self.model.runs.iter_mut() {
+            if m.status == Status::Running {
+                m.status = Status::Interrupted;
+                running.push(id.clone());
+            }
+        }
+        running.sort();
+        assert_eq!(ids, running);
+    }
+
     /// Naming a run replaces its title and leaves everything else;
     /// naming one that does not exist fails.
     #[rule]

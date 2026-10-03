@@ -85,6 +85,9 @@ pub enum Status {
     Failed,
     Cancelled,
     Limit,
+    /// The process that ran it closed while it ran: it was left
+    /// `running`, and [`Store::interrupt_running`] said so.
+    Interrupted,
 }
 
 impl Status {
@@ -95,6 +98,7 @@ impl Status {
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
             Self::Limit => "limit",
+            Self::Interrupted => "interrupted",
         }
     }
 
@@ -104,6 +108,7 @@ impl Status {
             "done" => Self::Done,
             "failed" => Self::Failed,
             "cancelled" => Self::Cancelled,
+            "interrupted" => Self::Interrupted,
             // The CHECK constraint allows nothing else.
             _ => Self::Limit,
         }
@@ -666,6 +671,22 @@ impl Store {
             return Err(StoreError::UnknownRun(run.to_owned()));
         }
         Ok(())
+    }
+
+    /// Marks every run still `running` as `interrupted`, and returns
+    /// their ids, sorted: what a process finds as it opens a store the
+    /// last one left, whose runs it no longer runs. Call it before any
+    /// run starts. When they were last active stays as it was.
+    pub async fn interrupt_running(&self) -> Result<Vec<String>> {
+        let mut ids: Vec<String> = sqlx::query_scalar!(
+            r#"UPDATE runs SET status = 'interrupted'
+               WHERE status = 'running'
+               RETURNING id AS "id!: String""#
+        )
+        .fetch_all(&mut *self.writer().await?)
+        .await?;
+        ids.sort();
+        Ok(ids)
     }
 
     /// Names the run `title`, in place of any name it had.
