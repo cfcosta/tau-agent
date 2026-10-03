@@ -92,6 +92,22 @@ async fn the_terminal_has_a_fixed_size_and_environment() {
     assert_eq!(finished.size, Size::TOOL);
 }
 
+/// A launcher runs first, with the program and its arguments after its
+/// own words.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launcher_runs_the_program_after_its_words() {
+    let run = collect(
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg("echo \"$0 $LAUNCHED\"")
+            .arg("zero")
+            .through(["/usr/bin/env", "LAUNCHED=yes"]),
+    )
+    .await;
+    assert_eq!(run.all_text(), "zero yes\n");
+    assert_eq!(run.code(), Some(0));
+}
+
 /// The terminal is the process's controlling terminal, so `/dev/tty`
 /// opens.
 #[tokio::test(flavor = "multi_thread")]

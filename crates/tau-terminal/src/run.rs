@@ -138,6 +138,7 @@ impl Killer {
 pub struct Command {
     program: OsString,
     args: Vec<OsString>,
+    launcher: Vec<OsString>,
     cwd: Option<PathBuf>,
     env: Vec<(OsString, OsString)>,
     size: Size,
@@ -151,6 +152,7 @@ impl Command {
         Self {
             program: program.into(),
             args: Vec::new(),
+            launcher: Vec::new(),
             cwd: None,
             env: Vec::new(),
             size: Size::TOOL,
@@ -162,6 +164,18 @@ impl Command {
 
     pub fn arg(mut self, arg: impl Into<OsString>) -> Self {
         self.args.push(arg.into());
+        self
+    }
+
+    /// Starts the program through `launcher`: the process is
+    /// `launcher… program args…`, as `env -i` or `direnv exec <dir>`
+    /// would run it. Empty starts the program itself.
+    pub fn through<I, S>(mut self, launcher: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.launcher = launcher.into_iter().map(Into::into).collect();
         self
     }
 
@@ -233,7 +247,14 @@ impl Command {
         )
         .map_err(io::Error::from)?;
 
-        let mut command = tokio::process::Command::new(&self.program);
+        let mut command = match self.launcher.split_first() {
+            Some((first, rest)) => {
+                let mut command = tokio::process::Command::new(first);
+                command.args(rest).arg(&self.program);
+                command
+            }
+            None => tokio::process::Command::new(&self.program),
+        };
         command.args(&self.args);
         if let Some(cwd) = &self.cwd {
             command.current_dir(cwd);
