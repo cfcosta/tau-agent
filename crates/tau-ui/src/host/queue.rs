@@ -1,4 +1,4 @@
-//! A main chat's landing queue (ADR 0021): chats wait to land while the
+//! A main chat's landing queue (ADR 0024): chats wait to land while the
 //! main chat works, and land in order once it is idle.
 //!
 //! [`Lane`] decides, and does nothing itself: each call takes what

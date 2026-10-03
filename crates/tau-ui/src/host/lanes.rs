@@ -1,4 +1,4 @@
-//! The landing queue on the host (ADR 0021): each main chat's [`Lane`],
+//! The landing queue on the host (ADR 0024): each main chat's [`Lane`],
 //! restored from its stored records, and the repository it lands on as
 //! a [`Main`]. Everything here blocks: call it off the interface's
 //! thread.

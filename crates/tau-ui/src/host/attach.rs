@@ -94,7 +94,7 @@ pub(super) fn title_in_background(
     .detach();
 }
 
-/// Shows what a drain of a main chat's queue did (ADR 0021): each
+/// Shows what a drain of a main chat's queue did (ADR 0024): each
 /// landing, or why a chat could not land, the queue and the conflicts
 /// on main as they are now; tells the person of conflicts still on
 /// main; and starts tau's turn resolving what the last landing left.
@@ -379,7 +379,7 @@ fn recover_in_background(
                 }
             });
             // What waited to land when tau closed lands now, and the
-            // conflicts on each main chat are read again (ADR 0021).
+            // conflicts on each main chat are read again (ADR 0024).
             let host_job = host.clone();
             drain_all_off_thread(&host_job, &workspace, cx);
             for slot in &slots {
@@ -742,7 +742,7 @@ impl Host {
                 }
                 // A chat lands by joining its main chat's queue, which
                 // lands it at once when main is idle and nothing waits
-                // before it (ADR 0021). What conflicts, main resolves,
+                // before it (ADR 0024). What conflicts, main resolves,
                 // in a turn tau starts (ADR 0014).
                 WorkspaceEvent::Land { run } => {
                     let (job_run, failed_run) = (run.clone(), run.clone());
@@ -909,7 +909,7 @@ impl Host {
                         .insert(run.clone());
                 }
                 // A main chat's turn ended: what it left in conflict
-                // marks it, and what waited lands (ADR 0021).
+                // marks it, and what waited lands (ADR 0024).
                 let main_ended = match &event {
                     RunEvent::RunEnd { run, .. } if host.is_main(run) => {
                         Some(run.clone())

@@ -68,7 +68,7 @@ pub struct RunView {
     #[serde(default)]
     pub ending: Option<Ending>,
     /// A main chat's: the finished chats waiting to land on it, in the
-    /// order they land (ADR 0021). Empty for any other run.
+    /// order they land (ADR 0024). Empty for any other run.
     #[serde(default)]
     pub landing_queue: Vec<crate::queue::Waiting>,
     /// A main chat's: conflicts a turn left on its stack, until it is

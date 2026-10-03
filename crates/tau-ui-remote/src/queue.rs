@@ -1,5 +1,5 @@
 //! Chats that wait to land on a busy main chat, and conflicts a
-//! resolving turn left on main (ADR 0021).
+//! resolving turn left on main (ADR 0024).
 //!
 //! The host decides when a queued chat lands; the interface shows what
 //! it says, on the main chat's view ([`RunView::landing_queue`],

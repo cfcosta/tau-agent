@@ -69,7 +69,7 @@ pub enum HostUpdate {
         result: Result<(), String>,
     },
     /// A main chat's landing queue and the conflicts on its stack, as
-    /// the host has them now (ADR 0021): the chats waiting to land on
+    /// the host has them now (ADR 0024): the chats waiting to land on
     /// it, in order, and what a turn left in conflict.
     LandingQueue {
         main: RunId,

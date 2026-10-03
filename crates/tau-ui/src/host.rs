@@ -216,7 +216,7 @@ pub struct Host {
     /// tests ([`Host::cut_landing_after`]).
     cut_landing: Mutex<Option<LandingStep>>,
     /// Each main chat's landing queue, restored from the store the
-    /// first time it is asked for (ADR 0021).
+    /// first time it is asked for (ADR 0024).
     lanes: Mutex<HashMap<RunId, queue::Lane>>,
     /// Held while a landing queue changes or drains: one at a time.
     draining: Mutex<()>,
@@ -740,7 +740,7 @@ impl Host {
         };
         let agent = if main { agent.tool(delegate) } else { agent };
         // tau's turn resolving a landing's conflicts on main stops only
-        // once they are resolved, or after one more try (ADR 0021).
+        // once they are resolved, or after one more try (ADR 0024).
         let hold = (main && resolving).then(|| lanes::ResolveHold {
             vcs: workspace.vcs().clone(),
         });

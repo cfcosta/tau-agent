@@ -1,4 +1,4 @@
-//! The landing queue (ADR 0021) against a model of a repository's main
+//! The landing queue (ADR 0024) against a model of a repository's main
 //! chat: chats finish and ask to land while main works or is idle,
 //! main's turns start and end, resolving turns clear what a landing
 //! left in conflict or leave it, the person unqueues and dismisses, and

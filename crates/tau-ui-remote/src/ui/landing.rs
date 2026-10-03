@@ -92,7 +92,7 @@ pub fn controls(
         return Some(super::queue::queued(run, at, waiting, &parent, t, cx));
     }
     // A main chat that is working, or that others wait on, takes this
-    // landing after them: Land queues it (ADR 0021).
+    // landing after them: Land queues it (ADR 0024).
     let waits = run
         .origin
         .parent()

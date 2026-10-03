@@ -1,4 +1,4 @@
-//! What waits on a main chat (ADR 0021): the chats queued to land on it
+//! What waits on a main chat (ADR 0024): the chats queued to land on it
 //! once its turn ends, and the conflicts a turn left on its stack. Both
 //! are cards at the end of the main chat's transcript; a queued chat's
 //! own landing card says where it waits.

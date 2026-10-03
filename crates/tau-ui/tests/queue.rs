@@ -1,5 +1,5 @@
 //! The landing queue through the real host and the workspace (ADR
-//! 0021): a chat landed while main works lands after main's turn; a
+//! 0024): a chat landed while main works lands after main's turn; a
 //! queued chat that meets new conflicts waits for the person; tau's
 //! resolving turn that leaves conflicts is held once, then marks main,
 //! which refuses new chats until Resolve again clears it.
