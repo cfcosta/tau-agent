@@ -151,12 +151,22 @@ fn main() {
                     None => demo_workspace(&args, window, cx),
                 })
             });
-            let Ok(workspace) = opened.and_then(|window| window.entity(cx))
-            else {
+            let Ok((workspace, window)) = opened.and_then(|window| {
+                Ok((window.entity(cx)?, gpui::AnyWindowHandle::from(window)))
+            }) else {
                 eprintln!("tau-ui: could not open a window");
                 cx.quit();
                 return;
             };
+            // What needs the person, said while tau is in the background.
+            if !args.demo {
+                tau_ui::notify::follow(
+                    &workspace,
+                    window,
+                    HostConfig::default_interface_settings(),
+                    cx,
+                );
+            }
             follow_motion_preference(&workspace, args.reduce_motion, cx);
             match host {
                 Some((host, events)) => {

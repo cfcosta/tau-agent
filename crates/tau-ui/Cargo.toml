@@ -67,3 +67,6 @@ ashpd = { version = "0.13", default-features = false, features = [
   "async-io",
   "settings",
 ] }
+# Desktop notifications over D-Bus, in Rust (zbus): no libdbus. GPUI's
+# Linux backend already builds it with these features.
+notify-rust = { version = "4.18", default-features = false, features = ["z"] }

@@ -9587,6 +9587,7 @@ dependencies = [
  "hegeltest",
  "if-addrs",
  "libc",
+ "notify-rust",
  "reqwest 0.13.5",
  "serde",
  "serde_json",

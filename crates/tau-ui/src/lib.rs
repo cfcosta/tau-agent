@@ -16,6 +16,7 @@ pub mod github;
 pub mod host;
 pub mod hosted;
 pub mod metered;
+pub mod notify;
 pub mod phone_server;
 
 // The interface's modules, by the paths the host has always used.
