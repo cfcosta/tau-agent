@@ -524,38 +524,194 @@ mod tests {
         assert_eq!(report.calls[0]["status"], "ok");
     }
 
-    // Property inventory: the generated module must agree with an independent
-    // repeated-addition oracle for two changed input pairs in one test VM.
-    // Bounded valid integers avoid rejection; Hegel shrinks them toward zero.
-    // Workspace hegel.toml supplies development and fixed-seed CI case counts.
+    fn fake_fixture(slot: usize, value_case: u8) -> ExpectedCall {
+        let (value, error) = match (value_case + slot as u8) % 6 {
+            0 => (Some(json!(null)), None),
+            1 => (Some(json!(slot as i64 + 10)), None),
+            2 => (None, Some("blocked".into())),
+            3 => (None, Some(String::new())),
+            4 => (Some(json!(null)), Some("blocked".into())),
+            _ => (Some(json!({"slot":slot})), Some(String::new())),
+        };
+        ExpectedCall {
+            name: "fake".into(),
+            args: json!({"slot":slot}),
+            value,
+            error,
+        }
+    }
+
+    fn fake_call_assertion(slot: usize, fixture: &ExpectedCall) -> String {
+        let call = format!("tools.fake({{slot={slot}}})");
+        match (&fixture.value, &fixture.error) {
+            (None, Some(message)) if message.is_empty() => {
+                format!(
+                    "local ok = pcall(function() {call} end); assert(not ok); "
+                )
+            }
+            (None, Some(message)) => format!(
+                "local ok, message = pcall(function() {call} end); assert(not ok and string.find(message, '{message}', 1, true)); "
+            ),
+            (Some(serde_json::Value::Null), _) => {
+                format!("assert({call} == json.null); ")
+            }
+            (Some(serde_json::Value::Number(number)), _) => {
+                format!("assert({call} == {number}); ")
+            }
+            (Some(serde_json::Value::Object(_)), _) => {
+                format!("assert({call}.slot == {slot}); ")
+            }
+            _ => unreachable!("fixture values have six constructed shapes"),
+        }
+    }
+
+    // Property inventory: ordered init and callback calls must consume exactly
+    // their fixtures; the independent transcript model predicts each attempted
+    // name, JSON args, status, and error, plus the final pass bit. Handled tool
+    // errors can pass; a mismatched, unexpected, or unused fixture cannot.
+    // Counts are built within 0..=3 per phase (at most six calls, seven fixtures).
+    // Every case exhausts all four outcome modes. Hegel shrinks counts and
+    // values toward short, readable transcripts while preserving each mode.
     #[hegel::test]
-    fn changed_arithmetic_inputs_agree_with_oracle(tc: TestCase) {
-        let a: i32 = tc.draw(gs::integers().min_value(-100).max_value(100));
-        let b: i32 = tc.draw(gs::integers().min_value(-100).max_value(100));
+    fn ordered_fake_calls_match_the_fixture_transcript_model(tc: TestCase) {
+        let init_count: usize =
+            tc.draw(gs::integers().min_value(0).max_value(3));
+        let drawn_callback_count: usize =
+            tc.draw(gs::integers().min_value(0).max_value(3));
+        let value_case: u8 = tc.draw(gs::integers().min_value(0).max_value(5));
+        for scenario in 0_u8..4 {
+            let callback_count = match scenario {
+                1 if init_count + drawn_callback_count == 0 => 1,
+                2 if init_count + drawn_callback_count < 2 => 2 - init_count,
+                _ => drawn_callback_count,
+            };
+            let call_count = init_count + callback_count;
+            let mut fixtures = (0..call_count)
+                .map(|slot| fake_fixture(slot, value_case))
+                .collect::<Vec<_>>();
+            let mut statuses = fixtures
+                .iter()
+                .map(|fixture| {
+                    if fixture.error.is_some() {
+                        "error"
+                    } else {
+                        "ok"
+                    }
+                })
+                .collect::<Vec<_>>();
+            match scenario {
+                1 => {
+                    fixtures.last_mut().unwrap().args = json!({"slot":999});
+                    *statuses.last_mut().unwrap() = "mismatch";
+                }
+                2 => {
+                    fixtures.pop();
+                    *statuses.last_mut().unwrap() = "unexpected";
+                }
+                3 => fixtures.push(fake_fixture(call_count, value_case)),
+                _ => {}
+            }
+
+            let mut root_source = String::new();
+            for slot in 0..init_count {
+                if (scenario == 1 || scenario == 2) && slot == call_count - 1 {
+                    root_source
+                        .push_str(&format!("tools.fake({{slot={slot}}}); "));
+                } else {
+                    root_source.push_str(&fake_call_assertion(
+                        slot,
+                        &fake_fixture(slot, value_case),
+                    ));
+                }
+            }
+            root_source.push_str("return function() ");
+            for slot in init_count..call_count {
+                if (scenario == 1 || scenario == 2) && slot == call_count - 1 {
+                    root_source
+                        .push_str(&format!("tools.fake({{slot={slot}}}); "));
+                } else {
+                    root_source.push_str(&fake_call_assertion(
+                        slot,
+                        &fake_fixture(slot, value_case),
+                    ));
+                }
+            }
+            root_source.push_str("return true end");
+            let definition = Definition::new(
+                "fixture_model".into(),
+                root_source,
+                json!({}),
+                BTreeMap::new(),
+            )
+            .unwrap();
+            let code = format!(
+                "assert(require('fixture_model', '{}')())",
+                definition.version()
+            );
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let report = runtime
+                .block_on(run_test(
+                    &definition,
+                    &BTreeMap::new(),
+                    code,
+                    fixtures.clone(),
+                    CancellationToken::new(),
+                    Arc::new(tokio::sync::Semaphore::new(1)),
+                ))
+                .unwrap();
+            assert_eq!(report.name, "fixture_model");
+            assert_eq!(report.version, definition.version());
+            assert_eq!(report.passed, scenario == 0, "{report:?}");
+            assert_eq!(report.error.is_none(), scenario == 0, "{report:?}");
+            assert_eq!(report.calls.len(), call_count, "{report:?}");
+            for (slot, call) in report.calls.iter().enumerate() {
+                assert_eq!(call["name"], "fake", "{report:?}");
+                assert_eq!(
+                    call["args"],
+                    json!({"slot":slot}).to_string(),
+                    "{report:?}"
+                );
+                assert_eq!(call["args_truncated"], false, "{report:?}");
+                assert_eq!(call["status"], statuses[slot], "{report:?}");
+                let expected_error = match statuses[slot] {
+                    "ok" => None,
+                    "mismatch" => Some(format!(
+                        "fake call {} expected fake with {}",
+                        slot + 1,
+                        fixtures[slot].args
+                    )),
+                    "unexpected" => Some("unexpected fake call".into()),
+                    "error" => {
+                        Some(fake_fixture(slot, value_case).error.unwrap())
+                    }
+                    _ => unreachable!(),
+                };
+                assert_eq!(call["error"], json!(expected_error), "{report:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn changed_arithmetic_inputs_agree_with_repeated_addition() {
         let (definition, library) = arithmetic();
-        let oracle = |x: i32, y: i32| x + x + x + y + y;
         let code = format!(
-            "local f = require('arithmetic', '{}'); assert(f({a}, {b}) == {}); assert(f({}, {}) == {})",
-            definition.version(),
-            oracle(a, b),
-            a + 1,
-            b - 1,
-            oracle(a + 1, b - 1)
+            "local f = require('arithmetic', '{}'); assert(f(4, -3) == 6); assert(f(-2, 5) == 4)",
+            definition.version()
         );
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let report = runtime
-            .block_on(run_test(
-                &definition,
-                library.versions(),
-                code,
-                vec![],
-                CancellationToken::new(),
-                Arc::new(tokio::sync::Semaphore::new(2)),
-            ))
-            .unwrap();
+        let report = run_test(
+            &definition,
+            library.versions(),
+            code,
+            vec![],
+            CancellationToken::new(),
+            Arc::new(tokio::sync::Semaphore::new(1)),
+        )
+        .await
+        .unwrap();
         assert!(report.passed, "{report:?}");
+        assert!(report.calls.is_empty());
     }
 }

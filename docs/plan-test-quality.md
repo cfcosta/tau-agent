@@ -25,7 +25,7 @@ Audit numbers refer to the approved 40-test shortlist.
 - [x] **09 — Markup:** require exact generated span text and marks (#9).
 - [x] **10 — Signatures:** verify semantic type structure as well as Luau syntax (#10).
 - [x] **11 — Module imports:** dependency/version/import histories and initialization counts (#11).
-- [ ] **12 — Fake module tests:** ordered fixtures, exact initialization and failure propagation (#12).
+- [x] **12 — Fake module tests:** ordered fixtures, exact initialization and failure propagation (#12).
 - [ ] **13 — Services:** clone/mutate/query histories against immutable snapshots (#13).
 - [ ] **14 — Paths:** exact independent path model with idempotence secondary (#14–15).
 - [ ] **15 — Retry rules:** exhaustive statuses, richer known/unknown header generation and preserved boundary regressions (#16–20).
@@ -66,6 +66,7 @@ mutation campaign. Only failure of the named replacement counts as detection.
 | 09    | Markup parser treats all nonempty text as plain     | `spans_recognize_generated_bold_and_code_sections`                    |
 | 10    | Supported object schemas always become `any`        | `supported_schemas_preserve_recursive_types_and_local_references`     |
 | 11    | Exact imports bypass the initialized-export cache   | `generated_exact_definition_graphs_preserve_values_pins_and_vm_cache` |
+| 12    | Fake tools stop checking exact arguments            | `ordered_fake_calls_match_the_fixture_transcript_model`               |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before
