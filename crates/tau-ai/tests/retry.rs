@@ -435,50 +435,24 @@ fn classify_matches_the_first_known_wins_model(tc: TestCase) {
     );
 }
 
-/// Metamorphic half of the classification table: any 5xx status with no
-/// known `code` or `kind` is retryable.
-#[hegel::test(test_cases = 500)]
-fn any_server_status_without_code_is_retryable(tc: TestCase) {
-    let status = tc.draw(gs::integers::<u16>().min_value(500).max_value(599));
-    let failure = Failure::Api {
-        code: None,
-        kind: None,
-        status: Some(status),
-    };
-    assert_eq!(classify(&failure), Class::Retryable);
-}
-
-/// Metamorphic half of the classification table: any 4xx status with no
-/// known `code` or `kind`, other than the two documented retryable
-/// statuses (408, 429), is fatal.
-#[hegel::test(test_cases = 500)]
-fn other_4xx_without_code_is_fatal(tc: TestCase) {
-    let status = tc.draw(gs::integers::<u16>().min_value(400).max_value(499));
-    // Only 408 and 429 are excluded out of a 100-value range, so the
-    // rejection rate is low.
-    tc.assume(status != 408 && status != 429);
-    let failure = Failure::Api {
-        code: None,
-        kind: None,
-        status: Some(status),
-    };
-    assert_eq!(classify(&failure), Class::Fatal);
-}
-
-/// `retry-after` is seconds; any `u32` round-trips exactly.
-#[hegel::test(test_cases = 500)]
-fn parse_retry_after_seconds(tc: TestCase) {
-    let seconds = tc.draw(gs::integers::<u32>());
-    let parsed = parse_retry_after("retry-after", &seconds.to_string());
-    assert_eq!(parsed, Some(Duration::from_secs(u64::from(seconds))));
-}
-
-/// `retry-after-ms` is milliseconds; any `u32` round-trips exactly.
-#[hegel::test(test_cases = 500)]
-fn parse_retry_after_ms(tc: TestCase) {
-    let millis = tc.draw(gs::integers::<u32>());
-    let parsed = parse_retry_after("retry-after-ms", &millis.to_string());
-    assert_eq!(parsed, Some(Duration::from_millis(u64::from(millis))));
+/// The ordinary status table is exhaustive for 4xx and 5xx statuses: only
+/// 408, 429 and 500..=599 retry. In particular, 409 follows the ordinary
+/// fatal rule.
+#[test]
+fn ordinary_statuses_without_code_or_kind_follow_the_retry_table() {
+    for status in 400..=599 {
+        let expected = if matches!(status, 408 | 429 | 500..=599) {
+            Class::Retryable
+        } else {
+            Class::Fatal
+        };
+        let failure = Failure::Api {
+            code: None,
+            kind: None,
+            status: Some(status),
+        };
+        assert_eq!(classify(&failure), expected, "status {status}");
+    }
 }
 
 /// A `Retry-After` value: a near miss of a plain integer (a sign, a
@@ -526,6 +500,26 @@ fn retry_after_header(tc: &TestCase) -> String {
     header = String::from("retry-after-ms"),
     value = String::from(" \t18446744073709551615 "),
 )]
+#[hegel::explicit_test_case(header = String::from("retry-after"), value = String::from("0"))]
+#[hegel::explicit_test_case(header = String::from("retry-after-ms"), value = String::from("0"))]
+#[hegel::explicit_test_case(header = String::from("retry-after"), value = String::from("1"))]
+#[hegel::explicit_test_case(header = String::from("retry-after-ms"), value = String::from("1"))]
+#[hegel::explicit_test_case(
+    header = String::from("retry-after"),
+    value = String::from("4294967295"),
+)]
+#[hegel::explicit_test_case(
+    header = String::from("retry-after-ms"),
+    value = String::from("4294967295"),
+)]
+#[hegel::explicit_test_case(
+    header = String::from("ReTrY-AfTeR"),
+    value = String::from(" \t18446744073709551615 \t"),
+)]
+#[hegel::explicit_test_case(
+    header = String::from("rEtRy-AfTeR-Ms"),
+    value = String::from(" \t18446744073709551615 \t"),
+)]
 fn parse_retry_after_is_a_trimmed_whole_number(tc: TestCase) {
     let header = tc.draw(retry_after_header());
     let value = tc.draw(retry_after_value());
@@ -538,12 +532,56 @@ fn parse_retry_after_is_a_trimmed_whole_number(tc: TestCase) {
     assert_eq!(parse_retry_after(&header, &value), expected);
 }
 
-/// An unrecognized header name is never parsed, whatever its value.
+/// Inventory: `classify_matches_the_first_known_wins_model` compares against
+/// the independent known-code/kind/status table; optional names and all `u16`
+/// statuses are generated directly, and shrinking keeps those inputs valid.
+/// The exhaustive ordinary-status table has a literal status-set oracle.
+/// `parse_retry_after_is_a_trimmed_whole_number` uses trimmed `u64` parsing
+/// and independent `Duration` constructors as its oracle; bounded text and
+/// case choices shrink toward short values and canonical lowercase headers.
+/// This property constructs each unsupported header from a known name and a
+/// fixed prefix, suffix, or first-letter removal, without filtering. Its
+/// canonical numeric control checks units independently; value and form
+/// choices shrink to a small, intelligible unsupported-header example.
 #[hegel::test(test_cases = 500)]
 fn parse_retry_after_unknown_header_is_none(tc: TestCase) {
-    let seconds = tc.draw(gs::integers::<u32>());
+    let known_header = tc.draw(gs::sampled_from(vec![
+        "retry-after".to_owned(),
+        "retry-after-ms".to_owned(),
+    ]));
+    let unsupported_form =
+        tc.draw(gs::sampled_from(vec!["prefix", "suffix", "remove-first"]));
+    let unknown_header = match unsupported_form {
+        "prefix" => format!("x-{known_header}"),
+        "suffix" => format!("{known_header}-x"),
+        "remove-first" => known_header.chars().skip(1).collect(),
+        _ => unreachable!("unsupported form came from a fixed generator"),
+    };
+
+    let number = tc.draw(gs::integers::<u64>());
+    let unknown_value_kind =
+        tc.draw(gs::sampled_from(vec!["numeric", "invalid", "whitespace"]));
+    let unknown_value = match unknown_value_kind {
+        "numeric" => number.to_string(),
+        "invalid" => format!("not-an-integer{}", tc.draw(generators::text(8))),
+        "whitespace" => tc.draw(gs::from_regex(r"[ \t]{1,8}")),
+        _ => unreachable!("unknown value kind came from a fixed generator"),
+    };
+
+    let canonical_value = number.to_string();
+    let expected_known = if known_header == "retry-after-ms" {
+        Duration::from_millis(number)
+    } else {
+        Duration::from_secs(number)
+    };
     assert_eq!(
-        parse_retry_after("x-unrelated-header", &seconds.to_string()),
-        None
+        parse_retry_after(&known_header, &canonical_value),
+        Some(expected_known),
+        "known header positive control: {known_header}"
+    );
+    assert_eq!(
+        parse_retry_after(&unknown_header, &unknown_value),
+        None,
+        "unsupported header: {unknown_header:?}, value: {unknown_value:?}"
     );
 }

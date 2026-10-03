@@ -28,7 +28,7 @@ Audit numbers refer to the approved 40-test shortlist.
 - [x] **12 — Fake module tests:** ordered fixtures, exact initialization and failure propagation (#12).
 - [x] **13 — Services:** clone/mutate/query histories against immutable snapshots (#13).
 - [x] **14 — Paths:** exact independent path model with idempotence secondary (#14–15).
-- [ ] **15 — Retry rules:** exhaustive statuses, richer known/unknown header generation and preserved boundary regressions (#16–20).
+- [x] **15 — Retry rules:** exhaustive statuses, richer known/unknown header generation and preserved boundary regressions (#16–20).
 - [ ] **16 — Compaction UI:** exhaustive activation and exact decision labels (#22–23).
 - [ ] **17 — Reasoning/goal UI:** exhaustive activation combinations (#24–25).
 - [ ] **18 — Callback defaults:** explicit configured/listening port boundaries (#26).
@@ -52,23 +52,24 @@ ones. It will not claim exhaustive mutation coverage or unmeasured savings.
 These are individual injected faults in disposable workspaces, not a full
 mutation campaign. Only failure of the named replacement counts as detection.
 
-| Batch | Injected fault                                      | Replacement that failed                                               |
-| ----- | --------------------------------------------------- | --------------------------------------------------------------------- |
-| 01    | Plain-name prefix loses one underscore              | `short_ascii_pairs_keep_exact_plain_names`                            |
-| 02    | Recovery treats HTTP 429 as a request fault         | `status_boundaries_apply_to_every_unrecognized_body_shape`            |
-| 03    | Character estimation counts UTF-8 bytes             | `context_estimate_rounds_semantic_characters_per_unreported_message`  |
-| 04    | Durable writes stop applying deletes                | `store_and_ui_folds_match_the_operation_model_at_each_prefix`         |
-| 05    | Both encoders receive a decoder that discards input | `a_json_body_round_trips`                                             |
-| 06    | Cost application overwrites reported total tokens   | `cost_matches_the_reference_formula` (clean rebuild)                  |
-| 07    | Argument validation accepts every coerced value     | `removing_a_required_leaf_is_rejected_at_its_key_path`                |
-| 08    | Native grep ignores the Rust glob                   | `reference_module_search_matches_sorted_rust_line_scan`               |
-| 08    | Artifact pages replace `é` with ASCII `e`           | `owned_utf8_artifact_pages_reconstruct_source_bytes`                  |
-| 09    | Markup parser treats all nonempty text as plain     | `spans_recognize_generated_bold_and_code_sections`                    |
-| 10    | Supported object schemas always become `any`        | `supported_schemas_preserve_recursive_types_and_local_references`     |
-| 11    | Exact imports bypass the initialized-export cache   | `generated_exact_definition_graphs_preserve_values_pins_and_vm_cache` |
-| 12    | Fake tools stop checking exact arguments            | `ordered_fake_calls_match_the_fixture_transcript_model`               |
-| 13    | Cloning services drops all typed values             | `cloned_snapshots_isolate_typed_writes_and_keep_last_values`          |
-| 14    | Every nonempty path resolves to `/`                 | `resolves_generated_paths_to_the_modeled_normalized_absolute_path`    |
+| Batch | Injected fault                                       | Replacement that failed                                               |
+| ----- | ---------------------------------------------------- | --------------------------------------------------------------------- |
+| 01    | Plain-name prefix loses one underscore               | `short_ascii_pairs_keep_exact_plain_names`                            |
+| 02    | Recovery treats HTTP 429 as a request fault          | `status_boundaries_apply_to_every_unrecognized_body_shape`            |
+| 03    | Character estimation counts UTF-8 bytes              | `context_estimate_rounds_semantic_characters_per_unreported_message`  |
+| 04    | Durable writes stop applying deletes                 | `store_and_ui_folds_match_the_operation_model_at_each_prefix`         |
+| 05    | Both encoders receive a decoder that discards input  | `a_json_body_round_trips`                                             |
+| 06    | Cost application overwrites reported total tokens    | `cost_matches_the_reference_formula` (clean rebuild)                  |
+| 07    | Argument validation accepts every coerced value      | `removing_a_required_leaf_is_rejected_at_its_key_path`                |
+| 08    | Native grep ignores the Rust glob                    | `reference_module_search_matches_sorted_rust_line_scan`               |
+| 08    | Artifact pages replace `é` with ASCII `e`            | `owned_utf8_artifact_pages_reconstruct_source_bytes`                  |
+| 09    | Markup parser treats all nonempty text as plain      | `spans_recognize_generated_bold_and_code_sections`                    |
+| 10    | Supported object schemas always become `any`         | `supported_schemas_preserve_recursive_types_and_local_references`     |
+| 11    | Exact imports bypass the initialized-export cache    | `generated_exact_definition_graphs_preserve_values_pins_and_vm_cache` |
+| 12    | Fake tools stop checking exact arguments             | `ordered_fake_calls_match_the_fixture_transcript_model`               |
+| 13    | Cloning services drops all typed values              | `cloned_snapshots_isolate_typed_writes_and_keep_last_values`          |
+| 14    | Every nonempty path resolves to `/`                  | `resolves_generated_paths_to_the_modeled_normalized_absolute_path`    |
+| 15    | Millisecond retry headers are interpreted as seconds | `parse_retry_after_is_a_trimmed_whole_number`                         |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before
