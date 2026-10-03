@@ -3033,3 +3033,98 @@ fn an_ended_chat_takes_no_messages(cx: &mut TestAppContext) {
         .collect();
     assert!(sent.is_empty(), "{sent:?}");
 }
+
+/// The main chat pushes from its header: one push at a time; GitHub's
+/// moved branch leaves the card that offers Fetch and push; a push that
+/// went leaves the card of what it took, nothing ahead, and a new run of
+/// the main chat puts the card away. Anything else is a dialog. Each
+/// state draws, on a computer and on a phone.
+#[gpui::test]
+fn the_main_chat_pushes_and_offers_fetch_and_push(cx: &mut TestAppContext) {
+    use tau_ui_remote::push::{PushFailure, PushState};
+    let (workspace, mut cx, events) = open_demo(cx);
+    let main = demo::run_id();
+    let repo = "tau-agent";
+    let draw = |workspace: &Entity<Workspace>, cx: &mut VisualTestContext| {
+        for phone in [false, true] {
+            workspace.update(cx, |ws, cx| {
+                ws.set_frame(phone.then_some((390., 844.)), cx)
+            });
+            cx.run_until_parked();
+        }
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(main.clone()), cx);
+        assert_eq!(ws.main_repo(&main), Some(repo));
+        assert_eq!(ws.main_repo(&demo::fork_id()), None);
+        assert_eq!(ws.unpushed(repo), Some((3, "main")));
+        ws.push(repo, false, cx);
+        ws.push(repo, false, cx);
+        assert_eq!(
+            ws.push_state(repo),
+            Some(&PushState::Pushing { fetching: false })
+        );
+    });
+    draw(&workspace, &mut cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let moved = PushFailure::Moved {
+            branch: "main".into(),
+            ahead: 3,
+        };
+        ws.pushed(repo, Err(moved), cx);
+        assert_eq!(
+            ws.push_state(repo),
+            Some(&PushState::Moved {
+                branch: "main".into(),
+                ahead: 3
+            })
+        );
+    });
+    draw(&workspace, &mut cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.push(repo, true, cx);
+        ws.pushed(repo, Ok(demo::pushed()), cx);
+        assert_eq!(
+            ws.push_state(repo),
+            Some(&PushState::Pushed(demo::pushed()))
+        );
+        assert_eq!(ws.unpushed(repo), None, "nothing ahead");
+    });
+    draw(&workspace, &mut cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply_event(
+            &tau_agent::event::RunEvent::RunStart {
+                run: main.clone(),
+                parent: None,
+                agent: "coder".into(),
+                call: None,
+            },
+            cx,
+        );
+        assert_eq!(ws.push_state(repo), None, "a new run puts it away");
+        ws.push(repo, false, cx);
+        ws.pushed(repo, Err(PushFailure::Failed("no git".into())), cx);
+        assert_eq!(ws.push_state(repo), None);
+        let (title, message) = ws.alert().expect("a dialog");
+        assert_eq!(title, "Could not push tau-agent");
+        assert_eq!(message, "no git");
+    });
+    let pushes: Vec<(String, bool)> = events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::Push { repo, fetch } => {
+                Some((repo.clone(), *fetch))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        pushes,
+        [
+            (repo.to_owned(), false),
+            (repo.to_owned(), true),
+            (repo.to_owned(), false)
+        ]
+    );
+}

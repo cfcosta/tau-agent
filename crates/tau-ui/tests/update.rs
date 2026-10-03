@@ -45,6 +45,17 @@ fn updates_round_trip() {
             result: Err("it has children".into()),
         },
         HostUpdate::ResumeFailed(run.clone()),
+        HostUpdate::Pushed {
+            repo: "tau-agent".into(),
+            result: Ok(demo::pushed()),
+        },
+        HostUpdate::Pushed {
+            repo: "tau-agent".into(),
+            result: Err(tau_ui_remote::push::PushFailure::Moved {
+                branch: "main".into(),
+                ahead: 3,
+            }),
+        },
         HostUpdate::Titled {
             run,
             title: "Fix the retry loop".into(),
@@ -76,8 +87,14 @@ fn workspace_events_round_trip() {
         WorkspaceEvent::Cancel {
             run: demo::run_id(),
         },
+        WorkspaceEvent::Push {
+            repo: "tau-agent".into(),
+            fetch: true,
+        },
     ];
     for event in events {
         assert_eq!(round_trip(&event), event);
+        // A phone can ask for each of these.
+        assert!(event.from_phone(), "{event:?}");
     }
 }
