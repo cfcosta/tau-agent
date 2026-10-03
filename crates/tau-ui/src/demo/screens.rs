@@ -183,6 +183,49 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.apply(HostUpdate::LandingFinished(record), cx);
         ws.navigate(Route::Run(run_id()), cx);
     }),
+    // Main's landing queue (ADR 0024): two chats wait for its turn, one
+    // clean, one with conflicts the person confirmed; and the waiting
+    // chat's own card.
+    ("land-queue", |ws, _, cx| {
+        land_queue(ws, cx);
+        ws.navigate(Route::Run(run_id()), cx);
+    }),
+    ("land-queued", |ws, _, cx| {
+        land_queue(ws, cx);
+        ws.navigate(Route::Run(fork_id()), cx);
+    }),
+    // A resolving turn left conflicts on main: the card that holds
+    // landings and new chats.
+    ("conflicts-on-main", |ws, _, cx| {
+        let conflicts = crate::queue::MainConflicts {
+            files: vec![
+                "crates/tau-ui/src/host.rs".into(),
+                "crates/tau-ui/src/host/landing.rs".into(),
+            ],
+            from: Some(fork_id().0.to_string()),
+            prompt: "Landing `Retry with backoff` left conflicts.".into(),
+            dismissed: false,
+        };
+        // tau's turn ended: the card offers to resolve again.
+        ws.apply_event(
+            &tau_agent::event::RunEvent::RunEnd {
+                run: run_id(),
+                parent: None,
+                stop: tau_agent::event::StopReason::Stop,
+                cost: 0.0,
+            },
+            cx,
+        );
+        ws.apply(
+            HostUpdate::LandingQueue {
+                main: run_id(),
+                queue: Vec::new(),
+                conflicts: Some(conflicts),
+            },
+            cx,
+        );
+        ws.navigate(Route::Run(run_id()), cx);
+    }),
     // tau-ask's panel in the composer's place (ADR 0019): a question
     // with previews; a checklist with a note being written; the review.
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),
@@ -544,4 +587,38 @@ fn ask(workspace: &mut Workspace, open: &str, cx: &mut Context<Workspace>) {
         draft.key(&ask, Key::Right);
         draft.key(&ask, Key::Digit(2));
     });
+}
+
+/// Main's queue as the canvas draws it: the demo's fork, clean, then a
+/// chat with a conflict the person confirmed.
+fn land_queue(ws: &mut Workspace, cx: &mut Context<Workspace>) {
+    let fork = fork_id();
+    let title = ws
+        .run(&fork)
+        .map_or_else(|| "Queue landings".to_owned(), |view| view.title.clone());
+    let host_rs = "crates/tau-ui/src/host.rs".to_owned();
+    let queue = vec![
+        crate::queue::Waiting {
+            run: fork.0.to_string(),
+            title,
+            changes: 4,
+            conflicts: Vec::new(),
+            confirmed: Vec::new(),
+        },
+        crate::queue::Waiting {
+            run: "load-agents".into(),
+            title: "Load AGENTS.md".into(),
+            changes: 2,
+            conflicts: vec![host_rs.clone()],
+            confirmed: vec![host_rs],
+        },
+    ];
+    ws.apply(
+        HostUpdate::LandingQueue {
+            main: run_id(),
+            queue,
+            conflicts: None,
+        },
+        cx,
+    );
 }
