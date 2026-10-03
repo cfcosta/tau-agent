@@ -3,9 +3,11 @@
 - Status: implemented in `crates/plugins/tau-vcs`, on `jj-lib` 0.45.1.
 - Design study: [jj-lib.md](../research/jj-lib.md). Decisions:
   [0009](../decisions/0009-child-runs-land-on-their-parent.md) (child
-  runs land on their parent) and
+  runs land on their parent),
   [0014](../decisions/0014-the-model-commits-and-runs-land-as-stacked-diffs.md)
-  (the model commits; runs land as stacked diffs).
+  (the model commits; runs land as stacked diffs) and
+  [0023](../decisions/0023-main-pushes-with-git-chat-prs-replay-onto-origin.md)
+  (main pushes with git; chat pull requests replay onto origin).
 
 The model reaches version control only through these tools. It never
 runs `jj` or `git` in a shell. The tools work on a jj repository, so
@@ -58,7 +60,7 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
   files are checked out: each tool's snapshot and transaction, and
   each `Project` write (`update`, `add_workspace`,
   `add_workspace_from_snapshot`, `forget_workspace`, `abandon_between`,
-  `remove_bookmark`). Runs work in workspaces of one repository from
+  `remove_bookmark`, `push_trunk`, `push_branch`). Runs work in workspaces of one repository from
   threads of their own, and two operations that started from the same
   one would fork jj's operation log: a commit two of them rewrote
   would be divergent, and a bookmark two of them moved conflicted.
@@ -336,9 +338,8 @@ the user's checkout.
   bookmark. No `git` is needed: the object files are hard-linked (they
   never change once written), and the refs, `HEAD`, config and
   `shallow` (where a shallow clone's history starts) copied. Cloning
-  from a URL is not supported yet. jj-lib's fetch and push run
-  `git` as a subprocess, so the GitHub side will need it, or a fetch
-  through gix and a push of our own.
+  and fetching go through gix; only pushing runs `git`, through jj-lib
+  (see "Pushing").
 - `clone_bare(url, token, into)` clones a remote into a bare
   repository with gix, keeping every branch and tag under its own
   name, as `git clone --bare` does; `open_or_import` takes that clone
@@ -441,8 +442,8 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   parent's parent, with the turn's files merged as above, and the undone
   commit's description is not the fork's.
 - `Project::stack(head)` lists a run's commits, oldest first: what
-  `head` has that trunk lacks. Pull requests push those, one GitHub
-  commit per commit, with the model's message.
+  `head` has that trunk lacks. A pull request replays those onto
+  GitHub's trunk (see "Pull requests").
 
 ## Landing a child run
 
@@ -714,6 +715,79 @@ Only a top-level run (a repository's main chat) gets
 `delegate`: runs nest one level
 ([ADR 0016](../decisions/0016-runs-nest-one-level.md)).
 
+## Pushing
+
+[ADR 0023](../decisions/0023-main-pushes-with-git-chat-prs-replay-onto-origin.md).
+A project pushes to the repository it was cloned from with jj-lib's
+`push_updates`, which runs `git push` on the project's Git store. This
+is the one place tau runs `git`; the Nix package puts it on `tau-ui`'s
+`PATH`. `Remote { url, token }` says where:
+
+- The token reaches `git` through the child's environment alone:
+  `GIT_CONFIG_COUNT` sets `credential.helper` to an empty value, which
+  drops the person's own helpers so none stores the token, then to a
+  shell helper that answers `get` with `x-access-token` and
+  `$TAU_GIT_TOKEN`. `GIT_TERMINAL_PROMPT=0` keeps `git` from asking.
+  The token is never written to a file or put on a command line.
+- The Git store's `origin` is rewritten before each push to hold the
+  URL and nothing else. Without a fetch refspec, `git push` writes no
+  remote-tracking ref, so jj never imports `<branch>@origin`, which
+  would make pushed commits immutable (see "Scoping rules").
+- `Project::upstream()` is GitHub's trunk as the last fetch or push
+  left it: what `<trunk>@git` names.
+- `Project::unpushed()` lists trunk's commits that `upstream()` lacks,
+  oldest first: the main chat's work waiting to go.
+- `Project::push_trunk(remote)` pushes trunk to the remote's branch of
+  the same name, with a lease on `upstream()`: the commits themselves,
+  so commit and change ids stay. Nothing to push returns an empty
+  `Pushed`. A commit with conflicts refuses the push. A remote whose
+  branch moved since the last fetch refuses it (`git` rejects the lease
+  or a non-fast-forward): `VcsError::PushRejected`. A remote that
+  refuses for its own reasons, such as a hook or a protected branch, is
+  `VcsError::PushRefused` with its reason. Once pushed, the Git store's
+  branch names the pushed commit and an import moves `<trunk>@git`
+  there, as a fetch would, so nothing is ahead.
+- `Project::replay(commits, onto)` copies commits (oldest first, each on
+  the one before) onto `onto`: each copy's tree is jj's three-way merge
+  of the copy before (`onto` for the first), the commit's parent tree,
+  and the commit's tree. Copies keep the description and author and get
+  new change ids, so they never make the originals divergent once a
+  fetch brings them back. They are written in a transaction that is
+  dropped, so no operation records them and they stay hidden; the Git
+  store keeps them under jj's `refs/jj/keep/`. The first copy that would
+  hold a conflict refuses with `VcsError::WouldConflict(paths)`.
+- `Project::push_branch(remote, branch, expected, head)` points the
+  remote's `branch` at `head` if the remote has it at `expected` (absent
+  for `None`), else `PushRejected`. No bookmark changes.
+
+The host's `Host::push_main(repo, fetch)` pushes a repository's trunk
+with the GitHub sign-in's token. With `fetch` it first updates from
+GitHub and moves the main chat onto trunk (`Vcs::move_onto`), which
+puts the main chat's commits on top of GitHub's new ones; the main chat
+must not be running then. The catalog's `Repo::unpushed` counts
+`unpushed()` for each repository from GitHub; the main chat's header
+and sidebar row show it with a Push button, and its chat ends with a
+card for the last push, or for GitHub's moved branch with Fetch and
+push (`WorkspaceEvent::Push`, `HostUpdate::Pushed`).
+
+## Pull requests
+
+A chat's pull request carries only the chat's commits:
+
+1. Preparing it fetches from GitHub, then replays the chat's stack onto
+   `upstream()`. A replay that would conflict refuses the pull request:
+   `would conflict on origin/<trunk>: a.rs, b.rs`. The draft lists each
+   copy with its line counts.
+2. Creating it replays again and pushes the last copy to the draft's
+   branch with `push_branch` (expecting no branch there), then opens
+   the pull request and asks for reviews through GitHub's API.
+3. Keep pushing replays the chat's commits after the last one pushed
+   onto the branch's commit, and pushes with a lease on it: a
+   fast-forward. A chat whose last pushed change is gone from its
+   stack replays all of it onto `upstream()` again.
+
+The main chat has no pull request: it pushes.
+
 ## Left to the host and the UI
 
 These operations change shared state, use the network, or throw work
@@ -722,9 +796,9 @@ away. The model does not get them. The host calls jj-lib (or later
 ([jj-lib.md](../research/jj-lib.md), "Operations the user triggers from
 the UI"):
 
-- **Fetch and push.** Updating trunk and pushing a run's bookmark.
-  These need credentials.
-- **Pull requests.** Opening a PR after a push.
+- **Fetch and push.** Updating trunk (`Project::update`) and pushing
+  (see "Pushing"). These need credentials.
+- **Pull requests.** Opening a PR after a push (see "Pull requests").
 - **Bookmarks, rebase, abandon and squash.** The study's
   `vcs_abandon`, `vcs_squash`, `vcs_cat` and named revisions (`trunk`,
   `fork-point`) are not built.

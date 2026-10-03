@@ -6,6 +6,9 @@
   Amended by [0024](0024-landings-queue-while-the-parent-works.md):
   the resolving turn is checked, and conflicts it leaves hold the
   parent.
+- Amended by [0023](0023-main-pushes-with-git-chat-prs-replay-onto-origin.md):
+  the main chat pushes trunk to GitHub, and pull requests replay a
+  chat's commits onto GitHub's trunk.
 - Date: 2026-09-30
 
 ## Context
