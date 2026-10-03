@@ -252,12 +252,18 @@ impl Workspace {
         let width = self.transcript.viewport_bounds().size.width;
         self.transcript_width = (width > px(0.)).then_some(width);
         // One more row, past the items, for an open landing's card, a
-        // landed chat's, a queued chat's, or a main chat's queue and
-        // conflicts.
+        // landed chat's, a queued chat's, or a main chat's queue,
+        // conflicts and push cards.
         let now =
             self.current()
                 .filter(|_| self.route != Route::NewRun)
                 .map(|run| {
+                    let pushed = self
+                        .main_repo(&run.id)
+                        .and_then(|repo| self.push_state(repo))
+                        .is_some_and(|state| {
+                            !matches!(state, PushState::Pushing { .. })
+                        });
                     let card = usize::from(
                         self.landings.contains_key(&run.id)
                             || matches!(
@@ -270,7 +276,8 @@ impl Workspace {
                             || run
                                 .main_conflicts
                                 .as_ref()
-                                .is_some_and(|c| !c.dismissed),
+                                .is_some_and(|c| !c.dismissed)
+                            || pushed,
                     );
                     (run.id.clone(), run.items.len() + card)
                 });
@@ -372,8 +379,10 @@ impl Workspace {
         }
         let (color, label) = ui::status_look(&run.status, t);
         let live = run.status.is_live();
+        // A main chat pushes to GitHub instead (ADR 0023).
         let done = self.catalog.pull_requests
-            && run.status == RunStatus::Finished(StopReason::Stop);
+            && run.status == RunStatus::Finished(StopReason::Stop)
+            && !self.is_main(&run.id);
         let id = run.id.clone();
         div()
             .h(px(48.))
@@ -406,6 +415,7 @@ impl Workspace {
                 t.dim,
             ))
             .child(div().flex_1())
+            .children(ui::push::header(self, run, t, cx))
             .child(ui::mono(
                 crate::view::usd(run.usage.cost),
                 Type::CAPTION,
@@ -749,7 +759,13 @@ impl Workspace {
     ) -> impl IntoElement {
         let live = run.status.is_live();
         let done = self.catalog.pull_requests
-            && run.status == RunStatus::Finished(StopReason::Stop);
+            && run.status == RunStatus::Finished(StopReason::Stop)
+            && !self.is_main(&run.id);
+        // A main chat with changes GitHub lacks pushes from here.
+        let push = self
+            .main_repo(&run.id)
+            .filter(|repo| self.unpushed(repo).is_some())
+            .map(str::to_owned);
         let id = run.id.clone();
         div()
             .absolute()
@@ -801,7 +817,8 @@ impl Workspace {
                             .grid()
                             .grid_cols(
                                 (usize::from(self.can_fork(run))
-                                    + usize::from(live || done))
+                                    + usize::from(live || done)
+                                    + usize::from(push.is_some()))
                                 .max(1) as u16,
                             )
                             .gap(sp(2.))
@@ -818,6 +835,23 @@ impl Workspace {
                                         .on_click(cx.listener(
                                             |ws, _, window, cx| {
                                                 ws.start_fork(window, cx)
+                                            },
+                                        )),
+                                )
+                            })
+                            .when_some(push, |row, repo| {
+                                row.child(
+                                    div()
+                                        .id("sheet-push")
+                                        .child(ui::big_button(
+                                            "Push to GitHub",
+                                            Some(Icon::Push),
+                                            ButtonKind::Primary,
+                                            t,
+                                        ))
+                                        .on_click(cx.listener(
+                                            move |ws, _, _, cx| {
+                                                ws.push(&repo, false, cx)
                                             },
                                         )),
                                 )

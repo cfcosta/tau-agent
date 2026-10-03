@@ -46,6 +46,7 @@ use crate::{
     phones::{Phones, PhonesRequest},
     plan_usage::{PlanAction, PlanAlert},
     pull_request::{PrState, PullRequest},
+    push::PushState,
     route::{self, Route},
     setup::{
         CloneState,
@@ -118,6 +119,7 @@ mod layout;
 mod onboarding;
 mod pairing;
 mod pull_request;
+mod push;
 
 /// Binds the workspace's keys. [`crate::init`] calls it.
 pub fn bind_keys(cx: &mut App) {
@@ -306,6 +308,13 @@ pub enum WorkspaceEvent {
         main: RunId,
         fork: RunId,
     },
+    /// Push the repository's trunk, the main chat's commits, to GitHub
+    /// (ADR 0023); fetch first when `fetch`, which puts them on top of
+    /// GitHub's new commits. Answer with [`HostUpdate::Pushed`].
+    Push {
+        repo: String,
+        fetch: bool,
+    },
     /// Push the run's branch and open the pull request.
     CreatePullRequest {
         run: RunId,
@@ -426,6 +435,8 @@ pub struct Workspace {
     pub(crate) kept_branch: Option<RunId>,
     /// Child runs on their way to landing, by run.
     landings: HashMap<RunId, LandingState>,
+    /// Where each repository's push to GitHub stands, by repository.
+    pushes: HashMap<String, PushState>,
     /// Runs that proposed their landing with `vcs_land` and have not
     /// stopped yet.
     proposed: HashSet<RunId>,
@@ -681,6 +692,7 @@ impl Workspace {
             open_cards: HashSet::new(),
             kept_branch: None,
             landings: HashMap::new(),
+            pushes: HashMap::new(),
             proposed: HashSet::new(),
             setup: Setup::default(),
             pairing: Pairing::default(),
@@ -855,6 +867,9 @@ impl Workspace {
             HostUpdate::PullRequestState { run, state } => {
                 self.set_pull_request_state(&run, state, cx)
             }
+            HostUpdate::Pushed { repo, result } => {
+                self.pushed(&repo, result, cx)
+            }
             HostUpdate::LandingPreview { run, preview } => {
                 self.set_landing_preview(&run, preview, cx)
             }
@@ -1004,6 +1019,14 @@ impl Workspace {
         }
         for run in &mut self.runs {
             run.apply(event);
+        }
+        // A main chat's new run puts away the card of its last push.
+        if let RunEvent::RunStart { run, .. } = event
+            && let Some(repo) = self.main_repo(run).map(str::to_owned)
+        {
+            self.pushes.retain(|pushing, state| {
+                *pushing != repo || matches!(state, PushState::Pushing { .. })
+            });
         }
         // A fork that finishes waits in its parent's chat, to land or
         // be dropped.

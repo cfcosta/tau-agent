@@ -635,6 +635,9 @@ fn run_row(
     // What plugins add to the row: a line under the title, and a count
     // at the end.
     let note = ws.run_rows(run, cx).into_iter().next();
+    // A main chat with changes GitHub lacks says so, with Push (ADR
+    // 0023).
+    let push = super::push::row(ws, run, t, cx);
     let title = div()
         .truncate()
         .text_color(if active { t.text } else { t.text_soft })
@@ -649,10 +652,15 @@ fn run_row(
         .items_center()
         .gap(sp(2.5))
         .min_h(px(34.))
-        .py(sp(note
-            .as_ref()
-            .and_then(|note| note.line.as_ref())
-            .map_or(0., |_| 1.5)))
+        .py(sp(
+            if push.is_some()
+                || note.as_ref().and_then(|note| note.line.as_ref()).is_some()
+            {
+                1.5
+            } else {
+                0.
+            },
+        ))
         .pl(sp(indent(depth)))
         .pr(sp(2.))
         .rounded(radius::CONTROL)
@@ -676,8 +684,18 @@ fn run_row(
                 .flex_col()
                 .gap(sp(0.25))
                 .child(title)
+                .when_some(push.as_ref(), |column, (line, _)| {
+                    column.child(
+                        div()
+                            .truncate()
+                            .typeset(Type::MICRO)
+                            .text_color(t.muted)
+                            .child(line.clone()),
+                    )
+                })
                 .when_some(
                     note.as_ref()
+                        .filter(|_| push.is_none())
                         .and_then(|note| Some((note.tone, note.line.clone()?))),
                     |column, (tone, line)| {
                         column.child(
@@ -697,7 +715,9 @@ fn run_row(
                 ),
         )
         .map(|row| {
-            if hovered && !ws.is_main(&run.id) {
+            if let Some((_, button)) = push {
+                row.child(button)
+            } else if hovered && !ws.is_main(&run.id) {
                 row.child(
                     div()
                         .id("close-run")

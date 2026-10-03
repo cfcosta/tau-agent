@@ -13,6 +13,7 @@ use tau_vcs::Landing;
 use crate::{
     catalog::{Catalog, Repo},
     pull_request::{PrState, PullRequest},
+    push::{PushFailure, Pushed},
     setup::SetupUpdate,
     view::{CodeState, RunView},
 };
@@ -41,6 +42,11 @@ pub enum HostUpdate {
     PullRequestState {
         run: RunId,
         state: PrState,
+    },
+    /// What pushing a repository's trunk to GitHub did (ADR 0023).
+    Pushed {
+        repo: String,
+        result: Result<Pushed, PushFailure>,
     },
     /// What landing a child run would do.
     LandingPreview {

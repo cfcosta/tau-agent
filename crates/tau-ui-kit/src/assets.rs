@@ -50,6 +50,8 @@ pub enum Icon {
     External,
     /// Lands a run: on its parent, or into main.
     Land,
+    /// Pushes main to GitHub.
+    Push,
 }
 
 impl Icon {
@@ -93,6 +95,7 @@ impl Icon {
             Self::Phone => "icons/phone.svg",
             Self::External => "icons/external.svg",
             Self::Land => "icons/land.svg",
+            Self::Push => "icons/push.svg",
         }
     }
 
@@ -178,6 +181,7 @@ impl Icon {
                 r#"<path d="M2 2l20 20M8.5 16.5a5 5 0 017 0M5 12.9a10 10 0 015.2-2.8M19 12.9a10 10 0 00-2.3-1.6M12 20h.01"/>"#
             }
             Self::Land => r#"<path d="M12 20V8M7 12l5-5 5 5M5 4h14"/>"#,
+            Self::Push => r#"<path d="M12 19V5M6 11l6-6 6 6"/>"#,
             Self::External => {
                 r#"<path d="M14 4h6v6M20 4l-8.5 8.5M18 14.5V20H4V6h5.5"/>"#
             }
@@ -187,7 +191,7 @@ impl Icon {
         }
     }
 
-    const ALL: [Self; 38] = [
+    const ALL: [Self; 39] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -226,6 +230,7 @@ impl Icon {
         Self::Phone,
         Self::External,
         Self::Land,
+        Self::Push,
     ];
 
     fn svg(self) -> String {

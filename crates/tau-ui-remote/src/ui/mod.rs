@@ -9,6 +9,7 @@ pub mod ending;
 pub mod inspector;
 pub mod interrupted;
 pub mod landing;
+pub mod push;
 pub mod queue;
 pub mod screens;
 pub mod transcript;

@@ -51,8 +51,8 @@ pub fn item(
 ) -> AnyElement {
     let edge = sp(if compact { 4. } else { 5. });
     let side = sp(if compact { 4. } else { 6. });
-    // Past the items, the landing card, while a landing is open, or
-    // where a landed chat's work went.
+    // Past the items, the landing card, while a landing is open, where
+    // a landed chat's work went, or a main chat's card for its last push.
     if index == run.items.len() {
         let card = match run.ending {
             Some(_) => super::ending::landed_card(ws, run, t, cx),
@@ -70,7 +70,13 @@ pub fn item(
             .flex()
             .flex_col()
             .gap(sp(4.))
-            .children(queue.into_iter().chain(card).map(|card| card.w_full()))
+            .children(
+                queue
+                    .into_iter()
+                    .chain(card)
+                    .chain(super::push::card(ws, run, t, cx))
+                    .map(|card| card.w_full()),
+            )
             .into_any_element();
     }
     let Some(item) = run.items.get(index) else {

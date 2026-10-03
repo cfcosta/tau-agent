@@ -68,6 +68,14 @@ pub struct Repo {
     /// (`UiPlugin::repo_data`).
     #[serde(default)]
     pub plugins: std::collections::BTreeMap<String, PluginValue>,
+    /// How many of trunk's changes GitHub does not have yet: what the
+    /// main chat would push (ADR 0023). Zero for a repository that did
+    /// not come from GitHub.
+    #[serde(default)]
+    pub unpushed: u32,
+    /// Trunk's branch, which `origin/<trunk>` names on GitHub.
+    #[serde(default)]
+    pub trunk: Option<String>,
 }
 
 impl Repo {
