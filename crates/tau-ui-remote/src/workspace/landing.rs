@@ -152,6 +152,14 @@ impl Workspace {
         }
     }
 
+    /// Goes on with `run`, which tau closing cut off: the host shows
+    /// tau's message saying so, and resumes it in its workspace.
+    pub fn resume_cut_off(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        self.follow = true;
+        cx.emit(WorkspaceEvent::ResumeCutOff { run: run.clone() });
+        cx.notify();
+    }
+
     pub fn landing(&self, run: &RunId) -> Option<&LandingState> {
         self.landings.get(run)
     }

@@ -114,6 +114,29 @@ pub(super) fn resolve(
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
+    tau_turn(
+        host,
+        run,
+        prompt,
+        |host, run, prompt| host.start_resolving(run, prompt),
+        "Could not start resolving the conflicts",
+        workspace,
+        cx,
+    )
+}
+
+/// Starts a turn of `run` that tau asks for, with `prompt`: its chat
+/// shows the message as tau's, then `start` resumes it. A failure says
+/// `failed` and why.
+pub(super) fn tau_turn(
+    host: &Arc<Host>,
+    run: &RunId,
+    prompt: String,
+    start: impl FnOnce(&Host, &RunId, &str) -> anyhow::Result<()>,
+    failed: &str,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
     workspace.update(cx, |ws, cx| {
         ws.apply(
             HostUpdate::TauTurn {
@@ -123,16 +146,10 @@ pub(super) fn resolve(
             cx,
         )
     });
-    if let Err(error) = host.start_resolving(run, &prompt) {
+    if let Err(error) = start(host, run, &prompt) {
         workspace.update(cx, |ws, cx| {
             ws.apply(HostUpdate::ResumeFailed(run.clone()), cx);
-            ws.apply(
-                HostUpdate::alert(
-                    "Could not start resolving the conflicts",
-                    format!("{error:#}"),
-                ),
-                cx,
-            );
+            ws.apply(HostUpdate::alert(failed, format!("{error:#}")), cx);
         });
     }
 }
@@ -198,6 +215,49 @@ pub(super) fn update_in_background(
     .detach();
 }
 
+/// Finishes what the last tau left as it closed (`Host::recover`), off
+/// the interface's thread, then brings in what changed upstream while it
+/// was closed, quietly: an update moves trunk, which recovery reads.
+fn recover_in_background(
+    host: &Arc<Host>,
+    slots: Vec<RepoSlot>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    // The repositories as they are, before recovery and updates.
+    if !slots.is_empty() {
+        let catalog = host.catalog();
+        workspace
+            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
+    }
+    let job = {
+        let recoverer = host.clone();
+        host.runtime.spawn_blocking(move || recoverer.recover())
+    };
+    let host = host.clone();
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        match job.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                eprintln!("tau-ui: cannot finish what tau left: {error:#}")
+            }
+            Err(error) => {
+                eprintln!("tau-ui: cannot finish what tau left: {error}")
+            }
+        }
+        let Some(workspace) = workspace.upgrade() else {
+            return;
+        };
+        cx.update(|cx| {
+            for slot in &slots {
+                update_in_background(&host, &slot.name, &workspace, false, cx);
+            }
+        });
+    })
+    .detach();
+}
+
 impl Host {
     /// Wires the host to a workspace: its events drive the host, and the
     /// runs' events drive the workspace. Loads history first.
@@ -223,11 +283,10 @@ impl Host {
         // Once a repository is imported, the plugins and the status bar
         // change.
         let slots = host.repos.lock().expect("not poisoned").clone();
-        for slot in slots {
-            refresh_when_imported(&host, &slot, workspace, cx);
-            // What changed while tau was closed comes in, quietly.
-            update_in_background(&host, &slot.name, workspace, false, cx);
+        for slot in &slots {
+            refresh_when_imported(&host, slot, workspace, cx);
         }
+        recover_in_background(&host, slots, workspace, cx);
         github::restore(workspace, &host.config.credentials, &host.github, cx);
         let handler = host.clone();
         // A sign-in, a switch of account or a sign-out from the Models
@@ -457,6 +516,15 @@ impl Host {
                         }),
                     }
                 }
+                WorkspaceEvent::ResumeCutOff { run } => tau_turn(
+                    &handler,
+                    run,
+                    CUT_OFF.to_owned(),
+                    |host, run, _| host.resume_cut_off(run),
+                    "Could not resume the run",
+                    &workspace,
+                    cx,
+                ),
                 WorkspaceEvent::Fork {
                     run,
                     turn,

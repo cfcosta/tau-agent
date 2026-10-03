@@ -243,6 +243,12 @@ pub enum WorkspaceEvent {
     },
     /// Forget the GitHub sign-in.
     GitHubSignOut,
+    /// Go on with a run tau closing cut off, in its workspace, with
+    /// tau's message saying so. The host answers with a
+    /// [`HostUpdate::TauTurn`], or [`Workspace::resume_failed`].
+    ResumeCutOff {
+        run: RunId,
+    },
     /// Go on with a finished run, as a chat goes on: the same run gets
     /// `prompt`, on its own model. Its events carry on in its view; if it
     /// cannot, answer with [`Workspace::resume_failed`].

@@ -46,24 +46,27 @@ pub(super) async fn stored_view(
     )
     .in_repo(stored_repo(store, &record.id).await.unwrap_or_default())
     .started(started(&record.created_at));
-    let stop = match record.status {
-        Status::Done => StopReason::Stop,
-        Status::Cancelled => StopReason::Cancelled,
-        Status::Failed => StopReason::Error(
-            record.error.clone().unwrap_or_else(|| "failed".into()),
-        ),
-        Status::Limit => StopReason::Error("stopped at a limit".into()),
-        Status::Running => {
-            StopReason::Error("interrupted: tau closed during the run".into())
-        }
-    };
     let plugin_cost = store
         .plugin_costs(&record.id)
         .await?
         .iter()
         .map(|cost| cost.cost_usd)
         .sum();
-    view.finish_stored(stop, record.cost_usd, plugin_cost);
+    let stop = match record.status {
+        Status::Done => Some(StopReason::Stop),
+        Status::Cancelled => Some(StopReason::Cancelled),
+        Status::Failed => Some(StopReason::Error(
+            record.error.clone().unwrap_or_else(|| "failed".into()),
+        )),
+        Status::Limit => Some(StopReason::Error("stopped at a limit".into())),
+        // tau closed while it ran; a run still `running` in the store
+        // is one this tau does not run, so it was cut off too.
+        Status::Interrupted | Status::Running => None,
+    };
+    match stop {
+        Some(stop) => view.finish_stored(stop, record.cost_usd, plugin_cost),
+        None => view.interrupted_stored(record.cost_usd, plugin_cost),
+    }
     // The plan it started with, as it showed live.
     if let Some(start) = stored_start(store, &record.id).await {
         view.set_base_plan(

@@ -205,6 +205,10 @@ pub struct Host {
     /// The plugins with their UI, each with its state on this host (ADR
     /// 0017).
     hosted: Vec<hosted::Hosted>,
+    /// Held while a run starts, and while a sweep reads what the
+    /// projects hold and who owns it, so a sweep never takes a starting
+    /// run's workspace.
+    starting: Mutex<()>,
     /// What plugins' host halves tell the interface, and its receiving
     /// end until [`Self::attach`] takes it.
     pushes: mpsc::UnboundedSender<tau_ui_plugin::Push>,
@@ -229,12 +233,14 @@ mod landing;
 mod onboarding;
 mod pull_request;
 mod repos;
+mod startup;
 
 pub use self::{
     config::HostConfig,
     history::history,
     instructions::{AGENTS_FILE, AGENTS_HEADING, AGENTS_LIMIT, agents_section},
     onboarding::onboard,
+    startup::CUT_OFF,
 };
 use self::{
     config::*,
@@ -376,6 +382,11 @@ impl Host {
     ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
         let (pushes, pushed) = mpsc::unbounded_channel();
+        // Runs the last tau left running were cut off as it closed: this
+        // one runs none of them.
+        if let Err(error) = runtime.block_on(store.interrupt_running()) {
+            eprintln!("tau-ui: cannot mark interrupted runs: {error:#}");
+        }
         let settings = load_settings(&config.settings, &config.default_model());
         let list = RepoList::load(&config.repo_list);
         let mut host = Self {
@@ -402,6 +413,7 @@ impl Host {
             runs: Arc::default(),
             events,
             hosted: Vec::new(),
+            starting: Mutex::new(()),
             pushes,
             pushed: Mutex::new(Some(pushed)),
         };
@@ -792,6 +804,7 @@ impl Host {
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
+        let _starting = self.starting.lock().expect("not poisoned");
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
         // Named after what it was asked, so the workspace says what it is
@@ -897,6 +910,7 @@ impl Host {
             anyhow::bail!("The run is still going; steer it instead");
         }
         self.refuse_ended(run)?;
+        let _starting = self.starting.lock().expect("not poisoned");
         let repo = self.slot_of_run(run)?;
         // The workspace its last turn worked in, which still has its
         // files.
@@ -904,10 +918,15 @@ impl Host {
         // A main chat works in the repository's own checkout, the
         // default workspace, not one of its own.
         let main = self.is_main(run);
+        // A run cut off in its first turn has no link yet: the workspace
+        // it recorded as it started.
         let workspace = match known {
             _ if main => Some(DEFAULT_WORKSPACE.to_owned()),
             Some(name) => Some(name),
-            None => self.link(run, None)?.map(|(_, link)| link.workspace),
+            None => match self.link(run, None)? {
+                Some((_, link)) => Some(link.workspace),
+                None => self.started_in(run),
+            },
         };
         // A main chat catches up with trunk first: its commits move
         // trunk, which may have moved without it.
@@ -926,6 +945,21 @@ impl Host {
         let resumed = agent.resume(run).start(prompt, &self.store);
         self.track(resumed, workspace, choice, &repo.name);
         Ok(())
+    }
+
+    /// The name of the workspace `run` recorded as it started, if it
+    /// did and it is still there.
+    fn started_in(&self, run: &RunId) -> Option<String> {
+        let dir = self
+            .runtime
+            .block_on(stored_start(&self.store, &run.0))?
+            .workspace?;
+        let dir = Path::new(&dir);
+        dir.join(".jj")
+            .is_dir()
+            .then(|| dir.file_name())
+            .flatten()
+            .map(|name| name.to_string_lossy().into_owned())
     }
 
     /// The link of `turn` in `run` (the latest when `None`), with the

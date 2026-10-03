@@ -496,6 +496,44 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   Confirmed, conflicts land as jj
   conflicts for the parent's next turn to resolve.
 
+## Sweeping at start
+
+Nothing cleans a run's workspace and bookmark once the process that ran
+it is gone: a sub-agent cut off mid-call, a chat whose landing or drop
+tau closed in the middle of, a workspace whose run never reached the
+store. Left there, they take disk space, and the main chat's catch-ups
+restack their commits every time.
+
+`tau_vcs::sweep::plan(owners, workspaces, bookmarks)` is the rule, a
+pure function. Each `Owner` is a run with the workspaces it worked in
+and its `Standing`:
+
+- `Kept`: its workspaces and bookmark stay.
+- `Landed`: they go; its commits, on its parent now, stay.
+- `Discarded`: they go, and first its own commits, what its bookmark
+  and its workspaces' working copies have that its `Keep` (its parent's
+  bookmark, or the main chat's working copy) lacks, as a drop does.
+
+A workspace goes unless a kept run worked in it, and `default`, the
+repository's checkout, never goes. A `tau/<run>` bookmark goes unless
+that run is kept; other bookmarks are not runs' and stay. What no
+owner names belongs to a run that is gone, and goes. `Project::sweep`
+carries a plan out: abandons, then forgets workspaces (their directories
+go), then removes bookmarks. Each step is idempotent, so a sweep cut
+off is finished by the next, and a done sweep plans nothing.
+
+The host sweeps each listed repository as it starts (`Host::recover`,
+off the interface's thread, before updates). A run of this session, or
+a sub-agent under one, is kept, and so is a workspace named after one
+of their workspaces with `-sub-`, which a delegate may be making; no run
+starts while the sweep reads what the projects hold. A chat that landed
+is landed, one dropped is discarded, and any other chat is open and
+kept, whatever its status: a chat that finished but has not landed,
+failed, or was cut off can go on. A sub-agent that failed, was
+cancelled or was cut off is discarded, as its call would have done; one
+that finished keeps what it has, as a call keeps a workspace it could
+not finalize.
+
 ## Moving onto trunk
 
 `Vcs::move_onto(trunk, bookmark, confirm)`, on a run's `Vcs`, rebases

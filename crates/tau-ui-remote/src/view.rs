@@ -120,11 +120,15 @@ pub enum RunStatus {
     Planning,
     Running,
     Finished(StopReason),
+    /// tau closed while it ran: it stopped mid-turn, its files as the
+    /// cut-off turn left them. Not live; it waits to be resumed. The
+    /// sidebar reads it as "Interrupted · tau closed".
+    Interrupted,
 }
 
 impl RunStatus {
     pub fn is_live(&self) -> bool {
-        !matches!(self, Self::Finished(_))
+        matches!(self, Self::Planning | Self::Running)
     }
 }
 
@@ -955,6 +959,14 @@ impl RunView {
             cost,
             plugin_cost: self.usage.plugin_cost,
         });
+    }
+
+    /// Sets a stored run that tau closed while it ran: its costs, and
+    /// [`RunStatus::Interrupted`], with no stop in its transcript.
+    pub fn interrupted_stored(&mut self, cost: f64, plugin_cost: f64) {
+        self.usage.cost = cost;
+        self.usage.plugin_cost = plugin_cost;
+        self.status = RunStatus::Interrupted;
     }
 
     pub fn with_origin(mut self, origin: Origin) -> Self {

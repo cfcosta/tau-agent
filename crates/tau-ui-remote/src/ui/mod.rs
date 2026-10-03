@@ -7,6 +7,7 @@ pub mod chrome;
 pub mod components;
 pub mod ending;
 pub mod inspector;
+pub mod interrupted;
 pub mod landing;
 pub mod screens;
 pub mod transcript;
@@ -28,6 +29,7 @@ pub fn status_look(status: &RunStatus, t: &Theme) -> (Hsla, SharedString) {
         RunStatus::Planning => (t.blue, "planning".into()),
         RunStatus::Running => (t.accent, "running".into()),
         RunStatus::Finished(stop) => stop_look(stop, t),
+        RunStatus::Interrupted => (t.muted, "interrupted".into()),
     }
 }
 
@@ -72,6 +74,9 @@ pub fn status_icon(
             .into_any_element(),
         RunStatus::Finished(_) => {
             icon(Icon::Warning, size, t.red).into_any_element()
+        }
+        RunStatus::Interrupted => {
+            icon(Icon::Pause, size, t.muted).into_any_element()
         }
     }
 }
