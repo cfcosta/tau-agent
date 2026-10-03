@@ -338,16 +338,36 @@ fn the_callback_is_loopback_only(tc: TestCase) {
     }
 }
 
-/// Without a callback URL: 127.0.0.1, the given port or any, and
-/// `/callback`.
-#[hegel::test(test_cases = 100)]
-fn the_default_callback_is_127_0_0_1(tc: TestCase) {
-    let port: Option<u16> =
-        tc.draw(gs::optional(gs::integers().min_value(1_u16)));
-    let address = callback_address(None, port).unwrap();
-    assert_eq!(address.ip, IpAddr::from([127, 0, 0, 1]));
-    assert_eq!(address.port, port.unwrap_or(0));
-    assert_eq!(address.redirect_uri(7), "http://127.0.0.1:7/callback");
+/// Boundary inventory: None, 1, 80, and 65535 configured ports. The law is
+/// loopback binding with the configured port (or zero), and a redirect to the
+/// actual listener port. The oracle is the bind fields, a literal URI, and its
+/// parsed components; these fixed rows need no shrinking.
+#[test]
+fn the_default_callback_binds_loopback_and_uses_the_listener_port() {
+    let cases = [
+        (None, 49_152),
+        (Some(1), 1),
+        (Some(80), 80),
+        (Some(65535), 65535),
+    ];
+
+    for (configured_port, listener_port) in cases {
+        let address = callback_address(None, configured_port).unwrap();
+        assert_eq!(address.ip, IpAddr::from([127, 0, 0, 1]));
+        assert_eq!(address.port, configured_port.unwrap_or(0));
+
+        let redirect_uri = address.redirect_uri(listener_port);
+        let expected_uri = format!("http://127.0.0.1:{listener_port}/callback");
+        assert_eq!(redirect_uri, expected_uri);
+
+        let parsed_uri = url::Url::parse(&redirect_uri).unwrap();
+        assert_eq!(parsed_uri.scheme(), "http");
+        assert_eq!(parsed_uri.host_str(), Some("127.0.0.1"));
+        assert_eq!(parsed_uri.port_or_known_default(), Some(listener_port));
+        assert_eq!(parsed_uri.path(), "/callback");
+        assert_eq!(parsed_uri.query(), None);
+        assert_eq!(parsed_uri.fragment(), None);
+    }
 }
 
 /// The hosts' filter keeps rmcp's sign-in targets, and their modules,

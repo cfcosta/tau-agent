@@ -31,7 +31,7 @@ Audit numbers refer to the approved 40-test shortlist.
 - [x] **15 — Retry rules:** exhaustive statuses, richer known/unknown header generation and preserved boundary regressions (#16–20).
 - [x] **16 — Compaction UI:** exhaustive activation and exact decision labels (#22–23).
 - [x] **17 — Reasoning/goal UI:** exhaustive activation combinations (#24–25).
-- [ ] **18 — Callback defaults:** explicit configured/listening port boundaries (#26).
+- [x] **18 — Callback defaults:** explicit configured/listening port boundaries (#26).
 - [ ] **19 — Session reasoning:** model-class tables and change/no-op/unset histories (#27–28, #40).
 - [ ] **20 — Goal commands:** consolidate parsed/general condition laws without rejection (#29).
 - [ ] **21 — Inference and slugs:** schema/value acceptance pairs and exact word/length models (#35–38).
@@ -73,6 +73,7 @@ mutation campaign. Only failure of the named replacement counts as detection.
 | 16    | Dropped results display as kept                      | `each_decision_has_its_exact_card_label`                              |
 | 17    | Goal UI enables the plugin in subagents              | `starting_checks_and_plugin_presence_follow_key_and_run_kind`         |
 | 17    | Reasoning UI ignores a manual effort                 | `startup_status_and_plugin_presence_follow_key_and_effort`            |
+| 18    | Redirect URIs hard-code port 7                       | `the_default_callback_binds_loopback_and_uses_the_listener_port`      |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before
