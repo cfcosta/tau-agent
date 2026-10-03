@@ -190,6 +190,24 @@ fn landed_note(landing: &Landing, brought: &[String]) -> String {
     )
 }
 
+/// A failed handoff is an error with enough durable identity to recover it.
+/// The UI must not close this child as if it had landed or been dropped.
+fn retained_workspace(workspace: &RunWorkspace, reason: String) -> ToolError {
+    ToolError::Output(Box::new(ToolOutput {
+        details: Some(json!({
+            "run": workspace.run().map(|run| run.0.to_string()),
+            "workspace": workspace.dir().display().to_string(),
+            "workspace_retained": true,
+            "error": reason,
+        })),
+        ..ToolOutput::text(format!(
+            "The sub-agent could not finalize its work: {reason}. Nothing landed. \
+             Its workspace and bookmark were retained at {} for recovery.",
+            workspace.dir().display()
+        ))
+    }))
+}
+
 #[async_trait]
 impl AgentTool for Delegate {
     fn name(&self) -> &str {
@@ -237,6 +255,17 @@ impl AgentTool for Delegate {
         //    model makes the commits (ADR 0014): with work still in `@`,
         //    the sub-agent could not see it, so it commits first.
         let working_copy = self.parent.vcs().working_copy().await?;
+        if !working_copy.too_large.is_empty() {
+            return Err(VcsError::UntrackedLarge(
+                working_copy
+                    .too_large
+                    .iter()
+                    .map(|file| file.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+            .into());
+        }
         if !working_copy.paths.is_empty() {
             return Err(
                 VcsError::Uncommitted(working_copy.paths.join(", ")).into()
@@ -296,6 +325,37 @@ impl AgentTool for Delegate {
         let output = match outcome {
             // 4. Its changes land on the caller.
             Ok((text, limit)) => {
+                // A normal/limited outcome does not prove the finish hook
+                // committed everything. Verify through jj-lib before any
+                // landing, abandonment or workspace deletion.
+                if workspace.run().is_some() {
+                    if let Some(error) = workspace.finalization_error() {
+                        return Err(retained_workspace(&workspace, error));
+                    }
+                    match workspace.vcs().working_copy().await {
+                        Ok(copy) if copy.is_committed() => {}
+                        Ok(copy) => {
+                            return Err(retained_workspace(
+                                &workspace,
+                                format!(
+                                    "uncommitted paths: {}; oversized untracked paths: {}",
+                                    copy.paths.join(", "),
+                                    copy.too_large
+                                        .iter()
+                                        .map(|file| file.path.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                ),
+                            ));
+                        }
+                        Err(error) => {
+                            return Err(retained_workspace(
+                                &workspace,
+                                error.to_string(),
+                            ));
+                        }
+                    }
+                }
                 // What the caller's head held in conflict before: the
                 // note names only what this landing brought.
                 let before = self.parent.vcs().working_copy().await?.head;

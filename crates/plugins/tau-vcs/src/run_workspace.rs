@@ -123,6 +123,8 @@ pub struct RunWorkspace {
     /// The bookmark the run's commits move, instead of `tau/<run>`: a
     /// main chat's, which commits on trunk.
     commits_to: Option<String>,
+    /// A failed end-of-run commit, shared with the delegating caller.
+    finalization_error: Arc<Mutex<Option<String>>>,
 }
 
 impl fmt::Debug for RunWorkspace {
@@ -153,6 +155,7 @@ impl RunWorkspace {
             pending: Arc::default(),
             run: Arc::default(),
             commits_to: None,
+            finalization_error: Arc::default(),
         })
     }
 
@@ -184,6 +187,13 @@ impl RunWorkspace {
 
     pub(crate) fn project(&self) -> &Project {
         &self.project
+    }
+
+    pub(crate) fn finalization_error(&self) -> Option<String> {
+        self.finalization_error
+            .lock()
+            .expect("not poisoned")
+            .clone()
     }
 
     /// Changes to link when the current turn ends, before its own.
@@ -228,6 +238,7 @@ impl Plugin for RunWorkspace {
         ctx: &PluginCtx,
     ) -> Result<Box<dyn PluginRun>, PluginError> {
         *self.run.lock().expect("not poisoned") = Some(ctx.run.clone());
+        self.finalization_error.lock().expect("not poisoned").take();
         // A fork continues from the last turn it inherits.
         let inherited = plan.records().iter().rev().find_map(|record| {
             serde_json::from_value::<Link>(record.clone()).ok()
@@ -274,6 +285,7 @@ impl Plugin for RunWorkspace {
             since,
             held: false,
             bookmark: self.bookmark_of(&ctx.run),
+            finalization_error: self.finalization_error.clone(),
         }))
     }
 }
@@ -295,6 +307,52 @@ struct Turns {
     held: bool,
     /// The bookmark the run's commits move.
     bookmark: String,
+    finalization_error: Arc<Mutex<Option<String>>>,
+}
+
+impl Turns {
+    async fn commit_pending(&self, ctx: &PluginCtx) -> Result<(), PluginError> {
+        let working_copy = self.vcs.working_copy().await?;
+        if working_copy.is_committed() {
+            return Ok(());
+        }
+        if !working_copy.too_large.is_empty() {
+            return Err(VcsError::UntrackedLarge(
+                working_copy
+                    .too_large
+                    .iter()
+                    .map(|file| file.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+            .into());
+        }
+        let diff = self.vcs.working_copy_diff().await?;
+        let settings = Settings {
+            model: self.model.clone(),
+            instructions: Some(DESCRIBE.to_owned()),
+            ..Settings::default()
+        };
+        let input = [Message::User(UserMessage {
+            content: UserContent::Text(format!(
+                "<task>\n{}\n</task>\n<diff>\n{diff}\n</diff>",
+                self.task
+            )),
+            timestamp: ctx.now(),
+        })];
+        let answer = ctx
+            .ask(settings, &input)
+            .await
+            .map_err(PluginError::other)?;
+        let message = answer.text();
+        if message.trim().is_empty() {
+            return Err(VcsError::EmptyDescription.into());
+        }
+        self.vcs
+            .commit_all(message.trim(), self.bookmark.clone())
+            .await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -383,39 +441,19 @@ impl PluginRun for Turns {
         if !matches!(run.stop, StopReason::Stop | StopReason::Limit(_)) {
             return;
         }
-        let Ok(working_copy) = self.vcs.working_copy().await else {
-            return;
-        };
-        if working_copy.paths.is_empty() {
-            return;
+        // The finish hook cannot change the run's terminal status. Keep
+        // the failure durable and visible to the caller instead of treating
+        // a failed commit as a successful handoff.
+        if let Err(error) = self.commit_pending(ctx).await {
+            let error = error.to_string();
+            *self.finalization_error.lock().expect("not poisoned") =
+                Some(error.clone());
+            let _ = ctx
+                .record(&serde_json::json!({
+                    "workspace": self.name,
+                    "finalization_error": error,
+                }))
+                .await;
         }
-        let Ok(diff) = self.vcs.working_copy_diff().await else {
-            return;
-        };
-        let task = &self.task;
-        let settings = Settings {
-            model: self.model.clone(),
-            instructions: Some(DESCRIBE.to_owned()),
-            ..Settings::default()
-        };
-        let input = [Message::User(UserMessage {
-            content: UserContent::Text(format!(
-                "<task>\n{task}\n</task>\n<diff>\n{diff}\n</diff>"
-            )),
-            timestamp: ctx.now(),
-        })];
-        // Without a message from a model, the work stays uncommitted:
-        // tau never writes one itself.
-        let Ok(answer) = ctx.ask(settings, &input).await else {
-            return;
-        };
-        let message: String = answer.text();
-        if message.trim().is_empty() {
-            return;
-        }
-        let _ = self
-            .vcs
-            .commit_all(message.trim(), self.bookmark.clone())
-            .await;
     }
 }

@@ -46,6 +46,11 @@ pub enum VcsError {
          with vcs_commit first."
     )]
     Uncommitted(String),
+    #[error(
+        "New files exceed jj's snapshot size limit ({0}). Keep the workspace \
+         and track or reduce these files before landing."
+    )]
+    UntrackedLarge(String),
     #[error("The parent's working copy is a merge")]
     ParentMerge,
     #[error("The child's changes do not form one stack")]

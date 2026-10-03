@@ -294,6 +294,20 @@ impl Host {
         if self.is_main(&parent) {
             self.catch_up(&project, &parent_workspace)?;
         }
+        // A completed run may have failed its final commit. Do not land
+        // only its earlier commits and then delete the remaining edits.
+        // Open the existing workspace, never recreate a missing one.
+        let child_vcs = tau_vcs::Vcs::open(
+            project.workspace_dir(&child_workspace),
+            identity(),
+        )?;
+        let copy = self.runtime.block_on(child_vcs.working_copy())?;
+        if !copy.is_committed() {
+            anyhow::bail!(
+                "The child has uncommitted or oversized untracked files; its workspace \
+                 is retained. Commit or recover its work before landing."
+            );
+        }
         let child_head =
             project.bookmark(&bookmark(child))?.ok_or_else(|| {
                 anyhow::anyhow!("{} has no changes to land", child.0)

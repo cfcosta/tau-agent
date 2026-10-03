@@ -2864,6 +2864,78 @@ fn a_nested_delegate_opens_and_closes_its_chat(cx: &mut TestAppContext) {
         WorkspaceEvent::CloseRun { run } if *run == child)));
 }
 
+/// The owned delegate's retained-workspace flag keeps its chat and route
+/// open, whether the call is direct or nested. Exhaust the finite flags
+/// and four call depths rather than randomly sampling their combinations.
+#[gpui::test]
+fn retained_delegates_stay_open_at_every_call_depth(cx: &mut TestAppContext) {
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use tau_agent::{event::RunEvent, tool::RunId};
+
+    for depth in 0..4 {
+        for retained in [false, true] {
+            let (workspace, mut window, events) = open_demo(cx);
+            let parent = demo::run_id();
+            let child = RunId(format!("retained-{depth}-{retained}").into());
+            workspace.update(&mut window, |ws, cx| {
+                let mut previous = None;
+                for index in 0..=depth {
+                    let id = format!("retain{}", "/1".repeat(index));
+                    let tool = if index == depth {
+                        "delegate"
+                    } else {
+                        "codemode"
+                    };
+                    ws.apply_event(
+                        &calls::start(
+                            &parent,
+                            &id,
+                            tool,
+                            json!({"task": "keep my work"}),
+                            previous.as_deref(),
+                        ),
+                        cx,
+                    );
+                    previous = Some(id);
+                }
+                let call = previous.unwrap();
+                ws.apply_event(
+                    &RunEvent::RunStart {
+                        run: child.clone(),
+                        parent: Some(parent.clone()),
+                        agent: Arc::from("coder"),
+                        call: Some(call.clone().into()),
+                    },
+                    cx,
+                );
+                ws.apply_event(&calls::run_end(&child, Some(&parent)), cx);
+                ws.navigate(Route::Run(child.clone()), cx);
+                let enclosing = (depth > 0)
+                    .then(|| format!("retain{}", "/1".repeat(depth - 1)));
+                ws.apply_event(&calls::end(&parent, &call, true, Some(json!({
+                    "run": child.0.as_ref(), "workspace_retained": retained,
+                })), enclosing.as_deref()), cx);
+                assert_eq!(ws.is_closed(&child), !retained);
+                assert_eq!(
+                    ws.route(),
+                    &Route::Run(if retained {
+                        child.clone()
+                    } else {
+                        parent.clone()
+                    })
+                );
+            });
+            assert_eq!(
+                events.borrow().iter().any(|event| matches!(event,
+                WorkspaceEvent::CloseRun { run } if *run == child)),
+                !retained
+            );
+        }
+    }
+}
+
 /// Every screen the demo opens by name opens on the demo, with its host
 /// answering, and draws.
 #[gpui::test]

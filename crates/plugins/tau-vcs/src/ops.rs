@@ -712,8 +712,17 @@ pub struct WorkingCopy {
     /// The paths `@` changes against its parent: none when all the work
     /// is committed.
     pub paths: Vec<String>,
+    /// New files omitted by jj-lib's snapshot size limit. They must not
+    /// disappear when a child workspace is removed.
+    pub too_large: Vec<crate::TooLarge>,
     /// `@`'s parent, the run's newest commit, in hex.
     pub head: String,
+}
+
+impl WorkingCopy {
+    pub fn is_committed(&self) -> bool {
+        self.paths.is_empty() && self.too_large.is_empty()
+    }
 }
 
 pub(crate) fn working_copy(
@@ -728,7 +737,11 @@ pub(crate) fn working_copy(
             .into_iter()
             .map(|change| change.path)
             .collect();
-    Ok(WorkingCopy { paths, head })
+    Ok(WorkingCopy {
+        paths,
+        too_large: snapshot.too_large,
+        head,
+    })
 }
 
 pub(crate) fn restore(

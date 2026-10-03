@@ -986,10 +986,19 @@ impl Workspace {
         {
             parent.fork_finished(run);
         }
-        // A sub-agent closes once its parent's call returns: landed, or
-        // dropped. Its siblings wait for their own calls. The call may be
-        // nested, as a codemode script's is.
-        if let RunEvent::ToolEnd { run, call_id, .. } = event
+        // A sub-agent closes after landing or an intentional drop, not
+        // when a failed finalization retained its workspace for recovery.
+        // Its siblings wait for their own calls, including nested calls.
+        if let RunEvent::ToolEnd {
+            run,
+            call_id,
+            output,
+            ..
+        } = event
+            && !output
+                .details
+                .as_ref()
+                .is_some_and(|details| details["workspace_retained"] == true)
             && let Some(view) = self.run(run)
             && view
                 .call(call_id)

@@ -401,8 +401,11 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   `@`, they are committed (`Vcs::commit_all`), with a message the run's
   model writes from the diff and the run's task (its own input, not the
   first message of a transcript it forked): one short `PluginCtx::ask`.
-  tau never writes a commit message itself; without an answer, the work
-  stays uncommitted. A failed or cancelled run keeps its work as it is.
+  tau never writes a commit message itself. An empty or failed answer,
+  a failed commit, or oversized untracked files leave the work uncommitted
+  and record a finalization error. A delegating caller verifies the native
+  working copy before handing it off; manual landing also refuses
+  remaining edits. A failed or cancelled run keeps its work as it is.
 - **Forking at a turn**: read the run's links with
   `Store::plugin_entries(run, "tau-vcs")`, take the `seq` of the
   turn's link, and fork with `Checkpoint::at(run, seq)` and a new
@@ -551,21 +554,29 @@ digits>`, so that no process reuses one an earlier one left, starts
    caller to resolve. The tool's text is the sub-agent's answer and a
    line on what landed; its details hold `run`, the `landing`, the
    `conflicts` it brought, and the `limit` that cut it short, if any.
-5. A sub-agent stopped by a limit committed what it left at its end, as
-   any run at a limit does, and lands like one that finished: its text
-   is its last message, and the line on what landed starts by saying
-   which limit stopped it (`It stopped at its turn limit.`).
-6. When it fails, or the caller is cancelled before it lands, its
-   changes are abandoned and the caller gets the error.
-7. Either way the sub-agent closes: its workspace is forgotten and its
-   bookmark removed.
+5. A sub-agent stopped by a limit tries to commit what it left at its
+   end. Only a verified committed working copy can land. Its text is its
+   last message, and a successful landing's line starts by saying which
+   limit stopped it (`It stopped at its turn limit.`).
+6. When the run itself fails, or the caller is cancelled before it lands,
+   its changes are intentionally abandoned and the caller gets the error.
+7. After a successful handoff or intentional discard, the workspace and
+   bookmark are removed and the child closes. Failed finalization or an
+   unverifiable working copy instead returns an error with
+   `workspace_retained: true`, the run ID, and the workspace path. Nothing
+   lands; the child stays open for recovery. Saved snapshots and the
+   conversation also remain in history.
+
+Behavioral properties and replay instructions are in
+[VCS handoff and conflict properties](vcs-hardening-tests.md).
 
 The caller's links record what came to its stack during the turn: each
 landed change with `from` naming the sub-agent, then the turn's
 snapshot. A call a tool makes through the loop, such as a codemode
 script's, is a call like the model's: in tau-ui its sub-agent gets a
-chat on its task and closes once that nested call returns
-(`RunView::call` finds a nested call while the model's call runs).
+chat on its task and closes once that nested call returns, unless its
+workspace was retained for recovery (`RunView::call` finds a nested call
+while the model's call runs).
 Only a top-level run (a repository's main chat) gets
 `delegate`: runs nest one level
 ([ADR 0016](../decisions/0016-runs-nest-one-level.md)).

@@ -2377,6 +2377,48 @@ fn a_repository_main_chat_has_a_view() {
     assert_eq!(view.origin, Origin::Root);
 }
 
+/// A done chat is not necessarily finalized: an unusable commit-message
+/// answer must not let manual landing delete its remaining edits.
+#[test]
+fn landing_keeps_a_chat_whose_final_commit_failed() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", serde_json::json!({"path": "committed.txt", "content": "committed\n"})))
+        .turn(|t| t.tool_call("vcs_commit", serde_json::json!({"message": "feat: committed"})))
+        .turn(|t| t.tool_call("write", serde_json::json!({"path": "pending.txt", "content": "pending\n"})))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.text("still done"))
+        .turn(|t| t.text(""));
+    let (host, mut events) = host(llm.clone());
+    let chat = host
+        .start("write both files", &ModelChoice::default(), REPO)
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    let dir = host.workspace(&chat.id).unwrap();
+    let project = host.project_of(REPO).unwrap();
+    let trunk = project.trunk().unwrap();
+    for action in [host.preview_landing(&chat.id), host.land(&chat.id)] {
+        let error = action.unwrap_err().to_string();
+        assert!(error.contains("workspace is retained"), "{error}");
+    }
+    assert_eq!(project.trunk().unwrap(), trunk);
+    assert_eq!(
+        std::fs::read(dir.join("pending.txt")).unwrap(),
+        b"pending\n"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("committed.txt")).unwrap(),
+        b"committed\n"
+    );
+    assert!(
+        project
+            .bookmark(&format!("tau/{}", chat.id.0))
+            .unwrap()
+            .is_some()
+    );
+    llm.assert_exhausted();
+}
+
 /// Runs nest one level: the main chat can delegate, and a chat under it,
 /// which could only nest a sub-agent under itself, is not given the
 /// tool.
