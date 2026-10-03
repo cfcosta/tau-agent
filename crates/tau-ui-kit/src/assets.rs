@@ -58,6 +58,8 @@ pub enum Icon {
     Landable,
     /// A run tau's closing cut off.
     Interrupted,
+    /// A shell: where agent commands run.
+    Terminal,
 }
 
 impl Icon {
@@ -105,6 +107,7 @@ impl Icon {
             Self::Question => "icons/question.svg",
             Self::Landable => "icons/landable.svg",
             Self::Interrupted => "icons/interrupted.svg",
+            Self::Terminal => "icons/terminal.svg",
         }
     }
 
@@ -204,10 +207,11 @@ impl Icon {
             Self::Interrupted => {
                 r#"<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>"#
             }
+            Self::Terminal => r#"<path d="M4 17l6-6-6-6M12 19h8"/>"#,
         }
     }
 
-    const ALL: [Self; 42] = [
+    const ALL: [Self; 43] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -250,6 +254,7 @@ impl Icon {
         Self::Question,
         Self::Landable,
         Self::Interrupted,
+        Self::Terminal,
     ];
 
     fn svg(self) -> String {
