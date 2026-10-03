@@ -850,6 +850,9 @@ impl Workspace {
             HostUpdate::Dropped { run, result } => {
                 self.dropped(&run, result, cx)
             }
+            HostUpdate::LandingFinished(record) => {
+                self.landing_finished(record, cx)
+            }
             HostUpdate::TauTurn { run, prompt } => {
                 self.tau_turn(&run, prompt, cx)
             }

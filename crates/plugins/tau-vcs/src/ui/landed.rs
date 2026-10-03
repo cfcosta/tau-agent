@@ -16,6 +16,10 @@ pub struct LandingRecord {
     pub from: String,
     pub title: String,
     pub landing: crate::Landing,
+    /// tau closed in the middle of the landing, and finished it at its
+    /// next start.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recovered: bool,
 }
 
 impl LandedCard {
@@ -30,6 +34,7 @@ impl LandedCard {
                 .map(Change::new)
                 .collect(),
             conflicts: record.landing.conflicts,
+            recovered: record.recovered,
         }
     }
 }
@@ -44,6 +49,9 @@ pub struct LandedCard {
     pub changes: Vec<Change>,
     /// Paths left with conflict markers for this run's next turn.
     pub conflicts: Vec<String>,
+    /// tau finished the landing at start, after closing in its middle.
+    #[serde(default)]
+    pub recovered: bool,
 }
 
 /// What a landing brought: its changes as they sit on the stack, and

@@ -144,6 +144,7 @@ pub fn delegated(data: &CallData) -> Option<LandedCard> {
             .to_owned(),
         landing: serde_json::from_value(details.get("landing")?.clone())
             .ok()?,
+        recovered: false,
     }))
 }
 

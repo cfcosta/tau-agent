@@ -46,6 +46,9 @@ use crate::{
 const GIT: &str = "git";
 const MAIN: &str = "main";
 
+/// How many operations back [`Project::landed`] looks for a landing.
+pub const LANDING_LOOKBACK: usize = 1000;
+
 /// jj's own workspace: the repository's checkout, under `main/`. A
 /// repository's main chat works in it; runs get workspaces of their own.
 pub const DEFAULT_WORKSPACE: &str = "default";
@@ -501,6 +504,16 @@ impl Project {
         keep: &str,
         head: &str,
     ) -> Result<usize, VcsError> {
+        self.abandon_beyond(&[keep], head)
+    }
+
+    /// Abandons what `head` has that none of `keeps` has (all full
+    /// commit ids in hex). Returns how many commits went.
+    pub fn abandon_beyond(
+        &self,
+        keeps: &[&str],
+        head: &str,
+    ) -> Result<usize, VcsError> {
         use futures_util::StreamExt as _;
         use jj_lib::revset::ResolvedRevsetExpression;
 
@@ -510,10 +523,14 @@ impl Project {
             CommitId::try_from_hex(hex)
                 .ok_or_else(|| VcsError::NotCommitId(hex.to_owned()))
         };
+        let keeps = keeps
+            .iter()
+            .map(|keep| id(keep))
+            .collect::<Result<Vec<_>, _>>()?;
         let ids: Vec<CommitId> = {
             let revset = ResolvedRevsetExpression::commit(id(head)?)
                 .ancestors()
-                .minus(&ResolvedRevsetExpression::commit(id(keep)?).ancestors())
+                .minus(&ResolvedRevsetExpression::commits(keeps).ancestors())
                 .evaluate(repo.as_ref())?;
             block_on(revset.stream().collect::<Vec<_>>())
                 .into_iter()
@@ -530,6 +547,40 @@ impl Project {
         block_on(tx.repo_mut().rebase_descendants())?;
         block_on(tx.commit(format!("tau: abandon {} changes", ids.len())))?;
         Ok(ids.len())
+    }
+
+    /// What the landing of the child whose head was `child_head` (a
+    /// full commit id in hex, as given to `Vcs::land`) did, if one was
+    /// confirmed: read back from its operation, which records it, so a
+    /// host that closed between the landing and recording it can finish.
+    /// Looks back over the newest [`LANDING_LOOKBACK`] operations.
+    pub fn landed(
+        &self,
+        child_head: &str,
+    ) -> Result<Option<crate::Landing>, VcsError> {
+        let repo = self.load()?;
+        let mut op = repo.operation().clone();
+        for _ in 0..LANDING_LOOKBACK {
+            if let Some(record) = op
+                .metadata()
+                .attributes
+                .get(crate::session::LANDING_ATTRIBUTE)
+                .and_then(|text| {
+                    serde_json::from_str::<serde_json::Value>(text).ok()
+                })
+                && record["child_head"] == child_head
+                && let Ok(landing) =
+                    serde_json::from_value(record["landing"].clone())
+            {
+                return Ok(Some(landing));
+            }
+            // Concurrent operations merge into one: follow the first.
+            match block_on(op.parents())?.into_iter().next() {
+                Some(parent) => op = parent,
+                None => break,
+            }
+        }
+        Ok(None)
     }
 
     /// The local bookmarks whose names start with `prefix`, sorted.

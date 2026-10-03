@@ -38,6 +38,11 @@ pub(crate) const BOOKMARK_ATTRIBUTE: &str = "tau.vcs.bookmark";
 /// The operation attribute of a landing: the change ids it landed,
 /// separated by spaces. A turn's paths leave them out.
 pub(crate) const LANDED_ATTRIBUTE: &str = "tau.vcs.landed";
+/// The operation attribute of a confirmed landing that says what it
+/// did: `{ "child_head": <hex>, "landing": Landing }`, so a host that
+/// closed before recording the landing can read it back
+/// (`Project::landed`).
+pub(crate) const LANDING_ATTRIBUTE: &str = "tau.vcs.landing";
 /// The operation attribute of a catch-up: the commit, in hex, a run moved
 /// onto (`move_onto`, or a step that follows an update). A turn's paths
 /// leave out what it brought, to that run and to the runs standing on it.

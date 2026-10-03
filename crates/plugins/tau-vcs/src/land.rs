@@ -58,6 +58,14 @@ pub(crate) fn land(
                 session::LANDED_ATTRIBUTE.to_owned(),
                 landed.join(" "),
             );
+            let record = serde_json::json!({
+                "child_head": child_head.hex(),
+                "landing": &landing,
+            });
+            tx.set_attribute(
+                session::LANDING_ATTRIBUTE.to_owned(),
+                record.to_string(),
+            );
             Ok(landing)
         })?;
         record.save(followed.as_ref())?;

@@ -84,6 +84,7 @@ impl Workspace {
             from: run.0.to_string(),
             title: child.title.clone(),
             landing,
+            recovered: false,
         });
         let changes = card.changes.len();
         if let Some(view) = self.runs.iter_mut().find(|view| view.id == parent)
@@ -101,6 +102,46 @@ impl Workspace {
         }
         self.close_run(run, cx);
         self.navigate(Route::Run(parent), cx);
+    }
+
+    /// A landing tau finished as it started, after closing in its
+    /// middle: the parent's chat gets its card, unless history brought
+    /// it already, and the child is closed, landed. Nothing opens.
+    pub fn landing_finished(
+        &mut self,
+        record: LandingRecord,
+        cx: &mut Context<Self>,
+    ) {
+        let run = RunId(record.from.as_str().into());
+        let Some(parent) = self
+            .run(&run)
+            .and_then(|child| child.origin.parent().cloned())
+        else {
+            return;
+        };
+        let changes = record.landing.changes.len();
+        if let Some(view) = self.runs.iter_mut().find(|view| view.id == parent)
+        {
+            view.items.retain(
+                |item| !matches!(item, Item::ForkReady { fork } if *fork == run),
+            );
+            let shown = view.items.iter().any(
+                |item| matches!(item, Item::Landed(card) if card.from == run),
+            );
+            if !shown {
+                view.items
+                    .push(Item::Landed(LandedCard::from_record(record)));
+            }
+        }
+        if let Some(view) = self.runs.iter_mut().find(|view| view.id == run) {
+            view.ending = Some(Ending::Landed {
+                on: parent,
+                changes,
+            });
+        }
+        self.closed.insert(run.clone());
+        cx.emit(WorkspaceEvent::CloseRun { run });
+        cx.notify();
     }
 
     /// Asks before dropping `run`, a child run.

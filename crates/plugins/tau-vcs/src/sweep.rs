@@ -24,7 +24,7 @@ pub enum Standing {
 }
 
 /// What a discarded run's commits are measured against: what its
-/// parent has stays.
+/// parent has stays, and so does trunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Keep {
     /// What this bookmark's commit has.
@@ -174,10 +174,14 @@ impl Project {
                 Keep::Bookmark(name) => self.bookmark(name)?,
                 Keep::Workspace(name) => self.workspace_head(name)?,
             };
-            let keep = match keep {
-                Some(keep) => keep,
-                None => self.trunk()?,
-            };
+            // Trunk always stays: a main chat that never ran stands on
+            // the root commit.
+            let trunk = self.trunk()?;
+            let keeps: Vec<&str> = keep
+                .iter()
+                .map(String::as_str)
+                .chain([trunk.as_str()])
+                .collect();
             let mut heads = Vec::new();
             for name in &abandon.workspaces {
                 heads.extend(self.workspace_head(name)?);
@@ -186,7 +190,7 @@ impl Project {
                 heads.extend(self.bookmark(name)?);
             }
             for head in heads {
-                self.abandon_between(&keep, &head)?;
+                self.abandon_beyond(&keeps, &head)?;
             }
         }
         for name in &sweep.forget {

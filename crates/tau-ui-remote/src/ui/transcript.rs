@@ -150,6 +150,13 @@ fn item_view(
                 ))
                 .into_any_element()
         }
+        Item::Landed(card) if card.recovered => div()
+            .flex()
+            .flex_col()
+            .gap(sp(2.))
+            .child(super::interrupted::finished_landing(&card.title, t))
+            .child(landed(card, t, compact, cx))
+            .into_any_element(),
         Item::Landed(card) => landed(card, t, compact, cx).into_any_element(),
         Item::ForkReady { fork } => {
             fork_ready(ws, run, fork, t, compact, cx).into_any_element()
