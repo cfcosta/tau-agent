@@ -190,6 +190,9 @@ pub struct Host {
     updating: Arc<Mutex<Vec<String>>>,
     /// What the latest update found.
     last_update: Arc<Mutex<Option<String>>>,
+    /// The latest landing forecast asked for in each repository: a pass
+    /// an earlier ask started shows nothing once a later one comes.
+    forecasts: Arc<Mutex<HashMap<String, u64>>>,
     /// Pull request drafts written from runs, until they are opened.
     drafts: Mutex<HashMap<RunId, PullRequest>>,
     /// Pull requests opened from runs, for pushing their later turns.
@@ -239,6 +242,7 @@ struct SessionRun {
 
 mod attach;
 mod config;
+mod forecast;
 mod history;
 mod hosted;
 mod instructions;
@@ -425,6 +429,7 @@ impl Host {
             sessions: Arc::default(),
             updating: Arc::default(),
             last_update: Arc::default(),
+            forecasts: Arc::default(),
             drafts: Mutex::default(),
             prs: Arc::default(),
             ending: Arc::default(),

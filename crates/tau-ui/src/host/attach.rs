@@ -405,6 +405,8 @@ impl Host {
             Err(error) => eprintln!("tau-ui: cannot read past runs: {error:#}"),
         }
         let host = Arc::new(self);
+        // Finished forks say whether they would land cleanly.
+        super::forecast::follow(&host, workspace, cx);
         // Phones reach this host once allowed.
         crate::phone_server::serve(
             host.runtime.handle().clone(),

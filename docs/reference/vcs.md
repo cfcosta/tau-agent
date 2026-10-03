@@ -561,6 +561,13 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   their native materialization has markers or not, and the new head.
   Confirmed, conflicts land as jj
   conflicts for the parent's next turn to resolve.
+- `Host::forecast_landing` reads a landing as the preview does
+  (`Host::land_dry`, the same `LandingPlan` and `Vcs::land` with
+  `confirm` off), but with `Reading::Forecast`: it writes nothing,
+  neither catching the parent up nor making workspaces, so it can run
+  in the background, and it keeps nothing for Land to confirm. The
+  sidebar's "Ready to land" and "Would conflict" come from it
+  ([attention.md](attention.md)).
 
 ## Sweeping at start
 
