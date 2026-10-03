@@ -308,9 +308,9 @@ pub fn highlight_lines(lang: Lang, lines: &[impl AsRef<str>]) -> Lines {
         .map(AsRef::as_ref)
         .collect::<Vec<_>>()
         .join("\n");
-    let spans = highlight(lang, &text);
+    let spans = highlight_cached(lang, &text);
     let mut out = Vec::with_capacity(lines.len());
-    let mut spans = spans.into_iter().peekable();
+    let mut spans = spans.iter().cloned().peekable();
     let mut start = 0;
     for line in lines {
         let end = start + line.as_ref().len();
@@ -333,6 +333,23 @@ pub fn highlight_lines(lang: Lang, lines: &[impl AsRef<str>]) -> Lines {
         start = end + 1;
     }
     out
+}
+
+/// `text` as an element: in its parts' colors when it has them, else
+/// plainly in `plain`.
+pub fn styled(
+    text: &str,
+    parts: Option<&[(Range<usize>, Kind)]>,
+    plain: Hsla,
+    look: &SyntaxLook,
+) -> gpui::AnyElement {
+    use gpui::IntoElement as _;
+    match parts.filter(|parts| !parts.is_empty() && !text.is_empty()) {
+        Some(parts) => gpui::StyledText::new(text.to_owned())
+            .with_runs(runs(text, parts, plain, look))
+            .into_any_element(),
+        None => gpui::SharedString::from(text.to_owned()).into_any_element(),
+    }
 }
 
 /// Runs over all of `text` in the monospace face: the highlighted parts

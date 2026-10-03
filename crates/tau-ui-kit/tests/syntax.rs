@@ -114,3 +114,46 @@ fn lines_cut_the_whole(tc: hegel::TestCase) {
     }
     assert_eq!(kinds_by_line, kinds);
 }
+
+/// A diff's lines are colored as their side of the file reads: the old
+/// side's parts on removed lines, the new side's on added and context
+/// lines.
+#[hegel::test(test_cases = 200)]
+fn a_diff_colors_each_side(tc: hegel::TestCase) {
+    use tau_ui_kit::diff::{DiffKind, colors};
+    let lang = Lang::ALL
+        [tc.draw(gs::integers::<usize>().max_value(Lang::ALL.len() - 1))];
+    let lines: Vec<(u8, String)> = tc.draw(gs::vecs(hegel::tuples!(
+        gs::integers::<u8>().max_value(2),
+        gs::text().alphabet("fnletdef{}()\"'#/* =;1x").max_size(16),
+    )));
+    let lines: Vec<(DiffKind, &str)> = lines
+        .iter()
+        .map(|(kind, text)| {
+            let kind = match kind {
+                0 => DiffKind::Context,
+                1 => DiffKind::Added,
+                _ => DiffKind::Removed,
+            };
+            (kind, text.as_str())
+        })
+        .collect();
+    let got = colors(&lines, lang);
+    assert_eq!(got.len(), lines.len());
+    let side = |drop: DiffKind| {
+        let picked: Vec<usize> =
+            (0..lines.len()).filter(|&i| lines[i].0 != drop).collect();
+        let texts: Vec<&str> = picked.iter().map(|&i| lines[i].1).collect();
+        (picked, highlight_lines(lang, &texts))
+    };
+    let (old, old_colors) = side(DiffKind::Added);
+    let (new, new_colors) = side(DiffKind::Removed);
+    for (i, parts) in new.iter().zip(&new_colors) {
+        assert_eq!(&got[*i], parts);
+    }
+    for (i, parts) in old.iter().zip(&old_colors) {
+        if lines[*i].0 == DiffKind::Removed {
+            assert_eq!(&got[*i], parts);
+        }
+    }
+}

@@ -734,7 +734,17 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
             let lines = diff_of(data)?;
             Some(CardView {
                 label: Some(diff::stat(&lines)),
-                body: Some(diff::view(&lines, &t).into_any_element()),
+                body: Some(
+                    diff::view(
+                        &lines,
+                        data.args
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .and_then(syntax::Lang::of_path),
+                        &t,
+                    )
+                    .into_any_element(),
+                ),
                 ..CardView::default()
             })
         }

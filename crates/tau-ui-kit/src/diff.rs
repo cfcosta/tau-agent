@@ -3,7 +3,10 @@
 use gpui::{Div, div, prelude::*, px};
 use serde::{Deserialize, Serialize};
 
-use crate::theme::{Design as _, MONO, Theme, Type, sp};
+use crate::{
+    syntax::{self, Lang},
+    theme::{Design as _, MONO, Theme, Type, sp},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffLine {
@@ -75,6 +78,39 @@ fn hunk_lengths(header: &str) -> (usize, usize) {
     (length('-'), length('+'))
 }
 
+/// How strongly unchanged lines around a change are colored.
+pub const CONTEXT_OPACITY: f32 = 0.7;
+
+/// Each diff line's highlighted parts. The old side (context and
+/// removed lines) and the new side (context and added lines) are each
+/// parsed as code of their own, so a line is colored as it reads in
+/// its version of the file.
+pub fn colors(lines: &[(DiffKind, &str)], lang: Lang) -> syntax::Lines {
+    let side = |drop: DiffKind| {
+        let texts: Vec<&str> = lines
+            .iter()
+            .filter(|(kind, _)| *kind != drop)
+            .map(|(_, text)| *text)
+            .collect();
+        syntax::highlight_lines(lang, &texts).into_iter()
+    };
+    let (mut old, mut new) = (side(DiffKind::Added), side(DiffKind::Removed));
+    lines
+        .iter()
+        .map(|(kind, _)| {
+            match kind {
+                DiffKind::Removed => old.next(),
+                DiffKind::Added => new.next(),
+                DiffKind::Context => {
+                    old.next();
+                    new.next()
+                }
+            }
+            .unwrap_or_default()
+        })
+        .collect()
+}
+
 /// `+12 −3`.
 pub fn stat(lines: &[DiffLine]) -> String {
     let added = lines.iter().filter(|l| l.kind == DiffKind::Added).count();
@@ -83,7 +119,17 @@ pub fn stat(lines: &[DiffLine]) -> String {
 }
 
 /// The lines, each on its own row, added and removed ones tinted.
-pub fn view(lines: &[DiffLine], t: &Theme) -> Div {
+pub fn view(lines: &[DiffLine], lang: Option<Lang>, t: &Theme) -> Div {
+    let colors = lang.map(|lang| {
+        colors(
+            &lines
+                .iter()
+                .map(|line| (line.kind, line.text.as_str()))
+                .collect::<Vec<_>>(),
+            lang,
+        )
+    });
+    let context = t.syntax.faded(CONTEXT_OPACITY);
     div()
         .flex()
         .flex_col()
@@ -91,7 +137,7 @@ pub fn view(lines: &[DiffLine], t: &Theme) -> Div {
         .font_family(MONO)
         .typeset(Type::CAPTION)
         .line_height(px(20.))
-        .children(lines.iter().map(|line| {
+        .children(lines.iter().enumerate().map(|(i, line)| {
             let (sign, color, bg) = match line.kind {
                 DiffKind::Added => {
                     ("+ ", t.added_text, Some(t.green.opacity(0.12)))
@@ -107,6 +153,17 @@ pub fn view(lines: &[DiffLine], t: &Theme) -> Div {
                 .whitespace_nowrap()
                 .overflow_hidden()
                 .when_some(bg, |row, bg| row.bg(bg))
-                .child(format!("{sign}{}", line.text))
+                .flex()
+                .child(sign)
+                .child(syntax::styled(
+                    &line.text,
+                    colors.as_ref().map(|colors| colors[i].as_slice()),
+                    color,
+                    if line.kind == DiffKind::Context {
+                        &context
+                    } else {
+                        &t.syntax
+                    },
+                ))
         }))
 }

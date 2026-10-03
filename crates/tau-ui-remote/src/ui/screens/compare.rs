@@ -282,7 +282,11 @@ fn code(
                             .border_b_1()
                             .border_color(t.border),
                     )
-                    .child(tau_ui_kit::diff::view(shown, t))
+                    .child(tau_ui_kit::diff::view(
+                        shown,
+                        tau_ui_kit::syntax::Lang::of_path(&file.stat.path),
+                        t,
+                    ))
                     .when(hidden > 0, |card| {
                         card.child(
                             ui::text(
@@ -386,7 +390,14 @@ fn branch(
                         t.text_soft,
                     )),
             )
-            .child(tau_ui_kit::diff::view(&lines, t))
+            .child(tau_ui_kit::diff::view(
+                &lines,
+                card.args()
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(tau_ui_kit::syntax::Lang::of_path),
+                t,
+            ))
     });
 
     div()

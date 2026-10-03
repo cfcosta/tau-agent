@@ -840,7 +840,14 @@ fn blocked_body(
         .flex()
         .flex_col()
         .when(!proposed.is_empty(), |body| {
-            body.child(tau_ui_kit::diff::view(&proposed, t))
+            body.child(tau_ui_kit::diff::view(
+                &proposed,
+                card.args()
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(tau_ui_kit::syntax::Lang::of_path),
+                t,
+            ))
         })
         .child(
             div()

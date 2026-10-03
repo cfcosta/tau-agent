@@ -498,7 +498,30 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
             .text_color(t.dim)
             .child(text)
     };
-    let hunk_view = |hunk: &Hunk| {
+    // The file's lines colored by its language, each side of the change
+    // as code of its own; one list across its hunks.
+    let colors = tau_ui_kit::syntax::Lang::of_path(&file.path).map(|lang| {
+        tau_ui_kit::diff::colors(
+            &file
+                .hunks
+                .iter()
+                .flat_map(|hunk| &hunk.lines)
+                .map(|line| (line.kind, line.text.as_str()))
+                .collect::<Vec<_>>(),
+            lang,
+        )
+    });
+    let context = t.syntax.faded(tau_ui_kit::diff::CONTEXT_OPACITY);
+    let starts: Vec<usize> = file
+        .hunks
+        .iter()
+        .scan(0, |at, hunk| {
+            let start = *at;
+            *at += hunk.lines.len();
+            Some(start)
+        })
+        .collect();
+    let hunk_view = |(h, hunk): (usize, &Hunk)| {
         div()
             .flex()
             .flex_col()
@@ -512,7 +535,7 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
                     .overflow_hidden()
                     .child(hunk.header.clone()),
             )
-            .children(hunk.lines.iter().map(|line| {
+            .children(hunk.lines.iter().enumerate().map(|(i, line)| {
                 let marker = line.kind == DiffKind::Added
                     && CONFLICT_MARKERS
                         .iter()
@@ -553,7 +576,18 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .text_color(color)
-                            .child(line.text.clone()),
+                            .child(tau_ui_kit::syntax::styled(
+                                &line.text,
+                                colors.as_ref().map(|colors| {
+                                    colors[starts[h] + i].as_slice()
+                                }),
+                                color,
+                                if line.kind == DiffKind::Context {
+                                    &context
+                                } else {
+                                    &t.syntax
+                                },
+                            )),
                     )
             }))
     };
@@ -572,5 +606,5 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
         .when(file.hunks.is_empty() && !file.binary, |body| {
             body.child(note("No lines changed."))
         })
-        .children(file.hunks.iter().map(hunk_view))
+        .children(file.hunks.iter().enumerate().map(hunk_view))
 }

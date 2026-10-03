@@ -288,6 +288,25 @@ impl SyntaxLook {
         }
     }
 
+    /// The same colors at `opacity`, for code around a change.
+    pub fn faded(&self, opacity: f32) -> Self {
+        let f = |color: Hsla| color.opacity(opacity);
+        Self {
+            keyword: f(self.keyword),
+            string: f(self.string),
+            escape: f(self.escape),
+            comment: f(self.comment),
+            function: f(self.function),
+            ty: f(self.ty),
+            number: f(self.number),
+            property: f(self.property),
+            attribute: f(self.attribute),
+            builtin: f(self.builtin),
+            punctuation: f(self.punctuation),
+            tag: f(self.tag),
+        }
+    }
+
     /// The color of a kind of part.
     pub fn color(&self, kind: crate::syntax::Kind) -> Hsla {
         use crate::syntax::Kind;
