@@ -73,10 +73,77 @@ run of the connection it came on. Errors look like this:
 
 | Limit                              | Value                                              | tau-agent behaviour                                                                                                                |
 | ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| In-flight responses per connection | 16, across all lanes                               | One run = one connection, with one response in flight. A new run takes an idle open connection that is not draining, or a new one. |
+| In-flight responses per connection | 16, across all lanes                               | One response in flight per connection. A run's lane takes a connection by conversation affinity (see "Connection pool").           |
 | Named `stream_id`s per connection  | 32 (the default lane doesn't count)                | Not reached: tau sends no `stream_id`, so `websocket_stream_limit_reached` never comes and has no handling.                        |
-| Ordering                           | FIFO within one `stream_id`; lanes run in parallel | One run = one lane = one connection. Parallel runs never queue behind each other.                                                  |
+| Ordering                           | FIFO within one `stream_id`; lanes run in parallel | One run = one lane, on one connection at a time. Parallel runs never queue behind each other.                                      |
 | Connection age                     | 60 min                                             | The pool rotates at 55 min. The error is `websocket_connection_limit_reached`.                                                     |
+
+## Connection pool
+
+`tau_ai::ws::proto::pool`. A lane is one run's requests. It belongs to
+a conversation, a path of work, given as an `Affinity`: the path (in
+tau, the run id, which is also the `prompt_cache_key`) and, for a fork
+whose first response has not completed, the parent's path. A
+connection remembers the path it serves, the path it served before,
+and the continuation its last lane left.
+
+A lane takes a connection when it opens, and when it has none and
+sends. In this order:
+
+1. an idle connection of its own path that no other lane holds;
+2. for a fork's first request, an idle connection of its parent's path.
+   If the parent's live lane holds it, that lane gives it up and takes
+   another connection when it next sends; the connection serves the
+   fork from then on (a handoff);
+3. if a connection of 1 or 2 has a response in flight, that connection
+   once it is idle, waiting at most `affinity_wait` (5 s);
+4. a free connection (no lane holds it): one that served the lane's
+   path before (such as the one a fork took over, given back when the
+   fork's run ended), else one that serves no path, else the least
+   recently used;
+5. a new connection.
+
+A lane keeps its connection while its run lives. When it closes, the
+connection keeps its continuation: the next lane of the same path
+continues from it by delta when its input extends the baseline. A free
+connection that serves a path stays open until rotation (55 minutes);
+one that serves no path closes after `idle_timeout` (5 minutes). At
+most `max_idle` (8) connections stay free: past it, the least recently
+used close, those that serve no path first. Rotation and a lost
+connection leave an idle lane without a connection until it sends.
+`PoolStats` counts `own_connection` placements, `handoffs` and
+`waits`.
+
+## Prompt cache
+
+On this route the prompt cache lives on the connection. Measured on
+2026-10-03 with gpt-5.5 and a ChatGPT token, prompts of about 4k
+tokens, with `crates/tau-ai/examples/cache_probe.rs`:
+
+| Request                                                                  | Cached                                   |
+| ------------------------------------------------------------------------ | ---------------------------------------- |
+| Same connection that served the prefix; same key, another key or none    | 85–86% (15 of 16 cases)                  |
+| Same, as a delta (`previous_response_id`) or as a full resend            | 85–86%                                   |
+| Same connection, `prompt_cache_key` changed mid-chain (a delta is taken) | 85%                                      |
+| A new connection; same key, another key or none                          | about 40% of requests, at random; else 0 |
+| Same connection, one tool fewer                                          | 0%                                       |
+| Same connection, effort low → medium                                     | 0%                                       |
+| Same connection, text added at the end of the instructions               | the prefix before it                     |
+
+Re-run on 2026-10-03 (`--handoff`): the source connection read 85–86%
+on every request; three new connections read 0%, 85% and 0% (same key,
+another key, none); a new one after the source closed read 85%.
+
+- A connection continues only from its most recent response:
+  `previous_response_id` of an older one fails with
+  `previous_response_not_found`.
+- `prompt_cache_key` does not route to a cache on this route; tau sends
+  it (each run's path) all the same.
+- So tau keeps a conversation on its connection (see "Connection
+  pool"), gives every run of a repository the same tools and
+  instructions, and keeps a long conversation's effort (tau-reasoning,
+  [plugins.md](plugins.md)). See
+  [ADR 0022](../decisions/0022-the-prompt-cache-follows-the-connection.md).
 
 ## Continuation state
 
@@ -137,7 +204,8 @@ copied:
 
 Events that force a full resend:
 
-- a fork's first turn;
+- a fork's first turn (its `prompt_cache_key` differs from its
+  parent's);
 - the first turn after a compaction;
 - any change to instructions, tools or reasoning settings (these are
   fixed per run, so this should never happen);
@@ -179,6 +247,9 @@ per lane:
 | `last_delta_items`   | number of input items in the last delta request      |
 | `connections_opened` | sockets opened, including reconnects and rotations   |
 | `connections_reused` | lanes placed on an open socket another lane left     |
+| `own_connection`     | lanes placed on a connection of their own path       |
+| `handoffs`           | forks placed on their parent's connection            |
+| `waits`              | lanes that waited for their path's busy connection   |
 | `recoveries`         | recovery-ladder steps taken, by condition            |
 
 These counters are part of the API. Tests use them as an oracle, and
@@ -206,9 +277,10 @@ setup. It is optional and set per agent.
   reasoning when `store` is `false`.
 - Tool-call ids are `call_id|item_id`.
 - The idle timer and the maximum age are tracked per connection:
-  - a connection with no lane for 5 minutes is closed (pi's cache
-    lifetime); one that still has its lane stays, since it holds the
-    lane's continuation, and rotation bounds its age;
+  - a free connection that serves no conversation is closed after 5
+    minutes (pi's cache lifetime); one that serves a conversation, or
+    still has its lane, stays, since it holds that conversation's
+    cache and continuation, and rotation bounds its age;
   - a connection with requests in flight that receives nothing for 5
     minutes (pi's idle timeout) is presumed dead and handled as lost: a
     request with no output yet is resent, pi's "idle before the first

@@ -64,7 +64,7 @@ Dependency direction:
 Agent::start(input, &store)
   └─ Run task
        ├─ store: INSERT runs (status = running)
-       ├─ lane = pool.acquire_lane()                 # a socket of its own
+       ├─ lane = pool.open_lane(affinity)            # the conversation's socket
        └─ loop
             ├─ transcript: kept in memory; fork ancestors loaded once at start
             ├─ body = session fields (built once) + InputCache(transcript)
@@ -83,11 +83,14 @@ Agent::start(input, &store)
   ChatGPT sign-in, the only way in
   ([0012](decisions/0012-chatgpt-sign-in-only.md)), and owns a pool of
   WebSocket connections.
-  - Each run gets a lane: a connection of its own, with one response
+  - Each run gets a lane on a connection of its own, with one response
     in flight. tau sends no `stream_id`, which the plan route may not
     take. Requests on a lane are FIFO; different lanes run concurrently.
-  - A new lane takes an open connection that has no lane and is not
-    draining, or the pool opens one.
+  - The prompt cache lives on the connection, so a lane takes one that
+    already serves its conversation, or for a fork's first request its
+    parent's, before any other free one or a new one
+    ([0022](decisions/0022-the-prompt-cache-follows-the-connection.md),
+    `docs/reference/openai-websocket.md`, "Connection pool").
 - **Each run is a tokio task.** A run owns:
   - a `CancellationToken`;
   - a bounded event channel;
@@ -113,8 +116,9 @@ The protocol logic in `tau-ai` does no I/O. It is written as plain state
 machines that take events and return actions:
 
 - **`ws::proto`** holds the lane and pool state: the delta rule, the
-  continuation per lane, one lane per connection, connection age,
-  and the recovery ladder. Its inputs are events such as "request
+  continuation per lane and per connection, one lane per connection,
+  which connection a lane takes (conversation affinity), connection
+  age, and the recovery ladder. Its inputs are events such as "request
   submitted", "frame received", "connection closed", "timer fired" and
   "cancel". Its outputs are actions such as "send this frame", "open a
   connection", "close this connection", "emit this event" and "set this

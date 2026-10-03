@@ -58,7 +58,10 @@ answers. Crate: `crates/plugins/tau-ask`. Decision:
   background.
 - **Who calls it:** the model only (`Exposure::ModelOnly`): a script
   that ends drops the calls it made, with the person still answering.
-  Sub-agents do not get the tool: nobody watches them.
+  Sub-agents declare the tool, so their tools match their caller's and
+  read its prompt cache (ADR 0022), but nobody watches them: a call
+  fails with `NO_ONE_TO_ASK` ("A sub-agent has no one to ask: decide
+  yourself, and say in your answer what you assumed and why.").
 
 ## Records
 

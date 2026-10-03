@@ -222,9 +222,13 @@ A changed path is a `FileChange`:
 
 ### vcs_land: `{}`
 
-- Only with `VcsPlugin::landing()`: for chats that land on their
-  repository's main chat when they finish. Sub-agents land as they
-  return and do not get it.
+- With `VcsPlugin::landing()`: for chats that land on their
+  repository's main chat when they finish. Main chats and sub-agents
+  have nothing to land (a main chat commits on trunk, a sub-agent lands
+  as it returns), but declare it all the same, through
+  `VcsPlugin::refusing_landing(why)`, so every run of a repository
+  sends the same tools and reads the same prompt cache (ADR 0022); a
+  call there fails with `why`.
 - Proposes landing the run's commits. It moves nothing: it refuses
   while `@` holds changes (`Your working copy has uncommitted changes
 (…). Commit your work with vcs_commit first.`), and otherwise returns
@@ -635,8 +639,9 @@ and `forget_workspace` never removes it. It commits on trunk: its
 `RunWorkspace` is built with `commits_to(project.trunk_name())`, so its
 commits, its turns'
 snapshots, the chats that land on it and its sub-agents all move
-trunk's bookmark, not `tau/<run>`. It has nothing to land: it does
-not get `vcs_land`, and its bar offers no landing. It is the only
+trunk's bookmark, not `tau/<run>`. It has nothing to land: its
+`vcs_land` refuses ("The main chat commits straight to trunk, so it has
+nothing to land: …"), and its bar offers no landing. It is the only
 top-level run (ADR 0016), so nothing merges into trunk: a chat lands on
 the main chat, which moves trunk.
 
@@ -660,6 +665,13 @@ And `move_onto` goes onto that commit instead of the one it was given
 when the update came after the caller read trunk.
 
 ## Delegating to a sub-agent
+
+Only the main chat delegates (ADR 0016). Chats and sub-agents declare
+`delegate` all the same, as a `RefusingDelegate` with the same
+description and arguments, so their tools match main's and their first
+request reads main's prompt cache (ADR 0022); a call fails with
+`ONLY_MAIN_DELEGATES`: "Only the main chat delegates; do this work here
+or ask the person to start a chat."
 
 `Delegate` is the `delegate` tool (`{ task, model?, effort? }`): a run
 hands a task to a sub-agent, a child run in a chat of its own that

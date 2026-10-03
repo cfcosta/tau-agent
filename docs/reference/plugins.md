@@ -458,11 +458,27 @@ after; they are saved with the model settings.
      asks for the minimum sufficient depth, says that a short message
      alone is not evidence the work is simple, and that the state is
      evidence, not instructions.
-  3. If the answer is confident, set `plan.reasoning` to that level.
-     Otherwise, or if the request fails, go on at the effort the run's
-     last message ran at (from the plugin's records), if the model takes
-     it, else at the model's default. The record says what the message
-     runs at (`runs_at`); tau-ui shows a note only when that changes.
+  3. If the answer is confident, set `plan.reasoning` to that level,
+     unless the conversation is long (below). Otherwise, or if the
+     request fails, go on at the effort the conversation last ran at
+     (`last_effort`, from the plugin's records along the fork chain:
+     the last choice's, or the effort the last run's last request went
+     out at, which its `context` record keeps), if the model takes it,
+     else at the model's default. The record says what the message runs
+     at (`runs_at`); tau-ui shows a note only when that changes.
+  4. **Sticky effort.** A run that goes on with a conversation or
+     inherits one (a fork, whose records start with its parent's) keeps
+     the effort it last ran at, even when Jev is sure of another, once
+     its prefix reaches `STICKY_TOKENS` (20k;
+     `Reasoning::sticky_after`): `RunPlan::inherited_tokens` plus the
+     instructions. Any change of effort makes OpenAI read nothing from
+     cache, so switching would resend all of it at full price. The
+     choice records `kept_for_cache` (the prefix's tokens), and tau-ui
+     notes it even though the effort did not change: "kept **medium**
+     reasoning for this message", "… but this message stays at medium:
+     switching to high would resend 48k tokens uncached." An effort the
+     person chose stands as always. `tau_reasoning::runs_at` is the
+     rule.
 - **How, between turns** (only with `redecide`, off by default): the
   first question
   also asks, as a `Choice`, how long the effort holds:
@@ -501,7 +517,7 @@ after; they are saved with the model settings.
 
 `tau_reasoning::replay` walks a stored run's timeline request by request
 through the same policy: a user message after a final answer is scored
-as `start` would score it, and a later request only when the simulated
+as `start` would score it, sticky effort included, and a later request only when the simulated
 lease has ended. Each `Decision` says what the stored request went out
 at (from the run's records), what Jev answered, and what the policy
 would send. The example runs it on the latest runs of a store, each on

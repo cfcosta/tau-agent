@@ -4,7 +4,9 @@
   a sub-agent started by `delegate` starts with its caller's transcript,
   not with its task alone, and several of them run at once.
   Amended by [0016](0016-runs-nest-one-level.md): only a top-level run
-  delegates.
+  delegates. Amended by [0022](0022-the-prompt-cache-follows-the-connection.md):
+  the inherited prefix hits the cache only on the caller's connection,
+  which the sub-agent's first request now takes.
 - Date: 2026-09-30
 - Background: a comparison with Codex's multi-agent tools
   (`spawn_agent`, `wait_agent`, `send_input`, `close_agent`), which

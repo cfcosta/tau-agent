@@ -342,7 +342,7 @@ list is a floor, not a ceiling.
 | **Delta rule:** for any lane history, `baseline + sent_input` equals the full input the request would otherwise carry                                                         | Differential |
 | Delta rule: a change to anything other than `input`, or to the baseline prefix, forces a full resend with no `previous_response_id`                                           | Metamorphic  |
 | Cancel, compaction, reconnect and `previous_response_not_found` each make the lane's next request a full resend                                                               | Model        |
-| Pool (state machine): never more than one lane or one in-flight response per connection; requests on a lane stay FIFO; no new work goes to a connection older than 55 minutes | Model        |
+| Pool (state machine): never more than one lane or one in-flight response per connection; requests on a lane stay FIFO; no new work goes to a connection older than 55 minutes; each lane goes where a reference selector says (own path, parent's, wait, free, new) and what a connection serves moves with it; at most `max_idle` free; no wait past `affinity_wait` | Model        |
 | Backoff delay for attempt `n` lies in `[0, base × 2ⁿ]`, and the number of attempts never exceeds the limit                                                                    | Invariant    |
 | Every strict prefix of a valid event stream ends in `error`, never in `done`                                                                                                  | Metamorphic  |
 | Unknown server event types anywhere in a stream are ignored and do not change the result                                                                                      | Metamorphic  |
@@ -499,7 +499,10 @@ let llm = ScriptedModel::new()
 ## Fake OpenAI server
 
 `tau_testing::FakeOpenAi` is a turmoil host that speaks the Responses
-WebSocket protocol, over plain `ws://` on the simulated network.
+WebSocket protocol, over plain `ws://` on the simulated network. For
+tests that run tau on a real runtime, such as the host's, `listen()`
+serves it on a local TCP port from a thread of its own, and
+`LocalConnector` reaches it.
 `ScriptedModel` replaces the whole `Llm`; `FakeOpenAi` replaces only the
 far end of the socket, so the real pool, lanes, delta rule and recovery
 ladder run. TLS is not simulated; the live tier covers it.
@@ -513,6 +516,13 @@ ladder run. TLS is not simulated; the live tier covers it.
   `previous_response_id` the connection does not hold gets
   `previous_response_not_found`. The cache is dropped after an error and
   when the connection closes.
+- **Prompt cache per connection.** As on OpenAI's route, a request
+  reads from cache the longest prefix it shares with a prompt that
+  connection saw (head of model, tools and effort, then instructions up
+  to their first difference, then input items; four bytes a token), and
+  nothing another connection saw. Each `Received` records
+  `input_tokens` and `cached_tokens`; `report_cache()` puts them in the
+  completed response's usage. Connection-affinity tests assert on it.
 - **Oracle for the delta rule.** For each request it rebuilds the full
   input from its cache plus the delta. Tests compare that with the full
   input the turn would have sent without continuation.

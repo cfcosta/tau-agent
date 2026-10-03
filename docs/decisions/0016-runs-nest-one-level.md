@@ -2,7 +2,9 @@
 
 - Status: accepted. Amends [0009](0009-child-runs-land-on-their-parent.md)
   and [0015](0015-delegates-fork-their-caller.md): only a top-level run
-  forks or delegates.
+  forks or delegates. Amended by
+  [0022](0022-the-prompt-cache-follows-the-connection.md): every run
+  declares `delegate`, and below the main chat it refuses.
 - Date: 2026-09-30
 
 ## Context
