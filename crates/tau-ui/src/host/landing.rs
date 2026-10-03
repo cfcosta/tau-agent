@@ -201,6 +201,25 @@ impl Host {
             }
         }
         let project = self.slot_of_run(child)?.project()?;
+        // The record first: once it is stored the chat takes no more
+        // messages, and should tau close before the rest is done, its
+        // start finishes it (`Host::sweep`).
+        let ending = self.ending_of(child)?;
+        if let Some(Ending::Landed { .. }) = ending {
+            anyhow::bail!("{} landed already; it cannot be dropped", child.0);
+        }
+        if ending.is_none() {
+            self.runtime.block_on(self.store.append_turn(
+                &child.0,
+                &[Entry::Plugin {
+                    plugin: DROPPED_RECORD.to_owned(),
+                    body: serde_json::to_string(&serde_json::json!({
+                        "parent": parent.0.to_string(),
+                    }))?,
+                }],
+                TurnUsage::default(),
+            ))?;
+        }
         // A main chat catches up with trunk first, as for a landing, and
         // keeps what its working copy stands on: its commits that an
         // update moved trunk past are its own, not the child's.
@@ -251,6 +270,15 @@ impl Host {
     /// Everything landing `child` needs, once both runs are idle.
     pub(super) fn landing(&self, child: &RunId) -> anyhow::Result<LandingPlan> {
         let parent = self.parent_of(child)?;
+        match self.ending_of(child)? {
+            None => {}
+            Some(Ending::Landed { .. }) => {
+                anyhow::bail!("{} landed already", child.0)
+            }
+            Some(Ending::Dropped) => {
+                anyhow::bail!("{} was dropped; it cannot land", child.0)
+            }
+        }
         for run in [child, &parent] {
             self.settle(run);
             if self.is_running(run) {

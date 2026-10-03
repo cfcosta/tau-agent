@@ -82,6 +82,8 @@ use crate::{
         ChildKind,
         CodeState,
         ContextWindow,
+        DROPPED_RECORD,
+        Ending,
         FileChange,
         FileKind,
         FileStat,
@@ -894,6 +896,7 @@ impl Host {
         if self.is_running(run) {
             anyhow::bail!("The run is still going; steer it instead");
         }
+        self.refuse_ended(run)?;
         let repo = self.slot_of_run(run)?;
         // The workspace its last turn worked in, which still has its
         // files.
@@ -1054,10 +1057,40 @@ impl Host {
         view
     }
 
-    pub fn steer(&self, run: &RunId, text: &str) {
+    /// Steers `run` with `text` while it runs. A chat that landed or
+    /// was dropped is refused: it takes no more messages.
+    pub fn steer(&self, run: &RunId, text: &str) -> anyhow::Result<()> {
+        self.refuse_ended(run)?;
         if let Some(control) = self.runs.lock().expect("not poisoned").get(run)
         {
             control.steer(text);
+        }
+        Ok(())
+    }
+
+    /// How `run` ended for good, if it did: landed on its parent, or
+    /// dropped. Such a chat takes no more messages.
+    pub fn ending_of(&self, run: &RunId) -> anyhow::Result<Option<Ending>> {
+        self.runtime.block_on(stored_ending(&self.store, &run.0))
+    }
+
+    /// Fails, saying why, when `run` landed or was dropped: going on
+    /// would rebuild its workspace and a new `tau/<run>` bookmark, a
+    /// branch nothing lands.
+    fn refuse_ended(&self, run: &RunId) -> anyhow::Result<()> {
+        match self.ending_of(run)? {
+            None => Ok(()),
+            Some(Ending::Landed { on, .. }) => {
+                let on = self.title_of(&on)?;
+                anyhow::bail!(
+                    "This chat landed on {on}, so it no longer takes \
+                     messages. Its work is on {on}: start a new chat from it."
+                )
+            }
+            Some(Ending::Dropped) => anyhow::bail!(
+                "This chat was dropped, so it no longer takes messages. \
+                 Start a new chat from main."
+            ),
         }
     }
 

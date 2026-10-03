@@ -2560,3 +2560,83 @@ fn a_long_agents_file_is_cut() {
     assert!(instructions.contains("AGENTS.md was cut here"), "cut");
     assert!(instructions.len() < long.len() + 2048);
 }
+
+/// A chat that landed or was dropped takes no more messages: the host
+/// refuses to resume or steer it, saying why, and makes it no new
+/// workspace or bookmark, a branch nothing would land. History still
+/// loads both, with how they ended.
+#[test]
+fn a_landed_or_dropped_chat_takes_no_more_messages() {
+    use tau_ui_remote::view::Ending;
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
+        .turn(|t| t.text("wrote a"))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
+        .turn(|t| t.text("wrote b"));
+    let src = tempfile::tempdir().unwrap();
+    let (host, mut events) = host_on(llm.clone(), src.path());
+    let project = host.project_of(REPO).unwrap();
+    let main = host.main_of(REPO).unwrap();
+    let mut chat = |prompt: &str| {
+        let view = host.start(prompt, &ModelChoice::default(), REPO).unwrap();
+        until_end(&mut events);
+        wait_until_done(&host, &view.id);
+        view.id
+    };
+    let landed = chat("write a");
+    let dropped = chat("write b");
+    host.land(&landed).unwrap();
+    host.drop_child(&dropped).unwrap();
+    assert_eq!(
+        host.ending_of(&landed).unwrap(),
+        Some(Ending::Landed {
+            on: main.clone(),
+            changes: 1
+        })
+    );
+    assert_eq!(host.ending_of(&dropped).unwrap(), Some(Ending::Dropped));
+
+    let workspaces = project.workspaces().unwrap();
+    for (run, why) in [(&landed, "landed on main"), (&dropped, "was dropped")] {
+        let refused = host
+            .resume(run, "one more thing", &ModelChoice::default())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains(why), "{refused}");
+        assert!(refused.contains("no longer takes messages"), "{refused}");
+        let refused =
+            host.steer(run, "one more thing").unwrap_err().to_string();
+        assert!(refused.contains(why), "{refused}");
+        assert!(!host.is_running(run));
+        assert_eq!(project.bookmark(&format!("tau/{}", run.0)).unwrap(), None);
+        // A dropped chat cannot land, nor a landed one be dropped.
+        assert!(host.land(run).is_err());
+    }
+    assert!(host.drop_child(&landed).is_err());
+    assert_eq!(project.workspaces().unwrap(), workspaces, "none made");
+    llm.assert_exhausted();
+
+    let history = host.history().unwrap();
+    let ending = |run: &tau_agent::tool::RunId| {
+        history
+            .iter()
+            .find(|view| view.id == *run)
+            .expect("in history")
+            .ending
+            .clone()
+    };
+    assert_eq!(
+        ending(&landed),
+        Some(Ending::Landed {
+            on: main.clone(),
+            changes: 1
+        })
+    );
+    assert_eq!(ending(&dropped), Some(Ending::Dropped));
+    assert_eq!(ending(&main), None);
+}

@@ -439,10 +439,11 @@ impl Host {
                     }
                 }
                 WorkspaceEvent::Resume { run, prompt, model } => {
-                    // A message opens a closed conversation again.
-                    let _ = handler.set_closed(run, false);
                     match handler.resume(run, prompt, model) {
                         Ok(()) => {
+                            // A message opens a closed conversation
+                            // again.
+                            let _ = handler.set_closed(run, false);
                             let starting = handler.starting_of(run, model);
                             workspace.update(cx, |ws, cx| {
                                 for (plugin, body) in starting {
@@ -558,7 +559,13 @@ impl Host {
                 // `phone_server::serve` handles these in its own
                 // subscription.
                 WorkspaceEvent::Phones(_) => {}
-                WorkspaceEvent::Steer { run, text } => handler.steer(run, text),
+                WorkspaceEvent::Steer { run, text } => {
+                    if let Err(error) = handler.steer(run, text) {
+                        workspace.update(cx, |ws, cx| {
+                            ws.apply(HostUpdate::alert("Could not steer the run", format!("{error:#}")), cx)
+                        });
+                    }
+                }
                 WorkspaceEvent::Cancel { run } => handler.cancel(run),
                 other => eprintln!("tau-ui: not handled yet: {other:?}"),
                 }

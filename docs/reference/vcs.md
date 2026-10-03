@@ -475,7 +475,17 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   moved trunk past the main chat's own commits under the child.
   `Host::land` catches a main chat up first too, and reads the child's
   head after, since the catch-up restacks the child.
-  The operation log keeps what was abandoned.
+  The operation log keeps what was abandoned. It stores a `dropped`
+  record on the child first, so a drop cut off by tau closing still
+  counts.
+- A chat that landed (its parent holds a `landing` record from it, or
+  links whose `from` names it) or was dropped (it holds a `dropped`
+  record) ended for good (`Host::ending_of`, `RunView::ending`). The
+  host refuses to resume or steer it, saying why, so no workspace or
+  `tau/<run>` bookmark comes back for it; it cannot land or be dropped
+  again. Its screen is read-only: the composer's place says why and
+  offers a new chat from main, on the desktop and on a phone. History
+  still loads it.
 - A child cannot land or be dropped while it has children still open:
   running, or holding changes it does not have. They land or are
   dropped first, one level at a time.

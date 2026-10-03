@@ -62,6 +62,20 @@ pub struct RunView {
     /// ([`tau_ui_plugin::RunCx::rewrite`]).
     #[serde(default)]
     pending_rewrites: std::collections::BTreeMap<String, String>,
+    /// How a chat under main ended for good, once it landed or was
+    /// dropped: it takes no more messages, and its screen is read-only.
+    /// `None` for a run that can go on.
+    #[serde(default)]
+    pub ending: Option<Ending>,
+}
+
+/// How a chat ended for good: what [`RunView::ending`] holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Ending {
+    /// Its changes landed on `on`, its parent: `changes` of them.
+    Landed { on: RunId, changes: usize },
+    /// It was dropped: its own changes were abandoned.
+    Dropped,
 }
 
 /// One run event, as the Events tab lists it.
@@ -167,6 +181,10 @@ pub enum Item {
 
 /// The plugin name a landing's record is stored under.
 pub const LANDING_RECORD: &str = "landing";
+
+/// The plugin name of the record a dropped chat keeps: it was dropped,
+/// and takes no more messages.
+pub const DROPPED_RECORD: &str = "dropped";
 
 pub use tau_vcs::ui::landed::{LandedCard, LandingRecord};
 
@@ -650,6 +668,7 @@ impl RunView {
             cost_before: 0.0,
             plugin_states: Default::default(),
             pending_rewrites: Default::default(),
+            ending: None,
         }
     }
 

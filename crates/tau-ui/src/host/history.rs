@@ -91,6 +91,88 @@ pub(super) async fn stored_view(
     Ok(view)
 }
 
+/// How `run` ended for good, if it did (see [`endings`]).
+pub(super) async fn stored_ending(
+    store: &Store,
+    run: &str,
+) -> anyhow::Result<Option<Ending>> {
+    if !store.plugin_entries(run, DROPPED_RECORD).await?.is_empty() {
+        return Ok(Some(Ending::Dropped));
+    }
+    let Some(record) = store.run(run).await? else {
+        return Ok(None);
+    };
+    let parent = match record.kind {
+        RunKind::Fork { parent, .. } | RunKind::Subagent { parent, .. } => {
+            parent
+        }
+        RunKind::Root => return Ok(None),
+    };
+    let of_parent = |entries: Vec<(i64, String)>| -> Vec<(String, String)> {
+        entries
+            .into_iter()
+            .map(|(_, body)| (parent.clone(), body))
+            .collect()
+    };
+    let landings =
+        of_parent(store.plugin_entries(&parent, LANDING_RECORD).await?);
+    let links =
+        of_parent(store.plugin_entries(&parent, WORKSPACE_PLUGIN).await?);
+    Ok(landed(&landings, &links).remove(run))
+}
+
+/// How each run that ended for good ended: the chats that landed or
+/// were dropped, by id. A chat landed when its parent recorded a landing
+/// from it (`Host::land`), or a change it brought (a sub-agent landing
+/// as it returns); it was dropped when it keeps a [`DROPPED_RECORD`].
+pub(super) async fn endings(
+    store: &Store,
+) -> anyhow::Result<HashMap<String, Ending>> {
+    let landings = store.plugin_entries_everywhere(LANDING_RECORD).await?;
+    let links = store.plugin_entries_everywhere(WORKSPACE_PLUGIN).await?;
+    let mut endings = landed(&landings, &links);
+    for (run, _) in store.plugin_entries_everywhere(DROPPED_RECORD).await? {
+        endings.insert(run, Ending::Dropped);
+    }
+    Ok(endings)
+}
+
+/// The chats that landed, from their parents' `(parent, body)` landing
+/// records and links.
+fn landed(
+    landings: &[(String, String)],
+    links: &[(String, String)],
+) -> HashMap<String, Ending> {
+    let mut landed: HashMap<String, Ending> = HashMap::new();
+    for (parent, body) in links {
+        let Some(from) = Link::parse(body).and_then(|link| link.from) else {
+            continue;
+        };
+        let on = RunId(parent.as_str().into());
+        match landed
+            .entry(from)
+            .or_insert(Ending::Landed { on, changes: 0 })
+        {
+            Ending::Landed { changes, .. } => *changes += 1,
+            Ending::Dropped => {}
+        }
+    }
+    // A landing's record counts its changes itself, and covers one that
+    // brought none.
+    for (parent, body) in landings {
+        if let Ok(record) = serde_json::from_str::<LandingRecord>(body) {
+            landed.insert(
+                record.from,
+                Ending::Landed {
+                    on: RunId(parent.as_str().into()),
+                    changes: record.landing.changes.len(),
+                },
+            );
+        }
+    }
+    landed
+}
+
 /// The words a run was started with: its own first message, not one a
 /// fork inherited.
 pub(super) async fn first_prompt(
@@ -114,6 +196,7 @@ pub async fn history(
     store: &Store,
     pinned: &[String],
 ) -> anyhow::Result<Vec<RunView>> {
+    let endings = endings(store).await?;
     let mut records = store.recent_runs(HISTORY).await?;
     for id in pinned {
         if !records.iter().any(|record| &record.id == id)
@@ -158,6 +241,9 @@ pub async fn history(
             _ => None,
         })
         .collect();
+    for view in &mut views {
+        view.ending = endings.get(&*view.id.0).cloned();
+    }
     for (parent, fork) in forks {
         if let Some(view) = views.iter_mut().find(|view| view.id == parent) {
             if !fork.status.is_live() {
