@@ -16,7 +16,7 @@ Audit numbers refer to the approved 40-test shortlist.
 
 - [x] **01 — MCP names:** independent plain/collision/length naming oracle (#2).
 - [x] **02 — Recovery:** independent status/body/precedence expectations (#3).
-- [ ] **03 — Token estimates:** independent Unicode/image/per-message accounting (#4).
+- [x] **03 — Token estimates:** independent Unicode/image/per-message accounting (#4).
 - [ ] **04 — Store UI:** compare durable and UI folds to an operation model (#5).
 - [ ] **05 — Request frames:** preserve original generated maps through both encodings (#6).
 - [ ] **06 — Costs:** combine independent formula/apply/increment coverage and exhaust zero usage (#7, #21, #39).
@@ -52,10 +52,11 @@ ones. It will not claim exhaustive mutation coverage or unmeasured savings.
 These are individual injected faults in disposable workspaces, not a full
 mutation campaign. Only failure of the named replacement counts as detection.
 
-| Batch | Injected fault                              | Replacement that failed                                    |
-| ----- | ------------------------------------------- | ---------------------------------------------------------- |
-| 01    | Plain-name prefix loses one underscore      | `short_ascii_pairs_keep_exact_plain_names`                 |
-| 02    | Recovery treats HTTP 429 as a request fault | `status_boundaries_apply_to_every_unrecognized_body_shape` |
+| Batch | Injected fault                              | Replacement that failed                                              |
+| ----- | ------------------------------------------- | -------------------------------------------------------------------- |
+| 01    | Plain-name prefix loses one underscore      | `short_ascii_pairs_keep_exact_plain_names`                           |
+| 02    | Recovery treats HTTP 429 as a request fault | `status_boundaries_apply_to_every_unrecognized_body_shape`           |
+| 03    | Character estimation counts UTF-8 bytes     | `context_estimate_rounds_semantic_characters_per_unreported_message` |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before

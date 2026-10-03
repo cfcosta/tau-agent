@@ -103,17 +103,6 @@ fn assistant_with_usage(usage: Usage) -> Message {
     })
 }
 
-/// Zeroes out every assistant message's usage, so `messages` reports no
-/// usage anywhere (`docs/reference/compaction.md`, "Token estimate").
-fn zero_out_usage(mut messages: Vec<Message>) -> Vec<Message> {
-    for message in &mut messages {
-        if let Message::Assistant(assistant) = message {
-            assistant.usage = Usage::default();
-        }
-    }
-    messages
-}
-
 /// Rewrites every assistant message's usage to grow with the transcript:
 /// each one reports at least as many tokens as
 /// [`estimate_context_tokens`] would estimate for everything up to and
@@ -167,14 +156,300 @@ fn token_estimate_never_decreases_when_a_message_is_appended(tc: TestCase) {
     }
 }
 
-/// With no reported usage anywhere, the estimate is `chars / 4` over
-/// every message (`docs/reference/testing.md`; `docs/reference/compaction.md`,
-/// "Token estimate").
+#[derive(Debug, Clone, Copy, hegel::PrettyPrintable)]
+enum TokenEstimateMessageKind {
+    UserText,
+    UserBlocks,
+    AssistantText,
+    AssistantThinking,
+    AssistantToolCall,
+    ToolResultText,
+    ToolResultImages,
+}
+
+#[derive(Debug)]
+struct MessageWithCharacterCount {
+    message: Message,
+    character_count: usize,
+}
+
+#[derive(Debug)]
+enum TinyJsonArgument {
+    Null,
+    Boolean(bool),
+    Integer(u16),
+    Unicode(String),
+}
+
+impl TinyJsonArgument {
+    fn as_json_value(&self) -> serde_json::Value {
+        match self {
+            Self::Null => serde_json::Value::Null,
+            Self::Boolean(value) => json!(value),
+            Self::Integer(value) => json!(value),
+            Self::Unicode(value) => json!(value),
+        }
+    }
+
+    /// Counts compact JSON characters from the scalar's semantics. Unicode
+    /// strings are drawn only from non-escaped scalar values.
+    fn compact_json_character_count(&self) -> usize {
+        match self {
+            Self::Null => 4,
+            Self::Boolean(false) => 5,
+            Self::Boolean(true) => 4,
+            Self::Integer(value) => value.to_string().chars().count(),
+            Self::Unicode(value) => value.chars().count() + 2,
+        }
+    }
+}
+
+const IMAGE_ESTIMATE_CHARACTERS: usize = 4_800;
+
+/// Draws bounded text from ASCII and unescaped Unicode scalar values.
+#[hegel::test_helper]
+fn draw_text_scalars(
+    tc: &TestCase,
+    min_scalars: usize,
+    max_scalars: usize,
+) -> String {
+    let scalars: Vec<char> = tc.draw(
+        gs::vecs(gs::sampled_from(vec!['a', 'é', '日', '🦀']))
+            .min_size(min_scalars)
+            .max_size(max_scalars),
+    );
+    scalars.into_iter().collect()
+}
+
+/// Draws one tiny JSON scalar directly, so the character oracle can count
+/// its canonical compact representation without asking serde to render it.
+#[hegel::test_helper]
+fn draw_tiny_json_argument(tc: &TestCase) -> TinyJsonArgument {
+    match tc.draw(gs::integers::<u8>().max_value(3)) {
+        0 => TinyJsonArgument::Null,
+        1 => TinyJsonArgument::Boolean(tc.draw(gs::booleans())),
+        2 => TinyJsonArgument::Integer(
+            tc.draw(gs::integers::<u16>().max_value(99)),
+        ),
+        _ => TinyJsonArgument::Unicode(draw_text_scalars(tc, 1, 3)),
+    }
+}
+
+fn image_input_block() -> InputBlock {
+    InputBlock::Image(ImageContent {
+        data: String::new(),
+        mime_type: "image/png".to_owned(),
+    })
+}
+
+/// Builds an assistant tool-call message and counts its semantic parts:
+/// tool-name scalars plus the compact JSON object syntax and scalar values.
+fn counted_tool_call(
+    name: String,
+    fields: Vec<(String, TinyJsonArgument)>,
+) -> MessageWithCharacterCount {
+    let json_character_count = 2
+        + fields.len().saturating_sub(1)
+        + fields
+            .iter()
+            .map(|(key, value)| {
+                key.chars().count() + 3 + value.compact_json_character_count()
+            })
+            .sum::<usize>();
+    let arguments = Map::from_iter(
+        fields
+            .iter()
+            .map(|(key, value)| (key.clone(), value.as_json_value())),
+    );
+    MessageWithCharacterCount {
+        character_count: name.chars().count() + json_character_count,
+        message: Message::Assistant(assistant_response(
+            StopReason::ToolUse,
+            None,
+            vec![AssistantBlock::ToolCall(ToolCall {
+                id: "call|fc".to_owned(),
+                name,
+                arguments,
+            })],
+        )),
+    }
+}
+
+/// Draws one valid message and its independent semantic character count.
+#[hegel::test_helper]
+fn draw_counted_message(
+    tc: &TestCase,
+    kind: TokenEstimateMessageKind,
+) -> MessageWithCharacterCount {
+    match kind {
+        TokenEstimateMessageKind::UserText => {
+            // The fixed five-character prefix guarantees this generated
+            // message distinguishes Unicode scalars from UTF-8 bytes and
+            // rounds up independently of all other messages.
+            let suffix: char =
+                tc.draw(gs::sampled_from(vec!['a', 'é', '日', '🦀']));
+            let text = format!("ééééx{suffix}");
+            MessageWithCharacterCount {
+                character_count: text.chars().count(),
+                message: user_text(&text),
+            }
+        }
+        TokenEstimateMessageKind::UserBlocks => {
+            let text = draw_text_scalars(tc, 0, 8);
+            let character_count =
+                text.chars().count() + IMAGE_ESTIMATE_CHARACTERS;
+            MessageWithCharacterCount {
+                character_count,
+                message: Message::User(UserMessage {
+                    content: UserContent::Blocks(vec![
+                        InputBlock::Text(TextContent {
+                            text,
+                            text_signature: None,
+                        }),
+                        image_input_block(),
+                    ]),
+                    timestamp: 0,
+                }),
+            }
+        }
+        TokenEstimateMessageKind::AssistantText => {
+            let text = draw_text_scalars(tc, 0, 8);
+            MessageWithCharacterCount {
+                character_count: text.chars().count(),
+                message: assistant_text(&text),
+            }
+        }
+        TokenEstimateMessageKind::AssistantThinking => {
+            let thinking = draw_text_scalars(tc, 0, 8);
+            MessageWithCharacterCount {
+                character_count: thinking.chars().count(),
+                message: Message::Assistant(assistant_response(
+                    StopReason::Stop,
+                    None,
+                    vec![AssistantBlock::Thinking(ThinkingContent {
+                        thinking,
+                        thinking_signature: None,
+                        redacted: None,
+                    })],
+                )),
+            }
+        }
+        TokenEstimateMessageKind::AssistantToolCall => {
+            let name = draw_text_scalars(tc, 1, 6);
+            let fields = vec![
+                ("n".to_owned(), TinyJsonArgument::Null),
+                ("b".to_owned(), TinyJsonArgument::Boolean(false)),
+                ("i".to_owned(), TinyJsonArgument::Integer(12)),
+                ("s".to_owned(), TinyJsonArgument::Unicode("é".to_owned())),
+                ("v".to_owned(), draw_tiny_json_argument(tc)),
+            ];
+            counted_tool_call(name, fields)
+        }
+        TokenEstimateMessageKind::ToolResultText => {
+            let text = draw_text_scalars(tc, 0, 8);
+            MessageWithCharacterCount {
+                character_count: text.chars().count(),
+                message: Message::ToolResult(ToolResultMessage {
+                    tool_call_id: "call|fc".to_owned(),
+                    tool_name: "read".to_owned(),
+                    content: vec![InputBlock::Text(TextContent {
+                        text,
+                        text_signature: None,
+                    })],
+                    details: None,
+                    is_error: false,
+                    timestamp: 0,
+                }),
+            }
+        }
+        TokenEstimateMessageKind::ToolResultImages => {
+            let text = draw_text_scalars(tc, 0, 8);
+            let character_count =
+                text.chars().count() + 2 * IMAGE_ESTIMATE_CHARACTERS;
+            MessageWithCharacterCount {
+                character_count,
+                message: Message::ToolResult(ToolResultMessage {
+                    tool_call_id: "call|fc".to_owned(),
+                    tool_name: "read".to_owned(),
+                    content: vec![
+                        InputBlock::Text(TextContent {
+                            text,
+                            text_signature: None,
+                        }),
+                        image_input_block(),
+                        image_input_block(),
+                    ],
+                    details: None,
+                    is_error: false,
+                    timestamp: 0,
+                }),
+            }
+        }
+    }
+}
+
+/// With no reported usage, context tokens equal the sum of independently
+/// rounded semantic character counts (`docs/reference/testing.md`;
+/// `docs/reference/compaction.md`, "Token estimate").
+///
+/// Property inventory: the oracle carries scalar counts from original text,
+/// 4,800 characters per image, and manually counted compact scalar JSON for
+/// tool calls. Assistant constructors set zero usage. Every case contains all
+/// seven message forms plus up to eight generated forms; text is bounded to
+/// eight scalars, names to six, and JSON integers to 0..=99. Shrinking can
+/// simplify generated fields and remove extra messages while retaining the
+/// required forms.
 #[hegel::test(test_cases = 500)]
-fn no_reported_usage_estimate_is_chars_over_four_everywhere(tc: TestCase) {
-    let messages = zero_out_usage(tc.draw(generators::transcript()));
-    let expected: u64 = messages.iter().map(estimate_message_tokens).sum();
+fn context_estimate_rounds_semantic_characters_per_unreported_message(
+    tc: TestCase,
+) {
+    let kinds = vec![
+        TokenEstimateMessageKind::UserText,
+        TokenEstimateMessageKind::UserBlocks,
+        TokenEstimateMessageKind::AssistantText,
+        TokenEstimateMessageKind::AssistantThinking,
+        TokenEstimateMessageKind::AssistantToolCall,
+        TokenEstimateMessageKind::ToolResultText,
+        TokenEstimateMessageKind::ToolResultImages,
+    ];
+    let additional_kinds: Vec<TokenEstimateMessageKind> = tc.draw(
+        gs::vecs(gs::sampled_from(vec![
+            TokenEstimateMessageKind::UserText,
+            TokenEstimateMessageKind::UserBlocks,
+            TokenEstimateMessageKind::AssistantText,
+            TokenEstimateMessageKind::AssistantThinking,
+            TokenEstimateMessageKind::AssistantToolCall,
+            TokenEstimateMessageKind::ToolResultText,
+            TokenEstimateMessageKind::ToolResultImages,
+        ]))
+        .max_size(8),
+    );
+    let counted_messages: Vec<_> = kinds
+        .into_iter()
+        .chain(additional_kinds)
+        .map(|kind| draw_counted_message(&tc, kind))
+        .collect();
+
+    let expected: u64 = counted_messages
+        .iter()
+        .map(|entry| entry.character_count.div_ceil(4) as u64)
+        .sum();
+    let messages: Vec<Message> = counted_messages
+        .into_iter()
+        .map(|entry| entry.message)
+        .collect();
     assert_eq!(estimate_context_tokens(&messages), expected);
+}
+
+#[test]
+fn unreported_context_counts_unicode_scalars_and_rounds_messages_separately() {
+    let unicode_text = "éééé";
+    assert_eq!(unicode_text.chars().count(), 4);
+    assert_eq!(unicode_text.len(), 8);
+    assert_eq!(estimate_context_tokens(&[user_text(unicode_text)]), 1);
+
+    let one_character_messages = vec![user_text("a"), user_text("b")];
+    assert_eq!(estimate_context_tokens(&one_character_messages), 2);
 }
 
 /// pi issue #8328: an assistant message whose usage is present but
@@ -184,9 +459,12 @@ fn no_reported_usage_estimate_is_chars_over_four_everywhere(tc: TestCase) {
 fn pi_known_case_zero_usage_assistant_falls_back_to_chars_over_four() {
     let messages =
         vec![user_text(&"x".repeat(400)), assistant_text("response")];
-    let expected: u64 = messages.iter().map(estimate_message_tokens).sum();
+    let expected: u64 = [400, "response".chars().count()]
+        .into_iter()
+        .map(|characters| characters.div_ceil(4) as u64)
+        .sum();
     assert_eq!(estimate_context_tokens(&messages), expected);
-    assert!(expected > 0);
+    assert_eq!(expected, 102);
 }
 
 /// `should_compact` is exactly `tokens > context_window - reserve_tokens`,
