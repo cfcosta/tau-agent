@@ -3,16 +3,17 @@
 mod common;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Arc,
+        Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
 use async_trait::async_trait;
-use common::{FakeHost, error, texts};
+use common::{FakeHost, error, texts, tool};
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_codemode::{
@@ -35,6 +36,7 @@ struct ModuleHost {
     tools: FakeHost,
     library: Library,
     lookups: AtomicUsize,
+    initializations: Mutex<Vec<(String, String)>>,
 }
 
 impl ModuleHost {
@@ -51,6 +53,7 @@ impl ModuleHost {
             tools: FakeHost::default(),
             library,
             lookups: AtomicUsize::new(0),
+            initializations: Mutex::new(Vec::new()),
         })
     }
 
@@ -79,12 +82,31 @@ impl ModuleHost {
 #[async_trait]
 impl Host for ModuleHost {
     fn tools(&self) -> Vec<ToolEntry> {
-        self.tools.tools()
+        let mut tools = self.tools.tools();
+        tools.push(tool("init", "Records a module source initialization."));
+        tools
     }
     fn namespaces(&self) -> Vec<Namespace> {
         self.tools.namespaces()
     }
     async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String> {
+        if call.name == "init" {
+            let name = call.args["name"]
+                .as_str()
+                .ok_or("init requires a name")?
+                .to_owned();
+            let label = call.args["label"]
+                .as_str()
+                .ok_or("init requires a label")?
+                .to_owned();
+            self.initializations.lock().unwrap().push((name, label));
+            return Ok(ToolReply {
+                value: call.args,
+                error: None,
+                usage: None,
+                usage_complete: None,
+            });
+        }
         self.tools.call_tool(call).await
     }
     async fn module(
@@ -328,28 +350,179 @@ async fn repeated_and_concurrent_require_share_one_module_value() {
     assert_eq!(texts(&output), ["true", "1", "2", "3"]);
 }
 
-// Property inventory: arithmetic exported by a generated module agrees with
-// an independent repeated-addition oracle. Valid bounded integers need no
-// filtering and shrink toward zero. The workspace hegel.toml supplies both
-// development and CI case counts; CI uses its fixed-seed profile.
-#[hegel::test]
-fn generated_arithmetic_module_matches_oracle(tc: TestCase) {
-    let a: i32 = tc.draw(gs::integers().min_value(-1000).max_value(1000));
-    let b: i32 = tc.draw(gs::integers().min_value(-1000).max_value(1000));
+#[tokio::test]
+async fn arithmetic_module_returns_the_fixed_example() {
     let module = definition(
         "arithmetic",
         "return function(a, b) return a * 3 + b * 2 end",
         &[],
     );
     let host = ModuleHost::new(&[module]);
+    let output = host.script("return require('arithmetic')(3, 2)").await;
+    assert_eq!(output.failure, None);
+    assert_eq!(texts(&output), ["13"]);
+}
+
+fn graph_edges(optional_edges: u8) -> Vec<Vec<usize>> {
+    // Indices 0..4 are leaves. Nodes 5 and 6 share leaf 0; root 7
+    // requires both, so every generated graph contains a diamond.
+    let mut edges = vec![Vec::new(); 8];
+    edges[5] = vec![0, 1];
+    edges[6] = vec![0, 2];
+    edges[7] = vec![5, 6];
+    for (bit, parent, child) in [
+        (0, 5, 2),
+        (1, 5, 3),
+        (2, 5, 4),
+        (3, 6, 1),
+        (4, 6, 3),
+        (5, 6, 4),
+        (6, 7, 3),
+        (7, 7, 4),
+    ] {
+        if optional_edges & (1 << bit) != 0 {
+            edges[parent].push(child);
+        }
+    }
+    edges
+}
+
+fn graph_module(
+    name: &str,
+    label: &str,
+    base: i32,
+    children: &[usize],
+    definitions: &[Definition],
+) -> Definition {
+    let mut source = format!(
+        "local init = tools.init({{ name = '{name}', label = '{label}' }})\nlocal value = {base}"
+    );
+    let mut dependencies = Vec::new();
+    for &child in children {
+        let dependency = &definitions[child];
+        let dependency_name = dependency.name();
+        source.push_str(&format!(
+            "\nvalue += require('{dependency_name}').value"
+        ));
+        dependencies.push((dependency_name, dependency.version()));
+    }
+    source.push_str("\nreturn { value = value, label = init.label }");
+    definition(name, &source, &dependencies)
+}
+
+fn expected_graph_values(edges: &[Vec<usize>], bases: &[i32; 8]) -> [i32; 8] {
+    let mut values = [0; 8];
+    for node in 0..8 {
+        values[node] = bases[node]
+            + edges[node].iter().map(|&child| values[child]).sum::<i32>();
+    }
+    values
+}
+
+fn expected_initializations(
+    edges: &[Vec<usize>],
+) -> BTreeMap<(String, String), usize> {
+    let mut reachable = BTreeSet::new();
+    let mut pending = vec![7];
+    while let Some(node) = pending.pop() {
+        if reachable.insert(node) {
+            pending.extend(edges[node].iter().copied());
+        }
+    }
+    let mut counts = BTreeMap::new();
+    for node in reachable {
+        if node != 7 {
+            let name = format!("node{node}");
+            counts.insert((name.clone(), name), 1);
+        }
+    }
+    counts.insert(("root".into(), "old".into()), 1);
+    counts.insert(("root".into(), "new".into()), 1);
+    counts
+}
+
+fn count_initializations(
+    events: &[(String, String)],
+) -> BTreeMap<(String, String), usize> {
+    let mut counts = BTreeMap::new();
+    for event in events {
+        *counts.entry(event.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+// Property inventory: exact imports and a later bare import return the
+// independently summed graph values, while each reachable exact version
+// executes once per VM. Five fixed leaves, a forced diamond, two root versions,
+// and eight optional earlier-node edges construct valid DAGs without filtering;
+// the edge mask shrinks toward the minimal diamond and bases toward one.
+#[hegel::test(test_cases = 24)]
+fn generated_exact_definition_graphs_preserve_values_pins_and_vm_cache(
+    tc: TestCase,
+) {
+    let optional_edges: u8 = tc.draw(gs::integers());
+    let left_base: i32 = tc.draw(gs::integers().min_value(1).max_value(8));
+    let right_base: i32 = tc.draw(gs::integers().min_value(1).max_value(8));
+    let old_root_base: i32 = tc.draw(gs::integers().min_value(1).max_value(8));
+    let edges = graph_edges(optional_edges);
+    let bases = [0, 1, 2, 3, 4, left_base, right_base, old_root_base];
+    let values = expected_graph_values(&edges, &bases);
+    let new_root_value = values[7] + 1;
+
+    let mut definitions = Vec::new();
+    for node in 0..7 {
+        let name = format!("node{node}");
+        definitions.push(graph_module(
+            &name,
+            &name,
+            bases[node],
+            &edges[node],
+            &definitions,
+        ));
+    }
+    let old_root =
+        graph_module("root", "old", old_root_base, &edges[7], &definitions);
+    let new_root =
+        graph_module("root", "new", old_root_base + 1, &edges[7], &definitions);
+    let script = format!(
+        "local old = require('root', '{}')\n\
+         local newer = require('root', '{}')\n\
+         local current = require('root')\n\
+         return old.value, newer.value, current.value, old.label, newer.label, current.label, \
+         old == require('root', '{}'), current == require('root'), newer == require('root', '{}'), \
+         current == newer, old ~= newer",
+        old_root.version(),
+        new_root.version(),
+        old_root.version(),
+        new_root.version(),
+    );
+    definitions.push(old_root);
+    definitions.push(new_root);
+    let host = ModuleHost::new(&definitions);
+    let expected_counts = expected_initializations(&edges);
+    let expected_text = [
+        values[7].to_string(),
+        new_root_value.to_string(),
+        new_root_value.to_string(),
+        "old".into(),
+        "new".into(),
+        "new".into(),
+        "true".into(),
+        "true".into(),
+        "true".into(),
+        "true".into(),
+        "true".into(),
+    ];
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    let output = runtime.block_on(
-        host.script(&format!("return require('arithmetic')({a}, {b})")),
-    );
-    let oracle = a + a + a + b + b;
-    assert_eq!(output.failure, None);
-    assert_eq!(texts(&output), [oracle.to_string()]);
+    for _ in 0..2 {
+        let previous = host.initializations.lock().unwrap().len();
+        let output = runtime.block_on(host.script(&script));
+        assert_eq!(output.failure, None, "{output:?}");
+        assert_eq!(texts(&output), expected_text);
+        let events = host.initializations.lock().unwrap();
+        assert_eq!(count_initializations(&events[previous..]), expected_counts);
+    }
 }
