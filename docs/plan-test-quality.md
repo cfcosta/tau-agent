@@ -18,7 +18,7 @@ Audit numbers refer to the approved 40-test shortlist.
 - [x] **02 — Recovery:** independent status/body/precedence expectations (#3).
 - [x] **03 — Token estimates:** independent Unicode/image/per-message accounting (#4).
 - [x] **04 — Store UI:** compare durable and UI folds to an operation model (#5).
-- [ ] **05 — Request frames:** preserve original generated maps through both encodings (#6).
+- [x] **05 — Request frames:** preserve original generated maps through both encodings (#6).
 - [ ] **06 — Costs:** combine independent formula/apply/increment coverage and exhaust zero usage (#7, #21, #39).
 - [ ] **07 — Schema generators:** replace compile-only coverage with valid/invalid value laws (#8).
 - [ ] **08 — Evaluator and fixtures:** execute real owned module/tools/artifact paths on generated inputs; retain corpus-integrity checks (#1, #30–34).
@@ -52,12 +52,13 @@ ones. It will not claim exhaustive mutation coverage or unmeasured savings.
 These are individual injected faults in disposable workspaces, not a full
 mutation campaign. Only failure of the named replacement counts as detection.
 
-| Batch | Injected fault                              | Replacement that failed                                              |
-| ----- | ------------------------------------------- | -------------------------------------------------------------------- |
-| 01    | Plain-name prefix loses one underscore      | `short_ascii_pairs_keep_exact_plain_names`                           |
-| 02    | Recovery treats HTTP 429 as a request fault | `status_boundaries_apply_to_every_unrecognized_body_shape`           |
-| 03    | Character estimation counts UTF-8 bytes     | `context_estimate_rounds_semantic_characters_per_unreported_message` |
-| 04    | Durable writes stop applying deletes        | `store_and_ui_folds_match_the_operation_model_at_each_prefix`        |
+| Batch | Injected fault                                      | Replacement that failed                                              |
+| ----- | --------------------------------------------------- | -------------------------------------------------------------------- |
+| 01    | Plain-name prefix loses one underscore              | `short_ascii_pairs_keep_exact_plain_names`                           |
+| 02    | Recovery treats HTTP 429 as a request fault         | `status_boundaries_apply_to_every_unrecognized_body_shape`           |
+| 03    | Character estimation counts UTF-8 bytes             | `context_estimate_rounds_semantic_characters_per_unreported_message` |
+| 04    | Durable writes stop applying deletes                | `store_and_ui_folds_match_the_operation_model_at_each_prefix`        |
+| 05    | Both encoders receive a decoder that discards input | `a_json_body_round_trips`                                            |
 
 Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before

@@ -285,27 +285,22 @@ fn a_real_turn_continues_from_a_warm_up(tc: TestCase) {
     assert!(prepared.body.get("generate").is_none());
 }
 
-/// A body serialized as a frame is the body as one JSON object.
+/// Property inventory: splitting and encoding a request preserves the original
+/// generated map, including optional continuation and extra fields. The oracle
+/// never calls another Body encoder. Bounded valid lane histories shrink toward
+/// a single turn with minimal input; fixed regressions below stay in the suite.
+/// A JSON body splits into fields, input and `previous_response_id`, and
+/// joins back unchanged through both map and frame encoders.
 #[hegel::test(test_cases = 200)]
-fn a_frame_is_the_body_as_json(tc: TestCase) {
+fn a_json_body_round_trips(tc: TestCase) {
     let history = tc.draw(generators::lane::lane_history());
     let index =
         tc.draw(gs::integers::<usize>().max_value(history.turns.len() - 1));
     let mut full = history.full_body(index);
-    if tc.draw(gs::booleans()) {
-        full.insert("previous_response_id".into(), json!("resp_1"));
-    }
-    let body = Body::from(full);
-    let frame: Value = serde_json::from_str(&body.to_frame()).unwrap();
-    assert_eq!(frame, Value::Object(body.to_map()));
-}
-
-/// A JSON body splits into fields, input and `previous_response_id`, and
-/// joins back unchanged.
-#[hegel::test(test_cases = 200)]
-fn a_json_body_round_trips(tc: TestCase) {
-    let history = tc.draw(generators::lane::lane_history());
-    let mut full = history.full_body(0);
+    full.insert(
+        "metadata".into(),
+        json!({"audit": tc.draw(generators::text(16))}),
+    );
     let previous = tc.draw(gs::booleans());
     if previous {
         full.insert("previous_response_id".into(), json!("resp_1"));
@@ -315,4 +310,6 @@ fn a_json_body_round_trips(tc: TestCase) {
     assert!(!body.fields.contains_key("previous_response_id"));
     assert!(!body.fields.contains_key("input"));
     assert_eq!(body.to_map(), full);
+    let frame: Value = serde_json::from_str(&body.to_frame()).unwrap();
+    assert_eq!(frame, Value::Object(full));
 }
