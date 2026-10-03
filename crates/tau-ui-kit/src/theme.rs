@@ -102,6 +102,8 @@ pub struct Theme {
     pub marks: [Hsla; 6],
     /// A command's terminal, drawn inside its card.
     pub term: TermLook,
+    /// How code is colored, by what each part of it is.
+    pub syntax: SyntaxLook,
     /// Onboarding's look: the handshake screens.
     pub setup: SetupLook,
     /// How surfaces stand out of the ground or sink into it.
@@ -250,6 +252,62 @@ impl SetupLook {
     }
 }
 
+/// How code is colored (`syntax`): one color per kind of part, quiet
+/// enough to sit in a card; plain code keeps the color it is set in.
+#[derive(Debug, Clone)]
+pub struct SyntaxLook {
+    pub keyword: Hsla,
+    pub string: Hsla,
+    pub escape: Hsla,
+    pub comment: Hsla,
+    pub function: Hsla,
+    pub ty: Hsla,
+    pub number: Hsla,
+    pub property: Hsla,
+    pub attribute: Hsla,
+    pub builtin: Hsla,
+    pub punctuation: Hsla,
+    pub tag: Hsla,
+}
+
+impl SyntaxLook {
+    fn graphite() -> Self {
+        Self {
+            keyword: c(rgb(0xc49bf0)),
+            string: c(rgb(0xa9dcb1)),
+            escape: c(rgb(0x7ec8c8)),
+            comment: c(rgb(0x75736d)),
+            function: c(rgb(0x82aaff)),
+            ty: c(rgb(0xe8c07d)),
+            number: c(rgb(0xf0a37e)),
+            property: c(rgb(0xd6d4ce)),
+            attribute: c(rgb(0x7ec8c8)),
+            builtin: c(rgb(0xf08a7e)),
+            punctuation: c(rgb(0x8b8983)),
+            tag: c(rgb(0xf08a7e)),
+        }
+    }
+
+    /// The color of a kind of part.
+    pub fn color(&self, kind: crate::syntax::Kind) -> Hsla {
+        use crate::syntax::Kind;
+        match kind {
+            Kind::Keyword => self.keyword,
+            Kind::String => self.string,
+            Kind::Escape => self.escape,
+            Kind::Comment => self.comment,
+            Kind::Function => self.function,
+            Kind::Type => self.ty,
+            Kind::Number | Kind::Constant => self.number,
+            Kind::Property => self.property,
+            Kind::Attribute => self.attribute,
+            Kind::Builtin => self.builtin,
+            Kind::Operator | Kind::Punctuation => self.punctuation,
+            Kind::Tag => self.tag,
+        }
+    }
+}
+
 /// How a `bash` card's terminal looks: a darker ground of its own, and
 /// the programs' own colors from a Ghostty-like palette, not remapped to
 /// the theme's.
@@ -370,6 +428,7 @@ impl Theme {
                 c(rgb(0x7ec8c8)),
             ],
             term: TermLook::graphite(),
+            syntax: SyntaxLook::graphite(),
             setup: SetupLook::graphite(),
             depth: Depth::graphite(),
         }

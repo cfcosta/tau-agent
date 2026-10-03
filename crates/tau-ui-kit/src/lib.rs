@@ -13,6 +13,7 @@ pub mod format;
 pub mod input;
 pub mod markdown;
 pub mod prose;
+pub mod syntax;
 pub mod theme;
 
 use gpui::App;
