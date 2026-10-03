@@ -222,13 +222,26 @@ mod attach;
 mod config;
 mod history;
 mod hosted;
+mod instructions;
 mod landing;
 mod onboarding;
 mod pull_request;
 mod repos;
 
-pub use self::{config::HostConfig, history::history, onboarding::onboard};
-use self::{config::*, history::*, onboarding::*, pull_request::*, repos::*};
+pub use self::{
+    config::HostConfig,
+    history::history,
+    instructions::{AGENTS_FILE, AGENTS_HEADING, AGENTS_LIMIT, agents_section},
+    onboarding::onboard,
+};
+use self::{
+    config::*,
+    history::*,
+    instructions::RepoInstructions,
+    onboarding::*,
+    pull_request::*,
+    repos::*,
+};
 
 const MAX_TURNS: u32 = 50;
 
@@ -626,13 +639,17 @@ impl Host {
                 };
                 let vcs = VcsPlugin::new(workspace.vcs().clone());
                 let vcs = if lands { vcs.landing() } else { vcs };
+                let dir = workspace.dir();
+                // The repository's instructions come after the workspace,
+                // which makes the directory as the run starts.
                 let agent = agent
                     .plugin(
-                        CodingTools::new(Root::new(workspace.dir()))
+                        CodingTools::new(Root::new(dir.clone()))
                             .with_artifacts(artifacts.clone()),
                     )
                     .plugin(vcs)
-                    .plugin(workspace);
+                    .plugin(workspace)
+                    .plugin(RepoInstructions { dir });
                 (agent, Services::default().with(hooks))
             };
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;

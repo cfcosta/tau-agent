@@ -2455,3 +2455,108 @@ fn only_the_main_chat_delegates() {
         tools(1)
     );
 }
+
+/// The instructions a request was sent with.
+fn instructions_of(request: &tau_testing::scripted::Request) -> String {
+    request.settings.instructions.clone().unwrap_or_default()
+}
+
+/// A run takes the repository's `AGENTS.md`, from its own workspace,
+/// into its instructions as it starts. A chat that changes the file
+/// sees its own version the next time it starts, and the main chat
+/// keeps reading trunk's.
+#[test]
+fn a_run_reads_the_repository_s_agents_file() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(
+        src.path().join("AGENTS.md"),
+        "Run `make check` before you commit.\n",
+    )
+    .unwrap();
+    git(src.path(), &["add", "AGENTS.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let rules =
+        serde_json::json!({ "path": "AGENTS.md", "content": "Use tabs.\n" });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("hello"))
+        .turn(|t| t.tool_call("write", rules))
+        .turn(|t| {
+            t.tool_call(
+                "vcs_commit",
+                serde_json::json!({ "message": "docs: tabs" }),
+            )
+        })
+        .turn(|t| t.text("the rules say tabs"))
+        .turn(|t| t.text("tabs it is"))
+        .turn(|t| t.text("hello again"));
+    let (host, mut events) = host_on(llm.clone(), src.path());
+
+    let main = on_main(&host, "hi");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let chat = host
+        .start("change the rules", &ModelChoice::default(), REPO)
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    host.resume(&chat.id, "and now?", &ModelChoice::default())
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    host.resume(&main, "and main?", &ModelChoice::default())
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+
+    let asked: Vec<String> =
+        llm.requests().iter().map(instructions_of).collect();
+    assert_eq!(asked.len(), 6);
+    for (at, instructions) in asked.iter().enumerate() {
+        assert!(
+            instructions.contains(tau_ui::host::AGENTS_HEADING),
+            "request {at}: {instructions}"
+        );
+    }
+    // The main chat, and the chat as it started on trunk's files.
+    for at in [0, 1, 5] {
+        assert!(asked[at].contains("Run `make check`"), "{}", asked[at]);
+    }
+    // Within a start, the instructions stay as they were: the chat's
+    // edit waits for its next start.
+    assert_eq!(asked[1], asked[3]);
+    assert!(asked[4].contains("Use tabs."), "{}", asked[4]);
+    assert!(!asked[4].contains("make check"), "{}", asked[4]);
+}
+
+/// Without an `AGENTS.md`, a run's instructions are tau's alone.
+#[test]
+fn a_repository_without_an_agents_file_adds_nothing() {
+    let llm = ScriptedModel::new().turn(|t| t.text("hello"));
+    let (host, mut events) = host(llm.clone());
+    let main = on_main(&host, "hi");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let asked = llm.requests();
+    assert_eq!(asked.len(), 1);
+    assert!(!instructions_of(&asked[0]).contains(tau_ui::host::AGENTS_HEADING));
+}
+
+/// A file over the limit is cut, and the instructions say so.
+#[test]
+fn a_long_agents_file_is_cut() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    let long = "rule\n".repeat(tau_ui::host::AGENTS_LIMIT / 5 + 100);
+    std::fs::write(src.path().join("AGENTS.md"), &long).unwrap();
+    git(src.path(), &["add", "AGENTS.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let llm = ScriptedModel::new().turn(|t| t.text("hello"));
+    let (host, mut events) = host_on(llm.clone(), src.path());
+    let main = on_main(&host, "hi");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let instructions = instructions_of(&llm.requests()[0]);
+    assert!(instructions.contains("AGENTS.md was cut here"), "cut");
+    assert!(instructions.len() < long.len() + 2048);
+}

@@ -47,7 +47,8 @@ The hardest part is the WebSocket layer. It has to:
 
 - Any other LLM provider, any other OpenAI API, SSE, and OAuth.
 - A CLI, TUI or RPC server.
-- Settings files and `AGENTS.md` discovery.
+- Settings files, and `AGENTS.md` discovery in the library (the app
+  reads it: [0020](decisions/0020-the-repository-s-agents-file.md)).
 - Skills and prompt templates.
 - pi's branching session tree, `context_edit` and branch summaries.
 - Follow-up queues.

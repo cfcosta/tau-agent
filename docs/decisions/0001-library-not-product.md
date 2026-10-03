@@ -1,7 +1,8 @@
 # 0001: A library for agent workflows, not a coding-agent product
 
 - Status: accepted; the optional UI crate is in
-  [0007](0007-gpui-interface.md)
+  [0007](0007-gpui-interface.md). The app reads `AGENTS.md`
+  ([0020](0020-the-repository-s-agents-file.md)).
 - Date: 2026-09-26
 
 ## Context
@@ -44,7 +45,8 @@ The library adds a few workflow primitives that pi lacks:
 - Out of scope:
   - a CLI, a TUI, and an RPC server in the library (an optional GUI
     crate sits beside it, see [0007](0007-gpui-interface.md));
-  - settings files and context-file discovery;
+  - settings files and context-file discovery (the app, not the
+    library, reads `AGENTS.md`: [0020](0020-the-repository-s-agents-file.md));
   - skills and prompt templates;
   - pi's session tree and `context_edit`;
   - follow-up queues. A caller that wants a follow-up simply starts
