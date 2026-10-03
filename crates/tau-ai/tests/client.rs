@@ -3,14 +3,26 @@
 
 use std::{cell::RefCell, io, rc::Rc};
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _},
+};
 use serde_json::json;
 use tau_ai::{
     client::OpenAi,
     cost,
     event::{AssistantEvent, DoneReason},
     llm::Llm,
-    message::{Message, StopReason, Usage, UserContent, UserMessage},
+    message::{
+        AssistantBlock,
+        AssistantMessage,
+        Message,
+        StopReason,
+        TextContent,
+        Usage,
+        UserContent,
+        UserMessage,
+    },
     model::{ServiceTier, find},
     responses::{
         input::response_items,
@@ -157,37 +169,6 @@ fn done_usage_gets_its_cost(tc: TestCase) {
         got.cost.total > 0.0
             || usage.input + usage.output + usage.cache_read == 0
     );
-}
-
-/// A model missing from the table gets no cost, and keeps the caller's
-/// reasoning setting; a known model's comes from the table.
-#[hegel::test(test_cases = 10)]
-fn reasoning_follows_the_table(tc: TestCase) {
-    let usage = Usage {
-        input: 1000,
-        output: 1000,
-        ..Usage::default()
-    };
-    let unknown = Settings {
-        model: "not-a-model".into(),
-        reasoning_model: false,
-        ..Settings::default()
-    };
-    let (event, request) = one_response(&tc, unknown, usage.clone());
-    let AssistantEvent::Done { usage: got, .. } = event else {
-        panic!()
-    };
-    assert_eq!(got.cost.total, 0.0);
-    assert!(request.get("include").is_none());
-
-    // gpt-5.5 reasons, whatever the caller said.
-    let known = Settings {
-        model: "gpt-5.5".into(),
-        reasoning_model: false,
-        ..Settings::default()
-    };
-    let (_, request) = one_response(&tc, known, usage);
-    assert_eq!(request["include"], json!(["reasoning.encrypted_content"]));
 }
 
 /// Property inventory: the current ChatGPT route strips the output ceiling
@@ -376,86 +357,225 @@ fn llm_error_displays_its_message() {
     assert_eq!(error.to_string(), "transport stopped");
 }
 
-/// Two turns on `model`: the first at the model's default effort, the
-/// second at `high`, set on the session between them. Returns the
-/// request bodies the fake saw, and the lane's full and delta counts.
-fn two_turns_changing_effort(
-    tc: &TestCase,
-    model: &str,
-) -> (Vec<serde_json::Value>, u64, u64) {
-    let mut first = tc.draw(openai::wire_assistant_message());
-    first.stop_reason = StopReason::Stop;
-    first.error_message = None;
-    first
-        .content
-        .retain(|b| !matches!(b, tau_ai::message::AssistantBlock::ToolCall(_)));
-    first.response_id = Some("resp_1".into());
-    let mut second = first.clone();
-    second.response_id = Some("resp_2".into());
-    let fake = FakeOpenAi::new(vec![
-        Reply::Respond {
-            frames: openai::draw_response_frames(tc, &first),
-            response_id: "resp_1".into(),
-            output_items: response_items(&first),
-        },
-        Reply::Respond {
-            frames: openai::draw_response_frames(tc, &second),
-            response_id: "resp_2".into(),
-            output_items: response_items(&second),
-        },
-    ]);
-    let counts = Rc::new(RefCell::new((0, 0)));
-    let seen = counts.clone();
-    let model = model.to_owned();
+/// Plays a bounded history on one simulated lane. Every scripted answer has
+/// one fixed text item, so the next transcript contains exactly the server's
+/// recorded output item before the next user item.
+fn send_reasoning_history(
+    settings: Settings,
+    transitions: Vec<Option<ReasoningEffort>>,
+) -> (
+    Vec<tau_testing::fake_openai::Received>,
+    (u64, u64),
+    Vec<Usage>,
+) {
+    let turns = transitions.len() + 1;
+    let messages: Vec<_> = (0..turns)
+        .map(|turn| AssistantMessage {
+            content: vec![AssistantBlock::Text(TextContent {
+                text: format!("answer {turn}"),
+                text_signature: Some(format!(
+                    "{{\"v\":1,\"id\":\"msg_{turn}\"}}"
+                )),
+            })],
+            model: settings.model.clone(),
+            response_id: Some(format!("resp_{turn}")),
+            usage: Usage {
+                input: 1000,
+                output: 1000,
+                ..Usage::default()
+            },
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        })
+        .collect();
+    let replies = messages
+        .iter()
+        .enumerate()
+        .map(|(turn, message)| Reply::Respond {
+            frames: vec![
+                json!({"type": "response.created", "response": {"id": format!("resp_{turn}")}}),
+                json!({"type": "response.output_item.added", "output_index": 0,
+                    "item": {"type": "message", "id": format!("msg_{turn}"),
+                        "role": "assistant", "status": "in_progress", "content": []}}),
+                json!({"type": "response.output_text.delta", "output_index": 0,
+                    "delta": format!("answer {turn}")}),
+                json!({"type": "response.output_item.done", "output_index": 0,
+                    "item": {"type": "message", "id": format!("msg_{turn}"),
+                        "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "text": format!("answer {turn}"),
+                            "annotations": []}]}}),
+                json!({"type": "response.completed", "response": {
+                    "id": format!("resp_{turn}"),
+                    "status": "completed",
+                    "usage": {"input_tokens": 1000, "output_tokens": 1000,
+                        "total_tokens": 2000,
+                        "output_tokens_details": {"reasoning_tokens": 0}}
+                }}),
+            ],
+            response_id: format!("resp_{turn}"),
+            output_items: response_items(message),
+        })
+        .collect();
+    let fake = FakeOpenAi::new(replies);
+    let results = Rc::new(RefCell::new(((0, 0), Vec::new())));
+    let seen = results.clone();
     let mut sim = turmoil::Builder::new().build();
     fake.install(&mut sim, "api");
     sim.client("client", async move {
         let client = OpenAi::with_connector(SimConnector, Limits::default());
-        let settings = Settings {
-            model,
-            ..Settings::default()
-        };
         let mut session = client.session(settings).await.unwrap();
-        let mut response = session.respond(&hello(), 0);
-        while response.next().await.is_some() {}
-        tau_ai::llm::LlmSession::set_reasoning(
-            &mut session,
-            Some(ReasoningEffort::High),
-        );
-        let mut transcript = hello();
-        transcript.push(Message::Assistant(first));
-        transcript.push(Message::User(UserMessage {
-            content: UserContent::Text("again".into()),
-            timestamp: 0,
-        }));
-        let mut response = session.respond(&transcript, 0);
-        while response.next().await.is_some() {}
+        let mut transcript = Vec::new();
+        for (turn, message) in messages.into_iter().enumerate() {
+            if turn > 0 {
+                tau_ai::llm::LlmSession::set_reasoning(
+                    &mut session,
+                    transitions[turn - 1],
+                );
+            }
+            transcript.push(Message::User(UserMessage {
+                content: UserContent::Text(format!("question {turn}")),
+                timestamp: 0,
+            }));
+            let mut response = session.respond(&transcript, 0);
+            let mut done = None;
+            while let Some(event) = response.next().await {
+                if let AssistantEvent::Done { usage, .. } = event {
+                    done = Some(usage);
+                }
+            }
+            seen.borrow_mut()
+                .1
+                .push(done.expect("completed scripted turn"));
+            transcript.push(Message::Assistant(message));
+        }
         let stats = client.stats().await.unwrap();
-        *seen.borrow_mut() =
+        seen.borrow_mut().0 =
             (stats.lanes.full_requests, stats.lanes.delta_requests);
         Ok(())
     });
     sim.run().unwrap();
-    let (full, delta) = *counts.borrow();
-    let bodies = fake.received().into_iter().map(|r| r.body).collect();
-    (bodies, full, delta)
+    let results = results.borrow();
+    assert!(fake.violations().is_empty());
+    (fake.received(), results.0, results.1.clone())
 }
 
-/// An effort set on a session goes with the requests after it.
-#[hegel::test(test_cases = 5)]
-fn a_session_takes_a_new_effort_between_requests(tc: TestCase) {
-    let (bodies, _, _) = two_turns_changing_effort(&tc, "gpt-6-sol");
-    assert!(bodies[0].get("reasoning").is_none(), "the model's default");
-    assert_eq!(bodies[1]["reasoning"]["effort"], json!("high"));
-}
+/// Property inventory: session model-class overrides and effort changes
+/// determine literal wire fields; equal wire fields continue with only the
+/// next user item, changed wire fields resend the whole ordinary transcript.
+/// Oracle: fixed model classes and independently built JSON input/fields.
+/// Generator: an initial optional effort and 3-5 transitions, with changed,
+/// repeated, and unset steps built in; shrinking keeps those steps and moves
+/// optional suffixes and efforts toward simpler histories.
+#[hegel::test(test_cases = 24)]
+fn session_reasoning_history_follows_effective_wire_fields(tc: TestCase) {
+    let initial = tc.draw(
+        gs::sampled_from(vec![
+            None,
+            Some(ReasoningEffort::Low),
+            Some(ReasoningEffort::High),
+        ])
+        .print_as_debug(),
+    );
+    let changed = if initial == Some(ReasoningEffort::High) {
+        ReasoningEffort::Low
+    } else {
+        ReasoningEffort::High
+    };
+    let mut transitions = vec![Some(changed), Some(changed), None];
+    let suffix = tc.draw(
+        gs::vecs(gs::sampled_from(vec![
+            None,
+            Some(ReasoningEffort::Low),
+            Some(ReasoningEffort::High),
+        ]))
+        .max_size(2)
+        .print_as_debug(),
+    );
+    transitions.extend(suffix);
 
-/// A new effort resends in full on every model: no model keeps its cache
-/// across a change of effort (`docs/reference/openai-websocket.md`).
-#[hegel::test(test_cases = 5)]
-fn a_new_effort_resends_in_full(tc: TestCase) {
-    for model in ["gpt-6-sol", "gpt-6-luna"] {
-        let (bodies, full, delta) = two_turns_changing_effort(&tc, model);
-        assert_eq!((full, delta), (2, 0), "{model}");
-        assert!(bodies[1].get("previous_response_id").is_none(), "{model}");
+    for (model, caller_reasoning, effective_reasoning) in [
+        ("gpt-6-sol", false, true),
+        ("gpt-4o", true, false),
+        ("not-a-model", false, false),
+        ("not-a-model", true, true),
+    ] {
+        let settings = Settings {
+            model: model.into(),
+            reasoning_model: caller_reasoning,
+            reasoning: initial,
+            ..Settings::default()
+        };
+        let (received, counts, usages) =
+            send_reasoning_history(settings, transitions.clone());
+        assert_eq!(received.len(), transitions.len() + 1, "{model}");
+        assert_eq!(usages.len(), received.len(), "{model}");
+        let mut previous_wire_effort = None;
+        let mut expected_full = 0;
+        let mut expected_delta = 0;
+        let mut expected_input = Vec::new();
+        for (turn, request) in received.iter().enumerate() {
+            let effort = if turn == 0 {
+                initial
+            } else {
+                transitions[turn - 1]
+            };
+            let wire_effort = effective_reasoning.then_some(effort).flatten();
+            let expected_reasoning = wire_effort.map(|effort| {
+                let label = match effort {
+                    ReasoningEffort::Low => "low",
+                    ReasoningEffort::High => "high",
+                    _ => unreachable!("history uses only low and high"),
+                };
+                json!({"effort": label, "summary": "auto"})
+            });
+            let expected_include = effective_reasoning
+                .then(|| json!(["reasoning.encrypted_content"]));
+            assert_eq!(
+                request.body.get("reasoning"),
+                expected_reasoning.as_ref(),
+                "{model} turn {turn}"
+            );
+            assert_eq!(
+                request.body.get("include"),
+                expected_include.as_ref(),
+                "{model} turn {turn}"
+            );
+            assert_eq!(request.body["model"], json!(model));
+            expected_input.push(json!({"role": "user", "content": [
+                {"type": "input_text", "text": format!("question {turn}")}
+            ]}));
+            let full = turn == 0 || wire_effort != previous_wire_effort;
+            if full {
+                expected_full += 1;
+                assert!(request.body.get("previous_response_id").is_none());
+                assert_eq!(request.body["input"], json!(expected_input));
+            } else {
+                expected_delta += 1;
+                assert_eq!(
+                    request.body["previous_response_id"],
+                    json!(format!("resp_{}", turn - 1))
+                );
+                assert_eq!(
+                    request.body["input"],
+                    json!([expected_input.last().unwrap()])
+                );
+            }
+            assert_eq!(
+                request.rebuilt_input.as_ref(),
+                Some(&expected_input),
+                "{model} turn {turn}"
+            );
+            if model == "not-a-model" {
+                assert_eq!(usages[turn].cost.total, 0.0);
+            }
+            expected_input.push(json!({
+                "type": "message", "role": "assistant", "id": format!("msg_{turn}"),
+                "status": "completed", "content": [{"type": "output_text",
+                    "text": format!("answer {turn}"), "annotations": []}]
+            }));
+            previous_wire_effort = wire_effort;
+        }
+        assert_eq!(counts, (expected_full, expected_delta), "{model}");
     }
 }
