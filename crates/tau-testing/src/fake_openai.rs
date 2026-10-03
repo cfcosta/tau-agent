@@ -13,6 +13,18 @@
 //! Replies are scripted by the test, in order across all requests, and
 //! prepared before the simulation runs (frames are drawn with Hegel,
 //! which cannot run inside the simulation).
+//!
+//! Each connection also keeps a prompt cache, as OpenAI's route does
+//! (`docs/reference/openai-websocket.md`, "Prompt cache"): a request
+//! reads from cache the longest prefix it shares with a prompt that
+//! connection saw before, and nothing another connection saw. A prompt
+//! is its head (every field but `input`, `instructions`,
+//! `previous_response_id`, `prompt_cache_key` and `generate`, so a
+//! change of tools or effort reads nothing), then its instructions,
+//! which match up to their first difference, then its input items. A
+//! token is four bytes of JSON. Each [`Received`] says what it read;
+//! with [`FakeOpenAi::report_cache`], completed responses report it in
+//! their usage too.
 
 use std::{
     cell::RefCell,
@@ -71,6 +83,11 @@ pub struct Received {
     /// The input the server rebuilt from its cache and the request, or
     /// `None` if it answered `previous_response_not_found`.
     pub rebuilt_input: Option<Vec<Value>>,
+    /// The prompt's size in tokens, and how many of them the
+    /// connection's prompt cache held. Both 0 for a request answered
+    /// `previous_response_not_found`.
+    pub input_tokens: u64,
+    pub cached_tokens: u64,
 }
 
 /// An HTTP answer to a WebSocket upgrade, instead of `101`.
@@ -93,6 +110,9 @@ struct State {
     connections: u32,
     /// Limits the client broke, which OpenAI would have refused.
     violations: Vec<String>,
+    /// Whether completed responses report the prompt cache in their
+    /// usage.
+    report_cache: bool,
 }
 
 /// A fake OpenAI endpoint. Clones share state.
@@ -144,6 +164,15 @@ impl FakeOpenAi {
                 }
             }
         });
+    }
+
+    /// Has completed responses report the prompt's tokens and those read
+    /// from the connection's cache in their usage (`input_tokens`,
+    /// `input_tokens_details.cached_tokens`), in place of the scripted
+    /// counts.
+    pub fn report_cache(self) -> Self {
+        self.state.borrow_mut().report_cache = true;
+        self
     }
 
     /// Answers the next upgrade with `refusal` instead of accepting it.
@@ -216,6 +245,8 @@ impl FakeOpenAi {
         let accepted = Instant::now();
         // Responses held by this connection: id -> full item list.
         let mut held: HashMap<String, Vec<Value>> = HashMap::new();
+        // The prompts this connection saw, for its prompt cache.
+        let mut seen: Vec<Prompt> = Vec::new();
         // Delayed replies, still in flight: when each is due.
         let mut pending: Vec<Pending> = Vec::new();
         loop {
@@ -228,7 +259,13 @@ impl FakeOpenAi {
                         pending.drain(..).partition(|p| p.due <= now);
                     pending = later;
                     for p in ready {
-                        if !answer(&mut socket, &mut held, p.reply, p.rebuilt).await {
+                        let served = Served {
+                            rebuilt: p.rebuilt,
+                            prompt: p.prompt,
+                            cached: p.cached,
+                            report: self.state.borrow().report_cache,
+                        };
+                        if !answer(&mut socket, &mut held, &mut seen, p.reply, served).await {
                             return;
                         }
                     }
@@ -274,10 +311,17 @@ impl FakeOpenAi {
                 }),
                 _ => Some(input.clone()),
             };
+            let prompt = rebuilt.as_ref().map(|items| Prompt::of(&body, items));
+            let (input_tokens, cached_tokens) = match &prompt {
+                Some(prompt) => (prompt.tokens(), prompt.cached(&seen)),
+                None => (0, 0),
+            };
             self.state.borrow_mut().received.push(Received {
                 connection,
                 body: body.clone(),
                 rebuilt_input: rebuilt.clone(),
+                input_tokens,
+                cached_tokens,
             });
 
             let Some(rebuilt) = rebuilt else {
@@ -293,14 +337,26 @@ impl FakeOpenAi {
                 continue;
             };
 
+            let prompt = prompt.expect("a rebuilt input has a prompt");
+            seen.push(prompt.clone());
             match reply {
                 Some(Reply::Delay(delay, reply)) => pending.push(Pending {
                     due: Instant::now() + delay,
                     reply: Some(*reply),
                     rebuilt,
+                    prompt,
+                    cached: cached_tokens,
                 }),
                 reply => {
-                    if !answer(&mut socket, &mut held, reply, rebuilt).await {
+                    let served = Served {
+                        rebuilt,
+                        prompt,
+                        cached: cached_tokens,
+                        report: self.state.borrow().report_cache,
+                    };
+                    if !answer(&mut socket, &mut held, &mut seen, reply, served)
+                        .await
+                    {
                         return;
                     }
                 }
@@ -314,15 +370,127 @@ struct Pending {
     due: Instant,
     reply: Option<Reply>,
     rebuilt: Vec<Value>,
+    prompt: Prompt,
+    cached: u64,
 }
 
-/// Sends `reply` to a request whose rebuilt input is `rebuilt`. Returns
-/// false once the connection is done.
+/// A request being answered.
+struct Served {
+    /// The input the server rebuilt.
+    rebuilt: Vec<Value>,
+    prompt: Prompt,
+    /// Its tokens the prompt cache held.
+    cached: u64,
+    /// Whether the completed response reports the cache in its usage.
+    report: bool,
+}
+
+/// One part of a prompt, in the order the prompt cache reads them.
+#[derive(Debug, Clone, PartialEq)]
+enum Part {
+    Head(Value),
+    Instructions(String),
+    Item(Value),
+}
+
+impl Part {
+    fn tokens(&self) -> u64 {
+        let bytes = match self {
+            Part::Head(value) | Part::Item(value) => value.to_string().len(),
+            Part::Instructions(text) => text.len(),
+        };
+        (bytes as u64).div_ceil(4)
+    }
+}
+
+/// A prompt as the prompt cache sees it.
+#[derive(Debug, Clone, PartialEq)]
+struct Prompt(Vec<Part>);
+
+impl Prompt {
+    /// The prompt of `body`, whose whole input is `items`.
+    fn of(body: &Value, items: &[Value]) -> Self {
+        let mut head = body.as_object().cloned().unwrap_or_default();
+        for field in [
+            "input",
+            "instructions",
+            "previous_response_id",
+            "prompt_cache_key",
+            "generate",
+        ] {
+            head.remove(field);
+        }
+        let mut parts = vec![Part::Head(Value::Object(head))];
+        if let Some(text) = body["instructions"].as_str() {
+            parts.push(Part::Instructions(text.to_owned()));
+        }
+        parts.extend(items.iter().cloned().map(Part::Item));
+        Self(parts)
+    }
+
+    /// The prompt followed by a response's output items.
+    fn answered(&self, output_items: &[Value]) -> Self {
+        let mut parts = self.0.clone();
+        parts.extend(output_items.iter().cloned().map(Part::Item));
+        Self(parts)
+    }
+
+    fn tokens(&self) -> u64 {
+        self.0.iter().map(Part::tokens).sum()
+    }
+
+    /// The tokens of the longest prefix this prompt shares with one of
+    /// `seen`.
+    fn cached(&self, seen: &[Prompt]) -> u64 {
+        seen.iter()
+            .map(|other| self.shared(other))
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn shared(&self, other: &Prompt) -> u64 {
+        let mut tokens = 0;
+        for (mine, theirs) in self.0.iter().zip(&other.0) {
+            if mine == theirs {
+                tokens += mine.tokens();
+                continue;
+            }
+            // Instructions match up to their first difference.
+            if let (Part::Instructions(mine), Part::Instructions(theirs)) =
+                (mine, theirs)
+            {
+                let common = mine
+                    .bytes()
+                    .zip(theirs.bytes())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                tokens += (common as u64) / 4;
+            }
+            break;
+        }
+        tokens
+    }
+}
+
+/// Reports the prompt's tokens and those read from cache in a
+/// `response.completed` frame's usage.
+fn with_cache_usage(mut frame: Value, served: &Served) -> Value {
+    if frame["type"] == "response.completed" {
+        let usage = &mut frame["response"]["usage"];
+        usage["input_tokens"] = served.prompt.tokens().into();
+        usage["input_tokens_details"]["cached_tokens"] = served.cached.into();
+    }
+    frame
+}
+
+/// Sends `reply` to the request `served`. Returns false once the
+/// connection is done.
 async fn answer(
     socket: &mut tokio_tungstenite::WebSocketStream<turmoil::net::TcpStream>,
     held: &mut HashMap<String, Vec<Value>>,
+    seen: &mut Vec<Prompt>,
     reply: Option<Reply>,
-    rebuilt: Vec<Value>,
+    served: Served,
 ) -> bool {
     match reply {
         Some(Reply::Respond {
@@ -331,11 +499,17 @@ async fn answer(
             output_items,
         }) => {
             for frame in frames {
+                let frame = if served.report {
+                    with_cache_usage(frame, &served)
+                } else {
+                    frame
+                };
                 if send(socket, frame).await.is_err() {
                     return false;
                 }
             }
-            let mut items = rebuilt;
+            seen.push(served.prompt.answered(&output_items));
+            let mut items = served.rebuilt;
             items.extend(output_items);
             held.insert(response_id, items);
             true
@@ -363,7 +537,7 @@ async fn answer(
         }
         Some(Reply::Delay(_, reply)) => {
             // A delay inside a delay: the outer one already waited.
-            Box::pin(answer(socket, held, Some(*reply), rebuilt)).await
+            Box::pin(answer(socket, held, seen, Some(*reply), served)).await
         }
         Some(Reply::Evict) | None => {
             // Out of script: fail loudly in the test's assertions rather
