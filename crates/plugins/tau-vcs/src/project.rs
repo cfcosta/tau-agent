@@ -43,6 +43,10 @@ use crate::{
     vcs::{Identity, Vcs, settings},
 };
 
+mod push;
+
+pub use push::{Pushed, REMOTE, Remote};
+
 const GIT: &str = "git";
 const MAIN: &str = "main";
 
@@ -302,36 +306,13 @@ impl Project {
     }
 
     /// The changes `head` (a full commit id in hex) has that trunk lacks,
-    /// oldest first: a run's stack, as a pull request pushes it.
+    /// oldest first: a run's stack, as a pull request replays it.
     pub fn stack(&self, head: &str) -> Result<Vec<StackChange>, VcsError> {
-        use futures_util::StreamExt as _;
-        use jj_lib::revset::ResolvedRevsetExpression;
-
         let repo = self.load()?;
         let head = commit(&repo, head)?;
         let trunk =
             CommitId::try_from_hex(self.trunk()?).ok_or(VcsError::NotHex)?;
-        let ids: Vec<CommitId> = {
-            let revset = ResolvedRevsetExpression::commit(head.id().clone())
-                .ancestors()
-                .minus(&ResolvedRevsetExpression::commit(trunk).ancestors())
-                .evaluate(repo.as_ref())?;
-            block_on(revset.stream().collect::<Vec<_>>())
-                .into_iter()
-                .collect::<Result<_, _>>()?
-        };
-        ids.iter()
-            .rev()
-            .map(|id| {
-                let commit = repo.store().get_commit(id)?;
-                Ok(StackChange {
-                    commit_id: id.hex(),
-                    change_id: commit.change_id().reverse_hex(),
-                    description: commit.description().to_owned(),
-                    conflict: commit.has_conflict(),
-                })
-            })
-            .collect()
+        range(&repo, head.id(), Some(&trunk))
     }
 
     /// Makes a fork's workspace from `snapshot`, a turn's snapshot of
@@ -913,6 +894,43 @@ pub struct StackChange {
     pub change_id: String,
     pub description: String,
     pub conflict: bool,
+}
+
+/// The changes `head` has that `base` lacks (all of its ancestors when
+/// `None`), oldest first.
+fn range(
+    repo: &Arc<ReadonlyRepo>,
+    head: &CommitId,
+    base: Option<&CommitId>,
+) -> Result<Vec<StackChange>, VcsError> {
+    use futures_util::StreamExt as _;
+    use jj_lib::revset::ResolvedRevsetExpression;
+
+    let ids: Vec<CommitId> = {
+        let base = match base {
+            Some(base) => ResolvedRevsetExpression::commit(base.clone()),
+            None => ResolvedRevsetExpression::root(),
+        };
+        let revset = ResolvedRevsetExpression::commit(head.clone())
+            .ancestors()
+            .minus(&base.ancestors())
+            .evaluate(repo.as_ref())?;
+        block_on(revset.stream().collect::<Vec<_>>())
+            .into_iter()
+            .collect::<Result<_, _>>()?
+    };
+    ids.iter()
+        .rev()
+        .map(|id| {
+            let commit = repo.store().get_commit(id)?;
+            Ok(StackChange {
+                commit_id: id.hex(),
+                change_id: commit.change_id().reverse_hex(),
+                description: commit.description().to_owned(),
+                conflict: commit.has_conflict(),
+            })
+        })
+        .collect()
 }
 
 /// The commit a full hex id names.

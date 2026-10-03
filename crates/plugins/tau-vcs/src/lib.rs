@@ -21,8 +21,9 @@
 //! The tools take change ids and commit ids, never revsets. Every tool
 //! snapshots the working copy first, so edits made with other tools are
 //! never lost, and the writing tools refuse immutable commits. Fetch and
-//! push are left to the host; [`clone_bare`] brings a remote repository
-//! in, over HTTPS, for [`Project::import`].
+//! push are left to the host: [`clone_bare`] brings a remote repository
+//! in, over HTTPS, for [`Project::import`], and [`Project::push_trunk`]
+//! and [`Project::push_branch`] push through jj-lib, which runs `git`.
 
 #[cfg(feature = "host")]
 mod clone;
@@ -79,6 +80,9 @@ pub use project::{
     DEFAULT_WORKSPACE,
     FileDiff,
     Project,
+    Pushed,
+    REMOTE,
+    Remote,
     StackChange,
     UpdateFrom,
     Updated,

@@ -70,6 +70,24 @@ pub enum VcsError {
          abandoned since it was read. Read the child's bookmark again."
     )]
     HiddenHead(String),
+    #[error(
+        "GitHub's {branch} moved since the last fetch: nothing was pushed. \
+         Fetch, then push again."
+    )]
+    PushRejected { branch: String },
+    #[error("GitHub refused the push to {branch}: {reason}")]
+    PushRefused { branch: String, reason: String },
+    #[error("Cannot push: {0}")]
+    Push(#[source] jj_lib::git::GitPushError),
+    #[error("Cannot set the remote to push to: {0}")]
+    PushRemote(String),
+    #[error(
+        "Trunk's changes hold conflicts in {0}. Resolve them in the main \
+         chat before pushing."
+    )]
+    ConflictedTrunk(String),
+    #[error("Would conflict: {}", .0.join(", "))]
+    WouldConflict(Vec<String>),
     #[error("No tau project at {}", .0.display())]
     NoProject(PathBuf),
     #[error("No tau project at {}: {source}", root.display())]
