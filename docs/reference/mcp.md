@@ -104,6 +104,10 @@ The common `mcpServers` shape:
 - **Stdio** (`command`, and `type` absent or `"stdio"`): `command` is
   one executable, not a shell line; `args`; `env`; `cwd`, relative to
   the repository. `~/` is expanded in `command`, `args` and `cwd`.
+  A server of a repository's scope starts through the launcher a run
+  in it gave the pool (`RepoLauncher`, the plugins' environment, such
+  as tau-direnv's), asked for the main workspace; its `env` comes after
+  the launcher's ([environment.md](environment.md)).
 - **HTTP** (`url`, and `type` absent, `"http"` or `"streamable-http"`):
   `url` (http or https), `headers`, and `oauth`, how to sign in
   ("Signing in"), only without an `Authorization` header.

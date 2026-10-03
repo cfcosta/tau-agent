@@ -26,6 +26,8 @@ tau-agent/
 │       ├── tau-codemode/         # Luau scripts that call tools and Jev
 │       ├── tau-compaction/       # summarizing compaction
 │       ├── tau-constitution/     # a repository's rules, checked with Jev
+│       ├── tau-direnv/           # agent commands in the repository's
+│       │                         # direnv environment (ADR 0025)
 │       ├── tau-fast-compaction/  # Jev-driven pruning of tool history
 │       ├── tau-goal/             # keeps a chat going until its /goal holds
 │       ├── tau-jev/              # TypeSafe's Jev client, for plugins

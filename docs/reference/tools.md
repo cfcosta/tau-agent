@@ -69,6 +69,15 @@ seven, for `Agent::tools`. `bash`, and so both, is unix-only.
 - **Shell:** a configured shell path if one is set; otherwise
   `/bin/bash`, then `bash` on `PATH`, then `sh`. The command runs as
   `-c <command>`, and stdin is closed.
+- **Environment:** the command inherits tau-ui's environment, and starts
+  through what plugins give the repository, when one does: words
+  before the shell and variables over its environment, such as
+  `direnv exec <workspace>` from tau-direnv
+  ([environment.md](environment.md),
+  [0025](../decisions/0025-agent-commands-run-in-an-environment-plugins-give.md)).
+  The first command may wait for it; the wait counts against
+  `timeout`, past which the call times out with "Command timed out
+  waiting for the repository's environment to load" and nothing ran.
 - **Process group:** the child runs in its own process group (`setsid`
   or `process_group(0)`). On cancel or timeout, the whole group gets
   SIGKILL. Exit code 128 + N is reported for signal N.
