@@ -1,6 +1,6 @@
 //! Landing a run's work on its parent, and the branches a run keeps.
 
-use super::*;
+use super::{queue::Preview, *};
 
 /// The plugin name of the intent a landing stores in its parent before
 /// it changes anything ([`Host::land`]).
@@ -142,14 +142,27 @@ impl Host {
     /// What landing `child` on its parent would do (ADR 0009): its
     /// changes as they would sit on the parent's stack, and the files
     /// that would conflict. Changes nothing.
+    ///
+    /// It works while the parent runs too: then it reads the parent as
+    /// it is, without catching a main chat up with trunk. What it finds
+    /// is what the person confirms when they land the child
+    /// ([`Host::queue_landing`]).
     pub fn preview_landing(&self, child: &RunId) -> anyhow::Result<Landing> {
-        let landing = self.landing(child)?;
-        let into = self.bookmark_of(&landing.parent, &landing.project)?;
-        Ok(self.runtime.block_on(landing.parent_vcs.land(
-            &landing.child_head,
+        let plan = self.landing(child, true)?;
+        let into = self.bookmark_of(&plan.parent, &plan.project)?;
+        let landing = self.runtime.block_on(plan.parent_vcs.land(
+            &plan.child_head,
             into,
             false,
-        ))?)
+        ))?;
+        self.previews.lock().expect("not poisoned").insert(
+            child.clone(),
+            Preview {
+                changes: landing.changes.len(),
+                conflicts: landing.conflicts.clone(),
+            },
+        );
+        Ok(landing)
     }
 
     /// Lands `child` on its parent (ADR 0009): restacks its changes onto
@@ -172,7 +185,10 @@ impl Host {
         child: &RunId,
         recovered: bool,
     ) -> anyhow::Result<Landing> {
-        let plan = self.landing(child)?;
+        // No run starts while it lands: a main chat's turn would start
+        // on the stack the landing rewrites.
+        let _starting = self.starting.lock().expect("not poisoned");
+        let plan = self.landing(child, false)?;
         let into = self.bookmark_of(&plan.parent, &plan.project)?;
         let intent = Intent {
             from: child.0.to_string(),
@@ -387,7 +403,7 @@ impl Host {
         let choice = self.session_of(run).choice.unwrap_or_else(|| {
             ModelChoice::new(self.config.default_model(), Effort::Auto)
         });
-        self.resume(run, prompt, &choice)
+        self.resume_as(run, prompt, &choice, self.is_main(run))
     }
 
     /// Drops `child`: abandons its own changes, the ones its parent does
@@ -470,8 +486,13 @@ impl Host {
         }
     }
 
-    /// Everything landing `child` needs, once both runs are idle.
-    pub(super) fn landing(&self, child: &RunId) -> anyhow::Result<LandingPlan> {
+    /// Everything landing `child` needs, once both runs are idle; for a
+    /// `preview`, the parent may be running.
+    pub(super) fn landing(
+        &self,
+        child: &RunId,
+        preview: bool,
+    ) -> anyhow::Result<LandingPlan> {
         let parent = self.parent_of(child)?;
         match self.ending_of(child)? {
             None => {}
@@ -484,6 +505,13 @@ impl Host {
         }
         for run in [child, &parent] {
             self.settle(run);
+        }
+        // A preview reads a running parent as it is.
+        let parent_busy = self.is_running(&parent);
+        for run in [Some(child), (!preview).then_some(&parent)]
+            .into_iter()
+            .flatten()
+        {
             if self.is_running(run) {
                 anyhow::bail!("{} is still running; land once it stops", run.0);
             }
@@ -522,7 +550,7 @@ impl Host {
         };
         // A main chat takes landings on trunk as it is now. The catch-up
         // may restack the child, so its head is read after it.
-        if self.is_main(&parent) {
+        if self.is_main(&parent) && !parent_busy {
             self.catch_up(&project, &parent_workspace)?;
         }
         // A completed run may have failed its final commit. Do not land
@@ -543,8 +571,14 @@ impl Host {
             project.bookmark(&bookmark(child))?.ok_or_else(|| {
                 anyhow::anyhow!("{} has no changes to land", child.0)
             })?;
-        let parent_vcs =
-            project.add_workspace(&parent_workspace, &project.trunk()?)?;
+        let parent_vcs = if parent_busy {
+            tau_vcs::Vcs::open(
+                project.workspace_dir(&parent_workspace),
+                identity(),
+            )?
+        } else {
+            project.add_workspace(&parent_workspace, &project.trunk()?)?
+        };
         Ok(LandingPlan {
             parent,
             project,

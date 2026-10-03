@@ -212,6 +212,16 @@ pub struct Host {
     /// The step after which landings stop, as if tau closed there: for
     /// tests ([`Host::cut_landing_after`]).
     cut_landing: Mutex<Option<LandingStep>>,
+    /// Each main chat's landing queue, restored from the store the
+    /// first time it is asked for (ADR 0021).
+    lanes: Mutex<HashMap<RunId, queue::Lane>>,
+    /// Held while a landing queue changes or drains: one at a time.
+    draining: Mutex<()>,
+    /// What each chat's last landing preview found: what the person
+    /// confirms when they land it.
+    previews: Mutex<HashMap<RunId, queue::Preview>>,
+    /// Hears of conflicts still on a main chat after its turn.
+    conflicts_hook: Option<lanes::ConflictsHook>,
     /// What plugins' host halves tell the interface, and its receiving
     /// end until [`Self::attach`] takes it.
     pushes: mpsc::UnboundedSender<tau_ui_plugin::Push>,
@@ -233,8 +243,10 @@ mod history;
 mod hosted;
 mod instructions;
 mod landing;
+mod lanes;
 mod onboarding;
 mod pull_request;
+pub mod queue;
 mod repos;
 mod startup;
 
@@ -243,6 +255,7 @@ pub use self::{
     history::history,
     instructions::{AGENTS_FILE, AGENTS_HEADING, AGENTS_LIMIT, agents_section},
     landing::{LANDING_INTENT, LandingStep},
+    lanes::{ConflictsHook, DrainReport, QUEUE_PLUGIN},
     onboarding::onboard,
     startup::CUT_OFF,
 };
@@ -419,6 +432,10 @@ impl Host {
             hosted: Vec::new(),
             starting: Mutex::new(()),
             cut_landing: Mutex::new(None),
+            lanes: Mutex::default(),
+            draining: Mutex::new(()),
+            previews: Mutex::default(),
+            conflicts_hook: None,
             pushes,
             pushed: Mutex::new(Some(pushed)),
         };
@@ -607,6 +624,7 @@ impl Host {
         repo: &RepoSlot,
         name: String,
         main: bool,
+        resolving: bool,
     ) -> anyhow::Result<(Agent, String)> {
         if self.account().is_none() {
             anyhow::bail!(
@@ -705,7 +723,16 @@ impl Host {
             )
         };
         let agent = if main { agent.tool(delegate) } else { agent };
+        // tau's turn resolving a landing's conflicts on main stops only
+        // once they are resolved, or after one more try (ADR 0021).
+        let hold = (main && resolving).then(|| lanes::ResolveHold {
+            vcs: workspace.vcs().clone(),
+        });
         let (agent, services) = on_workspace(agent, workspace, !main);
+        let agent = match hold {
+            Some(hold) => agent.plugin(hold),
+            None => agent,
+        };
         let kind = if main {
             tau_ui_plugin::RunKind::Main
         } else {
@@ -760,6 +787,8 @@ impl Host {
             .slot(repo)
             .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
         let main = self.main_of(&repo.name)?;
+        // A chat started now would fork conflicted code.
+        self.refuse_fork_of(&main)?;
         let (source, seq, turn) = match self.fork_point(&main, None)? {
             Some((source, seq, link)) => (source, seq, link.turn),
             None => (main, -1, 0),
@@ -786,6 +815,7 @@ impl Host {
                  it, like a sub-agent, has nothing under it"
             );
         }
+        self.refuse_fork_of(run)?;
         let (source, seq, link) =
             self.fork_point(run, turn)?.ok_or_else(|| match turn {
                 Some(turn) => {
@@ -817,7 +847,7 @@ impl Host {
         let name = workspace_name(&branch_slug(prompt));
         // A fork is a chat under the main chat: it delegates to none.
         let (agent, workspace) =
-            self.agent_for_run(choice, repo, name, false)?;
+            self.agent_for_run(choice, repo, name, false, false)?;
         let _guard = self.runtime.enter();
         let forked = agent
             .fork(&Checkpoint::at(source.clone(), seq))
@@ -911,6 +941,19 @@ impl Host {
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<()> {
+        self.resume_as(run, prompt, choice, false)
+    }
+
+    /// [`Host::resume`]; `resolving` for tau's turn resolving what a
+    /// landing left in conflict on a main chat, whose stop is held once
+    /// while conflicts remain.
+    fn resume_as(
+        &self,
+        run: &RunId,
+        prompt: &str,
+        choice: &ModelChoice,
+        resolving: bool,
+    ) -> anyhow::Result<()> {
         if self.is_running(run) {
             anyhow::bail!("The run is still going; steer it instead");
         }
@@ -945,10 +988,14 @@ impl Host {
         let workspace =
             workspace.unwrap_or_else(|| workspace_name(&branch_slug(prompt)));
         let (agent, workspace) =
-            self.agent_for_run(choice, &repo, workspace, main)?;
+            self.agent_for_run(choice, &repo, workspace, main, resolving)?;
         let _guard = self.runtime.enter();
         let resumed = agent.resume(run).start(prompt, &self.store);
         self.track(resumed, workspace, choice, &repo.name);
+        // Nothing lands on a main chat while it works.
+        if main {
+            self.main_started(run);
+        }
         Ok(())
     }
 

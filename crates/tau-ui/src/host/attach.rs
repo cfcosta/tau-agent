@@ -94,35 +94,120 @@ pub(super) fn title_in_background(
     .detach();
 }
 
-/// `paths` as the model reads them: `a.rs`, `b.rs` and `c.rs`.
-pub(super) fn code_list(paths: &[String]) -> String {
-    let quoted: Vec<String> =
-        paths.iter().map(|path| format!("`{path}`")).collect();
-    match quoted.as_slice() {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+/// Shows what a drain of a main chat's queue did (ADR 0021): each
+/// landing, or why a chat could not land, the queue and the conflicts
+/// on main as they are now; tells the person of conflicts still on
+/// main; and starts tau's turn resolving what the last landing left.
+pub(super) fn show_drain(
+    host: &Arc<Host>,
+    report: DrainReport,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let DrainReport {
+        main,
+        repo,
+        landed,
+        failed,
+        resolve,
+        notify,
+        queue,
+        conflicts,
+    } = report;
+    workspace.update(cx, |ws, cx| {
+        for (run, landing) in landed {
+            ws.apply(
+                HostUpdate::Landed {
+                    run,
+                    landing: Ok(landing),
+                },
+                cx,
+            );
+        }
+        for (run, error) in failed {
+            ws.apply(
+                HostUpdate::Landed {
+                    run,
+                    landing: Err(error),
+                },
+                cx,
+            );
+        }
+        ws.apply(
+            HostUpdate::LandingQueue {
+                main: main.clone(),
+                queue,
+                conflicts,
+            },
+            cx,
+        );
+    });
+    if let (Some(files), Some(hook)) = (notify, host.conflicts_hook.clone()) {
+        hook(&main, &repo, &files, cx);
+    }
+    if let Some(prompt) = resolve {
+        resolve_main(host, &main, prompt, workspace, cx);
     }
 }
 
-/// Starts `run`'s resolving turn with `prompt` (ADR 0014): its chat
-/// shows the message as tau's, then the host resumes it.
-pub(super) fn resolve(
+/// Runs `job`, which drains a main chat's queue, off the interface's
+/// thread, then shows what it did; a failure is an alert titled
+/// `failed`.
+fn drain_off_thread(
     host: &Arc<Host>,
-    run: &RunId,
+    workspace: &Entity<Workspace>,
+    job: impl FnOnce(&Host) -> anyhow::Result<DrainReport> + Send + 'static,
+    failed: &'static str,
+    cx: &mut App,
+) {
+    let shower = host.clone();
+    off_thread(
+        host,
+        workspace,
+        job,
+        move |_, report, cx| {
+            let workspace = cx.entity();
+            cx.defer(move |cx| show_drain(&shower, report, &workspace, cx));
+        },
+        alert(failed),
+        cx,
+    );
+}
+
+/// Starts tau's turn on `main` resolving its conflicts with `prompt`.
+/// One that does not start leaves main idle with the conflicts, which
+/// mark it.
+fn resolve_main(
+    host: &Arc<Host>,
+    main: &RunId,
     prompt: String,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
+    let started = std::cell::Cell::new(true);
     tau_turn(
         host,
-        run,
+        main,
         prompt,
-        |host, run, prompt| host.start_resolving(run, prompt),
+        |host, run, prompt| {
+            let result = host.start_resolving(run, prompt);
+            started.set(result.is_ok());
+            result
+        },
         "Could not start resolving the conflicts",
         workspace,
         cx,
-    )
+    );
+    if !started.get() {
+        let main = main.clone();
+        drain_off_thread(
+            host,
+            workspace,
+            move |host| host.resolving_failed(&main),
+            "Could not check main for conflicts",
+            cx,
+        );
+    }
 }
 
 /// Starts a turn of `run` that tau asks for, with `prompt`: its chat
@@ -215,6 +300,34 @@ pub(super) fn update_in_background(
     .detach();
 }
 
+/// Drains every main chat's queue off the interface's thread, as tau
+/// starts, and shows each.
+fn drain_all_off_thread(
+    host: &Arc<Host>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let job = {
+        let drainer = host.clone();
+        host.runtime.spawn_blocking(move || drainer.drain_all())
+    };
+    let (host, workspace) = (host.clone(), workspace.downgrade());
+    cx.spawn(async move |cx| {
+        let Ok(reports) = job.await else {
+            return;
+        };
+        let Some(workspace) = workspace.upgrade() else {
+            return;
+        };
+        cx.update(|cx| {
+            for report in reports {
+                show_drain(&host, report, &workspace, cx);
+            }
+        });
+    })
+    .detach();
+}
+
 /// Finishes what the last tau left as it closed (`Host::recover`), off
 /// the interface's thread, then brings in what changed upstream while it
 /// was closed, quietly: an update moves trunk, which recovery reads.
@@ -257,6 +370,10 @@ fn recover_in_background(
                     ws.apply(HostUpdate::LandingFinished(record), cx);
                 }
             });
+            // What waited to land when tau closed lands now, and the
+            // conflicts on each main chat are read again (ADR 0021).
+            let host_job = host.clone();
+            drain_all_off_thread(&host_job, &workspace, cx);
             for slot in &slots {
                 update_in_background(&host, &slot.name, &workspace, false, cx);
             }
@@ -576,39 +693,93 @@ impl Host {
                     }
                 }
                 WorkspaceEvent::PreviewLanding { run } => {
-                    let preview = handler
-                        .preview_landing(run)
-                        .map_err(|error| format!("{error:#}"));
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::LandingPreview { run: run.clone(), preview }, cx)
-                    });
+                    let preview = |ws: &mut Workspace, run, preview, cx: &mut Context<Workspace>| {
+                        ws.apply(HostUpdate::LandingPreview { run, preview }, cx)
+                    };
+                    let (job_run, run, failed_run) = (run.clone(), run.clone(), run.clone());
+                    off_thread(
+                        &handler,
+                        &workspace,
+                        move |host| host.preview_landing(&job_run),
+                        move |ws, landing, cx| preview(ws, run, Ok(landing), cx),
+                        move |ws, error, cx| preview(ws, failed_run, Err(error), cx),
+                        cx,
+                    );
                 }
+                // A chat lands by joining its main chat's queue, which
+                // lands it at once when main is idle and nothing waits
+                // before it (ADR 0021). What conflicts, main resolves,
+                // in a turn tau starts (ADR 0014).
                 WorkspaceEvent::Land { run } => {
-                    let parent = handler.parent_of(run).ok();
-                    let landed =
-                        handler.land(run).map_err(|error| format!("{error:#}"));
-                    let conflicts = landed
-                        .as_ref()
-                        .map(|landing| landing.conflicts.clone())
-                        .unwrap_or_default();
-                    workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Landed { run: run.clone(), landing: landed }, cx));
-                    // What conflicts, the parent resolves, in a turn tau
-                    // starts (ADR 0014).
-                    if let Some(parent) = parent.filter(|_| !conflicts.is_empty()) {
-                        let title = handler.title_of(run).unwrap_or_else(|_| run.0.to_string());
-                        let prompt = format!(
-                            "Landing `{title}` left conflicts in {}. Resolve them, \
-                             and commit the resolution.",
-                            code_list(&conflicts)
-                        );
-                        resolve(&handler, &parent, prompt, &workspace, cx);
+                    let (job_run, failed_run) = (run.clone(), run.clone());
+                    let shower = handler.clone();
+                    off_thread(
+                        &handler,
+                        &workspace,
+                        move |host| host.queue_landing(&job_run),
+                        move |ws, report, cx| {
+                            let workspace = cx.entity();
+                            let host = shower.clone();
+                            let _ = ws;
+                            cx.defer(move |cx| show_drain(&host, report, &workspace, cx));
+                        },
+                        move |ws, error, cx| {
+                            ws.apply(HostUpdate::Landed { run: failed_run, landing: Err(error) }, cx)
+                        },
+                        cx,
+                    );
+                }
+                WorkspaceEvent::Unqueue { run } => {
+                    let run = run.clone();
+                    drain_off_thread(
+                        &handler,
+                        &workspace,
+                        move |host| host.unqueue(&run),
+                        "Could not take the chat out of the queue",
+                        cx,
+                    );
+                }
+                WorkspaceEvent::DismissConflicts { main } => {
+                    let main = main.clone();
+                    drain_off_thread(
+                        &handler,
+                        &workspace,
+                        move |host| host.dismiss_conflicts(&main),
+                        "Could not save that",
+                        cx,
+                    );
+                }
+                WorkspaceEvent::ResolveAgain { main } => {
+                    match handler.resolve_again_prompt(main) {
+                        Ok(prompt) => resolve_main(&handler, main, prompt, &workspace, cx),
+                        Err(error) => workspace.update(cx, |ws, cx| {
+                            ws.apply(HostUpdate::alert("Could not resolve again", format!("{error:#}")), cx)
+                        }),
                     }
                 }
                 WorkspaceEvent::DropChild { run } => {
-                    let dropped = handler
-                        .drop_child(run)
-                        .map_err(|error| format!("{error:#}"));
-                    workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Dropped { run: run.clone(), result: dropped }, cx));
+                    // A dropped chat leaves the queue it waited in.
+                    let (job_run, run) = (run.clone(), run.clone());
+                    let failed_run = run.clone();
+                    let shower = handler.clone();
+                    off_thread(
+                        &handler,
+                        &workspace,
+                        move |host| {
+                            host.drop_child(&job_run)?;
+                            host.unqueue(&job_run)
+                        },
+                        move |ws, report, cx| {
+                            ws.apply(HostUpdate::Dropped { run, result: Ok(()) }, cx);
+                            let workspace = cx.entity();
+                            let host = shower.clone();
+                            cx.defer(move |cx| show_drain(&host, report, &workspace, cx));
+                        },
+                        move |ws, error, cx| {
+                            ws.apply(HostUpdate::Dropped { run: failed_run, result: Err(error) }, cx)
+                        },
+                        cx,
+                    );
                 }
                 WorkspaceEvent::KeepBranch { run } => {
                     if let Err(error) = handler.keep_branch(run) {
@@ -703,6 +874,14 @@ impl Host {
                         .expect("not poisoned")
                         .insert(run.clone());
                 }
+                // A main chat's turn ended: what it left in conflict
+                // marks it, and what waited lands (ADR 0021).
+                let main_ended = match &event {
+                    RunEvent::RunEnd { run, .. } if host.is_main(run) => {
+                        Some(run.clone())
+                    }
+                    _ => None,
+                };
                 let applied = workspace.update(cx, |ws, cx| {
                     ws.apply(HostUpdate::Event(event.clone()), cx);
                     if let Some(refusal) = &refusal {
@@ -711,6 +890,20 @@ impl Host {
                 });
                 if applied.is_err() {
                     break;
+                }
+                if let (Some(main), Some(entity)) =
+                    (main_ended, workspace.upgrade())
+                {
+                    let host = host.clone();
+                    cx.update(|cx| {
+                        drain_off_thread(
+                            &host,
+                            &entity,
+                            move |host| host.main_turn_ended(&main),
+                            "Could not land what waits on main",
+                            cx,
+                        )
+                    });
                 }
             }
             // Keep the host, and its runtime, alive as long as events flow.
