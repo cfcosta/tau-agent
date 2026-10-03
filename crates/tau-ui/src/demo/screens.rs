@@ -277,6 +277,8 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("diff", |ws, _, cx| vcs_card(ws, DIFF_CALL, DIFF_FILE, cx)),
     // The repository tree's states.
     ("repo-open", |ws, _, cx| ws.toggle_repo_open("docbert", cx)),
+    // Every chat state a row can show, at once, under tau-agent's main.
+    ("sidebar-states", |ws, _, cx| sidebar_states(ws, cx)),
     ("repo-menu", |ws, _, cx| {
         ws.toggle_repo_open("docbert", cx);
         ws.toggle_repo_menu("homelab.nix", cx);
@@ -649,4 +651,101 @@ fn land_queue(ws: &mut Workspace, cx: &mut Context<Workspace>) {
         },
         cx,
     );
+}
+
+/// tau-agent's main chat with a chat in each state its row can show:
+/// working, asking, ready to land, would conflict, interrupted, and one
+/// that landed and closed.
+fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    use tau_ui_remote::{attention::Forecast, view::INTERRUPTED};
+    let main = run_id();
+    let chat = |name: &str, title: &str, stop: Option<StopReason>| {
+        let mut view =
+            RunView::new(RunId(name.into()), title, "coder", "gpt-5.5")
+                .in_repo("tau-agent")
+                .started("today 09:12")
+                .with_origin(Origin::Fork {
+                    from: main.clone(),
+                    turn: 0,
+                });
+        view.turn = 7;
+        if let Some(stop) = stop {
+            view.finish_stored(stop, 0.12, 0.0);
+        }
+        view
+    };
+    let done = || Some(StopReason::Stop);
+    // Oldest first: each goes on top of the list.
+    let chats = [
+        chat("raise-turn-limit", "Raise turn limit", done()),
+        chat(
+            "atomic-landing",
+            "Atomic landing",
+            Some(StopReason::Error(INTERRUPTED.into())),
+        ),
+        chat("sidebar-states", "Sidebar run states", done()),
+        chat("load-agents", "Load AGENTS.md", done()),
+        chat("sweep-workspaces", "Sweep orphan workspaces", None),
+        chat("chat-prs", "Base chat PRs on origin", None),
+    ];
+    for view in chats {
+        workspace.apply(HostUpdate::Run(Box::new(view)), cx);
+    }
+    let forecast =
+        |run: &str, changes, conflicts: &[&str]| HostUpdate::Forecast {
+            run: RunId(run.into()),
+            forecast: Some(Forecast {
+                changes,
+                conflicts: conflicts
+                    .iter()
+                    .map(|path| (*path).to_owned())
+                    .collect(),
+            }),
+        };
+    workspace.apply(forecast("load-agents", 2, &[]), cx);
+    workspace.apply(
+        forecast(
+            "sidebar-states",
+            3,
+            &["crates/tau-ui-remote/src/ui/chrome.rs", "docs/plan.md"],
+        ),
+        cx,
+    );
+    let ask: tau_ask::Ask = serde_json::from_value(serde_json::json!({
+        "questions": [{
+            "question": "Delete the 3 workspaces with no run, or keep them?",
+            "header": "Workspaces",
+            "options": [
+                { "label": "Delete them", "description": "No run uses them." },
+                { "label": "Keep them", "description": "Look at them first." }
+            ]
+        }]
+    }))
+    .expect("the demo's question reads");
+    workspace.apply(
+        HostUpdate::PluginFold {
+            run: RunId("sweep-workspaces".into()),
+            plugin: tau_ask::NAME.into(),
+            body: tau_ask::Record::Asked {
+                call: "call_sweep".into(),
+                ask,
+            }
+            .to_value(),
+        },
+        cx,
+    );
+    // One landed: its chat closed, and main has its card.
+    workspace.apply(
+        HostUpdate::Landed {
+            run: RunId("raise-turn-limit".into()),
+            landing: Ok(landing_preview(false)),
+        },
+        cx,
+    );
+    if !workspace.is_repo_open("tau-agent") {
+        workspace.toggle_repo_open("tau-agent", cx);
+    }
+    // On main; a phone shows its list of runs.
+    workspace.navigate(Route::Run(main), cx);
+    workspace.navigate(Route::Home, cx);
 }
