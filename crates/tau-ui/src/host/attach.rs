@@ -237,19 +237,26 @@ fn recover_in_background(
     let host = host.clone();
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
-        match job.await {
-            Ok(Ok(())) => {}
+        let finished = match job.await {
+            Ok(Ok(finished)) => finished,
             Ok(Err(error)) => {
-                eprintln!("tau-ui: cannot finish what tau left: {error:#}")
+                eprintln!("tau-ui: cannot finish what tau left: {error:#}");
+                Vec::new()
             }
             Err(error) => {
-                eprintln!("tau-ui: cannot finish what tau left: {error}")
+                eprintln!("tau-ui: cannot finish what tau left: {error}");
+                Vec::new()
             }
-        }
+        };
         let Some(workspace) = workspace.upgrade() else {
             return;
         };
         cx.update(|cx| {
+            workspace.update(cx, |ws, cx| {
+                for record in finished {
+                    ws.apply(HostUpdate::LandingFinished(record), cx);
+                }
+            });
             for slot in &slots {
                 update_in_background(&host, &slot.name, &workspace, false, cx);
             }

@@ -58,6 +58,17 @@ impl Disk {
             .unwrap();
         let store = runtime.block_on(Store::open(self.db())).unwrap();
         let root = self.dir.path();
+        // tau lists only repositories from GitHub, as this one stands
+        // for: so the list keeps its main chat across starts.
+        let list = root.join("repos.json");
+        if let Ok(text) = std::fs::read_to_string(&list) {
+            let mut saved: serde_json::Value =
+                serde_json::from_str(&text).unwrap();
+            for repo in saved["repos"].as_array_mut().into_iter().flatten() {
+                repo["github"] = serde_json::json!("owner/repo");
+            }
+            std::fs::write(&list, saved.to_string()).unwrap();
+        }
         let config = HostConfig {
             account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
             credentials: Credentials::new(root.join("config")),
@@ -254,4 +265,152 @@ fn a_run_cut_off_by_a_restart_is_interrupted_and_resumes() {
     assert!(told.contains("tau closed while you were working"), "{told}");
     assert_eq!(disk.record(&run).status, tau_store::Status::Done);
     assert!(host.resume_cut_off(&run).is_err(), "not cut off any more");
+}
+
+/// A landed change as `ChangeInfo` says it, less its ids: description,
+/// empty, conflict, bookmarks.
+type ChangeSeen = (String, bool, bool, Vec<String>);
+
+/// What a landing of a chat that wrote `a.txt` left, in terms that do
+/// not hang on ids, which differ from one project to the next.
+#[derive(Debug, PartialEq)]
+struct Landed {
+    /// `a.txt` on trunk, and in the main chat's checkout.
+    on_trunk: Option<Vec<u8>>,
+    in_checkout: bool,
+    workspaces: usize,
+    run_bookmarks: usize,
+    /// The main chat's landing cards: the chat's title, and each change
+    /// as `ChangeInfo` says it, less its ids.
+    cards: Vec<(String, Vec<ChangeSeen>)>,
+    /// The main chat's links that a landing brought.
+    landed_links: usize,
+    /// How many changes the chat's ending says landed.
+    ending: Option<usize>,
+}
+
+fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
+    use tau_ui_remote::view::{Ending, Item};
+    let project = &disk.project;
+    let trunk = project.trunk().unwrap();
+    let main = host.main_of(REPO).unwrap();
+    let history = host.history().unwrap();
+    let main_view = history.iter().find(|view| view.id == main).unwrap();
+    let records = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let store = Store::open(disk.db()).await.unwrap();
+        store
+            .plugin_entries(&main.0, tau_vcs::run_workspace::PLUGIN)
+            .await
+            .unwrap()
+    });
+    Landed {
+        on_trunk: project
+            .file_at(&trunk, "a.txt")
+            .unwrap()
+            .map(|(bytes, _)| bytes),
+        in_checkout: project
+            .workspace_dir(tau_vcs::DEFAULT_WORKSPACE)
+            .join("a.txt")
+            .exists(),
+        workspaces: project.workspaces().unwrap().len(),
+        run_bookmarks: project.bookmarks("tau/").unwrap().len(),
+        cards: main_view
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Landed(card) => Some((
+                    card.title.clone(),
+                    card.changes
+                        .iter()
+                        .map(|change| {
+                            let info = &change.info;
+                            (
+                                info.description.clone(),
+                                info.empty,
+                                info.conflict,
+                                // The chat's bookmark is named by its id.
+                                info.bookmarks
+                                    .iter()
+                                    .map(|name| {
+                                        name.replace(&*chat.0, "<chat>")
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                )),
+                _ => None,
+            })
+            .collect(),
+        landed_links: records
+            .iter()
+            .filter_map(|(_, body)| tau_vcs::Link::parse(body))
+            .filter(|link| link.from.as_deref() == Some(&*chat.0))
+            .count(),
+        ending: match host.ending_of(chat).unwrap() {
+            Some(Ending::Landed { changes, .. }) => Some(changes),
+            _ => None,
+        },
+    }
+}
+
+/// A chat landed on main, with tau closing after `cut` (never, when
+/// `None`), then started again: what the landing left once the start
+/// finished it.
+fn land_cut_off(cut: Option<tau_ui::host::LandingStep>) -> Landed {
+    let disk = Disk::new();
+    let (host, mut events) = disk.start(writes(ScriptedModel::new(), "a.txt"));
+    let chat = chat(&host, &mut events, "write a");
+    host.cut_landing_after(cut);
+    let landed = host.land(&chat);
+    assert_eq!(landed.is_ok(), cut.is_none(), "{landed:?}");
+    drop(host);
+
+    let (host, _events) = disk.start(ScriptedModel::new());
+    let finished = host.recover().unwrap();
+    use tau_ui::host::LandingStep;
+    match cut {
+        // Once its record is stored, a landing is done but for tidying,
+        // which the start's sweep does: there is nothing to tell.
+        None | Some(LandingStep::Record | LandingStep::Workspace) => {
+            assert!(finished.is_empty(), "{cut:?}")
+        }
+        Some(LandingStep::Intent | LandingStep::Restack) => {
+            assert_eq!(finished.len(), 1, "{cut:?}");
+            assert!(finished[0].recovered);
+            assert_eq!(finished[0].title, "write a");
+            // Its card in main says tau finished it.
+            let main = host.main_of(REPO).unwrap();
+            let history = host.history().unwrap();
+            let view = history.iter().find(|view| view.id == main).unwrap();
+            assert!(view.items.iter().any(|item| matches!(
+                item,
+                tau_ui_remote::view::Item::Landed(card) if card.recovered
+            )));
+        }
+    }
+    // A landed chat takes no more messages, whatever cut it off.
+    assert!(host.resume(&chat, "more", &ModelChoice::default()).is_err());
+    // Starting again finds nothing left to finish.
+    assert!(host.recover().unwrap().is_empty());
+    landed_state(&disk, &host, &chat)
+}
+
+/// A landing cut off after any of its steps ends, once tau starts again,
+/// as one that ran whole: main has the chat's change on trunk and in its
+/// checkout, the same card and links, and the chat is landed, without a
+/// workspace or a bookmark.
+#[test]
+fn a_landing_cut_off_at_any_step_finishes_at_start() {
+    let whole = land_cut_off(None);
+    assert_eq!(whole.on_trunk.as_deref(), Some(&b"x\n"[..]));
+    assert!(whole.in_checkout);
+    assert_eq!(whole.workspaces, 0);
+    assert_eq!(whole.run_bookmarks, 0);
+    assert_eq!(whole.landed_links, 1);
+    assert_eq!(whole.ending, Some(1));
+    assert_eq!(whole.cards.len(), 1);
+    for step in tau_ui::host::LandingStep::ALL {
+        assert_eq!(land_cut_off(Some(step)), whole, "cut after {step:?}");
+    }
 }

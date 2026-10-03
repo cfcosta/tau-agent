@@ -209,6 +209,9 @@ pub struct Host {
     /// projects hold and who owns it, so a sweep never takes a starting
     /// run's workspace.
     starting: Mutex<()>,
+    /// The step after which landings stop, as if tau closed there: for
+    /// tests ([`Host::cut_landing_after`]).
+    cut_landing: Mutex<Option<LandingStep>>,
     /// What plugins' host halves tell the interface, and its receiving
     /// end until [`Self::attach`] takes it.
     pushes: mpsc::UnboundedSender<tau_ui_plugin::Push>,
@@ -239,6 +242,7 @@ pub use self::{
     config::HostConfig,
     history::history,
     instructions::{AGENTS_FILE, AGENTS_HEADING, AGENTS_LIMIT, agents_section},
+    landing::{LANDING_INTENT, LandingStep},
     onboarding::onboard,
     startup::CUT_OFF,
 };
@@ -414,6 +418,7 @@ impl Host {
             events,
             hosted: Vec::new(),
             starting: Mutex::new(()),
+            cut_landing: Mutex::new(None),
             pushes,
             pushed: Mutex::new(Some(pushed)),
         };

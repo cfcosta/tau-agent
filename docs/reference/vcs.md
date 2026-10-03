@@ -467,6 +467,23 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   child, so forks, the compare view and pull requests read them as the
   parent's own. Then it closes the child: its workspace is forgotten
   and its bookmark removed. Both runs must be idle.
+- `Host::land` survives tau closing at any step. It first stores a
+  `landing-intent` record in the parent (the child, its head, both
+  workspaces). The restack is one jj operation, which records what it
+  did under the attribute `tau.vcs.landing` (`{ child_head, landing }`),
+  so `Project::landed(child_head)` reads the `Landing` back from the
+  operation log (the newest `LANDING_LOOKBACK` operations). The links
+  and the `landing` record go in one store write; forgetting the
+  workspace and removing the bookmark find nothing to do when done
+  before. A restack that fails stores the intent again, `cancelled`.
+  At start, `Host::recover` finishes each intent with no `landing`
+  record: a restack the operations show done is recorded, and the
+  child closed; one not done lands now. Their records say `recovered`,
+  and the parent's card says tau finished the landing at start. A
+  landing whose record was stored is done but for the child's
+  workspace and bookmark, which the sweep takes. A host test cuts a
+  landing off after each step (`Host::cut_landing_after`) and checks
+  that the next start leaves what a whole landing leaves.
 - `Host::drop_child` closes a child without landing it: its own
   changes (what its head has that its parent's lacks) are abandoned
   with `Project::abandon_between`, and its workspace and bookmark go.

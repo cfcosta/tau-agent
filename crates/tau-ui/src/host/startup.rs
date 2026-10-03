@@ -110,8 +110,13 @@ impl Host {
 
     /// Finishes what the last tau left as it closed. Blocks: call it off
     /// the interface's thread, before updates move trunk.
-    pub fn recover(&self) -> anyhow::Result<()> {
-        self.sweep()
+    ///
+    /// Landings cut off are finished first, then the sweep takes what
+    /// no open run owns. Returns the landings finished, for their cards.
+    pub fn recover(&self) -> anyhow::Result<Vec<LandingRecord>> {
+        let finished = self.finish_landings()?;
+        self.sweep()?;
+        Ok(finished)
     }
 
     /// Sweeps every listed repository's project of the workspaces and

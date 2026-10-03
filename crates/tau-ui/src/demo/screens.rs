@@ -167,6 +167,22 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.apply(HostUpdate::History(vec![view]), cx);
         ws.navigate(Route::Run(run), cx);
     }),
+    // A landing tau closed in the middle of, finished at start: its card
+    // in main.
+    ("landing-finished", |ws, _, cx| {
+        let run = fork_id();
+        let Some(title) = ws.run(&run).map(|view| view.title.clone()) else {
+            return;
+        };
+        let record = crate::view::LandingRecord {
+            from: run.0.to_string(),
+            title,
+            landing: landing_preview(false),
+            recovered: true,
+        };
+        ws.apply(HostUpdate::LandingFinished(record), cx);
+        ws.navigate(Route::Run(run_id()), cx);
+    }),
     // tau-ask's panel in the composer's place (ADR 0019): a question
     // with previews; a checklist with a note being written; the review.
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),

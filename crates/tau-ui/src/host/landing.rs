@@ -2,6 +2,46 @@
 
 use super::*;
 
+/// The plugin name of the intent a landing stores in its parent before
+/// it changes anything ([`Host::land`]).
+pub const LANDING_INTENT: &str = "landing-intent";
+
+/// What a landing is about to do, stored first, so the next start can
+/// finish a landing cut off by tau closing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Intent {
+    /// The child landing.
+    pub(super) from: String,
+    /// Its head as the landing read it: the restack's operation records
+    /// what it did under it (`Project::landed`).
+    pub(super) child_head: String,
+    pub(super) child_workspace: String,
+    pub(super) parent_workspace: String,
+    /// The restack failed: the landing did not happen, and the next
+    /// start leaves it be.
+    #[serde(default)]
+    pub(super) cancelled: bool,
+}
+
+/// A step of [`Host::land`] after which tau may close, for tests that
+/// cut a landing off there ([`Host::cut_landing_after`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LandingStep {
+    /// The intent is stored.
+    Intent,
+    /// The restack is done: the child's changes are on the parent.
+    Restack,
+    /// The links and the landing's record are stored.
+    Record,
+    /// The child's workspace is forgotten.
+    Workspace,
+}
+
+impl LandingStep {
+    pub const ALL: [Self; 4] =
+        [Self::Intent, Self::Restack, Self::Record, Self::Workspace];
+}
+
 /// What [`Host::land`] and [`Host::preview_landing`] work with.
 pub(super) struct LandingPlan {
     pub(super) parent: RunId,
@@ -116,61 +156,224 @@ impl Host {
     /// the parent's newest commit, records them as links in the parent,
     /// and closes the child: its workspace goes, and so does its
     /// bookmark. Both runs must be idle.
+    ///
+    /// Each step can be cut off by tau closing, and the next start
+    /// finishes it ([`Host::finish_landings`]): an intent is stored
+    /// first, the restack is one jj operation that records what it did,
+    /// and the steps after it find nothing to do when done before.
     pub fn land(&self, child: &RunId) -> anyhow::Result<Landing> {
+        self.land_as(child, false)
+    }
+
+    /// [`Host::land`]; `recovered` when tau finishes, at start, a
+    /// landing it was asked for before it closed.
+    fn land_as(
+        &self,
+        child: &RunId,
+        recovered: bool,
+    ) -> anyhow::Result<Landing> {
         let plan = self.landing(child)?;
         let into = self.bookmark_of(&plan.parent, &plan.project)?;
-        let landing = self.runtime.block_on(plan.parent_vcs.land(
+        let intent = Intent {
+            from: child.0.to_string(),
+            child_head: plan.child_head.clone(),
+            child_workspace: plan.child_workspace.clone(),
+            parent_workspace: plan.parent_workspace.clone(),
+            cancelled: false,
+        };
+        self.store_intent(&plan.parent, &intent)?;
+        self.cut(LandingStep::Intent)?;
+        let landed = self.runtime.block_on(plan.parent_vcs.land(
             &plan.child_head,
             into,
             true,
-        ))?;
-        // The landed changes join the parent's links, oldest first, at
-        // the parent's latest turn, so forks, the compare view and pull
-        // requests see them as the parent's own.
-        let turn = self
-            .link(&plan.parent, None)?
-            .map_or(0, |(_, link)| link.turn);
-        let entries = landing
-            .changes
-            .iter()
-            .rev()
-            .map(|change| {
-                let link = Link {
-                    turn,
-                    workspace: plan.parent_workspace.clone(),
-                    commit_id: change.commit_id.clone(),
-                    change_id: change.change_id.clone(),
-                    changed: true,
-                    from: Some(child.0.to_string()),
-                    snapshot: false,
+        ));
+        let landing = match landed {
+            Ok(landing) => landing,
+            // It did not land: the next start does not try again.
+            Err(error) => {
+                let cancelled = Intent {
+                    cancelled: true,
+                    ..intent
                 };
-                Ok(Entry::Plugin {
-                    plugin: WORKSPACE_PLUGIN.to_owned(),
-                    body: serde_json::to_string(&link)?,
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        // And a record to draw the landing's card from, in history.
-        let record = LandingRecord {
-            from: child.0.to_string(),
-            title: self.title_of(child)?,
-            landing: landing.clone(),
+                self.store_intent(&plan.parent, &cancelled)?;
+                return Err(error.into());
+            }
         };
-        let mut entries = entries;
-        entries.push(Entry::Plugin {
-            plugin: LANDING_RECORD.to_owned(),
-            body: serde_json::to_string(&record)?,
-        });
+        self.cut(LandingStep::Restack)?;
+        self.finish_landing(
+            &plan.project,
+            &plan.parent,
+            &intent,
+            &landing,
+            recovered,
+        )?;
+        Ok(landing)
+    }
+
+    /// What a landing does after its restack, each step finding nothing
+    /// to do when it was done before: records the landed changes as the
+    /// parent's links with a record of the landing, then forgets the
+    /// child's workspace and removes its bookmark.
+    fn finish_landing(
+        &self,
+        project: &Project,
+        parent: &RunId,
+        intent: &Intent,
+        landing: &Landing,
+        recovered: bool,
+    ) -> anyhow::Result<LandingRecord> {
+        let child = RunId(intent.from.as_str().into());
+        let record = LandingRecord {
+            from: intent.from.clone(),
+            title: self.title_of(&child)?,
+            landing: landing.clone(),
+            recovered,
+        };
+        if self.landing_record(parent, &child)?.is_none() {
+            // The landed changes join the parent's links, oldest first,
+            // at the parent's latest turn, so forks, the compare view and
+            // pull requests see them as the parent's own.
+            let turn =
+                self.link(parent, None)?.map_or(0, |(_, link)| link.turn);
+            let mut entries = landing
+                .changes
+                .iter()
+                .rev()
+                .map(|change| {
+                    let link = Link {
+                        turn,
+                        workspace: intent.parent_workspace.clone(),
+                        commit_id: change.commit_id.clone(),
+                        change_id: change.change_id.clone(),
+                        changed: true,
+                        from: Some(intent.from.clone()),
+                        snapshot: false,
+                    };
+                    Ok(Entry::Plugin {
+                        plugin: WORKSPACE_PLUGIN.to_owned(),
+                        body: serde_json::to_string(&link)?,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            // And a record to draw the landing's card from, in history,
+            // in the same write.
+            entries.push(Entry::Plugin {
+                plugin: LANDING_RECORD.to_owned(),
+                body: serde_json::to_string(&record)?,
+            });
+            self.runtime.block_on(self.store.append_turn(
+                &parent.0,
+                &entries,
+                TurnUsage::default(),
+            ))?;
+        }
+        self.cut(LandingStep::Record)?;
+        // The child's changes live on the parent's stack now.
+        project.forget_workspace(&intent.child_workspace)?;
+        self.cut(LandingStep::Workspace)?;
+        project.remove_bookmark(&bookmark(&child))?;
+        self.session(&child, |run| run.workspace.take());
+        Ok(record)
+    }
+
+    /// The record `parent` keeps of `child`'s landing, once stored.
+    fn landing_record(
+        &self,
+        parent: &RunId,
+        child: &RunId,
+    ) -> anyhow::Result<Option<LandingRecord>> {
+        Ok(self
+            .runtime
+            .block_on(self.store.plugin_entries(&parent.0, LANDING_RECORD))?
+            .iter()
+            .filter_map(|(_, body)| {
+                serde_json::from_str::<LandingRecord>(body).ok()
+            })
+            .find(|record| *record.from == *child.0))
+    }
+
+    fn store_intent(
+        &self,
+        parent: &RunId,
+        intent: &Intent,
+    ) -> anyhow::Result<()> {
         self.runtime.block_on(self.store.append_turn(
-            &plan.parent.0,
-            &entries,
+            &parent.0,
+            &[Entry::Plugin {
+                plugin: LANDING_INTENT.to_owned(),
+                body: serde_json::to_string(intent)?,
+            }],
             TurnUsage::default(),
         ))?;
-        // The child's changes live on the parent's stack now.
-        plan.project.forget_workspace(&plan.child_workspace)?;
-        plan.project.remove_bookmark(&bookmark(child))?;
-        self.session(child, |run| run.workspace.take());
-        Ok(landing)
+        Ok(())
+    }
+
+    /// Stops a landing after `step`, as tau closing there would, when a
+    /// test asked for it ([`Host::cut_landing_after`]).
+    fn cut(&self, step: LandingStep) -> anyhow::Result<()> {
+        if *self.cut_landing.lock().expect("not poisoned") == Some(step) {
+            anyhow::bail!("tau closed after the landing's {step:?} step");
+        }
+        Ok(())
+    }
+
+    /// Makes every landing stop after `step`, as if tau closed there:
+    /// for tests of what the next start finishes. `None` lets landings
+    /// run whole.
+    pub fn cut_landing_after(&self, step: Option<LandingStep>) {
+        *self.cut_landing.lock().expect("not poisoned") = step;
+    }
+
+    /// Finishes the landings tau was in the middle of when it closed:
+    /// for each stored intent with no record of its landing, a restack
+    /// the project's operations show done is recorded and the child
+    /// closed; one not done yet lands now. Returns the records of the
+    /// landings it finished, each marked recovered, for their cards. A
+    /// landing whose record was stored is done but for its workspace
+    /// and bookmark, which the sweep after takes.
+    pub fn finish_landings(&self) -> anyhow::Result<Vec<LandingRecord>> {
+        let intents = self
+            .runtime
+            .block_on(self.store.plugin_entries_everywhere(LANDING_INTENT))?;
+        // The latest intent of each child, with the parent it is on.
+        let mut latest: Vec<(RunId, Intent)> = Vec::new();
+        for (parent, body) in intents {
+            let Ok(intent) = serde_json::from_str::<Intent>(&body) else {
+                continue;
+            };
+            latest.retain(|(_, known)| known.from != intent.from);
+            latest.push((RunId(parent.into()), intent));
+        }
+        let mut finished = Vec::new();
+        for (parent, intent) in latest {
+            let child = RunId(intent.from.as_str().into());
+            if intent.cancelled || self.ending_of(&child)?.is_some() {
+                continue;
+            }
+            let finish = || -> anyhow::Result<LandingRecord> {
+                let project = self.slot_of_run(&child)?.project()?;
+                match project.landed(&intent.child_head)? {
+                    Some(landing) => self.finish_landing(
+                        &project, &parent, &intent, &landing, true,
+                    ),
+                    None => {
+                        self.land_as(&child, true)?;
+                        self.landing_record(&parent, &child)?.ok_or_else(|| {
+                            anyhow::anyhow!("The landing left no record")
+                        })
+                    }
+                }
+            };
+            match finish() {
+                Ok(record) => finished.push(record),
+                Err(error) => eprintln!(
+                    "tau-ui: cannot finish the landing of {}: {error:#}",
+                    child.0
+                ),
+            }
+        }
+        Ok(finished)
     }
 
     /// Starts `run`'s next turn itself, with `prompt`: the turn that
