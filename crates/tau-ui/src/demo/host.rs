@@ -81,6 +81,7 @@ impl DemoHost {
                     name: repo.name.clone(),
                     checkout,
                     dir: dir.path().join("projects").join(&repo.name),
+                    workspaces: dir.path().join("projects").join(&repo.name),
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;

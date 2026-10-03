@@ -521,6 +521,7 @@ impl Fixture {
             name: "r".into(),
             checkout: repo_dir.path().to_owned(),
             dir: repo_dir.path().join("tau"),
+            workspaces: repo_dir.path().join("tau"),
         };
         let pushes = Arc::new(std::sync::Mutex::new(Vec::new()));
         let pushed = pushes.clone();

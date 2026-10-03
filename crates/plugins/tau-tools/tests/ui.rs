@@ -280,6 +280,7 @@ fn restarted_inspector_preview_reads_only_its_runs_grant() {
         vec![RepoCtx {
             name: "repo".into(),
             checkout: project.clone(),
+            workspaces: project.clone(),
             dir: project,
         }],
         Arc::new(|_| {}),

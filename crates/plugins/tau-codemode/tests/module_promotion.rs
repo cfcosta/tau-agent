@@ -163,6 +163,7 @@ impl Fixture {
                 name: "repo".into(),
                 checkout: self.path.join("checkout"),
                 dir: self.path.clone(),
+                workspaces: self.path.clone(),
             }],
             Arc::new(|_| {}),
         )
@@ -394,6 +395,7 @@ fn wrong_run_repository_duplicate_and_store_payload_cannot_authorize() {
             name: "repo".into(),
             checkout: f.path.join("checkout"),
             dir: f.path.join("different"),
+            workspaces: f.path.join("different"),
         }],
         Arc::new(|_| {}),
     );

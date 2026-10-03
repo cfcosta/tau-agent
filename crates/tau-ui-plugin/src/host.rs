@@ -32,6 +32,32 @@ pub struct RepoCtx {
     /// tau's own directory for it, outside the repository: archives,
     /// memory notes.
     pub dir: PathBuf,
+    /// Where its workspaces are, main's and every chat's.
+    pub workspaces: PathBuf,
+}
+
+/// The directory a run (or sub-agent) works in: its workspace. The
+/// host puts it in [`RunCtx::services`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceDir(pub PathBuf);
+
+/// What the repository's own commands start through, besides a run's:
+/// the launcher plugins give it, joined, and the directory its servers
+/// start in, the main workspace. The host puts it in
+/// [`RunCtx::services`] when a plugin gives one; tau-mcp starts the
+/// repository's stdio servers through it.
+#[derive(Clone)]
+pub struct RepoLauncher {
+    pub launcher: std::sync::Arc<dyn tau_agent::launch::Launcher>,
+    pub dir: PathBuf,
+}
+
+impl std::fmt::Debug for RepoLauncher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RepoLauncher")
+            .field("dir", &self.dir)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The run a plugin is built for.

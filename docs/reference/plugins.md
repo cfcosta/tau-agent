@@ -421,6 +421,24 @@ and `tau-ui`'s host builds a run's plugins only through that registry.
   `new(handle, cx)`. Any `Default` type is both.
 - **Values.** The interface keeps a plugin's state, data and settings
   as `PluginValue`: its own type once read, JSON only on the wire.
+- **Agent commands' environment.** `UiPlugin::launcher(host, repo,
+settings)` gives what commands in a repository start through: a
+  `tau_agent::launch::Launcher`, which answers, for a directory, the
+  words to put before the program and the variables to set (`Launch`),
+  and may wait first (an environment loading). The host joins every
+  plugin's in the registry's order (`Launchers`) and hands the result
+  to tau-tools' `bash` (`CodingTools::with_launcher`) and, through
+  `RunCtx::services`, to tau-mcp, which starts the repository's stdio
+  servers through it in the main workspace (`RepoLauncher`). With none,
+  commands start as they are. tau-direnv is the first such plugin
+  ([0025](../decisions/0025-agent-commands-run-in-an-environment-plugins-give.md)).
+- **What a run's services hold.** Besides the metered Jev and the turn
+  hooks, `RunCtx::services` holds the run's workspace (`WorkspaceDir`),
+  and the repository's joined launcher (`RepoLauncher`) when a plugin
+  gives one.
+- **Per-repository settings.** `points::REPO_MENU` (`Point<AtRepo>`)
+  takes entries for a repository's menu in the sidebar, after tau's
+  own: a toggle the plugin keeps per repository.
 
 See
 [ADR 0017](../decisions/0017-plugins-bring-their-ui.md), and its "As

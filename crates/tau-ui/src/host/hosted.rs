@@ -82,6 +82,12 @@ impl Host {
             name: slot.name.clone(),
             checkout: slot.path.clone(),
             dir: self.config.project_dir_of(&slot.path),
+            // The project's root once imported; until then, where it
+            // will be.
+            workspaces: match slot.project.peek() {
+                ProjectState::Ready(project) => project.root().to_owned(),
+                _ => self.config.project_dir_of(&slot.path),
+            },
         }
     }
 

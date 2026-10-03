@@ -103,6 +103,7 @@ pub fn run_ctx(kind: RunKind) -> RunCtx {
             name: "repo".into(),
             checkout: "/tmp/repo".into(),
             dir: "/tmp/tau/repo".into(),
+            workspaces: "/tmp/tau/repo".into(),
         },
         model: "gpt-5.5".into(),
         effort: None,

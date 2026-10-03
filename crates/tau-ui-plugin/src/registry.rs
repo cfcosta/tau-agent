@@ -103,6 +103,12 @@ pub trait ErasedPlugin: Send + Sync {
         settings: &PluginValue,
     ) -> PluginInfo;
     fn data(&self, host: &HostState, cx: &HostCx) -> PluginValue;
+    fn launcher(
+        &self,
+        host: &HostState,
+        repo: &RepoCtx,
+        settings: &PluginValue,
+    ) -> Option<std::sync::Arc<dyn tau_agent::launch::Launcher>>;
     fn repo_data(
         &self,
         host: &HostState,
@@ -250,6 +256,15 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
 
     fn data(&self, host: &HostState, cx: &HostCx) -> PluginValue {
         PluginValue::typed(self.plugin.data(self.host(host), cx))
+    }
+
+    fn launcher(
+        &self,
+        host: &HostState,
+        repo: &RepoCtx,
+        settings: &PluginValue,
+    ) -> Option<std::sync::Arc<dyn tau_agent::launch::Launcher>> {
+        self.plugin.launcher(self.host(host), repo, settings.get())
     }
 
     fn repo_data(

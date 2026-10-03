@@ -37,11 +37,13 @@ pub use host::{
     HostRecord,
     Push,
     RepoCtx,
+    RepoLauncher,
     RunCtx,
     RunKind,
     SavedSettings,
     TurnCommit,
     TurnHooks,
+    WorkspaceDir,
 };
 pub use manifest::{
     ListedCommand,
@@ -285,6 +287,20 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
         _settings: &Self::Settings,
     ) -> Vec<RecordOf<Self>> {
         Vec::new()
+    }
+
+    /// What agent commands in `repo` start through, when the plugin
+    /// gives them an environment: `bash`'s commands, and the
+    /// repository's MCP servers. None leaves them as they are; the host
+    /// joins every plugin's in the registry's order
+    /// ([`tau_agent::launch::Launchers`]).
+    fn launcher(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+        _settings: &Self::Settings,
+    ) -> Option<std::sync::Arc<dyn tau_agent::launch::Launcher>> {
+        None
     }
 
     /// Its entry on the Plugins screen. The registry sets its name.
