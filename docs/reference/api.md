@@ -74,6 +74,15 @@ for each call in that turn (its own, a sibling sub-agent's, or another
 tool's, whose result it cannot see), and then its input. `delegate`
 works this way ([0015](../decisions/0015-delegates-fork-their-caller.md)).
 
+Every run's requests carry a `Lineage` in their `Settings`: the run's
+id as its path, sent as `prompt_cache_key`, and for a fork or a forking
+sub-agent that has not been resumed, the id of the run it forks, when
+that run's last turn was on the same model. The transport puts the
+run's requests on a connection that already serves its path, or a
+fork's first request on its parent's
+([openai-websocket.md](openai-websocket.md), "Prompt cache"). A resumed
+run keeps its path, so it goes back to its connection.
+
 ## Run and Outcome
 
 ```rust

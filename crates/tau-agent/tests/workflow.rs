@@ -1183,3 +1183,81 @@ fn forking_sub_agents_start_from_their_callers_turn(tc: TestCase) {
         }
     });
 }
+
+/// The lineage a request was sent with: its path, and the path it forked
+/// from.
+fn lineage_of(
+    request: &tau_testing::scripted::Request,
+) -> (String, Option<String>) {
+    let lineage = request.settings.lineage.clone().expect("a lineage");
+    (lineage.path, lineage.parent)
+}
+
+/// Every run's requests carry its own id as their path, which goes out
+/// as `prompt_cache_key`. A fork's and a forking sub-agent's name the
+/// run they fork as parent, so their first request can take its
+/// connection; a resumed fork, a sub-agent that starts blank and a fork
+/// on another model name none.
+#[test]
+fn runs_name_their_path_and_what_they_fork() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("root"))
+        .turn(|t| t.text("fork"))
+        .turn(|t| t.text("fork again"))
+        .turn(|t| t.text("elsewhere"))
+        .turn(|t| {
+            t.tool_call("forking", json!({"input": "a"}))
+                .tool_call("blank", json!({"input": "b"}))
+        })
+        .turn(|t| t.text("a done"))
+        .turn(|t| t.text("b done"))
+        .turn(|t| t.text("lead done"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(llm.clone());
+        let root = agent.run("start", &store).await.unwrap();
+        let fork = agent
+            .fork(&root.checkpoint())
+            .run("go", &store)
+            .await
+            .unwrap();
+        agent.resume(&fork.run).run("again", &store).await.unwrap();
+        let other = agent
+            .clone()
+            .model("gpt-other")
+            .fork(&root.checkpoint())
+            .run("elsewhere", &store)
+            .await
+            .unwrap();
+        let child = Agent::new(llm.clone()).name("child");
+        let lead = agent
+            .clone()
+            .tool(child.as_tool("forking", "Forks.").forking())
+            .tool(child.as_tool("blank", "Starts blank."));
+        let lead_run = lead.run("delegate", &store).await.unwrap();
+
+        let requests = llm.requests();
+        let id = |run: &RunId| run.0.to_string();
+        assert_eq!(lineage_of(&requests[0]), (id(&root.run), None));
+        assert_eq!(
+            lineage_of(&requests[1]),
+            (id(&fork.run), Some(id(&root.run)))
+        );
+        assert_eq!(lineage_of(&requests[2]), (id(&fork.run), None));
+        assert_eq!(lineage_of(&requests[3]), (id(&other.run), None));
+        assert_eq!(lineage_of(&requests[4]), (id(&lead_run.run), None));
+        // The two sub-agents ran side by side, each on its own path: the
+        // forking one names the lead as parent, the blank one nothing.
+        let children: Vec<(String, Option<String>)> =
+            requests[5..7].iter().map(lineage_of).collect();
+        let mut parents: Vec<Option<String>> =
+            children.iter().map(|(_, parent)| parent.clone()).collect();
+        parents.sort();
+        assert_eq!(parents, vec![None, Some(id(&lead_run.run))]);
+        assert_ne!(children[0].0, children[1].0);
+        for (path, _) in &children {
+            assert_ne!(path, &id(&lead_run.run));
+        }
+        assert_eq!(lineage_of(&requests[7]), (id(&lead_run.run), None));
+    });
+}

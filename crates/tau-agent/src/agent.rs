@@ -27,7 +27,7 @@ use tau_ai::{
         Usage,
         UserContent,
     },
-    responses::request::{ReasoningEffort, Settings, ToolDefinition},
+    responses::request::{Lineage, ReasoningEffort, Settings, ToolDefinition},
     retry::RetryPolicy,
 };
 use tau_store::{Entry, NewRun, RunKind, Status, Store, StoreError};
@@ -340,14 +340,15 @@ impl Agent {
     }
 
     /// The settings a run of this agent sends, as its plan left them,
-    /// declaring the run's tools the model sees. Tool schemas go in
-    /// strict form when they convert; otherwise as they are, with
-    /// `strict: false`.
+    /// declaring the run's tools the model sees, in the conversation
+    /// `lineage`. Tool schemas go in strict form when they convert;
+    /// otherwise as they are, with `strict: false`.
     fn settings(
         &self,
         plan: &RunPlan,
         tools: &Toolbox,
         text_format: Option<Value>,
+        lineage: Lineage,
     ) -> Settings {
         let tools = tools
             .declared()
@@ -370,6 +371,7 @@ impl Agent {
             tools,
             reasoning: plan.reasoning,
             text_format,
+            lineage: Some(lineage),
             ..Settings::default()
         }
     }
@@ -939,7 +941,15 @@ async fn run_task(
         });
     }
     let tools = Arc::new(Toolbox::new(tools, agent.0.sources.clone()));
-    let settings = agent.settings(&plan, &tools, launch.text_format);
+    let lineage = Lineage {
+        path: id.0.to_string(),
+        parent: parent_run
+            .filter(|_| fork && resumed.is_none())
+            .filter(|_| {
+                last_model(&prelude, &history) == Some(agent.0.model.as_str())
+            }),
+    };
+    let settings = agent.settings(&plan, &tools, launch.text_format, lineage);
     let session = match agent.0.llm.open(settings).await {
         Ok(session) => session,
         Err(error) => {
@@ -1077,6 +1087,22 @@ fn fork_prelude(
     std::iter::once(Message::Assistant(turn.clone()))
         .chain(outputs)
         .collect()
+}
+
+/// The model of the last assistant message a run inherits: its
+/// prelude's, else its history's.
+fn last_model<'a>(
+    prelude: &'a [Message],
+    history: &'a [Message],
+) -> Option<&'a str> {
+    history
+        .iter()
+        .chain(prelude)
+        .rev()
+        .find_map(|message| match message {
+            Message::Assistant(assistant) => Some(assistant.model.as_str()),
+            _ => None,
+        })
 }
 
 /// Drops the reasoning of the assistant messages another model wrote,
