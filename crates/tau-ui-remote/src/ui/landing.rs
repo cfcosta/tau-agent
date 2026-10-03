@@ -88,6 +88,20 @@ pub fn controls(
     if run.status.is_live() {
         return None;
     }
+    if let Some((at, waiting)) = ws.queued(&run.id) {
+        return Some(super::queue::queued(run, at, waiting, &parent, t, cx));
+    }
+    // A main chat that is working, or that others wait on, takes this
+    // landing after them: Land queues it (ADR 0021).
+    let waits = run
+        .origin
+        .parent()
+        .and_then(|parent| ws.run(parent))
+        .is_some_and(|parent| {
+            parent.status.is_live()
+                || !parent.landing_queue.is_empty()
+                || parent.main_conflicts.is_some()
+        });
     let id = run.id.clone();
     let button = |label: String, kind: ButtonKind, key: &str| {
         div()
@@ -207,6 +221,16 @@ pub fn controls(
                         .py(sp(1.5))
                         .children(log_card::stack_rows(&changes, t, compact)),
                 )
+                .when(waits, |column| {
+                    column.child(caption(
+                        format!(
+                            "{parent} is busy: this chat joins its landing \
+                             queue and lands after {parent}'s turn, checked \
+                             again then."
+                        ),
+                        t.text_soft,
+                    ))
+                })
                 .when(!preview.conflicts.is_empty(), |column| {
                     column.child(caption(
                         format!(
@@ -224,10 +248,13 @@ pub fn controls(
                         .when(!changes.is_empty(), |row| {
                             row.child(
                                 button(
-                                    if preview.conflicts.is_empty() {
-                                        "Land".into()
-                                    } else {
-                                        "Land and resolve".into()
+                                    match (waits, preview.conflicts.is_empty())
+                                    {
+                                        (true, _) => "Queue to land".into(),
+                                        (false, true) => "Land".into(),
+                                        (false, false) => {
+                                            "Land and resolve".into()
+                                        }
                                     },
                                     ButtonKind::Primary,
                                     "confirm-land",

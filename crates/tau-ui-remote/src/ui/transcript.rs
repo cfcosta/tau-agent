@@ -59,10 +59,17 @@ pub fn item(
             None => super::interrupted::card(run, t, cx)
                 .or_else(|| super::landing::card(ws, run, t, compact, cx)),
         };
+        // A main chat's: what waits to land on it, and conflicts left
+        // on it.
+        let queue = super::queue::cards(ws, run, t, cx);
         return div()
             .px(side)
             .pt(sp(3.))
             .pb(edge)
+            .flex()
+            .flex_col()
+            .gap(sp(4.))
+            .children(queue)
             .children(card)
             .into_any_element();
     }

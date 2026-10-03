@@ -218,6 +218,20 @@ pub enum WorkspaceEvent {
     DropChild {
         run: RunId,
     },
+    /// Take this chat out of its main chat's landing queue.
+    Unqueue {
+        run: RunId,
+    },
+    /// Start tau's turn on this main chat again, to resolve what its
+    /// last turn left in conflict.
+    ResolveAgain {
+        main: RunId,
+    },
+    /// The person will resolve this main chat's conflicts themselves:
+    /// the card goes, and the mark stays until main is clean.
+    DismissConflicts {
+        main: RunId,
+    },
     /// Run a query against the store.
     Query {
         sql: String,
@@ -850,6 +864,11 @@ impl Workspace {
             HostUpdate::Dropped { run, result } => {
                 self.dropped(&run, result, cx)
             }
+            HostUpdate::LandingQueue {
+                main,
+                queue,
+                conflicts,
+            } => self.set_landing_queue(&main, queue, conflicts, cx),
             HostUpdate::LandingFinished(record) => {
                 self.landing_finished(record, cx)
             }

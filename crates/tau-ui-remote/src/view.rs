@@ -67,6 +67,14 @@ pub struct RunView {
     /// `None` for a run that can go on.
     #[serde(default)]
     pub ending: Option<Ending>,
+    /// A main chat's: the finished chats waiting to land on it, in the
+    /// order they land (ADR 0021). Empty for any other run.
+    #[serde(default)]
+    pub landing_queue: Vec<crate::queue::Waiting>,
+    /// A main chat's: conflicts a turn left on its stack, until it is
+    /// clean. Nothing lands on it and no chat forks it meanwhile.
+    #[serde(default)]
+    pub main_conflicts: Option<crate::queue::MainConflicts>,
 }
 
 /// How a chat ended for good: what [`RunView::ending`] holds.
@@ -673,6 +681,8 @@ impl RunView {
             plugin_states: Default::default(),
             pending_rewrites: Default::default(),
             ending: None,
+            landing_queue: Vec::new(),
+            main_conflicts: None,
         }
     }
 

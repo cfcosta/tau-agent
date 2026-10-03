@@ -56,6 +56,14 @@ pub enum HostUpdate {
         run: RunId,
         result: Result<(), String>,
     },
+    /// A main chat's landing queue and the conflicts on its stack, as
+    /// the host has them now (ADR 0021): the chats waiting to land on
+    /// it, in order, and what a turn left in conflict.
+    LandingQueue {
+        main: RunId,
+        queue: Vec<crate::queue::Waiting>,
+        conflicts: Option<crate::queue::MainConflicts>,
+    },
     /// A landing tau closed in the middle of, which it finished as it
     /// started: its card goes in the parent's chat, and the child closes.
     LandingFinished(crate::view::LandingRecord),
