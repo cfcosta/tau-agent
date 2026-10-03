@@ -47,6 +47,9 @@ pub fn registry() -> &'static Registry {
             // Questions the agent asks the person, answered in the
             // composer's place.
             .with(tau_ask::AskUi)
+            // Agent commands in the repository's direnv environment, once
+            // the person allows it.
+            .with(tau_direnv::DirenvUi)
             // MCP servers' tools: their direct ones are added to the run's
             // plan in tau-mcp's `start`, so it comes before Codemode.
             .with(tau_mcp::McpUi)

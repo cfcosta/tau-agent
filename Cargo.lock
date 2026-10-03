@@ -9271,6 +9271,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-direnv"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "gpui-pre",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tau-agent",
+ "tau-store",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "tempfile",
+ "tokio",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "tau-fast-compaction"
 version = "0.1.0"
 dependencies = [
@@ -9604,6 +9624,7 @@ dependencies = [
  "tau-codemode",
  "tau-compaction",
  "tau-constitution",
+ "tau-direnv",
  "tau-fast-compaction",
  "tau-goal",
  "tau-jev",
@@ -9683,6 +9704,7 @@ dependencies = [
  "tau-codemode",
  "tau-compaction",
  "tau-constitution",
+ "tau-direnv",
  "tau-fast-compaction",
  "tau-goal",
  "tau-mcp",

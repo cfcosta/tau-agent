@@ -1,0 +1,40 @@
+[package]
+name = "tau-direnv"
+description = "Runs a tau agent's commands in the repository's direnv environment, once the person allows it, as a plugin."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The host half: finding direnv, tau's direnv configuration, loading
+# each workspace's environment and the launcher commands start through.
+# The records, their fold and the views build without it.
+host = ["dep:async-trait", "dep:sha2", "dep:tokio", "dep:toml"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait = { workspace = true, optional = true }
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = { workspace = true, optional = true }
+tau-agent.workspace = true
+tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
+tokio = { workspace = true, optional = true, features = ["process", "io-util"] }
+toml = { workspace = true, optional = true }
+
+[dev-dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+hegeltest.workspace = true
+tau-store.workspace = true
+tau-ui-plugin = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = [
+  "rt",
+  "rt-multi-thread",
+  "time",
+  "process",
+] }
