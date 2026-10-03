@@ -253,18 +253,21 @@ impl Host {
     ) -> McpPlugin {
         let scope = Scope::of(repo);
         let loaded = self.load(&scope, settings);
-        self.fresh(scope, &loaded, true)
+        self.fresh(scope, &loaded, true, None)
             .expect("built when asked to")
     }
 
     /// The scope's plugin: built again when its servers changed, and
     /// built at all only when `build`. Building starts the connections
     /// it uses that never started; the others keep going as they were.
+    /// `launcher`: what the scope's stdio servers start through, from a
+    /// run in its repository; the pool keeps the last one given.
     fn fresh(
         &self,
         scope: Scope,
         loaded: &Loaded,
         build: bool,
+        launcher: Option<&tau_ui_plugin::RepoLauncher>,
     ) -> Option<McpPlugin> {
         // Connections start, and the ones let go close once their last
         // run lets go of them, on the host's runtime.
@@ -288,6 +291,9 @@ impl Host {
             },
             |built| built.pool,
         );
+        if let Some(launcher) = launcher {
+            pool.environment().set_launcher(launcher.clone());
+        }
         let servers = &loaded.sources.servers;
         let own: Vec<(Origin, ServerConfig)> = servers
             .iter()
@@ -331,7 +337,7 @@ impl Host {
     pub fn servers(&self, repo: Option<&Path>, settings: &Settings) -> Servers {
         let scope = Scope::of(repo);
         let loaded = self.load(&scope, settings);
-        let built = self.fresh(scope, &loaded, false);
+        let built = self.fresh(scope, &loaded, false, None);
         let started = built.is_some();
         let sources = &loaded.sources;
         let shared: BTreeSet<String> = sources
@@ -921,7 +927,12 @@ pub(super) fn agent_plugins(
     {
         return Ok(Vec::new());
     }
-    let plugin = host.fresh(scope, &loaded, true);
+    let plugin = host.fresh(
+        scope,
+        &loaded,
+        true,
+        run.services.get::<tau_ui_plugin::RepoLauncher>(),
+    );
     Ok(vec![Box::new(RunServers {
         plugin,
         runtime: host.runtime.clone(),

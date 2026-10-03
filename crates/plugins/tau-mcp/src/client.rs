@@ -110,6 +110,9 @@ pub(crate) enum Endpoint {
         args: Vec<String>,
         env: Vec<(String, String)>,
         cwd: Option<PathBuf>,
+        /// What it starts through: the repository's launcher, asked for
+        /// its main workspace.
+        launcher: Option<tau_ui_plugin::RepoLauncher>,
     },
     Http {
         url: String,
@@ -891,9 +894,19 @@ async fn open(
             args,
             env,
             cwd,
+            launcher,
         } => {
-            let mut command = tokio::process::Command::new(program);
-            command.args(args).envs(env.iter().map(|(k, v)| (k, v)));
+            let launch = match launcher {
+                Some(repo) => repo.launcher.launch(&repo.dir).await,
+                None => tau_agent::launch::Launch::default(),
+            };
+            let (first, words) =
+                launch.argv(std::ffi::OsStr::new(program), args);
+            let mut command = tokio::process::Command::new(first);
+            command
+                .args(words)
+                .envs(launch.env.iter().map(|(k, v)| (k, v)))
+                .envs(env.iter().map(|(k, v)| (k, v)));
             if let Some(cwd) = cwd {
                 command.current_dir(cwd);
             }

@@ -21,6 +21,8 @@ use tokio_util::sync::CancellationToken;
 
 const SERVE: &str = "TAU_MCP_TEST_SERVE";
 const PIDS: &str = "TAU_MCP_TEST_PIDS";
+/// Where the server writes what its launcher set, when given.
+const SEEN: &str = "TAU_MCP_TEST_SEEN";
 
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -31,6 +33,7 @@ fn main() {
         runtime.block_on(serve());
     } else {
         runtime.block_on(closing_ends_the_server_and_its_children());
+        runtime.block_on(a_launcher_starts_the_server());
         println!("stdio: ok");
     }
 }
@@ -51,6 +54,11 @@ async fn serve() {
         .unwrap();
     let pids = format!("{} {}", std::process::id(), sleeper.id());
     std::fs::write(std::env::var(PIDS).unwrap(), pids).unwrap();
+    if let Ok(seen) = std::env::var(SEEN) {
+        let var = |name| std::env::var(name).unwrap_or_else(|_| "none".into());
+        let text = format!("{} {}", var("LAUNCHED"), var("EXTRA"));
+        std::fs::write(seen, text).unwrap();
+    }
     let server = common::Server(common::State::new(false));
     let service = server.serve(rmcp::transport::stdio()).await.unwrap();
     let _ = service.waiting().await;
@@ -82,6 +90,7 @@ async fn closing_ends_the_server_and_its_children() {
         home: None,
         repo: Some(dir.path().to_owned()),
         auth: None,
+        launcher: Default::default(),
     };
     let connection = Connection::new(config, Origin::User, environment);
     connection.connect();
@@ -119,4 +128,65 @@ async fn closing_ends_the_server_and_its_children() {
 
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
+}
+
+/// Answers `env LAUNCHED=prefix` with `EXTRA=env`, keeping the
+/// directory it was asked about.
+struct Probe(std::sync::Mutex<Vec<std::path::PathBuf>>);
+
+#[async_trait::async_trait]
+impl tau_agent::launch::Launcher for Probe {
+    async fn launch(&self, dir: &Path) -> tau_agent::launch::Launch {
+        self.0.lock().unwrap().push(dir.to_owned());
+        tau_agent::launch::Launch {
+            prefix: vec!["/usr/bin/env".into(), "LAUNCHED=prefix".into()],
+            env: vec![("EXTRA".into(), "env".into())],
+        }
+    }
+}
+
+/// A stdio server of a repository with a launcher starts through it,
+/// asked for the repository's main workspace.
+async fn a_launcher_starts_the_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let seen = dir.path().join("seen");
+    let exe = std::env::current_exe().unwrap();
+    let config = ServerConfig::new(
+        "launched",
+        Transport::Stdio(StdioConfig {
+            command: exe.display().to_string(),
+            args: Vec::new(),
+            env: vec![
+                (SERVE.into(), "1".into()),
+                (PIDS.into(), dir.path().join("pids").display().to_string()),
+                (SEEN.into(), seen.display().to_string()),
+            ],
+            cwd: None,
+        }),
+    );
+    let environment = Environment {
+        env: Arc::new(|_| None),
+        home: None,
+        repo: Some(dir.path().to_owned()),
+        auth: None,
+        launcher: Default::default(),
+    };
+    let probe = Arc::new(Probe(Default::default()));
+    let main = dir.path().join("main");
+    environment.set_launcher(tau_ui_plugin::RepoLauncher {
+        launcher: probe.clone(),
+        dir: main.clone(),
+    });
+    let connection = Connection::new(config, Origin::Repo, environment);
+    connection.connect();
+    connection.settled(&CancellationToken::new()).await;
+    assert_eq!(
+        connection.status().state,
+        State::Connected,
+        "{:?}",
+        connection.status()
+    );
+    assert_eq!(read(&seen), "prefix env");
+    assert_eq!(*probe.0.lock().unwrap(), [main]);
+    connection.shutdown().await;
 }

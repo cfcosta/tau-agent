@@ -21,6 +21,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tau_ui_plugin::RepoLauncher;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -220,6 +221,10 @@ pub struct Environment {
     /// Where sign-ins are kept; without it, OAuth does not apply and a
     /// 401 fails the server.
     pub auth: Option<TokenStore>,
+    /// What stdio servers start through: the repository's launcher, once
+    /// a run gave it. Shared by the clones, so a pool's connections
+    /// take it when it comes.
+    pub launcher: Arc<Mutex<Option<RepoLauncher>>>,
 }
 
 impl Environment {
@@ -230,7 +235,13 @@ impl Environment {
             home: std::env::var_os("HOME").map(PathBuf::from),
             repo,
             auth: None,
+            launcher: Arc::default(),
         }
+    }
+
+    /// Starts stdio servers through `launcher` from now on.
+    pub fn set_launcher(&self, launcher: RepoLauncher) {
+        *self.launcher.lock().expect("launcher lock") = Some(launcher);
     }
 
     /// The same, keeping sign-ins in `store`.
@@ -270,6 +281,7 @@ impl Environment {
                     .map(|arg| expand_home(arg, home))
                     .collect(),
                 env: expand(&stdio.env)?,
+                launcher: self.launcher.lock().expect("launcher lock").clone(),
                 cwd: stdio.cwd.as_ref().map(|cwd| {
                     let cwd = PathBuf::from(expand_home(cwd, home));
                     match &self.repo {

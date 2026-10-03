@@ -43,6 +43,7 @@ fn environment() -> Environment {
         home: None,
         repo: None,
         auth: None,
+        launcher: Default::default(),
     }
 }
 
