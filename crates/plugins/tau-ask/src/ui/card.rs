@@ -2,7 +2,7 @@
 //! note, read from the call's own arguments and result so a stored run
 //! shows it as the live one did.
 
-use gpui::{Div, div, prelude::*, px};
+use gpui::{Div, div, prelude::*, rems};
 use tau_ui_kit::{
     assets::Icon,
     components::{self as ui, mono},
@@ -62,7 +62,7 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, AskUi>) -> Option<CardView> {
             Type::CAPTION,
             t.text_soft,
         )
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .truncate()
         .into_any_element()
     });
@@ -100,13 +100,13 @@ fn body(ask: &Ask, reply: Option<&Reply>, waiting: bool, t: &Theme) -> Div {
             .gap(sp(3.))
             .child(
                 ui::text(question.header.clone(), Type::CAPTION, t.dim)
-                    .w(px(96.))
+                    .w(rems(6.))
                     .flex_shrink_0(),
             )
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .flex_col()
                     .gap(sp(0.5))

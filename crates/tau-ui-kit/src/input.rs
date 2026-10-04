@@ -48,6 +48,7 @@ use gpui::{
     prelude::*,
     px,
     relative,
+    rems,
     size,
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -759,7 +760,7 @@ fn display(
                 len: marked.end - marked.start,
                 underline: Some(UnderlineStyle {
                     color: Some(run.color),
-                    thickness: px(1.0),
+                    thickness: px(1.),
                     wavy: false,
                 }),
                 ..run.clone()
@@ -1045,7 +1046,7 @@ impl Render for TextInput {
         div()
             .flex()
             .flex_1()
-            .min_w(px(0.))
+            .min_w(rems(0.))
             .key_context(CONTEXT)
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)

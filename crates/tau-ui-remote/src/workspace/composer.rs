@@ -45,7 +45,7 @@ impl Workspace {
             // field's placeholder says what sending does.
             send.child(
                 div()
-                    .size(px(32.))
+                    .size(rems(2.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -84,7 +84,7 @@ impl Workspace {
             .pb(sp(if compact { 4.5 } else { 5.5 }))
             .when(compact, |bar| bar.chrome(ui::Edge::Bottom, t))
             // On a desktop, the transcript's column.
-            .when(!compact, |bar| bar.w_full().max_w(px(808.)).mx_auto())
+            .when(!compact, |bar| bar.w_full().max_w(rems(50.5)).mx_auto())
             .when_some(self.composer_target().filter(|_| compact), |bar, target| {
                 bar.child(div().flex().child(self.model_chip(target, t, cx)))
             })
@@ -195,7 +195,7 @@ impl Workspace {
                             .child(
                                 div()
                                     .flex_1()
-                                    .min_w(px(0.))
+                                    .min_w(rems(0.))
                                     .py(sp(0.75))
                                     .child(self.composer.clone()),
                             )
@@ -224,7 +224,7 @@ impl Workspace {
         let step = |id: &'static str, glyph: Icon, delta: i32, on: bool| {
             div()
                 .id(id)
-                .size(px(22.))
+                .size(rems(1.375))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -274,7 +274,7 @@ impl Workspace {
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate()
                         .text_color(t.muted)
                         .child(

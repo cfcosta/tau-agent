@@ -10,7 +10,7 @@ use gpui::{
     Window,
     div,
     prelude::*,
-    px,
+    rems,
 };
 use tau_agent::tool::RunId;
 
@@ -268,7 +268,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(sp(2.5))
-                    .h(px(36.))
+                    .h(rems(2.25))
                     .px(sp(3.))
                     .rounded(radius::CONTROL)
                     .cursor_pointer()
@@ -278,7 +278,7 @@ impl Workspace {
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .truncate()
                             .child(hit.label),
                     )
@@ -303,7 +303,7 @@ impl Workspace {
             .child(
                 div()
                     .id("search")
-                    .w(px(560.))
+                    .w(rems(35.))
                     .max_w_full()
                     .flex()
                     .flex_col()

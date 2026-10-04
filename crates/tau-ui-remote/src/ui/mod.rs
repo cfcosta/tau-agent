@@ -15,7 +15,7 @@ pub mod screens;
 pub mod transcript;
 
 pub use components::*;
-use gpui::{Hsla, IntoElement, SharedString, div, prelude::*, px};
+use gpui::{Hsla, IntoElement, SharedString, div, prelude::*, rems};
 use tau_agent::event::StopReason;
 pub use tau_ui_kit::prose::*;
 
@@ -69,7 +69,7 @@ pub fn status_icon(
         }
         // Waiting for the user, whether it stopped or was stopped.
         RunStatus::Finished(StopReason::Stop | StopReason::Cancelled) => div()
-            .size(px(size.0))
+            .size(rems((size.0) / 16.))
             .flex()
             .items_center()
             .justify_center()

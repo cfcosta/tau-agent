@@ -12,6 +12,7 @@ use gpui::{
     prelude::*,
     px,
     relative,
+    rems,
 };
 use tau_agent::tool::RunId;
 
@@ -133,9 +134,9 @@ fn checkpoints(
         div()
             .absolute()
             .left(relative(x(turn)))
-            .top(px(y - 6.))
+            .top(rems((y - 6.) / 16.))
             .ml(sp(-1.5))
-            .size(px(12.))
+            .size(rems(0.75))
             .rounded(radius::CONTROL)
             .border_2()
             .border_color(color)
@@ -145,7 +146,7 @@ fn checkpoints(
         div()
             .absolute()
             .left(relative(x(turn)))
-            .top(px(y - 9.))
+            .top(rems((y - 9.) / 16.))
             .ml(sp(3.5))
             .typeset(Type::CAPTION)
             .text_color(color)
@@ -155,7 +156,7 @@ fn checkpoints(
 
     div()
         .relative()
-        .h(px(128.))
+        .h(rems(8.))
         .w_full()
         .child(lines)
         .children((1..=main_turns).map(|turn| {
@@ -169,7 +170,7 @@ fn checkpoints(
             div()
                 .absolute()
                 .left(relative(x(turn)))
-                .top(px(0.))
+                .top(rems(0.))
                 .ml(sp(-2.))
                 .child(mono(
                     if turn == at {
@@ -193,7 +194,7 @@ fn checkpoints(
                 div()
                     .absolute()
                     .left(relative(x(at)))
-                    .top(px(104.))
+                    .top(rems(6.5))
                     .typeset(Type::CAPTION)
                     .text_color(t.dim)
                     .whitespace_nowrap()
@@ -240,7 +241,7 @@ fn code(
             .fold((0, 0), |(a, r), file| (a + file.added, r + file.removed));
         div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w(rems(0.))
             .flex()
             .flex_col()
             .gap(sp(2.))
@@ -333,7 +334,7 @@ fn file_row(file: &FileStat, t: &Theme) -> gpui::Div {
         .child(
             ui::mono(file.path.clone(), Type::CAPTION, t.text_soft)
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate(),
         )
         .child(ui::mono(format!("+{}", file.added), Type::CAPTION, t.green))
@@ -402,7 +403,7 @@ fn branch(
 
     div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .flex_col()
         .gap(sp(3.5))

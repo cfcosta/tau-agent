@@ -43,6 +43,7 @@ use gpui::{
     MouseUpEvent,
     Pixels,
     Point as PixelPoint,
+    Rems,
     Render,
     Rgba,
     ScrollWheelEvent,
@@ -61,6 +62,7 @@ use gpui::{
     point,
     prelude::*,
     px,
+    rems,
     size,
 };
 
@@ -111,7 +113,8 @@ pub struct ViewOptions {
     pub scrollback: usize,
     /// A monospace font family.
     pub font_family: SharedString,
-    pub font_size: Pixels,
+    /// In rems, so the terminal grows with the window's zoom.
+    pub font_size: Rems,
     /// The line height, as a multiple of the font size.
     pub line_height: f32,
     pub palette: Palette,
@@ -134,7 +137,7 @@ impl Default for ViewOptions {
             } else {
                 "DejaVu Sans Mono".into()
             },
-            font_size: px(12.),
+            font_size: rems(0.75),
             line_height: 1.5,
             palette: Palette::default(),
             visible_rows: Some(24),
@@ -378,7 +381,7 @@ impl TerminalView {
     pub fn set_font(
         &mut self,
         family: impl Into<SharedString>,
-        size: Pixels,
+        size: Rems,
         cx: &mut Context<Self>,
     ) {
         self.options.font_family = family.into();
@@ -678,7 +681,7 @@ impl Render for TerminalView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let font = self.font();
-        let font_size = self.options.font_size;
+        let font_size = self.options.font_size.to_pixels(window.rem_size());
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&font);
         let width = text_system

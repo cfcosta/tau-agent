@@ -1,7 +1,7 @@
 //! The agent's plugins, in the order the loop asks them: what each one
 //! does, and what it is doing in the open run or what it cost.
 
-use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
 
 use crate::{
     theme::{Design as _, Theme, Type, radius, sp},
@@ -49,7 +49,7 @@ pub fn render(
                 })
                 .child(
                     div()
-                        .size(px(7.))
+                        .size(rems(0.4375))
                         .flex_shrink_0()
                         .rounded(radius::FULL)
                         .bg(ink),
@@ -57,7 +57,7 @@ pub fn render(
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .flex()
                         .flex_col()
                         .child(mono(plugin.name.clone(), Type::SMALL, ink))
@@ -92,7 +92,7 @@ pub fn render(
             .gap(sp(2.))
             .typeset(Type::CAPTION)
             .text_color(t.muted)
-            .child(div().size(px(7.)).rounded(radius::FULL).bg(t.green))
+            .child(div().size(rems(0.4375)).rounded(radius::FULL).bg(t.green))
             .child(div().text_color(t.text).child("tau-jev"))
             .child(format!("connected to {}", jev.model))
             .child("·")
@@ -118,7 +118,7 @@ pub fn render(
         compact,
         div()
             .w_full()
-            .max_w(px(1040.))
+            .max_w(rems(65.))
             .flex()
             .flex_col()
             .gap(sp(5.))

@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use gpui::{AnyElement, Context, Div, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, Div, SharedString, div, prelude::*, rems};
 
 use crate::{
     assets::Icon,
@@ -41,7 +41,7 @@ pub fn render(
     let left =
         div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w(rems(0.))
             .flex()
             .flex_col()
             .gap(sp(4.))
@@ -85,7 +85,7 @@ fn allow(phones: &Phones, t: &Theme, cx: &mut Context<Workspace>) -> Div {
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .flex_col()
                     .gap(sp(0.5))
@@ -173,7 +173,7 @@ fn paired(phones: &Phones, t: &Theme, cx: &mut Context<Workspace>) -> Div {
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .flex_col()
                     .gap(sp(0.5))
@@ -242,7 +242,7 @@ fn pair_card(
     cx: &mut Context<Workspace>,
 ) -> Div {
     let card = panel(4.5, t)
-        .when(!compact, |card| card.w(px(330.)).flex_shrink_0())
+        .when(!compact, |card| card.w(rems(20.625)).flex_shrink_0())
         .when(compact, |card| card.w_full())
         .items_center()
         .gap(sp(3.5))

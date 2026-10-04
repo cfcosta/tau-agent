@@ -2,7 +2,7 @@
 //! plugins keep for it (memory, rules, MCP servers). The sidebar lists
 //! only runs; the rest of a repository lives here.
 
-use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
 use tau_agent::event::StopReason;
 
 use crate::{
@@ -113,7 +113,7 @@ pub fn framed(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .child(
@@ -191,12 +191,12 @@ pub fn framed(
         ));
     div()
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .flex()
         .flex_col()
         .child(header)
         .child(tab_bar)
-        .child(div().flex_1().min_h(px(0.)).flex().flex_col().child(body))
+        .child(div().flex_1().min_h(rems(0.)).flex().flex_col().child(body))
         .into_any_element()
 }
 
@@ -340,11 +340,11 @@ pub fn render(
         .border_color(t.border)
         .typeset(Type::CAPTION)
         .text_color(t.dim)
-        .child(div().w(px(7.)))
+        .child(div().w(rems(0.4375)))
         .child(div().flex_1().child("Run"))
         .children(COLUMNS.iter().enumerate().map(|(n, (label, width))| {
             div()
-                .w(px(*width))
+                .w(rems((*width) / 16.))
                 .when(n > 0, |cell| cell.text_right())
                 .child(*label)
         }));
@@ -360,7 +360,7 @@ pub fn render(
         .collect();
     let list = div()
         .w_full()
-        .max_w(px(1040.))
+        .max_w(rems(65.))
         .flex()
         .flex_col()
         .gap(sp(4.))
@@ -444,7 +444,8 @@ fn run_row(
         _ => None,
     };
     let route = Route::Run(run.id.clone());
-    let cell = |width: f32| div().w(px(width)).flex_shrink_0().text_right();
+    let cell =
+        |width: f32| div().w(rems((width) / 16.)).flex_shrink_0().text_right();
     div()
         .id(SharedString::from(format!("repo-run-{}", run.id)))
         .flex()
@@ -458,7 +459,7 @@ fn run_row(
         .hover(|row| row.bg(t.card))
         .child(
             div()
-                .size(px(7.))
+                .size(rems(0.4375))
                 .flex_shrink_0()
                 .rounded(radius::FULL)
                 .bg(color),
@@ -466,7 +467,7 @@ fn run_row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .child(
@@ -497,7 +498,7 @@ fn run_row(
         )
         .child(
             div()
-                .w(px(COLUMNS[0].1))
+                .w(rems((COLUMNS[0].1) / 16.))
                 .flex_shrink_0()
                 .typeset(Type::CAPTION)
                 .text_color(t.roles.agent)

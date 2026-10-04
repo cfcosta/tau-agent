@@ -1,6 +1,6 @@
 //! A diff's lines: read from a unified diff, counted, and drawn.
 
-use gpui::{Div, div, prelude::*, px};
+use gpui::{Div, div, prelude::*, rems};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -136,7 +136,7 @@ pub fn view(lines: &[DiffLine], lang: Option<Lang>, t: &Theme) -> Div {
         .py(sp(1.5))
         .font_family(MONO)
         .typeset(Type::CAPTION)
-        .line_height(px(20.))
+        .line_height(rems(1.25))
         .children(lines.iter().enumerate().map(|(i, line)| {
             let (sign, color, bg) = match line.kind {
                 DiffKind::Added => {

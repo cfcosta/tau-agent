@@ -3,7 +3,7 @@
 //! the cards at the end of the main chat for a push that went and one
 //! that GitHub's moved branch refused.
 
-use gpui::{Context, SharedString, div, prelude::*, px};
+use gpui::{Context, SharedString, div, prelude::*, rems};
 
 use crate::{
     assets::Icon,
@@ -120,13 +120,13 @@ fn frame(
         .flex()
         .items_center()
         .gap(sp(2.))
-        .min_h(px(40.))
+        .min_h(rems(2.5))
         .px(sp(3.))
         .child(ui::icon(Icon::Push, IconSize::COMPACT, glyph_color))
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .font_weight(weight::STRONG)
                 .child(title),
@@ -169,7 +169,7 @@ fn pushed_card(pushed: &Pushed, t: &Theme) -> gpui::Div {
             div()
                 .flex()
                 .gap(sp(2.))
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .child(ui::mono(id.to_owned(), Type::CAPTION, t.change))
                 .child(
                     ui::mono(change.title.clone(), Type::CAPTION, t.text_soft)
@@ -206,7 +206,7 @@ fn moved_card(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .text_color(t.text_soft)
                 .line_height(gpui::relative(1.5))
                 .child(format!(

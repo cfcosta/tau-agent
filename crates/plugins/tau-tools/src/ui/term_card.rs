@@ -19,7 +19,7 @@ use gpui::{
     Subscription,
     div,
     prelude::*,
-    px,
+    rems,
 };
 use tau_agent::tool::RunId;
 use tau_terminal::{Size, TerminalEvent, TerminalView, ViewOptions};
@@ -71,7 +71,7 @@ fn options(term: &TermOutput, expanded: bool, t: &Theme) -> ViewOptions {
             rows: term.rows,
         },
         font_family: MONO.into(),
-        font_size: px(t.term.text.size),
+        font_size: rems(t.term.text.size / 16.),
         line_height: t.term.leading,
         palette: t.term.palette,
         visible_rows: (!expanded).then_some(t.term.rows),
@@ -339,7 +339,7 @@ pub fn body(
         .flex()
         .items_center()
         .gap(sp(2.))
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .border_b_1()
         .border_color(t.term.divider);
     let strip = match cut {
@@ -407,7 +407,7 @@ pub fn body(
             let strip = strip.child(
                 mono(label, micro, t.term.label)
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .truncate(),
             );
             if running {
@@ -465,7 +465,7 @@ fn seen(
     t: &Theme,
 ) -> impl IntoElement {
     let text = t.term.text;
-    let row_height = px(text.size * t.term.leading);
+    let row = text.size * t.term.leading;
     let lines = term.seen_lines();
     let rows = lines.len().min(t.term.rows);
     let fg = Hsla::from(t.term.palette.foreground);
@@ -475,13 +475,14 @@ fn seen(
         .pt(sp(2.))
         .pb(sp(2.5))
         .when(!expanded, |list| {
-            list.max_h(row_height * rows + sp(4.5)).overflow_y_scroll()
+            list.max_h(rems((row * rows as f32 + 18.) / 16.))
+                .overflow_y_scroll()
         })
         .flex()
         .flex_col()
         .children(lines.into_iter().map(move |line| {
             let row = div()
-                .h(row_height)
+                .h(rems(row / 16.))
                 .flex()
                 .items_center()
                 .whitespace_nowrap();

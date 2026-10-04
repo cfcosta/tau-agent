@@ -439,6 +439,8 @@ impl MotionPreference {
 #[serde(default)]
 struct InterfaceSettings {
     reduce_motion: Option<bool>,
+    /// How large the interface is drawn: 1 is as designed.
+    zoom: Option<f32>,
     /// Desktop notifications while tau's window is not focused; on
     /// unless `false`.
     notifications: Option<bool>,
@@ -457,6 +459,34 @@ pub fn saved_notifications(path: &Path) -> bool {
             true
         }
     }
+}
+
+/// The zoom saved in the interface settings at `path`, when the file is
+/// there and says one.
+pub fn saved_zoom(path: &Path) -> Option<f32> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<InterfaceSettings>(&text).ok()?.zoom
+}
+
+/// Saves `zoom` in the interface settings at `path`, keeping what else
+/// the file says.
+pub fn save_zoom(path: &Path, zoom: f32) -> std::io::Result<()> {
+    let mut settings = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| {
+            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
+                &text,
+            )
+            .ok()
+        })
+        .unwrap_or_default();
+    settings.insert("zoom".into(), serde_json::json!(zoom));
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text = serde_json::to_string_pretty(&settings)
+        .map_err(std::io::Error::other)?;
+    std::fs::write(path, text + "\n")
 }
 
 /// `reduce_motion` from the interface settings at `path`, when the file

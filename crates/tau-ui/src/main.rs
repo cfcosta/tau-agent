@@ -175,6 +175,12 @@ fn main() {
                     cx,
                 );
             }
+            workspace.update(cx, |ws, cx| {
+                ws.use_interface_settings(
+                    HostConfig::default_interface_settings(),
+                    cx,
+                )
+            });
             follow_motion_preference(&workspace, args.reduce_motion, cx);
             match host {
                 Some((host, events)) => {

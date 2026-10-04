@@ -1,7 +1,7 @@
 //! The components that know tau's own types. The rest are
 //! `tau-ui-kit`'s, re-exported here.
 
-use gpui::{Context, Div, SharedString, div, prelude::*, px};
+use gpui::{Context, Div, SharedString, div, prelude::*, rems};
 pub use tau_ui_kit::components::*;
 
 use crate::{
@@ -25,7 +25,7 @@ pub fn phone_bar(
     cx: &mut Context<Workspace>,
 ) -> Div {
     div()
-        .h(px(56.))
+        .h(rems(3.5))
         .flex_shrink_0()
         .flex()
         .items_center()

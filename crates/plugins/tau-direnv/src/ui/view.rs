@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use gpui::{AnyElement, Div, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Div, SharedString, div, prelude::*, rems};
 use tau_ui_kit::{
     assets::Icon,
     components::{self as ui, ButtonKind, mono},
@@ -62,13 +62,13 @@ pub fn question(
                     .flex()
                     .items_center()
                     .gap(sp(2.))
-                    .min_h(px(42.))
+                    .min_h(rems(2.625))
                     .px(sp(3.5))
                     .child(ui::icon(Icon::Terminal, IconSize::COMPACT, t.blue))
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .font_weight(weight::STRONG)
                             .text_color(t.text)
                             .child(format!("Load {repo}'s .envrc for agent commands?")),
@@ -179,7 +179,7 @@ fn loading(since: u64, t: &Theme) -> Div {
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .gap(sp(1.))
                 .text_color(t.text)
@@ -212,13 +212,13 @@ fn failed(
                 .flex()
                 .items_center()
                 .gap(sp(2.))
-                .min_h(px(40.))
+                .min_h(rems(2.5))
                 .px(sp(3.))
                 .child(ui::icon(Icon::Warning, IconSize::COMPACT, t.red))
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .font_weight(weight::STRONG)
                         .child("The repository's environment did not load"),
                 )
@@ -305,7 +305,7 @@ pub fn menu_entry(
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .min_h(px(34.))
+        .min_h(rems(2.125))
         .px(sp(2.5))
         .rounded(radius::CONTROL);
     if !data.direnv {

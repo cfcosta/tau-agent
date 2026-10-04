@@ -14,6 +14,7 @@ use gpui::{
     point,
     prelude::*,
     px,
+    rems,
 };
 
 use super::{
@@ -68,7 +69,7 @@ pub fn sidebar(
         .flex_shrink_0()
         .items_center()
         .gap(sp(2.))
-        .h(px(34.))
+        .h(rems(2.125))
         .px(sp(2.5))
         .rounded(radius::CONTROL)
         .cursor_pointer()
@@ -86,7 +87,7 @@ pub fn sidebar(
         .flex_shrink_0()
         .items_center()
         .gap(sp(2.))
-        .h(px(34.))
+        .h(rems(2.125))
         .mt(sp(2.))
         .px(sp(2.5))
         .well(t)
@@ -95,13 +96,13 @@ pub fn sidebar(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .child(ws.sidebar_filter.clone()),
         );
 
     let add = div()
         .id("add-repo")
-        .size(px(22.))
+        .size(rems(1.375))
         .flex()
         .items_center()
         .justify_center()
@@ -121,12 +122,7 @@ pub fn sidebar(
         (Route::Plugins, "Plugins", plugins, t.dim),
         (Route::Phones, "Phones", phones, t.green),
         // Sign-ins, keys and the models runs use.
-        (
-            Route::Models,
-            "Models and accounts",
-            String::new(),
-            t.dim,
-        ),
+        (Route::Models, "Models and accounts", String::new(), t.dim),
     ];
 
     // The app's name, and what all runs cost today.
@@ -192,7 +188,7 @@ pub fn sidebar(
                 .flex()
                 .flex_shrink_0()
                 .items_center()
-                .h(px(30.))
+                .h(rems(1.875))
                 .px(sp(2.))
                 .rounded(radius::BOX)
                 .cursor_pointer()
@@ -239,7 +235,7 @@ fn repo_group(
     let action = |id: &'static str, glyph: Option<Icon>, t: &Theme| {
         div()
             .id(id)
-            .size(px(24.))
+            .size(rems(1.5))
             .flex()
             .items_center()
             .justify_center()
@@ -261,7 +257,7 @@ fn repo_group(
         .flex_shrink_0()
         .items_center()
         .gap(sp(2.))
-        .h(px(32.))
+        .h(rems(2.))
         .px(sp(2.))
         .rounded(radius::BOX)
         .cursor_pointer()
@@ -273,7 +269,7 @@ fn repo_group(
         .child(
             div()
                 .id(SharedString::from(format!("fold-{name}")))
-                .size(px(16.))
+                .size(rems(1.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -294,7 +290,7 @@ fn repo_group(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .when(rows.open, |label| label.font_weight(weight::EMPHASIS))
                 .child(name.clone()),
@@ -396,7 +392,7 @@ fn repo_group(
                 .hover(|style| style.text_color(t.text_soft))
                 .child(format!("{} older runs", rows.older))
                 .id(SharedString::from(format!("older-{name}")))
-                .h(px(26.))
+                .h(rems(1.625))
                 .flex()
                 .items_center()
                 .pl(sp(5.5))
@@ -442,7 +438,7 @@ fn child_row(
         .flex_shrink_0()
         .items_center()
         .gap(sp(2.))
-        .h(px(34.))
+        .h(rems(2.125))
         .pl(sp(indent(depth)))
         .pr(sp(2.5))
         .rounded(radius::CONTROL)
@@ -499,7 +495,7 @@ fn run_row(
         .flex_shrink_0()
         .items_center()
         .gap(sp(2.))
-        .h(px(30.))
+        .h(rems(1.875))
         .pl(sp(2. + 4. * depth.min(4) as f32))
         .pr(sp(2.))
         .rounded(radius::BOX)
@@ -524,7 +520,7 @@ fn run_row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .when(strong, |title| title.font_weight(weight::EMPHASIS))
                 .child(run.title.clone()),
@@ -534,7 +530,7 @@ fn run_row(
                 row.child(
                     div()
                         .id("close-run")
-                        .size(px(18.))
+                        .size(rems(1.125))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -615,7 +611,7 @@ fn repo_menu(
             .flex()
             .items_center()
             .gap(sp(2.5))
-            .h(px(34.))
+            .h(rems(2.125))
             .px(sp(2.5))
             .rounded(radius::CONTROL)
             .cursor_pointer()
@@ -638,7 +634,7 @@ fn repo_menu(
     );
     let menu = div()
         .id("repo-menu")
-        .min_w(px(232.))
+        .min_w(rems(14.5))
         .flex()
         .flex_col()
         .p(sp(1.5))
@@ -678,10 +674,10 @@ fn repo_menu(
                 })),
         )
         .when(!plugins.is_empty(), |menu| {
-            menu.child(div().h(px(1.)).my(sp(1.)).bg(t.border))
+            menu.child(div().h(rems(0.0625)).my(sp(1.)).bg(t.border))
                 .children(plugins)
         })
-        .child(div().h(px(1.)).my(sp(1.)).bg(t.border))
+        .child(div().h(rems(0.0625)).my(sp(1.)).bg(t.border))
         .child(
             entry(
                 "menu-remove",
@@ -713,7 +709,7 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Option<Div> {
     }
     Some(
         div()
-            .h(px(26.))
+            .h(rems(1.625))
             .flex_shrink_0()
             .flex()
             .items_center()
@@ -756,7 +752,7 @@ pub fn phone_run_bar(
     let (color, label) = super::run_look(run, t);
     let id = run.id.clone();
     div()
-        .h(px(56.))
+        .h(rems(3.5))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -770,7 +766,7 @@ pub fn phone_run_bar(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(0.5))
@@ -824,7 +820,7 @@ pub fn phone_header(
         _ => ws.route_title(cx),
     };
     div()
-        .h(px(56.))
+        .h(rems(3.5))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -838,12 +834,14 @@ pub fn phone_header(
             )
         })
         .when(ws.route.is_top_level(), |bar| {
-            bar.pl(sp(4.)).child(logo(t, 28.)).child(div().w(px(6.)))
+            bar.pl(sp(4.))
+                .child(logo(t, 28.))
+                .child(div().w(rems(0.375)))
         })
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .typeset(Type::TITLE)
                 .font_weight(weight::STRONG)
@@ -873,7 +871,7 @@ pub fn phone_run_list(
     div()
         .id("phone-runs")
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .overflow_y_scroll()
         .flex()
         .flex_col()
@@ -899,7 +897,7 @@ fn phone_group(
         .flex()
         .items_center()
         .gap(sp(3.))
-        .min_h(px(52.))
+        .min_h(rems(3.25))
         .px(sp(4.))
         .chrome(Edge::Top, t)
         .cursor_pointer()
@@ -912,7 +910,7 @@ fn phone_group(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .typeset(Type::SUBTITLE)
                 .font_weight(weight::STRONG)
@@ -1014,7 +1012,7 @@ fn phone_group(
                 t,
             )
             .id(SharedString::from(format!("phone-older-{name}")))
-            .min_h(px(44.))
+            .min_h(rems(2.75))
             .flex()
             .items_center()
             .px(sp(4.))
@@ -1070,7 +1068,7 @@ fn phone_run_row(
         .flex()
         .items_center()
         .gap(sp(3.))
-        .min_h(px(56.))
+        .min_h(rems(3.5))
         .px(sp(4.))
         .border_b_1()
         .border_color(t.border)
@@ -1080,7 +1078,7 @@ fn phone_run_row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(0.75))
@@ -1119,7 +1117,7 @@ fn phone_child_row(
         .flex()
         .items_center()
         .gap(sp(3.))
-        .min_h(px(56.))
+        .min_h(rems(3.5))
         .pl(sp(11.))
         .pr(sp(4.))
         .border_b_1()
@@ -1128,7 +1126,7 @@ fn phone_child_row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(0.75))
@@ -1149,7 +1147,7 @@ pub fn phone_tab_bar(
 ) -> Div {
     let current = ws.route.tab();
     div()
-        .h(px(64.))
+        .h(rems(4.))
         .flex_shrink_0()
         .grid()
         .grid_cols(4)

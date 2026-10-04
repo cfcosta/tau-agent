@@ -4,7 +4,7 @@
 //! and left-out files in boxes of their own, then the files, each
 //! opening to its hunks as in the diff card.
 
-use gpui::{Div, Hsla, div, prelude::*, px};
+use gpui::{Div, Hsla, div, prelude::*, rems};
 use tau_ui_kit::{
     assets::Icon,
     components::{heading, icon, mono},
@@ -53,7 +53,7 @@ pub fn summary(status: &ChangeStatus, t: &Theme, compact: bool) -> Div {
     };
     div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .items_center()
         .gap(sp(1.5))
@@ -64,7 +64,7 @@ pub fn summary(status: &ChangeStatus, t: &Theme, compact: bool) -> Div {
             row.child(div().flex_shrink_0().text_color(t.dim).child("on"))
                 .child(
                     div()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate()
                         .text_color(t.change)
                         .child(parents),
@@ -177,7 +177,7 @@ pub fn body(
                 div()
                     .flex()
                     .items_center()
-                    .h(px(30.))
+                    .h(rems(1.875))
                     .px(sp(3.))
                     .mt(sp(0.5))
                     .border_t_1()
@@ -229,7 +229,7 @@ fn working_copy_row(change: &Change, t: &Theme) -> Div {
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .h(px(34.))
+        .h(rems(2.125))
         .px(sp(3.))
         .bg(t.accent.opacity(0.07))
         .border_b_1()
@@ -247,7 +247,7 @@ fn working_copy_row(change: &Change, t: &Theme) -> Div {
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate()
                         .typeset(Type::SMALL)
                         .text_color(t.text_soft)
@@ -258,7 +258,7 @@ fn working_copy_row(change: &Change, t: &Theme) -> Div {
             row.child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .truncate()
                     .typeset(Type::SMALL)
                     .text_color(t.dim)
@@ -273,7 +273,7 @@ fn working_copy_row(change: &Change, t: &Theme) -> Div {
 fn kind_badge(kind: &str, t: &Theme) -> Div {
     let (color, bg) = log_card::kind_colors(Some(kind), t);
     mono(kind.to_owned(), Type::MICRO, color)
-        .w(px(40.))
+        .w(rems(2.5))
         .flex_shrink_0()
         .flex()
         .justify_center()
@@ -288,26 +288,26 @@ fn parent_row(parent: &Change, t: &Theme, compact: bool) -> Div {
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .h(px(30.))
+        .h(rems(1.875))
         .pl(sp(3.75))
         .pr(sp(3.))
         .opacity(0.8)
         .child(
             div()
-                .w(px(2.))
+                .w(rems(0.125))
                 .h_full()
                 .mr(sp(0.5))
                 .flex_shrink_0()
                 .bg(color.opacity(0.35)),
         )
-        .child(mono("@-", Type::MICRO, t.dim).w(px(24.)).flex_shrink_0())
+        .child(mono("@-", Type::MICRO, t.dim).w(rems(1.5)).flex_shrink_0())
         .when(!compact, |row| {
             row.children(parent.kind.as_deref().map(|kind| kind_badge(kind, t)))
         })
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .typeset(Type::SMALL)
                 .text_color(t.muted)
@@ -383,11 +383,11 @@ fn path_row(
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .h(px(28.))
+        .h(rems(1.75))
         .px(sp(3.))
         .child(
             mono(letter, Type::MICRO, color)
-                .size(px(18.))
+                .size(rems(1.125))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -399,13 +399,13 @@ fn path_row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .typeset(Type::CAPTION.mono())
                 .when(!dir.is_empty(), |row| {
                     row.child(
                         div()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .truncate()
                             .text_color(t.dim)
                             .child(format!("{dir}/")),

@@ -1,7 +1,7 @@
 //! Model settings: each agent's default, which models the picker shows,
 //! and the accounts tau reaches them and GitHub with.
 
-use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
 
 use crate::{
     assets::Icon,
@@ -34,7 +34,7 @@ pub fn render(
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .flex()
                         .flex_col()
                         .gap(sp(0.75))
@@ -56,7 +56,7 @@ pub fn render(
             .px(sp(4.))
     };
     let header = columns(div())
-        .h(px(32.))
+        .h(rems(2.))
         .bg(t.card)
         .border_b_1()
         .border_color(t.border)
@@ -72,7 +72,7 @@ pub fn render(
             let hidden = models.settings.is_hidden(&option.id);
             let id = option.id.clone();
             columns(div())
-                .min_h(px(40.))
+                .min_h(rems(2.5))
                 .border_b_1()
                 .border_color(t.border)
                 .child(mono(option.label().to_owned(), Type::CAPTION, t.text))
@@ -115,7 +115,7 @@ pub fn render(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(0.5))
@@ -167,7 +167,7 @@ pub fn render(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(0.5))
@@ -209,7 +209,7 @@ pub fn render(
 
     let main = div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .flex_col()
         .gap(sp(4.5))
@@ -234,7 +234,7 @@ pub fn render(
         .flex_col()
         .gap(sp(4.))
         .when(!compact, |side| {
-            side.w(px(340.)).flex_shrink_0().pt(sp(14.5))
+            side.w(rems(21.25)).flex_shrink_0().pt(sp(14.5))
         })
         .child(access_card);
     ui::screen(
@@ -278,7 +278,7 @@ fn chatgpt_section(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(0.5))
@@ -328,7 +328,7 @@ fn chatgpt_section(
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .flex_col()
                     .gap(sp(0.25))

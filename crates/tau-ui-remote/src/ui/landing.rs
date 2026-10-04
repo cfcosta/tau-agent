@@ -3,7 +3,7 @@
 //! its parent's chat and the landing card at the end of the run's own
 //! chat share.
 
-use gpui::{Context, SharedString, div, prelude::*, px};
+use gpui::{Context, SharedString, div, prelude::*, rems};
 use tau_vcs::ui::{change_log::Change, log_card};
 
 use crate::{
@@ -52,13 +52,13 @@ pub fn card(
                     .flex()
                     .items_center()
                     .gap(sp(2.))
-                    .min_h(px(40.))
+                    .min_h(rems(2.5))
                     .px(sp(3.))
                     .child(ui::icon(Icon::Land, IconSize::COMPACT, t.accent))
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .truncate()
                             .typeset(Type::SMALL)
                             .font_weight(weight::STRONG)

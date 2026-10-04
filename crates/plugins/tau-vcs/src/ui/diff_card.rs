@@ -3,7 +3,7 @@
 //! each opening to its hunks, and a show leads with the message, ids,
 //! author and parents, then lists its files the same way.
 
-use gpui::{Div, SharedString, div, prelude::*, px};
+use gpui::{Div, SharedString, div, prelude::*, rems};
 use tau_ui_kit::{
     assets::Icon,
     components::{dot, heading, icon, mono},
@@ -38,7 +38,7 @@ pub fn blocks(diff: &ChangeDiff, t: &Theme) -> Div {
             } else {
                 t.border_strong
             };
-            div().size(px(7.)).rounded(radius::HAIRLINE).bg(color)
+            div().size(rems(0.4375)).rounded(radius::HAIRLINE).bg(color)
         }))
 }
 
@@ -46,7 +46,7 @@ pub fn blocks(diff: &ChangeDiff, t: &Theme) -> Div {
 pub fn files_summary(diff: &ChangeDiff, t: &Theme) -> Div {
     div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .items_center()
         .gap(sp(1.5))
@@ -61,7 +61,7 @@ pub fn commit_summary(diff: &ChangeDiff, t: &Theme) -> Div {
     let change = &diff.change;
     div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .items_center()
         .gap(sp(2.))
@@ -69,7 +69,7 @@ pub fn commit_summary(diff: &ChangeDiff, t: &Theme) -> Div {
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .typeset(Type::SMALL)
                 .text_color(t.text_soft)
@@ -161,7 +161,7 @@ pub fn commit_body(
             div().typeset(Type::SMALL).text_color(t.muted).children(
                 body.lines().map(|line| {
                     // A blank line between paragraphs keeps its height.
-                    div().min_h(px(20.)).child(line.to_owned())
+                    div().min_h(rems(1.25)).child(line.to_owned())
                 }),
             )
         }));
@@ -169,12 +169,16 @@ pub fn commit_body(
     let field = |name: &'static str, value: Div| {
         div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w(rems(0.))
             .flex()
             .items_center()
             .gap(sp(2.))
-            .child(mono(name, Type::CAPTION, t.dim).w(px(52.)).flex_shrink_0())
-            .child(value.min_w(px(0.)).truncate())
+            .child(
+                mono(name, Type::CAPTION, t.dim)
+                    .w(rems(3.25))
+                    .flex_shrink_0(),
+            )
+            .child(value.min_w(rems(0.)).truncate())
     };
     let author = diff.author.as_ref().map(|author| {
         field(
@@ -235,7 +239,7 @@ pub fn commit_body(
                     .flex()
                     .items_center()
                     .gap(sp(2.))
-                    .h(px(30.))
+                    .h(rems(1.875))
                     .px(sp(3.))
                     .border_t_1()
                     .border_color(t.raised)
@@ -287,7 +291,7 @@ fn parent_line(parent: &Change, t: &Theme) -> Div {
         .children(log_card::bookmarks(parent, t))
         .child(
             div()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .typeset(Type::CAPTION)
                 .text_color(t.dim)
@@ -381,7 +385,7 @@ fn file_row(
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .h(px(30.))
+        .h(rems(1.875))
         .px(sp(3.))
         .cursor_pointer()
         .hover(|row| row.bg(t.raised))
@@ -395,7 +399,7 @@ fn file_row(
         ))
         .child(
             mono(letter, Type::MICRO, color)
-                .size(px(18.))
+                .size(rems(1.125))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -408,13 +412,13 @@ fn file_row(
             // The folder gives way before the file's name does.
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .typeset(Type::CAPTION.mono())
                 .when(!dir.is_empty(), |path| {
                     path.child(
                         div()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .truncate()
                             .text_color(t.dim)
                             .child(format!("{dir}/")),
@@ -451,21 +455,23 @@ fn file_row(
                 div()
                     .flex()
                     .flex_shrink_0()
-                    .w(px(width))
-                    .h(px(4.))
+                    .w(rems((width) / 16.))
+                    .h(rems(0.25))
                     .rounded(radius::HAIRLINE)
                     .overflow_hidden()
                     .bg(t.raised)
                     .child(
                         div()
                             .h_full()
-                            .w(px(width * file.added as f32 / total))
+                            .w(rems((width * file.added as f32 / total) / 16.))
                             .bg(t.green),
                     )
                     .child(
                         div()
                             .h_full()
-                            .w(px(width * file.removed as f32 / total))
+                            .w(rems(
+                                (width * file.removed as f32 / total) / 16.,
+                            ))
                             .bg(t.red),
                     ),
             )
@@ -481,7 +487,7 @@ const CONFLICT_MARKERS: [&str; 5] =
 fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
     let number = |n: Option<u32>| {
         div()
-            .w(px(36.))
+            .w(rems(2.25))
             .flex_shrink_0()
             .pr(sp(1.5))
             .flex()
@@ -489,7 +495,7 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
             .text_color(t.dim.opacity(0.6))
             .child(n.map(|n| n.to_string()).unwrap_or_default())
     };
-    let gutter = if compact { sp(0.) } else { px(72.) };
+    let gutter = if compact { sp(0.) } else { rems(4.5) };
     let note = |text: &'static str| {
         div()
             .pl(gutter + sp(4.5))
@@ -562,7 +568,7 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
                     })
                     .child(
                         div()
-                            .w(px(18.))
+                            .w(rems(1.125))
                             .flex_shrink_0()
                             .flex()
                             .justify_center()
@@ -572,7 +578,7 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .text_color(color)
@@ -601,7 +607,7 @@ fn hunks(file: &FileDiff, t: &Theme, compact: bool) -> Div {
         .border_color(t.raised)
         .font_family(tau_ui_kit::theme::MONO)
         .typeset(Type::CAPTION)
-        .line_height(px(20.))
+        .line_height(rems(1.25))
         .when(file.binary, |body| body.child(note("A binary file.")))
         .when(file.hunks.is_empty() && !file.binary, |body| {
             body.child(note("No lines changed."))

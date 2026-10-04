@@ -5,7 +5,7 @@
 //! and how `@` changes it. Ignored entries stay in place, dimmed, with
 //! only their name.
 
-use gpui::{Div, Hsla, div, prelude::*, px};
+use gpui::{Div, Hsla, div, prelude::*, rems};
 use tau_ui_kit::{
     assets::Icon,
     components::{heading, icon, mono},
@@ -38,14 +38,14 @@ pub fn summary(
         .filter(|(_, n)| *n > 0);
     div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .items_center()
         .gap(sp(1.5))
         .typeset(Type::CAPTION.mono())
         .child(
             div()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .text_color(t.text_soft)
                 .child(path.to_owned()),
@@ -69,7 +69,7 @@ pub fn body(listing: &DirListing, t: &Theme, compact: bool) -> Div {
         div()
             .flex()
             .items_center()
-            .h(px(30.))
+            .h(rems(1.875))
             .px(sp(3.))
             .when(!first, |row| row.border_t_1().border_color(t.raised))
             .child(heading(&title, t))
@@ -141,7 +141,7 @@ fn row(listed: &Listed, now: i64, t: &Theme, compact: bool) -> Div {
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .h(px(30.))
+        .h(rems(1.875))
         .px(sp(3.))
         .hover(|row| row.bg(t.raised))
         .when(ignored, |row| row.opacity(0.7))
@@ -149,12 +149,12 @@ fn row(listed: &Listed, now: i64, t: &Theme, compact: bool) -> Div {
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .typeset(Type::CAPTION.mono())
                 .child(
                     div()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate()
                         .text_color(name_color)
                         .child(entry.name.clone()),
@@ -167,7 +167,7 @@ fn row(listed: &Listed, now: i64, t: &Theme, compact: bool) -> Div {
                 .when_some(entry.target.clone(), |name, target| {
                     name.child(
                         div()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .truncate()
                             .pl(sp(1.5))
                             .text_color(t.dim)
@@ -177,7 +177,7 @@ fn row(listed: &Listed, now: i64, t: &Theme, compact: bool) -> Div {
         )
         .child(
             mono(measure.unwrap_or_default(), Type::MICRO, t.dim)
-                .w(px(76.))
+                .w(rems(4.75))
                 .flex_shrink_0()
                 .flex()
                 .justify_end()
@@ -192,18 +192,18 @@ fn row(listed: &Listed, now: i64, t: &Theme, compact: bool) -> Div {
                 .map(|modified| age(modified, now));
             row.child(
                 mono(ago.unwrap_or_default(), Type::MICRO, t.dim)
-                    .w(px(36.))
+                    .w(rems(2.25))
                     .flex_shrink_0()
                     .flex()
                     .justify_end(),
             )
         })
-        .child(div().w(px(18.)).flex_shrink_0().children(listed.change.map(
-            |kind| {
+        .child(div().w(rems(1.125)).flex_shrink_0().children(
+            listed.change.map(|kind| {
                 let (letter, color) = change_look(kind, t);
                 badge(letter.to_owned(), color)
-            },
-        )))
+            }),
+        ))
 }
 
 /// A folder's icon, or a file's badge: the first letter of its type,
@@ -219,7 +219,7 @@ fn mark(listed: &Listed, t: &Theme) -> Div {
             t.blue
         };
         return div()
-            .size(px(18.))
+            .size(rems(1.125))
             .flex_shrink_0()
             .flex()
             .items_center()
@@ -268,7 +268,7 @@ fn change_look(kind: ChangeKind, t: &Theme) -> (&'static str, Hsla) {
 
 fn badge(text: String, color: Hsla) -> Div {
     mono(text, Type::MICRO, color)
-        .size(px(18.))
+        .size(rems(1.125))
         .flex_shrink_0()
         .flex()
         .items_center()

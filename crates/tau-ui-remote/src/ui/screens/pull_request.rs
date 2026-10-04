@@ -1,7 +1,7 @@
 //! A pull request from a finished run: the draft to check and send, then
 //! the opened pull request.
 
-use gpui::{AnyElement, Context, Div, div, prelude::*, px, relative};
+use gpui::{AnyElement, Context, Div, div, prelude::*, relative, rems};
 use tau_agent::tool::RunId;
 
 use crate::{
@@ -94,7 +94,7 @@ fn top_bar(
     let run_title = ws.run(run).map(|run| run.title.clone());
     let back = run.clone();
     div()
-        .h(px(44.))
+        .h(rems(2.75))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -173,7 +173,7 @@ fn draft(
     };
     let left = div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .flex_col()
         .gap(sp(5.))
@@ -208,7 +208,7 @@ fn draft(
                     div()
                         .flex()
                         .items_center()
-                        .h(px(44.))
+                        .h(rems(2.75))
                         .px(sp(3.))
                         .rounded(radius::BOX)
                         .border_1()
@@ -220,7 +220,7 @@ fn draft(
         .child(
             div()
                 .flex_1()
-                .min_h(px(0.))
+                .min_h(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(2.))
@@ -229,7 +229,7 @@ fn draft(
                     div()
                         .id("pr-description")
                         .flex_1()
-                        .min_h(px(220.))
+                        .min_h(rems(13.75))
                         .overflow_y_scroll()
                         .p(sp(3.))
                         .rounded(radius::BOX)
@@ -264,7 +264,7 @@ fn draft(
             .flex()
             .items_center()
             .gap(sp(2.5))
-            .min_h(px(36.))
+            .min_h(rems(2.25))
             .cursor_pointer()
             .child(checkbox(checked, false, t))
             .child(text)
@@ -274,7 +274,7 @@ fn draft(
     });
     let create = run.clone();
     let right = div()
-        .w(px(380.))
+        .w(rems(23.75))
         .flex_shrink_0()
         .flex()
         .flex_col()
@@ -303,7 +303,7 @@ fn draft(
                         .child(
                             div()
                                 .flex_1()
-                                .min_w(px(0.))
+                                .min_w(rems(0.))
                                 .typeset(Type::SMALL)
                                 .child(commit.title.clone()),
                         )
@@ -339,7 +339,7 @@ fn draft(
                             div()
                                 .flex()
                                 .items_center()
-                                .h(px(40.))
+                                .h(rems(2.5))
                                 .px(sp(3.))
                                 .rounded(radius::BOX)
                                 .border_1()
@@ -368,7 +368,7 @@ fn draft(
         );
     div()
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .flex()
         .child(left)
         .child(right)
@@ -430,7 +430,7 @@ fn phone_draft(
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .typeset(Type::BODY)
                             .child(commit.title.clone()),
                     )
@@ -461,7 +461,7 @@ fn phone_draft(
                 .flex()
                 .items_center()
                 .gap(sp(2.5))
-                .min_h(px(44.))
+                .min_h(rems(2.75))
                 .cursor_pointer()
                 .child(checkbox(pr.draft, true, t))
                 .child("Open as a draft")
@@ -525,7 +525,7 @@ fn opened(
     let back = run.clone();
     let content = div()
         .w_full()
-        .when(!compact, |col| col.max_w(px(620.)))
+        .when(!compact, |col| col.max_w(rems(38.75)))
         .flex()
         .flex_col()
         .gap(sp(5.5))
@@ -536,7 +536,7 @@ fn opened(
                 .gap(sp(3.))
                 .child(
                     div()
-                        .size(px(40.))
+                        .size(rems(2.5))
                         .flex_shrink_0()
                         .flex()
                         .items_center()
@@ -642,7 +642,7 @@ fn opened(
     }
     div()
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .flex()
         .justify_center()
         .items_start()

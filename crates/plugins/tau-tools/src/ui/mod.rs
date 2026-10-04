@@ -16,7 +16,7 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{Div, div, prelude::*, px};
+use gpui::{Div, div, prelude::*, rems};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_agent::plugin::Plugin;
@@ -278,14 +278,15 @@ fn peek(
     };
     let rest = read.lines.len() - read.lines.len().min(PEEK);
     let last = read.first + read.lines.len();
-    let gutter = px(8. * last.to_string().len() as f32);
+    // Half a rem per digit of the last line's number.
+    let gutter = 0.5 * last.to_string().len() as f32;
     div()
         .flex()
         .flex_col()
         .pb(sp(1.5))
         .font_family(MONO)
         .typeset(Type::CAPTION)
-        .line_height(px(20.))
+        .line_height(rems(1.25))
         .children(read.lines[..shown].iter().enumerate().map(|(i, line)| {
             div()
                 .flex()
@@ -296,7 +297,7 @@ fn peek(
                 .child(
                     div()
                         .flex_shrink_0()
-                        .w(gutter)
+                        .w(rems(gutter))
                         .flex()
                         .justify_end()
                         .text_color(t.dim.opacity(0.7))
@@ -326,9 +327,9 @@ fn peek(
                     .id(gpui::SharedString::from(format!("read-{call_id}")))
                     .flex()
                     .items_center()
-                    .min_h(px(28.))
+                    .min_h(rems(1.75))
                     .px(sp(3.))
-                    .pl(gutter + sp(6.))
+                    .pl(rems(gutter + 1.5))
                     .cursor_pointer()
                     .text_color(t.dim)
                     .hover(|row| row.text_color(t.text_soft))
@@ -378,7 +379,7 @@ fn output(lines: &[String], t: &Theme) -> Div {
         .py(sp(2.))
         .font_family(MONO)
         .typeset(Type::CAPTION)
-        .line_height(px(20.))
+        .line_height(rems(1.25))
         .text_color(t.muted)
         .children(lines.iter().map(|line| {
             let pass = line.trim_start().starts_with("PASS");
@@ -611,7 +612,7 @@ impl UiPlugin for ToolsUi {
                                         )))
                                         .flex()
                                         .items_center()
-                                        .min_h(px(32.))
+                                        .min_h(rems(2.))
                                         .px(sp(3.))
                                         .py(sp(1.))
                                         .cursor_pointer()

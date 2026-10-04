@@ -30,6 +30,7 @@ use gpui::{
     div,
     prelude::*,
     px,
+    rems,
 };
 use tau_agent::{
     event::{RunEvent, StopReason},
@@ -105,6 +106,9 @@ actions!(
         ShowHistory,
         ShowPlugins,
         Search,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
         SlashUp,
         SlashDown,
         SlashComplete
@@ -132,6 +136,12 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-3", ShowHistory, Some(CONTEXT)),
         KeyBinding::new("ctrl-4", ShowPlugins, Some(CONTEXT)),
         KeyBinding::new("ctrl-k", Search, Some(CONTEXT)),
+        // The interface's size, as a browser zooms a page.
+        KeyBinding::new("ctrl-=", ZoomIn, Some(CONTEXT)),
+        KeyBinding::new("ctrl-+", ZoomIn, Some(CONTEXT)),
+        KeyBinding::new("ctrl-shift-=", ZoomIn, Some(CONTEXT)),
+        KeyBinding::new("ctrl--", ZoomOut, Some(CONTEXT)),
+        KeyBinding::new("ctrl-0", ZoomReset, Some(CONTEXT)),
         // The composer's popover; elsewhere the keys go on.
         KeyBinding::new("up", SlashUp, Some(CONTEXT)),
         KeyBinding::new("down", SlashDown, Some(CONTEXT)),
@@ -429,6 +439,12 @@ pub struct Workspace {
     /// Whether the person opened the run's details: the inspector,
     /// beside the transcript. Closed, the transcript has the width.
     pub(crate) details_open: bool,
+    /// How large the interface is drawn: 1 is as designed. Every size
+    /// is in rems, so this sets the rem.
+    pub(crate) zoom: f32,
+    /// Where the interface's settings are saved; none keeps the zoom
+    /// for this window only.
+    interface_settings: Option<std::path::PathBuf>,
     /// Which of a repository's runs its page lists.
     pub(crate) runs_filter: crate::ui::screens::repo::RunsFilter,
     /// The repository History shows the runs of; none shows all.
@@ -696,6 +712,8 @@ impl Workspace {
             run_models: HashMap::new(),
             inspector_shown: false,
             details_open: false,
+            zoom: 1.,
+            interface_settings: None,
             runs_filter: Default::default(),
             history_repo: None,
             open_notes: HashSet::new(),
@@ -1448,6 +1466,50 @@ impl Workspace {
 
     pub(crate) fn shows_inspector(&self) -> bool {
         self.inspector_shown
+    }
+
+    /// The smallest and largest zoom, and a step of it.
+    pub const ZOOM_RANGE: (f32, f32) = (0.5, 2.);
+    pub const ZOOM_STEP: f32 = 0.1;
+
+    /// Keeps the zoom in the interface settings at `path`, starting from
+    /// the one saved there.
+    pub fn use_interface_settings(
+        &mut self,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(zoom) = crate::motion::saved_zoom(&path) {
+            self.zoom = zoom.clamp(Self::ZOOM_RANGE.0, Self::ZOOM_RANGE.1);
+            cx.notify();
+        }
+        self.interface_settings = Some(path);
+    }
+
+    /// Zooms by `steps` steps, or back to as designed for none, and
+    /// saves it.
+    pub fn zoom_by(&mut self, steps: i32, cx: &mut Context<Self>) {
+        let zoom = if steps == 0 {
+            1.
+        } else {
+            self.zoom + Self::ZOOM_STEP * steps as f32
+        };
+        // In tenths, so steps land on round sizes.
+        let zoom = ((zoom * 10.).round() / 10.)
+            .clamp(Self::ZOOM_RANGE.0, Self::ZOOM_RANGE.1);
+        if zoom == self.zoom {
+            return;
+        }
+        self.zoom = zoom;
+        if let Some(path) = &self.interface_settings
+            && let Err(error) = crate::motion::save_zoom(path, zoom)
+        {
+            eprintln!(
+                "tau-ui: cannot save the zoom to {}: {error}",
+                path.display()
+            );
+        }
+        cx.notify();
     }
 
     /// Opens or closes the run's details beside the transcript.

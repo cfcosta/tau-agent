@@ -16,8 +16,8 @@ use gpui::{
     SharedString,
     div,
     prelude::*,
-    px,
     relative,
+    rems,
 };
 use serde::{Deserialize, Serialize};
 use tau_agent::{plugin::Plugin, tool::RunId};
@@ -580,8 +580,8 @@ fn chart(choice: &Choice, t: &Theme, compact: bool) -> Div {
             .child(mono(format!("{:.2}", level.p), Type::MICRO, ink))
             .child(
                 div()
-                    .w(px(36.))
-                    .h(px((level.p as f32 * max_bar).max(3.)))
+                    .w(rems(2.25))
+                    .h(rems(((level.p as f32 * max_bar).max(3.)) / 16.))
                     .rounded_t(radius::SMALL)
                     .bg(if pick { t.blue } else { t.bar_idle }),
             )
@@ -625,7 +625,7 @@ fn chart(choice: &Choice, t: &Theme, compact: bool) -> Div {
         .well(t)
         .child(
             div()
-                .w(px(180.))
+                .w(rems(11.25))
                 .flex_shrink_0()
                 .flex()
                 .flex_col()
@@ -665,7 +665,7 @@ fn chart(choice: &Choice, t: &Theme, compact: bool) -> Div {
                     div()
                         .flex()
                         .items_end()
-                        .h(px(max_bar + 24.))
+                        .h(rems((max_bar + 24.) / 16.))
                         .border_b_1()
                         .border_color(t.border_strong)
                         .children(bars),
@@ -692,12 +692,12 @@ fn distribution(
             .items_center()
             .justify_end()
             .gap(sp(0.75))
-            .w(px(58.))
+            .w(rems(3.625))
             .child(mono(format!("{p:.2}"), Type::MICRO, ink))
             .child(
                 div()
-                    .w(px(22.))
-                    .h(px((p * height).max(3.)))
+                    .w(rems(1.375))
+                    .h(rems(((p * height).max(3.)) / 16.))
                     .rounded_t(radius::BAR)
                     .bg(if pick { t.blue } else { t.bar_idle }),
             )
@@ -721,12 +721,12 @@ fn distribution(
                 .flex()
                 .items_end()
                 .gap(sp(1.))
-                .h(px(height + 36.))
+                .h(rems((height + 36.) / 16.))
                 .children(columns),
         )
         .child(
             div()
-                .max_w(px(280.))
+                .max_w(rems(17.5))
                 .typeset(Type::CAPTION)
                 .text_color(t.muted)
                 .line_height(relative(1.5))
@@ -752,7 +752,7 @@ fn settings_section(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
     let what = |name: &str, caption: &str| {
         div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w(rems(0.))
             .flex()
             .flex_col()
             .gap(sp(0.75))
@@ -764,7 +764,7 @@ fn settings_section(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
         let handle = view.handle.clone();
         div()
             .id(SharedString::from(format!("threshold-{threshold}")))
-            .h(px(28.))
+            .h(rems(1.75))
             .px(sp(2.5))
             .flex()
             .items_center()

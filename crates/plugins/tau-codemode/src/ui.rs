@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{App, Context, Div, Entity, SharedString, div, prelude::*, px};
+use gpui::{App, Context, Div, Entity, SharedString, div, prelude::*, rems};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::{plugin::Plugin, tool::RunId};
@@ -926,7 +926,7 @@ pub fn card(
         head: Some(
             mono(first_line(code).to_owned(), Type::CAPTION, t.text_soft)
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .into_any_element(),
         ),
@@ -1061,7 +1061,7 @@ fn call_row(row: &Row, t: &Theme) -> Div {
                 .child(
                     mono(row.args.clone(), Type::MICRO, t.dim)
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate(),
                 )
                 .children(row.cost.filter(|cost| *cost > 0.0).map(|cost| {
@@ -1223,7 +1223,7 @@ fn disclosure(
 ) -> gpui::Stateful<Div> {
     div()
         .id(SharedString::from(key.clone()))
-        .min_h(px(32.))
+        .min_h(rems(2.))
         .flex()
         .items_center()
         .gap(sp(1.))
@@ -1545,7 +1545,7 @@ fn version_row(
                         t.text_soft,
                     )
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .truncate(),
                 )
                 .when(!selected && run.is_some(), |header| {

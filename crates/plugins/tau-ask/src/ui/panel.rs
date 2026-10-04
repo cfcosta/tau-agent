@@ -22,7 +22,7 @@ use gpui::{
     Window,
     div,
     prelude::*,
-    px,
+    rems,
 };
 use tau_ui_kit::{
     assets::Icon,
@@ -280,7 +280,7 @@ impl Panel {
                 .flex()
                 .items_center()
                 .gap(sp(1.5))
-                .h(px(28.))
+                .h(rems(1.75))
                 .px(sp(2.5))
                 .rounded(radius::CONTROL)
                 .cursor_pointer()
@@ -311,7 +311,7 @@ impl Panel {
                         .into_any_element()
                 } else {
                     div()
-                        .size(px(10.))
+                        .size(rems(0.625))
                         .rounded(radius::HAIRLINE)
                         .border_1()
                         .border_color(if on {
@@ -396,7 +396,7 @@ impl Panel {
         let side = previews.then(|| {
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(2.5))
@@ -433,7 +433,7 @@ impl Panel {
                 Some(side) if !compact => div()
                     .flex()
                     .child(
-                        rows.w(px(300.))
+                        rows.w(rems(18.75))
                             .flex_shrink_0()
                             .border_r_1()
                             .border_color(t.border),
@@ -476,7 +476,7 @@ impl Panel {
             .flex()
             .items_start()
             .gap(sp(3.))
-            .min_h(px(40.))
+            .min_h(rems(2.5))
             .px(sp(2.5))
             .py(sp(2.25))
             .rounded(radius::CONTROL)
@@ -487,7 +487,7 @@ impl Panel {
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .flex_col()
                     .gap(sp(0.5))
@@ -539,7 +539,7 @@ impl Panel {
             .flex()
             .items_center()
             .gap(sp(3.))
-            .min_h(px(40.))
+            .min_h(rems(2.5))
             .px(sp(2.5))
             .rounded(radius::CONTROL)
             .when(draft.cursor[i] == k, |row| row.bg(t.selected))
@@ -555,8 +555,8 @@ impl Panel {
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
-                    .h(px(30.))
+                    .min_w(rems(0.))
+                    .h(rems(1.875))
                     .flex()
                     .items_center()
                     .px(sp(2.))
@@ -626,7 +626,7 @@ impl Panel {
             )
             .child(
                 div()
-                    .min_h(px(52.))
+                    .min_h(rems(3.25))
                     .px(sp(2.5))
                     .py(sp(2.))
                     .rounded(radius::BOX)
@@ -681,13 +681,13 @@ impl Panel {
                     .hover(|row| row.bg(t.selected))
                     .child(
                         ui::text(question.header.clone(), Type::CAPTION, t.dim)
-                            .w(px(96.))
+                            .w(rems(6.))
                             .flex_shrink_0(),
                     )
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .flex()
                             .flex_col()
                             .gap(sp(1.5))

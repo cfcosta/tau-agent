@@ -2,7 +2,7 @@
 //! screen is read-only. The transcript ends on where its work went, and
 //! a note takes the composer's place, with a way to a new chat.
 
-use gpui::{Context, Div, div, prelude::*, px};
+use gpui::{Context, Div, div, prelude::*, rems};
 
 use crate::{
     assets::Icon,
@@ -50,7 +50,7 @@ pub fn landed_card(
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .flex_wrap()
                     .gap(sp(1.))
@@ -116,7 +116,7 @@ pub fn note(
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .text_color(t.muted)
                             .line_height(gpui::relative(1.5))
                             .child(why),

@@ -19,6 +19,7 @@ use gpui::{
     prelude::*,
     px,
     relative,
+    rems,
     svg,
 };
 
@@ -138,7 +139,7 @@ fn track_shade(track: Hsla) -> Hsla {
 pub fn icon(icon: Icon, size: IconSize, color: Hsla) -> Svg {
     svg()
         .path(icon.path())
-        .size(px(size.0))
+        .size(rems((size.0) / 16.))
         .flex_shrink_0()
         .text_color(color)
 }
@@ -199,7 +200,7 @@ pub fn screen_title(
         )
         .child(
             div()
-                .max_w(px(760.))
+                .max_w(rems(47.5))
                 .text_color(t.muted)
                 .leading(1.5)
                 .child(subtitle.into()),
@@ -366,7 +367,7 @@ pub fn icon_button(
 ) -> Stateful<Div> {
     div()
         .id(id)
-        .size(px(size))
+        .size(rems((size) / 16.))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -382,16 +383,16 @@ pub fn icon_button(
 /// tau's mark: τ on the accent.
 pub fn logo(t: &Theme, size: f32) -> Div {
     div()
-        .size(px(size))
+        .size(rems((size) / 16.))
         .flex_shrink_0()
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(size / 4.))
+        .rounded(rems((size / 4.) / 16.))
         .accent_key(t)
         .text_color(t.bg)
         .font_family(MONO)
-        .text_size(px(size * 0.6))
+        .text_size(rems((size * 0.6) / 16.))
         .font_weight(weight::EMPHASIS)
         .child("τ")
 }
@@ -400,8 +401,8 @@ pub fn logo(t: &Theme, size: f32) -> Div {
 pub fn count_pill(count: usize, t: &Theme) -> Div {
     mono(count.to_string(), Type::MICRO, t.bg)
         .flex_shrink_0()
-        .min_w(px(18.))
-        .h(px(18.))
+        .min_w(rems(1.125))
+        .h(rems(1.125))
         .px(sp(1.5))
         .flex()
         .items_center()
@@ -413,7 +414,7 @@ pub fn count_pill(count: usize, t: &Theme) -> Div {
 
 pub fn dot(color: Hsla, size: f32) -> Div {
     div()
-        .size(px(size))
+        .size(rems((size) / 16.))
         .flex_shrink_0()
         .rounded(radius::FULL)
         .bg(color)
@@ -507,14 +508,14 @@ pub fn bubble(t: &Theme) -> Div {
 pub fn bar(share: f32, height: f32, fill: Hsla, track: Hsla) -> Div {
     div()
         .relative()
-        .h(px(height))
+        .h(rems((height) / 16.))
         .w_full()
         .rounded(radius::FULL)
         .bg(track)
         .shadow(vec![shade(0., 1., 2., track_shade(track)).inset()])
         .child(
             div()
-                .h(px(height))
+                .h(rems((height) / 16.))
                 .w(relative(share.clamp(0.0, 1.0)))
                 .rounded(radius::FULL)
                 .bg(fill)
@@ -554,7 +555,7 @@ pub fn panel(steps: f32, t: &Theme) -> Div {
 /// or what went wrong.
 pub fn tile(glyph: Icon, color: Hsla, bg: Hsla, border: Hsla) -> Div {
     div()
-        .size(px(56.))
+        .size(rems(3.5))
         .flex()
         .items_center()
         .justify_center()
@@ -596,10 +597,10 @@ pub fn key_values(
                 .gap(sp(3.))
                 .child(
                     mono(key, Type::CAPTION, t.muted)
-                        .w(px(128.))
+                        .w(rems(8.))
                         .flex_shrink_0(),
                 )
-                .child(div().flex_1().min_w(px(0.)).child(value))
+                .child(div().flex_1().min_w(rems(0.)).child(value))
         }))
 }
 
@@ -625,7 +626,7 @@ pub fn notice(
         .typeset(style)
         .text_color(if danger { t.red } else { t.text_soft })
         .child(icon(glyph, IconSize::LARGE, tone))
-        .child(div().flex_1().min_w(px(0.)).child(text.into()))
+        .child(div().flex_1().min_w(rems(0.)).child(text.into()))
 }
 
 /// A modal dialog over a dimmed backdrop: a title, a message and what
@@ -671,7 +672,7 @@ pub fn modal(
             // A set width, not a share of the backdrop, so wrapped text
             // is measured at the width it is drawn at.
             div()
-                .w(px(440.))
+                .w(rems(27.5))
                 .max_w_full()
                 .flex()
                 .flex_col()
@@ -693,7 +694,7 @@ pub fn modal(
                             // instead of running out of it.
                             div()
                                 .flex_1()
-                                .min_w(px(0.))
+                                .min_w(rems(0.))
                                 .typeset(Type::SUBTITLE)
                                 .font_weight(weight::STRONG)
                                 .child(title.into()),
@@ -739,8 +740,8 @@ pub fn field(input: &Entity<TextInput>, mono: bool, t: &Theme) -> Div {
 /// An on/off switch; callers add the id and the click.
 pub fn switch(on: bool, t: &Theme) -> Div {
     div()
-        .w(px(36.))
-        .h(px(20.))
+        .w(rems(2.25))
+        .h(rems(1.25))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -749,14 +750,14 @@ pub fn switch(on: bool, t: &Theme) -> Div {
         .when(on, |track| track.accent_key(t).justify_end())
         .when(!on, |track| track.well(t))
         .cursor_pointer()
-        .child(div().size(px(16.)).rounded(radius::FULL).key(t))
+        .child(div().size(rems(1.)).rounded(radius::FULL).key(t))
 }
 
 /// A checkbox: 18 px, or 20 px for a phone's touch rows.
 pub fn checkbox(checked: bool, large: bool, t: &Theme) -> Div {
     let size = if large { 20. } else { 18. };
     let checkbox = div()
-        .size(px(size))
+        .size(rems((size) / 16.))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -788,7 +789,7 @@ pub fn screen(
     div()
         .id(id)
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .overflow_y_scroll()
         .child(
             div()
@@ -806,7 +807,7 @@ pub fn phone_body(id: &'static str) -> Stateful<Div> {
     div()
         .id(id)
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .overflow_y_scroll()
         .flex()
         .flex_col()
@@ -836,7 +837,7 @@ pub fn strictness(
     let height = if handles { 6. } else { 5. };
     let zone = |share: f64, color: Hsla| {
         div()
-            .h(px(height))
+            .h(rems((height) / 16.))
             .w(relative(share.clamp(0.0, 1.0) as f32))
             .bg(color)
     };
@@ -844,9 +845,9 @@ pub fn strictness(
         div()
             .absolute()
             .left(relative(at as f32))
-            .top(px(-6.))
-            .ml(px(-9.))
-            .size(px(18.))
+            .top(rems(-0.375))
+            .ml(rems(-0.5625))
+            .size(rems(1.125))
             .rounded(radius::FULL)
             .bg(t.text)
             .border_3()
@@ -854,10 +855,10 @@ pub fn strictness(
     };
     div()
         .relative()
-        .h(px(height))
+        .h(rems((height) / 16.))
         .flex_shrink_0()
         .map(|line| match width {
-            Some(width) => line.w(px(width)),
+            Some(width) => line.w(rems((width) / 16.)),
             None => line.w_full(),
         })
         .child(
@@ -868,7 +869,12 @@ pub fn strictness(
                 .overflow_hidden()
                 .child(zone(review, t.border_strong))
                 .child(zone(block - review, t.accent.opacity(0.55)))
-                .child(div().flex_1().h(px(height)).bg(t.red.opacity(0.6))),
+                .child(
+                    div()
+                        .flex_1()
+                        .h(rems((height) / 16.))
+                        .bg(t.red.opacity(0.6)),
+                ),
         )
         .when_some(score, |line, score| {
             let color = if score >= block {
@@ -882,10 +888,10 @@ pub fn strictness(
                 div()
                     .absolute()
                     .left(relative(score.clamp(0.0, 1.0) as f32))
-                    .top(px(-4.))
-                    .ml(px(-1.))
-                    .w(px(2.))
-                    .h(px(height + 8.))
+                    .top(rems(-0.25))
+                    .ml(rems(-0.0625))
+                    .w(rems(0.125))
+                    .h(rems((height + 8.) / 16.))
                     .rounded(radius::HAIRLINE)
                     .bg(color),
             )
@@ -914,7 +920,7 @@ pub fn table(
                 row.bg(t.card).text_color(t.muted).typeset(Type::CAPTION)
             })
             .children(cells.into_iter().enumerate().map(|(n, content)| {
-                let cell = div().flex_1().min_w(px(0.)).px(sp(3.)).py(sp(2.));
+                let cell = div().flex_1().min_w(rems(0.)).px(sp(3.)).py(sp(2.));
                 let cell = match align.get(n) {
                     Some(Align::Right) => cell.text_right(),
                     Some(Align::Center) => cell.text_center(),
@@ -1009,7 +1015,7 @@ pub fn list_item(marker: String, children: Vec<AnyElement>, t: &Theme) -> Div {
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(1.5))
@@ -1033,7 +1039,7 @@ pub fn md_heading(level: u8, content: AnyElement, t: &Theme) -> Div {
 
 /// A thematic break in a reply.
 pub fn rule(t: &Theme) -> Div {
-    div().w_full().h(px(1.)).my(sp(1.)).bg(t.border)
+    div().w_full().h(rems(0.0625)).my(sp(1.)).bg(t.border)
 }
 
 /// `text` as a QR code, `size` px square: black modules on a white
@@ -1053,14 +1059,16 @@ pub fn qr_code(text: &str, size: f32) -> Option<Div> {
         |_, _, _| (),
         move |bounds, _, window, _| {
             let black = gpui::rgb(0x000000);
+            // A module's side as drawn, at whatever the zoom is.
+            let module = bounds.size.width / width as f32;
             for (n, _) in dark.iter().enumerate().filter(|(_, dark)| **dark) {
                 let (x, y) = ((n % width) as f32, (n / width) as f32);
                 let origin = gpui::point(
-                    bounds.left() + px(x * module),
-                    bounds.top() + px(y * module),
+                    bounds.left() + module * x,
+                    bounds.top() + module * y,
                 );
                 // A hair wider, so neighbours meet without seams.
-                let side = gpui::size(px(module + 0.3), px(module + 0.3));
+                let side = gpui::size(module + px(0.3), module + px(0.3));
                 window.paint_quad(gpui::fill(
                     gpui::Bounds::new(origin, side),
                     black,
@@ -1068,10 +1076,10 @@ pub fn qr_code(text: &str, size: f32) -> Option<Div> {
             }
         },
     )
-    .size(px(module * width as f32));
+    .size(rems((module * width as f32) / 16.));
     Some(
         div()
-            .size(px(size))
+            .size(rems((size) / 16.))
             .flex()
             .items_center()
             .justify_center()
@@ -1090,7 +1098,7 @@ pub fn repo_mark(name: &str, size: f32, t: &Theme) -> Div {
         .map_or("?".into(), |c| c.to_lowercase().to_string());
     let mark = t.mark(name);
     div()
-        .size(px(size))
+        .size(rems((size) / 16.))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -1177,7 +1185,7 @@ pub fn note(
         .when(!compact, |row| {
             row.child(
                 div()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .child(crate::prose::rich(&head.text, t.muted, t)),
             )
         })

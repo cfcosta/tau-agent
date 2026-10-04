@@ -270,7 +270,7 @@ pub fn rich_width(
                 .shape_line(plain.into(), size, &runs, None)
                 .width
         })
-        .fold(px(0.), gpui::Pixels::max)
+        .fold(gpui::Pixels::ZERO, gpui::Pixels::max)
         .ceil()
 }
 

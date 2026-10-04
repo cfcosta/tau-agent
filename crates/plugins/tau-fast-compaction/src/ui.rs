@@ -5,7 +5,7 @@
 
 use std::{collections::BTreeMap, os::unix::fs::DirBuilderExt as _, sync::Arc};
 
-use gpui::{AnyElement, Div, SharedString, div, prelude::*, px, relative};
+use gpui::{AnyElement, Div, SharedString, div, prelude::*, relative, rems};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
@@ -593,7 +593,7 @@ fn meters(run: &RunInfo, pass: &Pass, trigger: Option<f32>, t: &Theme) -> Div {
             .gap(sp(3.))
             .child(
                 div()
-                    .w(px(56.))
+                    .w(rems(3.5))
                     .typeset(Type::CAPTION)
                     .text_color(t.muted)
                     .child(label),
@@ -611,16 +611,16 @@ fn meters(run: &RunInfo, pass: &Pass, trigger: Option<f32>, t: &Theme) -> Div {
                     .children(trigger.map(|trigger| {
                         div()
                             .absolute()
-                            .top(px(-4.))
+                            .top(rems(-0.25))
                             .left(relative(trigger))
-                            .w(px(2.))
-                            .h(px(22.))
+                            .w(rems(0.125))
+                            .h(rems(1.375))
                             .bg(t.accent)
                     })),
             )
             .child(
                 mono(tokens(used), Type::CAPTION, t.text)
-                    .w(px(48.))
+                    .w(rems(3.))
                     .flex()
                     .justify_end(),
             )
@@ -676,7 +676,7 @@ fn summary(state: &State, t: &Theme, compact: bool) -> Div {
     .border_1()
     .border_color(t.border)
     .rounded(radius::BOX)
-    .when(!compact, |card| card.w(px(300.)).flex_shrink_0())
+    .when(!compact, |card| card.w(rems(18.75)).flex_shrink_0())
 }
 
 /// The ledger: each call, with what the pass made of it.
@@ -698,7 +698,7 @@ fn table(state: &State, t: &Theme, compact: bool) -> Div {
             .text_color(ink)
             .child(
                 div()
-                    .size(px(8.))
+                    .size(rems(0.5))
                     .rounded(radius::HAIRLINE)
                     .bg(fill)
                     .border_1()
@@ -715,11 +715,11 @@ fn table(state: &State, t: &Theme, compact: bool) -> Div {
             },
         )
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .truncate();
         let right = |text: String, width: f32, color| {
             mono(text, Type::CAPTION, color)
-                .w(px(width))
+                .w(rems((width) / 16.))
                 .flex()
                 .justify_end()
         };
@@ -735,12 +735,12 @@ fn table(state: &State, t: &Theme, compact: bool) -> Div {
             .when(!compact, |row| {
                 row.child(
                     mono(format!("t{}", entry.turn), Type::CAPTION, t.dim)
-                        .w(px(40.)),
+                        .w(rems(2.5)),
                 )
             })
             .child(
                 mono(entry.tool.clone(), Type::CAPTION, t.blue)
-                    .w(px(if compact { 44. } else { 88. })),
+                    .w(rems((if compact { 44. } else { 88. }) / 16.)),
             )
             .child(input)
             .when(!compact, |row| {
@@ -750,13 +750,13 @@ fn table(state: &State, t: &Theme, compact: bool) -> Div {
             })
             .child(
                 div()
-                    .w(px(if compact { 96. } else { 120. }))
+                    .w(rems((if compact { 96. } else { 120. }) / 16.))
                     .child(decision),
             )
     });
     let head = |label: &str, width: f32, right: bool| {
         div()
-            .w(px(width))
+            .w(rems((width) / 16.))
             .when(right, |cell| cell.flex().justify_end())
             .child(heading(label, t))
     };

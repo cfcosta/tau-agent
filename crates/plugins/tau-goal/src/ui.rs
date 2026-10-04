@@ -19,7 +19,7 @@ use gpui::{
     SharedString,
     div,
     prelude::*,
-    px,
+    rems,
 };
 use serde::{Deserialize, Serialize};
 use tau_agent::plugin::Plugin;
@@ -481,7 +481,7 @@ fn goal_set(
     div().flex().justify_end().child(
         ui::bubble(t)
             .border_color(t.accent_border)
-            .max_w(px(if compact { 300. } else { 620. }))
+            .max_w(rems((if compact { 300. } else { 620. }) / 16.))
             .flex()
             .flex_col()
             .gap(sp(2.))
@@ -585,7 +585,7 @@ fn banner(at: &AtRun, view: &mut ViewCx<'_, GoalUi>) -> Option<AnyElement> {
                 .flex()
                 .items_center()
                 .gap(sp(2.5))
-                .min_h(px(48.))
+                .min_h(rems(3.))
                 .px(sp(3.5))
                 .py(sp(1.5))
                 .bg(t.accent_soft)
@@ -596,7 +596,7 @@ fn banner(at: &AtRun, view: &mut ViewCx<'_, GoalUi>) -> Option<AnyElement> {
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .flex()
                         .flex_col()
                         .gap(sp(0.5))
@@ -664,7 +664,7 @@ fn banner(at: &AtRun, view: &mut ViewCx<'_, GoalUi>) -> Option<AnyElement> {
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .flex_col()
                     .gap(sp(0.75))
@@ -677,7 +677,7 @@ fn banner(at: &AtRun, view: &mut ViewCx<'_, GoalUi>) -> Option<AnyElement> {
                             .child(
                                 div()
                                     .flex_1()
-                                    .min_w(px(0.))
+                                    .min_w(rems(0.))
                                     .truncate()
                                     .text_color(t.text)
                                     .child(goal.condition.clone()),
@@ -742,7 +742,10 @@ fn section(goal: &Goal, live: bool, t: &Theme) -> Div {
             .py(sp(2.25))
             .border_b_1()
             .border_color(t.border)
-            .child(mono(format!("#{}", check.n), Type::MICRO, t.dim).w(px(22.)))
+            .child(
+                mono(format!("#{}", check.n), Type::MICRO, t.dim)
+                    .w(rems(1.375)),
+            )
             .child(
                 div()
                     .flex_1()
@@ -976,8 +979,8 @@ fn popover(view: &mut ViewCx<'_, GoalUi>) -> AnyElement {
                 .child(label)
                 .child(
                     div()
-                        .w(px(64.))
-                        .h(px(28.))
+                        .w(rems(4.))
+                        .h(rems(1.75))
                         .flex()
                         .items_center()
                         .px(sp(2.))

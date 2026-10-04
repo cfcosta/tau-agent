@@ -1,7 +1,7 @@
 //! What tau closing left: a run it cut off, which waits to be resumed,
 //! and a landing it finished at its next start.
 
-use gpui::{Context, Div, div, prelude::*, px};
+use gpui::{Context, Div, div, prelude::*, rems};
 
 use crate::{
     assets::Icon,
@@ -45,7 +45,7 @@ pub fn card(
                     .flex()
                     .items_center()
                     .gap(sp(2.))
-                    .min_h(px(40.))
+                    .min_h(rems(2.5))
                     .px(sp(3.))
                     .child(ui::icon(
                         Icon::Pause,
@@ -55,7 +55,7 @@ pub fn card(
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .truncate()
                             .font_weight(weight::STRONG)
                             .child("Interrupted when tau closed"),
@@ -78,7 +78,7 @@ pub fn card(
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .text_color(t.text_soft)
                             .line_height(gpui::relative(1.5))
                             .child(what),
@@ -118,7 +118,7 @@ pub fn finished_landing(title: &str, t: &Theme) -> Div {
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_wrap()
                 .gap(sp(1.))

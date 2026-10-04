@@ -18,7 +18,7 @@ use gpui::{
     Window,
     div,
     prelude::*,
-    px,
+    rems,
 };
 use serde_json::Value;
 use tau_ui_kit::{
@@ -384,7 +384,7 @@ pub fn render(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
     let at = repo.as_deref();
     let content = div()
         .w_full()
-        .max_w(px(COLUMN))
+        .max_w(rems((COLUMN) / 16.))
         .mx_auto()
         .flex()
         .flex_col()
@@ -425,7 +425,7 @@ pub fn render(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
     div()
         .relative()
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .flex()
         .flex_col()
         .child(ui::screen("mcp-servers", compact, content))
@@ -510,7 +510,7 @@ fn intro(
         .child(
             div()
                 .flex_1()
-                .min_w(px(if compact { 0. } else { 300. }))
+                .min_w(rems((if compact { 0. } else { 300. }) / 16.))
                 .flex()
                 .flex_col()
                 .gap(sp(1.))
@@ -582,7 +582,7 @@ fn pending(
                 .child(
                     mono(row.transport.clone(), Type::CAPTION, t.dim)
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate(),
                 )
                 .child(
@@ -813,7 +813,7 @@ fn server_section(
     compact: bool,
     t: &Theme,
 ) -> Div {
-    let below = || div().pl(px(INDENT));
+    let below = || div().pl(rems((INDENT) / 16.));
     div()
         .flex()
         .flex_col()
@@ -839,7 +839,7 @@ fn server_section(
                 .child(
                     mono(server.transport.clone(), Type::CAPTION, t.dim)
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate(),
                 )
                 .when(!compact, |line| {
@@ -1286,7 +1286,7 @@ fn editor_modal(
         })
         .child(
             div()
-                .min_h(px(160.))
+                .min_h(rems(10.))
                 .px(sp(3.))
                 .py(sp(2.5))
                 .rounded(radius::BOX)

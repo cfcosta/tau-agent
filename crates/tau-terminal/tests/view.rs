@@ -12,6 +12,7 @@ use gpui::{
     VisualTestContext,
     point,
     px,
+    rems,
 };
 use hegel::{TestCase, generators as gs};
 use tau_terminal::{
@@ -25,12 +26,12 @@ use tau_terminal::{
     view::{self, Copy},
 };
 
-/// The test platform's font is 0.6 em wide per cell: at 10 px, cells
+/// The test platform's font is 0.6 em wide per cell: at 10 px (0.625 rem at the default rem size), cells
 /// are 6 px wide and 15 px tall.
 fn options(visible: usize) -> ViewOptions {
     ViewOptions {
         size: Size { cols: 20, rows: 6 },
-        font_size: px(10.),
+        font_size: rems(0.625),
         line_height: 1.5,
         visible_rows: Some(visible),
         ..ViewOptions::default()

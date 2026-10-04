@@ -1,7 +1,7 @@
 //! Every stored run, in every repository, filterable, with a query box
 //! for the store.
 
-use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
 
 use crate::{
     assets::Icon,
@@ -68,10 +68,10 @@ pub fn render(
         .flex()
         .items_center()
         .gap(sp(2.))
-        .h(px(36.))
+        .h(rems(2.25))
         .px(sp(2.5))
         .when(compact, |search| search.w_full())
-        .when(!compact, |search| search.w(px(320.)))
+        .when(!compact, |search| search.w(rems(20.)))
         .border_1()
         .border_color(t.border_strong)
         .rounded(radius::CONTROL)
@@ -93,7 +93,7 @@ pub fn render(
                     .flex()
                     .items_center()
                     .gap(sp(3.))
-                    .min_h(px(56.))
+                    .min_h(rems(3.5))
                     .pl(sp(if *nested { 6. } else { 0. }))
                     .border_b_1()
                     .border_color(t.border)
@@ -102,7 +102,7 @@ pub fn render(
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .flex()
                             .flex_col()
                             .gap(sp(0.5))
@@ -188,7 +188,7 @@ pub fn render(
                         .child(
                             div()
                                 .flex_1()
-                                .min_w(px(0.))
+                                .min_w(rems(0.))
                                 .child(ui::field(&ws.query, true, t)),
                         )
                         .child(
@@ -229,7 +229,7 @@ pub fn render(
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(280.))
+                            .min_w(rems(17.5))
                             .child(ui::screen_title("History", summary, t)),
                     )
                     .child(search),
@@ -344,7 +344,7 @@ fn history_row(
         .child(tau_ui_kit::components::repo_mark(&repo, 18., t))
         .child(
             div()
-                .w(px(190.))
+                .w(rems(11.875))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -370,7 +370,7 @@ fn history_row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .typeset(Type::CAPTION)
                 .text_color(t.muted)
@@ -378,7 +378,7 @@ fn history_row(
         )
         .child(
             div()
-                .w(px(110.))
+                .w(rems(6.875))
                 .flex_shrink_0()
                 .typeset(Type::CAPTION)
                 .text_color(color)
@@ -386,13 +386,13 @@ fn history_row(
         )
         .child(
             mono(usd(run.usage.cost), Type::CAPTION, t.roles.cost)
-                .w(px(70.))
+                .w(rems(4.375))
                 .flex_shrink_0()
                 .text_right(),
         )
         .child(
             div()
-                .w(px(60.))
+                .w(rems(3.75))
                 .flex_shrink_0()
                 .text_right()
                 .typeset(Type::CAPTION)
@@ -438,7 +438,7 @@ fn query_result(
             mono(cell.clone(), Type::CAPTION, color)
                 .flex_basis(gpui::relative(1. / columns))
                 .flex_grow(1.)
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
         }))
     };

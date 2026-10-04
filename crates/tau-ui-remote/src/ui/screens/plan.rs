@@ -1,6 +1,6 @@
 //! What each plugin's `start` decided before a run's session opened.
 
-use gpui::{AnyElement, Context, Div, Hsla, div, prelude::*, px, relative};
+use gpui::{AnyElement, Context, Div, Hsla, div, prelude::*, relative, rems};
 use tau_agent::tool::RunId;
 
 use crate::{
@@ -145,20 +145,20 @@ pub fn render(
         .flex()
         .flex_col()
         .gap(sp(3.5))
-        .when(!compact, |side| side.w(px(346.)).flex_shrink_0())
+        .when(!compact, |side| side.w(rems(21.625)).flex_shrink_0())
         .child(heading("RunPlan after start", t))
         .child(plan_table(&ws.run_plan(run, cx), t));
 
     let main = div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .flex_col()
         .gap(sp(4.))
         .children(prompt.map(|prompt| {
             div().flex().justify_end().child(
                 ui::bubble(t)
-                    .max_w(px(640.))
+                    .max_w(rems(40.))
                     .child(rich(&prompt, t.text, t)),
             )
         }))
@@ -188,7 +188,7 @@ fn plan_table(plan: &[crate::view::PlanField], t: &Theme) -> Div {
             .py(sp(2.5))
             .border_b_1()
             .border_color(t.border)
-            .child(mono(field.name.clone(), Type::CAPTION, t.muted).w(px(96.)))
+            .child(mono(field.name.clone(), Type::CAPTION, t.muted).w(rems(6.)))
             .child(
                 div()
                     .flex_1()
@@ -210,16 +210,17 @@ fn step(color: Hsla, content: Div, rail: bool, t: &Theme) -> impl IntoElement {
         .gap(sp(3.))
         .child(
             div()
-                .w(px(14.))
+                .w(rems(0.875))
                 .flex_shrink_0()
                 .flex()
                 .flex_col()
                 .items_center()
                 .child(div().mt(sp(1.)).child(dot(color, 10.)))
                 .when(rail, |column| {
-                    column
-                        .child(div().flex_1().w(px(1.)).my(sp(1.)).bg(t.border))
+                    column.child(
+                        div().flex_1().w(rems(0.0625)).my(sp(1.)).bg(t.border),
+                    )
                 }),
         )
-        .child(div().flex_1().min_w(px(0.)).child(content))
+        .child(div().flex_1().min_w(rems(0.)).child(content))
 }

@@ -1,7 +1,7 @@
 //! What the checks draw on a run: the plugin's line in its list, its
 //! notes, what it decided on each card, and its inspector section.
 
-use gpui::{AnyElement, SharedString, div, prelude::*, px, relative};
+use gpui::{AnyElement, SharedString, div, prelude::*, relative, rems};
 use tau_ui_kit::{
     assets::Icon,
     components::{
@@ -150,14 +150,14 @@ pub fn blocked(
     let tick = |at: f32| {
         div()
             .absolute()
-            .top(px(-3.))
+            .top(rems(-0.1875))
             .left(relative(at))
-            .w(px(2.))
-            .h(px(14.))
+            .w(rems(0.125))
+            .h(rems(0.875))
             .bg(t.text)
     };
     let meter = div()
-        .w(px(if compact { 150. } else { 220. }))
+        .w(rems((if compact { 150. } else { 220. }) / 16.))
         .flex_shrink_0()
         .flex()
         .flex_col()
@@ -181,7 +181,7 @@ pub fn blocked(
             meter.child(
                 div()
                     .relative()
-                    .h(px(14.))
+                    .h(rems(0.875))
                     .child(
                         div()
                             .absolute()

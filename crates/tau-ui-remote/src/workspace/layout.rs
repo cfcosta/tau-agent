@@ -4,8 +4,8 @@
 use super::*;
 
 /// The desktop sidebar's width: wider on a wide window.
-pub(super) fn sidebar_width(wide: bool) -> gpui::Pixels {
-    px(if wide { 264. } else { 232. })
+pub(super) fn sidebar_width(wide: bool) -> gpui::Rems {
+    rems(if wide { 16.5 } else { 14.5 })
 }
 
 impl Workspace {
@@ -15,7 +15,10 @@ impl Workspace {
         if self.phone_preview || self.width < PHONE_MAX {
             self.width
         } else {
-            self.width - sidebar_width(self.width >= NARROW_MAX)
+            let rem = px(16. * self.zoom);
+            self.width
+                - sidebar_width(self.width / self.zoom >= NARROW_MAX)
+                    .to_pixels(rem)
         }
     }
 }
@@ -33,20 +36,24 @@ impl Render for Workspace {
             screens::setup::observe(self, step, window, cx);
         }
         let t = theme(cx).clone();
+        // Every size is in rems: the zoom sets the rem.
+        window.set_rem_size(px(16. * self.zoom));
         let width = match self.frame {
             Some((width, _)) => px(width),
             None => window.viewport_size().width,
         };
-        let phone = self.phone_preview || width < PHONE_MAX;
+        // Zoomed in, the window holds less: the layouts change at the
+        // widths they would for a window that much smaller.
+        let phone = self.phone_preview || width / self.zoom < PHONE_MAX;
         self.width = if self.phone_preview { px(390.) } else { width };
         self.inspector_shown = !phone
-            && width >= NARROW_MAX
+            && width / self.zoom >= NARROW_MAX
             && self.details_open
             && matches!(self.route, Route::Home | Route::Run(_));
         let body = if phone {
             self.phone(&t, cx)
         } else {
-            self.desktop(width >= NARROW_MAX, &t, cx)
+            self.desktop(width / self.zoom >= NARROW_MAX, &t, cx)
         };
         // Drawing found nothing in the composer's place where something
         // was: the composer takes the keys back.
@@ -130,6 +137,11 @@ impl Render for Workspace {
                     cx.propagate();
                 }
             }))
+            .on_action(cx.listener(|ws, _: &ZoomIn, _, cx| ws.zoom_by(1, cx)))
+            .on_action(cx.listener(|ws, _: &ZoomOut, _, cx| ws.zoom_by(-1, cx)))
+            .on_action(
+                cx.listener(|ws, _: &ZoomReset, _, cx| ws.zoom_by(0, cx)),
+            )
             .on_action(cx.listener(|ws, _: &NewRun, window, cx| {
                 ws.start_new_run(window, cx)
             }))
@@ -174,7 +186,7 @@ impl Workspace {
             return div()
                 .id("transcript")
                 .flex_1()
-                .min_h(px(0.))
+                .min_h(rems(0.))
                 .flex()
                 .flex_col()
                 .items_center()
@@ -198,7 +210,7 @@ impl Workspace {
             }),
         )
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .into_any_element()
     }
 
@@ -341,7 +353,7 @@ impl Workspace {
         let Some(run) = self.current().filter(|_| self.route != Route::NewRun)
         else {
             return div()
-                .h(px(48.))
+                .h(rems(3.))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -354,7 +366,7 @@ impl Workspace {
         // A chat that ended is read-only: its title, and a tag saying so.
         if run.ending.is_some() {
             return div()
-                .h(px(48.))
+                .h(rems(3.))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -392,7 +404,7 @@ impl Workspace {
             && !self.is_main(&run.id);
         let id = run.id.clone();
         div()
-            .h(px(48.))
+            .h(rems(3.))
             .flex_shrink_0()
             .flex()
             .items_center()
@@ -406,7 +418,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(sp(1.5))
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .child(div().text_color(t.mark(&repo)).child(repo))
                     .child(div().text_color(t.dim).child("/"))
                     .child(
@@ -457,8 +469,8 @@ impl Workspace {
                         ))
                         .child(
                             div()
-                                .w(px(80.))
-                                .h(px(4.))
+                                .w(rems(5.))
+                                .h(rems(0.25))
                                 .rounded(radius::HAIRLINE)
                                 .bg(t.raised)
                                 .child(
@@ -573,11 +585,11 @@ impl Workspace {
             .flex_1()
             .flex()
             .flex_col()
-            .min_h(px(0.))
+            .min_h(rems(0.))
             .chrome(ui::Edge::Right, t)
             .child(
                 div()
-                    .h(px(48.))
+                    .h(rems(3.))
                     .flex_shrink_0()
                     .flex()
                     .items_center()
@@ -592,7 +604,7 @@ impl Workspace {
                 div()
                     .id("inspector")
                     .flex_1()
-                    .min_h(px(0.))
+                    .min_h(rems(0.))
                     .overflow_y_scroll()
                     .p(sp(4.))
                     .children(
@@ -611,8 +623,8 @@ impl Workspace {
     ) -> gpui::Div {
         div()
             .flex_1()
-            .min_w(px(0.))
-            .min_h(px(0.))
+            .min_w(rems(0.))
+            .min_h(rems(0.))
             .flex()
             .flex_col()
             .when(!compact, |screen| screen.child(self.run_header(t, cx)))
@@ -665,7 +677,7 @@ impl Workspace {
                     // composer it stands in for.
                     (Some(instead), None) if !compact => div()
                         .w_full()
-                        .max_w(px(808.))
+                        .max_w(rems(50.5))
                         .mx_auto()
                         .px(sp(6.))
                         .pb(sp(5.))
@@ -750,7 +762,7 @@ impl Workspace {
             .child(
                 div()
                     .flex_1()
-                    .min_h(px(0.))
+                    .min_h(rems(0.))
                     .flex()
                     .child(
                         chrome::sidebar(self, t, cx)
@@ -760,7 +772,7 @@ impl Workspace {
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .flex()
                             .flex_col()
                             .child(self.screen(false, t, cx)),
@@ -768,7 +780,7 @@ impl Workspace {
                     .when(wide && details, |row| {
                         row.child(
                             div()
-                                .w(px(328.))
+                                .w(rems(20.5))
                                 .flex_shrink_0()
                                 .flex()
                                 .flex_col()
@@ -828,7 +840,7 @@ impl Workspace {
                 .child(
                     div()
                         .flex_1()
-                        .min_h(px(0.))
+                        .min_h(rems(0.))
                         .flex()
                         .flex_col()
                         .child(self.screen(true, t, cx)),
@@ -885,8 +897,8 @@ impl Workspace {
                     .child(
                         div().flex().justify_center().child(
                             div()
-                                .w(px(40.))
-                                .h(px(4.))
+                                .w(rems(2.5))
+                                .h(rems(0.25))
                                 .rounded(radius::HAIRLINE)
                                 .bg(t.border_strong),
                         ),
@@ -896,7 +908,7 @@ impl Workspace {
                         div()
                             .id("sheet-body")
                             .flex_1()
-                            .min_h(px(0.))
+                            .min_h(rems(0.))
                             .overflow_y_scroll()
                             .child(inspector::content(self, run, t, cx)),
                     )

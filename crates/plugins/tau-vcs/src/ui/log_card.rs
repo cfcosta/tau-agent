@@ -2,7 +2,7 @@
 //! copy and the stack over trunk, each in runs of one commit scope. A
 //! change picked in it shows its whole description and ids.
 
-use gpui::{Div, Hsla, SharedString, Stateful, div, prelude::*, px};
+use gpui::{Div, Hsla, SharedString, Stateful, div, prelude::*, rems};
 use tau_ui_kit::{
     assets::Icon,
     components::{dot, heading, icon, mono},
@@ -20,8 +20,8 @@ use super::{
 pub fn bars(log: &ChangeLog, t: &Theme) -> Div {
     let bar = |height: f32, color| {
         div()
-            .w(px(5.))
-            .h(px(height))
+            .w(rems(0.3125))
+            .h(rems((height) / 16.))
             .rounded(radius::HAIRLINE)
             .bg(color)
     };
@@ -34,12 +34,16 @@ pub fn bars(log: &ChangeLog, t: &Theme) -> Div {
         .flex_shrink_0()
         .items_end()
         .gap(sp(0.5))
-        .h(px(14.))
+        .h(rems(0.875))
         .children(log.working_copy.as_ref().map(|_| bar(14., t.accent)))
         .children(stack)
         .when(log.trunk_len() > 0, |bars| {
             bars.child(
-                div().w(px(1.)).h_full().mx(sp(0.75)).bg(t.border_strong),
+                div()
+                    .w(rems(0.0625))
+                    .h_full()
+                    .mx(sp(0.75))
+                    .bg(t.border_strong),
             )
             .children((0..log.trunk_len()).map(|_| bar(6., t.bar_idle)))
         })
@@ -100,7 +104,7 @@ fn section(label: &str, t: &Theme) -> Div {
         .flex()
         .items_center()
         .gap(sp(2.))
-        .h(px(28.))
+        .h(rems(1.75))
         .px(sp(3.))
         .child(heading(label, t))
 }
@@ -155,7 +159,7 @@ fn working_copy_row(
     } else {
         "no description yet"
     });
-    row.h(px(34.))
+    row.h(rems(2.125))
         .px(sp(3.))
         .border_t_1()
         .border_b_1()
@@ -171,7 +175,7 @@ fn working_copy_row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .typeset(Type::SMALL)
                 .text_color(if described { t.text_soft } else { t.dim })
@@ -198,7 +202,7 @@ fn scope_runs(
                 .flex()
                 .items_center()
                 .gap(sp(2.))
-                .h(px(26.))
+                .h(rems(1.625))
                 .px(sp(3.))
                 .typeset(Type::CAPTION)
                 .child(dot(color, 8.))
@@ -246,12 +250,12 @@ fn change_row(
     compact: bool,
 ) -> Stateful<Div> {
     let (kind_color, kind_bg) = kind_colors(change.kind.as_deref(), t);
-    row.h(px(26.))
+    row.h(rems(1.625))
         .pl(sp(3.75))
         .pr(sp(3.))
         .child(
             div()
-                .w(px(2.))
+                .w(rems(0.125))
                 .h_full()
                 .mr(sp(2.75))
                 .flex_shrink_0()
@@ -264,7 +268,7 @@ fn change_row(
                     Type::MICRO,
                     kind_color,
                 )
-                .w(px(40.))
+                .w(rems(2.5))
                 .flex_shrink_0()
                 .flex()
                 .justify_center()
@@ -275,7 +279,7 @@ fn change_row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .typeset(Type::SMALL)
                 .text_color(t.text_soft)
@@ -333,7 +337,11 @@ fn detail(change: &Change, t: &Theme) -> Div {
         div()
             .flex()
             .gap(sp(2.))
-            .child(mono(name, Type::CAPTION, t.dim).w(px(52.)).flex_shrink_0())
+            .child(
+                mono(name, Type::CAPTION, t.dim)
+                    .w(rems(3.25))
+                    .flex_shrink_0(),
+            )
             .child(mono(value, Type::CAPTION, color))
     };
     let description = info.description.trim();
@@ -385,12 +393,12 @@ pub fn stack_rows(changes: &[Change], t: &Theme, compact: bool) -> Vec<Div> {
                 .flex()
                 .items_center()
                 .gap(sp(2.5))
-                .h(px(26.))
+                .h(rems(1.625))
                 .pl(sp(3.75))
                 .pr(sp(3.))
                 .child(
                     div()
-                        .w(px(2.))
+                        .w(rems(0.125))
                         .h_full()
                         .mr(sp(2.75))
                         .flex_shrink_0()
@@ -403,7 +411,7 @@ pub fn stack_rows(changes: &[Change], t: &Theme, compact: bool) -> Vec<Div> {
                             Type::MICRO,
                             kind_color,
                         )
-                        .w(px(40.))
+                        .w(rems(2.5))
                         .flex_shrink_0()
                         .flex()
                         .justify_center()
@@ -414,7 +422,7 @@ pub fn stack_rows(changes: &[Change], t: &Theme, compact: bool) -> Vec<Div> {
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate()
                         .typeset(Type::SMALL)
                         .text_color(t.text_soft)

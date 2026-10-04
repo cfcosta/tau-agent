@@ -11,7 +11,7 @@ use gpui::{
     Window,
     div,
     prelude::*,
-    px,
+    rems,
 };
 
 use crate::{
@@ -343,9 +343,9 @@ impl Workspace {
         } else {
             div()
                 .absolute()
-                .bottom(px(64.))
+                .bottom(rems(4.))
                 .left(sp(6.))
-                .w(px(640.))
+                .w(rems(40.))
                 .max_w_full()
                 .child(popover)
                 .into_any_element()
@@ -367,7 +367,7 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .gap(sp(2.5))
-                .h(px(if compact { 48. } else { 38. }))
+                .h(rems((if compact { 48. } else { 38. }) / 16.))
                 .px(sp(2.5))
                 .rounded(radius::CONTROL)
                 .cursor_pointer()
@@ -375,7 +375,7 @@ impl Workspace {
                 .hover(|style| style.bg(t.selected))
                 .child(
                     div()
-                        .size(px(if compact { 30. } else { 24. }))
+                        .size(rems((if compact { 30. } else { 24. }) / 16.))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -389,20 +389,20 @@ impl Workspace {
                 )
                 .child(
                     ui::mono(command.name.clone(), Type::SMALL, t.text)
-                        .min_w(px(64.))
+                        .min_w(rems(4.))
                         .flex_shrink_0(),
                 )
                 .when(!compact, |row| {
                     row.child(
                         ui::mono(command.args.clone(), Type::CAPTION, t.dim)
-                            .w(px(100.))
+                            .w(rems(6.25))
                             .flex_shrink_0(),
                     )
                 })
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate()
                         .text_color(if selected {
                             t.text_soft

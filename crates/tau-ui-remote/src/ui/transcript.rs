@@ -12,6 +12,7 @@ use gpui::{
     prelude::*,
     px,
     relative,
+    rems,
 };
 
 use super::{Material as _, icon, link, mono, rich, stop_look};
@@ -87,9 +88,10 @@ pub fn item(
     };
     // What an item can take: the transcript less its sides, at most
     // the column's width.
-    let room = ws
-        .transcript_width()
-        .map(|width| (width - side * 2.).min(COLUMN));
+    let rem = window.rem_size();
+    let room = ws.transcript_width().map(|width| {
+        (width - side.to_pixels(rem) * 2.).min(COLUMN.to_pixels(rem))
+    });
     column(
         div()
             .w_full()
@@ -106,11 +108,11 @@ pub fn item(
 
 /// How wide the transcript's column is on a desktop: a reading measure,
 /// centered in whatever room the window gives.
-const COLUMN: Pixels = px(760.);
+const COLUMN: gpui::Rems = rems(47.5);
 
 /// `content` in the transcript's column: centered and at most
 /// [`COLUMN`] wide on a desktop, edge to edge on a phone.
-fn column(content: Div, side: Pixels, compact: bool) -> Div {
+fn column(content: Div, side: gpui::Rems, compact: bool) -> Div {
     div()
         .w_full()
         .px(side)
@@ -301,10 +303,11 @@ fn user(
 ) -> Div {
     // Attached files show as their names, not their content.
     let (said, files) = split_attachments(text);
-    let widest = px(if compact { 300. } else { 620. });
+    let rem = window.rem_size();
+    let widest = rems(if compact { 18.75 } else { 38.75 }).to_pixels(rem);
     let widest = room.map_or(widest, |room| widest.min(room));
     // The bubble's padding and border, on both sides.
-    let frame = sp(3.5) * 2. + px(2.);
+    let frame = sp(3.5).to_pixels(rem) * 2. + px(2.);
     // A set width, as wide as the text or the widest the bubble gets, so
     // the text is measured at the width it is drawn at.
     let width = super::rich_width(said, t, window).min(widest - frame);
@@ -372,9 +375,9 @@ fn turn_end(
                 .group(group.clone())
                 .absolute()
                 .right_0()
-                .top(px(-10.))
-                .h(px(20.))
-                .w(px(240.))
+                .top(rems(-0.625))
+                .h(rems(1.25))
+                .w(rems(15.))
                 .flex()
                 .items_center()
                 .justify_end()
@@ -495,7 +498,7 @@ fn tool(
         Some(head) => head,
         None => mono(card.summary.clone(), Type::CAPTION, t.text_soft)
             .flex_1()
-            .min_w(px(0.))
+            .min_w(rems(0.))
             .truncate()
             .when(card.dropped == Some(Dropped::Call), |s| {
                 s.line_through().text_color(t.muted)
@@ -524,12 +527,12 @@ fn tool(
         .flex()
         .items_center()
         .gap(sp(2.))
-        .min_h(px(if compact { 40. } else { 30. }))
+        .min_h(rems((if compact { 40. } else { 30. }) / 16.))
         .child(status)
         .child(
             mono(card.tool.clone(), Type::CAPTION, t.roles.tool(&card.tool))
                 .flex_shrink_0()
-                .min_w(px(44.)),
+                .min_w(rems(2.75)),
         )
         .when_some(
             card.from_plugin.clone().filter(|_| !compact),
@@ -587,7 +590,7 @@ fn tool(
                     .flex()
                     .items_center()
                     .gap(sp(2.))
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .px(sp(3.))
                     .py(sp(1.5))
                     .border_t_1()
@@ -608,7 +611,7 @@ fn tool(
                                     card.call_id
                                 )))
                                 .flex_1()
-                                .min_w(px(0.))
+                                .min_w(rems(0.))
                                 .cursor_pointer()
                                 .hover(|style| style.underline())
                                 .child(
@@ -672,7 +675,7 @@ fn landed(
                 .flex()
                 .items_center()
                 .gap(sp(2.))
-                .min_h(px(36.))
+                .min_h(rems(2.25))
                 .px(sp(3.))
                 .cursor_pointer()
                 .on_click(cx.listener(move |ws, _, _, cx| {
@@ -683,7 +686,7 @@ fn landed(
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate()
                         .typeset(Type::SMALL)
                         .text_color(t.text_soft)
@@ -747,14 +750,14 @@ fn fork_ready(
                 .flex()
                 .items_center()
                 .gap(sp(2.))
-                .min_h(px(36.))
+                .min_h(rems(2.25))
                 .px(sp(3.))
                 .child(icon(Icon::Fork, IconSize::COMPACT, t.change))
                 .child(mono("fork", Type::CAPTION, t.blue).flex_shrink_0())
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .truncate()
                         .typeset(Type::SMALL)
                         .text_color(t.text_soft)
@@ -817,7 +820,7 @@ fn fork_ready(
 fn label(text: String, color: gpui::Hsla) -> Div {
     div()
         .flex_shrink_0()
-        .max_w(px(260.))
+        .max_w(rems(16.25))
         .truncate()
         .typeset(Type::CAPTION)
         .text_color(color)
@@ -890,7 +893,7 @@ fn blocked_body(
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .flex()
                         .flex_col()
                         .gap(sp(1.))
@@ -969,7 +972,7 @@ fn plugin_note(
                 .child(note.plugin.clone()),
         )
         .when(!compact, |row| {
-            row.child(div().min_w(px(0.)).child(rich(&note.text, t.muted, t)))
+            row.child(div().min_w(rems(0.)).child(rich(&note.text, t.muted, t)))
         })
         .child(div().flex_1())
         .when_some(note.detail.clone().filter(|_| !compact), |row, detail| {
@@ -1024,7 +1027,7 @@ fn rewrite(
     t: &Theme,
     compact: bool,
 ) -> Div {
-    let line = || div().flex_1().h(px(1.)).bg(t.blue_border);
+    let line = || div().flex_1().h(rems(0.0625)).bg(t.blue_border);
     let what = match tokens_seen {
         Some((before, after)) => format!(
             "rewrote the context: {} to {}",

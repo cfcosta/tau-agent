@@ -3,7 +3,7 @@
 //! are cards at the end of the main chat's transcript; a queued chat's
 //! own landing card says where it waits.
 
-use gpui::{Context, Div, SharedString, div, prelude::*, px};
+use gpui::{Context, Div, SharedString, div, prelude::*, rems};
 
 use crate::{
     assets::Icon,
@@ -58,13 +58,13 @@ fn header(icon: Icon, color: gpui::Hsla, title: String, note: Div) -> Div {
         .flex()
         .items_center()
         .gap(sp(2.))
-        .min_h(px(40.))
+        .min_h(rems(2.5))
         .px(sp(3.))
         .child(ui::icon(icon, IconSize::COMPACT, color))
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate()
                 .font_weight(weight::STRONG)
                 .child(title),
@@ -131,7 +131,7 @@ fn queue_card(
             .px(sp(3.))
             .py(sp(2.))
             .when(at > 0, |row| row.border_t_1().border_color(t.border_soft))
-            .child(div().w(px(14.)).child(ui::mono(
+            .child(div().w(rems(0.875)).child(ui::mono(
                 format!("{}", at + 1),
                 Type::MICRO,
                 t.dim,
@@ -140,10 +140,10 @@ fn queue_card(
                 div()
                     .id(SharedString::from(format!("queued-{}", waiting.run)))
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .cursor_pointer()
-                    .child(div().min_w(px(0.)).truncate().child(title))
+                    .child(div().min_w(rems(0.)).truncate().child(title))
                     .child(
                         div()
                             .flex_shrink_0()
@@ -368,7 +368,7 @@ pub fn queued(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .items_center()
                 .gap(sp(2.))

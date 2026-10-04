@@ -17,10 +17,12 @@ use gpui::{
     Global,
     Hsla,
     Pixels,
+    Rems,
     Rgba,
     Styled,
     px,
     relative,
+    rems,
     rgb,
     rgba,
 };
@@ -775,9 +777,10 @@ pub fn theme(cx: &App) -> &Theme {
 /// these.
 pub const UNIT: f32 = 4.;
 
-/// `steps` steps of spacing: `sp(2.)` is 8 px at the default unit.
-pub fn sp(steps: f32) -> Pixels {
-    px(UNIT * steps)
+/// `steps` steps of spacing: `sp(2.)` is half a rem, 8 px at the
+/// default rem size. Spacing is in rems, so it grows with the zoom.
+pub const fn sp(steps: f32) -> Rems {
+    rems(UNIT * steps / 16.)
 }
 
 /// A text style: size, and optionally weight, line height and the mono
@@ -895,33 +898,33 @@ pub mod weight {
 
 /// Corner radii.
 pub mod radius {
-    use gpui::{Pixels, px};
+    use gpui::{Rems, rems};
 
     /// Thin bars and meters.
-    pub const HAIRLINE: Pixels = px(2.);
+    pub const HAIRLINE: Rems = rems(0.125);
     /// The tops of chart bars.
-    pub const BAR: Pixels = px(3.);
+    pub const BAR: Rems = rems(0.1875);
     /// Checkboxes, small chips.
-    pub const SMALL: Pixels = px(4.);
+    pub const SMALL: Rems = rems(0.25);
     /// Icon badges and step buttons.
-    pub const TAG: Pixels = px(5.);
+    pub const TAG: Rems = rems(0.3125);
     /// Buttons, inline chips, list rows.
-    pub const CONTROL: Pixels = px(6.);
+    pub const CONTROL: Rems = rems(0.375);
     /// Fields, cards, boxes.
-    pub const BOX: Pixels = px(8.);
+    pub const BOX: Rems = rems(0.5);
     /// Transcript bubbles and grouped rows.
-    pub const LARGE: Pixels = px(10.);
+    pub const LARGE: Rems = rems(0.625);
     /// Panels on task screens.
-    pub const CARD: Pixels = px(12.);
+    pub const CARD: Rems = rems(0.75);
     /// The phone's run cards.
-    pub const TILE: Pixels = px(14.);
-    pub const BUBBLE: Pixels = px(16.);
+    pub const TILE: Rems = rems(0.875);
+    pub const BUBBLE: Rems = rems(1.);
     /// The tops of bottom sheets.
-    pub const SHEET: Pixels = px(18.);
+    pub const SHEET: Rems = rems(1.125);
     /// The phone preview's frame.
-    pub const DEVICE: Pixels = px(28.);
+    pub const DEVICE: Rems = rems(1.75);
     /// Fully round, for pills and circles.
-    pub const FULL: Pixels = px(9999.);
+    pub const FULL: Rems = rems(624.9375);
 }
 
 /// Icon sizes.
@@ -941,14 +944,14 @@ impl IconSize {
 
 /// The heights of controls.
 pub mod control {
-    use gpui::{Pixels, px};
+    use gpui::{Rems, rems};
 
     /// Buttons in headers and lists.
-    pub const SMALL: Pixels = px(30.);
+    pub const SMALL: Rems = rems(1.875);
     /// Rows you can tap, and small fields.
-    pub const MEDIUM: Pixels = px(36.);
+    pub const MEDIUM: Rems = rems(2.25);
     /// Big buttons and fields; the smallest touch target on a phone.
-    pub const LARGE: Pixels = px(44.);
+    pub const LARGE: Rems = rems(2.75);
 }
 
 /// Setting design values on any element.
@@ -956,7 +959,7 @@ pub trait Design: Styled + Sized {
     /// Sets the text's size, and its weight, line height and face when
     /// the style has them.
     fn typeset(mut self, style: Type) -> Self {
-        self = self.text_size(px(style.size));
+        self = self.text_size(rems(style.size / 16.));
         if let Some(weight) = style.weight {
             self = self.font_weight(weight);
         }
@@ -982,10 +985,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spacing_is_counted_in_units() {
-        assert_eq!(sp(0.), px(0.));
-        assert_eq!(sp(2.), px(2. * UNIT));
-        assert_eq!(sp(-1.5), px(-1.5 * UNIT));
+    fn spacing_is_counted_in_units_of_the_rem() {
+        assert_eq!(sp(0.), rems(0.));
+        // Four units make a rem: 16 px at the default rem size.
+        assert_eq!(sp(4.), rems(1.));
+        assert_eq!(sp(-1.5), rems(-1.5 * UNIT / 16.));
     }
 
     #[test]

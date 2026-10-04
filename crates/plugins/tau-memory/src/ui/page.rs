@@ -19,6 +19,7 @@ use gpui::{
     prelude::*,
     px,
     relative,
+    rems,
 };
 use tau_ui_kit::{
     assets::Icon,
@@ -40,6 +41,7 @@ use tau_ui_kit::{
         Theme,
         Tone,
         Type,
+        UNIT,
         radius,
         sp,
         weight,
@@ -75,7 +77,7 @@ struct Columns {
     /// The links column, when it fits beside the note.
     links: Option<Pixels>,
     /// The note's side padding.
-    pad: Pixels,
+    pad: gpui::Rems,
     /// The note's text width.
     text: Pixels,
 }
@@ -85,7 +87,7 @@ impl Columns {
         let beside = width - LINKS >= NOTE_MIN;
         let note = width - if beside { LINKS } else { 0. };
         let pad = if note >= NOTE_MIN { 12. } else { 5. };
-        let text = (note - 2. * f32::from(sp(pad))).clamp(120., MEASURE);
+        let text = (note - 2. * UNIT * pad).clamp(120., MEASURE);
         Self {
             links: beside.then_some(px(LINKS)),
             pad: sp(pad),
@@ -176,7 +178,7 @@ pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
             "memory-list",
             compact,
             div().flex().justify_center().child(
-                div().w_full().max_w(px(COLUMN)).child(list(
+                div().w_full().max_w(rems((COLUMN) / 16.)).child(list(
                     &handle, &repo, &book, &search, &query, kind, &t,
                 )),
             ),
@@ -186,7 +188,7 @@ pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
     let back = back(&handle, &repo, &t);
     if compact {
         // The phone's screen padding on each side.
-        let text = px((view.width - 2. * f32::from(sp(4.))).min(MEASURE));
+        let text = px((view.width - 2. * UNIT * 4.).min(MEASURE));
         return ui::screen(
             "memory-note",
             true,
@@ -204,13 +206,13 @@ pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
     let columns = Columns::for_width(view.width);
     div()
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .flex()
         .child(
             div()
                 .id("memory-note")
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .overflow_y_scroll()
                 .px(columns.pad)
                 .py(sp(6.))
@@ -290,18 +292,18 @@ fn list(
         .collect();
     let field = div()
         .flex_1()
-        .min_w(px(220.))
+        .min_w(rems(13.75))
         .flex()
         .items_center()
         .gap(sp(2.))
-        .h(px(34.))
+        .h(rems(2.125))
         .px(sp(3.))
         .bg(t.panel)
         .border_1()
         .border_color(t.border_strong)
         .rounded(radius::LARGE)
         .child(icon(Icon::Search, IconSize::COMPACT, t.dim))
-        .child(div().flex_1().min_w(px(0.)).child(search.clone()));
+        .child(div().flex_1().min_w(rems(0.)).child(search.clone()));
     let chips = std::iter::once((None, "All", book.notes.len(), t.dim)).chain(
         NoteType::ALL.into_iter().filter_map(|each| {
             let count =
@@ -414,7 +416,7 @@ fn row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(1.))
@@ -423,7 +425,7 @@ fn row(
                         .flex()
                         .items_baseline()
                         .gap(sp(2.5))
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .child(
                             mono(
                                 note.id.clone(),
@@ -431,12 +433,12 @@ fn row(
                                 t.dim,
                             )
                             .flex_shrink_0()
-                            .max_w(px(200.))
+                            .max_w(rems(12.5))
                             .truncate(),
                         )
                         .child(
                             div()
-                                .min_w(px(0.))
+                                .min_w(rems(0.))
                                 .truncate()
                                 .text_color(t.text)
                                 .font_weight(weight::EMPHASIS)
@@ -460,7 +462,7 @@ fn row(
         )
         .child(
             div()
-                .w(px(ASIDE))
+                .w(rems((ASIDE) / 16.))
                 .flex_shrink_0()
                 .flex()
                 .flex_col()
@@ -595,16 +597,16 @@ fn neighborhood(
                 .absolute()
                 .left(relative(x))
                 .top(relative(y))
-                .w(px(120.))
+                .w(rems(7.5))
                 .ml(sp(-15.))
-                .mt(px(-size / 2.))
+                .mt(rems((-size / 2.) / 16.))
                 .flex()
                 .flex_col()
                 .items_center()
                 .child(
                     div()
-                        .size(px(size))
-                        .rounded(px(size / 2.))
+                        .size(rems((size) / 16.))
+                        .rounded(rems((size / 2.) / 16.))
                         .bg(color)
                         .border_2()
                         .border_color(t.panel),
@@ -612,7 +614,7 @@ fn neighborhood(
                 .children(label.map(|label| {
                     div()
                         .mt(sp(1.))
-                        .max_w(px(120.))
+                        .max_w(rems(7.5))
                         .truncate()
                         .typeset(Type::MICRO)
                         .text_color(t.muted)
@@ -621,7 +623,7 @@ fn neighborhood(
         };
     let map = div()
         .relative()
-        .h(px(200.))
+        .h(rems(12.5))
         .w_full()
         .child(lines)
         .child(node((0.5, 0.5), t.accent, 18., None))

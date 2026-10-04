@@ -34,6 +34,7 @@ use gpui::{
     px,
     radians,
     relative,
+    rems,
     size as area,
     svg,
 };
@@ -306,7 +307,7 @@ pub fn render(
             div()
                 .id("setup-body")
                 .flex_1()
-                .min_h(px(0.))
+                .min_h(rems(0.))
                 .overflow_y_scroll()
                 .child(
                     body.w_full()
@@ -357,10 +358,10 @@ fn ring_set(
             let r = radius * scale;
             let ring = div()
                 .absolute()
-                .left(px(-r))
-                .top(px(-r))
-                .size(px(2. * r))
-                .rounded(px(r))
+                .left(rems((-r) / 16.))
+                .top(rems((-r) / 16.))
+                .size(rems((2. * r) / 16.))
+                .rounded(rems((r) / 16.))
                 .border_1()
                 .border_color(color.opacity(alpha));
             if !loops {
@@ -373,10 +374,10 @@ fn ring_set(
                 move |ring, phase| {
                     let v = breath(phase);
                     let r = r * (1. + 0.018 * v);
-                    ring.left(px(-r))
-                        .top(px(-r))
-                        .size(px(2. * r))
-                        .rounded(px(r))
+                    ring.left(rems((-r) / 16.))
+                        .top(rems((-r) / 16.))
+                        .size(rems((2. * r) / 16.))
+                        .rounded(rems((r) / 16.))
                         .opacity(1. - 0.28 * v)
                 },
             )
@@ -384,15 +385,15 @@ fn ring_set(
         });
     div()
         .absolute()
-        .size(px(0.))
+        .size(rems(0.))
         .child(
             div()
                 .absolute()
-                .left(px(-glow / 2.))
-                .top(px(-glow / 2.))
-                .size(px(glow))
+                .left(rems((-glow / 2.) / 16.))
+                .top(rems((-glow / 2.) / 16.))
+                .size(rems((glow) / 16.))
                 // A real radius: shadows do not round with `FULL`.
-                .rounded(px(glow / 2.))
+                .rounded(rems((glow / 2.) / 16.))
                 .shadow(vec![
                     BoxShadow::new(px(0.), px(0.), color.opacity(strength))
                         .blur_radius(px(glow))
@@ -429,7 +430,7 @@ fn backdrop(
     let mut anchor = div()
         .absolute()
         .left(relative(0.5))
-        .size(px(0.))
+        .size(rems(0.))
         .when(mood.within(800), |anchor| {
             anchor.child(
                 ring_set("was", mood.previous, scale, loops, t).with_animation(
@@ -460,7 +461,7 @@ fn backdrop(
         anchor = anchor.child(
             div()
                 .absolute()
-                .border(px(2.))
+                .border(rems(0.125))
                 .border_color(green.opacity(0.8))
                 .with_animation(
                     SharedString::from(format!("ripple-{}", link.epoch)),
@@ -472,10 +473,10 @@ fn backdrop(
                         }
                         let e = curve::ripple()((ms - 300.) / 1100.);
                         let r = r * lerp(0.35, 1.7, e);
-                        ring.left(px(-r))
-                            .top(px(-r))
-                            .size(px(2. * r))
-                            .rounded(px(r))
+                        ring.left(rems((-r) / 16.))
+                            .top(rems((-r) / 16.))
+                            .size(rems((2. * r) / 16.))
+                            .rounded(rems((r) / 16.))
                             .opacity(0.75 * (1. - e))
                     },
                 ),
@@ -486,10 +487,10 @@ fn backdrop(
         layer.child(anchor.with_animation(
             SharedString::from(format!("scene-move-{}", motion.scale.epoch)),
             after(0, 550, curve::settle()),
-            move |anchor, e| anchor.top(px(lerp(from, to, e))),
+            move |anchor, e| anchor.top(rems((lerp(from, to, e)) / 16.)),
         ))
     } else {
-        layer.child(anchor.top(px(to)))
+        layer.child(anchor.top(rems((to) / 16.)))
     }
 }
 
@@ -533,8 +534,8 @@ fn top_bar(
                 .child(
                     div()
                         .relative()
-                        .w(px(width))
-                        .h(px(3.))
+                        .w(rems((width) / 16.))
+                        .h(rems(0.1875))
                         .rounded(radius::HAIRLINE)
                         .overflow_hidden()
                         .bg(base)
@@ -576,7 +577,7 @@ fn top_bar(
     };
     let side = if compact { 96. } else { 140. };
     div()
-        .h(px(TOP_BAR))
+        .h(rems((TOP_BAR) / 16.))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -584,7 +585,7 @@ fn top_bar(
         .px(sp(if compact { 3. } else { 7. }))
         .child(
             div()
-                .w(px(side))
+                .w(rems((side) / 16.))
                 .flex()
                 .items_center()
                 .gap(sp(2.5))
@@ -607,7 +608,7 @@ fn top_bar(
                 .when(!compact, |row| row.pt(sp(3.)))
                 .children(items),
         )
-        .child(div().w(px(side)).flex().justify_end().child(mono(
+        .child(div().w(rems((side) / 16.)).flex().justify_end().child(mono(
             place,
             Type::CAPTION,
             look.faint,
@@ -620,12 +621,12 @@ fn top_bar(
 fn tau_tile(size: f32, t: &Theme) -> Div {
     let lit = size >= 48.;
     div()
-        .size(px(size))
+        .size(rems((size) / 16.))
         .flex_shrink_0()
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(size * 30. / 112.))
+        .rounded(rems((size * 30. / 112.) / 16.))
         .accent_key(t)
         .text_color(t.setup.on_light)
         .typeset(Type::HERO.sized(size * 58. / 112.).weighted(weight::STRONG))
@@ -656,16 +657,16 @@ fn brand_mark(
     match brand.svg() {
         Some(_) => svg()
             .path(brand.path())
-            .size(px(size))
+            .size(rems((size) / 16.))
             .flex_shrink_0()
             .text_color(color)
             .with_transformation(Transformation::rotate(radians(turn)))
             .into_any_element(),
         None => div()
-            .size(px(size))
+            .size(rems((size) / 16.))
             .flex_shrink_0()
-            .rounded(px(size / 2.))
-            .border(px(1.5))
+            .rounded(rems((size / 2.) / 16.))
+            .border(rems(0.09375))
             .border_color(t.setup.faint)
             .into_any_element(),
     }
@@ -683,7 +684,7 @@ fn service_icon(
     let glyph = |glyph: Icon, share: f32| {
         svg()
             .path(glyph.path())
-            .size(px(tile * share))
+            .size(rems((tile * share) / 16.))
             .flex_shrink_0()
             .text_color(t.text_soft)
             .with_transformation(
@@ -743,12 +744,12 @@ fn service_tile(size: f32, beat: Beat, t: &Theme) -> AnyElement {
     };
     let radius = size * 30. / 112.;
     let tile = div()
-        .size(px(size))
+        .size(rems((size) / 16.))
         .flex_shrink_0()
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(radius))
+        .rounded(rems((radius) / 16.))
         .bevel(look.surface_top, look.tile, t)
         .border_1()
         .border_color(edge)
@@ -778,13 +779,13 @@ fn dash_row(line: f32, offset: f32, alpha: f32, t: &Theme) -> Div {
     div()
         .absolute()
         .top_0()
-        .left(px(offset - 10.))
+        .left(rems((offset - 10.) / 16.))
         .flex()
         .gap(sp(1.5))
         .children((0..count).map(|_| {
             div()
-                .w(px(4.))
-                .h(px(2.))
+                .w(rems(0.25))
+                .h(rems(0.125))
                 .flex_shrink_0()
                 .bg(t.accent.opacity(alpha))
         }))
@@ -796,8 +797,8 @@ fn dashes(line: f32, alpha: f32, drift: bool, t: &Theme) -> AnyElement {
         .absolute()
         .left_0()
         .top_0()
-        .w(px(line))
-        .h(px(2.))
+        .w(rems((line) / 16.))
+        .h(rems(0.125))
         .overflow_hidden();
     if !drift {
         return track
@@ -821,9 +822,9 @@ fn comet(line: f32, t: &Theme) -> AnyElement {
     div()
         .absolute()
         .top_0()
-        .w(px(length))
-        .h(px(thick))
-        .rounded(px(thick / 2.))
+        .w(rems((length) / 16.))
+        .h(rems((thick) / 16.))
+        .rounded(rems((thick / 2.) / 16.))
         .bg(linear_gradient(
             90.,
             linear_color_stop(amber.opacity(0.), 0.),
@@ -842,7 +843,7 @@ fn comet(line: f32, t: &Theme) -> AnyElement {
             } else {
                 1.
             };
-            comet.left(px(x)).opacity(shown)
+            comet.left(rems((x) / 16.)).opacity(shown)
         })
         .into_any_element()
 }
@@ -869,14 +870,14 @@ fn medallion(size: Size, beat: Beat, color: Hsla, t: &Theme) -> AnyElement {
                 .into_any_element(),
         };
         div()
-            .size(px(side))
+            .size(rems((side) / 16.))
             .flex_shrink_0()
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(side / 2.))
+            .rounded(rems((side / 2.) / 16.))
             .bg(ground)
-            .border(px(2.))
+            .border(rems(0.125))
             .border_color(color)
             .child(mark)
     };
@@ -887,7 +888,7 @@ fn medallion(size: Size, beat: Beat, color: Hsla, t: &Theme) -> AnyElement {
     // The connection pops after the line has drawn; a refusal sooner.
     let delay = if link == Link::Connected { 260. } else { 180. };
     div()
-        .size(px(side))
+        .size(rems((side) / 16.))
         .flex()
         .items_center()
         .justify_center()
@@ -930,13 +931,13 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
         div()
             .absolute()
             .left_0()
-            .top(px(middle - 1.))
-            .w(px(size.line))
-            .h(px(2.))
+            .top(rems((middle - 1.) / 16.))
+            .w(rems((size.line) / 16.))
+            .h(rems(0.125))
     };
     let track = div()
-        .w(px(size.line))
-        .h(px(size.tile))
+        .w(rems((size.line) / 16.))
+        .h(rems((size.tile) / 16.))
         .flex_shrink_0()
         .relative()
         .flex()
@@ -954,25 +955,25 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
                     div()
                         .absolute()
                         .left_0()
-                        .top(px(middle - COMET.1 / 2.))
-                        .w(px(size.line))
-                        .h(px(COMET.1))
+                        .top(rems((middle - COMET.1 / 2.) / 16.))
+                        .w(rems((size.line) / 16.))
+                        .h(rems((COMET.1) / 16.))
                         .child(comet(size.line, t)),
                 )
             } else {
                 // Still: a lit dot in its halo.
                 track.child(
                     div()
-                        .size(px(HALO))
+                        .size(rems((HALO) / 16.))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(HALO / 2.))
+                        .rounded(rems((HALO / 2.) / 16.))
                         .bg(t.accent.opacity(0.18))
                         .child(
                             div()
-                                .size(px(HALO / 2.))
-                                .rounded(px(HALO / 4.))
+                                .size(rems((HALO / 2.) / 16.))
+                                .rounded(rems((HALO / 4.) / 16.))
                                 .bg(t.accent)
                                 .shadow(vec![
                                     BoxShadow::new(
@@ -994,7 +995,7 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
                     .left_0()
                     .top_0()
                     .w(relative(share))
-                    .h(px(2.))
+                    .h(rems(0.125))
                     .bg(green)
                     .shadow(vec![
                         BoxShadow::new(px(0.), px(0.), green.opacity(0.55))
@@ -1024,7 +1025,7 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
                         .left_0()
                         .top_0()
                         .w(relative(share))
-                        .h(px(2.))
+                        .h(rems(0.125))
                         .bg(color.opacity(0.8)),
                 )
                 .child(
@@ -1033,7 +1034,7 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
                         .right_0()
                         .top_0()
                         .w(relative(share))
-                        .h(px(2.))
+                        .h(rems(0.125))
                         .bg(color.opacity(0.25)),
                 )
             };
@@ -1060,11 +1061,11 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
                     let (length, thick) = COMET;
                     div()
                         .absolute()
-                        .top(px(middle - thick / 2.))
-                        .left(px(size.line / 2. - length))
-                        .w(px(length))
-                        .h(px(thick))
-                        .rounded(px(thick / 2.))
+                        .top(rems((middle - thick / 2.) / 16.))
+                        .left(rems((size.line / 2. - length) / 16.))
+                        .w(rems((length) / 16.))
+                        .h(rems((thick) / 16.))
+                        .rounded(rems((thick / 2.) / 16.))
                         .bg(linear_gradient(
                             90.,
                             linear_color_stop(amber.opacity(0.), 0.),
@@ -1096,13 +1097,13 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
             .child(mono(text, Type::MICRO, color))
     };
     let below = words.1.map(|text| {
-        let word = word(text, below_color).bottom(px(inset));
+        let word = word(text, below_color).bottom(rems((inset) / 16.));
         if fresh && link == Link::Connected {
             word.with_animation(
                 SharedString::from(format!("linkword-{}", beat.link_epoch)),
                 after(500, 320, curve::rise()),
                 move |word, e| {
-                    word.opacity(e).bottom(px(inset + 12. * (1. - e)))
+                    word.opacity(e).bottom(rems((inset + 12. * (1. - e)) / 16.))
                 },
             )
             .into_any_element()
@@ -1112,7 +1113,7 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
     });
     track
         .when_some(words.0, |track, text| {
-            track.child(word(text, t.dim).top(px(inset)))
+            track.child(word(text, t.dim).top(rems((inset) / 16.)))
         })
         .children(below)
 }
@@ -1120,7 +1121,7 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
 /// τ, the line and the other side, at `size`.
 fn handshake_at(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
     div()
-        .pt(px(size.top))
+        .pt(rems((size.top) / 16.))
         .flex()
         .items_center()
         .justify_center()
@@ -1188,7 +1189,7 @@ fn rise(
                 if reduce {
                     slot
                 } else {
-                    slot.relative().top(px(12. * (1. - e)))
+                    slot.relative().top(rems((12. * (1. - e)) / 16.))
                 }
             },
         )
@@ -1233,7 +1234,7 @@ fn headline(
             "sub",
             delay + 40,
             div()
-                .max_w(px(width))
+                .max_w(rems((width) / 16.))
                 .typeset(if compact { Type::BODY } else { Type::SUBTITLE })
                 .leading(1.6)
                 .text_color(t.muted)
@@ -1261,7 +1262,7 @@ fn light_button(
 ) -> Div {
     let look = &t.setup;
     div()
-        .h(px(52.))
+        .h(rems(3.25))
         .when(compact, |button| button.w_full())
         .flex()
         .items_center()
@@ -1305,7 +1306,7 @@ fn chatgpt_button(
         compact,
         t,
     )
-    .when(!compact, |button| button.w(px(width)))
+    .when(!compact, |button| button.w(rems((width) / 16.)))
 }
 
 /// A quiet action on a dark chip.
@@ -1316,7 +1317,7 @@ fn ghost_button(
     t: &Theme,
 ) -> Div {
     div()
-        .h(px(44.))
+        .h(rems(2.75))
         .when(compact, |button| button.w_full())
         .flex()
         .items_center()
@@ -1341,7 +1342,7 @@ fn ghost_button(
 /// Words that act, without a box.
 fn text_button(label: impl Into<SharedString>, t: &Theme) -> Div {
     div()
-        .h(px(40.))
+        .h(rems(2.5))
         .flex()
         .items_center()
         .justify_center()
@@ -1413,7 +1414,7 @@ fn account_chip(
         .border_color(look.surface_border)
         .child(
             div()
-                .size(px(30.))
+                .size(rems(1.875))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1481,7 +1482,7 @@ fn welcome(
     let cards = steps.into_iter().enumerate().map(|(n, (name, detail))| {
         glass(t)
             .when(compact, |card| card.w_full())
-            .when(!compact, |card| card.w(px(250.)))
+            .when(!compact, |card| card.w(rems(15.625)))
             .gap(sp(1.5))
             .px(sp(4.5))
             .py(sp(4.))
@@ -1502,7 +1503,9 @@ fn welcome(
     });
     let hero = if compact {
         let size = Size::of(Scale::Big, true);
-        div().pt(px(size.top)).child(tau_tile(size.tile + 8., t))
+        div()
+            .pt(rems((size.top) / 16.))
+            .child(tau_tile(size.tile + 8., t))
     } else {
         orbit(t)
     };
@@ -1602,20 +1605,20 @@ fn orbit(t: &Theme) -> Div {
     let sat = |x: f32, y: f32, inner: AnyElement, label: &'static str| {
         div()
             .absolute()
-            .left(px(x - 60.))
-            .top(px(y - SAT / 2.))
-            .w(px(120.))
+            .left(rems((x - 60.) / 16.))
+            .top(rems((y - SAT / 2.) / 16.))
+            .w(rems(7.5))
             .flex()
             .flex_col()
             .items_center()
             .gap(sp(2.5))
             .child(
                 div()
-                    .size(px(SAT))
+                    .size(rems((SAT) / 16.))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(SAT * 30. / 112.))
+                    .rounded(rems((SAT * 30. / 112.) / 16.))
                     .bevel(t.setup.surface_top, t.setup.tile, t)
                     .border_1()
                     .border_color(t.border)
@@ -1625,16 +1628,16 @@ fn orbit(t: &Theme) -> Div {
     };
     div()
         .relative()
-        .w(px(2. * R + SAT))
-        .h(px(cy + 64.))
+        .w(rems((2. * R + SAT) / 16.))
+        .h(rems((cy + 64.) / 16.))
         // The spokes.
         .child(
             div()
                 .absolute()
-                .left(px(cx - R))
-                .top(px(cy))
-                .w(px(2. * R))
-                .h(px(1.))
+                .left(rems((cx - R) / 16.))
+                .top(rems((cy) / 16.))
+                .w(rems((2. * R) / 16.))
+                .h(rems(0.0625))
                 .flex()
                 .child(div().w(relative(0.5)).h_full().bg(linear_gradient(
                     90.,
@@ -1650,10 +1653,10 @@ fn orbit(t: &Theme) -> Div {
         .child(
             div()
                 .absolute()
-                .left(px(cx))
-                .top(px(cy - UP))
-                .w(px(1.))
-                .h(px(UP))
+                .left(rems((cx) / 16.))
+                .top(rems((cy - UP) / 16.))
+                .w(rems(0.0625))
+                .h(rems((UP) / 16.))
                 .bg(linear_gradient(
                     180.,
                     linear_color_stop(faint, 0.),
@@ -1681,8 +1684,8 @@ fn orbit(t: &Theme) -> Div {
         .child(
             div()
                 .absolute()
-                .left(px(cx - 60.))
-                .top(px(cy - 60.))
+                .left(rems((cx - 60.) / 16.))
+                .top(rems((cy - 60.) / 16.))
                 .child(tau_tile(120., t)),
         )
 }
@@ -1725,14 +1728,14 @@ fn code_cells(
         .children(code.chars().enumerate().map(|(n, ch)| {
             let cell = if ch == '-' {
                 div()
-                    .w(px(if compact { 10. } else { 16. }))
-                    .h(px(2.))
+                    .w(rems((if compact { 10. } else { 16. }) / 16.))
+                    .h(rems(0.125))
                     .bg(t.border_strong)
                     .into_any_element()
             } else {
                 let cell = div()
-                    .w(px(w))
-                    .h(px(h))
+                    .w(rems((w) / 16.))
+                    .h(rems((h) / 16.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1767,7 +1770,7 @@ fn code_cells(
                     if reduce {
                         slot
                     } else {
-                        slot.relative().top(px(12. * (1. - e)))
+                        slot.relative().top(rems((12. * (1. - e)) / 16.))
                     }
                 },
             )
@@ -1820,7 +1823,7 @@ fn github(
     let status = match &ws.setup.github {
         GitHub::Failed(error) => Some(
             div()
-                .max_w(px(560.))
+                .max_w(rems(35.))
                 .text_center()
                 .typeset(Type::SMALL)
                 .text_color(t.red)
@@ -1983,7 +1986,7 @@ fn token(
     });
     let form = div()
         .w_full()
-        .max_w(px(560.))
+        .max_w(rems(35.))
         .flex()
         .flex_col()
         .gap(sp(3.5))
@@ -1992,7 +1995,7 @@ fn token(
             div()
                 .flex()
                 .items_center()
-                .h(px(50.))
+                .h(rems(3.125))
                 .px(sp(4.))
                 .rounded(radius::CARD)
                 .border_1()
@@ -2206,7 +2209,11 @@ fn model_start(
                 )
                 .into_any_element();
             let rule = (n + 1 < steps.len() && !compact).then(|| {
-                div().w(px(28.)).h(px(1.)).bg(t.border).into_any_element()
+                div()
+                    .w(rems(1.75))
+                    .h(rems(0.0625))
+                    .bg(t.border)
+                    .into_any_element()
             });
             [Some(item), rule].into_iter().flatten()
         }));
@@ -2219,7 +2226,7 @@ fn model_start(
         .when_some(failed, |col, error| {
             col.child(
                 div()
-                    .max_w(px(560.))
+                    .max_w(rems(35.))
                     .text_center()
                     .typeset(Type::SMALL)
                     .text_color(t.red)
@@ -2235,7 +2242,7 @@ fn model_start(
                 .when(compact, |button| button.w_full())
                 .child(
                     chatgpt_button("Continue with ChatGPT", 380., compact, t)
-                        .h(px(54.)),
+                        .h(rems(3.375)),
                 )
                 .on_click(cx.listener(|ws, _, _, cx| {
                     ws.sign_in_chatgpt(None, false, cx)
@@ -2283,7 +2290,7 @@ fn model_waiting(
     };
     let paste = glass(t)
         .w_full()
-        .max_w(px(560.))
+        .max_w(rems(35.))
         .gap(sp(2.5))
         .px(sp(4.5))
         .py(sp(4.))
@@ -2298,10 +2305,10 @@ fn model_waiting(
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .flex()
                         .items_center()
-                        .h(px(42.))
+                        .h(rems(2.625))
                         .px(sp(3.))
                         .rounded(radius::LARGE)
                         .border_1()
@@ -2313,7 +2320,7 @@ fn model_waiting(
                 .child(
                     div()
                         .id("chatgpt-paste")
-                        .h(px(42.))
+                        .h(rems(2.625))
                         .flex()
                         .items_center()
                         .px(sp(3.5))
@@ -2391,7 +2398,9 @@ fn model_signed_in(
                     chip.bevel(look.surface_top, look.surface, t)
                 })
                 .cursor_pointer()
-                .hover(|style| style.border_color(t.accent_border).top(px(-1.)))
+                .hover(|style| {
+                    style.border_color(t.accent_border).top(rems(-0.0625))
+                })
                 .child(mono(
                     option.id.clone(),
                     Type::CODE,
@@ -2415,7 +2424,7 @@ fn model_signed_in(
                         if reduce {
                             slot
                         } else {
-                            slot.relative().top(px(12. * (1. - e)))
+                            slot.relative().top(rems((12. * (1. - e)) / 16.))
                         }
                     },
                 )
@@ -2428,11 +2437,11 @@ fn model_signed_in(
             .flex_wrap()
             .justify_center()
             .gap(sp(2.))
-            .max_w(px(700.))
+            .max_w(rems(43.75))
             .children(pills)
     } else {
         div()
-            .max_w(px(560.))
+            .max_w(rems(35.))
             .text_center()
             .typeset(Type::SMALL)
             .text_color(look.faint)
@@ -2573,7 +2582,7 @@ fn model_not_eligible(
                 .flex_wrap()
                 .justify_center()
                 .gap(sp(2.))
-                .max_w(px(760.))
+                .max_w(rems(47.5))
                 .children(reasons.map(|reason| {
                     div()
                         .px(sp(3.))
@@ -2629,7 +2638,7 @@ fn tick_box(name: &str, checked: bool, reduce: bool, t: &Theme) -> AnyElement {
     let (ink, floor, theme) = (t.setup.on_light, t.setup.field, t.clone());
     let build = move |scale: f32| {
         let tile = div()
-            .size(px(SIDE * scale))
+            .size(rems((SIDE * scale) / 16.))
             .flex_shrink_0()
             .flex()
             .items_center()
@@ -2646,7 +2655,7 @@ fn tick_box(name: &str, checked: bool, reduce: bool, t: &Theme) -> AnyElement {
         }
     };
     let slot = div()
-        .size(px(SIDE))
+        .size(rems((SIDE) / 16.))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -2696,7 +2705,7 @@ fn repos(
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(rems(0.))
                         .flex()
                         .flex_col()
                         .gap(sp(0.5))
@@ -2726,7 +2735,7 @@ fn repos(
     let count = ws.setup.selected().count();
     let panel = glass(t)
         .w_full()
-        .max_w(px(640.))
+        .max_w(rems(40.))
         .rounded(radius::BUBBLE)
         .overflow_hidden()
         .shadow(vec![
@@ -2738,13 +2747,16 @@ fn repos(
                 .flex()
                 .items_center()
                 .gap(sp(2.5))
-                .h(px(46.))
+                .h(rems(2.875))
                 .px(sp(4.5))
                 .border_b_1()
                 .border_color(look.surface_border)
                 .child(icon(Icon::Search, IconSize::MEDIUM, t.dim))
                 .child(
-                    div().flex_1().min_w(px(0.)).child(ws.repo_filter.clone()),
+                    div()
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .child(ws.repo_filter.clone()),
                 )
                 .child(mono(
                     format!("{} repositories", ws.setup.repos.len()),
@@ -2862,7 +2874,7 @@ fn clone_bar(
     let build = move |share: f32| {
         div()
             .relative()
-            .h(px(4.))
+            .h(rems(0.25))
             .w_full()
             .rounded(radius::FULL)
             .bg(track)
@@ -2934,7 +2946,7 @@ fn ready(
         };
         let card = glass(t)
             .when(compact, |card| card.w_full())
-            .when(!compact, |card| card.w(px(300.)))
+            .when(!compact, |card| card.w(rems(18.75)))
             .gap(sp(2.5))
             .px(sp(4.))
             .py(sp(3.5))
@@ -2946,7 +2958,7 @@ fn ready(
                     .gap(sp(2.5))
                     .child(
                         mono(clone.name.clone(), Type::SMALL, t.text)
-                            .min_w(px(0.)),
+                            .min_w(rems(0.)),
                     )
                     .child(mono(state, Type::CAPTION, color).flex_shrink_0()),
             )
@@ -3016,7 +3028,7 @@ fn ready(
     };
     let composer = div()
         .w_full()
-        .max_w(px(720.))
+        .max_w(rems(45.))
         .flex()
         .flex_col()
         .rounded(radius::SHEET)
@@ -3026,7 +3038,7 @@ fn ready(
         .shadow(halo(ring_to))
         .child(
             div()
-                .h(px(if compact { 88. } else { 108. }))
+                .h(rems((if compact { 88. } else { 108. }) / 16.))
                 .px(sp(5.))
                 .py(sp(4.5))
                 .typeset(Type::SUBTITLE)
@@ -3058,7 +3070,7 @@ fn ready(
                     div()
                         .id("first-run")
                         .when(compact, |button| button.w_full())
-                        .h(px(42.))
+                        .h(rems(2.625))
                         .flex()
                         .items_center()
                         .justify_center()

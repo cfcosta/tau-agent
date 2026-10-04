@@ -5,7 +5,7 @@
 //! opens from a bar pinned under it. The phone layout shows the same
 //! column in a bottom sheet.
 
-use gpui::{Context, Div, SharedString, div, prelude::*, px, relative};
+use gpui::{Context, Div, SharedString, div, prelude::*, relative, rems};
 
 use super::{
     Material as _,
@@ -130,11 +130,11 @@ fn context(
     ];
     let stack = div()
         .relative()
-        .h(px(12.))
+        .h(rems(0.75))
         .child(
             div()
                 .flex()
-                .h(px(12.))
+                .h(rems(0.75))
                 .rounded(radius::SMALL)
                 .overflow_hidden()
                 .well(t)
@@ -153,10 +153,10 @@ fn context(
             track.child(
                 div()
                     .absolute()
-                    .top(px(-4.))
+                    .top(rems(-0.25))
                     .left(relative(trigger))
-                    .w(px(2.))
-                    .h(px(20.))
+                    .w(rems(0.125))
+                    .h(rems(1.25))
                     .bg(t.accent),
             )
         });
@@ -173,7 +173,10 @@ fn context(
                     .typeset(Type::CAPTION)
                     .text_color(t.muted)
                     .child(
-                        div().size(px(8.)).rounded(radius::HAIRLINE).bg(*color),
+                        div()
+                            .size(rems(0.5))
+                            .rounded(radius::HAIRLINE)
+                            .bg(*color),
                     )
                     .child(div().flex_1().child(*name))
                     .child(mono(tokens(*used), Type::CAPTION, t.text_soft))
@@ -470,7 +473,7 @@ fn plugin_states(
                 .flex()
                 .items_center()
                 .gap(sp(2.5))
-                .min_h(px(36.))
+                .min_h(rems(2.25))
                 .px(sp(3.))
                 .border_b_1()
                 .border_color(t.border)
@@ -505,7 +508,7 @@ pub fn events(
             panel.child(
                 div()
                     .id("event-log")
-                    .max_h(px(280.))
+                    .max_h(rems(17.5))
                     .overflow_y_scroll()
                     .px(sp(4.))
                     .pt(sp(3.))
@@ -518,7 +521,7 @@ pub fn events(
                 .flex()
                 .items_center()
                 .gap(sp(2.))
-                .h(px(44.))
+                .h(rems(2.75))
                 .px(sp(4.))
                 .cursor_pointer()
                 .hover(|style| style.bg(gpui::white().opacity(0.03)))
@@ -559,16 +562,16 @@ fn event_log(run: &RunView, t: &Theme) -> Div {
                     .gap(sp(2.))
                     .child(
                         mono(format!("t{}", line.turn), Type::MICRO, t.dim)
-                            .w(px(24.)),
+                            .w(rems(1.5)),
                     )
                     .child(
                         mono(line.kind.clone(), Type::MICRO, color(&line.kind))
-                            .w(px(80.)),
+                            .w(rems(5.)),
                     )
                     .child(
                         mono(line.text.clone(), Type::MICRO, t.muted)
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .truncate(),
                     )
             })),

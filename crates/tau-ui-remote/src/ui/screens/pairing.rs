@@ -5,7 +5,7 @@
 //! These are phone screens; a desktop window (`--open pair`) shows them
 //! in a column of a phone's width.
 
-use gpui::{AnyElement, Context, Div, div, prelude::*, px};
+use gpui::{AnyElement, Context, Div, div, prelude::*, rems};
 
 use crate::{
     assets::Icon,
@@ -66,7 +66,7 @@ pub fn render(
                     div()
                         .w_full()
                         .flex_1()
-                        .when(!compact, |col| col.max_w(px(420.)).py(sp(8.)))
+                        .when(!compact, |col| col.max_w(rems(26.25)).py(sp(8.)))
                         .flex()
                         .flex_col()
                         .gap(sp(6.))
@@ -179,7 +179,7 @@ fn check(mark: Mark, text: &str, detail: Option<String>, t: &Theme) -> Div {
     div().flex().items_start().gap(sp(2.5)).child(glyph).child(
         div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w(rems(0.))
             .flex()
             .flex_col()
             .gap(sp(0.5))
@@ -197,8 +197,8 @@ fn check(mark: Mark, text: &str, detail: Option<String>, t: &Theme) -> Div {
 /// reads the code; this stands in for it once it closes.
 fn viewfinder(t: &Theme) -> Div {
     let corner = |top: bool, left: bool| {
-        let side = px(3.);
-        let mark = div().absolute().size(px(36.)).border_color(t.accent);
+        let side = rems(0.1875);
+        let mark = div().absolute().size(rems(2.25)).border_color(t.accent);
         let mark = if top {
             mark.top_0().border_t(side)
         } else {
@@ -211,7 +211,7 @@ fn viewfinder(t: &Theme) -> Div {
         }
     };
     div()
-        .h(px(320.))
+        .h(rems(20.))
         .flex()
         .items_center()
         .justify_center()
@@ -222,7 +222,7 @@ fn viewfinder(t: &Theme) -> Div {
         .child(
             div()
                 .relative()
-                .size(px(220.))
+                .size(rems(13.75))
                 .flex()
                 .items_center()
                 .justify_center()

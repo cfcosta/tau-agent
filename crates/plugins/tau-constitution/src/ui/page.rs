@@ -18,7 +18,7 @@ use gpui::{
     Window,
     div,
     prelude::*,
-    px,
+    rems,
 };
 use serde_json::Value;
 use tau_ui_kit::{
@@ -681,7 +681,7 @@ pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> AnyElement {
     let empty = rules.rules.is_empty() && rules.error.is_none();
     let column = div()
         .w_full()
-        .max_w(px(COLUMN))
+        .max_w(rems((COLUMN) / 16.))
         .flex()
         .flex_col()
         .gap(sp(4.))
@@ -719,7 +719,7 @@ pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> AnyElement {
     div()
         .relative()
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .flex()
         .flex_col()
         .child(ui::screen(
@@ -804,7 +804,7 @@ fn intro(ui: &Entity<Ui>, repo: &str, stats: &RulesStats, t: &Theme) -> Div {
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .typeset(Type::BODY)
                 .text_color(t.muted)
                 .child(StyledText::new(line).with_highlights(highlights)),
@@ -893,7 +893,7 @@ fn broken(
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .flex_col()
                     .gap(sp(2.))
@@ -921,7 +921,7 @@ fn settings(ui: &Entity<Ui>, repo: &str, rules: &Rules, t: &Theme) -> Div {
     let what = |name: &str, caption: String| {
         div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w(rems(0.))
             .flex()
             .flex_col()
             .gap(sp(0.5))
@@ -933,7 +933,7 @@ fn settings(ui: &Entity<Ui>, repo: &str, rules: &Rules, t: &Theme) -> Div {
         let repo = repo.to_owned();
         div()
             .id(SharedString::from(format!("on-error-{label}")))
-            .h(px(28.))
+            .h(rems(1.75))
             .px(sp(3.))
             .flex()
             .items_center()
@@ -1045,7 +1045,7 @@ fn no_key(handle: Handle, compact: bool, t: &Theme) -> Div {
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(0.75))
@@ -1072,7 +1072,7 @@ fn nothing_yet(ui: &Entity<Ui>, repo: &str, t: &Theme) -> Div {
     let new_repo = repo.to_owned();
     div().flex().justify_center().py(sp(12.)).child(
         div()
-            .w(px(520.))
+            .w(rems(32.5))
             .max_w_full()
             .flex()
             .flex_col()
@@ -1080,7 +1080,7 @@ fn nothing_yet(ui: &Entity<Ui>, repo: &str, t: &Theme) -> Div {
             .gap(sp(3.5))
             .child(
                 div()
-                    .size(px(48.))
+                    .size(rems(3.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1235,7 +1235,7 @@ fn rules_list(
         let toggle = ui.clone();
         let menu_button = div()
             .id(SharedString::from(format!("rule-menu-{}", rule.id)))
-            .size(px(28.))
+            .size(rems(1.75))
             .flex_shrink_0()
             .flex()
             .items_center()
@@ -1266,14 +1266,14 @@ fn rules_list(
             }))
             .child(
                 mono(rule.id.clone(), Type::CODE, t.roles.rules)
-                    .w(px(40.))
+                    .w(rems(2.5))
                     .flex_shrink_0()
                     .pt(sp(0.25)),
             )
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(rems(0.))
                     .flex()
                     .flex_col()
                     .gap(sp(0.5))
@@ -1294,7 +1294,7 @@ fn rules_list(
             .when(!compact, |row| {
                 row.child(
                     div()
-                        .w(px(150.))
+                        .w(rems(9.375))
                         .flex_shrink_0()
                         .flex()
                         .justify_end()
@@ -1331,8 +1331,8 @@ fn rule_menu(
     div()
         .absolute()
         .right(sp(4.))
-        .top(px(44.))
-        .w(px(160.))
+        .top(rems(2.75))
+        .w(rems(10.))
         .p(sp(1.))
         .flex()
         .flex_col()
@@ -1371,7 +1371,7 @@ fn review(
         .collect();
     let waiting = div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .flex_col()
         .gap(sp(3.5))
@@ -1388,7 +1388,7 @@ fn review(
         .flex()
         .flex_col()
         .gap(sp(2.5))
-        .when(!compact, |side| side.w(px(360.)).flex_shrink_0())
+        .when(!compact, |side| side.w(rems(22.5)).flex_shrink_0())
         .child(heading("Handled by the rules", t))
         .child(
             div()
@@ -1425,7 +1425,7 @@ fn review(
                         .child(
                             div()
                                 .flex_1()
-                                .min_w(px(0.))
+                                .min_w(rems(0.))
                                 .flex()
                                 .flex_col()
                                 .gap(sp(0.5))
@@ -1530,7 +1530,7 @@ fn review_card(
                     .border_1()
                     .border_color(t.border)
                     .child(mono(rule.id.clone(), Type::CAPTION, t.muted))
-                    .child(div().flex_1().min_w(px(0.)).text_color(t.text_soft).child(rule.text.clone()))
+                    .child(div().flex_1().min_w(rems(0.)).text_color(t.text_soft).child(rule.text.clone()))
                     .when(!compact, |row| {
                         row.child(ui::strictness(
                             rule.review,
@@ -1630,7 +1630,7 @@ fn editor(view: &ViewCx<'_, ConstitutionUi>, t: &Theme) -> Option<AnyElement> {
             .flex()
             .items_center()
             .gap(sp(2.5))
-            .min_h(px(if compact { 44. } else { 34. }))
+            .min_h(rems((if compact { 44. } else { 34. }) / 16.))
             .px(sp(3.))
             .rounded(radius::CONTROL)
             .cursor_pointer()
@@ -1694,7 +1694,7 @@ fn editor(view: &ViewCx<'_, ConstitutionUi>, t: &Theme) -> Option<AnyElement> {
         div()
             .id(preset.label())
             .flex_1()
-            .h(px(if compact { 40. } else { 28. }))
+            .h(rems((if compact { 40. } else { 28. }) / 16.))
             .flex()
             .items_center()
             .justify_center()
@@ -1710,7 +1710,7 @@ fn editor(view: &ViewCx<'_, ConstitutionUi>, t: &Theme) -> Option<AnyElement> {
         let step = |id: &'static str, glyph: &'static str, delta: f64| {
             div()
                 .id(id)
-                .size(px(26.))
+                .size(rems(1.625))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1732,13 +1732,15 @@ fn editor(view: &ViewCx<'_, ConstitutionUi>, t: &Theme) -> Option<AnyElement> {
             .gap(sp(2.))
             .child(ui::text(name, Type::CAPTION, color))
             .child(step(down, "−", -0.05))
-            .child(mono(format!("{value:.2}"), Type::SMALL, t.text).w(px(36.)))
+            .child(
+                mono(format!("{value:.2}"), Type::SMALL, t.text).w(rems(2.25)),
+            )
             .child(step(up, "+", 0.05))
     };
     let zone = |head: String, color: Hsla, body: &'static str| {
         div()
             .flex_1()
-            .min_w(px(0.))
+            .min_w(rems(0.))
             .flex()
             .flex_col()
             .gap(sp(0.75))
@@ -1809,7 +1811,7 @@ fn editor(view: &ViewCx<'_, ConstitutionUi>, t: &Theme) -> Option<AnyElement> {
     let body = div()
         .id("rule-editor-body")
         .flex_1()
-        .min_h(px(0.))
+        .min_h(rems(0.))
         .overflow_y_scroll()
         .p(sp(5.))
         .flex()
@@ -1857,7 +1859,7 @@ fn editor(view: &ViewCx<'_, ConstitutionUi>, t: &Theme) -> Option<AnyElement> {
         .child(
             div()
                 .flex_shrink_0()
-                .h(px(56.))
+                .h(rems(3.5))
                 .flex()
                 .items_center()
                 .gap(sp(2.5))
@@ -1919,7 +1921,7 @@ fn editor(view: &ViewCx<'_, ConstitutionUi>, t: &Theme) -> Option<AnyElement> {
             )
             .child(
                 panel
-                    .w(px(560.))
+                    .w(rems(35.))
                     .h_full()
                     .border_l_1()
                     .border_color(t.border_strong)
@@ -2034,7 +2036,7 @@ fn try_section(
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(rems(0.))
                             .flex()
                             .gap(sp(2.))
                             .child(mono(
@@ -2068,7 +2070,7 @@ fn try_section(
                             Type::CAPTION,
                             color,
                         )
-                        .w(px(120.))
+                        .w(rems(7.5))
                         .flex_shrink_0(),
                     )
             });

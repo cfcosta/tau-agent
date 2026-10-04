@@ -2,7 +2,7 @@
 //! what it returned, as structured JSON when the server gave some, else
 //! as text.
 
-use gpui::{Div, div, prelude::*, px};
+use gpui::{Div, div, prelude::*, rems};
 use serde_json::Value;
 use tau_ui_kit::{
     components::{code_block, heading, mono},
@@ -111,13 +111,13 @@ fn head(shown: &Shown, summary: &str, t: &Theme) -> Div {
     };
     div()
         .flex_1()
-        .min_w(px(0.))
+        .min_w(rems(0.))
         .flex()
         .items_center()
         .gap(sp(1.5))
         .child(
             mono(named, Type::CAPTION, t.text_soft)
-                .min_w(px(0.))
+                .min_w(rems(0.))
                 .truncate(),
         )
         .children(

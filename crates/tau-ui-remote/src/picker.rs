@@ -12,7 +12,7 @@ use gpui::{
     Window,
     div,
     prelude::*,
-    px,
+    rems,
 };
 
 use crate::{
@@ -292,7 +292,7 @@ impl Workspace {
             let on = effort == choice.effort;
             div()
                 .id(SharedString::from(format!("effort-{}", effort.label())))
-                .h(px(if phone { 34. } else { 30. }))
+                .h(rems((if phone { 34. } else { 30. }) / 16.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -327,7 +327,7 @@ impl Workspace {
                 IconSize::COMPACT,
                 if signed_in { t.green } else { t.dim },
             ))
-            .child(div().flex_1().min_w(px(0.)).child(ui::prose(
+            .child(div().flex_1().min_w(rems(0.)).child(ui::prose(
                 &format!(
                     "{} · coder's default is `{}`",
                     models.access.label, default.model
@@ -379,7 +379,7 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .pb(sp(1.5))
-                    .max_h(px(if phone { 380. } else { 420. }))
+                    .max_h(rems((if phone { 380. } else { 420. }) / 16.))
                     .overflow_y_scroll()
                     .when(empty, |list| {
                         list.child(ui::empty(
@@ -489,18 +489,22 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(panel.w(px(460.)).rounded(radius::CARD)),
+                .child(panel.w(rems(28.75)).rounded(radius::CARD)),
             // Above the composer, by its send button.
             PickerTarget::Next | PickerTarget::Run(_) | PickerTarget::Fork => {
                 div()
                     .absolute()
-                    .right(px(if self.shows_inspector() { 424. } else { 96. }))
-                    .bottom(px(if target == PickerTarget::Fork {
-                        140.
-                    } else {
-                        96.
-                    }))
-                    .child(panel.w(px(460.)).rounded(radius::CARD))
+                    .right(rems(
+                        (if self.shows_inspector() { 424. } else { 96. }) / 16.,
+                    ))
+                    .bottom(rems(
+                        (if target == PickerTarget::Fork {
+                            140.
+                        } else {
+                            96.
+                        }) / 16.,
+                    ))
+                    .child(panel.w(rems(28.75)).rounded(radius::CARD))
             }
         };
         backdrop.child(placed).into_any_element()
@@ -535,21 +539,21 @@ fn model_row(
     let mark = if picked {
         ui::icon(Icon::Check, IconSize::BASE, t.accent).into_any_element()
     } else {
-        div().w(px(14.)).into_any_element()
+        div().w(rems(0.875)).into_any_element()
     };
     let row = div()
         .id(SharedString::from(format!("model-{}", option.id)))
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .min_h(px(if phone { 52. } else { 40. }))
+        .min_h(rems((if phone { 52. } else { 40. }) / 16.))
         .px(sp(3.5))
         .child(mark);
     let row = if phone {
         row.child(
             ui::mono(option.label().to_owned(), Type::BODY, t.text)
                 .flex_1()
-                .min_w(px(0.)),
+                .min_w(rems(0.)),
         )
     } else {
         row.child(
