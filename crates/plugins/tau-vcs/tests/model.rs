@@ -617,7 +617,8 @@ fn check_patches(diff: &Value, from: &Tree, to: &Tree) {
     let text = diff.as_str().unwrap_or_else(|| panic!("no diff: {diff}"));
     let mut sections: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     let mut current: Option<String> = None;
-    for line in text.lines() {
+    // Git's lines end at `\n` alone: a `\r` before it is the line's.
+    for line in text.split_terminator('\n') {
         if let Some(rest) = line.strip_prefix("diff --git a/") {
             let path = rest.split(" b/").next().unwrap().to_owned();
             sections.insert(path.clone(), Vec::new());
@@ -837,4 +838,29 @@ fn a_describe_undone_and_redone_at_once_works() {
     }
     let (_, done) = machine.ok("vcs_describe", json!({ "message": "Same" }));
     assert_eq!(done["working_copy"]["description"], json!("Same\n"));
+}
+
+/// A line Git keeps whole holds a lone `\r`, and a last line that ends
+/// in one still has no newline: the diff says so, and rebuilds the file.
+/// The diff used to end a line at the `\r` and leave the marker out.
+#[test]
+fn a_diff_keeps_a_lone_carriage_return_in_its_line() {
+    let machine = fresh();
+    let mut before = Tree::new();
+    before.insert("a.txt".into(), b"one\r\ntwo\rthree\n".to_vec());
+    std::fs::write(machine.dir.path().join("a.txt"), &before["a.txt"]).unwrap();
+    machine.ok("vcs_commit", json!({ "message": "Before" }));
+    let mut after = Tree::new();
+    after.insert("a.txt".into(), b"one\r\ntwo\rfour\n\x01\x02\r".to_vec());
+    std::fs::write(machine.dir.path().join("a.txt"), &after["a.txt"]).unwrap();
+    let (_, status) = machine.ok("vcs_status", json!({}));
+    check_patches(&status["diff"], &before, &after);
+    assert!(
+        status["diff"]
+            .as_str()
+            .unwrap()
+            .ends_with("\\ No newline at end of file\n"),
+        "{}",
+        status["diff"]
+    );
 }

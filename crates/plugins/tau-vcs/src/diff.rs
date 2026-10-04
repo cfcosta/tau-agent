@@ -171,16 +171,41 @@ fn file_diff(
     }
     let old = String::from_utf8_lossy(&before.content.contents);
     let new = String::from_utf8_lossy(&after.content.contents);
-    let diff = similar::TextDiff::from_lines(old.as_ref(), new.as_ref());
-    let unified = diff
-        .unified_diff()
-        .context_radius(3)
-        .missing_newline_hint(true)
-        .header(&old_name, &new_name)
-        .to_string();
-    out.push_str(&unified);
-    if !out.ends_with('\n') {
-        out.push('\n');
+    out.push_str(&format!("--- {old_name}\n+++ {new_name}\n"));
+    unified_hunks(out, &git_lines(&old), &git_lines(&new));
+}
+
+/// `text`'s lines as Git splits them: each ends at `\n`, and the last
+/// may end without one. A lone `\r` is part of its line, not an end.
+fn git_lines(text: &str) -> Vec<&str> {
+    text.split_inclusive('\n').collect()
+}
+
+/// Appends the hunks from `old` to `new`, with three lines of context.
+/// A line without its `\n` is followed by `\ No newline at end of file`,
+/// as Git writes it. `similar`'s own unified diff is not used: it takes
+/// a lone `\r` for a line end, so it would split lines Git keeps whole
+/// and leave out the marker after a last line that ends in `\r`.
+fn unified_hunks(out: &mut String, old: &[&str], new: &[&str]) {
+    use similar::{ChangeTag, TextDiff, udiff::UnifiedHunkHeader};
+
+    let diff = TextDiff::from_slices(old, new);
+    for group in diff.grouped_ops(3) {
+        out.push_str(&format!("{}\n", UnifiedHunkHeader::new(&group)));
+        for op in &group {
+            for change in diff.iter_changes(op) {
+                out.push(match change.tag() {
+                    ChangeTag::Equal => ' ',
+                    ChangeTag::Delete => '-',
+                    ChangeTag::Insert => '+',
+                });
+                let line = change.value();
+                out.push_str(line);
+                if !line.ends_with('\n') {
+                    out.push_str("\n\\ No newline at end of file\n");
+                }
+            }
+        }
     }
 }
 
