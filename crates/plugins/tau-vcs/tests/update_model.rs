@@ -183,6 +183,12 @@ impl Machine {
             Kind::Remote => "from a remote",
         });
         let initial = tc.draw(gs::sampled_from(BRANCHES.to_vec()));
+        Self::from_source(kind, initial)
+    }
+
+    /// A project made from a source of `kind`, whose checkout has one
+    /// commit on branch `initial`.
+    fn from_source(kind: Kind, initial: &str) -> Self {
         let home = tempfile::tempdir().unwrap();
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).unwrap();
@@ -572,8 +578,10 @@ impl Machine {
     }
 
     /// The host's catch-up before a main chat's turn: its own commits
-    /// and `@` move onto trunk's head, and nothing else, even when
-    /// upstream dropped what they stood on.
+    /// that trunk lacks, and `@`, move onto trunk's head, and nothing
+    /// else, even when upstream dropped what they stood on. Trunk can
+    /// have some of them already: a bookmark the main chat moved onto
+    /// one becomes trunk when `HEAD` names it again.
     fn do_catch_up(&mut self, tc: &TestCase) {
         if self.base_dropped() {
             tc.event("upstream dropped the main chat's base");
@@ -581,6 +589,15 @@ impl Machine {
         let name = self.project.trunk_name().unwrap();
         let trunk = self.trunk.clone();
         let ahead = self.own_ancestor_of_trunk();
+        // Oldest first.
+        let behind: Vec<&Own> = self
+            .own
+            .iter()
+            .filter(|own| !self.git_ancestor(&self.now(&own.change_id), &trunk))
+            .collect();
+        if !behind.is_empty() && behind.len() < self.own.len() {
+            tc.event("a catch-up onto some of the main chat's commits");
+        }
         let old: BTreeMap<String, String> = self
             .own
             .iter()
@@ -591,15 +608,8 @@ impl Machine {
                 .unwrap();
         let ids: Vec<&str> =
             moved.changes.iter().map(|c| c.change_id.as_str()).collect();
-        let want: Vec<&str> = if ahead {
-            Vec::new()
-        } else {
-            self.own
-                .iter()
-                .rev()
-                .map(|o| o.change_id.as_str())
-                .collect()
-        };
+        let want: Vec<&str> =
+            behind.iter().rev().map(|o| o.change_id.as_str()).collect();
         assert_eq!(ids, want, "the catch-up moves the main chat's commits");
         assert!(moved.conflicts.is_empty(), "{moved:?}");
         if want.is_empty() {
@@ -607,9 +617,7 @@ impl Machine {
         } else {
             tc.event("a catch-up restacks the main chat's commits");
         }
-        if let Some(oldest) = self.own.first()
-            && !ahead
-        {
+        if let Some(oldest) = behind.first() {
             let first = self.now(&oldest.change_id);
             assert_eq!(
                 self.project.parent_of(&first).unwrap(),
@@ -923,4 +931,31 @@ fn a_catch_up_onto_no_trunk_points_no_bookmark_at_the_root() {
     assert_eq!(moved.head, ROOT);
     assert_eq!(project.bookmarks("").unwrap(), Vec::<String>::new());
     assert_eq!(project.trunk().unwrap(), ROOT);
+}
+
+/// The main chat commits twice on `main`, then the source's `HEAD`
+/// moves to a new `master`, and the main chat commits once more there;
+/// then `HEAD` goes back to `main`, which upstream never moved. Trunk is
+/// `main` again, on the main chat's second commit, so its catch-up moves
+/// the third alone: the first two are under trunk already. The model
+/// used to expect every commit of the main chat's to move unless the
+/// newest was trunk.
+#[test]
+fn a_catch_up_leaves_the_main_chats_commits_under_trunk() {
+    hegel::Hegel::new(|tc| {
+        let mut m = Machine::from_source(Kind::Bare, "main");
+        m.main_commit(tc.clone());
+        m.main_commit(tc.clone());
+        m.do_op(&tc, &Op::Branch("master".into()));
+        m.do_op(&tc, &Op::Checkout("master".into()));
+        m.do_update(&tc);
+        m.main_commit(tc.clone());
+        m.do_op(&tc, &Op::Checkout("main".into()));
+        m.do_update(&tc);
+        m.the_project_follows(tc.clone());
+        m.catch_up(tc.clone());
+        m.the_project_follows(tc);
+    })
+    .settings(hegel::Settings::new().test_cases(1))
+    .run();
 }
