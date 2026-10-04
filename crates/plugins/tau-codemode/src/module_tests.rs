@@ -18,7 +18,6 @@ use crate::{
     ToolReply,
     modules::{Definition, ExpectedCall, MAX_TEST_REPORT_BYTES, TestReport},
     options::{Options, Source},
-    result::Item,
     run,
 };
 
@@ -254,10 +253,7 @@ pub(crate) async fn run_test(
     let mut output = outcome
         .items
         .iter()
-        .map(|item| match item {
-            Item::Text(text) => text.as_str(),
-            Item::Image(_) => "[image omitted]",
-        })
+        .map(|item| item.text().unwrap_or("[image omitted]"))
         .collect::<Vec<_>>()
         .join("\n");
     let output_truncated = truncate_utf8(&mut output, OUTPUT_LIMIT);

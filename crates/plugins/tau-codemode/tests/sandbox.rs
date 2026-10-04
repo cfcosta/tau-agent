@@ -438,7 +438,7 @@ async fn images_are_checked_and_typed_by_their_bytes() {
         .iter()
         .map(|item| match item {
             Item::Image(image) => image.mime_type,
-            Item::Text(_) => "text",
+            Item::Text(_) | Item::Json(_) => "text",
         })
         .collect();
     assert_eq!(types, ["image/png", "image/gif"]);

@@ -206,10 +206,7 @@ pub fn texts(outcome: &Outcome) -> Vec<String> {
     outcome
         .items
         .iter()
-        .filter_map(|item| match item {
-            tau_codemode::Item::Text(text) => Some(text.clone()),
-            tau_codemode::Item::Image(_) => None,
-        })
+        .filter_map(|item| item.text().map(str::to_owned))
         .collect()
 }
 

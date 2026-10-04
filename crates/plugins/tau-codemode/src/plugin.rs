@@ -942,7 +942,7 @@ fn text_block(text: String) -> InputBlock {
 
 fn block(item: Item) -> InputBlock {
     match item {
-        Item::Text(text) => text_block(text),
+        Item::Text(text) | Item::Json(text) => text_block(text),
         Item::Image(image) => InputBlock::Image(ImageContent {
             data: image.data,
             mime_type: image.mime_type.to_owned(),

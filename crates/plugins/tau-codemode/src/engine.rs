@@ -68,7 +68,7 @@ use crate::{
     search::{self, Index},
     signature,
     store::{Snapshot, Store},
-    value::{display, from_lua, to_lua},
+    value::{display, from_lua, item, to_lua},
 };
 
 /// The VM's memory limit.
@@ -222,10 +222,9 @@ fn returned(lua: &Lua, values: MultiValue) -> Result<Vec<Item>, Failure> {
         if value.is_nil() {
             continue;
         }
-        let text = display(lua, &value).map_err(|error| {
+        items.push(item(lua, &value).map_err(|error| {
             Failure::Error(format!("The script's return value: {error}"))
-        })?;
-        items.push(Item::Text(text));
+        })?);
     }
     Ok(items)
 }
@@ -412,7 +411,7 @@ impl State {
 
     fn push(&self, item: Item) -> Result<(), String> {
         let size = match &item {
-            Item::Text(text) => text.len(),
+            Item::Text(text) | Item::Json(text) => text.len(),
             Item::Image(image) => image.data.len(),
         };
         let total = self.output_bytes.fetch_add(size, Ordering::SeqCst) + size;
@@ -731,9 +730,7 @@ fn install(lua: &Lua, state: &Arc<State>) -> mlua::Result<()> {
         "text",
         lifted(
             lua.create_function(move |lua, value: LuaValue| {
-                match display(lua, &value)
-                    .and_then(|text| s.push(Item::Text(text)))
-                {
+                match item(lua, &value).and_then(|item| s.push(item)) {
                     Ok(()) => Ok(ok([])),
                     Err(error) => fail(lua, format!("text(): {error}")),
                 }

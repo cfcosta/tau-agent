@@ -13,6 +13,8 @@
 use mlua::{Lua, LuaSerdeExt, Table, Value as LuaValue};
 use serde_json::{Map, Number, Value};
 
+use crate::result::Item;
+
 /// How deep a table may nest before it is refused, which also stops
 /// cycles.
 pub const MAX_DEPTH: usize = 128;
@@ -158,11 +160,20 @@ fn index(key: &LuaValue) -> Option<i64> {
     }
 }
 
-/// How `text` and `return` show a value: strings as they are, anything
-/// else as compact JSON.
+/// How `print` shows a value: strings as they are, anything else as
+/// compact JSON.
 pub fn display(lua: &Lua, value: &LuaValue) -> Result<String, String> {
     match value {
         LuaValue::String(s) => Ok(s.to_string_lossy()),
         other => Ok(from_lua(lua, other)?.to_string()),
+    }
+}
+
+/// The item `text` and `return` append for a value: a string as text,
+/// anything else as compact JSON.
+pub fn item(lua: &Lua, value: &LuaValue) -> Result<Item, String> {
+    match value {
+        LuaValue::String(s) => Ok(Item::Text(s.to_string_lossy())),
+        other => Ok(Item::Json(from_lua(lua, other)?.to_string())),
     }
 }

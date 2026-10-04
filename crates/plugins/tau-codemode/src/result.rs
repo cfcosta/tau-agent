@@ -18,11 +18,40 @@ pub const MAX_ARGS_CHARS: usize = 200;
 /// A row's `error` is cut at this many characters.
 pub const MAX_ERROR_CHARS: usize = 500;
 
+/// The most bytes of output a result's details keep for the card; past
+/// it, items keep [`CUT_HEAD_BYTES`] of their text.
+pub const MAX_OUTPUT_DETAIL_BYTES: usize = 256 * 1024;
+
+/// How much of an item's text the details keep once past
+/// [`MAX_OUTPUT_DETAIL_BYTES`].
+pub const CUT_HEAD_BYTES: usize = 1024;
+
 /// One output item, in the order the script made it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
+    /// A string, as the script gave it.
     Text(String),
+    /// Any other value, as compact JSON.
+    Json(String),
     Image(Image),
+}
+
+impl Item {
+    /// The text the model reads for it; none for an image.
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) | Self::Json(text) => Some(text),
+            Self::Image(_) => None,
+        }
+    }
+
+    /// The item for the model: a JSON value is text there.
+    fn for_model(self) -> Self {
+        match self {
+            Self::Json(text) => Self::Text(text),
+            other => other,
+        }
+    }
 }
 
 /// How a nested call went.
@@ -177,11 +206,12 @@ impl Outcome {
         Some(format!("Script error:\n{}\n\n{summary}", failure.head()))
     }
 
-    /// The details: `{ calls, complete, store, usage, wall_ms }`.
+    /// The details: `{ calls, complete, output, store, usage, wall_ms }`.
     pub fn details(&self) -> Value {
         json!({
             "calls": self.calls.iter().map(CallRow::to_json).collect::<Vec<_>>(),
             "complete": self.calls_total <= self.calls.len(),
+            "output": output_details(&self.items),
             "store": self.store,
             "usage": self.usage,
             "wall_ms": self.wall.as_millis() as u64,
@@ -200,7 +230,8 @@ impl Outcome {
             },
             self.wall.as_secs_f64()
         );
-        let mut items = self.items.clone();
+        let mut items: Vec<Item> =
+            self.items.iter().cloned().map(Item::for_model).collect();
         if let Some(text) = self.failure_text() {
             items.push(Item::Text(text));
         }
@@ -227,7 +258,7 @@ pub fn budget(
     let total: u64 = items
         .iter()
         .map(|item| match item {
-            Item::Text(text) => estimate_tokens(text),
+            Item::Text(text) | Item::Json(text) => estimate_tokens(text),
             Item::Image(_) => 0,
         })
         .sum();
@@ -238,7 +269,7 @@ pub fn budget(
     let mut images = Vec::new();
     for item in items {
         match item {
-            Item::Text(text) => texts.push(text),
+            Item::Text(text) | Item::Json(text) => texts.push(text),
             Item::Image(image) => images.push(Item::Image(image)),
         }
     }
@@ -246,6 +277,61 @@ pub fn budget(
     let mut out = vec![Item::Text(truncated(&full, max_tokens, save))];
     out.extend(images);
     out
+}
+
+/// The output as the card shows it, item by item: `{ kind: "text",
+/// text }`, `{ kind: "json", value }` or `{ kind: "image", mime, bytes }`.
+/// Past [`MAX_OUTPUT_DETAIL_BYTES`], a text or JSON item keeps only its
+/// head as `text`, with `bytes` and `cut: true`; the model's result has
+/// all of it.
+pub fn output_details(items: &[Item]) -> Vec<Value> {
+    let mut left = MAX_OUTPUT_DETAIL_BYTES;
+    items
+        .iter()
+        .map(|item| {
+            let (kind, text) = match item {
+                Item::Text(text) => ("text", text),
+                Item::Json(text) => ("json", text),
+                Item::Image(image) => {
+                    return json!({
+                        "kind": "image",
+                        "mime": image.mime_type,
+                        // Base64: three bytes per four characters,
+                        // less the padding.
+                        "bytes": image.data.len() / 4 * 3
+                            - image.data.bytes().rev().take_while(|&b| b == b'=').count(),
+                    });
+                }
+            };
+            if text.len() > left {
+                left = 0;
+                return json!({
+                    "kind": kind,
+                    "text": head(text, CUT_HEAD_BYTES),
+                    "bytes": text.len(),
+                    "cut": true,
+                });
+            }
+            left -= text.len();
+            match item {
+                Item::Json(text) => json!({
+                    "kind": "json",
+                    "value": serde_json::from_str::<Value>(text)
+                        .unwrap_or(Value::Null),
+                }),
+                _ => json!({ "kind": "text", "text": text }),
+            }
+        })
+        .collect()
+}
+
+/// The first `max` bytes of `text`, cut back to a character boundary.
+fn head(text: &str, max: usize) -> &str {
+    let mut end = max.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 /// `text` cut to `max` characters, with `…` in place of the rest.
