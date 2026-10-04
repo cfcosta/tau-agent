@@ -910,16 +910,11 @@ pub fn table(
             .flex()
             .w_full()
             .when(!header, |row| row.border_t_1().border_color(t.border))
-            .when(header, |row| row.bg(t.raised).text_color(t.text))
+            .when(header, |row| {
+                row.bg(t.card).text_color(t.muted).typeset(Type::CAPTION)
+            })
             .children(cells.into_iter().enumerate().map(|(n, content)| {
-                let cell = div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .px(sp(3.))
-                    .py(sp(2.))
-                    .when(n > 0, |cell| {
-                        cell.border_l_1().border_color(t.border)
-                    });
+                let cell = div().flex_1().min_w(px(0.)).px(sp(3.)).py(sp(2.));
                 let cell = match align.get(n) {
                     Some(Align::Right) => cell.text_right(),
                     Some(Align::Center) => cell.text_center(),
@@ -933,8 +928,8 @@ pub fn table(
         .flex_col()
         .w_full()
         .border_1()
-        .border_color(t.border_strong)
-        .rounded(radius::BOX)
+        .border_color(t.border)
+        .rounded(radius::LARGE)
         .overflow_hidden()
         .typeset(Type::SMALL)
         .child(row(head, true))

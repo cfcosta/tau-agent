@@ -12,7 +12,7 @@ use tau_agent::plugin::Plugin;
 use tau_jev::Jev;
 use tau_ui_kit::{
     assets::Icon,
-    components::{self as ui, bar, dot, heading, icon, key_values, link, mono},
+    components::{self as ui, bar, heading, icon, key_values, link, mono},
     format::{fine_usd, tokens},
     theme::{Design as _, IconSize, Theme, Type, radius, sp},
 };
@@ -402,6 +402,11 @@ fn badge(
     view: &mut ViewCx<'_, FastCompactionUi>,
 ) -> Option<AnyElement> {
     let entry = view.state?.entry(at.keys.first()?)?;
+    // A result kept as it was needs no word: only what the pass changed
+    // shows on the card.
+    if matches!(entry.decision, Decision::Pinned | Decision::Keep) {
+        return None;
+    }
     let t = view.theme().clone();
     Some(
         div()
@@ -409,7 +414,6 @@ fn badge(
             .items_center()
             .gap(sp(2.))
             .flex_shrink_0()
-            .child(mono(tokens(entry.tokens), Type::MICRO, t.dim))
             .child(
                 div()
                     .px(sp(1.5))
@@ -418,10 +422,7 @@ fn badge(
                     .border_color(t.border_strong)
                     .rounded(radius::SMALL)
                     .typeset(Type::MICRO)
-                    .text_color(match entry.decision {
-                        Decision::Pinned | Decision::Keep => t.muted,
-                        _ => t.dim,
-                    })
+                    .text_color(t.dim)
                     .child(entry.decision.card_label()),
             )
             .into_any_element(),
@@ -470,78 +471,56 @@ fn rewrite(
     let compact = view.compact;
     let handle = view.handle.clone();
     let saved = before.saturating_sub(after);
-    let line = || div().flex_1().h(px(1.)).bg(t.blue_border);
+    let ink = t.roles.plugin(NAME).unwrap_or(t.blue);
     Some(
         div()
             .flex()
             .flex_col()
             .gap(sp(1.5))
-            .py(sp(1.))
+            .px(sp(3.5))
+            .py(sp(2.5))
+            .rounded(radius::LARGE)
+            .bg(t.card)
+            .typeset(Type::CAPTION)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(sp(3.))
-                    .child(line())
+                    .gap(sp(2.))
+                    .child(icon(Icon::Plug, IconSize::COMPACT, ink))
+                    .when(!compact, |row| {
+                        row.child(div().text_color(ink).child(NAME))
+                    })
+                    .child(div().text_color(t.text_soft).child(format!(
+                        "pruned {} tokens: {} to {}",
+                        tokens(saved),
+                        tokens(before),
+                        tokens(after)
+                    )))
+                    .child(div().flex_1())
                     .child(
                         div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap(sp(2.))
-                            .px(sp(3.))
-                            .py(sp(1.5))
-                            .rounded(radius::BUBBLE)
-                            .border_1()
-                            .border_dashed()
-                            .border_color(t.blue_border)
-                            .bg(t.blue_soft)
-                            .child(icon(Icon::Plug, IconSize::COMPACT, t.blue))
-                            .when(!compact, |pill| {
-                                pill.child(mono(NAME, Type::CAPTION, t.blue))
-                            })
-                            .child(div().text_color(t.text_soft).child(
-                                format!(
-                                    "pruned {} tokens: {} to {}",
-                                    tokens(saved),
-                                    tokens(before),
-                                    tokens(after)
-                                ),
-                            ))
-                            .when(!compact, |pill| {
-                                pill.child(mono(
-                                    pass.detail.clone(),
-                                    Type::MICRO,
-                                    t.dim,
-                                ))
-                            })
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "open-ledger-{}",
-                                        at.index
-                                    )))
-                                    .child(link("Ledger", &t))
-                                    .on_click(move |_, _, cx| {
-                                        handle.navigate(ledger_link(), cx)
-                                    }),
-                            ),
-                    )
-                    .child(line()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_center()
-                    .gap(sp(1.5))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child(dot(t.blue_border, 4.))
-                    .child(
-                        "The next request resends the pruned transcript once, \
-                         then turns are deltas again.",
+                            .id(SharedString::from(format!(
+                                "open-ledger-{}",
+                                at.index
+                            )))
+                            .child(link("Ledger", &t))
+                            .on_click(move |_, _, cx| {
+                                handle.navigate(ledger_link(), cx)
+                            }),
                     ),
             )
+            .when(!compact, |card| {
+                card.child(
+                    mono(pass.detail.clone(), Type::MICRO, t.dim)
+                        .pl(sp(5.))
+                        .truncate(),
+                )
+            })
+            .child(div().pl(sp(5.)).text_color(t.dim).child(
+                "The next request resends the pruned transcript once, \
+                     then turns are deltas again.",
+            ))
             .into_any_element(),
     )
 }

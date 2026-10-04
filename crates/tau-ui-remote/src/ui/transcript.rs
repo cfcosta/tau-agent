@@ -491,7 +491,6 @@ fn tool(
     };
     // Only a card that wants attention has an edge.
     let edged = border != t.border;
-    let quiet = matches!(card.state, ToolState::Done { .. }) && !failed;
     let summary = match view.head {
         Some(head) => head,
         None => mono(card.summary.clone(), Type::CAPTION, t.text_soft)
@@ -526,9 +525,7 @@ fn tool(
         .items_center()
         .gap(sp(2.))
         .min_h(px(if compact { 40. } else { 30. }))
-        // A call that went as it should needs no mark: its name says
-        // what ran.
-        .when(!quiet, |row| row.child(status))
+        .child(status)
         .child(
             mono(card.tool.clone(), Type::CAPTION, t.roles.tool(&card.tool))
                 .flex_shrink_0()

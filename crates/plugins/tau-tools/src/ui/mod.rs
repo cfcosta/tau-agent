@@ -158,6 +158,18 @@ pub fn artifact_status(data: &CallData) -> Option<ArtifactStatus> {
     Some(ArtifactStatus::Unavailable(reason.to_owned()))
 }
 
+/// Why a finished call's artifact was not kept, when the tool said so.
+/// Provenance is the inspector's; a card mentions the artifact only
+/// when keeping it failed.
+fn artifact_error(data: &CallData) -> Option<ArtifactStatus> {
+    data.result
+        .as_ref()
+        .and_then(|result| result.details.as_ref())
+        .and_then(|details| details.get("artifact_error"))
+        .and_then(Value::as_str)
+        .map(|error| ArtifactStatus::Unavailable(error.to_owned()))
+}
+
 fn artifact_line(status: &ArtifactStatus, t: &Theme) -> Div {
     let label = match status {
         ArtifactStatus::Available {
@@ -643,7 +655,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
                 Some(_) => tail(output_lines(data), 4),
                 None => tail(output_lines(data), 6),
             };
-            let artifact = artifact_status(data);
+            let artifact = artifact_error(data);
             Some(CardView {
                 body: (!lines.is_empty() || artifact.is_some()).then(|| {
                     div()
@@ -696,13 +708,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
             };
             // Provenance is the inspector's; the card says only that
             // keeping it failed.
-            let missing = data
-                .result
-                .as_ref()
-                .and_then(|result| result.details.as_ref())
-                .and_then(|details| details.get("artifact_error"))
-                .and_then(Value::as_str)
-                .map(|error| ArtifactStatus::Unavailable(error.to_owned()));
+            let missing = artifact_error(data);
             Some(CardView {
                 label: Some(read.label()),
                 body: (!read.lines.is_empty() || missing.is_some()).then(
@@ -799,10 +805,9 @@ fn terminal(
                     compact,
                     view.cx,
                 ))
-                .when_some(
-                    artifact_status(&at.data).as_ref(),
-                    |body, status| body.child(artifact_line(status, t)),
-                )
+                .when_some(artifact_error(&at.data).as_ref(), |body, status| {
+                    body.child(artifact_line(status, t))
+                })
                 .into_any_element(),
         ),
         inset: true,
