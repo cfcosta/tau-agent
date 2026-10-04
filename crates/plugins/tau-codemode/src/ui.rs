@@ -58,6 +58,7 @@ use crate::{
     format::formatted,
     live::{InferUpdate, JevUpdate},
     modules,
+    outline,
     promotion,
     result::{MAX_ARGS_CHARS, MAX_ERROR_CHARS, preview},
     store::{Record, Snapshot, Writes},
@@ -67,7 +68,8 @@ use crate::{
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CodemodeUi;
 
-/// Inspector disclosure state; only opened source and test details are rendered.
+/// Disclosure state: the inspector's opened source and test details,
+/// and the cards' opened output items.
 pub struct InspectorUi {
     open: BTreeSet<String>,
     pub open_traces: BTreeSet<(String, String)>,
@@ -85,7 +87,8 @@ impl PluginUi for InspectorUi {
 }
 
 impl InspectorUi {
-    fn toggle(&mut self, key: String) {
+    /// Opens what `key` names, or closes it when open.
+    pub fn toggle(&mut self, key: String) {
         if !self.open.remove(&key) {
             self.open.insert(key);
         }
@@ -634,38 +637,20 @@ pub fn calls(call_id: &str, data: &CallData) -> Calls {
     calls
 }
 
-/// What a finished script said: its output, and why it failed.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Said {
-    pub output: String,
-    pub error: Option<String>,
-}
-
-/// The output and failure in a result's text: what follows its
-/// `Output:` line, the failure's `Script error:` item apart. A call
-/// that failed before the script ran (a bad options line) has only its
-/// message.
-pub fn said(text: &str, failed: bool) -> Said {
-    let Some((_, rest)) = text.split_once("\nOutput:\n") else {
-        return Said {
-            output: String::new(),
-            error: failed.then(|| text.trim().to_owned()),
-        };
-    };
-    // tau-ui joins the result's text blocks with a newline.
-    let rest = rest.strip_prefix('\n').unwrap_or(rest);
-    let (output, error) = match rest.rsplit_once("Script error:\n") {
-        Some((output, error)) if failed => {
-            // The list of calls made before it is the card's rows.
-            let head = error.split("\n\n").next().unwrap_or(error);
-            (output, Some(head.trim().to_owned()))
-        }
-        _ => (rest, None),
-    };
-    Said {
-        output: output.trim_end().to_owned(),
-        error,
+/// Why a finished script failed, from its result's text: the
+/// `Script error:` item's message. A call that failed before the script
+/// ran (a bad options line) has only its message.
+pub fn failure(text: &str, failed: bool) -> Option<String> {
+    if !failed {
+        return None;
     }
+    let Some((_, rest)) = text.split_once("\nOutput:\n") else {
+        return Some(text.trim().to_owned());
+    };
+    let (_, error) = rest.rsplit_once("Script error:\n")?;
+    // The list of calls made before it is the card's rows.
+    let head = error.split("\n\n").next().unwrap_or(error);
+    Some(head.trim().to_owned())
 }
 
 /// The script's source, from the call's arguments.
@@ -717,9 +702,6 @@ pub fn label(calls: &Calls, details: Option<&Value>) -> String {
     }
     parts.join(" · ")
 }
-
-/// The most lines of output a card shows.
-const OUTPUT_LINES: usize = 40;
 
 impl UiPlugin for CodemodeUi {
     type State = State;
@@ -917,11 +899,25 @@ pub fn card(
     let data = &at.data;
     let calls = calls(&at.call_id, data);
     let details = data.result.as_ref().and_then(|r| r.details.as_ref());
-    let said = data
+    let failed = data
         .result
         .as_ref()
-        .map(|result| said(&result.text, result.error));
-    let failed = said.as_ref().and_then(|said| said.error.clone());
+        .and_then(|result| failure(&result.text, result.error));
+    let items = details.map(outline::items).unwrap_or_default();
+    let output = (!items.is_empty()).then(|| {
+        let ui_state = view.ui.clone();
+        let handle = view.handle.clone();
+        outline::outline(
+            &at.call_id,
+            &items,
+            &view.read_ui().open,
+            move |key, cx| {
+                ui_state.update(cx, |ui, _| ui.toggle(key));
+                handle.refresh(cx);
+            },
+            &t,
+        )
+    });
     let code = script(data);
     Some(CardView {
         head: Some(
@@ -938,7 +934,8 @@ pub fn card(
         edge: failed.as_ref().map(|_| Tone::Danger),
         shape: None,
         body: Some(
-            body(code, &calls, said.as_ref(), details, &t).into_any_element(),
+            body(code, &calls, output, failed.clone(), details, &t)
+                .into_any_element(),
         ),
         // Open while it runs, so its calls show as they come; closed once
         // it ended, down to its header.
@@ -947,11 +944,13 @@ pub fn card(
     })
 }
 
-/// The script, its calls, its output and what it stored.
+/// The script, its calls, its output, why it failed and what it
+/// stored.
 fn body(
     code: &str,
     calls: &Calls,
-    said: Option<&Said>,
+    output: Option<Div>,
+    failed: Option<String>,
     details: Option<&Value>,
     t: &Theme,
 ) -> Div {
@@ -982,28 +981,11 @@ fn body(
                     }),
             )
         })
-        .when_some(said, |body, said| {
-            let lines: Vec<&str> = said.output.lines().collect();
-            let more = lines.len().saturating_sub(OUTPUT_LINES);
-            body.when(!said.output.is_empty(), |body| {
-                body.child(heading("Output", t)).child(
-                    mono(
-                        lines[..lines.len() - more].join("\n"),
-                        Type::CAPTION,
-                        t.muted,
-                    )
-                    .when(more > 0, |text| {
-                        text.child(mono(
-                            format!("… {more} more lines"),
-                            Type::MICRO,
-                            t.dim,
-                        ))
-                    }),
-                )
-            })
-            .when_some(said.error.clone(), |body, error| {
-                body.child(mono(error, Type::CAPTION, t.red))
-            })
+        .when_some(output, |body, output| {
+            body.child(heading("Output", t)).child(output)
+        })
+        .when_some(failed, |body, error| {
+            body.child(mono(error, Type::CAPTION, t.red))
         })
         .when_some(writes, |body, writes| {
             let mut parts = Vec::new();

@@ -33,6 +33,7 @@ use tau_codemode::{
     },
     modules::{self, Definition, ModuleTest, TestReport},
     options,
+    outline::{self, Shown},
     run,
     store,
     ui::{self, Action, CodemodeUi, InspectorUi, Row, State},
@@ -595,10 +596,7 @@ fn result_text(outcome: &Outcome) -> (String, Value) {
     let text = rendered
         .content
         .iter()
-        .filter_map(|item| match item {
-            Item::Text(text) => Some(text.as_str()),
-            Item::Image(_) => None,
-        })
+        .filter_map(Item::text)
         .collect::<Vec<_>>()
         .join("\n");
     (text, rendered.details)
@@ -788,13 +786,13 @@ fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
     });
     data.end();
     assert_eq!(ui::calls(CALL, &data), stored);
-    let said = ui::said(&text, outcome.is_error());
-    assert_eq!(said.output, output);
+    assert_eq!(outline::items(&details), [Shown::Text(output)]);
+    let failure = ui::failure(&text, outcome.is_error());
     assert_eq!(
-        said.error,
+        failure,
         outcome.failure.as_ref().map(|failure| failure.head())
     );
-    assert_eq!(said.error.is_some(), raise);
+    assert_eq!(failure.is_some(), raise);
 }
 
 /// A Jev request shows on the card as soon as it starts, before any
@@ -839,10 +837,8 @@ fn a_jev_request_shows_while_it_runs() {
 /// A call that fails before its script runs says only why.
 #[test]
 fn a_call_that_never_ran_says_why() {
-    let said = ui::said("@options must be a JSON object.", true);
-    assert_eq!(said.output, "");
     assert_eq!(
-        said.error.as_deref(),
+        ui::failure("@options must be a JSON object.", true).as_deref(),
         Some("@options must be a JSON object.")
     );
     assert_eq!(ui::stored_rows(&Value::Null), None);

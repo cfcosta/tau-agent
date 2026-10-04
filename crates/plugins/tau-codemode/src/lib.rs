@@ -17,7 +17,8 @@
 //!   requests, which make no run events of their own.
 //! - [`store`] folds the store's records and keeps a script's writes.
 //! - [`Codemode`] is the plugin, and [`CodemodeTool`] its tool.
-//! - [`format::formatted`] is a script as the cards show it.
+//! - [`format::formatted`] is a script as the cards show it, and
+//!   [`outline`] its output.
 //! - [`CodemodeUi`] is the plugin with its UI (ADR 0017): its card, its
 //!   store in the inspector, and its entry on the Plugins screen.
 
@@ -45,6 +46,7 @@ mod module_tools;
 pub mod modules;
 #[cfg(feature = "host")]
 pub mod options;
+pub mod outline;
 #[cfg(feature = "host")]
 pub mod plugin;
 pub mod promotion;
