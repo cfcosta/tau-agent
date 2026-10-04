@@ -13,7 +13,7 @@
 
 use std::{
     cell::RefCell,
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::Path,
     rc::Rc,
     sync::{
@@ -47,6 +47,7 @@ use tau_ui::{
 use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
+    models::{Effort, ModelChoice},
     phones::PhoneUp,
     remote,
     route::Route,
@@ -55,6 +56,16 @@ use tau_ui_remote::{
 };
 use tau_vcs::{Identity, Project};
 use tokio::sync::oneshot;
+
+/// The models people show, hide and pick: the plan's.
+fn models() -> Vec<String> {
+    let offered = tau_ai::model::plan_models();
+    offered
+        .iter()
+        .take(3)
+        .map(|model| model.id.clone())
+        .collect()
+}
 
 /// The repository the host lists.
 const REPO: &str = "repo";
@@ -222,6 +233,12 @@ struct Asked {
     closed: HashSet<RunId>,
     /// Chats stopped and not written to since.
     cancelled: HashSet<RunId>,
+    /// Each chat's last goal set, through tau-goal's records.
+    goals: HashMap<RunId, String>,
+    /// Each model hidden or shown last.
+    hidden: HashMap<String, bool>,
+    /// The model coder runs on last picked.
+    default: Option<ModelChoice>,
 }
 
 impl Asked {
@@ -239,6 +256,23 @@ impl Asked {
             }
             WorkspaceEvent::CloseRun { run } => {
                 self.closed.insert(run.clone());
+            }
+            WorkspaceEvent::PluginRecord { run, plugin, body }
+                if plugin == tau_goal::NAME =>
+            {
+                if let Some(tau_goal::Record::Set { goal, .. }) =
+                    tau_goal::Record::parse(body)
+                {
+                    self.goals.insert(run.clone(), goal);
+                }
+            }
+            WorkspaceEvent::HideModel { id, hidden } => {
+                self.hidden.insert(id.clone(), *hidden);
+            }
+            WorkspaceEvent::SetDefaultModel { agent, choice }
+                if agent == "coder" =>
+            {
+                self.default = Some(choice.clone());
             }
             WorkspaceEvent::Cancel { run } => {
                 for (said, _, stopped) in &mut self.said {
@@ -284,6 +318,26 @@ impl Asked {
         }
         for run in &self.closed {
             assert!(computer.closed.contains(run), "{run:?} is not closed");
+        }
+        for (run, goal) in &self.goals {
+            let state: tau_goal::ui::State = computer
+                .runs
+                .iter()
+                .find(|view| &view.id == run)
+                .and_then(|view| view.plugin_states.get(tau_goal::NAME))
+                .map(|state| {
+                    serde_json::from_value(state.json().clone()).unwrap()
+                })
+                .unwrap_or_default();
+            let shown = state.goal.map(|shown| shown.condition);
+            assert_eq!(shown.as_ref(), Some(goal), "{run:?}'s goal");
+        }
+        let settings = &computer.catalog.models.settings;
+        for (id, hidden) in &self.hidden {
+            assert_eq!(settings.is_hidden(id), *hidden, "{id} hidden");
+        }
+        if let Some(choice) = &self.default {
+            assert_eq!(&settings.default_for("coder"), choice, "coder's model");
         }
         for run in &self.cancelled {
             let view = computer.runs.iter().find(|view| &view.id == run);
@@ -699,6 +753,55 @@ impl Tau {
         self.after_action(who);
     }
 
+    /// The person sets a chat's goal: tau-goal's UI stores a record.
+    #[rule]
+    fn set_goal(&mut self, tc: TestCase) {
+        let who = self.who(&tc);
+        let runs = self.device(who).runs();
+        tc.assume(!runs.is_empty());
+        let run = pick(&tc, &runs);
+        let goal = self.prompt();
+        let device = self.device(who);
+        let handle = device
+            .workspace
+            .read_with(&device.cx, |ws, _| ws.plugin_handle(tau_goal::NAME));
+        let record = tau_goal::Record::Set {
+            goal,
+            continuations: 1,
+            budget: 1.0,
+        };
+        device.cx.update(|_, cx| handle.record(&run, record, cx));
+        device.cx.run_until_parked();
+        self.after_action(who);
+    }
+
+    /// The person shows or hides a model in the picker.
+    #[rule]
+    fn hide_model(&mut self, tc: TestCase) {
+        let who = self.who(&tc);
+        let id = tc.draw(gs::sampled_from(models()));
+        let device = self.device(who);
+        device
+            .workspace
+            .update(&mut device.cx, |ws, cx| ws.toggle_model_hidden(&id, cx));
+        device.cx.run_until_parked();
+        self.after_action(who);
+    }
+
+    /// The person picks the model new chats start on.
+    #[rule]
+    fn pick_default_model(&mut self, tc: TestCase) {
+        let who = self.who(&tc);
+        let model = tc.draw(gs::sampled_from(models()));
+        let device = self.device(who);
+        device.workspace.update(&mut device.cx, |ws, cx| {
+            let choice = ModelChoice::new(model.clone(), Effort::Auto);
+            ws.set_default_model("coder", choice, cx)
+        });
+        device.cx.run_until_parked();
+        self.after_action(who);
+    }
+
     /// The model answers one waiting request.
     #[rule(weight = 3)]
     fn model_answers(&mut self, tc: TestCase) {
@@ -794,7 +897,6 @@ fn assert_synced(phone: usize, computer: &Synced, theirs: &Synced) {
         resuming,
         closed,
         kept_branch,
-        landings,
         pushes,
         proposed,
         pull_requests,
