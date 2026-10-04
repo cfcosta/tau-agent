@@ -120,6 +120,13 @@ pub fn sidebar(
         (Route::History, "History", "all repos".to_owned(), t.dim),
         (Route::Plugins, "Plugins", plugins, t.dim),
         (Route::Phones, "Phones", phones, t.green),
+        // Sign-ins, keys and the models runs use.
+        (
+            Route::Models,
+            "Models and accounts",
+            String::new(),
+            t.dim,
+        ),
     ];
 
     // The app's name, and what all runs cost today.
