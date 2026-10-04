@@ -12,7 +12,17 @@ use super::{landing::Reading, *};
 
 /// How long a forecast waits for more changes before it starts: a
 /// landing or a turn's end moves several runs at once.
-const SETTLE: Duration = Duration::from_millis(250);
+pub(super) const SETTLE: Duration = Duration::from_millis(250);
+
+impl Host {
+    /// Waits `wait` for more changes before a forecast starts, in place
+    /// of [`SETTLE`]: for a host whose runs end faster than a person's,
+    /// as in tests.
+    pub fn with_forecast_wait(mut self, wait: Duration) -> Self {
+        self.forecast_wait = wait;
+        self
+    }
+}
 
 /// What a repository's runs look like, as far as forecasts go: each
 /// run, whether it is going or closed, and its turn. A change in it may
@@ -115,7 +125,7 @@ fn forecast_in_background(
         let (worker, repo) = (host.clone(), repo.clone());
         host.runtime.spawn_blocking(move || {
             let host = worker;
-            std::thread::sleep(SETTLE);
+            std::thread::sleep(host.forecast_wait);
             let mut found = Vec::new();
             for fork in forks {
                 if !host.forecast_current(&repo, generation) {

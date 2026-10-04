@@ -208,6 +208,8 @@ pub struct Host {
     /// Runs whose `RunEnd` went by while their outcome is still being
     /// stored: they stop in a moment.
     ending: Arc<Mutex<HashSet<RunId>>>,
+    /// How long a forecast waits for more changes before it starts.
+    forecast_wait: std::time::Duration,
     /// Jobs the host is doing off the interface's thread, until what
     /// they did is shown.
     jobs: Arc<std::sync::atomic::AtomicUsize>,
@@ -453,6 +455,7 @@ impl Host {
             drafts: Mutex::default(),
             prs: Arc::default(),
             ending: Arc::default(),
+            forecast_wait: forecast::SETTLE,
             jobs: Arc::default(),
             runs: Arc::default(),
             sub_agents: Default::default(),
