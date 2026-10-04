@@ -9,7 +9,7 @@
 //! still has it; otherwise the app is asked for a snapshot.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     io,
     net::SocketAddr,
     path::PathBuf,
@@ -31,15 +31,14 @@ use tokio::{
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+pub use crate::feed::REPLAY;
 use crate::{
     devices::{Device, Devices, DevicesError},
+    feed::{Feed, Joined},
     pairing::{Address, Fingerprint, PairingCode},
     tls::{Identity, TlsError},
-    wire::{Answer, Down, Hello, Refusal, Up, VERSION},
+    wire::{Answer, Hello, Refusal, Up, VERSION},
 };
-
-/// How many messages the host keeps for phones that come back.
-pub const REPLAY: usize = 4096;
 /// How long a phone has to finish TLS, the WebSocket and its hello.
 const HANDSHAKE: Duration = Duration::from_secs(10);
 const PING: Duration = Duration::from_secs(15);
@@ -101,8 +100,7 @@ impl Server {
         let (commands, receiver) = mpsc::unbounded_channel();
         let (events, events_out) = mpsc::unbounded_channel();
         let state = State {
-            seq: first_seq(),
-            buffer: VecDeque::new(),
+            feed: Feed::new(first_seq()),
             conns: HashMap::new(),
             devices: devices.clone(),
             host: config.host.clone(),
@@ -252,16 +250,11 @@ enum Out {
 struct Conn {
     device: String,
     out: UnboundedSender<Out>,
-    /// Whether it has had its snapshot or replay, and takes new
-    /// messages.
-    live: bool,
 }
 
 struct State {
-    /// The last message's number.
-    seq: u64,
-    /// The last messages, oldest first, as their frames.
-    buffer: VecDeque<(u64, String)>,
+    /// The messages sent, and which connections take new ones.
+    feed: Feed<ConnId>,
     conns: HashMap<ConnId, Conn>,
     devices: Arc<Mutex<Devices>>,
     host: String,
@@ -274,13 +267,17 @@ impl State {
             match command {
                 Command::Broadcast(body) => self.broadcast(body),
                 Command::Snapshot(conn, bodies) => self.snapshot(conn, bodies),
-                Command::Revoked(id) => self.conns.retain(|_, conn| {
-                    let keep = conn.device != id;
-                    if !keep {
-                        let _ = conn.out.send(Out::Close);
-                    }
-                    keep
-                }),
+                Command::Revoked(id) => {
+                    let feed = &mut self.feed;
+                    self.conns.retain(|conn_id, conn| {
+                        let keep = conn.device != id;
+                        if !keep {
+                            let _ = conn.out.send(Out::Close);
+                            feed.leave(*conn_id);
+                        }
+                        keep
+                    });
+                }
                 Command::Stop => break,
                 Command::Hello { conn, hello, out } => {
                     self.hello(conn, hello, out)
@@ -288,6 +285,7 @@ impl State {
                 Command::Up { conn, body } => self.up(conn, body),
                 Command::Closed(conn) => {
                     self.conns.remove(&conn);
+                    self.feed.leave(conn);
                 }
             }
         }
@@ -296,30 +294,20 @@ impl State {
     }
 
     fn broadcast(&mut self, body: Value) {
-        self.seq += 1;
-        let frame = to_frame(&Down::Message {
-            seq: self.seq,
-            body,
-        });
-        for conn in self.conns.values().filter(|conn| conn.live) {
+        let (down, to) = self.feed.broadcast(body);
+        let frame = to_frame(&down);
+        for conn in to.iter().filter_map(|conn| self.conns.get(conn)) {
             let _ = conn.out.send(Out::Frame(frame.clone()));
-        }
-        self.buffer.push_back((self.seq, frame));
-        if self.buffer.len() > REPLAY {
-            self.buffer.pop_front();
         }
     }
 
-    fn snapshot(&mut self, conn: ConnId, bodies: Vec<Value>) {
-        let Some(conn) = self.conns.get_mut(&conn) else {
+    fn snapshot(&mut self, id: ConnId, bodies: Vec<Value>) {
+        let (Some(conn), Some(down)) =
+            (self.conns.get(&id), self.feed.snapshot(id, bodies))
+        else {
             return;
         };
-        let frame = to_frame(&Down::Snapshot {
-            seq: self.seq,
-            bodies,
-        });
-        let _ = conn.out.send(Out::Frame(frame));
-        conn.live = true;
+        let _ = conn.out.send(Out::Frame(to_frame(&down)));
     }
 
     fn hello(&mut self, id: ConnId, hello: Hello, out: UnboundedSender<Out>) {
@@ -345,46 +333,32 @@ impl State {
         };
         let list = devices.list();
         drop(devices);
-        let missed = last_seq.and_then(|last| self.missed(last));
+        let joined = self.feed.join(id, last_seq);
         let _ = out.send(Out::Frame(to_frame(&Answer::Welcome {
             version: VERSION,
             host: self.host.clone(),
             device: device.id.clone(),
             token,
-            resumed: missed.is_some(),
+            resumed: matches!(joined, Joined::Replay(_)),
         })));
-        for frame in missed.iter().flatten() {
-            let _ = out.send(Out::Frame(frame.clone()));
+        if let Joined::Replay(missed) = &joined {
+            for down in missed {
+                let _ = out.send(Out::Frame(to_frame(down)));
+            }
         }
         self.conns.insert(
             id,
             Conn {
                 device: device.id.clone(),
                 out,
-                live: missed.is_some(),
             },
         );
         let _ = self.events.send(ServerEvent::DevicesChanged(list));
-        if missed.is_none() {
+        if joined == Joined::NeedSnapshot {
             let _ = self
                 .events
                 .send(ServerEvent::NeedSnapshot { conn: id, device });
         }
-    }
-
-    /// The frames after `last`, if the buffer still has them all.
-    fn missed(&self, last: u64) -> Option<Vec<String>> {
-        if last == self.seq {
-            return Some(Vec::new());
-        }
-        let oldest = self.buffer.front()?.0;
-        (last < self.seq && oldest <= last + 1).then(|| {
-            self.buffer
-                .iter()
-                .filter(|(seq, _)| *seq > last)
-                .map(|(_, frame)| frame.clone())
-                .collect()
-        })
     }
 
     fn up(&self, conn: ConnId, body: Value) {

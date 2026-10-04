@@ -7,12 +7,15 @@
 //!   fingerprint;
 //! - [`devices`]: the phones paired with the computer, and their tokens;
 //! - [`wire`]: the frames on the socket, with the app's JSON inside;
+//! - [`feed`]: the numbered messages, kept so a phone that comes back
+//!   gets what it missed, with no sockets in it;
 //! - [`server`]: the computer's side: pairing, tokens, and messages
 //!   numbered so a phone that comes back gets what it missed;
 //! - [`client`]: the phone's side.
 
 pub mod client;
 pub mod devices;
+pub mod feed;
 pub mod pairing;
 pub mod server;
 pub mod tls;
