@@ -8335,6 +8335,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9515,6 +9528,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-skills"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "gpui-pre",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tau-agent",
+ "tau-store",
+ "tau-testing",
+ "tau-ui-plugin",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "tau-store"
 version = "0.1.0"
 dependencies = [
@@ -9632,6 +9665,7 @@ dependencies = [
  "tau-memory",
  "tau-reasoning",
  "tau-remote",
+ "tau-skills",
  "tau-store",
  "tau-testing",
  "tau-tools",
@@ -9711,6 +9745,7 @@ dependencies = [
  "tau-memory",
  "tau-reasoning",
  "tau-remote",
+ "tau-skills",
  "tau-store",
  "tau-terminal",
  "tau-testing",
@@ -10614,6 +10649,12 @@ name = "unit-prefix"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

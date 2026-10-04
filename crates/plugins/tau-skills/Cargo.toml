@@ -1,0 +1,34 @@
+[package]
+name = "tau-skills"
+description = "Skills: instructions a tau agent loads when a task calls for them, from ~/.agents/skills, as a plugin."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The agent half: reading the skills folder, the list in a run's
+# instructions, and the `skill` tool. The list and the views build
+# without it, as on a phone.
+host = ["dep:async-trait", "dep:serde_yaml_ng", "dep:tokio"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait = { workspace = true, optional = true }
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+serde.workspace = true
+serde_json.workspace = true
+# SKILL.md's frontmatter: descriptions are often YAML block scalars.
+serde_yaml_ng = { version = "0.10", optional = true }
+tau-agent.workspace = true
+tau-ui-plugin.workspace = true
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+futures-util.workspace = true
+hegeltest.workspace = true
+tau-store.workspace = true
+tau-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
