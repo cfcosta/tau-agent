@@ -55,6 +55,7 @@ use crate::{
     CallStatus,
     PLUGIN,
     description::NAME,
+    format::formatted,
     live::{InferUpdate, JevUpdate},
     modules,
     promotion,
@@ -964,7 +965,7 @@ fn body(
         .gap(sp(2.))
         .px(sp(3.))
         .py(sp(2.5))
-        .child(code_block(Some("luau"), code, t))
+        .child(code_block(Some("luau"), &formatted(code), t))
         .when(!calls.rows.is_empty(), |body| {
             body.child(
                 div()
@@ -1461,7 +1462,11 @@ fn promotions_section(
                     Type::MICRO,
                     t.muted,
                 ))
-                .child(code_block(Some("luau"), request.root.source(), t))
+                .child(code_block(
+                    Some("luau"),
+                    &formatted(request.root.source()),
+                    t,
+                ))
                 .child(code_block(
                     Some("json"),
                     &compact_json_preview(request.root.signatures(), 16 * 1024),
@@ -1607,7 +1612,11 @@ fn version_row(
             t,
         ));
     if source_open {
-        row = row.child(code_block(Some("luau"), definition.source(), t));
+        row = row.child(code_block(
+            Some("luau"),
+            &formatted(definition.source()),
+            t,
+        ));
     }
     row = row.child(disclosure(
         signatures_key,
@@ -1647,7 +1656,7 @@ fn version_row(
         ));
         if expanded {
             row = row
-                .child(code_block(Some("luau"), test.code(), t))
+                .child(code_block(Some("luau"), &formatted(test.code()), t))
                 .child(mono(
                     format!(
                         "Fake calls: {}",

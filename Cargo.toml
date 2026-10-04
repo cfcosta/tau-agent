@@ -54,6 +54,8 @@ libc = "0.2.189"
 # Codemode's sandbox: Luau, run from tokio, with JSON values
 # (docs/decisions/0018-codemode-and-mcp.md).
 mlua = { version = "0.12.1", features = ["luau", "async", "send", "serde"] }
+# Codemode's cards show scripts formatted; the library half, for Luau.
+stylua = { version = "2.5.2", default-features = false, features = ["luau"] }
 # The terminal emulator behind tau-terminal
 # (docs/decisions/0010-terminal-rendering.md). The -sys crate finds the
 # library through pkg-config (the flake's `libghostty-vt`), never git or
