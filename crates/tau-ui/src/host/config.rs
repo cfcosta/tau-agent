@@ -21,6 +21,8 @@ pub struct HostConfig {
     pub settings: PathBuf,
     /// The repositories tau lists, usually `$XDG_DATA_HOME/tau/repos.json`.
     pub repo_list: PathBuf,
+    /// The person's skills, usually `~/.agents/skills` (tau-skills).
+    pub skills: PathBuf,
 }
 
 impl HostConfig {
@@ -42,6 +44,15 @@ impl HostConfig {
             })
             .unwrap_or_else(|| PathBuf::from("."))
             .join("tau")
+    }
+
+    /// `~/.agents/skills`: where other agents keep the person's skills
+    /// too.
+    pub fn default_skills() -> PathBuf {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(tau_skills::SKILLS_DIR)
     }
 
     pub fn default_store() -> PathBuf {

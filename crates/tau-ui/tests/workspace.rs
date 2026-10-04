@@ -375,6 +375,7 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         repos: dir.join("repos"),
         settings: dir.join("models.json"),
         repo_list: dir.join("repos.json"),
+        skills: std::env::temp_dir().join("tau-test-skills-none"),
     };
     // No repository is listed, so the demo's run cannot be forked.
     let (host, events) = Host::with_agent(runtime, agent, store, config);

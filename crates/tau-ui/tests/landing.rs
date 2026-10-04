@@ -129,6 +129,7 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
         repos: dir.path().join("repos"),
         settings: dir.path().join("models.json"),
         repo_list: dir.path().join("repos.json"),
+        skills: std::env::temp_dir().join("tau-test-skills-none"),
     };
     let agent = tau_agent::agent::Agent::new(llm.clone()).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);

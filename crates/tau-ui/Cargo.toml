@@ -24,6 +24,7 @@ tau-codemode.workspace = true
 tau-compaction.workspace = true
 tau-constitution = { workspace = true, features = ["demo"] }
 tau-ask.workspace = true
+tau-skills.workspace = true
 tau-direnv.workspace = true
 tau-goal = { workspace = true, features = ["demo"] }
 tau-jev.workspace = true

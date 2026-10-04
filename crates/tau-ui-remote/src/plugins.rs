@@ -53,6 +53,8 @@ pub fn registry() -> &'static Registry {
             // MCP servers' tools: their direct ones are added to the run's
             // plan in tau-mcp's `start`, so it comes before Codemode.
             .with(tau_mcp::McpUi)
+            // Skills the model loads when a task calls for them.
+            .with(tau_skills::SkillsUi)
             // Codemode's `start` lists the Luau signatures of the tools in
             // the run's plan when it runs. A plugin that adds tools in its
             // own `start` (tau-mcp, for its servers' direct tools) must be

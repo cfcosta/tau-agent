@@ -105,7 +105,36 @@ fn host_of(
         // The test's own: a test that saves settings leaves others be.
         settings: fresh_repo_list().with_extension("models"),
         repo_list: fresh_repo_list(),
+        skills: std::env::temp_dir().join("tau-test-skills-none"),
     };
+    let (host, events) = Host::with_agent(runtime, agent, store, config);
+    (host.with_repo(REPO, project_of(root)), events)
+}
+
+/// [`host_on`], with the person's skills in `skills`.
+fn host_with_skills(
+    llm: ScriptedModel,
+    root: &Path,
+    skills: &Path,
+) -> (Host, UnboundedReceiver<RunEvent>) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(Store::memory()).unwrap();
+    let config = HostConfig {
+        account: test_account(),
+        credentials: Credentials::new(
+            fresh_repo_list().with_extension("config"),
+        ),
+        model: Some("gpt-6-luna".into()),
+        store: std::env::temp_dir().join("unused.db"),
+        repos: fresh_repo_list().with_extension("repos"),
+        settings: fresh_repo_list().with_extension("models"),
+        repo_list: fresh_repo_list(),
+        skills: skills.to_owned(),
+    };
+    let agent = Agent::new(llm).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     (host.with_repo(REPO, project_of(root)), events)
 }
@@ -1184,6 +1213,7 @@ fn config_on(data: &Path) -> HostConfig {
         repos: data.join("repos"),
         settings: data.join("models.json"),
         repo_list: data.join("repos.json"),
+        skills: std::env::temp_dir().join("tau-test-skills-none"),
     }
 }
 
@@ -2653,4 +2683,50 @@ fn conversations_go_back_to_their_connections() {
     let stats = host.block_on(client.stats()).unwrap();
     assert_eq!(stats.connections_opened, 1);
     assert_eq!(stats.handoffs, 1);
+}
+
+/// The person's skills are listed in a run's instructions, and the model
+/// loads one by name: its instructions, and the folder its files are in.
+#[test]
+fn a_run_lists_the_persons_skills_and_loads_one() {
+    let skills = tempfile::tempdir().unwrap();
+    let folder = skills.path().join("release-notes");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join(tau_skills::SKILL_FILE),
+        "---\nname: release-notes\ndescription: >\n  Writes release notes\n  between two tags\n---\n\nGroup the commits by kind.\n",
+    )
+    .unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("skill", serde_json::json!({ "name": "release-notes" }))
+        })
+        .turn(|t| t.text("grouped"));
+    let src = tempfile::tempdir().unwrap();
+    let (host, mut events) =
+        host_with_skills(llm.clone(), src.path(), skills.path());
+    let main = on_main(&host, "write the notes");
+    let seen = until_end(&mut events);
+    wait_until_done(&host, &main);
+
+    let instructions = instructions_of(&llm.requests()[0]);
+    assert!(
+        instructions.contains(tau_skills::scan::HEADING),
+        "{instructions}"
+    );
+    assert!(
+        instructions
+            .contains("- release-notes: Writes release notes between two tags"),
+        "{instructions}"
+    );
+    let loaded = seen.iter().find_map(|event| match event {
+        RunEvent::ToolEnd {
+            output, is_error, ..
+        } => Some((output.text_content(), *is_error)),
+        _ => None,
+    });
+    let (text, failed) = loaded.expect("the skill call ended");
+    assert!(!failed, "{text}");
+    assert!(text.contains("Group the commits by kind."), "{text}");
+    assert!(text.contains(&folder.display().to_string()), "{text}");
 }

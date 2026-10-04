@@ -49,7 +49,8 @@ impl Host {
         let mut services = Services::default()
             .with(self.memory_search)
             .with(saved)
-            .with(ConfigDir(self.config.credentials.dir.clone()));
+            .with(ConfigDir(self.config.credentials.dir.clone()))
+            .with(tau_skills::SkillsDir(self.config.skills.clone()));
         if let Some(jev) = self.jev() {
             services = services.with(jev);
         }
