@@ -840,6 +840,25 @@ fn a_describe_undone_and_redone_at_once_works() {
     assert_eq!(done["working_copy"]["description"], json!("Same\n"));
 }
 
+/// Deleting a file again right after undoing the restore that deleted
+/// it, within the same second: the snapshot is the very commit the undo
+/// hid. jj refused it as already existing, as it did a redone describe.
+#[test]
+fn a_snapshot_of_what_an_undo_took_back_works() {
+    let machine = fresh();
+    let file = machine.dir.path().join("a.txt");
+    for _ in 0..3 {
+        std::fs::write(&file, "a\n").unwrap();
+        machine.ok("vcs_restore", json!({ "paths": ["a.txt"] }));
+        assert!(!file.exists());
+        machine.ok("vcs_undo", json!({}));
+        assert!(file.exists());
+        std::fs::remove_file(&file).unwrap();
+        let (_, status) = machine.ok("vcs_status", json!({}));
+        assert_eq!(status["changes"], json!([]));
+    }
+}
+
 /// A line Git keeps whole holds a lone `\r`, and a last line that ends
 /// in one still has no newline: the diff says so, and rebuilds the file.
 /// The diff used to end a line at the `\r` and leave the marker out.

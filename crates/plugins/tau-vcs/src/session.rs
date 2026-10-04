@@ -182,9 +182,9 @@ fn snapshot_locked(
                 let mut tx = repo.start_transaction();
                 tx.set_is_snapshot(true);
                 tx.set_workspace_name(name);
-                let edited = block_on(
-                    tx.repo_mut().rewrite_commit(&wc).set_tree(merged).write(),
-                )?;
+                let edited = write_commit(&mut tx, |repo| {
+                    repo.rewrite_commit(&wc).set_tree(merged.clone())
+                })?;
                 tx.repo_mut()
                     .set_wc_commit(name.to_owned(), edited.id().clone())?;
                 block_on(tx.repo_mut().rebase_descendants())?;
@@ -217,8 +217,11 @@ fn snapshot_locked(
         let mut tx = repo.start_transaction();
         tx.set_is_snapshot(true);
         tx.set_workspace_name(name);
-        let new_wc =
-            block_on(tx.repo_mut().rewrite_commit(&wc).set_tree(tree).write())?;
+        // A snapshot can be the very commit an undo hid, as when a file
+        // a restore deleted is deleted again once the restore is undone.
+        let new_wc = write_commit(&mut tx, |repo| {
+            repo.rewrite_commit(&wc).set_tree(tree.clone())
+        })?;
         tx.repo_mut()
             .set_wc_commit(name.to_owned(), new_wc.id().clone())?;
         block_on(tx.repo_mut().rebase_descendants())?;
@@ -246,9 +249,10 @@ fn divergent(repo: &ReadonlyRepo, commit: &Commit) -> Result<bool, VcsError> {
 ///
 /// Git stores commit times in whole seconds, so redoing a rewrite an
 /// undo took back, within the same second, makes the very commit the
-/// undo hid, and jj refuses it ("Newly-created commit ... already
-/// exists"). jj's Git backend nudges the time only when the change ids
-/// differ; this is the same fix for the same change.
+/// undo hid (a describe again, or a snapshot of the same files), and jj
+/// refuses it ("Newly-created commit ... already exists"). jj's Git
+/// backend nudges the time only when the change ids differ; this is the
+/// same fix for the same change.
 pub(crate) fn write_commit(
     tx: &mut Transaction,
     build: impl Fn(
