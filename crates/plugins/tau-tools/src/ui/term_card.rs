@@ -1,4 +1,4 @@
-//! A `bash` card's terminal: an inset screen with a strip on top.
+//! A `bash` card's terminal: its screen in the card, under a strip.
 //!
 //! The screen is a [`TerminalView`] per card, kept by [`TermCards`]:
 //! live while the command runs (fed the `term` chunks as they arrive),
@@ -277,7 +277,7 @@ fn tab(
         .child(mono(label, Type::MICRO, if on { t.text } else { t.dim }))
 }
 
-/// The card's body: the inset screen, with its strip.
+/// The card's body: the screen, under its strip.
 #[allow(clippy::too_many_arguments)]
 pub fn body(
     ui: &Entity<Ui>,
@@ -335,21 +335,15 @@ pub fn body(
         )
     };
 
-    let strip = div()
-        .flex()
-        .items_center()
-        .gap(sp(2.))
-        .min_w(rems(0.))
-        .border_b_1()
-        .border_color(t.term.divider);
+    let strip = div().flex().items_center().gap(sp(2.)).min_w(rems(0.));
     let strip = match cut {
         // Cut: the terminal, or what the model saw.
         Some(cut) => {
             let path = std::path::PathBuf::from(&cut.archive);
             let strip = strip
                 .gap(sp(1.))
-                .px(sp(2.))
-                .py(sp(1.25))
+                .px(sp(3.))
+                .pb(sp(1.))
                 .child(
                     tab(
                         id("tab-term"),
@@ -390,7 +384,7 @@ pub fn body(
             )
         }
         None => {
-            let strip = strip.px(sp(2.5)).py(sp(1.5));
+            let strip = strip.px(sp(3.5)).pb(sp(1.));
             let label = if running {
                 format!("{} · xterm-256color", term.size_label())
             } else if total == 0 {
@@ -431,27 +425,19 @@ pub fn body(
         seen(term, &call_id, expanded, t).into_any_element()
     } else {
         match view {
-            Some(view) => div()
-                .pl(sp(3.))
-                .pt(sp(2.))
-                .pb(sp(2.5))
-                .child(view)
-                .into_any_element(),
+            Some(view) => {
+                div().pl(sp(3.5)).pb(sp(2.5)).child(view).into_any_element()
+            }
             None => seen(term, &call_id, expanded, t).into_any_element(),
         }
     };
 
+    // The screen sits in the card as a read's lines do: no box of its
+    // own, on the terminal's ground.
     div()
-        .mx(sp(3.))
-        .mb(sp(3.))
         .flex()
         .flex_col()
-        .border_1()
-        .border_color(t.term.border)
-        .rounded(radius::CONTROL)
-        .well(t)
         .bg(ground)
-        .overflow_hidden()
         .child(strip)
         .child(screen)
 }
@@ -471,8 +457,7 @@ fn seen(
     let fg = Hsla::from(t.term.palette.foreground);
     div()
         .id(SharedString::from(format!("term-seen-{call_id}")))
-        .px(sp(3.))
-        .pt(sp(2.))
+        .px(sp(3.5))
         .pb(sp(2.5))
         .when(!expanded, |list| {
             list.max_h(rems((row * rows as f32 + 18.) / 16.))
