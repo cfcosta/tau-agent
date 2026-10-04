@@ -200,6 +200,9 @@ pub struct Host {
     prs: Arc<Mutex<HashMap<RunId, OpenPr>>>,
     /// How to steer and cancel each run going on.
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
+    /// How to stop each sub-agent going on, which runs inside its main
+    /// chat's call rather than as a run of the host's.
+    sub_agents: sub_agents::SubAgentStops,
     /// What each run going on was steered with and has not read yet.
     unread: Arc<Mutex<HashMap<RunId, Vec<String>>>>,
     /// Runs whose `RunEnd` went by while their outcome is still being
@@ -260,6 +263,7 @@ mod push;
 pub mod queue;
 mod repos;
 mod startup;
+mod sub_agents;
 
 pub use self::{
     config::HostConfig,
@@ -451,6 +455,7 @@ impl Host {
             ending: Arc::default(),
             jobs: Arc::default(),
             runs: Arc::default(),
+            sub_agents: Default::default(),
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
@@ -764,6 +769,7 @@ impl Host {
         let delegate = {
             let child_on_workspace = on_workspace.clone();
             let registered = registered.clone();
+            let stops = self.sub_agents.clone();
             let caller = choice.clone();
             let models = models.clone();
             Delegate::new(
@@ -773,7 +779,8 @@ impl Host {
                 move |child, asked| {
                     let choice = child_choice(&caller, asked)?;
                     let agent = for_model(&choice, &child)
-                        .tool(RefusingDelegate::new(&models));
+                        .tool(RefusingDelegate::new(&models))
+                        .plugin(stops.clone());
                     let (agent, services) = child_on_workspace(
                         agent,
                         child,
@@ -1296,11 +1303,14 @@ impl Host {
         }
     }
 
+    /// Stops `run`: one of the host's, or a sub-agent going on.
     pub fn cancel(&self, run: &RunId) {
         if let Some(control) = self.runs.lock().expect("not poisoned").get(run)
         {
             control.cancel();
+            return;
         }
+        self.sub_agents.cancel(run);
     }
 }
 

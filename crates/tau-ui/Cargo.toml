@@ -44,6 +44,8 @@ tau-ui-plugin.workspace = true
 tau-ui-remote.workspace = true
 futures-util.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+# A sub-agent's stop, as its plugins get it.
+tokio-util.workspace = true
 reqwest.workspace = true
 anyhow.workspace = true
 uuid.workspace = true

@@ -939,6 +939,56 @@ fn a_run_delegates_and_the_sub_agent_lands() {
 
 /// A sub-agent that fails still comes back from history, under the run
 /// that called it, with how it ended.
+/// A sub-agent's chat stops on its own: its delegate call fails, and
+/// the main chat goes on.
+#[test]
+fn a_sub_agent_stops_and_its_main_chat_goes_on() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("delegate", serde_json::json!({ "task": "wait" }))
+        })
+        // The sub-agent's answer would take a minute.
+        .turn(|t| t.text("too late").delay(Duration::from_secs(60)))
+        .turn(|t| t.text("done without it"));
+    let (host, mut events) = host(llm);
+    let main = on_main(&host, "hand it off");
+    let deadline = std::time::Instant::now() + WAIT;
+    let child = loop {
+        assert!(std::time::Instant::now() < deadline, "no sub-agent started");
+        match events.try_recv() {
+            Ok(RunEvent::RunStart {
+                run,
+                parent: Some(_),
+                ..
+            }) => break run,
+            Ok(_) => {}
+            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    };
+    host.cancel(&child);
+    // Everything up to main's own end.
+    let mut seen = Vec::new();
+    while !seen.iter().any(
+        |event| matches!(event, RunEvent::RunEnd { run, .. } if *run == main),
+    ) {
+        seen.extend(until_end(&mut events));
+    }
+    let stopped = |run: &tau_agent::tool::RunId| {
+        seen.iter().find_map(|event| match event {
+            RunEvent::RunEnd {
+                run: ended, stop, ..
+            } if ended == run => Some(stop.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(stopped(&child), Some(StopReason::Cancelled));
+    assert_eq!(stopped(&main), Some(StopReason::Stop), "main goes on");
+    let failed = seen.iter().any(|event| {
+        matches!(event, RunEvent::ToolEnd { run, is_error: true, .. } if *run == main)
+    });
+    assert!(failed, "the delegate call failed");
+}
+
 #[test]
 fn a_failed_sub_agent_comes_back_from_history() {
     let src = tempfile::tempdir().unwrap();
