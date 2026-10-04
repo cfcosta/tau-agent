@@ -54,7 +54,7 @@ use tau_ui_remote::{
     remote,
     route::Route,
     update::HostUpdate,
-    view::{Item, Origin, RunView},
+    view::{ChildKind, Item, Origin, RunView},
     workspace::Synced,
 };
 use tau_vcs::{Identity, Project};
@@ -75,11 +75,23 @@ const REPOS: [&str; 2] = ["repo", "other"];
 /// How long the host has to settle before the test fails.
 const SETTLE: Duration = Duration::from_secs(30);
 
-/// A model that answers each request only when [`Gate::answer`] says.
+/// What the model answers a request with.
+#[derive(Debug, Clone, PartialEq)]
+enum Reply {
+    /// It is done: the turn ends, and so does the run.
+    Text,
+    /// It writes `content` to `path`: the chat has changes to land.
+    Write { path: String, content: String },
+    /// It hands `task` to a sub-agent, which only a main chat can.
+    Delegate { task: String },
+}
+
+/// A model that answers each request only when [`Gate::answer`] says,
+/// and with what it says.
 #[derive(Clone, Default)]
 struct Gate {
     model: ScriptedModel,
-    waiting: Arc<Mutex<Vec<oneshot::Sender<()>>>>,
+    waiting: Arc<Mutex<Vec<oneshot::Sender<Reply>>>>,
     /// Sessions open: one per run going on.
     sessions: Arc<AtomicUsize>,
 }
@@ -92,16 +104,10 @@ impl Gate {
         waiting.len()
     }
 
-    /// Whether every run going on waits for the model: nothing else
-    /// happens until the test answers.
-    fn idle(&self) -> bool {
-        self.sessions.load(Ordering::SeqCst) == self.waiting()
-    }
-
-    /// Answers the `n`th waiting request: the turn ends with a reply.
-    fn answer(&self, n: usize) {
+    /// Answers the `n`th waiting request with `reply`.
+    fn answer(&self, n: usize, reply: Reply) {
         let answer = self.waiting.lock().unwrap().remove(n);
-        let _ = answer.send(());
+        let _ = answer.send(reply);
     }
 }
 
@@ -110,11 +116,24 @@ impl Llm for Gate {
         &self,
         settings: Settings,
     ) -> BoxFuture<'static, Result<Box<dyn LlmSession>, LlmError>> {
+        // A plugin's side request, such as a commit message, has no
+        // tools; a run's turns always do. Side requests are answered at
+        // once: the test steers runs, not what plugins ask on the side.
+        let side = settings.tools.is_empty();
         let (gate, open) = (self.clone(), self.model.open(settings));
-        gate.sessions.fetch_add(1, Ordering::SeqCst);
+        if !side {
+            gate.sessions.fetch_add(1, Ordering::SeqCst);
+        }
         async move {
-            let inner = open.await?;
-            Ok(Box::new(GatedSession { gate, inner }) as Box<dyn LlmSession>)
+            let inner = Arc::new(Mutex::new(open.await?));
+            let settings = inner.lock().unwrap().settings().clone();
+            let session = GatedSession {
+                gate,
+                inner,
+                settings,
+                side,
+            };
+            Ok(Box::new(session) as Box<dyn LlmSession>)
         }
         .boxed()
     }
@@ -122,25 +141,33 @@ impl Llm for Gate {
 
 struct GatedSession {
     gate: Gate,
-    inner: Box<dyn LlmSession>,
+    /// The scripted session, answered once the test says how.
+    inner: Arc<Mutex<Box<dyn LlmSession>>>,
+    /// Its settings, as the inner session has them.
+    settings: Settings,
+    /// A plugin's side request, answered at once.
+    side: bool,
 }
 
 impl Drop for GatedSession {
     fn drop(&mut self) {
-        self.gate.sessions.fetch_sub(1, Ordering::SeqCst);
+        if !self.side {
+            self.gate.sessions.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
 impl LlmSession for GatedSession {
     fn settings(&self) -> &Settings {
-        self.inner.settings()
+        &self.settings
     }
 
     fn set_reasoning(
         &mut self,
         effort: Option<tau_ai::responses::request::ReasoningEffort>,
     ) {
-        self.inner.set_reasoning(effort);
+        self.settings.reasoning = effort;
+        self.inner.lock().unwrap().set_reasoning(effort);
     }
 
     fn respond(
@@ -148,11 +175,32 @@ impl LlmSession for GatedSession {
         transcript: &[Message],
         timestamp: Timestamp,
     ) -> EventStream {
-        let _ = self.gate.model.clone().turn(|turn| turn.text("Done."));
-        let reply = self.inner.respond(transcript, timestamp);
+        if self.side {
+            let _ = self.gate.model.clone().turn(|turn| turn.text("Notes."));
+            return self.inner.lock().unwrap().respond(transcript, timestamp);
+        }
         let (answer, answered) = oneshot::channel();
         self.gate.waiting.lock().unwrap().push(answer);
-        stream::once(answered.map(move |_| reply)).flatten().boxed()
+        let (model, inner, transcript) = (
+            self.gate.model.clone(),
+            self.inner.clone(),
+            transcript.to_vec(),
+        );
+        // The turn is scripted once the test answers, as it answers.
+        let reply = async move {
+            let reply = answered.await.unwrap_or(Reply::Text);
+            let _ = model.turn(|turn| match reply {
+                Reply::Text => turn.text("Done."),
+                Reply::Write { path, content } => turn.tool_call(
+                    "write",
+                    serde_json::json!({ "path": path, "content": content }),
+                ),
+                Reply::Delegate { task } => turn
+                    .tool_call("delegate", serde_json::json!({ "task": task })),
+            });
+            inner.lock().unwrap().respond(&transcript, timestamp)
+        };
+        stream::once(reply).flatten().boxed()
     }
 }
 
@@ -238,8 +286,9 @@ impl Device {
 /// device: what the computer must show once everything arrived.
 #[derive(Debug, Default)]
 struct Asked {
-    /// Each message, its run (none for a new chat), and whether the run
-    /// was stopped after it: a steer it had not read goes with it.
+    /// Each message, its run (none for a new chat), and whether it may
+    /// not show: the run was stopped after it, and a steer it had not
+    /// read goes with it, or the host refused the new chat and said so.
     said: Vec<(Option<RunId>, String, bool)>,
     /// Chats closed and not written to since.
     closed: HashSet<RunId>,
@@ -260,6 +309,10 @@ struct Asked {
     kept: Option<RunId>,
     /// Repositories hidden.
     hidden_repos: HashSet<String>,
+    /// Chats ever asked to land or be dropped, and the messages that came
+    /// for them after: the host refuses those once the chat ended.
+    asked_to_end: HashSet<RunId>,
+    late: HashSet<String>,
     /// What the host said went wrong, for a failure to show.
     alerts: Vec<String>,
 }
@@ -284,6 +337,7 @@ impl Asked {
             WorkspaceEvent::Land { run }
             | WorkspaceEvent::DropChild { run } => {
                 self.ending.insert(run.clone());
+                self.asked_to_end.insert(run.clone());
             }
             WorkspaceEvent::KeepBranch { run } => self.kept = Some(run.clone()),
             WorkspaceEvent::HideRepo { repo } => {
@@ -291,6 +345,9 @@ impl Asked {
             }
             WorkspaceEvent::Say { run, text, .. } => {
                 self.said_once(text);
+                if self.asked_to_end.contains(run) {
+                    self.late.insert(text.clone());
+                }
                 self.said.push((Some(run.clone()), text.clone(), false));
                 self.ending.remove(run);
                 // It may open the chat again, or start it again.
@@ -331,6 +388,21 @@ impl Asked {
     fn answered(&mut self, update: &HostUpdate) {
         match update {
             HostUpdate::Alert { title, message } => {
+                // The host answers a new chat as it takes the request: a
+                // refusal is of the last one, such as one from a main
+                // chat left with conflicts (ADR 0024).
+                if title == "Could not start the run"
+                    || title == "Could not fork the run"
+                {
+                    let last = self
+                        .said
+                        .iter_mut()
+                        .rev()
+                        .find(|(run, ..)| run.is_none());
+                    if let Some((_, _, refused)) = last {
+                        *refused = true;
+                    }
+                }
                 self.alerts.push(format!("{title}: {message}"))
             }
             HostUpdate::Landed {
@@ -376,9 +448,18 @@ impl Asked {
             let queued = run.and_then(|run| computer.queued.get(run));
             in_transcript || queued.is_some_and(|texts| texts.contains(text))
         };
+        // A chat that landed or was dropped takes no more messages; the
+        // host says so.
+        let ended = |run: Option<&RunId>| {
+            computer
+                .runs
+                .iter()
+                .any(|view| Some(&view.id) == run && view.ending.is_some())
+        };
         for (run, text, stopped) in &self.said {
+            let refused = self.late.contains(text) && ended(run.as_ref());
             assert!(
-                *stopped || shows(run.as_ref(), text),
+                *stopped || refused || shows(run.as_ref(), text),
                 "the computer does not show {text:?} to {run:?}; it said \
                  {:?}; it shows {:?}",
                 self.alerts,
@@ -603,7 +684,7 @@ impl Tau {
         let main = tau.computer.runs()[0].id.clone();
         tau.say_to(Who::Computer, &main, "the first turn".into());
         tau.host_settles();
-        tau.gate.answer(0);
+        tau.gate.answer(0, Reply::Text);
         tau.settle();
         tau
     }
@@ -637,21 +718,32 @@ impl Tau {
     /// while.
     fn host_settles(&mut self) {
         let deadline = Instant::now() + SETTLE;
-        let started = Instant::now();
-        let mut polls = 0;
         let mut last = None;
         let mut still = 0;
-        while still < 3 {
+        while still < 2 {
             assert!(Instant::now() < deadline, "the host never settled");
             self.computer.cx.run_until_parked();
             let synced = self.computer.synced();
-            let live = synced
+            // A run waiting for its sub-agent asks the model nothing
+            // until the sub-agent is done.
+            let live: Vec<&RunView> = synced
                 .runs
                 .iter()
                 .filter(|run| run.status.is_live())
+                .collect();
+            let delegating = live
+                .iter()
+                .filter(|run| {
+                    run.children.iter().any(|child| {
+                        child.kind == ChildKind::SubAgent
+                            && child.status.is_live()
+                    })
+                })
                 .count();
-            let idle = self.gate.idle()
-                && live == self.gate.waiting()
+            let live = live.len();
+            let sessions = self.gate.sessions.load(Ordering::SeqCst);
+            let idle = sessions == live
+                && self.gate.waiting() == live - delegating
                 && !self.host.busy();
             let now =
                 (synced, self.wire.borrow().feed.seq(), self.gate.waiting());
@@ -661,19 +753,7 @@ impl Tau {
                 still = 0;
                 last = Some(now);
             }
-            std::thread::sleep(Duration::from_millis(5));
-            polls += 1;
-            if polls % 100 == 0 {
-                eprintln!(
-                    "PROFILE slow: sessions {} waiting {} live {}",
-                    self.gate.sessions.load(Ordering::SeqCst),
-                    self.gate.waiting(),
-                    live
-                );
-            }
-        }
-        if started.elapsed() > Duration::from_millis(300) {
-            eprintln!("PROFILE settle {:?}", started.elapsed());
+            std::thread::sleep(Duration::from_millis(2));
         }
     }
 
@@ -827,6 +907,8 @@ fn host(
     };
     let agent = Agent::new(gate.clone()).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
+    // Forecasts start at once: no person's burst of changes to wait out.
+    let host = host.with_forecast_wait(Duration::from_millis(1));
     let host = REPOS.iter().fold(host, |host, repo| {
         host.with_repo(repo, project(&dir.join(repo).join("checkout")))
     });
@@ -1044,13 +1126,146 @@ impl Tau {
         self.after_action(who);
     }
 
+    /// Someone writes to a finished main chat, and the model hands a
+    /// task to a sub-agent: a chat of its own, under main, on every
+    /// device.
+    #[rule(weight = 2)]
+    fn main_delegates(&mut self, tc: TestCase) {
+        let who = self.who(&tc);
+        let mains: Vec<RunView> =
+            self.computer
+                .workspace
+                .read_with(&self.computer.cx, |ws, _| {
+                    ws.runs()
+                        .iter()
+                        .filter(|run| {
+                            ws.is_main(&run.id) && !run.status.is_live()
+                        })
+                        .cloned()
+                        .collect()
+                });
+        tc.assume(!mains.is_empty());
+        let main = pick(&tc, &mains);
+        let waiting = self.gate.waiting();
+        let text = self.prompt();
+        self.say_to(who, &main, text);
+        // A phone's message goes up first.
+        if let Who::Phone(phone) = who {
+            while self.deliver(phone, false) {}
+        }
+        self.host_settles();
+        // Main went on, unless the host had it running by now: then the
+        // message steered it, and there is nothing to hand off. (Too late
+        // to reject: the message went.)
+        if self.gate.waiting() != waiting + 1 {
+            return;
+        }
+        tc.event("a main chat hands off a task");
+        self.gate.answer(
+            waiting,
+            Reply::Delegate {
+                task: "write the notes".into(),
+            },
+        );
+        self.host_settles();
+    }
+
+    /// A chat starts from main, writes a file and finishes, and the
+    /// person lands it from a device that shows it finished.
+    #[rule(weight = 2)]
+    fn chat_lands(&mut self, tc: TestCase) {
+        let who = self.who(&tc);
+        let main =
+            self.computer
+                .workspace
+                .read_with(&self.computer.cx, |ws, _| {
+                    ws.runs()
+                        .iter()
+                        .find(|run| {
+                            ws.is_main(&run.id)
+                                && Workspace::last_fork_turn_of(run) >= 1
+                        })
+                        .map(|run| run.id.clone())
+                });
+        let Some(main) = main else {
+            tc.event("no main chat to land on");
+            tc.reject()
+        };
+        let waiting = self.gate.waiting();
+        let text = self.prompt();
+        let computer = &mut self.computer;
+        computer.workspace.update(&mut computer.cx, |ws, cx| {
+            if ws.start_fork_at(&main, 1, cx) {
+                ws.submit_prompt(text.clone(), cx);
+            }
+        });
+        self.host_settles();
+        // Its turn writes a file, then it is done, and done again when
+        // tau-vcs holds its stop once to have it commit; something else
+        // may have taken the turn first.
+        for reply in [
+            Reply::Write {
+                path: "c.txt".into(),
+                content: format!("{text}\n"),
+            },
+            Reply::Text,
+            Reply::Text,
+        ] {
+            if self.gate.waiting() != waiting + 1 {
+                tc.event("a chat to land was taken over");
+                return;
+            }
+            self.gate.answer(waiting, reply);
+            self.host_settles();
+        }
+        let chat = self.computer.runs().into_iter().find(|run| {
+            matches!(run.origin, Origin::Fork { .. })
+                && run.items.contains(&Item::User(text.clone()))
+                && !run.status.is_live()
+        });
+        let Some(chat) = chat else {
+            tc.event("a chat to land did not finish");
+            return;
+        };
+        // The device sees it finished before it lands it.
+        self.settle();
+        tc.event("a finished chat lands");
+        let device = self.device(who);
+        device
+            .workspace
+            .update(&mut device.cx, |ws, cx| ws.land(&chat.id, cx));
+        device.cx.run_until_parked();
+        self.after_action(who);
+    }
+
     /// The model answers one waiting request.
     #[rule(weight = 3)]
     fn model_answers(&mut self, tc: TestCase) {
         let waiting = self.gate.waiting();
         tc.assume(waiting > 0);
         let n = tc.draw(gs::integers().min_value(0).max_value(waiting - 1));
-        self.gate.answer(n);
+        let text = self.prompt();
+        // Mostly done; else a file, which two chats may both write, or a
+        // sub-agent's task.
+        let reply =
+            match tc.draw(gs::integers::<u8>().min_value(0).max_value(3)) {
+                0 | 1 => Reply::Text,
+                2 => Reply::Write {
+                    path: tc
+                        .draw(gs::sampled_from(vec!["a.txt", "b.txt"]))
+                        .to_owned(),
+                    content: format!("{text}\n"),
+                },
+                _ => Reply::Delegate {
+                    task: "write the notes".into(),
+                },
+            };
+        tc.event(match &reply {
+            Reply::Text => "the model is done",
+            Reply::Write { .. } => "the model writes a file",
+            Reply::Delegate { .. } => "the model hands off a task",
+        });
+        self.gate.answer(n, reply);
         self.host_settles();
     }
 
@@ -1124,9 +1339,16 @@ impl Tau {
     /// Everything arrives: every phone shows what the computer shows,
     /// and the computer shows what was asked of any of them.
     #[rule(weight = 2)]
-    fn all_arrive(&mut self, _tc: TestCase) {
+    fn all_arrive(&mut self, tc: TestCase) {
         self.settle();
         let computer = self.computer.synced();
+        if computer
+            .runs
+            .iter()
+            .any(|run| matches!(run.origin, Origin::SubAgent { .. }))
+        {
+            tc.event("a sub-agent's chat is shown");
+        }
         for (phone, device) in self.phones.iter_mut().enumerate() {
             let theirs = device.synced();
             assert_synced(phone, &computer, &theirs);
@@ -1171,11 +1393,9 @@ fn assert_synced(phone: usize, computer: &Synced, theirs: &Synced) {
 // A real host per case, so generating is slow by nature.
 #[hegel::test(test_cases = 30, suppress_health_check = [HealthCheck::TooSlow])]
 fn every_device_shows_what_any_device_did(tc: TestCase) {
-    let t = Instant::now();
     let phones = tc.draw(gs::integers().min_value(1).max_value(2));
     let tau = Tau::new(phones);
     hegel::stateful::machine(tau).steps(30).run(tc);
-    eprintln!("PROFILE case {:?}", t.elapsed());
 }
 
 /// A phone's message the computer took, its answer lost with the
