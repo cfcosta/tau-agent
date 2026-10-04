@@ -952,12 +952,6 @@ impl Host {
                     } => host.refusal(),
                     _ => None,
                 };
-                if let RunEvent::RunEnd { run, .. } = &event {
-                    host.ending
-                        .lock()
-                        .expect("not poisoned")
-                        .insert(run.clone());
-                }
                 if let RunEvent::Steered { run, text } = &event {
                     host.steer_read(run, text);
                 }

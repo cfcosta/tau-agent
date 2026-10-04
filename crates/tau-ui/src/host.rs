@@ -1154,15 +1154,23 @@ impl Host {
         let runs = self.runs.clone();
         let ending = self.ending.clone();
         self.runtime.spawn(async move {
+            let id = run.id();
             {
                 let mut stream = run.events();
                 while let Some(event) = stream.next().await {
+                    // Its end goes by before its outcome is stored: it
+                    // stops in a moment (`Host::settle`). Marked here, by
+                    // the task that unmarks it, so the mark cannot outlive
+                    // the run.
+                    if matches!(&event, RunEvent::RunEnd { run, .. } if *run == id)
+                    {
+                        ending.lock().expect("not poisoned").insert(id.clone());
+                    }
                     if events.send(event).is_err() {
                         break;
                     }
                 }
             }
-            let id = run.id();
             // The outcome is stored by the run; the events said it all.
             let _ = run.outcome().await;
             runs.lock().expect("not poisoned").remove(&id);
