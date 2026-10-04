@@ -60,6 +60,8 @@ pub enum Icon {
     Interrupted,
     /// A shell: where agent commands run.
     Terminal,
+    /// A skill: instructions the agent loads for a task.
+    Skill,
 }
 
 impl Icon {
@@ -108,6 +110,7 @@ impl Icon {
             Self::Landable => "icons/landable.svg",
             Self::Interrupted => "icons/interrupted.svg",
             Self::Terminal => "icons/terminal.svg",
+            Self::Skill => "icons/skill.svg",
         }
     }
 
@@ -208,10 +211,13 @@ impl Icon {
                 r#"<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>"#
             }
             Self::Terminal => r#"<path d="M4 17l6-6-6-6M12 19h8"/>"#,
+            Self::Skill => {
+                r#"<path d="M4 5a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M14 3v5h5M8 13h8M8 17h5"/>"#
+            }
         }
     }
 
-    const ALL: [Self; 43] = [
+    const ALL: [Self; 44] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -255,6 +261,7 @@ impl Icon {
         Self::Landable,
         Self::Interrupted,
         Self::Terminal,
+        Self::Skill,
     ];
 
     fn svg(self) -> String {
