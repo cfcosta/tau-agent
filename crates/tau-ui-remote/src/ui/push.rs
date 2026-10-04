@@ -31,52 +31,27 @@ pub fn header(
     run: &RunView,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Option<gpui::Div> {
+) -> Option<gpui::Stateful<gpui::Div>> {
     let repo = ws.main_repo(&run.id)?.to_owned();
-    let (ahead, trunk) = ws.unpushed(&repo)?;
+    let (ahead, _) = ws.unpushed(&repo)?;
     let pushing =
         matches!(ws.push_state(&repo), Some(PushState::Pushing { .. }));
-    let count = div()
-        .flex()
-        .items_center()
-        .gap(sp(1.5))
-        .px(sp(2.))
-        .py(sp(1.))
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::CONTROL)
-        .child(ui::mono(format!("↑{ahead}"), Type::MICRO, t.green))
-        .child(ui::mono("ahead of", Type::MICRO, t.dim))
-        .child(ui::mono(
-            format!("origin/{trunk}"),
-            Type::MICRO,
-            t.text_soft,
-        ));
+    // How far ahead trunk is goes on the button itself.
     let label = if pushing {
-        "Pushing…"
+        "Pushing…".to_owned()
     } else {
-        "Push to GitHub"
+        format!("Push ↑{ahead}")
     };
-    let button = div()
-        .id("push")
-        .child(ui::button(label, ButtonKind::Primary, t).child(ui::icon(
-            Icon::Push,
-            IconSize::COMPACT,
-            t.bg,
-        )))
-        .when(pushing, |button| button.opacity(0.6))
-        .when(!pushing, |button| {
-            button.on_click(
-                cx.listener(move |ws, _, _, cx| ws.push(&repo, false, cx)),
-            )
-        });
     Some(
         div()
-            .flex()
-            .items_center()
-            .gap(sp(3.))
-            .child(count)
-            .child(button),
+            .id("push")
+            .child(ui::button(label, ButtonKind::Primary, t))
+            .when(pushing, |button| button.opacity(0.6))
+            .when(!pushing, |button| {
+                button.on_click(
+                    cx.listener(move |ws, _, _, cx| ws.push(&repo, false, cx)),
+                )
+            }),
     )
 }
 

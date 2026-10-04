@@ -21,7 +21,11 @@ struct RepoTab {
 
 /// The repository's tabs: its runs, then each page a plugin lists for
 /// it.
-fn tabs(ws: &Workspace, repo: &str, cx: &mut Context<Workspace>) -> Vec<RepoTab> {
+fn tabs(
+    ws: &Workspace,
+    repo: &str,
+    cx: &mut Context<Workspace>,
+) -> Vec<RepoTab> {
     let runs = ws.runs.iter().filter(|run| ws.repo_of(run) == repo).count();
     let entries = ws.contributions(
         tau_ui_plugin::points::SIDEBAR_REPO,
@@ -47,7 +51,11 @@ fn tabs(ws: &Workspace, repo: &str, cx: &mut Context<Workspace>) -> Vec<RepoTab>
 
 /// The repository whose page `route` is a tab of, if any: its Runs
 /// tab, or a page a plugin lists for it.
-pub fn owner(ws: &Workspace, route: &Route, cx: &mut Context<Workspace>) -> Option<String> {
+pub fn owner(
+    ws: &Workspace,
+    route: &Route,
+    cx: &mut Context<Workspace>,
+) -> Option<String> {
     if let Route::Repo(repo) = route {
         return Some(repo.clone());
     }
@@ -106,7 +114,9 @@ pub fn framed(
                         .gap(sp(1.5))
                         .typeset(Type::CAPTION)
                         .text_color(t.muted)
-                        .children(path.map(|path| mono(path, Type::CAPTION, t.dim).truncate()))
+                        .children(path.map(|path| {
+                            mono(path, Type::CAPTION, t.dim).truncate()
+                        }))
                         .when(live > 0, |line| {
                             line.child("·").child(
                                 div()
@@ -124,38 +134,40 @@ pub fn framed(
                     ws.new_run_in(&new_in, window, cx)
                 })),
         );
-    let tab_bar = div()
-        .flex()
-        .flex_shrink_0()
-        .gap(sp(6.))
-        .px(sp(if compact { 4. } else { 9. }))
-        .pt(sp(4.5))
-        .border_b_1()
-        .border_color(t.border)
-        .children(tabs(ws, repo, cx).into_iter().enumerate().map(|(n, tab)| {
-            let on = tab.route == ws.route;
-            let route = tab.route.clone();
-            div()
-                .id(SharedString::from(format!("repo-tab-{n}")))
-                .flex()
-                .gap(sp(1.5))
-                .pb(sp(2.5))
-                .cursor_pointer()
-                .text_color(if on { t.text } else { t.text_soft })
-                .when(on, |tab| {
-                    tab.font_weight(weight::EMPHASIS)
-                        .border_b_2()
-                        .border_color(t.roles.primary)
-                })
-                .child(tab.label)
-                .children(
-                    tab.detail
-                        .map(|detail| div().text_color(t.dim).child(detail)),
-                )
-                .on_click(
-                    cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
-                )
-        }));
+    let tab_bar =
+        div()
+            .flex()
+            .flex_shrink_0()
+            .gap(sp(6.))
+            .px(sp(if compact { 4. } else { 9. }))
+            .pt(sp(4.5))
+            .border_b_1()
+            .border_color(t.border)
+            .children(tabs(ws, repo, cx).into_iter().enumerate().map(
+                |(n, tab)| {
+                    let on = tab.route == ws.route;
+                    let route = tab.route.clone();
+                    div()
+                        .id(SharedString::from(format!("repo-tab-{n}")))
+                        .flex()
+                        .gap(sp(1.5))
+                        .pb(sp(2.5))
+                        .cursor_pointer()
+                        .text_color(if on { t.text } else { t.text_soft })
+                        .when(on, |tab| {
+                            tab.font_weight(weight::EMPHASIS)
+                                .border_b_2()
+                                .border_color(t.roles.primary)
+                        })
+                        .child(tab.label)
+                        .children(tab.detail.map(|detail| {
+                            div().text_color(t.dim).child(detail)
+                        }))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.navigate(route.clone(), cx)
+                        }))
+                },
+            ));
     div()
         .flex_1()
         .min_h(px(0.))
@@ -175,8 +187,11 @@ pub fn render(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let mut runs: Vec<&RunView> =
-        ws.runs.iter().filter(|run| ws.repo_of(run) == repo).collect();
+    let mut runs: Vec<&RunView> = ws
+        .runs
+        .iter()
+        .filter(|run| ws.repo_of(run) == repo)
+        .collect();
     runs.reverse();
     let rows: Vec<AnyElement> = runs
         .iter()
@@ -201,7 +216,11 @@ pub fn render(
 }
 
 /// A run in the list: its status, title, agent, turns and cost.
-fn run_row(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> impl IntoElement {
+fn run_row(
+    run: &RunView,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
     let (color, label) = status_look(&run.status, t);
     let route = Route::Run(run.id.clone());
     div()
@@ -215,7 +234,13 @@ fn run_row(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> impl IntoEl
         .border_color(t.border)
         .cursor_pointer()
         .hover(|row| row.bg(t.card))
-        .child(div().size(px(7.)).flex_shrink_0().rounded(radius::FULL).bg(color))
+        .child(
+            div()
+                .size(px(7.))
+                .flex_shrink_0()
+                .rounded(radius::FULL)
+                .bg(color),
+        )
         .child(
             div()
                 .flex_1()
@@ -223,8 +248,15 @@ fn run_row(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> impl IntoEl
                 .flex()
                 .items_baseline()
                 .gap(sp(2.5))
-                .child(div().truncate().font_weight(weight::EMPHASIS).child(run.title.clone()))
-                .child(div().typeset(Type::CAPTION).text_color(color).child(label)),
+                .child(
+                    div()
+                        .truncate()
+                        .font_weight(weight::EMPHASIS)
+                        .child(run.title.clone()),
+                )
+                .child(
+                    div().typeset(Type::CAPTION).text_color(color).child(label),
+                ),
         )
         .child(
             div()
@@ -250,5 +282,7 @@ fn run_row(run: &RunView, t: &Theme, cx: &mut Context<Workspace>) -> impl IntoEl
                 .w(px(70.))
                 .text_right(),
         )
-        .on_click(cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)))
+        .on_click(
+            cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
+        )
 }

@@ -525,13 +525,8 @@ impl Workspace {
                     div()
                         .id("fork")
                         .child(
-                            ui::button("Fork", ButtonKind::Secondary, t).child(
-                                ui::icon(
-                                    Icon::Fork,
-                                    IconSize::COMPACT,
-                                    t.text_soft,
-                                ),
-                            ),
+                            ui::button("Fork", ButtonKind::Secondary, t)
+                                .text_color(t.roles.agent),
                         )
                         .on_click(cx.listener(|ws, _, window, cx| {
                             ws.start_fork(window, cx)

@@ -25,7 +25,6 @@ impl Workspace {
     ) -> impl IntoElement {
         // On New Run the message starts a run, whatever the open run does.
         let live = self.route != Route::NewRun && self.is_live();
-        let continues = self.continues_chat();
         let queued = self
             .current()
             .and_then(|run| self.queued.get(&run.id))
@@ -42,37 +41,27 @@ impl Workspace {
                 t,
             ))
         } else {
-            // Inside the field, at its end: what sending does.
+            // Inside the field, at its end: a square that sends. The
+            // field's placeholder says what sending does.
             send.child(
                 div()
-                    .h(control::SMALL)
+                    .size(px(32.))
                     .flex()
                     .items_center()
-                    .gap(sp(1.5))
-                    .px(sp(3.))
+                    .justify_center()
                     .rounded(radius::BOX)
                     .bg(t.roles.primary)
-                    .text_color(t.roles.on_primary)
-                    .font_weight(weight::EMPHASIS)
                     .cursor_pointer()
+                    .hover(|button| button.opacity(0.9))
                     .child(ui::icon(
                         if self.forking.is_some() {
                             Icon::Fork
                         } else {
                             Icon::Send
                         },
-                        IconSize::COMPACT,
+                        IconSize::BASE,
                         t.roles.on_primary,
-                    ))
-                    .child(if self.forking.is_some() {
-                        "Fork"
-                    } else if live {
-                        "Steer"
-                    } else if continues {
-                        "Send"
-                    } else {
-                        "Start"
-                    }),
+                    )),
             )
         };
 
