@@ -1,8 +1,9 @@
-//! The Servers page: a repository's MCP servers (or the user's alone),
-//! where each comes from, how it is reached and exposed, whether it is
-//! connected and its tools; the repository servers that wait for
-//! approval; entries that were skipped; and the editor for the servers
-//! the page adds.
+//! The Servers page, a tab of a repository's page: in one quiet column,
+//! a line on its MCP servers (or the user's alone) and what waits on
+//! the user, the repository servers that wait for approval, entries
+//! that were skipped, and each server with where it comes from, how it
+//! is reached and exposed, whether it is connected and its tools; and
+//! the editor for the servers the page adds.
 
 use std::collections::BTreeSet;
 
@@ -58,6 +59,8 @@ pub struct Ui {
     editor: Option<Editor>,
     /// The server whose removal waits for a second click.
     removing: Option<String>,
+    /// The servers whose tools, resources and prompts show whole.
+    details: BTreeSet<String>,
 }
 
 impl Ui {
@@ -72,6 +75,7 @@ impl Ui {
             entry,
             editor: None,
             removing: None,
+            details: BTreeSet::new(),
         }
     }
 
@@ -100,6 +104,21 @@ impl Ui {
 
     pub fn removing(&self) -> Option<&str> {
         self.removing.as_deref()
+    }
+
+    /// Whether `name`'s tools, resources and prompts show whole.
+    pub fn showing_details(&self, name: &str) -> bool {
+        self.details.contains(name)
+    }
+
+    /// Shows `name`'s tools, resources and prompts whole, or as chips
+    /// again.
+    pub fn toggle_details(&mut self, name: &str, cx: &mut Context<Self>) {
+        if !self.details.remove(name) {
+            self.details.insert(name.to_owned());
+        }
+        cx.notify();
+        self.handle.refresh(cx);
     }
 
     /// Opens the editor on a new server.
@@ -338,58 +357,43 @@ pub fn servers_of<'a>(
     }
 }
 
-/// The page.
+/// The widest the page's column grows.
+const COLUMN: f32 = 860.;
+
+/// The most tools a server shows as chips; the rest are counted on a
+/// chip that opens them all.
+pub const CHIPS: usize = 12;
+
+/// How far a server's lines sit in from its dot: past the dot and its
+/// gap, under the name.
+const INDENT: f32 = 17.;
+
+/// The page: what the servers are and what waits on the user, the
+/// repository servers waiting for approval, entries that were skipped,
+/// and each server with its tools.
 pub fn render(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
     let t = view.theme().clone();
     let compact = view.compact;
     let (repo, servers) = servers_of(view);
     let servers = servers.clone();
     let ui = view.ui.clone();
-    let removing = view.read_ui().removing.clone();
+    let (removing, details) = {
+        let state = view.read_ui();
+        (state.removing.clone(), state.details.clone())
+    };
+    let at = repo.as_deref();
     let content = div()
+        .w_full()
+        .max_w(px(COLUMN))
+        .mx_auto()
         .flex()
         .flex_col()
-        .gap(sp(4.5))
-        .child(header(&ui, repo.as_deref(), &servers, compact, &t))
-        .when(!servers.pending.is_empty(), |page| {
-            page.child(pending(&ui, repo.as_deref(), &servers.pending, &t))
-        })
+        .gap(sp(3.5))
+        .child(intro(&ui, at, &servers, compact, &t))
+        .children(servers.pending.iter().map(|row| pending(&ui, at, row, &t)))
         .children(servers.errors.iter().map(|error| {
             ui::notice(Icon::Warning, error.clone(), t.red, Type::SMALL, &t)
         }))
-        .when(!servers.started && !servers.servers.is_empty(), |page| {
-            let repo = repo.clone();
-            page.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(3.))
-                    .child(
-                        ui::notice(
-                            Icon::Info,
-                            if repo.is_some() {
-                                "Not connected yet: the servers start with the \
-                                 first run in this repository."
-                            } else {
-                                "Not connected yet: runs start their \
-                                 repository's servers."
-                            },
-                            t.blue,
-                            Type::SMALL,
-                            &t,
-                        )
-                        .flex_1(),
-                    )
-                    .child(action(
-                        "mcp-connect",
-                        "Connect now",
-                        ButtonKind::Secondary,
-                        &ui,
-                        &t,
-                        move |ui, cx| ui.reconnect(repo.as_deref(), None, cx),
-                    )),
-            )
-        })
         .child(if servers.servers.is_empty() {
             ui::empty(
                 "No servers yet. Add one here, or in ~/.config/tau/mcp.json.",
@@ -400,13 +404,13 @@ pub fn render(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
             div()
                 .flex()
                 .flex_col()
-                .gap(sp(3.))
                 .children(servers.servers.iter().map(|server| {
-                    server_card(
+                    server_section(
                         &ui,
-                        repo.as_deref(),
+                        at,
                         server,
                         removing.as_deref() == Some(server.name.as_str()),
+                        details.contains(&server.name),
                         compact,
                         &t,
                     )
@@ -429,139 +433,190 @@ pub fn render(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
         .into_any_element()
 }
 
-/// The title, whose servers these are, and what can be done.
-fn header(
+/// `1 server`, `2 servers`: `one` or `many` after a count.
+fn counted(count: usize, one: &str, many: &str) -> String {
+    match count {
+        1 => format!("1 {one}"),
+        n => format!("{n} {many}"),
+    }
+}
+
+/// What these servers are, how many are connected and what waits on
+/// the user, each count in its color; where they are read from; and
+/// what can be done: connect them before a run does, or add one.
+fn intro(
     ui: &Entity<Ui>,
     repo: Option<&str>,
     servers: &Servers,
     compact: bool,
     t: &Theme,
 ) -> Div {
+    let mut counts = Vec::new();
+    if !servers.servers.is_empty() {
+        counts.push(match servers.started {
+            true => (format!("{} connected", servers.connected()), t.green),
+            false => ("none connected yet".to_owned(), t.muted),
+        });
+    }
+    if servers.needs_sign_in() > 0 {
+        counts.push((
+            counted(servers.needs_sign_in(), "needs sign-in", "need sign-in"),
+            t.roles.live,
+        ));
+    }
+    if servers.failed() > 0 {
+        counts.push((format!("{} failed", servers.failed()), t.red));
+    }
+    if !servers.pending.is_empty() {
+        counts.push((
+            counted(
+                servers.pending.len(),
+                "needs your approval",
+                "need your approval",
+            ),
+            t.roles.live,
+        ));
+    }
+    let last = counts.len().saturating_sub(1);
+    let line = div()
+        .flex()
+        .flex_wrap()
+        .typeset(Type::SMALL.sized(13.5))
+        .text_color(t.muted)
+        .child(match repo {
+            Some(_) => "Servers this repository's runs can call. ",
+            None => "Your servers, which every repository's runs can call. ",
+        })
+        .children(counts.into_iter().enumerate().map(
+            |(at, (count, color))| {
+                div()
+                    .flex()
+                    .child(div().text_color(color).child(count))
+                    .child(if at == last { "." } else { ", " })
+            },
+        ));
     let files = [servers.user_file.as_deref(), servers.repo_file.as_deref()]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
         .join(" and ");
+    let connect = (!servers.started && !servers.servers.is_empty())
+        .then(|| repo.map(str::to_owned));
     div()
         .flex()
-        .items_start()
-        .gap(sp(4.))
+        .flex_wrap()
+        .items_center()
+        .gap(sp(3.))
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(px(if compact { 0. } else { 300. }))
                 .flex()
                 .flex_col()
-                .gap(sp(1.5))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.5))
-                        .child(
-                            div()
-                                .typeset(Type::TITLE)
-                                .font_weight(weight::STRONG)
-                                .child("MCP servers"),
-                        )
-                        .child(ui::tag(
-                            repo.unwrap_or("your servers").to_owned(),
-                            Type::CAPTION,
-                            t.text_soft,
-                            t,
-                        ))
-                        .child(mono(servers.summary(), Type::CAPTION, t.dim)),
-                )
-                .when(!compact, |title| {
-                    title.child(ui::text(
+                .gap(sp(1.))
+                .child(line)
+                .when(!compact && !files.is_empty(), |intro| {
+                    intro.child(ui::text(
                         format!(
-                            "Servers whose tools runs get, read from {files} \
-                             and the servers added here. A repository's own \
-                             servers wait for your approval."
+                            "Read from {files}, and the servers added here. \
+                             A repository's own servers wait for your \
+                             approval; until a run starts them, Connect does."
                         ),
-                        Type::BODY,
-                        t.muted,
+                        Type::CAPTION,
+                        t.dim,
                     ))
                 }),
         )
+        .when_some(connect, |row, repo| {
+            row.child(action(
+                "mcp-connect",
+                "Connect now",
+                ButtonKind::Secondary,
+                ui,
+                t,
+                move |ui, cx| ui.reconnect(repo.as_deref(), None, cx),
+            ))
+        })
         .child(action(
             "mcp-add",
-            "Add server",
-            ButtonKind::Primary,
+            "Add a server",
+            ButtonKind::Secondary,
             ui,
             t,
             |ui, cx| ui.open_add(cx),
         ))
 }
 
-/// The repository servers waiting for approval, each with its whole
-/// entry: approving runs what it says.
+/// A repository server waiting for approval, in a filled panel with
+/// its whole entry: approving runs what it says.
 fn pending(
     ui: &Entity<Ui>,
     repo: Option<&str>,
-    pending: &[PendingRow],
+    row: &PendingRow,
     t: &Theme,
 ) -> Div {
+    let (repo, row) = (repo.map(str::to_owned), row.clone());
+    let entry = serde_json::to_string_pretty(&row.entry).unwrap_or_default();
     div()
         .flex()
         .flex_col()
         .gap(sp(2.5))
-        .child(heading(
-            &format!("Waiting for approval · {}", pending.len()),
-            t,
-        ))
-        .children(pending.iter().map(|row| {
-            let (repo, row) = (repo.map(str::to_owned), row.clone());
-            let entry =
-                serde_json::to_string_pretty(&row.entry).unwrap_or_default();
-            ui::card(t)
-                .p(sp(3.5))
+        .px(sp(4.5))
+        .py(sp(4.))
+        .rounded(radius::CARD)
+        .bg(t.card)
+        .border_1()
+        .border_color(t.border_strong)
+        .child(
+            div()
+                .flex()
+                .items_center()
                 .gap(sp(2.5))
-                .border_color(t.accent_border)
                 .child(
                     div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .child(icon(Icon::Lock, IconSize::COMPACT, t.accent))
-                        .child(mono(row.name.clone(), Type::SMALL, t.text))
-                        .child(
-                            mono(row.transport.clone(), Type::CAPTION, t.dim)
-                                .flex_1()
-                                .min_w(px(0.))
-                                .truncate(),
-                        )
-                        .when_some(repo, |line, repo| {
-                            let id = format!("mcp-approve-{}", row.name);
-                            let row = row.clone();
-                            line.child(action(
-                                id,
-                                "Approve",
-                                ButtonKind::Primary,
-                                ui,
-                                t,
-                                move |ui, cx| ui.approve(&repo, &row, cx),
-                            ))
-                        }),
+                        .flex_shrink_0()
+                        .font_weight(weight::STRONG)
+                        .text_color(t.text)
+                        .child(row.name.clone()),
                 )
-                .child(ui::text(
-                    "The repository's .tau/mcp.json starts this server. It \
-                     connects once approved, and asks again if the entry \
-                     changes.",
-                    Type::CAPTION,
-                    t.muted,
-                ))
-                .child(ui::code_block(Some("json"), &entry, t))
-        }))
+                .child(
+                    mono(row.transport.clone(), Type::CAPTION, t.dim)
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate(),
+                )
+                .child(
+                    ui::text("needs approval", Type::SMALL, t.roles.live)
+                        .flex_shrink_0(),
+                ),
+        )
+        .child(ui::text(
+            "The repository's .tau/mcp.json starts this server. It connects \
+             once approved, and asks again if the entry changes.",
+            Type::SMALL.sized(13.5),
+            t.text_soft,
+        ))
+        .child(ui::code_block(Some("json"), &entry, t))
+        .when_some(repo, |panel, repo| {
+            let id = format!("mcp-approve-{}", row.name);
+            panel.child(div().flex().gap(sp(2.)).child(action(
+                id,
+                "Approve",
+                ButtonKind::Primary,
+                ui,
+                t,
+                move |ui, cx| ui.approve(&repo, &row, cx),
+            )))
+        })
 }
 
 /// A state's color.
 fn state_color(state: Option<&str>, t: &Theme) -> gpui::Hsla {
     match state {
         Some("connected") => t.green,
-        Some("connecting") => t.accent,
+        Some("connecting") => t.roles.waiting,
         Some("failed") => t.red,
-        Some(super::NEEDS_AUTH) => t.accent,
+        Some(super::NEEDS_AUTH) => t.roles.live,
         _ => t.dim,
     }
 }
@@ -572,48 +627,6 @@ pub fn state_label(state: &str) -> &str {
         super::NEEDS_AUTH => "needs sign-in",
         other => other,
     }
-}
-
-/// Sign in, when the server waits for it; Sign out, when signed in.
-fn sign_in_actions(
-    ui: &Entity<Ui>,
-    repo: Option<&str>,
-    server: &ServerRow,
-    t: &Theme,
-) -> Div {
-    let waiting = server.state.as_deref() == Some(super::NEEDS_AUTH);
-    let signed_in = server.auth.as_ref().is_some_and(|auth| auth.signed_in);
-    let name = server.name.clone();
-    div()
-        .flex()
-        .items_center()
-        .gap(sp(2.))
-        .when(waiting && server.auth.is_some(), |row| {
-            let (repo, name) = (repo.map(str::to_owned), name.clone());
-            row.child(action(
-                format!("mcp-sign-in-{name}"),
-                if signed_in {
-                    "Sign in again"
-                } else {
-                    "Sign in"
-                },
-                ButtonKind::Primary,
-                ui,
-                t,
-                move |ui, cx| ui.sign_in(repo.as_deref(), &name, cx),
-            ))
-        })
-        .when(signed_in, |row| {
-            let (repo, name) = (repo.map(str::to_owned), name.clone());
-            row.child(action(
-                format!("mcp-sign-out-{name}"),
-                "Sign out",
-                ButtonKind::Secondary,
-                ui,
-                t,
-                move |ui, cx| ui.sign_out(repo.as_deref(), &name, cx),
-            ))
-        })
 }
 
 /// Who is signed in, where, with which scopes; or what the server wants.
@@ -644,172 +657,324 @@ pub fn sign_in_line(server: &ServerRow) -> Option<String> {
     Some(parts.join(" · "))
 }
 
-/// One server: its name, where it comes from, how it is reached and
-/// exposed, its state and last error, its tools, and what can be done.
-fn server_card(
+/// What a server's line says on its right: its state when it is not
+/// connected, and how many tools, resources and prompts it has.
+pub fn server_note(server: &ServerRow, repo: Option<&str>) -> String {
+    let mut parts = Vec::new();
+    match server.state.as_deref() {
+        Some("connected") => {}
+        Some(state) => parts.push(state_label(state).to_owned()),
+        None if repo.is_none() && per_repo(server) => {
+            parts.push("starts in each repository".to_owned())
+        }
+        None => parts.push("not started".to_owned()),
+    }
+    parts.push(counted(server.tools.len(), "tool", "tools"));
+    if !server.resources.is_empty() {
+        parts.push(counted(server.resources.len(), "resource", "resources"));
+    }
+    if !server.templates.is_empty() {
+        parts.push(counted(server.templates.len(), "template", "templates"));
+    }
+    if !server.prompts.is_empty() {
+        parts.push(counted(server.prompts.len(), "prompt", "prompts"));
+    }
+    parts.join(" · ")
+}
+
+/// Where a server comes from and how its tools reach runs:
+/// `settings · codemode · shared`.
+fn origin(server: &ServerRow) -> String {
+    let mut parts = vec![server.defined.label(), server.exposure.as_str()];
+    if server.shared {
+        parts.push("shared");
+    }
+    if per_repo(server) {
+        parts.push("per repository");
+    }
+    parts.join(" · ")
+}
+
+/// Words that act, quieter than a button: a server's own actions.
+fn quiet_action(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    color: gpui::Hsla,
+    ui: &Entity<Ui>,
+    f: impl Fn(&mut Ui, &mut Context<Ui>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id.into())
+        .flex_shrink_0()
+        .typeset(Type::CAPTION)
+        .text_color(color)
+        .cursor_pointer()
+        .hover(|style| style.underline())
+        .child(label.into())
+        .on_click(on_ui(ui, f))
+}
+
+/// What can be done to a server: sign in or out, see its tools whole,
+/// connect it again, edit or remove it, and turn it on or off.
+fn server_actions(
     ui: &Entity<Ui>,
     repo: Option<&str>,
     server: &ServerRow,
     removing: bool,
+    open: bool,
     compact: bool,
     t: &Theme,
 ) -> Div {
     let name = server.name.clone();
-    let state = server
-        .state
-        .as_deref()
-        .map(|state| state_label(state).to_owned())
-        .unwrap_or_else(|| match repo.is_none() && per_repo(server) {
-            true => "starts in each repository".into(),
-            false => "not started".into(),
-        });
-    let actions = div()
+    let waiting = server.state.as_deref() == Some(super::NEEDS_AUTH);
+    let signed_in = server.auth.as_ref().is_some_and(|auth| auth.signed_in);
+    let has_details = !server.tools.is_empty() || has_more(server);
+    div()
         .flex()
+        .flex_wrap()
         .items_center()
-        .gap(sp(2.))
-        .child(sign_in_actions(ui, repo, server, t))
-        .when(server.state.is_some() && server.enabled, |row| {
+        .gap(sp(3.))
+        .when(waiting && server.auth.is_some(), |row| {
             let (repo, name) = (repo.map(str::to_owned), name.clone());
             row.child(action(
-                format!("mcp-reconnect-{name}"),
-                "Reconnect",
-                ButtonKind::Secondary,
+                format!("mcp-sign-in-{name}"),
+                if signed_in {
+                    "Sign in again"
+                } else {
+                    "Sign in"
+                },
+                ButtonKind::Primary,
                 ui,
                 t,
+                move |ui, cx| ui.sign_in(repo.as_deref(), &name, cx),
+            ))
+        })
+        .when(has_details, |row| {
+            let name = name.clone();
+            row.child(quiet_action(
+                format!("mcp-details-{name}"),
+                if open { "Hide details" } else { "Details" },
+                t.muted,
+                ui,
+                move |ui, cx| ui.toggle_details(&name, cx),
+            ))
+        })
+        .when(signed_in, |row| {
+            let (repo, name) = (repo.map(str::to_owned), name.clone());
+            row.child(quiet_action(
+                format!("mcp-sign-out-{name}"),
+                "Sign out",
+                t.muted,
+                ui,
+                move |ui, cx| ui.sign_out(repo.as_deref(), &name, cx),
+            ))
+        })
+        .when(server.state.is_some() && server.enabled, |row| {
+            let (repo, name) = (repo.map(str::to_owned), name.clone());
+            row.child(quiet_action(
+                format!("mcp-reconnect-{name}"),
+                "Reconnect",
+                t.muted,
+                ui,
                 move |ui, cx| ui.reconnect(repo.as_deref(), Some(&name), cx),
             ))
         })
-        .child(toggle(ui, repo, server, false, t))
         .when(server.defined == Defined::Settings, |row| {
             let entry = server.entry.clone().unwrap_or(Value::Null);
             let (edit, remove) = (name.clone(), name.clone());
-            row.child(action(
+            row.child(quiet_action(
                 format!("mcp-edit-{name}"),
                 "Edit",
-                ButtonKind::Secondary,
+                t.muted,
                 ui,
-                t,
                 move |ui, cx| ui.open_edit(&edit, &entry, cx),
             ))
-            .child(action(
+            .child(quiet_action(
                 format!("mcp-remove-{name}"),
                 if removing { "Remove it" } else { "Remove" },
-                ButtonKind::Danger,
+                if removing { t.red } else { t.muted },
                 ui,
-                t,
                 move |ui, cx| ui.remove(&remove, cx),
             ))
-        });
-    ui::card(t)
-        .p(sp(3.5))
-        .gap(sp(2.5))
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(sp(2.))
-                .child(ui::dot(state_color(server.state.as_deref(), t), 8.))
-                .child(mono(server.name.clone(), Type::SMALL, t.text))
-                .child(ui::badge(server.defined.label(), t.muted, t.border))
-                .when(server.shared, |row| {
-                    row.child(ui::badge("shared", t.green, t.border))
-                })
-                .when(per_repo(server), |row| {
-                    row.child(ui::badge("per repository", t.muted, t.border))
-                })
-                .child(ui::badge(
-                    server.exposure.clone(),
-                    t.blue,
-                    t.blue_border,
-                ))
-                .child(mono(state, Type::CAPTION, t.dim))
-                .child(div().flex_1())
-                .when(!compact, |row| row.child(actions)),
-        )
-        .child(mono(server.transport.clone(), Type::CAPTION, t.dim).truncate())
-        .when_some(server.description.clone(), |card, description| {
-            card.child(ui::text(description, Type::SMALL, t.muted))
         })
-        .when_some(sign_in_line(server), |card, line| {
-            card.child(mono(line, Type::CAPTION, t.muted))
-        })
-        .when_some(server.error.clone(), |card, error| {
-            let color = match server.state.as_deref() {
-                Some(super::NEEDS_AUTH) => t.accent,
-                _ => t.red,
-            };
-            card.child(mono(error, Type::CAPTION, color))
-        })
-        .when(!server.tools.is_empty(), |card| {
-            card.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(heading(
-                        &format!("Tools · {}", server.tools.len()),
-                        t,
-                    ))
-                    .children(
-                        server.tools.iter().map(|tool| tool_row(tool, t)),
-                    ),
-            )
-        })
-        .when(has_more(server), |card| card.child(offers(server, t)))
-        .when(compact, |card| {
-            card.child(
-                div().flex().flex_wrap().child(server_actions_compact(
-                    ui, repo, server, removing, t,
-                )),
-            )
-        })
+        .child(toggle(ui, repo, server, compact, t))
 }
 
-/// A server's actions on a phone, under it.
-fn server_actions_compact(
+/// One server, as a section over a rule: its state's dot, its name and
+/// how it is reached, what it has; where it comes from and what can be
+/// done; its description, sign-in and last error; and its tools as
+/// chips, or whole with its resources and prompts once opened.
+fn server_section(
     ui: &Entity<Ui>,
     repo: Option<&str>,
     server: &ServerRow,
     removing: bool,
+    open: bool,
+    compact: bool,
     t: &Theme,
 ) -> Div {
+    let below = || div().pl(px(INDENT));
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(2.))
+        .px(sp(1.))
+        .pt(sp(3.5))
+        .pb(sp(4.))
+        .border_b_1()
+        .border_color(t.border)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(2.5))
+                .child(ui::dot(state_color(server.state.as_deref(), t), 7.))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .font_weight(weight::STRONG)
+                        .text_color(t.text)
+                        .child(server.name.clone()),
+                )
+                .child(
+                    mono(server.transport.clone(), Type::CAPTION, t.dim)
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate(),
+                )
+                .when(!compact, |line| {
+                    line.child(
+                        ui::text(
+                            server_note(server, repo),
+                            Type::SMALL,
+                            t.muted,
+                        )
+                        .flex_shrink_0(),
+                    )
+                }),
+        )
+        .child(
+            below()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(sp(3.))
+                .child(
+                    mono(
+                        match compact {
+                            true => format!(
+                                "{} · {}",
+                                origin(server),
+                                server_note(server, repo)
+                            ),
+                            false => origin(server),
+                        },
+                        Type::CAPTION,
+                        t.dim,
+                    )
+                    .flex_1(),
+                )
+                .child(server_actions(
+                    ui, repo, server, removing, open, compact, t,
+                )),
+        )
+        .when_some(server.description.clone(), |section, description| {
+            section.child(below().child(ui::text(
+                description,
+                Type::SMALL,
+                t.text_soft,
+            )))
+        })
+        .when_some(sign_in_line(server), |section, line| {
+            section.child(below().child(mono(line, Type::CAPTION, t.muted)))
+        })
+        .when_some(server.error.clone(), |section, error| {
+            let color = match server.state.as_deref() {
+                Some(super::NEEDS_AUTH) => t.roles.live,
+                _ => t.red,
+            };
+            section.child(below().child(mono(error, Type::CAPTION, color)))
+        })
+        .when(!open && !server.tools.is_empty(), |section| {
+            section.child(below().child(tool_chips(ui, server, t)))
+        })
+        .when(open, |section| {
+            section.child(
+                below()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(3.))
+                    .when(!server.tools.is_empty(), |details| {
+                        details.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(heading(
+                                    &format!("Tools · {}", server.tools.len()),
+                                    t,
+                                ))
+                                .children(
+                                    server
+                                        .tools
+                                        .iter()
+                                        .map(|tool| tool_row(tool, t)),
+                                ),
+                        )
+                    })
+                    .when(has_more(server), |details| {
+                        details.child(offers(server, t))
+                    }),
+            )
+        })
+}
+
+/// A tool's chip color: hidden tools quiet, destructive ones red.
+fn chip_color(tool: &ToolRow, t: &Theme) -> gpui::Hsla {
+    if tool.name.is_none() {
+        t.dim
+    } else if tool.annotations.destructive == Some(true) {
+        t.red
+    } else {
+        t.blue
+    }
+}
+
+/// A short mono name on a small raised chip.
+fn chip(text: impl Into<SharedString>, color: gpui::Hsla, t: &Theme) -> Div {
+    mono(text, Type::CAPTION, color)
+        .flex_shrink_0()
+        .px(sp(2.))
+        .py(sp(0.5))
+        .rounded(radius::CONTROL)
+        .bg(t.raised)
+}
+
+/// A server's first [`CHIPS`] tools as chips, and the rest counted on
+/// one that opens them all.
+fn tool_chips(ui: &Entity<Ui>, server: &ServerRow, t: &Theme) -> Div {
+    let more = server.tools.len().saturating_sub(CHIPS);
     let name = server.name.clone();
     div()
         .flex()
         .flex_wrap()
-        .gap(sp(2.))
-        .child(sign_in_actions(ui, repo, server, t))
-        .when(server.state.is_some() && server.enabled, |row| {
-            let (repo, name) = (repo.map(str::to_owned), name.clone());
-            row.child(action(
-                format!("mcp-reconnect-{name}"),
-                "Reconnect",
-                ButtonKind::Secondary,
-                ui,
-                t,
-                move |ui, cx| ui.reconnect(repo.as_deref(), Some(&name), cx),
-            ))
-        })
-        .child(toggle(ui, repo, server, true, t))
-        .when(server.defined == Defined::Settings, |row| {
-            let entry = server.entry.clone().unwrap_or(Value::Null);
-            let (edit, remove) = (name.clone(), name.clone());
-            row.child(action(
-                format!("mcp-edit-{name}"),
-                "Edit",
-                ButtonKind::Secondary,
-                ui,
-                t,
-                move |ui, cx| ui.open_edit(&edit, &entry, cx),
-            ))
-            .child(action(
-                format!("mcp-remove-{name}"),
-                if removing { "Remove it" } else { "Remove" },
-                ButtonKind::Danger,
-                ui,
-                t,
-                move |ui, cx| ui.remove(&remove, cx),
-            ))
+        .gap(sp(1.5))
+        .children(
+            server
+                .tools
+                .iter()
+                .take(CHIPS)
+                .map(|tool| chip(tool.tool.clone(), chip_color(tool, t), t)),
+        )
+        .when(more > 0, |chips| {
+            chips.child(
+                div()
+                    .id(SharedString::from(format!("mcp-more-{name}")))
+                    .cursor_pointer()
+                    .child(chip(format!("+{more}"), t.muted, t))
+                    .on_click(on_ui(ui, move |ui, cx| {
+                        ui.toggle_details(&name, cx)
+                    })),
+            )
         })
 }
 
@@ -841,8 +1006,8 @@ pub fn reach(server: &ServerRow, repo: Option<&str>) -> &'static str {
     }
 }
 
-/// The switch that turns `server` on or off at the page's level (a
-/// button on a phone), or why it cannot.
+/// The switch that turns `server` on or off at the page's level (words
+/// on a phone), or why it cannot.
 fn toggle(
     ui: &Entity<Ui>,
     repo: Option<&str>,
@@ -861,12 +1026,11 @@ fn toggle(
         ui.enable(repo.as_deref(), &name, !enabled, cx)
     };
     if compact {
-        return action(
+        return quiet_action(
             id,
             if enabled { "Turn off" } else { "Turn on" },
-            ButtonKind::Secondary,
+            t.muted,
             ui,
-            t,
             flip,
         )
         .into_any_element();
@@ -1134,7 +1298,7 @@ fn editor_modal(
             body.child(mono(problem, Type::CAPTION, t.red))
         });
     ui::modal(
-        icon(Icon::Plug, IconSize::LARGE, t.accent),
+        icon(Icon::Plug, IconSize::LARGE, t.roles.mcp),
         match &editor.editing {
             Some(_) => "Edit server",
             None => "Add server",

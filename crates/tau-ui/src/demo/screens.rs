@@ -29,6 +29,9 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("constitution", |ws, _, cx| {
         plugin_page(ws, tau_constitution::NAME, "rules", "repo", cx)
     }),
+    ("mcp", |ws, _, cx| {
+        plugin_page(ws, tau_mcp::NAME, "servers", "repo", cx)
+    }),
     ("ledger", |ws, _, cx| {
         let run = run_id().0.to_string();
         let page = Route::Plugin {
