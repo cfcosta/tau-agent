@@ -12,6 +12,7 @@ use std::{
 
 use gpui::{App, Entity, Task};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tau_remote::{
     Address,
     Server,
@@ -109,19 +110,13 @@ pub fn serve(
     }
     show(&bridge, workspace, cx);
 
-    // What the host applies goes to every phone. Onboarding stays here.
+    // What the host applies goes to every phone.
     let echo = bridge.clone();
     cx.subscribe(workspace, move |_, update: &HostUpdate, _| {
-        if matches!(update, HostUpdate::Setup(_)) {
-            return;
-        }
-        if let Some(server) = &echo.borrow().server {
-            match serde_json::to_value(update) {
-                Ok(body) => server.broadcast(body),
-                Err(error) => {
-                    eprintln!("tau-ui: cannot send an update: {error}")
-                }
-            }
+        if let Some(server) = &echo.borrow().server
+            && let Some(body) = to_phones(update)
+        {
+            server.broadcast(body);
         }
     })
     .detach();
@@ -133,6 +128,36 @@ pub fn serve(
         }
     })
     .detach();
+}
+
+/// What phones are sent of `update`: all but onboarding, which stays
+/// on the computer.
+pub fn to_phones(update: &HostUpdate) -> Option<Value> {
+    if matches!(update, HostUpdate::Setup(_)) {
+        return None;
+    }
+    serde_json::to_value(update)
+        .inspect_err(|error| {
+            eprintln!("tau-ui: cannot send an update: {error}")
+        })
+        .ok()
+}
+
+/// What a phone that needs everything is sent: what `workspace` shows.
+pub fn snapshot(workspace: &Workspace) -> Vec<Value> {
+    to_phones(&workspace.snapshot()).into_iter().collect()
+}
+
+/// What a phone sent, if it is something a phone may ask.
+pub fn from_phone(body: Value) -> Option<PhoneUp> {
+    match serde_json::from_value::<PhoneUp>(body) {
+        Ok(PhoneUp::Event(event)) if !event.from_phone() => None,
+        Ok(up) => Some(up),
+        Err(error) => {
+            eprintln!("tau-ui: a phone sent what tau cannot read: {error}");
+            None
+        }
+    }
 }
 
 fn handle(
@@ -285,33 +310,20 @@ fn on_event(
 ) {
     match event {
         ServerEvent::NeedSnapshot { conn, .. } => {
-            let snapshot = workspace.read(cx).snapshot();
-            match serde_json::to_value(&snapshot) {
-                Ok(body) => server.snapshot(conn, vec![body]),
-                Err(error) => {
-                    eprintln!("tau-ui: cannot send a snapshot: {error}")
+            server.snapshot(conn, snapshot(workspace.read(cx)));
+        }
+        ServerEvent::Up { device, body, .. } => match from_phone(body) {
+            // The host acts on it as on its own interface's.
+            Some(PhoneUp::Event(event)) => {
+                workspace.update(cx, |_, cx| cx.emit(event));
+            }
+            Some(PhoneUp::Name(name)) => {
+                if let Err(error) = server.rename(&device.id, &name) {
+                    eprintln!("tau-ui: cannot rename a phone: {error}");
                 }
             }
-        }
-        ServerEvent::Up { device, body, .. } => {
-            match serde_json::from_value::<PhoneUp>(body) {
-                // The host acts on it as on its own interface's.
-                Ok(PhoneUp::Event(event)) if event.from_phone() => {
-                    workspace.update(cx, |_, cx| cx.emit(event));
-                }
-                Ok(PhoneUp::Event(_)) => {}
-                Ok(PhoneUp::Name(name)) => {
-                    if let Err(error) = server.rename(&device.id, &name) {
-                        eprintln!("tau-ui: cannot rename a phone: {error}");
-                    }
-                }
-                Err(error) => {
-                    eprintln!(
-                        "tau-ui: a phone sent what tau cannot read: {error}"
-                    )
-                }
-            }
-        }
+            None => {}
+        },
         ServerEvent::DevicesChanged(paired) => {
             let mut state = bridge.borrow_mut();
             // A phone that just paired used the code.

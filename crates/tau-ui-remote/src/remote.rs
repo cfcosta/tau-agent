@@ -213,8 +213,6 @@ fn arrive(
         News::Pairing(update) => {
             workspace.update(cx, |ws, cx| ws.update_pairing(update, cx))
         }
-        // Onboarding is the computer's own.
-        News::Apply(HostUpdate::Setup(_)) => {}
         News::Apply(update) => {
             workspace.update(cx, |ws, cx| ws.apply(update, cx))
         }
@@ -270,13 +268,42 @@ fn arrive(
 }
 
 fn send(sender: &Sender, up: PhoneUp) {
-    match serde_json::to_value(&up) {
-        Ok(body) => {
-            // A closed connection comes back through the session.
-            let _ = sender.send(body);
-        }
-        Err(error) => eprintln!("tau: cannot send to the computer: {error}"),
+    if let Some(body) = to_computer(&up) {
+        // A closed connection comes back through the session.
+        let _ = sender.send(body);
     }
+}
+
+/// What the phone sends the computer of `up`.
+pub fn to_computer(up: &PhoneUp) -> Option<serde_json::Value> {
+    serde_json::to_value(up)
+        .inspect_err(|error| {
+            eprintln!("tau: cannot send to the computer: {error}")
+        })
+        .ok()
+}
+
+/// The updates in what the computer sent, to apply in order. Onboarding
+/// is the computer's own.
+pub fn updates(down: Down) -> Vec<HostUpdate> {
+    let bodies = match down {
+        Down::Snapshot { bodies, .. } => bodies,
+        Down::Message { body, .. } => vec![body],
+    };
+    bodies
+        .into_iter()
+        .filter_map(|body| {
+            serde_json::from_value::<HostUpdate>(body)
+                .inspect_err(|error| {
+                    eprintln!(
+                        "tau: the computer sent what this phone cannot read: \
+                         {error}"
+                    )
+                })
+                .ok()
+        })
+        .filter(|update| !matches!(update, HostUpdate::Setup(_)))
+        .collect()
 }
 
 /// What the person did on the phone.
@@ -499,20 +526,8 @@ fn start_session(
                     ));
                     while let Ok(Some(down)) = connection.recv().await {
                         let seq = down.seq();
-                        let bodies = match down {
-                            Down::Snapshot { bodies, .. } => bodies,
-                            Down::Message { body, .. } => vec![body],
-                        };
-                        for body in bodies {
-                            match serde_json::from_value::<HostUpdate>(body) {
-                                Ok(update) => {
-                                    let _ = news.send(News::Apply(update));
-                                }
-                                Err(error) => eprintln!(
-                                    "tau: the computer sent what this phone \
-                                     cannot read: {error}"
-                                ),
-                            }
+                        for update in updates(down) {
+                            let _ = news.send(News::Apply(update));
                         }
                         *last_seq.lock().expect("not poisoned") = Some(seq);
                     }
