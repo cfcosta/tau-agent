@@ -1135,12 +1135,25 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 recatalog(&|catalog| catalog.update = Some(text.clone()), cx);
             }
             // A finished run goes on with one more turn.
-            WorkspaceEvent::Resume { run, prompt, .. } => {
+            // A message steers a run that is going; a finished one goes
+            // on with one more turn.
+            WorkspaceEvent::Say { run, text, model } => {
                 workspace.update(cx, |ws, cx| {
                     let Some(view) = ws.run(run).cloned() else {
                         return;
                     };
-                    let steps = resume_script(&view, prompt);
+                    if view.status.is_live() {
+                        let (run, text) = (run.clone(), text.clone());
+                        ws.apply(HostUpdate::Steered { run, text }, cx);
+                        return;
+                    }
+                    let resumed = HostUpdate::Resumed {
+                        run: run.clone(),
+                        prompt: text.clone(),
+                        model: model.clone(),
+                    };
+                    ws.apply(resumed, cx);
+                    let steps = resume_script(&view, text);
                     ws.replay(run.clone(), steps, cx);
                 });
             }

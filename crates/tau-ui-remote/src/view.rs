@@ -1415,6 +1415,8 @@ impl RunView {
                 delay: *delay,
                 error: error.clone(),
             }),
+            // What the person steered with, read by the run.
+            RunEvent::Steered { text, .. } => self.push_user(text.clone()),
             // A plugin with its UI says it in what it publishes.
             RunEvent::Continued { plugin, .. }
                 if crate::plugins::registry().get(plugin).is_some() => {}

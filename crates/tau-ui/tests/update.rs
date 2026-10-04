@@ -80,9 +80,10 @@ fn updates_round_trip() {
 #[test]
 fn workspace_events_round_trip() {
     let events = [
-        WorkspaceEvent::Steer {
+        WorkspaceEvent::Say {
             run: demo::run_id(),
             text: "honor retry-after".into(),
+            model: Default::default(),
         },
         WorkspaceEvent::Cancel {
             run: demo::run_id(),

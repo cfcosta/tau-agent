@@ -200,6 +200,8 @@ pub struct Host {
     prs: Arc<Mutex<HashMap<RunId, OpenPr>>>,
     /// How to steer and cancel each run going on.
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
+    /// What each run going on was steered with and has not read yet.
+    unread: Arc<Mutex<HashMap<RunId, Vec<String>>>>,
     /// Runs whose `RunEnd` went by while their outcome is still being
     /// stored: they stop in a moment.
     ending: Arc<Mutex<HashSet<RunId>>>,
@@ -445,6 +447,7 @@ impl Host {
             prs: Arc::default(),
             ending: Arc::default(),
             runs: Arc::default(),
+            unread: Arc::default(),
             events,
             hosted: Vec::new(),
             starting: Mutex::new(()),
@@ -1195,15 +1198,52 @@ impl Host {
         view
     }
 
-    /// Steers `run` with `text` while it runs. A chat that landed or
-    /// was dropped is refused: it takes no more messages.
-    pub fn steer(&self, run: &RunId, text: &str) -> anyhow::Result<()> {
+    /// Steers `run` with `text` if it is going: it reads it before its
+    /// next turn. Returns whether it was going; one that is not goes on
+    /// with the message instead ([`Host::resume`]). A chat that landed
+    /// or was dropped is refused: it takes no more messages.
+    pub fn steer(&self, run: &RunId, text: &str) -> anyhow::Result<bool> {
         self.refuse_ended(run)?;
-        if let Some(control) = self.runs.lock().expect("not poisoned").get(run)
+        // A run whose end went by reads nothing more.
+        self.settle(run);
+        let runs = self.runs.lock().expect("not poisoned");
+        let Some(control) = runs.get(run) else {
+            return Ok(false);
+        };
+        control.steer(text);
+        self.unread
+            .lock()
+            .expect("not poisoned")
+            .entry(run.clone())
+            .or_default()
+            .push(text.to_owned());
+        Ok(true)
+    }
+
+    /// `run` read `text` it was steered with.
+    pub fn steer_read(&self, run: &RunId, text: &str) {
+        let mut unread = self.unread.lock().expect("not poisoned");
+        if let Some(texts) = unread.get_mut(run)
+            && let Some(at) = texts.iter().position(|unread| unread == text)
         {
-            control.steer(text);
+            texts.remove(at);
         }
-        Ok(())
+    }
+
+    /// What `run`, which stopped, was steered with and never read.
+    pub fn take_unread(&self, run: &RunId) -> Vec<String> {
+        self.unread
+            .lock()
+            .expect("not poisoned")
+            .remove(run)
+            .unwrap_or_default()
+    }
+
+    /// The model `run` last ran on.
+    pub fn choice_of(&self, run: &RunId) -> ModelChoice {
+        self.session_of(run).choice.unwrap_or_else(|| {
+            ModelChoice::new(self.config.default_model(), Effort::Auto)
+        })
     }
 
     /// How `run` ended for good, if it did: landed on its parent, or

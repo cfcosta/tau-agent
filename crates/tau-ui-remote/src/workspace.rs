@@ -124,6 +124,9 @@ mod onboarding;
 mod pairing;
 mod pull_request;
 mod push;
+mod synced;
+
+pub use synced::Synced;
 
 /// Binds the workspace's keys. [`crate::init`] calls it.
 pub fn bind_keys(cx: &mut App) {
@@ -196,10 +199,14 @@ pub enum WorkspaceEvent {
     CloseRun {
         run: RunId,
     },
-    /// Queue a message for a running run (`Run::steer`).
-    Steer {
+    /// The person's message to a run. The host decides what it does,
+    /// as the run is when it arrives: a run that is going reads it
+    /// before its next turn (`Run::steer`); a finished one goes on with
+    /// it, on `model`.
+    Say {
         run: RunId,
         text: String,
+        model: ModelChoice,
     },
     Cancel {
         run: RunId,
@@ -274,14 +281,6 @@ pub enum WorkspaceEvent {
     /// [`HostUpdate::TauTurn`], or [`Workspace::resume_failed`].
     ResumeCutOff {
         run: RunId,
-    },
-    /// Go on with a finished run, as a chat goes on: the same run gets
-    /// `prompt`, on its own model. Its events carry on in its view; if it
-    /// cannot, answer with [`Workspace::resume_failed`].
-    Resume {
-        run: RunId,
-        prompt: String,
-        model: ModelChoice,
     },
     /// Sign in with ChatGPT in the browser: `account` again (its id), or
     /// a new account with `None`. `consent` asks again for plan usage.
@@ -404,8 +403,9 @@ pub struct Workspace {
     /// Whether the side panel shows the event log open.
     events_open: bool,
     sheet_open: bool,
-    /// Steering messages sent but not yet seen by the run, per run.
-    queued: HashMap<RunId, String>,
+    /// Steering messages the host took that the run has not read yet,
+    /// in order, per run.
+    queued: HashMap<RunId, Vec<String>>,
     /// Finished runs asked to go on, with how they had ended, until they
     /// start again.
     resuming: HashMap<RunId, RunStatus>,
@@ -929,6 +929,13 @@ impl Workspace {
             HostUpdate::BranchCode { main, fork, code } => {
                 self.set_branch_code(&main, &fork, code, cx)
             }
+            HostUpdate::Steered { run, text } => {
+                self.queued.entry(run).or_default().push(text);
+                cx.notify();
+            }
+            HostUpdate::Resumed { run, prompt, model } => {
+                self.resumed(&run, prompt, &model, cx)
+            }
             HostUpdate::ResumeFailed(run) => self.resume_failed(&run, cx),
             HostUpdate::PluginRecord { run, plugin, body }
             | HostUpdate::PluginFold { run, plugin, body } => {
@@ -1112,10 +1119,23 @@ impl Workspace {
                 }
             }
         }
+        // What it did not read, the host sends again if the run stopped
+        // on its own, as a message that resumes it.
+        if let RunEvent::RunEnd { run, .. } = event {
+            self.queued.remove(run);
+        }
         match event {
-            // The run has read what was queued.
-            RunEvent::TurnStart { run, .. } => {
-                self.queued.remove(run);
+            // The run read one message it was steered with: it is in the
+            // transcript now.
+            RunEvent::Steered { run, text } => {
+                if let Some(queued) = self.queued.get_mut(run)
+                    && let Some(at) = queued.iter().position(|q| q == text)
+                {
+                    queued.remove(at);
+                    if queued.is_empty() {
+                        self.queued.remove(run);
+                    }
+                }
             }
             RunEvent::RunStart { run, .. } => {
                 self.resuming.remove(run);
@@ -1151,8 +1171,9 @@ impl Workspace {
         update: RunUpdate,
         cx: &mut Context<Self>,
     ) -> bool {
+        // What a run streamed is the host's, for every interface.
         if let RunUpdate::Event(event) = update {
-            self.apply_event(&event, cx);
+            self.apply(HostUpdate::Event(event), cx);
             return true;
         }
         let Some(view) = self.runs.iter_mut().find(|view| &view.id == run)
@@ -1675,17 +1696,9 @@ impl Workspace {
             return;
         }
         match self.current().filter(|_| self.route != Route::NewRun) {
-            // A chat that landed or was dropped is read-only.
-            Some(run) if run.ending.is_some() => return,
-            Some(run) if run.status.is_live() => {
-                let run = run.id.clone();
-                self.queued.insert(run.clone(), text.clone());
-                cx.emit(WorkspaceEvent::Steer { run, text });
-            }
-            // A finished chat goes on.
             Some(run) => {
                 let run = run.id.clone();
-                self.resume_run(&run, text, cx);
+                self.say(&run, text, cx);
             }
             _ => cx.emit(WorkspaceEvent::NewRun {
                 prompt: text,
@@ -1696,41 +1709,53 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Sends `text` to a finished run: it shows at once, the run moves to
-    /// the top of the list, and the host starts it again.
-    pub(crate) fn resume_run(
+    /// Sends `text` to `run`, with the model picked for it or the one it
+    /// was on, should it go on. It shows once the host takes it
+    /// ([`HostUpdate::Steered`] or [`HostUpdate::Resumed`]), on every
+    /// interface alike.
+    pub(crate) fn say(
         &mut self,
         run: &RunId,
         text: String,
         cx: &mut Context<Self>,
     ) {
         // A chat that landed or was dropped takes no more messages.
-        let Some(at) = self
-            .runs
-            .iter()
-            .position(|view| &view.id == run && view.ending.is_none())
+        let Some(on) = self
+            .run(run)
+            .filter(|view| view.ending.is_none())
+            .map(Self::model_of)
         else {
             return;
         };
-        let mut view = self.runs.remove(at);
-        // The model picked for it, or the one it was on.
-        let model = self
-            .run_models
-            .remove(run)
-            .unwrap_or_else(|| Self::model_of(&view));
-        view.switch_model(&model.model, model.effort.label());
-        // A message to a closed conversation opens it again.
-        self.closed.remove(run);
-        self.resuming.insert(run.clone(), view.status.clone());
-        view.push_user(text.clone());
-        view.status = RunStatus::Planning;
-        self.runs.insert(0, view);
+        let model = self.run_models.remove(run).unwrap_or(on);
         self.follow = true;
-        cx.emit(WorkspaceEvent::Resume {
+        cx.emit(WorkspaceEvent::Say {
             run: run.clone(),
-            prompt: text,
+            text,
             model,
         });
+    }
+
+    /// The host took `prompt` for `run`: it shows, the run moves to the
+    /// top of the list, and it opens again if it was closed.
+    fn resumed(
+        &mut self,
+        run: &RunId,
+        prompt: String,
+        model: &ModelChoice,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(at) = self.runs.iter().position(|view| &view.id == run) else {
+            return;
+        };
+        let mut view = self.runs.remove(at);
+        view.switch_model(&model.model, model.effort.label());
+        self.closed.remove(run);
+        self.resuming.insert(run.clone(), view.status.clone());
+        view.push_user(prompt);
+        view.status = RunStatus::Planning;
+        self.runs.insert(0, view);
+        self.after_update(cx);
     }
 
     /// The host could not go on with the run: it ends as it had, without

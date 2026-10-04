@@ -180,7 +180,7 @@ fn fork_mode_sends_the_chosen_turn(cx: &mut TestAppContext) {
     });
     assert!(matches!(
         events.borrow().last(),
-        Some(WorkspaceEvent::Resume { .. })
+        Some(WorkspaceEvent::Say { .. })
     ));
 }
 
@@ -1060,6 +1060,28 @@ fn every_onboarding_screen_draws(cx: &mut TestAppContext) {
     }
 }
 
+/// Answers the last message sent as a host does for a finished run: it
+/// goes on with it.
+fn host_resumes(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+    events: &Events,
+) {
+    let Some(WorkspaceEvent::Say { run, text, model }) =
+        events.borrow().last().cloned()
+    else {
+        panic!("no message was sent");
+    };
+    workspace.update(cx, |ws, cx| {
+        let resumed = tau_ui_remote::update::HostUpdate::Resumed {
+            run,
+            prompt: text,
+            model,
+        };
+        ws.apply(resumed, cx)
+    });
+}
+
 /// Plays the demo run to its end.
 fn finish_demo_run(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
     workspace.update(cx, |ws, cx| {
@@ -1083,33 +1105,45 @@ fn a_message_to_a_finished_run_goes_on_with_it(cx: &mut TestAppContext) {
             ws.run(&run).unwrap().status
                 == RunStatus::Finished(StopReason::Stop)
         );
-        let runs_before = ws.runs().len();
         ws.submit_prompt("now add a test for it".into(), cx);
-        // No new chat: the same run, back to work, at the top.
-        assert_eq!(ws.runs().len(), runs_before);
-        assert_eq!(ws.runs()[0].id, run);
-        let view = ws.run(&run).unwrap();
-        assert!(view.status.is_live());
-        assert!(matches!(
-            view.items.last(),
-            Some(Item::User(text)) if text == "now add a test for it"
-        ));
-        assert_eq!(ws.route(), &Route::Run(run.clone()));
     });
     assert_eq!(
         events.borrow().last(),
-        Some(&WorkspaceEvent::Resume {
+        Some(&WorkspaceEvent::Say {
             run: run.clone(),
-            prompt: "now add a test for it".into(),
+            text: "now add a test for it".into(),
             model: ModelChoice::new("gpt-5.5", Effort::Auto),
         })
     );
+    // The host took it: no new chat, the same run back to work, at the
+    // top.
+    workspace.update(&mut cx, |ws, _| {
+        let view = ws.run(&run).unwrap();
+        assert_eq!(ws.runs()[0].id, run);
+        assert!(view.status.is_live());
+        assert!(view.items.iter().any(
+            |item| matches!(item, Item::User(text) if text == "now add a test for it")
+        ));
+        assert_eq!(ws.route(), &Route::Run(run.clone()));
+    });
     // If the host cannot, the run ends as it had.
     workspace.update(&mut cx, |ws, cx| {
-        ws.resume_failed(&run, cx);
+        ws.apply(
+            tau_ui_remote::update::HostUpdate::Resumed {
+                run: run.clone(),
+                prompt: "and the docs".into(),
+                model: ModelChoice::new("gpt-5.5", Effort::Auto),
+            },
+            cx,
+        );
+        ws.apply(
+            tau_ui_remote::update::HostUpdate::ResumeFailed(run.clone()),
+            cx,
+        );
         let view = ws.run(&run).unwrap();
-        assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
-        assert!(!matches!(view.items.last(), Some(Item::User(_))));
+        assert!(!view.items.iter().any(
+            |item| matches!(item, Item::User(text) if text == "and the docs")
+        ));
     });
     // A new run is still a new run.
     workspace.update(&mut cx, |ws, cx| {
@@ -1214,8 +1248,8 @@ fn closing_a_conversation_takes_it_off_the_sidebar(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(done.clone()), cx);
         ws.submit_prompt("one more thing".into(), cx);
-        assert!(!ws.is_closed(&done));
     });
+    workspace.read_with(&cx, |ws, _| assert!(!ws.is_closed(&done)));
 }
 
 #[gpui::test]
@@ -1431,7 +1465,7 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     assert!(
         !events.iter().any(|event| matches!(
             event,
-            WorkspaceEvent::Resume { .. } | WorkspaceEvent::NewRun { .. }
+            WorkspaceEvent::Say { .. } | WorkspaceEvent::NewRun { .. }
         )),
         "no command was sent as a message: {events:?}"
     );
@@ -1509,14 +1543,19 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
         let prompts: Vec<&str> = events
             .iter()
             .filter_map(|event| match event {
-                WorkspaceEvent::Resume { prompt, .. } => Some(prompt.as_str()),
+                WorkspaceEvent::Say { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
+        // The first goal went on with the run; the new one is told to
+        // the model, which reads it as its next turn starts.
         assert_eq!(
             prompts,
-            ["/goal --continuations 10 --budget 2.00 Every lane has an \
-              owner in lanes.toml"]
+            [
+                "/goal --continuations 10 --budget 2.00 Every lane has an \
+                 owner in lanes.toml",
+                &tau_goal::set_input("it ships"),
+            ]
         );
         assert_eq!(
             goal_records(&events),
@@ -1529,10 +1568,6 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
                 }
             )]
         );
-        assert!(events.contains(&WorkspaceEvent::Steer {
-            run: done.clone(),
-            text: tau_goal::set_input("it ships"),
-        }));
     }
     events.borrow_mut().clear();
 
@@ -1559,7 +1594,7 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
         assert!(
             !events
                 .iter()
-                .any(|event| matches!(event, WorkspaceEvent::Steer { .. })),
+                .any(|event| matches!(event, WorkspaceEvent::Say { .. })),
             "the model is not told"
         );
     }
@@ -1640,8 +1675,8 @@ fn goal_buttons_store_changes_and_keep_going(cx: &mut TestAppContext) {
         ]
     );
     assert!(events.iter().any(|event| matches!(event,
-        WorkspaceEvent::Resume { run, prompt, .. }
-            if run == &stopped && prompt == tau_goal::ui::KEEP_GOING)));
+        WorkspaceEvent::Say { run, text, .. }
+            if run == &stopped && text == tau_goal::ui::KEEP_GOING)));
 }
 
 /// Without a TypeSafe key a goal is not checked: the banner says so,
@@ -1693,7 +1728,7 @@ fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
         !events
             .borrow()
             .iter()
-            .any(|event| matches!(event, WorkspaceEvent::Resume { .. })),
+            .any(|event| matches!(event, WorkspaceEvent::Say { .. })),
         "nothing goes on unchecked"
     );
     // The pause could not be saved: the host puts back what is stored.
@@ -2019,6 +2054,9 @@ fn a_chat_goes_on_on_another_model(cx: &mut TestAppContext) {
         let runs = ws.runs().len();
         ws.submit_prompt("go on".into(), cx);
         assert_eq!(ws.runs().len(), runs, "no fork, no new run");
+    });
+    host_resumes(&workspace, &mut cx, &events);
+    workspace.update(&mut cx, |ws, _| {
         let view = ws.run(&run).unwrap();
         assert_eq!(view.model, "gpt-6-luna");
         let reasoning =
@@ -2029,9 +2067,9 @@ fn a_chat_goes_on_on_another_model(cx: &mut TestAppContext) {
     });
     assert_eq!(
         events.borrow().last(),
-        Some(&WorkspaceEvent::Resume {
+        Some(&WorkspaceEvent::Say {
             run: run.clone(),
-            prompt: "go on".into(),
+            text: "go on".into(),
             model: ModelChoice::new("gpt-6-luna", Effort::Auto),
         })
     );
@@ -2590,8 +2628,9 @@ fn a_picked_effort_stays_after_sending(cx: &mut TestAppContext) {
     });
     assert!(matches!(
         events.borrow().last(),
-        Some(WorkspaceEvent::Resume { model, .. }) if model.effort == Effort::High
+        Some(WorkspaceEvent::Say { model, .. }) if model.effort == Effort::High
     ));
+    host_resumes(&workspace, &mut cx, &events);
     workspace.read_with(&cx, |ws, _| {
         let choice = ws.choice_for(&PickerTarget::Run(id.clone()));
         assert_eq!(choice.effort, Effort::High, "still high after sending");
@@ -3028,12 +3067,7 @@ fn an_ended_chat_takes_no_messages(cx: &mut TestAppContext) {
     let sent: Vec<_> = events
         .borrow()
         .iter()
-        .filter(|event| {
-            matches!(
-                event,
-                WorkspaceEvent::Resume { .. } | WorkspaceEvent::Steer { .. }
-            )
-        })
+        .filter(|event| matches!(event, WorkspaceEvent::Say { .. }))
         .cloned()
         .collect();
     assert!(sent.is_empty(), "{sent:?}");

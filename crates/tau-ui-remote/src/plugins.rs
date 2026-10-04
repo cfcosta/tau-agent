@@ -160,11 +160,9 @@ impl Workspace {
                     body,
                 });
             }
-            Request::Steer { run, text } => {
-                cx.emit(WorkspaceEvent::Steer { run, text });
-            }
+            Request::Steer { run, text } => self.say(&run, text, cx),
             Request::Send { run, text } => match run {
-                Some(run) => self.resume_run(&run, text, cx),
+                Some(run) => self.say(&run, text, cx),
                 None => self.send(text, cx),
             },
             Request::Composer(text) => {

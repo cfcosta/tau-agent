@@ -46,6 +46,50 @@ fn alert(
 /// and shows it. Without a client, as in tests, or when the call fails,
 /// the run keeps its placeholder. The run's record is written as it
 /// starts, well before the model answers.
+/// Goes on with `run`, a finished chat, on `prompt`: it shows first,
+/// so it comes before what the run does, and is taken back if the run
+/// cannot go on.
+fn go_on(
+    host: &Arc<Host>,
+    run: &RunId,
+    prompt: &str,
+    model: &ModelChoice,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    workspace.update(cx, |ws, cx| {
+        let resumed = HostUpdate::Resumed {
+            run: run.clone(),
+            prompt: prompt.to_owned(),
+            model: model.clone(),
+        };
+        ws.apply(resumed, cx)
+    });
+    match host.resume(run, prompt, model) {
+        Ok(()) => {
+            // A message opens a closed conversation again.
+            let _ = host.set_closed(run, false);
+            let starting = host.starting_of(run, model);
+            workspace.update(cx, |ws, cx| {
+                for (plugin, body) in starting {
+                    let run = run.clone();
+                    ws.apply(HostUpdate::PluginFold { run, plugin, body }, cx);
+                }
+            });
+        }
+        Err(error) => workspace.update(cx, |ws, cx| {
+            ws.apply(HostUpdate::ResumeFailed(run.clone()), cx);
+            ws.apply(
+                HostUpdate::alert(
+                    "Could not go on with the run",
+                    format!("{error:#}"),
+                ),
+                cx,
+            )
+        }),
+    }
+}
+
 pub(super) fn title_in_background(
     host: &Arc<Host>,
     run: &RunId,
@@ -655,22 +699,14 @@ impl Host {
                         eprintln!("tau-ui: cannot save closed runs: {error:#}");
                     }
                 }
-                WorkspaceEvent::Resume { run, prompt, model } => {
-                    match handler.resume(run, prompt, model) {
-                        Ok(()) => {
-                            // A message opens a closed conversation
-                            // again.
-                            let _ = handler.set_closed(run, false);
-                            let starting = handler.starting_of(run, model);
-                            workspace.update(cx, |ws, cx| {
-                                for (plugin, body) in starting {
-                                    ws.apply(HostUpdate::PluginFold { run: run.clone(), plugin, body }, cx);
-                                }
-                            });
-                        }
+                WorkspaceEvent::Say { run, text, model } => {
+                    match handler.steer(run, text) {
+                        Ok(true) => workspace.update(cx, |ws, cx| {
+                            ws.apply(HostUpdate::Steered { run: run.clone(), text: text.clone() }, cx)
+                        }),
+                        Ok(false) => go_on(&handler, run, text, model, &workspace, cx),
                         Err(error) => workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::ResumeFailed(run.clone()), cx);
-                            ws.apply(HostUpdate::alert("Could not go on with the run", format!("{error:#}")), cx)
+                            ws.apply(HostUpdate::alert("Could not send the message", format!("{error:#}")), cx)
                         }),
                     }
                 }
@@ -839,13 +875,6 @@ impl Host {
                 // `phone_server::serve` handles these in its own
                 // subscription.
                 WorkspaceEvent::Phones(_) => {}
-                WorkspaceEvent::Steer { run, text } => {
-                    if let Err(error) = handler.steer(run, text) {
-                        workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::alert("Could not steer the run", format!("{error:#}")), cx)
-                        });
-                    }
-                }
                 WorkspaceEvent::Cancel { run } => handler.cancel(run),
                 other => eprintln!("tau-ui: not handled yet: {other:?}"),
                 }
@@ -908,6 +937,20 @@ impl Host {
                         .expect("not poisoned")
                         .insert(run.clone());
                 }
+                if let RunEvent::Steered { run, text } = &event {
+                    host.steer_read(run, text);
+                }
+                // What the run was steered with too late to read: a run
+                // that stopped on its own goes on with it; a cancelled one
+                // was stopped on purpose.
+                let unread = match &event {
+                    RunEvent::RunEnd { run, stop, .. } => {
+                        let unread = host.take_unread(run);
+                        (*stop != StopReason::Cancelled && !unread.is_empty())
+                            .then(|| (run.clone(), unread.join("\n\n")))
+                    }
+                    _ => None,
+                };
                 // A main chat's turn ended: what it left in conflict
                 // marks it, and what waited lands (ADR 0024).
                 let main_ended = match &event {
@@ -924,6 +967,14 @@ impl Host {
                 });
                 if applied.is_err() {
                     break;
+                }
+                if let (Some((run, text)), Some(entity)) =
+                    (unread, workspace.upgrade())
+                {
+                    let (host, model) = (host.clone(), host.choice_of(&run));
+                    cx.update(|cx| {
+                        go_on(&host, &run, &text, &model, &entity, cx)
+                    });
                 }
                 if let (Some(main), Some(entity)) =
                     (main_ended, workspace.upgrade())

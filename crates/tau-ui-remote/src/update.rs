@@ -12,6 +12,7 @@ use tau_vcs::Landing;
 
 use crate::{
     catalog::{Catalog, Repo},
+    models::ModelChoice,
     pull_request::{PrState, PullRequest},
     push::{PushFailure, Pushed},
     setup::SetupUpdate,
@@ -90,6 +91,20 @@ pub enum HostUpdate {
         main: RunId,
         fork: RunId,
         code: CodeState,
+    },
+    /// The host took a message for a live run, which reads it as its
+    /// next turn starts.
+    Steered {
+        run: RunId,
+        text: String,
+    },
+    /// The host took a message to a finished run: it shows, the run
+    /// moves to the top, opens again if it was closed, and starts again
+    /// on `model`.
+    Resumed {
+        run: RunId,
+        prompt: String,
+        model: ModelChoice,
     },
     /// A run asked to go on could not.
     ResumeFailed(RunId),

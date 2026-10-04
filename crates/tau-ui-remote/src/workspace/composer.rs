@@ -28,7 +28,7 @@ impl Workspace {
         let queued = self
             .current()
             .and_then(|run| self.queued.get(&run.id))
-            .cloned();
+            .map(|texts| texts.join(" · "));
         let send = div()
             .id("send")
             .on_click(cx.listener(|ws, _, _, cx| ws.submit_from_button(cx)));
