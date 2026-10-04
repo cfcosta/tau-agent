@@ -1,0 +1,11 @@
+# Tests do not sync their throwaway repositories to disk: see
+# scripts/no-disk-syncs.sh. Setup scripts are still experimental in
+# nextest.
+experimental = ["setup-scripts"]
+
+[scripts.setup.no-disk-syncs]
+command = "scripts/no-disk-syncs.sh"
+
+[[profile.default.scripts]]
+filter = "all()"
+setup = "no-disk-syncs"

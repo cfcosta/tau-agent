@@ -379,6 +379,9 @@
             nativeBuildInputs = [ pkgs.pkg-config ];
 
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath guiLibs;
+            # What nextest preloads into tests so they skip disk syncs
+            # (scripts/no-disk-syncs.sh).
+            TAU_TEST_PRELOAD = pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.libeatmydata}/lib/libeatmydata.so";
           };
         }
       );
