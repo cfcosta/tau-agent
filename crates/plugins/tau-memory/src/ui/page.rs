@@ -1,6 +1,6 @@
-//! The notes: search on the left, the open note in the middle, its links
-//! on the right when there is room for them, and under the note when
-//! there is not. The phone shows the list, then the note on its own.
+//! The notes: a search, a chip for each kind of note, and the notes in
+//! one quiet column. A note opens in place of the list, its links beside
+//! it when there is room for them and under it when there is not.
 //!
 //! Every column gets a width worked out from the window's. Left to size
 //! the note's text itself, GPUI can measure it at one width and draw it
@@ -36,7 +36,6 @@ use tau_ui_kit::{
     theme::{
         Design as _,
         IconSize,
-        SANS,
         SERIF,
         Theme,
         Tone,
@@ -49,27 +48,30 @@ use tau_ui_kit::{
 use tau_ui_plugin::{Handle, Link, ViewCx, points::AtAnchor};
 
 use super::{Mark, MemoryUi, NoteView, Notebook, USER, notes_link};
-use crate::plugin::{NAME, USER as USER_ID};
+use crate::{
+    note::NoteType,
+    plugin::{NAME, USER as USER_ID},
+};
 
-/// The list's width, when the window allows it.
-const LIST: f32 = 320.;
-/// The narrowest the list gets.
-const LIST_MIN: f32 = 240.;
+/// The widest the list's column gets.
+const COLUMN: f32 = 860.;
 /// The links column's width.
 const LINKS: f32 = 320.;
 /// The narrowest the note's column gets with the links beside it.
 const NOTE_MIN: f32 = 560.;
 /// The widest a note's text runs: a comfortable line.
 const MEASURE: f32 = 680.;
+/// The width of a row's right column: how linked the note is, and when
+/// it was edited.
+const ASIDE: f32 = 150.;
 
 /// The page's state in one window: what the list is searched for.
 pub struct Ui {
     pub(super) search: Entity<TextInput>,
 }
 
-/// How the page is split, from the width it has.
+/// How an open note's page is split, from the width it has.
 struct Columns {
-    list: Pixels,
     /// The links column, when it fits beside the note.
     links: Option<Pixels>,
     /// The note's side padding.
@@ -80,13 +82,11 @@ struct Columns {
 
 impl Columns {
     fn for_width(width: f32) -> Self {
-        let list = (width * 0.4).clamp(LIST_MIN, LIST);
-        let beside = width - list - LINKS >= NOTE_MIN;
-        let note = width - list - if beside { LINKS } else { 0. };
+        let beside = width - LINKS >= NOTE_MIN;
+        let note = width - if beside { LINKS } else { 0. };
         let pad = if note >= NOTE_MIN { 12. } else { 5. };
         let text = (note - 2. * f32::from(sp(pad))).clamp(120., MEASURE);
         Self {
-            list: px(list),
             links: beside.then_some(px(LINKS)),
             pad: sp(pad),
             text: px(text),
@@ -109,6 +109,42 @@ fn note_link(repo: &str, id: &str) -> Link {
     notes_link(repo).param("note", id.to_owned())
 }
 
+/// The list, showing only notes of `kind`; every note without one.
+fn kind_link(repo: &str, kind: Option<NoteType>) -> Link {
+    match kind {
+        Some(kind) => notes_link(repo).param("kind", kind.as_str()),
+        None => notes_link(repo),
+    }
+}
+
+/// A kind's name on its chip, for many notes.
+fn plural(kind: NoteType) -> &'static str {
+    match kind {
+        NoteType::Fact => "Facts",
+        NoteType::Convention => "Conventions",
+        NoteType::Decision => "Decisions",
+        NoteType::Gotcha => "Gotchas",
+        NoteType::Procedure => "Procedures",
+        NoteType::Case => "Cases",
+        NoteType::Preference => "Preferences",
+        NoteType::Index => "Indexes",
+    }
+}
+
+/// The color a kind's name is written in.
+fn kind_color(kind: NoteType, t: &Theme) -> Hsla {
+    match kind {
+        NoteType::Fact => t.blue,
+        NoteType::Convention => t.syntax.ty,
+        NoteType::Decision => t.syntax.keyword,
+        NoteType::Gotcha => t.syntax.number,
+        NoteType::Procedure => t.green,
+        NoteType::Case => t.syntax.property,
+        NoteType::Preference => t.roles.memory,
+        NoteType::Index => t.muted,
+    }
+}
+
 /// The page's title: the open note's, or whose notes they are.
 pub fn title(view: &mut ViewCx<'_, MemoryUi>) -> String {
     let repo = view.param("repo").unwrap_or_default().to_owned();
@@ -120,8 +156,8 @@ pub fn title(view: &mut ViewCx<'_, MemoryUi>) -> String {
     }
 }
 
-/// The page: the notes of the `repo` parameter, with the `note`
-/// parameter open.
+/// The page: the notes of the `repo` parameter, those of the `kind`
+/// parameter alone when it is set, or the `note` parameter's note open.
 pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
     let t = view.theme().clone();
     let compact = view.compact;
@@ -130,31 +166,40 @@ pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
             .into_any_element();
     };
     let book = notebook(view, &repo);
-    let open = view
-        .param("note")
-        .and_then(|id| book.note(id))
-        .or_else(|| (!compact).then(|| book.notes.first()).flatten())
-        .cloned();
+    let open = view.param("note").and_then(|id| book.note(id)).cloned();
+    let kind = view.param("kind").and_then(NoteType::parse);
     let search = view.read_ui().search.clone();
     let query = search.read(view.cx).text().to_lowercase();
     let handle = view.handle.clone();
+    let Some(note) = open else {
+        return ui::screen(
+            "memory-list",
+            compact,
+            div().flex().justify_center().child(
+                div().w_full().max_w(px(COLUMN)).child(list(
+                    &handle, &repo, &book, &search, &query, kind, &t,
+                )),
+            ),
+        )
+        .into_any_element();
+    };
+    let back = back(&handle, &repo, &t);
     if compact {
         // The phone's screen padding on each side.
         let text = px((view.width - 2. * f32::from(sp(4.))).min(MEASURE));
-        return match open {
-            Some(note) => ui::screen(
-                "memory-note",
-                true,
-                reader(&handle, &repo, &book, &note, true, text, true, &t),
-            )
-            .into_any_element(),
-            None => ui::screen(
-                "memory-list",
-                true,
-                list(&handle, &repo, &book, &search, &query, None, &t),
-            )
-            .into_any_element(),
-        };
+        return ui::screen(
+            "memory-note",
+            true,
+            div()
+                .flex()
+                .flex_col()
+                .gap(sp(4.))
+                .child(back)
+                .child(reader(
+                    &handle, &repo, &book, &note, true, text, true, &t,
+                )),
+        )
+        .into_any_element();
     }
     let columns = Columns::for_width(view.width);
     div()
@@ -163,192 +208,273 @@ pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
         .flex()
         .child(
             div()
-                .id("memory-list")
-                .w(columns.list)
-                .flex_shrink_0()
+                .id("memory-note")
+                .flex_1()
+                .min_w(px(0.))
                 .overflow_y_scroll()
-                .chrome(Edge::Left, &t)
-                .border_r_1()
-                .border_color(t.border)
-                .p(sp(3.))
-                .child(list(
+                .px(columns.pad)
+                .py(sp(6.))
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(sp(4.))
+                .child(div().w(columns.text).child(back))
+                .child(reader(
                     &handle,
                     &repo,
                     &book,
-                    &search,
-                    &query,
-                    open.as_ref().map(|note| note.id.as_str()),
+                    &note,
+                    false,
+                    columns.text,
+                    columns.links.is_none(),
                     &t,
                 )),
         )
-        .child(match open {
-            Some(note) => div()
-                .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .child(
-                    div()
-                        .id("memory-note")
-                        .flex_1()
-                        .min_w(px(0.))
-                        .overflow_y_scroll()
-                        .px(columns.pad)
-                        .py(sp(8.))
-                        .child(reader(
-                            &handle,
-                            &repo,
-                            &book,
-                            &note,
-                            false,
-                            columns.text,
-                            columns.links.is_none(),
-                            &t,
-                        )),
-                )
-                .when_some(columns.links, |row, width| {
-                    row.child(
-                        div()
-                            .id("memory-links")
-                            .w(width)
-                            .flex_shrink_0()
-                            .overflow_y_scroll()
-                            .chrome(Edge::Right, &t)
-                            .border_l_1()
-                            .border_color(t.border)
-                            .p(sp(5.))
-                            .child(neighborhood(
-                                &handle, &repo, &book, &note, &t,
-                            )),
-                    )
-                })
-                .into_any_element(),
-            None => ui::empty("No notes yet.", &t).flex_1().into_any_element(),
+        .when_some(columns.links, |row, width| {
+            row.child(
+                div()
+                    .id("memory-links")
+                    .w(width)
+                    .flex_shrink_0()
+                    .overflow_y_scroll()
+                    .chrome(Edge::Right, &t)
+                    .border_l_1()
+                    .border_color(t.border)
+                    .p(sp(5.))
+                    .child(neighborhood(&handle, &repo, &book, &note, &t)),
+            )
         })
         .into_any_element()
 }
 
+/// The way back from a note to the list.
+fn back(handle: &Handle, repo: &str, t: &Theme) -> impl IntoElement {
+    let to = notes_link(repo);
+    let handle = handle.clone();
+    let hover = t.text;
+    div()
+        .id("memory-back")
+        .flex()
+        .items_center()
+        .gap(sp(1.5))
+        .typeset(Type::SMALL)
+        .text_color(t.muted)
+        .cursor_pointer()
+        .hover(move |style| style.text_color(hover))
+        .child(icon(Icon::Back, IconSize::COMPACT, t.muted))
+        .child("All notes")
+        .on_click(move |_, _, cx| handle.navigate(to.clone(), cx))
+}
+
+/// The list: the search and the kinds, then a row for each note that
+/// matches both.
 fn list(
     handle: &Handle,
     repo: &str,
     book: &Notebook,
     search: &Entity<TextInput>,
     query: &str,
-    open: Option<&str>,
+    kind: Option<NoteType>,
     t: &Theme,
 ) -> impl IntoElement {
-    let notes = book.notes.iter().filter(|note| {
-        query.is_empty()
-            || note.title.to_lowercase().contains(query)
-            || note.body.iter().any(|p| p.to_lowercase().contains(query))
-    });
-    let (heading_text, about) = if repo == USER {
-        (
-            "Your notes".to_owned(),
-            "What runs learned about you and how you work. Every \
-             repository's runs see these."
-                .to_owned(),
-        )
-    } else {
-        (
-            "Memory".to_owned(),
-            format!(
-                "What runs in {repo} learned. Runs in other repositories \
-                 never see these notes."
-            ),
-        )
-    };
+    let rows: Vec<_> = book
+        .notes
+        .iter()
+        .filter(|note| kind.is_none_or(|kind| note.kind == kind))
+        .filter(|note| {
+            query.is_empty()
+                || note.title.to_lowercase().contains(query)
+                || note.body.iter().any(|p| p.to_lowercase().contains(query))
+        })
+        .map(|note| row(handle, repo, book, note, t))
+        .collect();
+    let field = div()
+        .flex_1()
+        .min_w(px(220.))
+        .flex()
+        .items_center()
+        .gap(sp(2.))
+        .h(px(34.))
+        .px(sp(3.))
+        .bg(t.panel)
+        .border_1()
+        .border_color(t.border_strong)
+        .rounded(radius::LARGE)
+        .child(icon(Icon::Search, IconSize::COMPACT, t.dim))
+        .child(div().flex_1().min_w(px(0.)).child(search.clone()));
+    let chips = std::iter::once((None, "All", book.notes.len(), t.dim)).chain(
+        NoteType::ALL.into_iter().filter_map(|each| {
+            let count =
+                book.notes.iter().filter(|note| note.kind == each).count();
+            (count > 0)
+                .then(|| (Some(each), plural(each), count, kind_color(each, t)))
+        }),
+    );
     div()
         .flex()
         .flex_col()
-        .gap(sp(3.))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(2.))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .when(repo != USER, |row| {
-                            row.child(ui::repo_mark(repo, 20., t))
-                        })
-                        .child(
-                            div()
-                                .typeset(Type::TITLE)
-                                .font_weight(weight::STRONG)
-                                .child(heading_text),
-                        )
-                        .child(mono(
-                            format!("{} notes", book.notes.len()),
-                            Type::CAPTION,
-                            t.dim,
-                        )),
-                )
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.muted)
-                        .line_height(relative(1.5))
-                        .child(about),
-                ),
-        )
-        .when(!book.path.is_empty(), |list| {
-            list.child(mono(book.path.clone(), Type::MICRO, t.dim))
+        .gap(sp(4.5))
+        .when(repo == USER, |list| {
+            list.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(1.))
+                    .child(
+                        div()
+                            .typeset(Type::TITLE)
+                            .font_weight(weight::STRONG)
+                            .child("Your notes"),
+                    )
+                    .child(
+                        div().typeset(Type::SMALL).text_color(t.muted).child(
+                            "What runs learned about you and how you \
+                                 work. Every repository's runs see these.",
+                        ),
+                    ),
+            )
         })
         .child(
             div()
                 .flex()
+                .flex_wrap()
                 .items_center()
-                .gap(sp(2.))
-                .h(px(36.))
-                .px(sp(2.5))
-                .border_1()
-                .border_color(t.border_strong)
-                .rounded(radius::CONTROL)
-                .child(icon(Icon::Search, IconSize::BASE, t.dim))
-                .child(search.clone()),
+                .gap(sp(2.5))
+                .child(field)
+                .children(chips.map(|(each, name, count, color)| {
+                    let selected = each == kind;
+                    let to = kind_link(repo, each);
+                    let handle = handle.clone();
+                    let hover = t.raised;
+                    div()
+                        .id(SharedString::from(format!(
+                            "memory-kind-{}",
+                            each.map_or("all", NoteType::as_str)
+                        )))
+                        .flex()
+                        .items_center()
+                        .gap(sp(1.25))
+                        .px(sp(2.75))
+                        .py(sp(1.5))
+                        .rounded(radius::BOX)
+                        .typeset(Type::SMALL)
+                        .cursor_pointer()
+                        .when(selected, |chip| {
+                            chip.bg(t.raised).text_color(t.text)
+                        })
+                        .when(!selected, |chip| {
+                            chip.text_color(t.text_soft)
+                                .hover(move |style| style.bg(hover))
+                        })
+                        .child(name)
+                        .child(div().text_color(color).child(count.to_string()))
+                        .on_click(move |_, _, cx| {
+                            handle.navigate(to.clone(), cx)
+                        })
+                })),
         )
-        .children(notes.map(|note| {
-            let active = open == Some(note.id.as_str());
-            let to = note_link(repo, &note.id);
-            let handle = handle.clone();
-            let backlinks = book.backlinks(&note.id).count();
+        .child(if rows.is_empty() {
+            ui::empty(
+                if book.notes.is_empty() {
+                    "No notes yet."
+                } else {
+                    "No notes match."
+                },
+                t,
+            )
+            .into_any_element()
+        } else {
+            div().flex().flex_col().children(rows).into_any_element()
+        })
+}
+
+/// A note in the list: its id, title and kind over the start of its text,
+/// how linked it is over when it was edited.
+fn row(
+    handle: &Handle,
+    repo: &str,
+    book: &Notebook,
+    note: &NoteView,
+    t: &Theme,
+) -> impl IntoElement {
+    let to = note_link(repo, &note.id);
+    let handle = handle.clone();
+    let links = note.links.len() + book.backlinks(&note.id).count();
+    let hover = t.card;
+    div()
+        .id(SharedString::from(format!("note-{}", note.id)))
+        .flex()
+        .gap(sp(5.))
+        .px(sp(1.))
+        .py(sp(3.))
+        .border_b_1()
+        .border_color(t.border)
+        .cursor_pointer()
+        .hover(move |style| style.bg(hover))
+        .child(
             div()
-                .id(SharedString::from(format!("note-{}", note.id)))
+                .flex_1()
+                .min_w(px(0.))
                 .flex()
                 .flex_col()
                 .gap(sp(1.))
-                .p(sp(2.5))
-                .rounded(radius::CONTROL)
-                .cursor_pointer()
-                .when(active, |row| row.pressed(t))
-                .when(!active, |row| {
-                    row.hover(|style| style.bg(gpui::white().opacity(0.03)))
-                })
                 .child(
                     div()
-                        .font_weight(weight::EMPHASIS)
-                        .child(note.title.clone()),
+                        .flex()
+                        .items_baseline()
+                        .gap(sp(2.5))
+                        .min_w(px(0.))
+                        .child(
+                            mono(
+                                note.id.clone(),
+                                Type::MICRO.sized(11.5),
+                                t.dim,
+                            )
+                            .flex_shrink_0()
+                            .max_w(px(200.))
+                            .truncate(),
+                        )
+                        .child(
+                            div()
+                                .min_w(px(0.))
+                                .truncate()
+                                .text_color(t.text)
+                                .font_weight(weight::EMPHASIS)
+                                .child(note.title.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .typeset(Type::CAPTION)
+                                .text_color(kind_color(note.kind, t))
+                                .child(note.kind.as_str()),
+                        ),
                 )
                 .child(
                     div()
-                        .typeset(Type::CAPTION)
+                        .typeset(Type::SMALL)
                         .text_color(t.muted)
-                        .line_height(relative(1.45))
-                        .child(rich_in(note.snippet(), SANS, t.muted, t)),
-                )
-                .child(mono(
-                    format!(
-                        "{} links · {backlinks} backlinks",
-                        note.links.len()
-                    ),
-                    Type::MICRO,
-                    t.dim,
-                ))
-                .on_click(move |_, _, cx| handle.navigate(to.clone(), cx))
-        }))
+                        .truncate()
+                        .child(note.snippet().replace('`', "")),
+                ),
+        )
+        .child(
+            div()
+                .w(px(ASIDE))
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap(sp(1.))
+                .typeset(Type::SMALL.sized(12.5))
+                .child(div().text_color(t.muted).child(match links {
+                    0 => "no links".to_owned(),
+                    1 => "1 link".to_owned(),
+                    n => format!("{n} links"),
+                }))
+                .child(div().text_color(t.dim).child(note.edited.clone())),
+        )
+        .on_click(move |_, _, cx| handle.navigate(to.clone(), cx))
 }
 
 /// A note, its text `width` wide; with its links under it when `links`

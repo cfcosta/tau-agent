@@ -46,7 +46,7 @@ use crate::{
     MemoryPlugin,
     Scopes,
     index::{Bm25, Index},
-    note::{By, LinkType, Note as MemoryNote},
+    note::{By, LinkType, Note as MemoryNote, NoteType},
     plugin::{NAME, Record, Scope},
     store::Notes,
 };
@@ -239,6 +239,8 @@ impl Notebook {
 pub struct NoteView {
     pub id: String,
     pub title: String,
+    /// What the note holds: a fact, a decision, …
+    pub kind: NoteType,
     /// Paragraphs, with `code` in backticks.
     pub body: Vec<String>,
     pub links: Vec<LinkView>,
@@ -305,6 +307,7 @@ fn entry(note: &MemoryNote, now: u64) -> NoteView {
     NoteView {
         id: note.id.clone(),
         title: note.title.clone(),
+        kind: note.kind,
         body,
         links: note
             .all_links()
