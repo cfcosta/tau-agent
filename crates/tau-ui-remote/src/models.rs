@@ -204,6 +204,13 @@ impl ModelSettings {
         self.hidden.iter().any(|hidden| hidden == id)
     }
 
+    /// Leaves `id` out of the picker, or shows it again.
+    pub fn set_hidden(&mut self, id: &str, hidden: bool) {
+        if self.is_hidden(id) != hidden {
+            self.toggle_hidden(id);
+        }
+    }
+
     pub fn toggle_hidden(&mut self, id: &str) {
         match self.hidden.iter().position(|hidden| hidden == id) {
             Some(at) => {

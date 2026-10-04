@@ -8,7 +8,7 @@ use gpui::Context;
 use serde::{Deserialize, Serialize};
 use tau_agent::tool::RunId;
 
-use super::{LandingState, Workspace};
+use super::Workspace;
 use crate::{
     catalog::Catalog,
     pull_request::PullRequest,
@@ -26,7 +26,6 @@ pub struct Synced {
     pub resuming: HashMap<RunId, RunStatus>,
     pub closed: HashSet<RunId>,
     pub kept_branch: Option<RunId>,
-    pub landings: HashMap<RunId, LandingState>,
     pub pushes: HashMap<String, PushState>,
     pub proposed: HashSet<RunId>,
     pub pull_requests: HashMap<RunId, PullRequest>,
@@ -47,7 +46,6 @@ impl Workspace {
             resuming,
             closed,
             kept_branch,
-            landings,
             pushes,
             proposed,
             pull_requests,
@@ -59,7 +57,6 @@ impl Workspace {
         self.resuming = resuming;
         self.closed = closed;
         self.kept_branch = kept_branch;
-        self.landings = landings;
         self.pushes = pushes;
         self.proposed = proposed;
         self.pull_requests = pull_requests;
@@ -79,7 +76,6 @@ impl Workspace {
             resuming,
             closed,
             kept_branch,
-            landings,
             pushes,
             proposed,
             pull_requests,
@@ -104,6 +100,9 @@ impl Workspace {
             forking: _,
             // Shown on each, dismissed on each.
             dialog: _,
+            // A landing's card, as this device asked, waits and puts it
+            // away; what the host did to the chat is in its run.
+            landings: _,
             plan_alert: _,
             next_model: _,
             next_model_picked: _,
@@ -175,7 +174,6 @@ impl Workspace {
             resuming: resuming.clone(),
             closed: closed.clone(),
             kept_branch: kept_branch.clone(),
-            landings: landings.clone(),
             pushes: pushes.clone(),
             proposed: proposed.clone(),
             pull_requests: pull_requests.clone(),

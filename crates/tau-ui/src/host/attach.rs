@@ -682,17 +682,11 @@ impl Host {
                     });
                 }
                 WorkspaceEvent::PluginRecord { run, plugin, body } => {
-                    if let Err(error) =
-                        handler.store_plugin_record(run, plugin, body)
-                    {
-                        // The interface showed the change already: put
-                        // back what the plugin will read, and say so.
-                        let records = handler.plugin_records(run, plugin);
-                        workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::PluginRestate { run: run.clone(), plugin: plugin.clone(), records }, cx);
-                            ws.apply(HostUpdate::alert(format!("Could not save what {plugin} changed"), format!("{error:#}")), cx);
-                        });
-                    }
+                    let stored = handler.store_plugin_record(run, plugin, body);
+                    workspace.update(cx, |ws, cx| match stored {
+                        Ok(()) => ws.apply(HostUpdate::PluginRecord { run: run.clone(), plugin: plugin.clone(), body: body.clone() }, cx),
+                        Err(error) => ws.apply(HostUpdate::alert(format!("Could not save what {plugin} changed"), format!("{error:#}")), cx),
+                    });
                 }
                 WorkspaceEvent::CloseRun { run } => {
                     if let Err(error) = handler.set_closed(run, true) {
@@ -755,13 +749,27 @@ impl Host {
                         cx,
                     );
                 }
-                WorkspaceEvent::SaveModelSettings(settings) => {
-                    if let Err(error) = handler.save_settings(settings.clone())
-                    {
-                        workspace.update(cx, |ws, cx| {
+                WorkspaceEvent::SetDefaultModel { .. } | WorkspaceEvent::HideModel { .. } => {
+                    // The change, to the settings as kept now: another
+                    // interface may have changed others since.
+                    let saved = handler.change_settings(|settings| match event {
+                        WorkspaceEvent::SetDefaultModel { agent, choice } => {
+                            settings.set_default(agent, choice.clone())
+                        }
+                        WorkspaceEvent::HideModel { id, hidden } => {
+                            settings.set_hidden(id, *hidden)
+                        }
+                        _ => {}
+                    });
+                    // What is saved, for every interface; the one that
+                    // changed it showed the change already.
+                    let catalog = handler.catalog();
+                    workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::catalog(catalog), cx);
+                        if let Err(error) = saved {
                             ws.apply(HostUpdate::alert("Could not save the model settings", format!("{error:#}")), cx)
-                        });
-                    }
+                        }
+                    });
                 }
                 WorkspaceEvent::PreviewLanding { run } => {
                     let preview = |ws: &mut Workspace, run, preview, cx: &mut Context<Workspace>| {
@@ -853,18 +861,23 @@ impl Host {
                     );
                 }
                 WorkspaceEvent::KeepBranch { run } => {
-                    if let Err(error) = handler.keep_branch(run) {
-                        eprintln!(
-                            "tau-ui: cannot drop the other branches: {error:#}"
-                        );
-                    }
+                    let kept = handler.keep_branch(run);
+                    workspace.update(cx, |ws, cx| match kept {
+                        Ok(()) => ws.apply(HostUpdate::BranchKept(run.clone()), cx),
+                        Err(error) => ws.apply(HostUpdate::alert("Could not drop the other branches", format!("{error:#}")), cx),
+                    });
                 }
                 WorkspaceEvent::HideRepo { repo } => {
-                    if let Err(error) = handler.hide_repo(repo) {
-                        eprintln!(
-                            "tau-ui: cannot save the repository list: {error:#}"
-                        );
-                    }
+                    // The list without it, for every interface; the one
+                    // that hid it showed that already.
+                    let hidden = handler.hide_repo(repo);
+                    let catalog = handler.catalog();
+                    workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::catalog(catalog), cx);
+                        if let Err(error) = hidden {
+                            ws.apply(HostUpdate::alert("Could not save the repository list", format!("{error:#}")), cx)
+                        }
+                    });
                 }
                 WorkspaceEvent::OpenRepos(open) => {
                     if let Err(error) = handler.set_open_repos(open.clone()) {

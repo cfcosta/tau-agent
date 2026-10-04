@@ -8,7 +8,7 @@ use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
     catalog::Catalog,
-    models::{Effort, ModelChoice, ModelSettings},
+    models::{Effort, ModelChoice},
     pull_request::PrState,
     route::Route,
     setup::{GitHub, ModelAccess, Setup, SetupStep, SetupUpdate},
@@ -508,20 +508,15 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
             serde_json::json!({ "redecide": true, "threshold": 0.9 })
         )]
     );
-    let saved: Vec<ModelSettings> = events
-        .borrow()
-        .iter()
-        .filter_map(|event| match event {
-            WorkspaceEvent::SaveModelSettings(settings) => {
-                Some(settings.clone())
-            }
-            _ => None,
-        })
-        .collect();
-    assert_eq!(saved.len(), 2);
-    let last = saved.last().unwrap();
-    assert_eq!(last.default_for("coder").model, "gpt-6-luna");
-    assert!(last.is_hidden("gpt-6-astra"));
+    // Each change is sent as itself, not as the settings this window has.
+    let events = events.borrow();
+    assert!(events.iter().any(|event| matches!(event,
+        WorkspaceEvent::SetDefaultModel { agent, choice }
+            if agent == "coder" && choice.model == "gpt-6-luna")));
+    assert!(events.contains(&WorkspaceEvent::HideModel {
+        id: "gpt-6-astra".into(),
+        hidden: true,
+    }));
 }
 
 /// tau-reasoning draws itself: its note in the demo's transcript, its
@@ -892,8 +887,8 @@ fn the_signed_in_model_step_picks_the_default_model(cx: &mut TestAppContext) {
         .borrow()
         .iter()
         .filter_map(|event| match event {
-            WorkspaceEvent::SaveModelSettings(settings) => {
-                Some(settings.default_for("coder").model)
+            WorkspaceEvent::SetDefaultModel { choice, .. } => {
+                Some(choice.model.clone())
             }
             _ => None,
         })

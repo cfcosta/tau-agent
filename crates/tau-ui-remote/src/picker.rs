@@ -175,21 +175,26 @@ impl Workspace {
             .settings
             .set_default(agent, choice.clone());
         if agent == "coder" && !self.next_model_picked {
-            self.next_model = choice;
+            self.next_model = choice.clone();
         }
-        self.save_model_settings(cx);
+        // Shown here at once; the host saves the change, not this
+        // interface's settings, which another may have changed since,
+        // and sends every interface what it saved.
+        cx.emit(WorkspaceEvent::SetDefaultModel {
+            agent: agent.to_owned(),
+            choice,
+        });
+        cx.notify();
     }
 
     /// Shows or hides a model in the picker, and saves it.
     pub fn toggle_model_hidden(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.catalog.models.settings.toggle_hidden(id);
-        self.save_model_settings(cx);
-    }
-
-    fn save_model_settings(&mut self, cx: &mut Context<Self>) {
-        cx.emit(WorkspaceEvent::SaveModelSettings(
-            self.catalog.models.settings.clone(),
-        ));
+        let settings = &mut self.catalog.models.settings;
+        settings.toggle_hidden(id);
+        cx.emit(WorkspaceEvent::HideModel {
+            id: id.to_owned(),
+            hidden: settings.is_hidden(id),
+        });
         cx.notify();
     }
 

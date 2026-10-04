@@ -147,6 +147,8 @@ pub enum HostUpdate {
     },
     /// Onboarding moved on. Only the machine being set up shows it.
     Setup(SetupUpdate),
+    /// A fork's branch was kept, and its siblings dropped.
+    BranchKept(RunId),
     /// A conversation closed: it leaves the sidebar, and History keeps
     /// it.
     Closed(RunId),

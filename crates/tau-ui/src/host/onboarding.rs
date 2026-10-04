@@ -213,8 +213,16 @@ impl Host {
 
     /// Keeps and saves the user's model choices.
     pub fn save_settings(&self, settings: ModelSettings) -> anyhow::Result<()> {
+        self.change_settings(|saved| *saved = settings)
+    }
+
+    /// Changes the user's model choices as kept now, and saves them.
+    pub fn change_settings(
+        &self,
+        change: impl FnOnce(&mut ModelSettings),
+    ) -> anyhow::Result<()> {
         let mut saved = self.settings.lock().expect("not poisoned");
-        *saved = settings;
+        change(&mut saved);
         write_settings(&self.config.settings, &saved)
     }
 }

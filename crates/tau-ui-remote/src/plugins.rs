@@ -148,12 +148,9 @@ impl Workspace {
                     settings,
                 });
             }
+            // It folds once the host stores it (`HostUpdate::PluginRecord`),
+            // on every interface alike.
             Request::Record { run, body } => {
-                if let Some(view) =
-                    self.runs.iter_mut().find(|view| view.id == run)
-                {
-                    view.fold(plugin, &body);
-                }
                 cx.emit(WorkspaceEvent::PluginRecord {
                     run,
                     plugin: plugin.to_owned(),

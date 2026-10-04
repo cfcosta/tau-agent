@@ -277,7 +277,7 @@ impl Workspace {
     }
 
     pub fn keep_branch(&mut self, run: &RunId, cx: &mut Context<Self>) {
-        self.kept_branch = Some(run.clone());
+        // It shows once the host keeps it (`HostUpdate::BranchKept`).
         cx.emit(WorkspaceEvent::KeepBranch { run: run.clone() });
         cx.notify();
     }

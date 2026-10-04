@@ -42,7 +42,7 @@ use crate::{
     assets::Icon,
     catalog::{Catalog, PluginInfo},
     input::{InputEvent, TextInput},
-    models::{ModelChoice, ModelSettings, USAGE_SETTINGS_URL},
+    models::{ModelChoice, USAGE_SETTINGS_URL},
     pairing::{PairRequest, PairStep, Pairing, PairingUpdate, Progress},
     phones::{Phones, PhonesRequest},
     plan_usage::{PlanAction, PlanAlert},
@@ -187,8 +187,8 @@ pub enum WorkspaceEvent {
         plugin: String,
         settings: serde_json::Value,
     },
-    /// Store `body` as `plugin`'s record with `run`: the interface folded
-    /// it already.
+    /// Store `body` as `plugin`'s record with `run`; every interface
+    /// folds it once stored.
     PluginRecord {
         run: RunId,
         plugin: String,
@@ -219,8 +219,16 @@ pub enum WorkspaceEvent {
         prompt: String,
         model: ModelChoice,
     },
-    /// Keep the user's model choices: defaults and hidden models.
-    SaveModelSettings(ModelSettings),
+    /// Make `choice` `agent`'s model when a run does not pick one.
+    SetDefaultModel {
+        agent: String,
+        choice: ModelChoice,
+    },
+    /// Leave the model out of the picker, or show it again.
+    HideModel {
+        id: String,
+        hidden: bool,
+    },
     /// Keep this branch of a fork and drop the others.
     KeepBranch {
         run: RunId,
@@ -970,6 +978,10 @@ impl Workspace {
             }
             HostUpdate::Setup(update) => self.update_setup(update, cx),
             HostUpdate::Snapshot(synced) => self.restore(*synced, cx),
+            HostUpdate::BranchKept(run) => {
+                self.kept_branch = Some(run);
+                cx.notify();
+            }
             HostUpdate::Closed(run) => {
                 self.closed.insert(run);
                 cx.notify();

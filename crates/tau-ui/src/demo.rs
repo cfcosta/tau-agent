@@ -1135,6 +1135,19 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 recatalog(&|catalog| catalog.update = Some(text.clone()), cx);
             }
             // A finished run goes on with one more turn.
+            // The demo keeps what plugins store, and every branch.
+            WorkspaceEvent::PluginRecord { run, plugin, body } => {
+                let record = HostUpdate::PluginRecord {
+                    run: run.clone(),
+                    plugin: plugin.clone(),
+                    body: body.clone(),
+                };
+                workspace.update(cx, |ws, cx| ws.apply(record, cx))
+            }
+            WorkspaceEvent::KeepBranch { run } => {
+                let kept = HostUpdate::BranchKept(run.clone());
+                workspace.update(cx, |ws, cx| ws.apply(kept, cx))
+            }
             WorkspaceEvent::CloseRun { run } => workspace
                 .update(cx, |ws, cx| {
                     ws.apply(HostUpdate::Closed(run.clone()), cx)
