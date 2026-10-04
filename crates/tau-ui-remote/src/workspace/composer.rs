@@ -42,10 +42,29 @@ impl Workspace {
                 t,
             ))
         } else {
-            // As tall as the field beside it, with the field's corners.
+            // Inside the field, at its end: what sending does.
             send.child(
-                ui::big_button(
-                    if self.forking.is_some() {
+                div()
+                    .h(control::SMALL)
+                    .flex()
+                    .items_center()
+                    .gap(sp(1.5))
+                    .px(sp(3.))
+                    .rounded(radius::BOX)
+                    .bg(t.roles.primary)
+                    .text_color(t.roles.on_primary)
+                    .font_weight(weight::EMPHASIS)
+                    .cursor_pointer()
+                    .child(ui::icon(
+                        if self.forking.is_some() {
+                            Icon::Fork
+                        } else {
+                            Icon::Send
+                        },
+                        IconSize::COMPACT,
+                        t.roles.on_primary,
+                    ))
+                    .child(if self.forking.is_some() {
                         "Fork"
                     } else if live {
                         "Steer"
@@ -53,21 +72,17 @@ impl Workspace {
                         "Send"
                     } else {
                         "Start"
-                    },
-                    Some(if self.forking.is_some() {
-                        Icon::Fork
-                    } else {
-                        Icon::Send
                     }),
-                    ButtonKind::Primary,
-                    t,
-                )
-                .h(control::LARGE)
-                .rounded(radius::LARGE)
-                .shadow_sm(),
             )
         };
 
+        // On a desktop the button sits inside the field; on a phone,
+        // beside it.
+        let (inside, beside) = if compact {
+            (None, Some(send))
+        } else {
+            (Some(send), None)
+        };
         div()
             .relative()
             .flex_shrink_0()
@@ -77,8 +92,10 @@ impl Workspace {
             .children(self.slash_popover(compact, t, cx))
             .px(sp(if compact { 3. } else { 6. }))
             .pt(sp(if compact { 2.5 } else { 3. }))
-            .pb(sp(if compact { 4.5 } else { 4. }))
-            .chrome(ui::Edge::Bottom, t)
+            .pb(sp(if compact { 4.5 } else { 5.5 }))
+            .when(compact, |bar| bar.chrome(ui::Edge::Bottom, t))
+            // On a desktop, the transcript's column.
+            .when(!compact, |bar| bar.w_full().max_w(px(808.)).mx_auto())
             .when_some(self.composer_target().filter(|_| compact), |bar, target| {
                 bar.child(div().flex().child(self.model_chip(target, t, cx)))
             })
@@ -163,11 +180,12 @@ impl Workspace {
                             .gap(sp(2.5))
                             .min_h(control::LARGE)
                             .px(sp(3.5))
-                            .py(sp(2.))
-                            .well(t)
+                            .py(sp(if compact { 2. } else { 1.5 }))
+                            .when(compact, |field| field.well(t))
+                            .when(!compact, |field| field.bg(t.panel).pr(sp(1.5)))
                             .border_1()
                             .border_color(t.border_strong)
-                            .rounded(if compact { radius::FULL } else { radius::LARGE })
+                            .rounded(if compact { radius::FULL } else { radius::TILE })
                             .when(!compact, |field| {
                                 field.child(
                                     // As tall as the chip, so it lines up
@@ -197,9 +215,10 @@ impl Workspace {
                                 |field, target| {
                                     field.child(self.model_chip(target, t, cx))
                                 },
-                            ),
+                            )
+                            .children(inside),
                     )
-                    .child(send),
+                    .children(beside),
             )
     }
 
