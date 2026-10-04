@@ -110,6 +110,7 @@ fn forecast_in_background(
     if forks.is_empty() {
         return;
     }
+    let counted = host.job();
     let job = {
         let (worker, repo) = (host.clone(), repo.clone());
         host.runtime.spawn_blocking(move || {
@@ -142,6 +143,7 @@ fn forecast_in_background(
     let host = host.clone();
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
+        let _counted = counted;
         let Ok(found) = job.await else {
             return;
         };

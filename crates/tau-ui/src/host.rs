@@ -205,6 +205,9 @@ pub struct Host {
     /// Runs whose `RunEnd` went by while their outcome is still being
     /// stored: they stop in a moment.
     ending: Arc<Mutex<HashSet<RunId>>>,
+    /// Jobs the host is doing off the interface's thread, until what
+    /// they did is shown.
+    jobs: Arc<std::sync::atomic::AtomicUsize>,
     /// The user's model choices, as loaded and last saved.
     settings: Arc<Mutex<ModelSettings>>,
     events: mpsc::UnboundedSender<RunEvent>,
@@ -446,6 +449,7 @@ impl Host {
             drafts: Mutex::default(),
             prs: Arc::default(),
             ending: Arc::default(),
+            jobs: Arc::default(),
             runs: Arc::default(),
             unread: Arc::default(),
             events,
@@ -519,6 +523,18 @@ impl Host {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+    }
+
+    /// Whether the host is still doing something it was asked, or that
+    /// a run's end set off: a landing, a forecast, an update.
+    pub fn busy(&self) -> bool {
+        self.jobs.load(std::sync::atomic::Ordering::SeqCst) > 0
+    }
+
+    /// Counts a job as begun, until the guard is dropped.
+    pub(crate) fn job(&self) -> Job {
+        self.jobs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Job(self.jobs.clone())
     }
 
     pub fn is_running(&self, run: &RunId) -> bool {
@@ -1297,6 +1313,15 @@ pub fn branch_slug(prompt: &str) -> String {
         "untitled".into()
     } else {
         words.join("-").to_lowercase()
+    }
+}
+
+/// A job the host is doing, counted by [`Host::busy`] until dropped.
+pub(crate) struct Job(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

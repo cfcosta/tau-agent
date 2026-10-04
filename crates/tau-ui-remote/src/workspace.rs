@@ -1491,7 +1491,9 @@ impl Workspace {
         }
     }
 
-    pub(crate) fn last_fork_turn_of(run: &RunView) -> u32 {
+    /// The last turn of `run` a new chat can start from: its last
+    /// finished turn.
+    pub fn last_fork_turn_of(run: &RunView) -> u32 {
         Self::last_fork_turn(run)
     }
 

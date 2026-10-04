@@ -16,6 +16,7 @@ fn off_thread<T: Send + 'static>(
     failed: impl FnOnce(&mut Workspace, String, &mut Context<Workspace>) + 'static,
     cx: &mut App,
 ) {
+    let counted = host.job();
     let job = {
         let worker = host.clone();
         host.runtime.spawn_blocking(move || job(&worker))
@@ -30,6 +31,7 @@ fn off_thread<T: Send + 'static>(
             Ok(value) => done(ws, value, cx),
             Err(error) => failed(ws, error, cx),
         });
+        drop(counted);
     })
     .detach();
 }
@@ -310,6 +312,7 @@ pub(super) fn update_in_background(
     }
     let catalog = host.catalog();
     workspace.update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
+    let counted = host.job();
     let job = {
         let (updater, name) = (host.clone(), name.to_owned());
         host.runtime
@@ -318,6 +321,7 @@ pub(super) fn update_in_background(
     let (host, name) = (host.clone(), name.to_owned());
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
+        let _counted = counted;
         let result = match job.await {
             Ok(result) => result.map_err(|error| format!("{error:#}")),
             Err(error) => Err(error.to_string()),
@@ -395,6 +399,7 @@ fn recover_in_background(
         workspace
             .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
     }
+    let counted = host.job();
     let job = {
         let recoverer = host.clone();
         host.runtime.spawn_blocking(move || recoverer.recover())
@@ -402,6 +407,7 @@ fn recover_in_background(
     let host = host.clone();
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
+        let _counted = counted;
         let finished = match job.await {
             Ok(Ok(finished)) => finished,
             Ok(Err(error)) => {
@@ -442,13 +448,14 @@ impl Host {
         workspace: &Entity<Workspace>,
         mut events: mpsc::UnboundedReceiver<RunEvent>,
         cx: &mut App,
-    ) {
+    ) -> Arc<Host> {
         match self.history() {
             Ok(runs) => workspace
                 .update(cx, |ws, cx| ws.apply(HostUpdate::History(runs), cx)),
             Err(error) => eprintln!("tau-ui: cannot read past runs: {error:#}"),
         }
         let host = Arc::new(self);
+        let attached = host.clone();
         // Finished forks say whether they would land cleanly.
         super::forecast::follow(&host, workspace, cx);
         // Phones reach this host once allowed.
@@ -1009,5 +1016,6 @@ impl Host {
             drop(host);
         })
         .detach();
+        attached
     }
 }
