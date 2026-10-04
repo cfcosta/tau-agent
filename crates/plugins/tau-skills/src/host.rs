@@ -68,7 +68,9 @@ impl Plugin for SkillsPlugin {
     ) -> Result<Box<dyn PluginRun>, PluginError> {
         if let Some(section) = scan::section(&self.skills) {
             plan.instructions = Some(match plan.instructions.take() {
-                Some(base) if !base.is_empty() => format!("{base}\n\n{section}"),
+                Some(base) if !base.is_empty() => {
+                    format!("{base}\n\n{section}")
+                }
                 _ => section,
             });
         }
@@ -102,8 +104,12 @@ impl AgentTool for SkillTool {
     ) -> Result<ToolOutput, ToolError> {
         let name = args["name"].as_str().unwrap_or_default().to_owned();
         let Some(skill) = self.skills.get(&name).cloned() else {
-            let names: Vec<&str> =
-                self.skills.found.iter().map(|skill| skill.name.as_str()).collect();
+            let names: Vec<&str> = self
+                .skills
+                .found
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect();
             return Err(ToolError::Message(format!(
                 "There is no skill {name:?}. The skills are: {}.",
                 names.join(", ")
@@ -111,15 +117,16 @@ impl AgentTool for SkillTool {
         };
         let file = skill.dir.join(SKILL_FILE);
         let read = file.clone();
-        let text = tokio::task::spawn_blocking(move || std::fs::read_to_string(read))
-            .await
-            .map_err(|error| ToolError::Message(error.to_string()))?
-            .map_err(|error| {
-                ToolError::Message(format!(
-                    "Cannot read {}: {error}",
-                    file.display()
-                ))
-            })?;
+        let text =
+            tokio::task::spawn_blocking(move || std::fs::read_to_string(read))
+                .await
+                .map_err(|error| ToolError::Message(error.to_string()))?
+                .map_err(|error| {
+                    ToolError::Message(format!(
+                        "Cannot read {}: {error}",
+                        file.display()
+                    ))
+                })?;
         let body = scan::split(&text).map(|(_, body)| body).unwrap_or(&text);
         let mut output = ToolOutput::text(format!(
             "Skill {name}. Its folder, where the files it names are: {}\n\n{}",

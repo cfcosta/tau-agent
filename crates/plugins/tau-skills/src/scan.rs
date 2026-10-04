@@ -130,7 +130,8 @@ pub fn check_name(name: &str) -> Result<(), String> {
 /// and the instructions after it.
 pub fn split(text: &str) -> Result<(&str, &str), String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let no_front = || format!("{SKILL_FILE} does not start with frontmatter (---)");
+    let no_front =
+        || format!("{SKILL_FILE} does not start with frontmatter (---)");
     let rest = text
         .strip_prefix("---\n")
         .or_else(|| text.strip_prefix("---\r\n"))
@@ -206,7 +207,9 @@ fn count_files(folder: &Path) -> usize {
             continue;
         };
         for entry in entries.filter_map(Result::ok) {
-            let Ok(kind) = entry.file_type() else { continue };
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
             if kind.is_dir() {
                 todo.push(entry.path());
             } else {
@@ -232,7 +235,9 @@ pub fn section(skills: &Skills) -> Option<String> {
          outside the workspace. When a task fits a skill's description, \
          call `{TOOL}` with its name before you start, and follow what it \
          says. Its folder may hold scripts and references it names: read \
-         and run them from there.\n"
+         and run them from there. A message that starts with `/name` \
+         asks for that skill: load it first, then do what the message \
+         says after the name.\n"
     );
     for skill in &skills.found {
         text.push_str(&format!("\n- {}: {}", skill.name, skill.description));

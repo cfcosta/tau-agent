@@ -15,6 +15,8 @@
 //!   tool.
 //! - [`ui`]: the plugin, with its UI.
 
+#[cfg(feature = "demo")]
+pub mod demo;
 #[cfg(feature = "host")]
 pub mod host;
 #[cfg(feature = "host")]

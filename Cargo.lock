@@ -9542,6 +9542,7 @@ dependencies = [
  "tau-agent",
  "tau-store",
  "tau-testing",
+ "tau-ui-kit",
  "tau-ui-plugin",
  "tempfile",
  "tokio",

@@ -8,6 +8,8 @@ publish.workspace = true
 
 [features]
 default = ["host"]
+# Skills for the demo's screens.
+demo = []
 # The agent half: reading the skills folder, the list in a run's
 # instructions, and the `skill` tool. The list and the views build
 # without it, as on a phone.
@@ -22,6 +24,7 @@ serde_json.workspace = true
 # SKILL.md's frontmatter: descriptions are often YAML block scalars.
 serde_yaml_ng = { version = "0.10", optional = true }
 tau-agent.workspace = true
+tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 tokio = { workspace = true, optional = true }
 

@@ -17,7 +17,9 @@ fn skill(dir: &Path, name: &str, description: &str, body: &str) {
     fs::create_dir_all(folder.join("scripts")).unwrap();
     fs::write(
         folder.join(SKILL_FILE),
-        format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n"),
+        format!(
+            "---\nname: {name}\ndescription: {description}\n---\n\n{body}\n"
+        ),
     )
     .unwrap();
     fs::write(folder.join("scripts/run.sh"), "echo hi\n").unwrap();
@@ -64,7 +66,12 @@ fn the_model_loads_a_listed_skill() {
         "Writes release notes between two tags",
         "Group the commits by kind.",
     );
-    skill(home.path(), "code-review", "Reviews the diff", "Look for bugs.");
+    skill(
+        home.path(),
+        "code-review",
+        "Reviews the diff",
+        "Look for bugs.",
+    );
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("skill", json!({ "name": "release-notes" })))
         .turn(|t| t.text("Grouped."));
@@ -76,9 +83,10 @@ fn the_model_loads_a_listed_skill() {
     let instructions = llm.requests()[0].settings.instructions.clone().unwrap();
     assert!(instructions.contains(scan::HEADING));
     assert!(instructions.contains("- code-review: Reviews the diff"));
-    assert!(instructions.contains(
-        "- release-notes: Writes release notes between two tags"
-    ));
+    assert!(
+        instructions
+            .contains("- release-notes: Writes release notes between two tags")
+    );
     assert!(!instructions.contains("Group the commits"));
 
     // The call gives its instructions, without the frontmatter, and its
@@ -97,7 +105,12 @@ fn the_model_loads_a_listed_skill() {
 #[test]
 fn an_unknown_skill_names_the_ones_there_are() {
     let home = tempfile::tempdir().unwrap();
-    skill(home.path(), "code-review", "Reviews the diff", "Look for bugs.");
+    skill(
+        home.path(),
+        "code-review",
+        "Reviews the diff",
+        "Look for bugs.",
+    );
     let llm = ScriptedModel::new()
         // A name like a path does not reach outside the folder.
         .turn(|t| t.tool_call("skill", json!({ "name": "../code-review" })))

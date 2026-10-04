@@ -55,10 +55,7 @@ fn folder(tc: &hegel::TestCase) -> Folder {
             named: tc.draw(gs::booleans()),
             // Words, colons, quotes and lines: what YAML must escape.
             description: tc.draw(
-                gs::text()
-                    .alphabet("ab :#'\"\n-")
-                    .min_size(1)
-                    .max_size(40),
+                gs::text().alphabet("ab :#'\"\n-").min_size(1).max_size(40),
             ),
             style: tc.draw(gs::integers::<u8>().max_value(2)),
             other: tc.draw(
@@ -91,10 +88,7 @@ fn yaml_description(text: &str, style: u8) -> String {
     match style {
         0 => indented("|"),
         1 => indented(">"),
-        _ => format!(
-            "description: {}\n",
-            serde_json::to_string(text).unwrap()
-        ),
+        _ => format!("description: {}\n", serde_json::to_string(text).unwrap()),
     }
 }
 
@@ -135,8 +129,7 @@ fn write(dir: &Path, folder_name: &str, folder: &Folder) {
 
 #[hegel::test(test_cases = 200)]
 fn every_folder_is_a_skill_or_a_problem(tc: TestCase) {
-    let folders: Vec<Folder> =
-        tc.draw(gs::vecs(folder()).max_size(6));
+    let folders: Vec<Folder> = tc.draw(gs::vecs(folder()).max_size(6));
     let home = tempfile::tempdir().unwrap();
     let mut expected = Vec::new();
     let mut used = BTreeSet::new();
@@ -157,8 +150,11 @@ fn every_folder_is_a_skill_or_a_problem(tc: TestCase) {
     // Each folder once, as a skill or a problem.
     let found: BTreeSet<_> =
         skills.found.iter().map(|skill| skill.dir.clone()).collect();
-    let problems: BTreeSet<_> =
-        skills.problems.iter().map(|problem| problem.dir.clone()).collect();
+    let problems: BTreeSet<_> = skills
+        .problems
+        .iter()
+        .map(|problem| problem.dir.clone())
+        .collect();
     assert!(found.is_disjoint(&problems));
     assert_eq!(found.len() + problems.len(), folders.len());
 
@@ -176,17 +172,25 @@ fn every_folder_is_a_skill_or_a_problem(tc: TestCase) {
                 other,
                 ..
             } => {
-                let want = if *named { name.clone() } else { folder_name.clone() };
+                let want = if *named {
+                    name.clone()
+                } else {
+                    folder_name.clone()
+                };
                 let valid = scan::check_name(&want).is_ok();
                 let words = scan::one_line(description);
                 // Only a skill claims its name.
-                let fresh = valid && !words.is_empty() && names.insert(want.clone());
+                let fresh =
+                    valid && !words.is_empty() && names.insert(want.clone());
                 if !fresh {
                     assert!(skill.is_none(), "{folder_name}: {folder:?}");
                     continue;
                 }
                 let skill = skill.unwrap_or_else(|| {
-                    panic!("{folder_name} is not a skill: {:?}", skills.problems)
+                    panic!(
+                        "{folder_name} is not a skill: {:?}",
+                        skills.problems
+                    )
                 });
                 assert_eq!(skill.name, want);
                 assert_eq!(skill.description, words);
@@ -202,8 +206,10 @@ fn every_folder_is_a_skill_or_a_problem(tc: TestCase) {
         None => assert!(skills.found.is_empty()),
         Some(section) => {
             assert!(section.starts_with(HEADING));
-            let lines: Vec<&str> =
-                section.lines().filter(|line| line.starts_with("- ")).collect();
+            let lines: Vec<&str> = section
+                .lines()
+                .filter(|line| line.starts_with("- "))
+                .collect();
             assert_eq!(lines.len(), skills.found.len());
             for skill in &skills.found {
                 let line = format!("- {}: {}", skill.name, skill.description);
@@ -252,7 +258,10 @@ fn unquoted_names_read_as_written() {
         .unwrap();
     }
     let skills = scan::scan(home.path());
-    let names: Vec<&str> =
-        skills.found.iter().map(|skill| skill.name.as_str()).collect();
+    let names: Vec<&str> = skills
+        .found
+        .iter()
+        .map(|skill| skill.name.as_str())
+        .collect();
     assert_eq!(names, ["404", "c", "d", "true"], "{:?}", skills.problems);
 }
