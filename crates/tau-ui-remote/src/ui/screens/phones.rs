@@ -246,7 +246,6 @@ fn pair_card(
         .when(compact, |card| card.w_full())
         .items_center()
         .gap(sp(3.5))
-        .border_color(t.accent_border)
         .child(
             div()
                 .self_start()
@@ -307,7 +306,7 @@ fn pair_card(
                 ),
                 (
                     "Expires".into(),
-                    mono(countdown(shown), Type::CAPTION, t.accent),
+                    mono(countdown(shown), Type::CAPTION, t.roles.live),
                 ),
             ],
             t,

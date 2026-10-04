@@ -1,13 +1,12 @@
-//! The agent's plugins in registration order, the seams each one uses,
-//! and what they cost.
+//! The agent's plugins, in the order the loop asks them: what each one
+//! does, and what it is doing in the open run or what it cost.
 
-use gpui::{AnyElement, Context, SharedString, div, prelude::*, px, relative};
+use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
 use crate::{
-    catalog::{PluginInfo, Seam},
     theme::{Design as _, Theme, Type, radius, sp},
-    ui::{self, bar, dot, heading, key_values, mono},
-    view::{Item, tokens, usd},
+    ui::{self, mono},
+    view::{tokens, usd},
     workspace::Workspace,
 };
 
@@ -18,291 +17,128 @@ pub fn render(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let catalog = &ws.catalog;
-    let rows = catalog.plugins.iter().enumerate().map(|(index, plugin)| {
-        let route = ws.plugin_route(plugin);
-        let seams = Seam::ALL.iter().map(|seam| {
-            let used = plugin.seams.contains(seam);
+    let run = ws.current();
+    // What plugins charged, by the catalog's count of each.
+    let plugin_cost: f64 =
+        catalog.plugins.iter().map(|plugin| plugin.spend).sum();
+    let rows: Vec<AnyElement> = catalog
+        .plugins
+        .iter()
+        .map(|plugin| {
+            let route = ws.plugin_route(plugin);
+            let ink =
+                t.roles.plugin(&plugin.name).unwrap_or(t.mark(&plugin.name));
+            // What it does in the open run, else what it cost.
+            let (state, state_ink) = run
+                .and_then(|run| {
+                    run.plugins.iter().find(|status| status.name == plugin.name)
+                })
+                .map(|status| (status.state.clone(), t.tone(status.tone)))
+                .unwrap_or_else(|| (usd(plugin.spend), t.dim));
             div()
-                .when(!compact, |cell| cell.flex_1().flex().justify_center())
+                .id(SharedString::from(format!("plugin-{}", plugin.name)))
+                .flex()
+                .items_center()
+                .gap(sp(3.))
+                .px(sp(1.))
+                .py(sp(3.))
+                .border_b_1()
+                .border_color(t.border)
+                .when(route.is_some(), |row| {
+                    row.cursor_pointer().hover(|style| style.bg(t.card))
+                })
                 .child(
                     div()
-                        .size(px(10.))
-                        .rounded(radius::TAG)
-                        .border_1()
-                        .border_color(if used {
-                            t.blue
-                        } else {
-                            t.border_strong
-                        })
-                        .when(used, |dot| dot.bg(t.blue)),
+                        .size(px(7.))
+                        .flex_shrink_0()
+                        .rounded(radius::FULL)
+                        .bg(ink),
                 )
-        });
-        let name = div()
-            .flex()
-            .flex_col()
-            .gap(sp(0.75))
-            .child(mono(plugin.name.clone(), Type::SMALL, t.text))
-            .child(
-                div()
-                    .typeset(Type::CAPTION)
-                    .text_color(t.muted)
-                    .child(plugin.description.clone()),
-            );
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .flex()
+                        .flex_col()
+                        .child(mono(plugin.name.clone(), Type::SMALL, ink))
+                        .child(
+                            div()
+                                .truncate()
+                                .typeset(Type::CAPTION)
+                                .text_color(t.muted)
+                                .child(plugin.description.clone()),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .typeset(Type::CAPTION)
+                        .text_color(state_ink)
+                        .child(state),
+                )
+                .when_some(route, |row, route| {
+                    row.on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(route.clone(), cx)
+                    }))
+                })
+                .into_any_element()
+        })
+        .collect();
+    let jev = catalog.jev.as_ref().map(|jev| {
         div()
-            .id(SharedString::from(format!("plugin-{}", plugin.name)))
             .flex()
-            .when(compact, |row| row.flex_col().items_start().gap(sp(2.)))
-            .when(!compact, |row| row.items_center().gap(sp(2.)))
-            .px(sp(4.))
-            .py(sp(3.))
-            .border_b_1()
-            .border_color(t.border)
-            .when(route.is_some(), |row| {
-                row.cursor_pointer()
-                    .hover(|style| style.bg(gpui::white().opacity(0.03)))
-            })
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(3.))
-                    .when(!compact, |cell| cell.w(px(300.)).flex_shrink_0())
-                    .child(mono((index + 1).to_string(), Type::CAPTION, t.dim))
-                    .child(name),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(sp(if compact { 2.5 } else { 0. }))
-                    .when(!compact, |cells| cells.flex_1())
-                    .children(seams),
-            )
-            .child(
-                mono(usd(plugin.spend), Type::CAPTION, t.muted)
-                    .when(!compact, |cell| {
-                        cell.w(px(80.)).flex().justify_end()
-                    }),
-            )
-            .when_some(route, |row, route| {
-                row.on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.navigate(route.clone(), cx)
-                }))
+            .flex_wrap()
+            .items_center()
+            .gap(sp(2.))
+            .typeset(Type::CAPTION)
+            .text_color(t.muted)
+            .child(div().size(px(7.)).rounded(radius::FULL).bg(t.green))
+            .child(div().text_color(t.text).child("tau-jev"))
+            .child(format!("connected to {}", jev.model))
+            .child("·")
+            .child(format!(
+                "{} requests, {} tokens in",
+                jev.requests,
+                tokens(jev.input_tokens)
+            ))
+            .child("·")
+            .child(div().text_color(t.roles.cost).child(usd(jev.spent)))
+            .child("·")
+            .child(format!("p50 {} ms", jev.latency_p50_ms))
+            .when(jev.failed > 0, |line| {
+                line.child("·").child(
+                    div()
+                        .text_color(t.red)
+                        .child(format!("{} failed", jev.failed)),
+                )
             })
     });
-    let header = div()
-        .flex()
-        .items_end()
-        .gap(sp(2.))
-        .px(sp(4.))
-        .py(sp(2.5))
-        .bg(t.panel)
-        .border_b_1()
-        .border_color(t.border)
-        .child(div().w(px(300.)).child(heading("Plugin", t)))
-        .child(div().flex_1().flex().children(Seam::ALL.iter().map(|seam| {
-            div().flex_1().flex().justify_center().child(mono(
-                seam.label(),
-                Type::MICRO,
-                t.dim,
-            ))
-        })))
-        .child(
-            div()
-                .w(px(80.))
-                .flex()
-                .justify_end()
-                .child(heading("Spend", t)),
-        );
-
-    let rewrites = ws
-        .runs
-        .iter()
-        .flat_map(|run| &run.items)
-        .filter(|item| matches!(item, Item::Rewrite { .. }))
-        .count();
-    let plugin_cost: f64 =
-        ws.runs.iter().map(|run| run.usage.plugin_cost).sum();
-    let legend = div()
-        .flex()
-        .flex_wrap()
-        .gap(sp(4.))
-        .typeset(Type::CAPTION)
-        .text_color(t.muted)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(1.5))
-                .child(dot(t.blue, 10.))
-                .child("uses the seam"),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(1.5))
-                .child(
-                    div()
-                        .size(px(10.))
-                        .rounded(radius::TAG)
-                        .border_1()
-                        .border_color(t.border_strong),
-                )
-                .child("default no-op"),
-        )
-        .child("Pick a plugin to see its work.");
-    let facts = div()
-        .grid()
-        .grid_cols(if compact { 1 } else { 3 })
-        .gap(sp(3.))
-        .child(fact("Settings fixed at start", "Only `start` may change settings, through the `RunPlan`. After that, every turn is a delta.", t))
-        .child(fact("Context rewrites", &format!("{rewrites} stored rewrites across these runs. Each one costs a single full resend."), t))
-        .child(fact("Plugins pay their own way", &format!("{} charged by plugins, counted in each run's limits.", usd(plugin_cost)), t));
-
-    let main = div()
-        .flex_1()
-        .min_w(px(0.))
-        .flex()
-        .flex_col()
-        .gap(sp(4.5))
-        .child(ui::screen_title(
-            format!("Plugins on {}", catalog.agent),
-            format!(
-                "In registration order{}. The loop asks them in this order at every seam, and the first rewrite at a turn boundary wins.",
-                catalog.agent_source.as_ref().map_or(String::new(), |source| format!(", from {source}"))
-            ),
-            t,
-        ))
-        .child(ui::card(t).when(!compact, |card| card.child(header)).children(rows))
-        .child(legend)
-        .child(facts);
-
-    let side = div()
-        .flex()
-        .flex_col()
-        .gap(sp(5.))
-        .when(!compact, |side| side.w(px(300.)).flex_shrink_0())
-        .children(catalog.jev.as_ref().map(|jev| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(2.5))
-                .child(heading("tau-jev", t))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .child(dot(t.green, 8.))
-                        .child(format!("Connected to {}", jev.model)),
-                )
-                .child(key_values(
-                    [
-                        (
-                            "key".into(),
-                            mono(jev.key_env.clone(), Type::CAPTION, t.text),
-                        ),
-                        (
-                            "price".into(),
-                            mono(jev.price.clone(), Type::CAPTION, t.text),
-                        ),
-                        (
-                            "requests".into(),
-                            mono(
-                                jev.requests.to_string(),
-                                Type::CAPTION,
-                                t.text,
-                            ),
-                        ),
-                        (
-                            "input".into(),
-                            mono(
-                                format!("{} tokens", tokens(jev.input_tokens)),
-                                Type::CAPTION,
-                                t.text,
-                            ),
-                        ),
-                        (
-                            "spent".into(),
-                            mono(usd(jev.spent), Type::CAPTION, t.text),
-                        ),
-                        (
-                            "latency p50".into(),
-                            mono(
-                                format!("{} ms", jev.latency_p50_ms),
-                                Type::CAPTION,
-                                t.text,
-                            ),
-                        ),
-                        (
-                            "failed".into(),
-                            mono(jev.failed.to_string(), Type::CAPTION, t.text),
-                        ),
-                    ],
-                    t,
-                ))
-        }))
-        .child(spend(&catalog.plugins, t));
-
     ui::screen(
         "plugins",
         compact,
         div()
+            .w_full()
+            .max_w(px(1040.))
             .flex()
-            .when(compact, |layout| layout.flex_col())
-            .gap(sp(7.))
-            .child(main)
-            .child(side),
+            .flex_col()
+            .gap(sp(5.))
+            .child(ui::screen_title(
+                "Plugins",
+                format!(
+                    "What runs alongside every {} run, in the order the loop asks them. {} charged by plugins.",
+                    catalog.agent,
+                    usd(plugin_cost)
+                ),
+                t,
+            ))
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(if compact { 1 } else { 2 })
+                    .gap_x(sp(8.))
+                    .children(rows),
+            )
+            .children(jev),
     )
     .into_any_element()
-}
-
-fn fact(title: &str, body: &str, t: &Theme) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(1.5))
-        .p(sp(3.5))
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::BOX)
-        .child(
-            div()
-                .typeset(Type::CAPTION)
-                .text_color(t.muted)
-                .child(title.to_owned()),
-        )
-        .child(
-            div()
-                .line_height(relative(1.5))
-                .child(ui::rich(body, t.text, t)),
-        )
-}
-
-fn spend(plugins: &[PluginInfo], t: &Theme) -> impl IntoElement {
-    let mut sorted: Vec<&PluginInfo> =
-        plugins.iter().filter(|p| p.spend > 0.0).collect();
-    sorted.sort_by(|a, b| b.spend.total_cmp(&a.spend));
-    let top = sorted.first().map_or(1.0, |p| p.spend);
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.5))
-        .child(heading("Spend by plugin", t))
-        .children(sorted.into_iter().map(|plugin| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(1.25))
-                .child(
-                    div()
-                        .flex()
-                        .child(
-                            mono(plugin.name.clone(), Type::CAPTION, t.text)
-                                .flex_1(),
-                        )
-                        .child(mono(usd(plugin.spend), Type::CAPTION, t.muted)),
-                )
-                .child(bar((plugin.spend / top) as f32, 6., t.blue, t.raised))
-        }))
 }
