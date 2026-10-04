@@ -1128,6 +1128,44 @@ impl Machine {
         self.trunk = at;
         self.check_commit(at);
     }
+
+    /// Abandons `child`'s own changes, what its head has that its
+    /// parent's lacks, as `Host::drop_child` does, and closes it.
+    fn do_drop(&mut self, tc: &TestCase, child: usize) {
+        tc.event("a drop");
+        let parent = self.runs[child].parent.unwrap();
+        let keep = self.runs[parent].head;
+        if self.runs[child].bookmarked {
+            let head = self
+                .project
+                .bookmark(&self.runs[child].bookmark.clone())
+                .unwrap()
+                .unwrap();
+            let count = self
+                .project
+                .abandon_between(&self.commits[keep].commit_id, &head)
+                .unwrap();
+            let own = self.own_changes(self.runs[child].head, keep);
+            assert_eq!(count, own.len(), "abandoned changes");
+            if own.is_empty() {
+                tc.event("a drop with nothing to abandon");
+            }
+            let before: Vec<Tree> =
+                self.commits.iter().map(|c| c.tree.clone()).collect();
+            for &at in &own {
+                self.commits[at].abandoned = true;
+            }
+            let dragged = self.follow(&own.iter().copied().collect(), &before);
+            if !dragged.is_empty() {
+                tc.event("a drop drags a forgotten fork along");
+            }
+            self.learn(&dragged);
+            for &at in &dragged {
+                self.check_commit(at);
+            }
+        }
+        self.close(child, State::Dropped);
+    }
 }
 
 #[hegel::state_machine]
@@ -1207,45 +1245,15 @@ impl Machine {
     }
 
     /// Drops a child: its own changes are abandoned, as `Host::drop_child`
-    /// does, and it closes.
+    /// does, and it closes. The main chat catches up with trunk first, as
+    /// the host has it.
     #[rule(weight = 2)]
     fn drop_child(&mut self, tc: TestCase) {
         let candidates = self.closable();
         tc.assume(!candidates.is_empty());
         let child = tc.draw(gs::sampled_from(candidates));
-        tc.event("a drop");
-        let parent = self.runs[child].parent.unwrap();
-        let keep = self.runs[parent].head;
-        if self.runs[child].bookmarked {
-            let head = self
-                .project
-                .bookmark(&self.runs[child].bookmark.clone())
-                .unwrap()
-                .unwrap();
-            let count = self
-                .project
-                .abandon_between(&self.commits[keep].commit_id, &head)
-                .unwrap();
-            let own = self.own_changes(self.runs[child].head, keep);
-            assert_eq!(count, own.len(), "abandoned changes");
-            if own.is_empty() {
-                tc.event("a drop with nothing to abandon");
-            }
-            let before: Vec<Tree> =
-                self.commits.iter().map(|c| c.tree.clone()).collect();
-            for &at in &own {
-                self.commits[at].abandoned = true;
-            }
-            let dragged = self.follow(&own.iter().copied().collect(), &before);
-            if !dragged.is_empty() {
-                tc.event("a drop drags a forgotten fork along");
-            }
-            self.learn(&dragged);
-            for &at in &dragged {
-                self.check_commit(at);
-            }
-        }
-        self.close(child, State::Dropped);
+        self.do_catch_up(&tc);
+        self.do_drop(&tc, child);
     }
 
     /// Forgets a fork's workspace, as "keep branch" does for the others:
@@ -1506,6 +1514,27 @@ fn a_catchup_snapshot_does_not_count_reordered_conflict_terms() {
         m.the_project_is_the_model(tc.clone());
         m.do_catch_up(&tc);
         m.do_snapshot(&tc, MAIN, &[]);
+        m.the_project_is_the_model(tc);
+    })
+    .settings(hegel::Settings::new().test_cases(1))
+    .run();
+}
+
+/// A chat starts on a trunk an update moved past the main chat, and is
+/// dropped. The main chat catches up first, as the host has it, so the
+/// drop abandons the chat's commit alone, and not upstream's under it.
+/// The model used to drop from where the main chat stood, abandoning
+/// upstream's commit with the chat's, while trunk stayed on it.
+#[test]
+fn a_drop_after_an_update_keeps_upstreams_commits() {
+    hegel::Hegel::new(|tc| {
+        let mut m = Machine::new();
+        m.do_upstream(&tc, &[("a.txt", Some("one\n"))]);
+        m.do_start(&tc);
+        m.do_turn(&tc, 1, &[("c.txt", Some("two\n"))]);
+        m.the_project_is_the_model(tc.clone());
+        m.do_catch_up(&tc);
+        m.do_drop(&tc, 1);
         m.the_project_is_the_model(tc);
     })
     .settings(hegel::Settings::new().test_cases(1))
