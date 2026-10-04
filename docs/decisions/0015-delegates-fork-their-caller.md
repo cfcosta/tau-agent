@@ -6,7 +6,9 @@
   Amended by [0016](0016-runs-nest-one-level.md): only a top-level run
   delegates. Amended by [0022](0022-the-prompt-cache-follows-the-connection.md):
   the inherited prefix hits the cache only on the caller's connection,
-  which the sub-agent's first request now takes.
+  which the sub-agent's first request now takes. Amended by
+  [0026](0026-sub-agents-run-detached.md): `delegate` gives way to
+  `spawn` and `wait`, and sub-agents outlive their call.
 - Date: 2026-09-30
 - Background: a comparison with Codex's multi-agent tools
   (`spawn_agent`, `wait_agent`, `send_input`, `close_agent`), which

@@ -5,7 +5,9 @@
   only" rule no longer refuses a landing, it delays it. Amends
   [0014](0014-the-model-commits-and-runs-land-as-stacked-diffs.md): the
   parent's resolving turn is checked, and conflicts it leaves hold the
-  parent.
+  parent. Amended by [0026](0026-sub-agents-run-detached.md):
+  sub-agents nobody waits for join the queue, and tau's turn after a
+  drain reports them.
 - Date: 2026-10-03
 
 ## Context
