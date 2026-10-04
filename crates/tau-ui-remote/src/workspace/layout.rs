@@ -661,6 +661,16 @@ impl Workspace {
                     .and_then(|run| ui::ending::note(run, compact, t, cx));
                 match (instead, ended) {
                     (_, Some(note)) => note.into_any_element(),
+                    // On a desktop, in the transcript's column, as the
+                    // composer it stands in for.
+                    (Some(instead), None) if !compact => div()
+                        .w_full()
+                        .max_w(px(808.))
+                        .mx_auto()
+                        .px(sp(6.))
+                        .pb(sp(5.))
+                        .child(instead)
+                        .into_any_element(),
                     (Some(instead), None) => instead,
                     (None, None) => {
                         self.composer(compact, t, cx).into_any_element()
