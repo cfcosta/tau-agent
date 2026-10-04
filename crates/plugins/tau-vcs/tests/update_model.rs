@@ -37,16 +37,47 @@ const TAGS: [&str; 2] = ["v1", "v2"];
 /// jj's root commit, in a Git-backed repository.
 const ROOT: &str = "0000000000000000000000000000000000000000";
 
-/// The refs under `prefix` in the repository at `dir`, by short name.
+/// The refs under `prefix` in the repository at `dir`, by short name,
+/// each with the object it names (a tag's own object, unpeeled), as
+/// `git for-each-ref` lists them. Read in process: the checks ask after
+/// every step, and a `git` process each time was a third of the run.
 fn refs(dir: &Path, prefix: &str) -> BTreeMap<String, String> {
-    let format = "--format=%(refname) %(objectname)";
-    git(dir, &["for-each-ref", format, prefix])
-        .lines()
-        .map(|line| {
-            let (name, id) = line.split_once(' ').unwrap();
-            (name.strip_prefix(prefix).unwrap().to_owned(), id.to_owned())
+    let repo = gix::open(dir).unwrap();
+    let references = repo.references().unwrap();
+    references
+        .prefixed(prefix)
+        .unwrap()
+        .map(|reference| {
+            let reference = reference.unwrap();
+            let name = reference.name().as_bstr().to_string();
+            let id = match reference.target().try_id() {
+                Some(id) => id.to_owned(),
+                None => reference.into_fully_peeled_id().unwrap().detach(),
+            };
+            (
+                name.strip_prefix(prefix).unwrap().to_owned(),
+                id.to_string(),
+            )
         })
         .collect()
+}
+
+/// Whether `ancestor` is `of` or an ancestor of it in the repository at
+/// `dir`, as `git merge-base --is-ancestor` says; one that is not there
+/// is not.
+fn is_ancestor(dir: &Path, ancestor: &str, of: &str) -> bool {
+    let repo = gix::open(dir).unwrap();
+    let (Ok(ancestor), Ok(of)) = (
+        gix::ObjectId::from_hex(ancestor.as_bytes()),
+        gix::ObjectId::from_hex(of.as_bytes()),
+    ) else {
+        return false;
+    };
+    let Ok(walk) = repo.rev_walk([of]).all() else {
+        return false;
+    };
+    walk.filter_map(Result::ok)
+        .any(|commit| commit.id == ancestor)
 }
 
 /// The branch `HEAD` names in the Git directory `git_dir`, if any.
@@ -275,8 +306,15 @@ impl Machine {
     /// The bookmarks the project should have, but for `tau/` ones: the
     /// source's branches, with the main chat's moves on top.
     fn want_bookmarks(&self) -> BTreeMap<String, Option<String>> {
-        let mut want: BTreeMap<String, Option<String>> = self
-            .branches()
+        self.bookmarks_over(self.branches())
+    }
+
+    /// [`Self::want_bookmarks`], over the source's `branches` as read.
+    fn bookmarks_over(
+        &self,
+        branches: BTreeMap<String, String>,
+    ) -> BTreeMap<String, Option<String>> {
+        let mut want: BTreeMap<String, Option<String>> = branches
             .into_iter()
             .map(|(name, id)| (name, Some(id)))
             .collect();
@@ -291,7 +329,14 @@ impl Machine {
     /// bookmark with one target; else the root commit, named after
     /// `HEAD`'s branch or `main`.
     fn want_trunk(&self) -> (String, String) {
-        let bookmarks = self.want_bookmarks();
+        self.trunk_over(&self.want_bookmarks())
+    }
+
+    /// [`Self::want_trunk`], over the `bookmarks` the project should have.
+    fn trunk_over(
+        &self,
+        bookmarks: &BTreeMap<String, Option<String>>,
+    ) -> (String, String) {
         let head = self.head.clone();
         head.iter()
             .cloned()
@@ -310,9 +355,11 @@ impl Machine {
     fn check_mirror(&self) {
         let store = self.project.root().join("git");
         let source = self.source_git();
+        // Read once: every check below is against the same branches.
+        let branches = self.branches();
         assert_eq!(
             refs(&store, "refs/heads/"),
-            self.branches(),
+            branches,
             "the Git store's branches"
         );
         assert_eq!(
@@ -336,12 +383,13 @@ impl Machine {
                 (name, id)
             })
             .collect();
-        assert_eq!(got, self.want_bookmarks(), "bookmarks");
-        let (name, id) = self.want_trunk();
+        let want = self.bookmarks_over(branches.clone());
+        assert_eq!(got, want, "bookmarks");
+        let (name, id) = self.trunk_over(&want);
         assert_eq!(self.project.trunk_name().unwrap(), name, "trunk's name");
         assert_eq!(self.project.trunk().unwrap(), id, "trunk");
         // Every branch's files are readable at its commit.
-        for id in self.branches().values() {
+        for id in branches.values() {
             let want = git(&source, &["show", &format!("{id}:f.txt")]);
             let (got, _) = self.project.file_at(id, "f.txt").unwrap().unwrap();
             assert_eq!(String::from_utf8(got).unwrap().trim(), want);
@@ -373,13 +421,7 @@ impl Machine {
         if of == ROOT {
             return false;
         }
-        let store = self.project.root().join("git");
-        tau_testing::git::output(
-            &store,
-            &["merge-base", "--is-ancestor", ancestor, of],
-        )
-        .status
-        .success()
+        is_ancestor(&self.project.root().join("git"), ancestor, of)
     }
 
     /// Whether upstream dropped what the main chat stands on: the trunk
@@ -958,4 +1000,46 @@ fn a_catch_up_leaves_the_main_chats_commits_under_trunk() {
     })
     .settings(hegel::Settings::new().test_cases(1))
     .run();
+}
+
+/// The model reads refs and ancestry in process: as `git` reads them,
+/// loose or packed, lightweight or annotated, before and after `gc`.
+#[test]
+fn refs_and_ancestry_read_as_git_does() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path();
+    git(dir, &["init", "--quiet", "-b", "main"]);
+    std::fs::write(dir.join("f.txt"), "one\n").unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "--quiet", "-m", "one"]);
+    let first = git(dir, &["rev-parse", "HEAD"]);
+    git(dir, &["tag", "v1"]);
+    std::fs::write(dir.join("f.txt"), "two\n").unwrap();
+    git(dir, &["commit", "--quiet", "-am", "two"]);
+    let second = git(dir, &["rev-parse", "HEAD"]);
+    git(dir, &["tag", "-a", "-m", "tag", "v2"]);
+    git(dir, &["branch", "feat/x", &first]);
+    let git_dir = dir.join(".git");
+    let by_git = |prefix: &str| -> BTreeMap<String, String> {
+        let format = "--format=%(refname) %(objectname)";
+        git(dir, &["for-each-ref", format, prefix])
+            .lines()
+            .map(|line| {
+                let (name, id) = line.split_once(' ').unwrap();
+                (name.strip_prefix(prefix).unwrap().to_owned(), id.to_owned())
+            })
+            .collect()
+    };
+    for packed in [false, true] {
+        if packed {
+            git(dir, &["gc", "--quiet", "--prune=now"]);
+        }
+        for prefix in ["refs/heads/", "refs/tags/"] {
+            assert_eq!(refs(&git_dir, prefix), by_git(prefix), "{prefix}");
+        }
+        assert!(is_ancestor(&git_dir, &first, &second));
+        assert!(is_ancestor(&git_dir, &second, &second));
+        assert!(!is_ancestor(&git_dir, &second, &first));
+        assert!(!is_ancestor(&git_dir, &"1".repeat(40), &second));
+    }
 }
