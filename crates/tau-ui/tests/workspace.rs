@@ -353,6 +353,8 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         host::{Host, HostConfig},
     };
 
+    // The host works on its own runtime's threads, as it does in tau.
+    cx.executor().allow_parking();
     let (workspace, mut cx, _) = open(cx);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -362,14 +364,17 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
     let store = runtime.block_on(tau_store::Store::memory()).unwrap();
     let agent =
         tau_agent::agent::Agent::new(ScriptedModel::new()).name("coder");
+    // The test's own directory: a repository list another run left in
+    // the shared temp directory would give the host a repository.
+    let dir = tempfile::tempdir().unwrap().keep();
     let config = HostConfig {
         account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
-        credentials: Credentials::new(tempfile::tempdir().unwrap().keep()),
+        credentials: Credentials::new(dir.join("config")),
         model: Some("gpt-5.5".into()),
-        store: std::env::temp_dir().join("unused.db"),
-        repos: std::env::temp_dir().join("unused-repos"),
-        settings: std::env::temp_dir().join("unused-models.json"),
-        repo_list: std::env::temp_dir().join("unused-repos.json"),
+        store: dir.join("unused.db"),
+        repos: dir.join("repos"),
+        settings: dir.join("models.json"),
+        repo_list: dir.join("repos.json"),
     };
     // No repository is listed, so the demo's run cannot be forked.
     let (host, events) = Host::with_agent(runtime, agent, store, config);
