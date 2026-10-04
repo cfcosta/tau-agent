@@ -330,7 +330,15 @@ impl Workspace {
                     plugin.contribute(point.name, at, env)
                 })
                 .unwrap_or_default();
-            for (order, out) in outs {
+            for (order, mut out) in outs {
+                // A plugin's navigation entry leads to its own page unless
+                // it names another plugin's.
+                if let Some(entry) =
+                    out.downcast_mut::<tau_ui_plugin::NavEntry>()
+                    && entry.to.plugin.is_none()
+                {
+                    entry.to.plugin = Some(plugin.name().to_owned());
+                }
                 if let Ok(out) = out.downcast::<Out>() {
                     found.push((order, n, *out));
                 }
