@@ -1418,9 +1418,17 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     let done = tau_agent::tool::RunId("plugin-docs".into());
     workspace.update(&mut cx, |ws, cx| ws.navigate(Route::NewRun, cx));
     // A new run has no conversation to fork, close or open a PR from.
+    // The demo's skills come with the plugins' commands, but not the
+    // folder that is not a skill.
     assert_eq!(
         names(composer_slash(&workspace, &mut cx, "/")),
-        ["/goal", "/model", "/attach"]
+        [
+            "/goal",
+            "/code-review",
+            "/release-notes",
+            "/model",
+            "/attach"
+        ]
     );
     // Only the main chat forks (ADR 0016).
     workspace.update(&mut cx, |ws, cx| {
@@ -1429,7 +1437,7 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     assert_eq!(names(composer_slash(&workspace, &mut cx, "/fo")), ["/fork"]);
     workspace
         .update(&mut cx, |ws, cx| ws.navigate(Route::Run(done.clone()), cx));
-    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 5);
+    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 7);
     assert!(names(composer_slash(&workspace, &mut cx, "/fo")).is_empty());
     // Not a command: a message.
     assert_eq!(
@@ -3172,5 +3180,48 @@ fn the_main_chat_pushes_and_offers_fetch_and_push(cx: &mut TestAppContext) {
             (repo.to_owned(), true),
             (repo.to_owned(), false)
         ]
+    );
+}
+
+/// A skill is `/name` in the composer: what is typed after it goes with
+/// it, as the message, to a new chat or to the one open.
+#[gpui::test]
+fn a_skill_command_sends_its_name_and_the_task(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| ws.navigate(Route::NewRun, cx));
+    assert_eq!(
+        names(composer_slash(&workspace, &mut cx, "/rel")),
+        ["/release-notes"]
+    );
+    workspace.update(&mut cx, |ws, cx| {
+        ws.set_composer("", cx);
+        ws.submit_prompt("/release-notes from v0.3 to v0.4".into(), cx);
+    });
+    cx.run_until_parked();
+    let Some(WorkspaceEvent::NewRun { prompt, .. }) =
+        events.borrow().last().cloned()
+    else {
+        panic!("a new run: {:?}", events.borrow())
+    };
+    assert_eq!(prompt, "/release-notes from v0.3 to v0.4");
+    events.borrow_mut().clear();
+
+    let done = tau_agent::tool::RunId("plugin-docs".into());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(done.clone()), cx);
+        ws.set_composer("", cx);
+        // Picked alone, it waits for the task in the composer.
+        ws.submit_prompt("/code-review".into(), cx);
+        assert_eq!(ws.composer_text(cx), "/code-review ");
+        ws.set_composer("", cx);
+        ws.submit_prompt("/code-review the retry loop".into(), cx);
+    });
+    cx.run_until_parked();
+    assert!(
+        events.borrow().iter().any(|event| matches!(event,
+            WorkspaceEvent::Say { run, text, .. }
+                if *run == done && text == "/code-review the retry loop")),
+        "{:?}",
+        events.borrow()
     );
 }

@@ -260,6 +260,20 @@ pub static SCREENS: &[(&str, Screen)] = &[
     }),
     // tau-ask's panel in the composer's place (ADR 0019): a question
     // with previews; a checklist with a note being written; the review.
+    // tau-skills: the Skills screen; a skill loaded, its card open; a
+    // skill not there.
+    ("skills", |ws, _, cx| {
+        ws.navigate(
+            Route::Plugin {
+                plugin: tau_skills::NAME.into(),
+                page: "skills".into(),
+                params: Default::default(),
+            },
+            cx,
+        )
+    }),
+    ("skill", |ws, _, cx| skill(ws, true, cx)),
+    ("skill-missing", |ws, _, cx| skill(ws, false, cx)),
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),
     ("ask-note", |ws, _, cx| ask(ws, "ask-note", cx)),
     ("ask-review", |ws, _, cx| ask(ws, "ask-review", cx)),
@@ -696,6 +710,67 @@ fn ask(workspace: &mut Workspace, open: &str, cx: &mut Context<Workspace>) {
         draft.key(&ask, Key::Right);
         draft.key(&ask, Key::Digit(2));
     });
+}
+
+/// tau-agent's main chat with a `skill` call: release-notes loaded, its
+/// card open, or a skill not there.
+fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
+    let run = run_id();
+    let call = "call_skill".to_owned();
+    let name = if found {
+        "release-notes"
+    } else {
+        "deploy-prod"
+    };
+    workspace.navigate(Route::Run(run.clone()), cx);
+    workspace.apply(
+        HostUpdate::Event(RunEvent::ToolStart {
+            run: run.clone(),
+            call_id: call.clone(),
+            tool: tau_skills::TOOL.into(),
+            args: serde_json::json!({ "name": name }),
+            parent: None,
+        }),
+        cx,
+    );
+    let output = if found {
+        let mut output = tau_agent::tool::ToolOutput::text(
+            "Skill release-notes. Its folder, where the files it names are: \
+             ~/.agents/skills/release-notes\n\nRun scripts/commits.sh with \
+             the two tags, group what it lists, and lead with what users \
+             will notice.",
+        );
+        output.details = Some(
+            serde_json::to_value(tau_skills::Loaded {
+                name: name.into(),
+                description: "Writes release notes from the commits between \
+                              two tags: groups by kind, leads with what users \
+                              notice."
+                    .into(),
+                file: "~/.agents/skills/release-notes/SKILL.md".into(),
+            })
+            .expect("plain JSON"),
+        );
+        output
+    } else {
+        tau_agent::tool::ToolOutput::text(
+            "There is no skill \"deploy-prod\". The skills are: code-review, \
+             release-notes.",
+        )
+    };
+    workspace.apply(
+        HostUpdate::Event(RunEvent::ToolEnd {
+            run: run.clone(),
+            call_id: call.clone(),
+            output: std::sync::Arc::new(output),
+            is_error: !found,
+            parent: None,
+        }),
+        cx,
+    );
+    if found {
+        workspace.toggle_card(&run, &call, cx);
+    }
 }
 
 /// tau-agent's main chat with tau-direnv's `record` folded in.

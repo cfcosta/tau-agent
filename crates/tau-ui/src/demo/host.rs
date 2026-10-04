@@ -99,10 +99,13 @@ impl DemoHost {
             },
         );
         let jev: Arc<dyn Jev> = Arc::new(scripted_jev());
+        let skills = dir.path().join("skills");
+        tau_skills::demo::seed(&skills)?;
         let services = Services::default()
             .with(tau_memory::ui::Search::Keywords)
             .with(saved)
             .with(ConfigDir(dir.path().join("config")))
+            .with(tau_skills::SkillsDir(skills))
             .with(jev);
         let (pushes, pushed) = mpsc::unbounded_channel();
         let cx = HostCx::new(
