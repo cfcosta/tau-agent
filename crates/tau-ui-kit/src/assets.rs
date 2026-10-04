@@ -62,6 +62,12 @@ pub enum Icon {
     Terminal,
     /// A skill: instructions the agent loads for a task.
     Skill,
+    /// A file: a page with a folded corner.
+    File,
+    /// A JSON value: a pair of braces.
+    Braces,
+    /// Plain text: three lines.
+    Text,
 }
 
 impl Icon {
@@ -111,6 +117,9 @@ impl Icon {
             Self::Interrupted => "icons/interrupted.svg",
             Self::Terminal => "icons/terminal.svg",
             Self::Skill => "icons/skill.svg",
+            Self::File => "icons/file.svg",
+            Self::Braces => "icons/braces.svg",
+            Self::Text => "icons/text.svg",
         }
     }
 
@@ -214,10 +223,17 @@ impl Icon {
             Self::Skill => {
                 r#"<path d="M4 5a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M14 3v5h5M8 13h8M8 17h5"/>"#
             }
+            Self::File => {
+                r#"<path d="M5 5a2 2 0 012-2h7l5 5v11a2 2 0 01-2 2H7a2 2 0 01-2-2z"/><path d="M14 3v5h5"/>"#
+            }
+            Self::Braces => {
+                r#"<path d="M8 4H7a2 2 0 00-2 2v4a2 2 0 01-2 2 2 2 0 012 2v4a2 2 0 002 2h1M16 4h1a2 2 0 012 2v4a2 2 0 002 2 2 2 0 00-2 2v4a2 2 0 01-2 2h-1"/>"#
+            }
+            Self::Text => r#"<path d="M4 6h16M4 12h16M4 18h10"/>"#,
         }
     }
 
-    const ALL: [Self; 44] = [
+    const ALL: [Self; 47] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -262,6 +278,9 @@ impl Icon {
         Self::Interrupted,
         Self::Terminal,
         Self::Skill,
+        Self::File,
+        Self::Braces,
+        Self::Text,
     ];
 
     fn svg(self) -> String {
