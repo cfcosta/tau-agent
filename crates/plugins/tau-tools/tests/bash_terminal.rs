@@ -355,10 +355,12 @@ async fn a_prompt_fails_at_once() {
     assert_eq!(called.text(), "no-input\n");
 }
 
-/// `with_terminal(false)` runs with pipes: no details, as without the
-/// feature.
+/// `with_terminal(false)` runs with pipes: no terminal in the details,
+/// and no details on the updates, as without the feature. The result's
+/// details still say what became of the output's artifact, as every
+/// `bash` result's do.
 #[tokio::test(flavor = "multi_thread")]
-async fn pipes_mode_has_no_details() {
+async fn pipes_mode_has_no_terminal_details() {
     let dir = tempfile::tempdir().unwrap();
     let bash = Bash::new(Root::new(dir.path())).with_terminal(false);
     let called = call(
@@ -368,7 +370,14 @@ async fn pipes_mode_has_no_details() {
     )
     .await;
     let output = called.result.unwrap();
-    assert_eq!(output.details, None);
+    assert_eq!(
+        output.details,
+        Some(json!({
+            "artifact": null,
+            "artifact_error": "artifact storage is unavailable",
+            "source_complete": true,
+        }))
+    );
     assert!(called.updates.iter().all(|update| update.details.is_none()));
 }
 

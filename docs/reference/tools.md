@@ -108,7 +108,9 @@ seven, for `Agent::tools`. `bash`, and so both, is unix-only.
   byte size, and source. Publication failure leaves `artifact: null`
   and sets `artifact_error`; an incomplete source cannot grant its
   captured bytes. A complete run with zero output bytes has
-  `artifact: null` and `artifact_error: null`.
+  `artifact: null` and `artifact_error: null`. The result's details
+  carry the same `artifact`, `artifact_error` and `source_complete`,
+  with pipes or a terminal, so the card can show them.
 
 ### bash: terminal mode (the `terminal` feature)
 
