@@ -211,6 +211,20 @@ impl Roles {
         }
     }
 
+    /// The color a plugin's name is written in, where it speaks.
+    pub fn plugin(&self, name: &str) -> Option<Hsla> {
+        Some(match name {
+            "tau-reasoning" => self.reasoning,
+            "tau-memory" => self.memory,
+            "tau-constitution" => self.rules,
+            "tau-mcp" => self.mcp,
+            "tau-compaction" | "tau-fast-compaction" => self.tool_read,
+            "tau-codemode" => self.tool_run,
+            "tau-ask" => self.agent,
+            _ => return None,
+        })
+    }
+
     /// The color a tool's name is written in.
     pub fn tool(&self, name: &str) -> Hsla {
         match name {

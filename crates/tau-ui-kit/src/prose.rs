@@ -137,8 +137,10 @@ fn styled_spans(
             face.style = gpui::FontStyle::Italic;
         }
         let tint = if span.link.is_some() {
-            t.blue
-        } else if span.code || span.bold {
+            t.roles.link
+        } else if span.code {
+            t.roles.code
+        } else if span.bold {
             t.text
         } else {
             color
@@ -147,7 +149,7 @@ fn styled_spans(
             len: body.len(),
             font: face,
             color: tint,
-            background_color: span.code.then_some(t.raised),
+            background_color: None,
             underline: span.link.as_ref().map(|_| gpui::UnderlineStyle {
                 color: Some(t.blue),
                 thickness: px(1.),
@@ -220,7 +222,7 @@ fn marked_runs(
                     t.text,
                     None,
                 ),
-                Mark::Code if chips => (font(MONO), t.text, Some(t.raised)),
+                Mark::Code if chips => (font(MONO), t.roles.code, None),
                 Mark::Code => (font(MONO), color, None),
             };
             TextRun {

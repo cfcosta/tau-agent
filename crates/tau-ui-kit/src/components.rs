@@ -567,10 +567,9 @@ pub fn tag(
 pub fn bubble(t: &Theme) -> Div {
     div()
         .px(sp(3.5))
-        .py(sp(3.))
-        .key(t)
-        .border_color(t.border_soft)
-        .rounded(radius::LARGE)
+        .py(sp(2.5))
+        .bg(t.raised)
+        .rounded(radius::BUBBLE)
         .leading(1.55)
 }
 
@@ -1222,6 +1221,17 @@ pub fn note(
 ) -> Div {
     let folds = folds.filter(|_| !compact);
     let open = folds.unwrap_or(true);
+    // A plugin speaks in its own color; a note that warns, in its tone.
+    let warns = matches!(
+        head.tone,
+        crate::theme::Tone::Danger | crate::theme::Tone::Warn
+    );
+    let ink = match head.tone {
+        crate::theme::Tone::Info | crate::theme::Tone::Quiet => {
+            t.roles.plugin(&head.plugin).unwrap_or(t.tone(head.tone))
+        }
+        tone => t.tone(tone),
+    };
     let header = div()
         .id(id)
         .flex()
@@ -1236,27 +1246,19 @@ pub fn note(
                 ))
                 .when_some(on_toggle, |row, toggle| row.on_click(toggle))
         })
+        .child(icon(head.icon, IconSize::COMPACT, ink))
         .child(
             div()
-                .size(px(20.))
                 .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(radius::TAG)
-                .bg(t.info_surface)
-                .child(icon(head.icon, IconSize::COMPACT, t.tone(head.tone))),
-        )
-        .child(
-            mono(head.plugin.clone(), Type::CAPTION, t.tone(head.tone))
-                .flex_shrink_0(),
+                .text_color(ink)
+                .child(head.plugin.clone()),
         )
         .when(!compact, |row| {
-            row.child(div().child(crate::prose::rich(
-                &head.text,
-                t.text_soft,
-                t,
-            )))
+            row.child(
+                div()
+                    .min_w(px(0.))
+                    .child(crate::prose::rich(&head.text, t.muted, t)),
+            )
         })
         .child(div().flex_1())
         .when_some(head.detail.clone().filter(|_| !compact), |row, detail| {
@@ -1265,20 +1267,22 @@ pub fn note(
         .children(link);
     let indent = match (compact, folds.is_some()) {
         (true, _) => 0.,
-        (false, true) => 12.,
-        (false, false) => 7.,
+        (false, true) => 9.,
+        (false, false) => 5.,
     };
+    // A note is a line of the transcript, quieter than what the agent
+    // says; one that warns gets a soft fill of its tone.
     div()
         .flex()
         .flex_col()
         .gap(sp(2.))
-        .px(sp(3.))
-        .py(sp(2.))
-        .rounded(radius::BOX)
-        .bg(t.blue_soft)
-        .border_1()
-        .border_dashed()
-        .border_color(t.blue_border)
+        .typeset(Type::CAPTION)
+        .when(warns, |card| {
+            card.px(sp(3.5))
+                .py(sp(2.))
+                .rounded(radius::LARGE)
+                .bg(ink.opacity(0.1))
+        })
         .child(header)
         .when(compact, |card| {
             card.child(

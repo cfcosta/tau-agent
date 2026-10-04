@@ -49,7 +49,7 @@ pub fn item(
     window: &Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let edge = sp(if compact { 4. } else { 5. });
+    let edge = sp(if compact { 4. } else { 7. });
     let side = sp(if compact { 4. } else { 6. });
     // Past the items, the landing card, while a landing is open, where
     // a landed chat's work went, or a main chat's card for its last push.
@@ -62,36 +62,61 @@ pub fn item(
         // A main chat's: what waits to land on it, and conflicts left
         // on it.
         let queue = super::queue::cards(ws, run, t, cx);
-        return div()
-            .px(side)
-            .pt(sp(3.))
-            .pb(edge)
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap(sp(4.))
-            .children(
-                queue
-                    .into_iter()
-                    .chain(card)
-                    .chain(super::push::card(ws, run, t, cx))
-                    .map(|card| card.w_full()),
-            )
-            .into_any_element();
+        return column(
+            div()
+                .pt(sp(3.))
+                .pb(edge)
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(sp(4.))
+                .children(
+                    queue
+                        .into_iter()
+                        .chain(card)
+                        .chain(super::push::card(ws, run, t, cx))
+                        .map(|card| card.w_full()),
+                ),
+            side,
+            compact,
+        )
+        .into_any_element();
     }
     let Some(item) = run.items.get(index) else {
         return div().into_any_element();
     };
-    // What an item can take: the transcript less its sides.
-    let room = ws.transcript_width().map(|width| width - side * 2.);
+    // What an item can take: the transcript less its sides, at most
+    // the column's width.
+    let room = ws
+        .transcript_width()
+        .map(|width| (width - side * 2.).min(COLUMN));
+    column(
+        div()
+            .w_full()
+            .pt(if index == 0 { edge } else { sp(3.5) })
+            .when(index + 1 == run.items.len(), |item| item.pb(edge))
+            .child(item_view(
+                ws, run, index, item, t, compact, room, window, cx,
+            )),
+        side,
+        compact,
+    )
+    .into_any_element()
+}
+
+/// How wide the transcript's column is on a desktop: a reading measure,
+/// centered in whatever room the window gives.
+const COLUMN: Pixels = px(760.);
+
+/// `content` in the transcript's column: centered and at most
+/// [`COLUMN`] wide on a desktop, edge to edge on a phone.
+fn column(content: Div, side: Pixels, compact: bool) -> Div {
     div()
+        .w_full()
         .px(side)
-        .pt(if index == 0 { edge } else { sp(3.) })
-        .when(index + 1 == run.items.len(), |item| item.pb(edge))
-        .child(item_view(
-            ws, run, index, item, t, compact, room, window, cx,
-        ))
-        .into_any_element()
+        .flex()
+        .justify_center()
+        .child(content.when(!compact, |content| content.max_w(COLUMN)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -438,10 +463,11 @@ fn tool(
 
     let failed =
         view.failed.is_some() || matches!(card.state, ToolState::Failed(_));
+    let live = t.roles.live;
     let (status, border) = match &card.state {
         ToolState::Running => (
-            icon(Icon::Spinner, IconSize::COMPACT, t.accent),
-            t.accent_border,
+            icon(Icon::Spinner, IconSize::COMPACT, live),
+            live.opacity(0.45),
         ),
         _ if failed => {
             (icon(Icon::Blocked, IconSize::BASE, t.red), t.red_border)
@@ -453,16 +479,18 @@ fn tool(
             (icon(Icon::Blocked, IconSize::BASE, t.red), t.red_border)
         }
         ToolState::Flagged { .. } => (
-            icon(Icon::Warning, IconSize::BASE, t.accent),
-            t.accent_border,
+            icon(Icon::Warning, IconSize::BASE, live),
+            live.opacity(0.45),
         ),
     };
     // A result that wants attention says so on the card's edge.
     let border = match view.edge {
         Some(Tone::Danger) => t.red_border,
-        Some(Tone::Warn) => t.accent_border,
+        Some(Tone::Warn) => live.opacity(0.45),
         _ => border,
     };
+    // Only a card that wants attention has an edge.
+    let edged = border != t.border;
     let summary = match view.head {
         Some(head) => head,
         None => mono(card.summary.clone(), Type::CAPTION, t.text_soft)
@@ -496,16 +524,12 @@ fn tool(
         .flex()
         .items_center()
         .gap(sp(2.))
-        .min_h(px(if compact {
-            44.
-        } else if dropped {
-            32.
-        } else {
-            36.
-        }))
-        .px(sp(3.))
+        .min_h(px(if compact { 40. } else { 30. }))
         .child(status)
-        .child(mono(card.tool.clone(), Type::CAPTION, t.blue).flex_shrink_0())
+        .child(
+            mono(card.tool.clone(), Type::CAPTION, t.roles.tool(&card.tool))
+                .flex_shrink_0(),
+        )
         .when_some(
             card.from_plugin.clone().filter(|_| !compact),
             |row, plugin| {
@@ -601,18 +625,20 @@ fn tool(
                     })
             });
 
+    // A call with nothing under it is one line in the transcript; one
+    // with a body, or that wants attention, is a panel.
+    let panel = body.is_some() || cut.is_some() || !extras.is_empty() || edged;
     div()
         .flex()
         .flex_col()
-        .border_1()
-        .border_color(border)
-        .rounded(radius::BOX)
-        .raised(t)
-        .overflow_hidden()
         .when(dropped, |card| card.opacity(0.7))
-        .child(header.when(body.is_some() && !view.inset, |h| {
-            h.border_b_1().border_color(t.border)
-        }))
+        .when(panel, |card| {
+            card.rounded(radius::LARGE)
+                .bg(t.card)
+                .overflow_hidden()
+                .when(edged, |card| card.border_1().border_color(border))
+        })
+        .child(header.px(sp(if panel { 3.5 } else { 0. })))
         .children(body)
         .children(cut)
         .children(extras)
@@ -799,7 +825,7 @@ fn label(text: String, color: gpui::Hsla) -> Div {
 
 fn state_label(card: &ToolCard, t: &Theme) -> Div {
     let (text, color): (String, _) = match &card.state {
-        ToolState::Running => ("running".into(), t.accent),
+        ToolState::Running => ("running".into(), t.roles.live),
         ToolState::Done { summary } => {
             let text = summary.clone().unwrap_or_default();
             let color = if text.starts_with('+') {
@@ -814,7 +840,7 @@ fn state_label(card: &ToolCard, t: &Theme) -> Div {
             (format!("Blocked by {plugin}"), t.red)
         }
         ToolState::Flagged { .. } => {
-            ("Ran · flagged for review".into(), t.accent)
+            ("Ran · flagged for review".into(), t.roles.live)
         }
     };
     label(text, color)
@@ -908,6 +934,11 @@ fn plugin_note(
     // links to the chart instead.
     let folds = false;
     let open = !folds || ws.note_open(&run.id, index);
+    // A plugin speaks in its own color; a note that warns, in its tone.
+    let ink = match note.tone {
+        Tone::Danger | Tone::Warn | Tone::Good => t.tone(note.tone),
+        _ => t.roles.plugin(&note.plugin).unwrap_or(t.blue),
+    };
     let header = div()
         .id(SharedString::from(format!("note-{index}")))
         .flex()
@@ -925,27 +956,19 @@ fn plugin_note(
                     t.dim,
                 ))
         })
+        .child(if note.plugin == tau_goal::NAME {
+            icon(Icon::Target, IconSize::COMPACT, t.tone(note.tone))
+        } else {
+            icon(Icon::Plug, IconSize::COMPACT, ink)
+        })
         .child(
             div()
-                .size(px(20.))
                 .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(radius::TAG)
-                .bg(t.info_surface)
-                .child(if note.plugin == tau_goal::NAME {
-                    icon(Icon::Target, IconSize::COMPACT, t.tone(note.tone))
-                } else {
-                    icon(Icon::Plug, IconSize::COMPACT, t.blue)
-                }),
-        )
-        .child(
-            mono(note.plugin.clone(), Type::CAPTION, t.tone(note.tone))
-                .flex_shrink_0(),
+                .text_color(ink)
+                .child(note.plugin.clone()),
         )
         .when(!compact, |row| {
-            row.child(div().child(rich(&note.text, t.text_soft, t)))
+            row.child(div().min_w(px(0.)).child(rich(&note.text, t.muted, t)))
         })
         .child(div().flex_1())
         .when_some(note.detail.clone().filter(|_| !compact), |row, detail| {
@@ -966,17 +989,21 @@ fn plugin_note(
             },
         );
 
+    // A note is a line of the transcript, quieter than what the agent
+    // says; one that warns gets a soft fill of its tone.
+    let warns = matches!(note.tone, Tone::Danger | Tone::Warn);
     div()
         .flex()
         .flex_col()
         .gap(sp(2.))
-        .px(sp(3.))
-        .py(sp(2.))
-        .rounded(radius::BOX)
-        .bg(t.blue_soft)
-        .border_1()
-        .border_dashed()
-        .border_color(t.blue_border)
+        .typeset(Type::CAPTION)
+        .when(warns, |note_row| {
+            note_row
+                .px(sp(3.5))
+                .py(sp(2.))
+                .rounded(radius::LARGE)
+                .bg(ink.opacity(0.1))
+        })
         .child(header)
         .when(compact, |card| {
             card.child(
