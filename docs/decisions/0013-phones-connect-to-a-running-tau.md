@@ -165,9 +165,10 @@ All five steps are in. Where the code went its own way:
   the clock, so they only grow across restarts. It keeps the last 4096
   for phones that come back, and a phone that missed more gets a new
   snapshot.
-- **The snapshot is the computer's Workspace**: its runs and its catalog,
-  as `HostUpdate::Snapshot`, rather than timelines for the phone to
-  rebuild. Onboarding's updates stay on the computer.
+- **The snapshot is the computer's Workspace**: everything every
+  interface shows alike (`Workspace::synced`), as `HostUpdate::Snapshot`,
+  rather than timelines for the phone to rebuild. Onboarding's updates
+  stay on the computer.
 - **What a phone may ask for** is `WorkspaceEvent::from_phone`: not
   signing in or out, keys, pairing, or paths on the computer. A phone
   also sends its name, which renames it in the computer's list.
@@ -185,3 +186,36 @@ All five steps are in. Where the code went its own way:
   shows the whole certificate to compare.
 - **The phone keeps its token in the app's private directory**, not yet
   in the Android Keystore.
+
+### Every device shows the same tau
+
+Added after: a message sent from a phone did not show on the computer.
+
+- **Devices send what the person asked; only the host changes what they
+  share.** `Workspace::synced` names what every interface must show
+  alike, and is changed only by a `HostUpdate` the host applies, which
+  every phone gets. A device does not change it first and tell the host:
+  a message, a close, a stored plugin record shows once the host takes
+  it (`Steered`, `Resumed`, `Closed`, `PluginRecord`, `BranchKept`).
+  The rest of a workspace is the device's own: where it is, what is
+  typed, a dialog, a landing's card.
+- **The host decides what a message does.** A phone a moment behind
+  cannot tell a running chat from a finished one, so it sends
+  `WorkspaceEvent::Say`; the host steers a run that is going and resumes
+  one that is not. The steer shows in the transcript when the run reads
+  it (`RunEvent::Steered`); a run that stops on its own before reading
+  it goes on with it.
+- **Changes go as themselves**, not as the device's copy of the whole:
+  `SetDefaultModel`, `HideModel`. A device behind does not undo what
+  another just changed.
+- **Each request a phone makes takes effect once.** The phone numbers it
+  and keeps it in an outbox until the computer acknowledges it
+  (`Down::Ack`), and sends what is left on every connection; the
+  computer keeps the last number it took from each phone, across
+  restarts, and takes nothing at or below it. The header says how many
+  wait. Protocol version 2.
+- **A model checks it** (`crates/tau-ui/tests/sync_model.rs`): the real
+  host and one or two phones over the real feed and encoding, in
+  process, with the network's every drop and delay picked by Hegel.
+  Once everything arrives, every phone shows what the computer shows,
+  and the computer shows what was asked of any device, once.
