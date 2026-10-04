@@ -14,13 +14,17 @@ const MARKS: [(&str, &str); 2] = [
 ];
 
 fn main() {
-    let dir = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("assets/brand");
-    println!("cargo:rerun-if-changed={}", dir.display());
+    let assets =
+        Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("assets");
+    let dir = assets.join("brand");
+    // Watched where it always is: Cargo runs a script again on every
+    // build while a path it watches is missing, as the marks usually
+    // are, and so rebuilt every crate above this one each time. Cargo
+    // scans a watched directory, so marks dropped in still count.
+    println!("cargo:rerun-if-changed={}", assets.display());
     let mut out = String::new();
     for (name, file) in MARKS {
         let path = dir.join(file);
-        println!("cargo:rerun-if-changed={}", path.display());
         let value = if path.is_file() {
             format!("Some(include_bytes!({:?}))", path.display().to_string())
         } else {
