@@ -698,6 +698,7 @@ impl Host {
                     if let Err(error) = handler.set_closed(run, true) {
                         eprintln!("tau-ui: cannot save closed runs: {error:#}");
                     }
+                    workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Closed(run.clone()), cx));
                 }
                 WorkspaceEvent::Say { run, text, model } => {
                     match handler.steer(run, text) {

@@ -1226,6 +1226,8 @@ fn closing_a_conversation_takes_it_off_the_sidebar(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(done.clone()), cx);
         ws.close_run(&done, cx);
+    });
+    workspace.update(&mut cx, |ws, cx| {
         assert!(ws.is_closed(&done));
         // The screen moves to another open conversation.
         assert_ne!(ws.route(), &Route::Run(done.clone()));
@@ -1259,6 +1261,8 @@ fn a_phone_closes_the_conversation_it_shows(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(done.clone()), cx);
         ws.close_run_to_list(&done, cx);
+    });
+    workspace.update(&mut cx, |ws, _| {
         assert!(ws.is_closed(&done));
         // Back to the list, with nothing to go back to.
         assert_eq!(ws.route(), &Route::Home);
@@ -1454,6 +1458,8 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
         assert_ne!(ws.composer_slash(cx), tau_ui_remote::slash::Slash::None);
         // Enter on a command being typed runs it.
         ws.submit_prompt("/cl".into(), cx);
+    });
+    workspace.update(&mut cx, |ws, cx| {
         assert!(ws.is_closed(&done));
         // Enter on /go puts /goal in the composer, to write the goal.
         ws.navigate(Route::Run(done.clone()), cx);
@@ -2472,7 +2478,7 @@ fn a_mirrored_workspace_echoes_what_the_host_applies(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_snapshot_replaces_the_runs(cx: &mut TestAppContext) {
+fn a_snapshot_replaces_what_is_shown_alike(cx: &mut TestAppContext) {
     let (desktop, mut desktop_cx, _) = open(cx);
     let (phone, mut phone_cx, _) = open(cx);
     let snapshot = desktop.update(&mut desktop_cx, |ws, cx| {
@@ -2480,10 +2486,10 @@ fn a_snapshot_replaces_the_runs(cx: &mut TestAppContext) {
         ws.snapshot()
     });
     phone.update(&mut phone_cx, |ws, cx| ws.apply(snapshot, cx));
-    let desktop_runs =
-        desktop.update(&mut desktop_cx, |ws, _| ws.runs().to_vec());
-    let phone_runs = phone.update(&mut phone_cx, |ws, _| ws.runs().to_vec());
-    assert_eq!(phone_runs, desktop_runs);
+    // Everything the two show alike, not only the runs.
+    let desktop = desktop.update(&mut desktop_cx, |ws, _| ws.synced());
+    let phone = phone.update(&mut phone_cx, |ws, _| ws.synced());
+    assert_eq!(phone, desktop);
 }
 
 /// A repository's main chat heads its tree and stays open; the chats
@@ -2554,6 +2560,11 @@ fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
         ws.close_run(&main, cx);
         assert!(!ws.is_closed(&main));
         ws.close_run(&RunId("chat-6".into()), cx);
+        // The host takes it.
+        ws.apply(
+            tau_ui_remote::update::HostUpdate::Closed(RunId("chat-6".into())),
+            cx,
+        );
         assert_eq!(ws.listed_children(ws.run(&main).unwrap()).count(), 6);
     });
     let closed: Vec<RunId> = events

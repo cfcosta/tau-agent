@@ -1135,6 +1135,10 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 recatalog(&|catalog| catalog.update = Some(text.clone()), cx);
             }
             // A finished run goes on with one more turn.
+            WorkspaceEvent::CloseRun { run } => workspace
+                .update(cx, |ws, cx| {
+                    ws.apply(HostUpdate::Closed(run.clone()), cx)
+                }),
             // A message steers a run that is going; a finished one goes
             // on with one more turn.
             WorkspaceEvent::Say { run, text, model } => {

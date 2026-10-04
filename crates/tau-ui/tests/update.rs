@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use tau_ui::demo;
 use tau_ui_remote::{
     update::HostUpdate,
-    view::RunUpdate,
-    workspace::WorkspaceEvent,
+    view::{CodeState, RunUpdate},
+    workspace::{Synced, WorkspaceEvent},
 };
 
 fn round_trip<T>(value: &T) -> T
@@ -20,10 +20,18 @@ where
 fn a_snapshot_of_the_demo_round_trips() {
     let mut runs = vec![demo::retry_after()];
     runs.extend(demo::history());
-    let snapshot = HostUpdate::Snapshot {
+    let (main, fork) = (demo::run_id(), demo::fork_id());
+    let synced = Synced {
         runs,
-        catalog: Box::new(demo::catalog()),
+        catalog: demo::catalog(),
+        queued: [(main.clone(), vec!["and the docs".to_owned()])].into(),
+        closed: [fork.clone()].into(),
+        // A comparison is keyed by two runs, which JSON keys cannot be.
+        branch_code: [((main, fork), CodeState::Ready(demo::branch_code()))]
+            .into(),
+        ..Synced::default()
     };
+    let snapshot = HostUpdate::Snapshot(Box::new(synced));
     assert_eq!(round_trip(&snapshot), snapshot);
 }
 

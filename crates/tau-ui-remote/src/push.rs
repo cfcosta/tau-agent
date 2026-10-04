@@ -33,7 +33,7 @@ pub enum PushFailure {
 }
 
 /// Where a repository's push stands, for its main chat.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PushState {
     /// Pushing, or fetching first.
     Pushing {

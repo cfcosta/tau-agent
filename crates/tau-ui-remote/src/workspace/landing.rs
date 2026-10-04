@@ -105,7 +105,9 @@ impl Workspace {
                 changes,
             });
         }
-        self.close_run(run, cx);
+        // Every interface applies this alike; the host keeps it closed.
+        self.closed.insert(run.clone());
+        cx.emit(WorkspaceEvent::CloseRun { run: run.clone() });
         if asked {
             self.navigate(Route::Run(parent), cx);
         }
@@ -194,7 +196,9 @@ impl Workspace {
         if let Some(view) = self.runs.iter_mut().find(|view| &view.id == run) {
             view.ending = Some(Ending::Dropped);
         }
-        self.close_run(run, cx);
+        // Every interface applies this alike; the host keeps it closed.
+        self.closed.insert(run.clone());
+        cx.emit(WorkspaceEvent::CloseRun { run: run.clone() });
         if let Some(parent) = parent {
             self.navigate(Route::Run(parent), cx);
         }

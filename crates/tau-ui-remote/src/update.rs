@@ -147,12 +147,12 @@ pub enum HostUpdate {
     },
     /// Onboarding moved on. Only the machine being set up shows it.
     Setup(SetupUpdate),
-    /// Everything an interface shows, for one that just connected: the
-    /// runs as the host's interface has them, and the catalog.
-    Snapshot {
-        runs: Vec<RunView>,
-        catalog: Box<Catalog>,
-    },
+    /// A conversation closed: it leaves the sidebar, and History keeps
+    /// it.
+    Closed(RunId),
+    /// Everything an interface shows alike, for one that just connected:
+    /// what the host's interface shows.
+    Snapshot(Box<crate::workspace::Synced>),
 }
 
 impl HostUpdate {

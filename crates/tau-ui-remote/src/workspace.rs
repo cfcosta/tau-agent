@@ -969,9 +969,10 @@ impl Workspace {
                 self.add_repo(repo, cx)
             }
             HostUpdate::Setup(update) => self.update_setup(update, cx),
-            HostUpdate::Snapshot { runs, catalog } => {
-                self.set_catalog(*catalog, cx);
-                self.replace_runs(runs, cx);
+            HostUpdate::Snapshot(synced) => self.restore(*synced, cx),
+            HostUpdate::Closed(run) => {
+                self.closed.insert(run);
+                cx.notify();
             }
         }
     }
@@ -983,10 +984,7 @@ impl Workspace {
 
     /// What this workspace shows, for an interface that just connected.
     pub fn snapshot(&self) -> HostUpdate {
-        HostUpdate::Snapshot {
-            runs: self.runs.clone(),
-            catalog: Box::new(self.catalog.clone()),
-        }
+        HostUpdate::Snapshot(Box::new(self.synced()))
     }
 
     /// Shows `runs` in place of the ones shown, as a host that
@@ -1859,7 +1857,8 @@ impl Workspace {
         if self.run(run).is_some_and(|view| view.status.is_live()) {
             cx.emit(WorkspaceEvent::Cancel { run: run.clone() });
         }
-        self.closed.insert(run.clone());
+        // It leaves the sidebar once the host takes it
+        // (`HostUpdate::Closed`), on every interface alike.
         self.hovered_run = None;
         cx.emit(WorkspaceEvent::CloseRun { run: run.clone() });
         if self.route.run() == Some(run) || self.current.as_ref() == Some(run) {
@@ -1868,7 +1867,8 @@ impl Workspace {
                 .runs
                 .iter()
                 .find(|view| {
-                    !self.closed.contains(&view.id)
+                    &view.id != run
+                        && !self.closed.contains(&view.id)
                         && view.origin == Origin::Root
                 })
                 .map(|view| view.id.clone());
@@ -1998,7 +1998,7 @@ impl Workspace {
 }
 
 /// Where landing a child run stands.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum LandingState {
     /// Waiting for the host's preview.
     Previewing,
