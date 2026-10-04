@@ -36,7 +36,9 @@ use tau_ai::{
 };
 use tau_remote::{
     Down,
+    Up,
     feed::{Feed, Joined},
+    outbox::{self, Outbox},
 };
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
@@ -154,14 +156,19 @@ impl LlmSession for GatedSession {
 }
 
 /// A phone's end of the network.
-#[derive(Default)]
 struct Link {
     /// Its connection, while it has one.
     conn: Option<u32>,
-    /// What the computer sent that has not arrived.
+    /// What the computer sent that has not arrived, answers included.
     down: VecDeque<Down>,
-    /// What the phone sent that has not arrived.
-    up: VecDeque<Value>,
+    /// What the phone sent on its connection that has not arrived.
+    up: VecDeque<Up>,
+    /// What the person asked on the phone that the computer has not
+    /// taken, as `remote` keeps it.
+    outbox: Outbox,
+    /// The last request the computer took from it, as `phone_server`
+    /// keeps it.
+    taken: Option<u64>,
     /// The last message's number it applied.
     last: Option<u64>,
     /// It needs a snapshot the computer has not sent.
@@ -194,6 +201,9 @@ impl Wire {
             Joined::Replay(missed) => link.down.extend(missed),
             Joined::NeedSnapshot => link.waiting = true,
         }
+        // What the computer did not take yet goes again, in order.
+        let pending: Vec<Up> = link.outbox.pending().collect();
+        link.up.extend(pending);
     }
 
     fn settled(&self) -> bool {
@@ -201,6 +211,7 @@ impl Wire {
             link.conn.is_some()
                 && link.down.is_empty()
                 && link.up.is_empty()
+                && link.outbox.is_empty()
                 && !link.waiting
         })
     }
@@ -239,6 +250,8 @@ struct Asked {
     hidden: HashMap<String, bool>,
     /// The model coder runs on last picked.
     default: Option<ModelChoice>,
+    /// Messages the host got more than once.
+    twice: Vec<String>,
 }
 
 impl Asked {
@@ -246,9 +259,11 @@ impl Asked {
     fn arrived(&mut self, event: &WorkspaceEvent) {
         match event {
             WorkspaceEvent::NewRun { prompt, .. } => {
+                self.said_once(prompt);
                 self.said.push((None, prompt.clone(), false))
             }
             WorkspaceEvent::Say { run, text, .. } => {
+                self.said_once(text);
                 self.said.push((Some(run.clone()), text.clone(), false));
                 // It may open the chat again, or start it again.
                 self.closed.remove(run);
@@ -284,8 +299,16 @@ impl Asked {
         }
     }
 
-    /// Fails unless `computer` shows what was asked.
+    /// Every message is told apart: one the host got before came twice.
+    fn said_once(&mut self, text: &str) {
+        if self.said.iter().any(|(_, said, _)| said == text) {
+            self.twice.push(text.to_owned());
+        }
+    }
+
+    /// Fails unless `computer` shows what was asked, once.
     fn shown_by(&self, computer: &Synced) {
+        assert!(self.twice.is_empty(), "taken twice: {:?}", self.twice);
         let users = |run: &RunView| -> Vec<String> {
             run.items
                 .iter()
@@ -398,7 +421,17 @@ impl Tau {
 
         let wire = Rc::new(RefCell::new(Wire {
             feed: Feed::new(1_000),
-            links: (0..phones).map(|_| Link::default()).collect(),
+            links: (0..phones)
+                .map(|_| Link {
+                    conn: None,
+                    down: VecDeque::new(),
+                    up: VecDeque::new(),
+                    outbox: Outbox::new(0),
+                    taken: None,
+                    last: None,
+                    waiting: false,
+                })
+                .collect(),
             next_conn: 0,
         }));
         // What the host applies goes out, as `phone_server` sends it.
@@ -442,8 +475,16 @@ impl Tau {
                                 return;
                             }
                             let up_event = PhoneUp::Event(event.clone());
-                            if let Some(body) = remote::to_computer(&up_event) {
-                                up.borrow_mut().links[phone].up.push_back(body);
+                            let Some(body) = remote::to_computer(&up_event)
+                            else {
+                                return;
+                            };
+                            // Sent now if connected, and kept until taken.
+                            let mut wire = up.borrow_mut();
+                            let link = &mut wire.links[phone];
+                            let request = link.outbox.push(body);
+                            if link.conn.is_some() {
+                                link.up.push_back(request);
                             }
                         },
                     )
@@ -478,18 +519,14 @@ impl Tau {
 
     /// Someone who can act: the computer, or a connected phone.
     fn who(&self, tc: &TestCase) -> Who {
-        let phones = self.phones.len();
-        let pick: usize =
-            tc.draw(gs::integers().min_value(0).max_value(phones));
-        if pick == phones {
+        // Phones mostly: what crosses the network is what can go wrong.
+        if !tc.draw(gs::weighted_booleans(0.75)) {
             return Who::Computer;
         }
-        let wire = self.wire.borrow();
-        let link = &wire.links[pick];
-        // A phone that is not connected says so (decision 0013); what it
-        // sends then is another property's.
-        tc.assume(link.conn.is_some() && !link.waiting);
-        Who::Phone(pick)
+        // Connected or not: what it asks goes once it reaches the
+        // computer.
+        let last = self.phones.len() - 1;
+        Who::Phone(tc.draw(gs::integers().min_value(0).max_value(last)))
     }
 
     fn prompt(&mut self) -> String {
@@ -546,6 +583,10 @@ impl Tau {
         if down {
             let next = self.wire.borrow_mut().links[phone].down.pop_front();
             let Some(next) = next else { return false };
+            if let Down::Ack { up } = next {
+                self.wire.borrow_mut().links[phone].outbox.taken(up);
+                return true;
+            }
             let seq = next.seq();
             let device = &mut self.phones[phone];
             for update in remote::updates(next) {
@@ -554,11 +595,27 @@ impl Tau {
                     .update(&mut device.cx, |ws, cx| ws.apply(update, cx));
             }
             device.cx.run_until_parked();
-            self.wire.borrow_mut().links[phone].last = Some(seq);
+            self.wire.borrow_mut().links[phone].last = seq;
         } else {
             let next = self.wire.borrow_mut().links[phone].up.pop_front();
-            let Some(next) = next else { return false };
-            match phone_server::from_phone(next) {
+            let Some(Up::Up { id, body }) = next else {
+                return false;
+            };
+            // Taken once, and answered each time, as the server does.
+            let taken = {
+                let mut wire = self.wire.borrow_mut();
+                let link = &mut wire.links[phone];
+                link.down.push_back(Down::Ack { up: id });
+                let new = outbox::is_new(link.taken, id);
+                if new {
+                    link.taken = Some(id);
+                }
+                new
+            };
+            if !taken {
+                return true;
+            }
+            match phone_server::from_phone(body) {
                 Some(PhoneUp::Event(event)) => {
                     let computer = &mut self.computer;
                     computer
@@ -830,12 +887,32 @@ impl Tau {
             .draw(gs::integers().min_value(0).max_value(self.phones.len() - 1));
         let mut wire = self.wire.borrow_mut();
         let link = &mut wire.links[phone];
-        // What the phone sent waits for the next connection; the
-        // network loses what the computer had sent.
+        // The network loses what was on its way, both ways, answers
+        // included; the phone's outbox keeps what was not taken.
         let Some(conn) = link.conn.take() else {
             tc.reject()
         };
         link.down.clear();
+        link.up.clear();
+        link.waiting = false;
+        wire.feed.leave(conn);
+    }
+
+    /// The computer takes a phone's request, and the connection drops
+    /// before its answer arrives: the phone sends it again on the next.
+    #[rule(weight = 3)]
+    fn answer_lost(&mut self, tc: TestCase) {
+        let phone = tc
+            .draw(gs::integers().min_value(0).max_value(self.phones.len() - 1));
+        if !self.deliver(phone, false) {
+            tc.reject();
+        }
+        tc.event("an answer was lost");
+        let mut wire = self.wire.borrow_mut();
+        let link = &mut wire.links[phone];
+        let conn = link.conn.take().expect("it was connected");
+        link.down.clear();
+        link.up.clear();
         link.waiting = false;
         wire.feed.leave(conn);
     }
@@ -914,4 +991,31 @@ fn every_device_shows_what_any_device_did(tc: TestCase) {
     let tau = Tau::new(phones);
     hegel::stateful::machine(tau).steps(25).run(tc);
     eprintln!("PROFILE case {:?}", t.elapsed());
+}
+
+/// A phone's message the computer took, its answer lost with the
+/// connection, is sent again on the next and shows once.
+#[test]
+fn a_message_whose_answer_was_lost_shows_once() {
+    let mut tau = Tau::new(1);
+    let main = tau.computer.runs()[0].id.clone();
+    tau.say_to(Who::Phone(0), &main, "hello".into());
+    assert!(tau.deliver(0, false), "it went up");
+    {
+        let mut wire = tau.wire.borrow_mut();
+        let link = &mut wire.links[0];
+        let conn = link.conn.take().unwrap();
+        link.down.clear();
+        wire.feed.leave(conn);
+    }
+    tau.settle();
+    let view = tau.computer.runs().into_iter().find(|run| run.id == main);
+    let said = view
+        .unwrap()
+        .items
+        .iter()
+        .filter(|item| matches!(item, Item::User(text) if text == "hello"))
+        .count();
+    assert_eq!(said, 1);
+    assert!(tau.asked.borrow().twice.is_empty());
 }
