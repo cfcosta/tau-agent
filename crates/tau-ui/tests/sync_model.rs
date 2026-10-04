@@ -53,7 +53,8 @@ use tau_ui_remote::{
     phones::PhoneUp,
     remote,
     route::Route,
-    view::{Item, RunView},
+    update::HostUpdate,
+    view::{Item, Origin, RunView},
     workspace::Synced,
 };
 use tau_vcs::{Identity, Project};
@@ -69,8 +70,8 @@ fn models() -> Vec<String> {
         .collect()
 }
 
-/// The repository the host lists.
-const REPO: &str = "repo";
+/// The repositories the host lists.
+const REPOS: [&str; 2] = ["repo", "other"];
 /// How long the host has to settle before the test fails.
 const SETTLE: Duration = Duration::from_secs(30);
 
@@ -252,19 +253,46 @@ struct Asked {
     default: Option<ModelChoice>,
     /// Messages the host got more than once.
     twice: Vec<String>,
+    /// Chats asked to land or be dropped, and not written to or refused
+    /// since: each lands, waits in its main chat's queue, or is dropped.
+    ending: HashSet<RunId>,
+    /// The branch kept last.
+    kept: Option<RunId>,
+    /// Repositories hidden.
+    hidden_repos: HashSet<String>,
+    /// What the host said went wrong, for a failure to show.
+    alerts: Vec<String>,
 }
 
 impl Asked {
     /// The host got `event`.
     fn arrived(&mut self, event: &WorkspaceEvent) {
         match event {
-            WorkspaceEvent::NewRun { prompt, .. } => {
+            WorkspaceEvent::NewRun { prompt, repo, .. } => {
+                self.said_once(prompt);
+                // A repository hidden before cannot take a new chat, nor
+                // can none, once two devices hid one each; the host says
+                // so.
+                let refused =
+                    repo.is_empty() || self.hidden_repos.contains(repo);
+                self.said.push((None, prompt.clone(), refused))
+            }
+            WorkspaceEvent::Fork { prompt, .. } => {
                 self.said_once(prompt);
                 self.said.push((None, prompt.clone(), false))
+            }
+            WorkspaceEvent::Land { run }
+            | WorkspaceEvent::DropChild { run } => {
+                self.ending.insert(run.clone());
+            }
+            WorkspaceEvent::KeepBranch { run } => self.kept = Some(run.clone()),
+            WorkspaceEvent::HideRepo { repo } => {
+                self.hidden_repos.insert(repo.clone());
             }
             WorkspaceEvent::Say { run, text, .. } => {
                 self.said_once(text);
                 self.said.push((Some(run.clone()), text.clone(), false));
+                self.ending.remove(run);
                 // It may open the chat again, or start it again.
                 self.closed.remove(run);
                 self.cancelled.remove(run);
@@ -294,6 +322,26 @@ impl Asked {
                     *stopped |= said.as_ref() == Some(run);
                 }
                 self.cancelled.insert(run.clone());
+            }
+            _ => {}
+        }
+    }
+
+    /// The host answered: a landing or a drop it refused, it said so.
+    fn answered(&mut self, update: &HostUpdate) {
+        match update {
+            HostUpdate::Alert { title, message } => {
+                self.alerts.push(format!("{title}: {message}"))
+            }
+            HostUpdate::Landed {
+                run,
+                landing: Err(_),
+            }
+            | HostUpdate::Dropped {
+                run,
+                result: Err(_),
+            } => {
+                self.ending.remove(run);
             }
             _ => {}
         }
@@ -331,7 +379,9 @@ impl Asked {
         for (run, text, stopped) in &self.said {
             assert!(
                 *stopped || shows(run.as_ref(), text),
-                "the computer does not show {text:?} to {run:?}; it shows {:?}",
+                "the computer does not show {text:?} to {run:?}; it said \
+                 {:?}; it shows {:?}",
+                self.alerts,
                 computer
                     .runs
                     .iter()
@@ -355,6 +405,38 @@ impl Asked {
             let shown = state.goal.map(|shown| shown.condition);
             assert_eq!(shown.as_ref(), Some(goal), "{run:?}'s goal");
         }
+        for run in &self.ending {
+            let ended = computer
+                .runs
+                .iter()
+                .any(|view| &view.id == run && view.ending.is_some());
+            let waiting = computer.runs.iter().any(|view| {
+                view.landing_queue
+                    .iter()
+                    .any(|waiting| *waiting.run == *run.0)
+            });
+            assert!(
+                ended || waiting,
+                "{run:?} neither ended nor waits to land"
+            );
+        }
+        if let Some(run) = &self.kept {
+            assert_eq!(
+                computer.kept_branch.as_ref(),
+                Some(run),
+                "the kept branch"
+            );
+        }
+        for repo in &self.hidden_repos {
+            assert!(
+                computer
+                    .catalog
+                    .repos
+                    .iter()
+                    .all(|listed| &listed.name != repo),
+                "{repo} is still listed"
+            );
+        }
         let settings = &computer.catalog.models.settings;
         for (id, hidden) in &self.hidden {
             assert_eq!(settings.is_hidden(id), *hidden, "{id} hidden");
@@ -373,6 +455,8 @@ impl Asked {
 }
 
 struct Tau {
+    /// The computer's host, to ask whether it is still at work.
+    host: Arc<Host>,
     /// Keeps the app the windows are in.
     _app: TestAppContext,
     computer: Device,
@@ -407,7 +491,8 @@ impl Tau {
         let workspace = window.root(&mut cx).unwrap();
         let mut computer_cx =
             VisualTestContext::from_window(window.into(), &cx);
-        computer_cx.update(|_, cx| host.attach(&workspace, events, cx));
+        let host =
+            computer_cx.update(|_, cx| host.attach(&workspace, events, cx));
         // What the host gets: the computer's own requests, and phones'
         // as they arrive.
         let asked = Rc::new(RefCell::new(Asked::default()));
@@ -442,6 +527,11 @@ impl Tau {
                 if let Some(body) = phone_server::to_phones(update) {
                     out.borrow_mut().broadcast(body);
                 }
+            })
+            .detach();
+            let answered = asked.clone();
+            cx.subscribe(&workspace, move |_, update: &HostUpdate, _| {
+                answered.borrow_mut().answered(update)
             })
             .detach();
         });
@@ -502,10 +592,18 @@ impl Tau {
             computer,
             phones,
             wire,
+            host,
             gate,
             asked,
             prompts: 0,
         };
+        tau.settle();
+        // The first repository's main chat has a turn, which new chats
+        // can start from.
+        let main = tau.computer.runs()[0].id.clone();
+        tau.say_to(Who::Computer, &main, "the first turn".into());
+        tau.host_settles();
+        tau.gate.answer(0);
         tau.settle();
         tau
     }
@@ -552,7 +650,9 @@ impl Tau {
                 .iter()
                 .filter(|run| run.status.is_live())
                 .count();
-            let idle = self.gate.idle() && live == self.gate.waiting();
+            let idle = self.gate.idle()
+                && live == self.gate.waiting()
+                && !self.host.busy();
             let now =
                 (synced, self.wire.borrow().feed.seq(), self.gate.waiting());
             if idle && last.as_ref() == Some(&now) {
@@ -702,7 +802,7 @@ fn pick(tc: &TestCase, runs: &[RunView]) -> RunId {
     runs[n].id.clone()
 }
 
-/// A host on `gate`, listing one repository.
+/// A host on `gate`, listing two repositories.
 fn host(
     gate: &Gate,
 ) -> (
@@ -727,7 +827,10 @@ fn host(
     };
     let agent = Agent::new(gate.clone()).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
-    (host.with_repo(REPO, project(&dir.join("checkout"))), events)
+    let host = REPOS.iter().fold(host, |host, repo| {
+        host.with_repo(repo, project(&dir.join(repo).join("checkout")))
+    });
+    (host, events)
 }
 
 fn project(checkout: &Path) -> Project {
@@ -855,6 +958,88 @@ impl Tau {
             let choice = ModelChoice::new(model.clone(), Effort::Auto);
             ws.set_default_model("coder", choice, cx)
         });
+        device.cx.run_until_parked();
+        self.after_action(who);
+    }
+
+    /// The person starts a chat from a main chat's finished turn.
+    #[rule(weight = 2)]
+    fn fork(&mut self, tc: TestCase) {
+        let who = self.who(&tc);
+        let device = self.device(who);
+        let mains: Vec<(RunId, u32)> =
+            device.workspace.read_with(&device.cx, |ws, _| {
+                ws.runs()
+                    .iter()
+                    .filter(|run| ws.is_main(&run.id))
+                    .map(|run| {
+                        (run.id.clone(), Workspace::last_fork_turn_of(run))
+                    })
+                    .filter(|(_, turn)| *turn >= 1)
+                    .collect()
+            });
+        tc.assume(!mains.is_empty());
+        let n = tc.draw(gs::integers().min_value(0).max_value(mains.len() - 1));
+        let (main, last) = mains[n].clone();
+        let turn = tc.draw(gs::integers().min_value(1).max_value(last));
+        let text = self.prompt();
+        let device = self.device(who);
+        device.workspace.update(&mut device.cx, |ws, cx| {
+            assert!(ws.start_fork_at(&main, turn, cx));
+            ws.submit_prompt(text, cx);
+        });
+        tc.event("a chat started from a turn");
+        device.cx.run_until_parked();
+        self.after_action(who);
+    }
+
+    /// The person lands a finished chat on its main chat, drops it, or
+    /// keeps its branch.
+    #[rule(weight = 3)]
+    fn end_chat(&mut self, tc: TestCase) {
+        let who = self.who(&tc);
+        let device = self.device(who);
+        let chats: Vec<RunView> = device
+            .runs()
+            .into_iter()
+            .filter(|run| {
+                matches!(run.origin, Origin::Fork { .. })
+                    && !run.status.is_live()
+                    && run.ending.is_none()
+            })
+            .collect();
+        tc.assume(!chats.is_empty());
+        let run = pick(&tc, &chats);
+        let how = tc.draw(gs::sampled_from(vec!["land", "drop", "keep"]));
+        tc.event(format!("a chat asked to {how}"));
+        device.workspace.update(&mut device.cx, |ws, cx| match how {
+            "land" => ws.land(&run, cx),
+            "drop" => ws.drop_child(&run, cx),
+            _ => ws.keep_branch(&run, cx),
+        });
+        device.cx.run_until_parked();
+        self.after_action(who);
+    }
+
+    /// The person stops listing a repository, while another is listed.
+    #[rule]
+    fn hide_repo(&mut self, tc: TestCase) {
+        let who = self.who(&tc);
+        let device = self.device(who);
+        let repos: Vec<String> =
+            device.workspace.read_with(&device.cx, |ws, _| {
+                ws.catalog()
+                    .repos
+                    .iter()
+                    .map(|repo| repo.name.clone())
+                    .collect()
+            });
+        tc.assume(repos.len() > 1);
+        let repo = tc.draw(gs::sampled_from(repos));
+        tc.event("a repository hidden");
+        device
+            .workspace
+            .update(&mut device.cx, |ws, cx| ws.remove_repo(&repo, cx));
         device.cx.run_until_parked();
         self.after_action(who);
     }
@@ -989,7 +1174,7 @@ fn every_device_shows_what_any_device_did(tc: TestCase) {
     let t = Instant::now();
     let phones = tc.draw(gs::integers().min_value(1).max_value(2));
     let tau = Tau::new(phones);
-    hegel::stateful::machine(tau).steps(25).run(tc);
+    hegel::stateful::machine(tau).steps(30).run(tc);
     eprintln!("PROFILE case {:?}", t.elapsed());
 }
 
