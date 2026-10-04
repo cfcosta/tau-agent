@@ -24,6 +24,6 @@ pub fn init(cx: &mut App) {
     if let Err(error) = assets::load_fonts(cx) {
         eprintln!("tau-ui-kit: could not load the bundled fonts: {error}");
     }
-    cx.set_global(theme::Theme::graphite());
+    cx.set_global(theme::Theme::tokyo_night());
     input::bind_keys(cx);
 }

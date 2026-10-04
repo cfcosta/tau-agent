@@ -49,7 +49,8 @@ pub const PHONE_MAX: Pixels = px(720.);
 /// Below this width the desktop layout drops the inspector.
 pub const NARROW_MAX: Pixels = px(1100.);
 
-/// The graphite theme from the mockups.
+/// The interface's colors. [`Theme::tokyo_night`] is the default;
+/// [`Theme::graphite`] is the earlier look.
 #[derive(Debug, Clone)]
 pub struct Theme {
     /// The editor ground, behind the transcript.
@@ -108,6 +109,121 @@ pub struct Theme {
     pub setup: SetupLook,
     /// How surfaces stand out of the ground or sink into it.
     pub depth: Depth,
+    /// The colors things take by what they are: a running run, a cost,
+    /// a tool. A palette's own hues, spread over the interface.
+    pub roles: Roles,
+}
+
+/// One color per role, so a palette shows all its hues instead of one
+/// accent everywhere.
+#[derive(Debug, Clone)]
+pub struct Roles {
+    /// A running run, and a call in flight.
+    pub live: Hsla,
+    /// A run waiting to land or for a person.
+    pub waiting: Hsla,
+    /// Money.
+    pub cost: Hsla,
+    /// An agent's name.
+    pub agent: Hsla,
+    /// The model's name.
+    pub model: Hsla,
+    /// Memory: its notes and what recalls them.
+    pub memory: Hsla,
+    /// The constitution's rules.
+    pub rules: Hsla,
+    /// MCP servers.
+    pub mcp: Hsla,
+    /// The reasoning effort.
+    pub reasoning: Hsla,
+    /// A branch or bookmark.
+    pub branch: Hsla,
+    /// The context meter's fill.
+    pub meter: Hsla,
+    /// Links.
+    pub link: Hsla,
+    /// Code inline in prose.
+    pub code: Hsla,
+    /// The primary action's fill, and the text on it.
+    pub primary: Hsla,
+    pub on_primary: Hsla,
+    /// Tools by what they do: listing, searching, reading, changing
+    /// files, running commands, and anything else.
+    pub tool_list: Hsla,
+    pub tool_search: Hsla,
+    pub tool_read: Hsla,
+    pub tool_edit: Hsla,
+    pub tool_run: Hsla,
+    pub tool_other: Hsla,
+}
+
+impl Roles {
+    fn graphite() -> Self {
+        let blue = c(rgb(0x82aaff));
+        Self {
+            live: c(rgb(0xe5a54a)),
+            waiting: blue,
+            cost: c(rgb(0xe8c07d)),
+            agent: c(rgb(0xc49bf0)),
+            model: c(rgb(0x9db8ff)),
+            memory: c(rgb(0x7ec8c8)),
+            rules: c(rgb(0xc49bf0)),
+            mcp: blue,
+            reasoning: c(rgb(0xe5a54a)),
+            branch: c(rgb(0x7fc98a)),
+            meter: c(rgb(0x8b8983)),
+            link: c(rgb(0x9db8ff)),
+            code: c(rgb(0xf2f0ea)),
+            primary: c(rgb(0xe5a54a)),
+            on_primary: c(rgb(0x1a1305)),
+            tool_list: blue,
+            tool_search: blue,
+            tool_read: blue,
+            tool_edit: blue,
+            tool_run: blue,
+            tool_other: blue,
+        }
+    }
+
+    fn tokyo_night() -> Self {
+        Self {
+            live: c(rgb(0xff9e64)),
+            waiting: c(rgb(0x7aa2f7)),
+            cost: c(rgb(0xe0af68)),
+            agent: c(rgb(0x7dcfff)),
+            model: c(rgb(0x7aa2f7)),
+            memory: c(rgb(0x73daca)),
+            rules: c(rgb(0xe0af68)),
+            mcp: c(rgb(0x2ac3de)),
+            reasoning: c(rgb(0xff9e64)),
+            branch: c(rgb(0x9ece6a)),
+            meter: c(rgb(0x2ac3de)),
+            link: c(rgb(0x7dcfff)),
+            code: c(rgb(0x7dcfff)),
+            primary: c(rgb(0x7aa2f7)),
+            on_primary: c(rgb(0x16161e)),
+            tool_list: c(rgb(0x2ac3de)),
+            tool_search: c(rgb(0x73daca)),
+            tool_read: c(rgb(0x7aa2f7)),
+            tool_edit: c(rgb(0xff9e64)),
+            tool_run: c(rgb(0xbb9af7)),
+            tool_other: c(rgb(0x7dcfff)),
+        }
+    }
+
+    /// The color a tool's name is written in.
+    pub fn tool(&self, name: &str) -> Hsla {
+        match name {
+            "ls" | "vcs_status" | "vcs_log" => self.tool_list,
+            "grep" | "find" => self.tool_search,
+            "read" | "vcs_show" | "vcs_diff" => self.tool_read,
+            "edit" | "write" => self.tool_edit,
+            "bash" | "codemode" => self.tool_run,
+            _ if name.starts_with("mcp__") => self.mcp,
+            _ if name.starts_with("memory") => self.memory,
+            _ => self.tool_other,
+        }
+    }
 }
 
 /// The milled look: surfaces lit from above. Panels and buttons rise
@@ -148,6 +264,30 @@ pub struct Depth {
 }
 
 impl Depth {
+    /// Nearly flat: surfaces are told apart by their fill, with only a
+    /// faint lift.
+    fn tokyo_night() -> Self {
+        Self {
+            highlight: c(rgba(0xffffff08)),
+            shade: c(rgba(0x00000040)),
+            drop: c(rgba(0x00000040)),
+            inner: c(rgba(0x00000066)),
+            seam: c(rgb(0x16161e)),
+            panel_top: c(rgb(0x16161e)),
+            chrome_top: c(rgb(0x16161e)),
+            well: c(rgb(0x16161e)),
+            key_top: c(rgb(0x292e42)),
+            key_bottom: c(rgb(0x24283b)),
+            key_border: c(rgb(0x3b4261)),
+            accent_top: c(rgb(0x89b0fa)),
+            accent_bottom: c(rgb(0x7aa2f7)),
+            accent_edge: c(rgba(0x3d59a159)),
+            accent_glow: c(rgba(0x7aa2f740)),
+            danger_top: c(rgb(0x2d202a)),
+            danger_bottom: c(rgb(0x261b25)),
+        }
+    }
+
     fn graphite() -> Self {
         Self {
             highlight: c(rgba(0xffffff0f)),
@@ -224,6 +364,33 @@ pub struct SetupLook {
 }
 
 impl SetupLook {
+    fn tokyo_night() -> Self {
+        Self {
+            ground: c(rgb(0x16161e)),
+            tile: c(rgb(0x1a1b26)),
+            surface: c(rgb(0x1f2335)),
+            surface_top: c(rgb(0x24283b)),
+            surface_border: c(rgb(0x292e42)),
+            glass: c(rgba(0x1a1b26d9)),
+            divider: c(rgb(0x292e42)),
+            field: c(rgb(0x16161e)),
+            track: c(rgb(0x292e42)),
+            light: c(rgb(0xc0caf5)),
+            light_foot: c(rgb(0xa9b1d6)),
+            on_light: c(rgb(0x16161e)),
+            soft: c(rgb(0xa9b1d6)),
+            faint: c(rgb(0x737aa2)),
+            idle: c(rgb(0x565f89)),
+            green_edge: c(rgb(0x41593a)),
+            waiting_edge: c(rgb(0x6e4b33)),
+            refusal: c(rgb(0x8c5a6a)),
+            ring_alphas: [0.16, 0.10, 0.07, 0.05, 0.035],
+            ring_radii: [150., 250., 360., 480., 610.],
+            compact_scale: 0.45,
+            glow_alpha: 0.10,
+        }
+    }
+
     fn graphite() -> Self {
         Self {
             ground: c(rgb(0x0b0c0e)),
@@ -271,6 +438,23 @@ pub struct SyntaxLook {
 }
 
 impl SyntaxLook {
+    fn tokyo_night() -> Self {
+        Self {
+            keyword: c(rgb(0xbb9af7)),
+            string: c(rgb(0x9ece6a)),
+            escape: c(rgb(0x89ddff)),
+            comment: c(rgb(0x565f89)),
+            function: c(rgb(0x7aa2f7)),
+            ty: c(rgb(0x2ac3de)),
+            number: c(rgb(0xff9e64)),
+            property: c(rgb(0x73daca)),
+            attribute: c(rgb(0xe0af68)),
+            builtin: c(rgb(0xf7768e)),
+            punctuation: c(rgb(0x89ddff)),
+            tag: c(rgb(0xf7768e)),
+        }
+    }
+
     fn graphite() -> Self {
         Self {
             keyword: c(rgb(0xc49bf0)),
@@ -359,6 +543,43 @@ const fn term_rgb(value: u32) -> tau_terminal::Rgb {
 }
 
 impl TermLook {
+    fn tokyo_night() -> Self {
+        Self {
+            palette: tau_terminal::Palette {
+                ansi: [
+                    term_rgb(0x15161e),
+                    term_rgb(0xf7768e),
+                    term_rgb(0x9ece6a),
+                    term_rgb(0xe0af68),
+                    term_rgb(0x7aa2f7),
+                    term_rgb(0xbb9af7),
+                    term_rgb(0x7dcfff),
+                    term_rgb(0xa9b1d6),
+                    term_rgb(0x414868),
+                    term_rgb(0xf7768e),
+                    term_rgb(0x9ece6a),
+                    term_rgb(0xe0af68),
+                    term_rgb(0x7aa2f7),
+                    term_rgb(0xbb9af7),
+                    term_rgb(0x7dcfff),
+                    term_rgb(0xc0caf5),
+                ],
+                foreground: term_rgb(0xc0caf5),
+                background: term_rgb(0x16161e),
+                cursor: term_rgb(0xc0caf5),
+                selection: term_rgb(0x283457),
+                scrollbar: term_rgb(0x3b4261),
+            },
+            border: c(rgb(0x292e42)),
+            divider: c(rgb(0x1f2335)),
+            label: c(rgb(0x737aa2)),
+            tab: c(rgb(0x292e42)),
+            text: Type::CAPTION.mono(),
+            leading: 1.5,
+            rows: 12,
+        }
+    }
+
     fn graphite() -> Self {
         Self {
             palette: tau_terminal::Palette {
@@ -402,6 +623,60 @@ fn c(color: Rgba) -> Hsla {
 }
 
 impl Theme {
+    /// Tokyo Night: ink-blue grounds, and the palette's blue, orange,
+    /// purple, cyan and green each given a role.
+    pub fn tokyo_night() -> Self {
+        Self {
+            bg: c(rgb(0x1a1b26)),
+            panel: c(rgb(0x16161e)),
+            card: c(rgb(0x16161e)),
+            raised: c(rgb(0x292e42)),
+            selected: c(rgb(0x292e42)),
+            border: c(rgb(0x292e42)),
+            border_strong: c(rgb(0x3b4261)),
+            text: c(rgb(0xc0caf5)),
+            text_soft: c(rgb(0xa9b1d6)),
+            muted: c(rgb(0x9aa5ce)),
+            dim: c(rgb(0x737aa2)),
+            accent: c(rgb(0x7aa2f7)),
+            accent_soft: c(rgba(0x7aa2f71f)),
+            accent_border: c(rgb(0x3d59a1)),
+            blue: c(rgb(0x7aa2f7)),
+            blue_soft: c(rgba(0x7aa2f70d)),
+            blue_border: c(rgb(0x3b4261)),
+            green: c(rgb(0x9ece6a)),
+            green_soft: c(rgba(0x9ece6a1f)),
+            red: c(rgb(0xf7768e)),
+            red_soft: c(rgba(0xf7768e14)),
+            red_border: c(rgb(0x5c2f3c)),
+            added_text: c(rgb(0xb9e08f)),
+            removed_text: c(rgb(0xf9a3b4)),
+            scrim: c(rgba(0x0b0b1299)),
+            backdrop: c(rgb(0x101018)),
+            border_soft: c(rgb(0x292e42)),
+            slate: c(rgb(0x565f89)),
+            bar_idle: c(rgb(0x3b4261)),
+            change: c(rgb(0xbb9af7)),
+            info_surface: c(rgb(0x1f2335)),
+            info_panel: c(rgb(0x1f2335)),
+            danger_surface: c(rgb(0x221a26)),
+            danger_edge: c(rgb(0x5c2f3c)),
+            marks: [
+                c(rgb(0x7aa2f7)),
+                c(rgb(0xbb9af7)),
+                c(rgb(0xff9e64)),
+                c(rgb(0x73daca)),
+                c(rgb(0xe0af68)),
+                c(rgb(0x7dcfff)),
+            ],
+            term: TermLook::tokyo_night(),
+            syntax: SyntaxLook::tokyo_night(),
+            setup: SetupLook::tokyo_night(),
+            depth: Depth::tokyo_night(),
+            roles: Roles::tokyo_night(),
+        }
+    }
+
     pub fn graphite() -> Self {
         Self {
             bg: c(rgb(0x141518)),
@@ -450,6 +725,7 @@ impl Theme {
             syntax: SyntaxLook::graphite(),
             setup: SetupLook::graphite(),
             depth: Depth::graphite(),
+            roles: Roles::graphite(),
         }
     }
 
@@ -466,7 +742,7 @@ impl Theme {
     pub fn tone(&self, tone: Tone) -> Hsla {
         match tone {
             Tone::Info => self.blue,
-            Tone::Warn => self.accent,
+            Tone::Warn => self.roles.live,
             Tone::Danger => self.red,
             Tone::Good => self.green,
             Tone::Quiet => self.muted,
