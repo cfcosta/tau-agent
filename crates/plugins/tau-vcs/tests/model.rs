@@ -744,12 +744,21 @@ fn apply(old: &str, lines: &[&str]) -> Result<String, String> {
 
 /// The tools, and a turn checkpoint, against the model: see the module
 /// docs. Each case makes a jj repository and runs up to 30 steps.
-#[hegel::test(test_cases = 40)]
+// A real jj repository per case, and up to 30 tool calls on it, each a
+// snapshot and an operation: a case takes seconds by nature, and more
+// under a loaded machine, while drawing its steps is cheap.
+#[hegel::test(
+    test_cases = 40,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
 fn the_tools_behave_like_the_model(tc: TestCase) {
     hegel::stateful::machine(Machine::new()).steps(30).run(tc);
 }
 
-#[hegel::test(profile = "nightly_slow")]
+#[hegel::test(
+    profile = "nightly_slow",
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
 #[ignore = "nightly"]
 fn the_tools_behave_like_the_model_nightly(tc: TestCase) {
     hegel::stateful::machine(Machine::new()).steps(60).run(tc);
