@@ -847,6 +847,18 @@ pub fn phone_header(
                 .font_weight(weight::STRONG)
                 .child(title),
         )
+        // What the person did here that the computer has not taken:
+        // it goes once the phone reaches it.
+        .when(ws.pairing.unsent > 0, |bar| {
+            let unsent = ws.pairing.unsent;
+            bar.child(
+                div()
+                    .flex_shrink_0()
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child(format!("{unsent} waiting to send")),
+            )
+        })
         .when(matches!(ws.route, Route::Home), |bar| {
             bar.child(
                 icon_button("phone-add-repo", Icon::Folder, 44., t).on_click(

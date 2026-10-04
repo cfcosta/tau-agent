@@ -57,7 +57,7 @@ impl Workspace {
                 matches!(self.route, Route::Pair(PairStep::Unreachable))
                     .then_some(Route::Home)
             }
-            PairingUpdate::Progress(_) => None,
+            PairingUpdate::Progress(_) | PairingUpdate::Unsent(_) => None,
         };
         self.pairing.update(update);
         match next {

@@ -78,6 +78,8 @@ pub struct Pairing {
     pub computer: Option<Computer>,
     /// Times in a row the paired computer did not answer.
     pub tries: u32,
+    /// Requests made here the computer has not taken yet.
+    pub unsent: usize,
 }
 
 /// What the phone's remote learned while pairing or connecting.
@@ -93,6 +95,8 @@ pub enum PairingUpdate {
         computer: Computer,
         tries: u32,
     },
+    /// This many requests wait for the computer to take them.
+    Unsent(usize),
 }
 
 impl Pairing {
@@ -105,6 +109,7 @@ impl Pairing {
                 self.computer = Some(computer);
                 self.tries = 0;
             }
+            PairingUpdate::Unsent(unsent) => self.unsent = unsent,
             PairingUpdate::Unreachable { computer, tries } => {
                 self.progress = Progress::Idle;
                 self.computer = Some(computer);

@@ -25,6 +25,7 @@ use tau_remote::{
     Refusal,
     Sender,
     client,
+    outbox::Outbox,
 };
 use tokio::{
     runtime::Runtime,
@@ -64,6 +65,10 @@ enum News {
     ScanCancelled,
     Paired(Credentials, client::Connection),
     Connected(Sender, Computer),
+    /// The computer took the requests up to this one.
+    Taken(u64),
+    /// The connection closed; the session connects again.
+    Disconnected,
     Revoked(Credentials),
 }
 
@@ -74,6 +79,9 @@ struct State {
     credentials: Option<Credentials>,
     /// The connection's sender while connected.
     sender: Option<Sender>,
+    /// What the person asked here that the computer has not taken: sent
+    /// again on each connection, until it is.
+    outbox: Outbox,
     /// The number of the last message applied, to resume from.
     last_seq: Arc<Mutex<Option<u64>>>,
     /// A typed address and code, until the certificate is compared.
@@ -84,8 +92,6 @@ struct State {
     session: Option<AbortHandle>,
     /// Wakes a session waiting to try again.
     retry: Arc<Notify>,
-    /// A name typed before the phone was connected.
-    name: Option<String>,
     _news: Option<Task<()>>,
 }
 
@@ -113,6 +119,16 @@ fn store(dir: &Path, credentials: Option<&Credentials>) -> std::io::Result<()> {
             _ => Ok(()),
         },
     }
+}
+
+/// Request numbers start from the clock, so they only grow across the
+/// phone's restarts, and the computer never takes a new one for one it
+/// had.
+fn clock() -> u64 {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    u64::try_from(millis).unwrap_or(u64::MAX >> 12) << 10
 }
 
 fn computer(credentials: &Credentials) -> Computer {
@@ -157,12 +173,12 @@ pub fn connect(
         news,
         credentials: credentials.clone(),
         sender: None,
+        outbox: Outbox::new(clock()),
         last_seq: Arc::default(),
         typed: None,
         pairing: None,
         session: None,
         retry: Arc::default(),
-        name: None,
         _news: None,
     }));
 
@@ -238,15 +254,20 @@ fn arrive(
             });
         }
         News::Connected(sender, computer) => {
-            let name = state.borrow_mut().name.take();
-            if let Some(name) = name {
-                send(&sender, PhoneUp::Name(name));
+            state.borrow_mut().sender = Some(sender.clone());
+            // What the computer did not take yet, again, in order.
+            for up in state.borrow().outbox.pending() {
+                let _ = sender.send(up);
             }
-            state.borrow_mut().sender = Some(sender);
             workspace.update(cx, |ws, cx| {
                 ws.update_pairing(PairingUpdate::Connected(computer), cx)
             });
         }
+        News::Taken(up) => {
+            state.borrow_mut().outbox.taken(up);
+            show_unsent(state, &workspace, cx);
+        }
+        News::Disconnected => state.borrow_mut().sender = None,
         News::Revoked(credentials) => {
             let mut state = state.borrow_mut();
             state.credentials = None;
@@ -267,11 +288,29 @@ fn arrive(
     Some(())
 }
 
-fn send(sender: &Sender, up: PhoneUp) {
-    if let Some(body) = to_computer(&up) {
-        // A closed connection comes back through the session.
-        let _ = sender.send(body);
+/// Sends `up` once connected, and again on each connection until the
+/// computer takes it.
+fn send(state: &Rc<RefCell<State>>, up: PhoneUp) {
+    let Some(body) = to_computer(&up) else { return };
+    let mut state = state.borrow_mut();
+    let up = state.outbox.push(body);
+    if let Some(sender) = &state.sender {
+        // A closed connection comes back through the session, which
+        // sends it again.
+        let _ = sender.send(up);
     }
+}
+
+/// Says how many requests wait for the computer.
+fn show_unsent(
+    state: &Rc<RefCell<State>>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let unsent = state.borrow().outbox.len();
+    workspace.update(cx, |ws, cx| {
+        ws.update_pairing(PairingUpdate::Unsent(unsent), cx)
+    });
 }
 
 /// What the phone sends the computer of `up`.
@@ -289,6 +328,7 @@ pub fn updates(down: Down) -> Vec<HostUpdate> {
     let bodies = match down {
         Down::Snapshot { bodies, .. } => bodies,
         Down::Message { body, .. } => vec![body],
+        Down::Ack { .. } => Vec::new(),
     };
     bodies
         .into_iter()
@@ -317,18 +357,9 @@ fn act(
         if !event.from_phone() {
             return;
         }
-        let sender = state.borrow().sender.clone();
-        match sender {
-            Some(sender) => send(&sender, PhoneUp::Event(event.clone())),
-            None => workspace.update(cx, |ws, cx| {
-                ws.show_alert(
-                    "Not connected",
-                    "tau is still reaching your computer; try again in a \
-                     moment.",
-                    cx,
-                )
-            }),
-        }
+        // Sent now, or once the phone reaches the computer again.
+        send(state, PhoneUp::Event(event.clone()));
+        show_unsent(state, workspace, cx);
         return;
     };
     match request.clone() {
@@ -355,11 +386,8 @@ fn act(
             }
         }
         PairRequest::Name(name) => {
-            let sender = state.borrow().sender.clone();
-            match sender {
-                Some(sender) => send(&sender, PhoneUp::Name(name)),
-                None => state.borrow_mut().name = Some(name),
-            }
+            send(state, PhoneUp::Name(name));
+            show_unsent(state, workspace, cx);
         }
         PairRequest::Retry => state.borrow().retry.notify_one(),
         PairRequest::Cancel => {
@@ -525,12 +553,19 @@ fn start_session(
                         computer.clone(),
                     ));
                     while let Ok(Some(down)) = connection.recv().await {
+                        if let Down::Ack { up } = down {
+                            let _ = news.send(News::Taken(up));
+                            continue;
+                        }
                         let seq = down.seq();
                         for update in updates(down) {
                             let _ = news.send(News::Apply(update));
                         }
-                        *last_seq.lock().expect("not poisoned") = Some(seq);
+                        if let Some(seq) = seq {
+                            *last_seq.lock().expect("not poisoned") = Some(seq);
+                        }
                     }
+                    let _ = news.send(News::Disconnected);
                 }
                 Err(ClientError::Refused(Refusal::UnknownToken)) => {
                     let _ = news.send(News::Revoked(credentials));
