@@ -2,7 +2,7 @@
 //! did, the calls and answers that wait for a person, and the editor
 //! that writes and tries a rule.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use gpui::{
     AnyElement,
@@ -11,8 +11,10 @@ use gpui::{
     Context,
     Div,
     Entity,
+    HighlightStyle,
     Hsla,
     SharedString,
+    StyledText,
     Window,
     div,
     prelude::*,
@@ -54,11 +56,8 @@ const TRIAL_ANSWERS: usize = 3;
 /// The most times the page lets one run's answer be sent back.
 pub const MAX_HOLDS: u32 = 10;
 
-/// The narrowest screen the rules table fits: its fixed columns (id,
-/// places, strictness, activity, menu, and the gaps between them), room
-/// for a rule's text, and the screen's padding. Narrower, each rule is
-/// stacked as on the phone, so its text never shrinks to a sliver.
-const TABLE_MIN: f32 = 740. + 260. + 64.;
+/// The widest the page's column grows: rules read as lines of prose.
+const COLUMN: f32 = 860.;
 
 /// Thresholds by name. The editor offers these first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -664,7 +663,8 @@ pub fn trial_samples(
 }
 
 /// The page: its repository is the `repo` parameter; `rule`, when
-/// given, is the rule to show.
+/// given, is the rule to show. The repository's own page draws its name
+/// above, so this starts with what the rules do.
 pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> AnyElement {
     let t = view.theme().clone();
     let compact = view.compact;
@@ -679,19 +679,21 @@ pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> AnyElement {
     let ui = view.ui.clone();
     let tab = view.read_ui().tab;
     let empty = rules.rules.is_empty() && rules.error.is_none();
-    let content = div()
+    let column = div()
+        .w_full()
+        .max_w(px(COLUMN))
         .flex()
         .flex_col()
-        .gap(sp(4.5))
-        .child(header(&ui, &repo, empty, compact, &t))
-        .when_some(broken(view, &rules, &repo, jev, &t), |screen, banner| {
-            screen.child(banner)
+        .gap(sp(4.))
+        .when(!empty, |column| column.child(intro(&ui, &repo, &stats, &t)))
+        .when_some(broken(view, &rules, &repo, jev, &t), |column, banner| {
+            column.child(banner)
         })
-        .when(!jev && rules.error.is_none(), |screen| {
-            screen.child(no_key(view.handle.clone(), compact, &t))
+        .when(!jev && rules.error.is_none(), |column| {
+            column.child(no_key(view.handle.clone(), compact, &t))
         })
-        .when(empty, |screen| screen.child(nothing_yet(&ui, &repo, &t)))
-        .when(!empty && rules.error.is_none(), |screen| {
+        .when(empty, |column| column.child(nothing_yet(&ui, &repo, &t)))
+        .when(!empty && rules.error.is_none(), |column| {
             let list = match tab {
                 Tab::Rules => rules_list(
                     view,
@@ -706,18 +708,11 @@ pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> AnyElement {
                     review(view, &repo, &rules, &t).into_any_element()
                 }
             };
-            screen
-                .child(stat_tiles(&stats, compact, &t))
-                .when(stats.waiting > 0 && tab == Tab::Rules, |screen| {
-                    screen.child(waiting_strip(view, &repo, &stats, &t))
-                })
+            column
                 .child(tabs(&ui, tab, &rules, &stats, &t))
                 .child(list)
-                .when(tab == Tab::Rules, |screen| {
-                    screen.child(settings(&ui, &repo, &rules, &t))
-                })
-                .when(tab == Tab::Rules && !compact, |screen| {
-                    screen.child(legend(&t))
+                .when(tab == Tab::Rules, |column| {
+                    column.child(settings(&ui, &repo, &rules, &t))
                 })
         });
     let editor = editor(view, &t);
@@ -727,69 +722,101 @@ pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> AnyElement {
         .min_h(px(0.))
         .flex()
         .flex_col()
-        .child(ui::screen("constitution", compact, content))
+        .child(ui::screen(
+            "constitution",
+            compact,
+            div().flex().justify_center().child(column),
+        ))
         .when_some(editor, |screen, editor| screen.child(editor))
         .into_any_element()
 }
 
-/// The title, the repository, and what can be done: add a rule.
-fn header(
-    ui: &Entity<Ui>,
-    repo: &str,
-    empty: bool,
-    compact: bool,
-    t: &Theme,
-) -> Div {
+/// One line on what the rules do and what they did over `repo`'s runs,
+/// with each count in its color, and the way to add a rule.
+fn intro(ui: &Entity<Ui>, repo: &str, stats: &RulesStats, t: &Theme) -> Div {
+    let held: usize = stats.per_rule.values().map(|(_, _, held)| held).sum();
+    let mut parts: Vec<(String, Option<Hsla>)> = vec![
+        ("tau-constitution".into(), Some(t.roles.rules)),
+        (
+            " checks every tool call and final answer against these rules \
+             before they run. "
+                .into(),
+            None,
+        ),
+    ];
+    if stats.runs == 0 {
+        parts.push(("Nothing checked yet.".into(), None));
+    } else {
+        parts.push((
+            format!(
+                "Across {} {}: ",
+                stats.runs,
+                if stats.runs == 1 { "run" } else { "runs" }
+            ),
+            None,
+        ));
+        parts.push((format!("{} checked", stats.checked), Some(t.text_soft)));
+        for (count, what, color) in [
+            (stats.blocked, "blocked", t.red),
+            (stats.flagged, "flagged", t.roles.waiting),
+            (held, "held", t.roles.live),
+            (stats.failed as usize, "not checked", t.roles.waiting),
+        ] {
+            if count > 0 {
+                parts.push((", ".into(), None));
+                parts.push((format!("{count} {what}"), Some(color)));
+            }
+        }
+        parts.push((".".into(), None));
+        if stats.cost > 0.0 {
+            parts.push((" Jev cost ".into(), None));
+            parts.push((
+                if stats.cost < 0.01 {
+                    format!("${:.5}", stats.cost)
+                } else {
+                    usd(stats.cost)
+                },
+                Some(t.roles.cost),
+            ));
+            parts.push((".".into(), None));
+        }
+    }
+    let mut line = String::new();
+    let mut highlights = Vec::new();
+    for (part, color) in parts {
+        let start = line.len();
+        line.push_str(&part);
+        if let Some(color) = color {
+            highlights.push((
+                start..line.len(),
+                HighlightStyle {
+                    color: Some(color),
+                    ..HighlightStyle::default()
+                },
+            ));
+        }
+    }
     let new_repo = repo.to_owned();
     div()
         .flex()
-        .items_start()
-        .gap(sp(4.))
+        .items_center()
+        .gap(sp(3.))
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .gap(sp(1.5))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.5))
-                        .child(
-                            div()
-                                .typeset(Type::TITLE)
-                                .font_weight(weight::STRONG)
-                                .child("Constitution"),
-                        )
-                        .child(ui::tag(
-                            repo.to_owned(),
-                            Type::CAPTION,
-                            t.text_soft,
-                            t,
-                        )),
-                )
-                .when(!compact, |title| {
-                    title.child(ui::text(
-                        "Rules Jev checks on what the model writes: tool calls \
-                         and final answers. An edit applies from the next tool \
-                         call, in runs already going too.",
-                        Type::BODY,
-                        t.muted,
-                    ))
-                }),
+                .typeset(Type::BODY)
+                .text_color(t.muted)
+                .child(StyledText::new(line).with_highlights(highlights)),
         )
-        .when(!empty, |row| {
-            row.child(
-                div()
-                    .id("new-rule")
-                    .child(ui::button("New rule", ButtonKind::Primary, t))
-                    .on_click(on_ui(ui, move |ui, cx| {
-                        ui.open_editor(&new_repo, None, cx)
-                    })),
-            )
-        })
+        .child(
+            div()
+                .id("new-rule")
+                .child(ui::button("Add a rule", ButtonKind::Secondary, t))
+                .on_click(on_ui(ui, move |ui, cx| {
+                    ui.open_editor(&new_repo, None, cx)
+                })),
+        )
 }
 
 /// Rules that cannot be read from the store: why, what it means, and
@@ -878,15 +905,16 @@ fn broken(
 }
 
 /// How the checks behave beyond each rule: what happens when Jev cannot
-/// answer, and how many times an answer may go back.
+/// answer, and how many times an answer may go back. Rows are split by
+/// lines, as the rules are, and a note under them says what Jev reads.
 fn settings(ui: &Entity<Ui>, repo: &str, rules: &Rules, t: &Theme) -> Div {
     let row = || {
         div()
             .flex()
             .items_center()
             .gap(sp(4.))
-            .px(sp(4.))
-            .py(sp(3.))
+            .px(sp(1.))
+            .py(sp(3.5))
             .border_b_1()
             .border_color(t.border)
     };
@@ -896,9 +924,9 @@ fn settings(ui: &Entity<Ui>, repo: &str, rules: &Rules, t: &Theme) -> Div {
             .min_w(px(0.))
             .flex()
             .flex_col()
-            .gap(sp(0.75))
-            .child(name.to_owned())
-            .child(ui::text(caption, Type::CAPTION, t.muted))
+            .gap(sp(0.5))
+            .child(div().font_weight(weight::EMPHASIS).child(name.to_owned()))
+            .child(ui::text(caption, Type::SMALL, t.muted))
     };
     let (blocks, holds) = (rules.blocks_unchecked, rules.max_holds);
     let segment = |label: &'static str, on: bool, blocks: bool| {
@@ -932,10 +960,14 @@ fn settings(ui: &Entity<Ui>, repo: &str, rules: &Rules, t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
-        .gap(sp(2.))
-        .child(heading("Settings", t))
+        .mt(sp(4.))
+        .child(div().pb(sp(1.)).child(heading("Settings", t)))
         .child(
-            ui::card(t)
+            div()
+                .flex()
+                .flex_col()
+                .border_t_1()
+                .border_color(t.border)
                 .child(
                     row()
                         .child(what(
@@ -990,6 +1022,12 @@ fn settings(ui: &Entity<Ui>, repo: &str, rules: &Rules, t: &Theme) -> Div {
                         ),
                 ),
         )
+        .child(div().pt(sp(3.)).child(ui::text(
+            "Jev sees only the fields a rule names, as the model wrote them. \
+             Never tool output or file contents.",
+            Type::CAPTION,
+            t.dim,
+        )))
 }
 
 /// Without a TypeSafe key nothing is checked: say so, and where to fix it.
@@ -1077,133 +1115,8 @@ fn nothing_yet(ui: &Entity<Ui>, repo: &str, t: &Theme) -> Div {
     )
 }
 
-fn stat_tiles(stats: &RulesStats, compact: bool, t: &Theme) -> Div {
-    let tile = |value: String,
-                name: &'static str,
-                note: Option<String>,
-                color: Hsla| {
-        div()
-            .flex_1()
-            .min_w(px(0.))
-            .flex()
-            .flex_col()
-            .gap(sp(1.))
-            .px(sp(3.5))
-            .py(sp(3.))
-            .rounded(radius::BOX)
-            .raised(t)
-            .border_1()
-            .border_color(t.border)
-            .child(ui::text(name, Type::CAPTION, t.muted))
-            .child(mono(value, Type::LEAD, color))
-            .when_some(note.filter(|_| !compact), |tile, note| {
-                tile.child(ui::text(note, Type::CAPTION, t.dim))
-            })
-    };
-    let mut runs = format!(
-        "in {} {}",
-        stats.runs,
-        if stats.runs == 1 { "run" } else { "runs" }
-    );
-    if stats.failed > 0 {
-        runs.push_str(&format!(" · {} not checked", stats.failed));
-    }
-    div()
-        .flex()
-        .gap(sp(2.5))
-        .child(tile(
-            stats.checked.to_string(),
-            "Checked",
-            Some(runs),
-            t.text,
-        ))
-        .child(tile(
-            stats.blocked.to_string(),
-            "Blocked",
-            Some("the model got the rule".into()),
-            if stats.blocked > 0 { t.red } else { t.text },
-        ))
-        .child(tile(
-            stats.flagged.to_string(),
-            "Flagged",
-            Some(match stats.waiting {
-                0 => "nothing waiting".to_owned(),
-                n => format!("{n} waiting for you"),
-            }),
-            if stats.flagged > 0 { t.accent } else { t.text },
-        ))
-        .when(!compact, |row| {
-            row.child(tile(
-                stats.held_runs.to_string(),
-                "Answers held",
-                Some(format!("of {} runs", stats.runs)),
-                t.text,
-            ))
-            .child(tile(
-                if stats.cost > 0.0 && stats.cost < 0.01 {
-                    format!("${:.5}", stats.cost)
-                } else {
-                    usd(stats.cost)
-                },
-                "Jev cost",
-                Some("these runs".into()),
-                t.text,
-            ))
-        })
-}
-
-/// Above the rules: something waits for a person.
-fn waiting_strip(
-    view: &ViewCx<'_, ConstitutionUi>,
-    repo: &str,
-    stats: &RulesStats,
-    t: &Theme,
-) -> impl IntoElement {
-    let first = review_items(view, repo).into_iter().next();
-    div()
-        .id("waiting")
-        .flex()
-        .items_center()
-        .gap(sp(3.))
-        .px(sp(3.5))
-        .py(sp(2.75))
-        .rounded(radius::BOX)
-        .bg(t.accent_soft)
-        .border_1()
-        .border_color(t.accent_border)
-        .cursor_pointer()
-        .child(icon(Icon::Warning, IconSize::BASE, t.accent))
-        .child(
-            div()
-                .font_weight(weight::EMPHASIS)
-                .child(match stats.waiting {
-                    1 => "1 call needs a look".to_owned(),
-                    n => format!("{n} calls need a look"),
-                }),
-        )
-        .when_some(first, |strip, item| {
-            strip.child(
-                mono(
-                    format!(
-                        "{} {} · {} {:.2} · {}",
-                        item.flag.tool.as_deref().unwrap_or("final answer"),
-                        item.flag.shown,
-                        item.flag.rule,
-                        item.flag.score,
-                        item.run_title
-                    ),
-                    Type::CAPTION,
-                    t.text_soft,
-                )
-                .flex_1()
-                .min_w(px(0.))
-                .truncate(),
-            )
-        })
-        .child(ui::button("Review", ButtonKind::Secondary, t))
-        .on_click(on_ui(&view.ui, |ui, cx| ui.set_tab(Tab::Review, cx)))
-}
-
+/// The two lists: the rules, and what waits for review. A count of
+/// what waits stands out until it is looked at.
 fn tabs(
     ui: &Entity<Ui>,
     current: Tab,
@@ -1215,18 +1128,13 @@ fn tabs(
         let on = current == which;
         div()
             .id(name)
-            .h(px(40.))
             .flex()
             .items_center()
-            .gap(sp(1.75))
-            .border_b_2()
-            .border_color(if on {
-                t.accent
-            } else {
-                gpui::transparent_black()
-            })
+            .gap(sp(1.5))
+            .typeset(Type::SMALL)
             .text_color(if on { t.text } else { t.muted })
             .when(on, |tab| tab.font_weight(weight::EMPHASIS))
+            .hover(|style| style.text_color(t.text))
             .cursor_pointer()
             .child(name)
             .map(|tab| {
@@ -1240,35 +1148,15 @@ fn tabs(
     };
     div()
         .flex()
-        .gap(sp(5.5))
-        .border_b_1()
-        .border_color(t.border)
+        .items_center()
+        .gap(sp(5.))
         .child(tab(Tab::Rules, "Rules", rules.rules.len(), false))
         .child(tab(Tab::Review, "Review", stats.waiting, true))
 }
 
-/// Where a rule reads: a tool's field, or the final answer.
-fn place(text: &str, t: &Theme) -> Div {
-    let glyph = if text == "final answer" {
-        Icon::Chat
-    } else {
-        Icon::Runs
-    };
-    div()
-        .flex()
-        .items_center()
-        .gap(sp(1.25))
-        .flex_shrink_0()
-        .px(sp(1.75))
-        .py(sp(0.5))
-        .rounded(radius::SMALL)
-        .bg(t.raised)
-        .child(icon(glyph, IconSize::SMALL, t.dim))
-        .child(mono(text.to_owned(), Type::MICRO, t.text_soft))
-}
-
-/// A rule's last runs in a word: `2 blocked`, `1 flagged`.
-fn activity(rule: &RuleInfo, stats: &RulesStats, t: &Theme) -> (String, Hsla) {
+/// A rule's verdict over its runs, in a few words, and its color:
+/// blocked red, held live, flagged waiting, nothing caught green.
+fn verdict(rule: &RuleInfo, stats: &RulesStats, t: &Theme) -> (String, Hsla) {
     let (blocked, flagged, held) =
         stats.per_rule.get(&rule.id).copied().unwrap_or_default();
     let parts: Vec<String> =
@@ -1279,18 +1167,44 @@ fn activity(rule: &RuleInfo, stats: &RulesStats, t: &Theme) -> (String, Hsla) {
             .collect();
     let color = if blocked > 0 {
         t.red
-    } else if held + flagged > 0 {
-        t.accent
+    } else if held > 0 {
+        t.roles.live
+    } else if flagged > 0 {
+        t.roles.waiting
     } else {
-        t.dim
+        t.green
     };
     if parts.is_empty() {
-        ("—".into(), color)
+        ("clear".into(), color)
     } else {
         (parts.join(" · "), color)
     }
 }
 
+/// What each rule last caught in `repo`'s runs: the call it blocked or
+/// flagged, or the final answer it held.
+fn last_caught(
+    view: &ViewCx<'_, ConstitutionUi>,
+    repo: &str,
+) -> HashMap<String, String> {
+    let mut last = HashMap::new();
+    for (run, state) in
+        view.runs().into_iter().filter(|(run, _)| run.repo == repo)
+    {
+        for call in state.calls.values() {
+            if let Some(verdict) = &call.verdict {
+                last.insert(verdict.rule.clone(), call.shown.clone());
+            }
+        }
+        for rule in &state.stats.held {
+            last.insert(rule.clone(), format!("final answer, {}", run.title));
+        }
+    }
+    last
+}
+
+/// The rules, one line each: the id, the rule with where it reads and
+/// how strict it is, what it caught, and its ⋯ menu. A click edits it.
 fn rules_list(
     view: &ViewCx<'_, ConstitutionUi>,
     repo: &str,
@@ -1300,54 +1214,28 @@ fn rules_list(
     t: &Theme,
 ) -> Div {
     let compact = view.compact;
-    let stacked = compact || view.width < TABLE_MIN;
     let menu = view.read_ui().menu.clone();
+    let last = last_caught(view, repo);
     let ui = view.ui.clone();
     let rows = rules.rules.iter().map(|rule| {
-        let (act, act_color) = activity(rule, stats, t);
+        let (said, said_color) = verdict(rule, stats, t);
         let focused = focus == Some(rule.id.as_str());
         let menu_open = menu.as_deref() == Some(rule.id.as_str());
         let (edit_repo, edit_rule) = (repo.to_owned(), rule.clone());
         let menu_id = rule.id.clone();
-        let places = div()
-            .flex()
-            .flex_wrap()
-            .gap(sp(1.5))
-            .children(rule.applies_to.iter().map(|at| place(at, t)));
-        let gauge = div()
-            .flex()
-            .flex_col()
-            .gap(sp(1.5))
-            .child(ui::strictness(
-                rule.review,
-                rule.block,
-                None,
-                if compact { None } else { Some(180.) },
-                false,
-                t,
-            ))
-            .child(mono(
-                format!("flag {:.2} · block {:.2}", rule.review, rule.block),
-                Type::MICRO,
-                t.dim,
-            ));
-        let row = div()
-            .id(SharedString::from(format!("rule-{}", rule.id)))
-            .relative()
-            .cursor_pointer()
-            .border_b_1()
-            .border_color(t.border)
-            .when(focused || menu_open, |row| row.pressed(t))
-            .hover(|style| style.bg(t.selected))
-            .on_click(on_ui(&ui, move |ui, cx| {
-                ui.open_editor(&edit_repo, Some(edit_rule.clone()), cx)
-            }));
-        // The ⋯ menu: edit or remove the rule. The phone edits in the
-        // editor instead.
+        let mut caption = format!(
+            "Checks {} · flag {:.2} · block {:.2}",
+            rule.applies_to.join(", "),
+            rule.review,
+            rule.block
+        );
+        if let Some(shown) = last.get(&rule.id) {
+            caption.push_str(&format!(" · last: {shown}"));
+        }
         let toggle = ui.clone();
         let menu_button = div()
             .id(SharedString::from(format!("rule-menu-{}", rule.id)))
-            .size(px(30.))
+            .size(px(28.))
             .flex_shrink_0()
             .flex()
             .items_center()
@@ -1360,85 +1248,63 @@ fn rules_list(
                 cx.stop_propagation();
                 toggle.update(cx, |ui, cx| ui.toggle_menu(&menu_id, cx))
             });
-        let row = if stacked {
-            row.flex()
-                .flex_col()
-                .gap(sp(2.25))
-                .px(sp(4.))
-                .py(sp(3.5))
-                .child(
-                    div()
-                        .flex()
-                        .gap(sp(2.5))
-                        .child(mono(rule.id.clone(), Type::CAPTION, t.muted))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .child(rule.text.clone()),
-                        )
-                        .when(!compact, |line| line.child(menu_button)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .pl(sp(7.5))
-                        .child(places)
-                        .child(div().flex_1())
-                        .child(mono(act, Type::MICRO, act_color)),
-                )
-                .child(div().pl(sp(7.5)).child(gauge))
-        } else {
-            row.flex()
-                .items_center()
-                .gap(sp(4.))
-                .px(sp(4.))
-                .py(sp(3.5))
-                .child(
-                    mono(rule.id.clone(), Type::CAPTION, t.muted)
-                        .w(px(36.))
-                        .flex_shrink_0(),
-                )
-                .child(div().flex_1().min_w(px(0.)).child(rule.text.clone()))
-                .child(places.w(px(250.)).flex_shrink_0())
-                .child(gauge.w(px(190.)).flex_shrink_0())
-                .child(
-                    mono(act, Type::CAPTION, act_color)
-                        .w(px(110.))
-                        .flex_shrink_0(),
-                )
-                .child(menu_button)
-        };
-        row.when(menu_open, |row| row.child(rule_menu(&ui, repo, rule, t)))
-    });
-    div()
-        .flex()
-        .flex_col()
-        .rounded(radius::BOX)
-        .border_1()
-        .border_color(t.border)
-        .raised(t)
-        .when(!stacked, |list| {
-            list.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(4.))
-                    .h(px(34.))
-                    .px(sp(4.))
-                    .border_b_1()
-                    .border_color(t.border)
-                    .child(div().w(px(36.)).child(heading("ID", t)))
-                    .child(div().flex_1().child(heading("Rule", t)))
-                    .child(div().w(px(250.)).child(heading("Applies to", t)))
-                    .child(div().w(px(190.)).child(heading("Strictness", t)))
-                    .child(div().w(px(110.)).child(heading("Activity", t)))
-                    .child(div().w(px(30.))),
+        div()
+            .id(SharedString::from(format!("rule-{}", rule.id)))
+            .relative()
+            .flex()
+            .items_start()
+            .gap(sp(3.5))
+            .px(sp(1.))
+            .py(sp(3.5))
+            .border_b_1()
+            .border_color(t.border)
+            .cursor_pointer()
+            .when(focused || menu_open, |row| row.pressed(t))
+            .hover(|style| style.bg(t.selected))
+            .on_click(on_ui(&ui, move |ui, cx| {
+                ui.open_editor(&edit_repo, Some(edit_rule.clone()), cx)
+            }))
+            .child(
+                mono(rule.id.clone(), Type::CODE, t.roles.rules)
+                    .w(px(40.))
+                    .flex_shrink_0()
+                    .pt(sp(0.25)),
             )
-        })
-        .children(rows)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex()
+                    .flex_col()
+                    .gap(sp(0.5))
+                    .child(
+                        div()
+                            .font_weight(weight::EMPHASIS)
+                            .child(rule.text.clone()),
+                    )
+                    .child(ui::text(caption, Type::SMALL, t.muted))
+                    .when(compact, |text| {
+                        text.child(ui::text(
+                            said.clone(),
+                            Type::SMALL,
+                            said_color,
+                        ))
+                    }),
+            )
+            .when(!compact, |row| {
+                row.child(
+                    div()
+                        .w(px(150.))
+                        .flex_shrink_0()
+                        .flex()
+                        .justify_end()
+                        .child(ui::text(said, Type::SMALL, said_color)),
+                )
+            })
+            .child(menu_button)
+            .when(menu_open, |row| row.child(rule_menu(&ui, repo, rule, t)))
+    });
+    div().flex().flex_col().children(rows)
 }
 
 /// A rule's ⋯ menu: edit it, or remove it.
@@ -1486,35 +1352,6 @@ fn rule_menu(
         }))
 }
 
-fn legend(t: &Theme) -> Div {
-    let swatch = |color: Hsla, name: &'static str| {
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(1.5))
-            .child(
-                div()
-                    .w(px(10.))
-                    .h(px(6.))
-                    .rounded(radius::HAIRLINE)
-                    .bg(color),
-            )
-            .child(name)
-    };
-    div()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .gap(sp(4.))
-        .typeset(Type::CAPTION)
-        .text_color(t.dim)
-        .child(swatch(t.border_strong, "runs"))
-        .child(swatch(t.accent.opacity(0.55), "runs, flagged for you"))
-        .child(swatch(t.red.opacity(0.6), "refused, the model gets the rule"))
-        .child(div().flex_1())
-        .child("Jev sees only the fields a rule names, as the model wrote them. Never tool output or file contents.")
-}
-
 /// What waits for a person, and what the rules handled on their own.
 fn review(
     view: &ViewCx<'_, ConstitutionUi>,
@@ -1557,12 +1394,10 @@ fn review(
             div()
                 .flex()
                 .flex_col()
-                .rounded(radius::BOX)
-                .border_1()
+                .border_t_1()
                 .border_color(t.border)
-                .raised(t)
                 .when(handled.is_empty(), |list| {
-                    list.child(div().p(sp(3.)).child(ui::text(
+                    list.child(div().py(sp(3.)).child(ui::text(
                         "Nothing yet.",
                         Type::CAPTION,
                         t.dim,
@@ -1573,7 +1408,7 @@ fn review(
                         HandledKind::Blocked => {
                             (Icon::Blocked, t.red, "blocked")
                         }
-                        HandledKind::Held => (Icon::Chat, t.accent, "held"),
+                        HandledKind::Held => (Icon::Chat, t.roles.live, "held"),
                         HandledKind::LookedFine => {
                             (Icon::Check, t.green, "looked fine")
                         }
@@ -1667,7 +1502,7 @@ fn review_card(
                 ))
                 .child(ui::text(format!("in {}", item.run_title), Type::CAPTION, t.muted))
                 .child(div().flex_1())
-                .child(mono(format!("p {:.2}", item.flag.score), Type::CAPTION, t.accent)),
+                .child(mono(format!("p {:.2}", item.flag.score), Type::CAPTION, t.roles.waiting)),
         )
         .child(
             div()
