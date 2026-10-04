@@ -47,7 +47,7 @@ use crate::{
         sp,
         weight,
     },
-    view::{ChildKind, RunView, tokens, usd},
+    view::{ChildKind, RunView, usd},
     workspace::Workspace,
 };
 
@@ -58,117 +58,6 @@ fn tab_icon(tab: Tab) -> Icon {
         Tab::Plugins => Icon::Plug,
         Tab::Models => Icon::Settings,
     }
-}
-
-/// The desktop title bar: where you are, and the way back.
-pub fn title_bar(
-    ws: &Workspace,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let run = ws.current();
-    // What the composer's next message goes to: the open chat's model,
-    // or the next run's.
-    let choice = ws.composer_target().map_or_else(
-        || ws.fork_model().clone(),
-        |target| ws.choice_for(&target),
-    );
-    let reasoning = format!("reasoning {}", choice.effort.label());
-    let model = choice.model.clone();
-    let total: f64 = ws.runs.iter().map(|run| run.usage.cost).sum();
-    let mut crumbs = vec![ws.name.clone()];
-    match &ws.route {
-        Route::Home | Route::Run(_) => {
-            crumbs.extend(run.map(|run| run.title.clone()));
-        }
-        route => {
-            crumbs.extend(
-                route
-                    .run()
-                    .and_then(|id| ws.run(id))
-                    .map(|run| run.title.clone()),
-            );
-            crumbs.push(ws.route_title(cx));
-        }
-    }
-    let last = crumbs.len() - 1;
-
-    div()
-        .h(px(44.))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(sp(2.5))
-        .pl(sp(3.))
-        .pr(sp(3.))
-        .chrome(Edge::Top, t)
-        .child(logo(t, 26.))
-        .when(ws.can_go_back(), |bar| {
-            bar.child(
-                icon_button("back", Icon::Back, 30., t)
-                    .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
-            )
-        })
-        .children(crumbs.into_iter().enumerate().flat_map(|(n, crumb)| {
-            let text = div()
-                .when(n == last, |crumb| crumb.font_weight(weight::EMPHASIS))
-                .text_color(if n == last { t.text } else { t.muted })
-                .child(crumb)
-                .into_any_element();
-            let slash = (n > 0)
-                .then(|| div().text_color(t.dim).child("/").into_any_element());
-            slash.into_iter().chain([text])
-        }))
-        .child(div().flex_1())
-        .child(
-            div()
-                .id("open-search")
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .w(px(340.))
-                .px(sp(2.5))
-                .py(sp(1.25))
-                .well(t)
-                .rounded(radius::CONTROL)
-                .text_color(t.dim)
-                .cursor_pointer()
-                .child(icon(Icon::Search, IconSize::BASE, t.dim))
-                .child(
-                    div().flex_1().child("Search runs, repositories, actions"),
-                )
-                .child(mono("Ctrl K", Type::MICRO, t.dim))
-                .on_click(
-                    cx.listener(|ws, _, window, cx| ws.open_search(window, cx)),
-                ),
-        )
-        .child(div().flex_1())
-        .child(
-            div()
-                .id("title-model")
-                .flex()
-                .items_center()
-                .gap(sp(1.5))
-                .px(sp(2.5))
-                .py(sp(1.25))
-                .key(t)
-                .rounded(radius::CONTROL)
-                .cursor_pointer()
-                .hover(|style| style.border_color(t.border_strong))
-                .child(mono(model, Type::CAPTION, t.text))
-                .child(mono("·", Type::CAPTION, t.dim))
-                .child(mono(reasoning, Type::CAPTION, t.blue))
-                .on_click(cx.listener(|ws, _, window, cx| {
-                    ws.title_model_clicked(window, cx)
-                })),
-        )
-        .child(
-            mono(format!("today {}", usd(total)), Type::CAPTION, t.accent)
-                .px(sp(2.5))
-                .py(sp(1.25))
-                .rounded(radius::CONTROL)
-                .bg(t.accent_soft),
-        )
 }
 
 /// The desktop sidebar: a new run in the selected repository, the
@@ -191,13 +80,13 @@ pub fn sidebar(
         .flex_shrink_0()
         .items_center()
         .gap(sp(2.))
-        .h(control::MEDIUM)
+        .h(px(34.))
         .px(sp(2.5))
-        .key(t)
         .rounded(radius::CONTROL)
         .cursor_pointer()
-        .hover(|style| style.border_color(t.border_strong))
-        .child(icon(Icon::Plus, IconSize::BASE, t.text))
+        .text_color(t.text_soft)
+        .hover(|style| style.bg(t.raised))
+        .child(icon(Icon::Plus, IconSize::BASE, t.roles.branch))
         .child(
             div()
                 .flex_1()
@@ -253,15 +142,45 @@ pub fn sidebar(
         (Route::Phones, Icon::Phone, "Phones", ""),
     ];
 
+    // The app's name, and what all runs cost today.
+    let total: f64 = ws.runs.iter().map(|run| run.usage.cost).sum();
+    let brand = div()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(sp(2.5))
+        .px(sp(2.))
+        .pt(sp(1.))
+        .pb(sp(3.))
+        .child(logo(t, 22.))
+        .child(div().font_weight(weight::STRONG).child("tau"))
+        .child(div().flex_1())
+        .child(
+            div()
+                .flex()
+                .gap(sp(1.))
+                .typeset(Type::CAPTION)
+                .text_color(t.dim)
+                .child("today")
+                .child(div().text_color(t.roles.cost).child(usd(total))),
+        );
+    let search = nav_row(Icon::Search, "Search", "Ctrl K".into(), false, t)
+        .id("open-search")
+        .on_click(cx.listener(|ws, _, window, cx| ws.open_search(window, cx)));
+
     div()
         .id("sidebar")
         .flex()
         .flex_col()
         .gap(sp(0.5))
-        .p(sp(2.))
-        .chrome(Edge::Left, t)
+        .p(sp(2.5))
+        .bg(t.panel)
+        .border_r_1()
+        .border_color(t.border)
         .overflow_y_scroll()
+        .child(brand)
         .child(new_run)
+        .child(search)
         .when(many, |bar| bar.child(filter_field))
         .child(section("Repositories", Some(add.into_any_element()), t))
         .children({
@@ -901,61 +820,45 @@ fn repo_menu(
     .with_priority(1)
 }
 
-pub fn status_bar(ws: &Workspace, t: &Theme) -> Div {
-    let context = ws.current().map(|run| {
-        let window = run
-            .context
-            .window
-            .map_or(String::new(), |window| format!(" / {}", tokens(window)));
-        format!("context {}{window}", tokens(run.context.used))
-    });
-    div()
-        .h(px(26.))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(sp(4.5))
-        .px(sp(3.5))
-        .chrome(Edge::Bottom, t)
-        .font_family(MONO)
-        .typeset(Type::MICRO)
-        .text_color(t.muted)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(1.5))
-                .child(live_dot(t.green, 6.))
-                .child("tau-ui"),
-        )
-        .children(context)
-        .children(match &ws.catalog.project {
-            ProjectStatus::Unknown => None,
-            ProjectStatus::Importing(name) => Some(
-                div()
-                    .text_color(t.accent)
-                    .child(format!("importing {name}…")),
-            ),
-            ProjectStatus::Updating(name) => Some(
-                div()
-                    .text_color(t.accent)
-                    .child(format!("updating {name}…")),
-            ),
-            ProjectStatus::Failed(name) => Some(
-                div()
-                    .text_color(t.red)
-                    .child(format!("{name} could not be imported")),
-            ),
-        })
-        .children(ws.catalog.update.clone().map(|text| div().child(text)))
-        .child(div().flex_1())
-        .child("Esc back")
-        .child(format!(
-            "{} · {} runs · {} repos",
-            ws.catalog.store.path,
-            ws.runs.len(),
-            ws.catalog.repos.len()
-        ))
+/// The bar under the desktop, when there is news: a repository being
+/// imported or failing to, or an update. Without any, there is no bar.
+pub fn status_bar(ws: &Workspace, t: &Theme) -> Option<Div> {
+    let busy = !matches!(ws.catalog.project, ProjectStatus::Unknown);
+    if !busy && ws.catalog.update.is_none() {
+        return None;
+    }
+    Some(
+        div()
+            .h(px(26.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(sp(4.5))
+            .px(sp(3.5))
+            .chrome(Edge::Bottom, t)
+            .font_family(MONO)
+            .typeset(Type::MICRO)
+            .text_color(t.muted)
+            .children(match &ws.catalog.project {
+                ProjectStatus::Unknown => None,
+                ProjectStatus::Importing(name) => Some(
+                    div()
+                        .text_color(t.accent)
+                        .child(format!("importing {name}…")),
+                ),
+                ProjectStatus::Updating(name) => Some(
+                    div()
+                        .text_color(t.accent)
+                        .child(format!("updating {name}…")),
+                ),
+                ProjectStatus::Failed(name) => Some(
+                    div()
+                        .text_color(t.red)
+                        .child(format!("{name} could not be imported")),
+                ),
+            })
+            .children(ws.catalog.update.clone().map(|text| div().child(text))),
+    )
 }
 
 /// The phone's header above a run: back, title and status, close,

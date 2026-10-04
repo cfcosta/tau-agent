@@ -41,6 +41,7 @@ impl Render for Workspace {
         self.width = if self.phone_preview { px(390.) } else { width };
         self.inspector_shown = !phone
             && width >= NARROW_MAX
+            && self.details_open
             && matches!(self.route, Route::Home | Route::Run(_));
         let body = if phone {
             self.phone(&t, cx)
@@ -379,6 +380,12 @@ impl Workspace {
         }
         let (color, label) = ui::status_look(&run.status, t);
         let live = run.status.is_live();
+        let repo = self.repo_of(run).to_owned();
+        // How full the context is, as a bar beside its numbers.
+        let window = run.context.window.filter(|window| *window > 0);
+        let fill = window.map_or(0., |window| {
+            (run.context.used as f32 / window as f32).clamp(0., 1.)
+        });
         // A main chat pushes to GitHub instead (ADR 0023).
         let done = self.catalog.pull_requests
             && run.status == RunStatus::Finished(StopReason::Stop)
@@ -393,34 +400,78 @@ impl Workspace {
             .px(sp(6.))
             .border_b_1()
             .border_color(t.border)
+            // Where the run is: its repository, then its title.
             .child(
                 div()
-                    .typeset(Type::LEAD)
-                    .font_weight(weight::STRONG)
-                    .child(run.title.clone()),
+                    .flex()
+                    .items_center()
+                    .gap(sp(1.5))
+                    .min_w(px(0.))
+                    .child(div().text_color(t.mark(&repo)).child(repo))
+                    .child(div().text_color(t.dim).child("/"))
+                    .child(
+                        div()
+                            .truncate()
+                            .font_weight(weight::STRONG)
+                            .child(run.title.clone()),
+                    ),
             )
-            .child(ui::pill(
-                match run.status {
-                    RunStatus::Running => {
-                        format!("{label} · turn {}", run.turn)
-                    }
-                    _ => label.to_string(),
-                },
-                color,
-                t.raised,
-            ))
-            .child(ui::mono(
-                format!("{} · turn {}", run.agent, run.turn),
-                Type::CAPTION,
-                t.dim,
-            ))
+            // Who works on it, how far, and what it cost.
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .gap(sp(1.))
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child(
+                        div()
+                            .text_color(t.roles.agent)
+                            .child(run.agent.clone()),
+                    )
+                    .child(format!("· turn {} ·", run.turn))
+                    .child(
+                        div()
+                            .text_color(t.roles.cost)
+                            .child(crate::view::usd(run.usage.cost)),
+                    )
+                    .when(!matches!(run.status, RunStatus::Running), |row| {
+                        row.child("·")
+                            .child(div().text_color(color).child(label))
+                    }),
+            )
             .child(div().flex_1())
+            .when_some(window, |header, window| {
+                header.child(
+                    div()
+                        .flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap(sp(2.))
+                        .typeset(Type::CAPTION)
+                        .text_color(t.dim)
+                        .child(format!(
+                            "{} of {}",
+                            crate::view::tokens(run.context.used),
+                            crate::view::tokens(window)
+                        ))
+                        .child(
+                            div()
+                                .w(px(80.))
+                                .h(px(4.))
+                                .rounded(radius::HAIRLINE)
+                                .bg(t.raised)
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .w(gpui::relative(fill.max(0.02)))
+                                        .rounded(radius::HAIRLINE)
+                                        .bg(t.roles.meter),
+                                ),
+                        ),
+                )
+            })
             .children(ui::push::header(self, run, t, cx))
-            .child(ui::mono(
-                crate::view::usd(run.usage.cost),
-                Type::CAPTION,
-                t.muted,
-            ))
             .children(
                 run.children
                     .iter()
@@ -474,16 +525,37 @@ impl Workspace {
                     div()
                         .id("fork")
                         .child(
-                            ui::button("Fork here", ButtonKind::Secondary, t)
-                                .child(ui::icon(
+                            ui::button("Fork", ButtonKind::Secondary, t).child(
+                                ui::icon(
                                     Icon::Fork,
                                     IconSize::COMPACT,
                                     t.text_soft,
-                                )),
+                                ),
+                            ),
                         )
                         .on_click(cx.listener(|ws, _, window, cx| {
                             ws.start_fork(window, cx)
                         })),
+                )
+            })
+            // The run's details beside the transcript: its plugins,
+            // budget and events.
+            .when(self.width >= NARROW_MAX, |header| {
+                header.child(
+                    div()
+                        .id("details")
+                        .child(ui::button(
+                            if self.details_open {
+                                "Hide details"
+                            } else {
+                                "Details"
+                            },
+                            ButtonKind::Secondary,
+                            t,
+                        ))
+                        .on_click(
+                            cx.listener(|ws, _, _, cx| ws.toggle_details(cx)),
+                        ),
                 )
             })
             .when(live, |header| {
@@ -652,12 +724,12 @@ impl Workspace {
         if self.route.is_focused() {
             return self.focused(false, t, cx);
         }
-        let on_run = matches!(self.route, Route::Home | Route::Run(_));
+        let details = self.details_open
+            && matches!(self.route, Route::Home | Route::Run(_));
         div()
             .size_full()
             .flex()
             .flex_col()
-            .child(chrome::title_bar(self, t, cx))
             .child(
                 div()
                     .flex_1()
@@ -676,7 +748,7 @@ impl Workspace {
                             .flex_col()
                             .child(self.screen(false, t, cx)),
                     )
-                    .when(wide && on_run, |row| {
+                    .when(wide && details, |row| {
                         row.child(
                             div()
                                 .w(px(328.))
@@ -687,7 +759,7 @@ impl Workspace {
                         )
                     }),
             )
-            .child(chrome::status_bar(self, t))
+            .children(chrome::status_bar(self, t))
             .into_any_element()
     }
 

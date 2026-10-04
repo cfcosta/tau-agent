@@ -426,6 +426,9 @@ pub struct Workspace {
     /// Whether the last layout showed the inspector, for placing the
     /// model picker beside it.
     inspector_shown: bool,
+    /// Whether the person opened the run's details: the inspector,
+    /// beside the transcript. Closed, the transcript has the width.
+    pub(crate) details_open: bool,
     /// Plugin notes opened to show their detail, as `(run, item index)`.
     /// Notes start closed.
     pub(crate) open_notes: HashSet<(RunId, usize)>,
@@ -688,6 +691,7 @@ impl Workspace {
             model_search,
             run_models: HashMap::new(),
             inspector_shown: false,
+            details_open: false,
             open_notes: HashSet::new(),
             open_cards: HashSet::new(),
             kept_branch: None,
@@ -1438,6 +1442,12 @@ impl Workspace {
 
     pub(crate) fn shows_inspector(&self) -> bool {
         self.inspector_shown
+    }
+
+    /// Opens or closes the run's details beside the transcript.
+    pub(crate) fn toggle_details(&mut self, cx: &mut Context<Self>) {
+        self.details_open = !self.details_open;
+        cx.notify();
     }
 
     /// Whether `run` can be forked at all. Runs nest one level (ADR
