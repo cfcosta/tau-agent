@@ -274,6 +274,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
     }),
     ("skill", |ws, _, cx| skill(ws, true, cx)),
     ("skill-missing", |ws, _, cx| skill(ws, false, cx)),
+    ("codemode", |ws, _, cx| codemode(ws, cx)),
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),
     ("ask-note", |ws, _, cx| ask(ws, "ask-note", cx)),
     ("ask-review", |ws, _, cx| ask(ws, "ask-review", cx)),
@@ -770,6 +771,103 @@ fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
     );
     if found {
         workspace.toggle_card(&run, &call, cx);
+    }
+}
+
+/// tau-agent's main chat with a `codemode` script that read a project's
+/// files: its card open, its first output item too.
+fn codemode(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    let run = run_id();
+    let call = "call_codemode".to_owned();
+    let reads = [
+        (
+            "README.md",
+            "# Ascend\n\nThe public product home page is at `/`; \
+                       `/app` opens the dashboard.\n\n## Development\n\n\
+                       Run `bun run dev`.\n",
+        ),
+        (
+            "package.json",
+            "{\n  \"name\": \"ascend\",\n  \"private\": true\n}\n",
+        ),
+    ];
+    let code = "text(tools.read({path='README.md'})); \
+                text(tools.read({path='package.json'})); \
+                text(tools.ls({path='docs'})); text(tools.vcs_status({}))";
+    workspace.navigate(Route::Run(run.clone()), cx);
+    workspace.apply(
+        HostUpdate::Event(RunEvent::ToolStart {
+            run: run.clone(),
+            call_id: call.clone(),
+            tool: tau_codemode::description::NAME.into(),
+            args: serde_json::json!({ "code": code }),
+            parent: None,
+        }),
+        cx,
+    );
+    let mut output: Vec<serde_json::Value> = reads
+        .iter()
+        .map(|(path, text)| {
+            serde_json::json!({
+                "kind": "json",
+                "value": {
+                    "complete": true, "kind": "text", "path": path,
+                    "returned_lines": text.lines().count(), "text": text,
+                },
+            })
+        })
+        .collect();
+    output.push(serde_json::json!({
+        "kind": "json",
+        "value": { "entries": [
+            { "kind": "file", "name": "authentication.md" },
+            { "kind": "file", "name": "deployment.md" },
+            { "kind": "file", "name": "metrics.md" },
+        ], "path": "docs" },
+    }));
+    output.push(serde_json::json!({
+        "kind": "json",
+        "value": { "change": "qystttnm", "clean": true, "parent": "main" },
+    }));
+    let row = |id: &str, name: &str, args: &str| {
+        serde_json::json!({
+            "id": id, "name": name, "args": args, "status": "ok", "ms": 10,
+            "error": null, "cost": null, "usage_uncertain": false,
+        })
+    };
+    let mut result = tau_agent::tool::ToolOutput::text(
+        "Script completed\nWall time 0.0 seconds\nOutput:\n",
+    );
+    result.details = Some(serde_json::json!({
+        "calls": [
+            row("call_codemode/1", "read", r#"{"path":"README.md"}"#),
+            row("call_codemode/2", "read", r#"{"path":"package.json"}"#),
+            row("call_codemode/3", "ls", r#"{"path":"docs"}"#),
+            row("call_codemode/4", "vcs_status", "{}"),
+        ],
+        "complete": true,
+        "output": output,
+        "store": null,
+        "usage": tau_ai::message::Usage::default(),
+        "wall_ms": 35,
+    }));
+    workspace.apply(
+        HostUpdate::Event(RunEvent::ToolEnd {
+            run: run.clone(),
+            call_id: call.clone(),
+            output: std::sync::Arc::new(result),
+            is_error: false,
+            parent: None,
+        }),
+        cx,
+    );
+    workspace.toggle_card(&run, &call, cx);
+    if let Some(ui) = workspace
+        .plugin_ui::<tau_codemode::ui::InspectorUi>(tau_codemode::PLUGIN)
+    {
+        ui.update(cx, |ui, _| {
+            ui.toggle(tau_codemode::outline::key(&call, 0));
+        });
     }
 }
 
