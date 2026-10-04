@@ -199,6 +199,25 @@ impl Attention {
     }
 
     /// The line under the run's title, if it has one.
+    /// One word for it, as a list shows it: `running`, `to land`. Empty
+    /// for a run that waits on nothing.
+    pub fn word(&self) -> &'static str {
+        match self {
+            Self::Working { .. } => "running",
+            Self::Asks { .. } => "asks you",
+            Self::ReadyToLand { .. } => "to land",
+            Self::WouldConflict { .. } | Self::ConflictsOnMain { .. } => {
+                "conflicts"
+            }
+            Self::Queued(_) => "queued",
+            Self::Interrupted => "interrupted",
+            Self::Failed => "failed",
+            Self::Landed => "landed",
+            Self::Dropped => "dropped",
+            Self::Idle => "",
+        }
+    }
+
     pub fn line(&self) -> Option<String> {
         Some(match self {
             Self::Working { turn } => format!("Working · turn {turn}"),

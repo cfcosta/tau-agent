@@ -429,6 +429,10 @@ pub struct Workspace {
     /// Whether the person opened the run's details: the inspector,
     /// beside the transcript. Closed, the transcript has the width.
     pub(crate) details_open: bool,
+    /// Which of a repository's runs its page lists.
+    pub(crate) runs_filter: crate::ui::screens::repo::RunsFilter,
+    /// The repository History shows the runs of; none shows all.
+    pub(crate) history_repo: Option<String>,
     /// Plugin notes opened to show their detail, as `(run, item index)`.
     /// Notes start closed.
     pub(crate) open_notes: HashSet<(RunId, usize)>,
@@ -692,6 +696,8 @@ impl Workspace {
             run_models: HashMap::new(),
             inspector_shown: false,
             details_open: false,
+            runs_filter: Default::default(),
+            history_repo: None,
             open_notes: HashSet::new(),
             open_cards: HashSet::new(),
             kept_branch: None,

@@ -564,25 +564,25 @@ fn state_word(
     unpushed: bool,
     t: &Theme,
 ) -> (String, gpui::Hsla) {
-    let word = |text: &str, ink| (text.to_owned(), ink);
+    let word = |ink| (attention.word().to_owned(), ink);
     match attention {
-        Attention::Working { .. } => word("running", t.roles.live),
-        Attention::Asks { .. } => word("asks you", t.roles.waiting),
-        Attention::ReadyToLand { .. } => word("to land", t.roles.waiting),
-        Attention::WouldConflict { .. } | Attention::ConflictsOnMain { .. } => {
-            word("conflicts", t.red)
+        Attention::Working { .. } => word(t.roles.live),
+        Attention::Asks { .. } | Attention::ReadyToLand { .. } => {
+            word(t.roles.waiting)
         }
-        Attention::Queued(_) => word("queued", t.dim),
-        Attention::Interrupted => word("interrupted", t.dim),
-        Attention::Failed => word("failed", t.red),
-        Attention::Landed => word("landed", t.dim),
-        Attention::Dropped => word("dropped", t.dim),
+        Attention::WouldConflict { .. }
+        | Attention::ConflictsOnMain { .. }
+        | Attention::Failed => word(t.red),
+        Attention::Queued(_)
+        | Attention::Interrupted
+        | Attention::Landed
+        | Attention::Dropped => word(t.dim),
         Attention::Idle => match note
             .and_then(|note| Some((note.count.clone()?, t.tone(note.tone))))
         {
             Some(said) => said,
-            None if unpushed => word("to push", t.roles.waiting),
-            None => word("", t.dim),
+            None if unpushed => ("to push".to_owned(), t.roles.waiting),
+            None => (String::new(), t.dim),
         },
     }
 }
