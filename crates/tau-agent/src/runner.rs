@@ -324,6 +324,11 @@ impl Runner {
             // One steering message per drain, after the tool batch.
             let steered = self.steering.try_recv().ok();
             if let Some(text) = &steered {
+                self.emit(RunEvent::Steered {
+                    run: self.run.clone(),
+                    text: text.clone(),
+                })
+                .await;
                 let message = self.user(text.clone());
                 self.persist(std::slice::from_ref(&message), &Usage::default())
                     .await?;

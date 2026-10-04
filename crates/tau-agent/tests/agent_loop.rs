@@ -687,16 +687,18 @@ fn control_steers_and_cancels_while_events_are_read() {
         let control = run.control();
         assert_eq!(control.id(), run.id());
         let reader = tokio::spawn(async move {
-            let mut ends = Vec::new();
+            let (mut ends, mut steered) = (Vec::new(), Vec::new());
             {
                 let mut events = run.events();
                 while let Some(event) = events.next().await {
-                    if let RunEvent::RunEnd { stop, .. } = event {
-                        ends.push(stop);
+                    match event {
+                        RunEvent::RunEnd { stop, .. } => ends.push(stop),
+                        RunEvent::Steered { text, .. } => steered.push(text),
+                        _ => {}
                     }
                 }
             }
-            (ends, run.outcome().await)
+            (ends, steered, run.outcome().await)
         });
         tokio::time::sleep(Duration::from_millis(10)).await;
         control.steer("also check the tests");
@@ -706,8 +708,10 @@ fn control_steers_and_cancels_while_events_are_read() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         control.cancel();
-        let (ends, outcome) = reader.await.unwrap();
+        let (ends, steered, outcome) = reader.await.unwrap();
         assert_eq!(ends, [StopReason::Cancelled]);
+        // Interfaces hear when the run read it, to show it.
+        assert_eq!(steered, ["also check the tests"]);
         assert_eq!(outcome.unwrap().stop, StopReason::Cancelled);
         let second = &llm.requests()[1];
         assert_eq!(second.transcript.len(), 4, "the steered message");

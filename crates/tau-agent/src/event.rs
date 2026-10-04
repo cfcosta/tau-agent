@@ -120,6 +120,13 @@ pub enum RunEvent {
         delay: Duration,
         error: String,
     },
+    /// The run read a steering message (`Run::steer`): it goes to the
+    /// model as the user's, and the next turn starts. Comes after the
+    /// turn's `TurnEnd`.
+    Steered {
+        run: RunId,
+        text: String,
+    },
     /// A plugin kept the run from stopping: `message` goes to the model
     /// as the user's, and another turn starts. Comes after the turn's
     /// `TurnEnd`.
@@ -175,6 +182,7 @@ impl RunEvent {
             | Self::TurnEnd { run, .. }
             | Self::ContextRewritten { run, .. }
             | Self::Retry { run, .. }
+            | Self::Steered { run, .. }
             | Self::Continued { run, .. }
             | Self::PluginReport { run, .. }
             | Self::PluginCharged { run, .. }
