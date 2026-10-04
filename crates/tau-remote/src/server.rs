@@ -37,7 +37,7 @@ use crate::{
     feed::{Feed, Joined},
     pairing::{Address, Fingerprint, PairingCode},
     tls::{Identity, TlsError},
-    wire::{Answer, Hello, Refusal, Up, VERSION},
+    wire::{Answer, Down, Hello, Refusal, Up, VERSION},
 };
 /// How long a phone has to finish TLS, the WebSocket and its hello.
 const HANDSHAKE: Duration = Duration::from_secs(10);
@@ -236,6 +236,7 @@ enum Command {
     },
     Up {
         conn: ConnId,
+        id: u64,
         body: Value,
     },
     Closed(ConnId),
@@ -282,7 +283,7 @@ impl State {
                 Command::Hello { conn, hello, out } => {
                     self.hello(conn, hello, out)
                 }
-                Command::Up { conn, body } => self.up(conn, body),
+                Command::Up { conn, id, body } => self.up(conn, id, body),
                 Command::Closed(conn) => {
                     self.conns.remove(&conn);
                     self.feed.leave(conn);
@@ -361,20 +362,23 @@ impl State {
         }
     }
 
-    fn up(&self, conn: ConnId, body: Value) {
-        let Some(id) = self.conns.get(&conn).map(|conn| &conn.device) else {
+    /// A phone's request: taken once, however often it comes, and
+    /// answered each time, so the phone stops sending it.
+    fn up(&self, conn: ConnId, up: u64, body: Value) {
+        let Some(Conn { device: id, out }) = self.conns.get(&conn) else {
             return;
         };
-        let device = self
-            .devices
-            .lock()
-            .expect("not poisoned")
-            .list()
-            .into_iter()
-            .find(|device| &device.id == id);
-        if let Some(device) = device {
+        let mut devices = self.devices.lock().expect("not poisoned");
+        let Ok(taken) = devices.take(id, up) else {
+            // Not saved: not taken, so the phone sends it again.
+            return;
+        };
+        let device = devices.list().into_iter().find(|device| &device.id == id);
+        drop(devices);
+        if let (true, Some(device)) = (taken, device) {
             let _ = self.events.send(ServerEvent::Up { conn, device, body });
         }
+        let _ = out.send(Out::Frame(to_frame(&Down::Ack { up })));
     }
 }
 
@@ -455,8 +459,8 @@ async fn serve(
             frame = stream.next() => match frame {
                 Some(Ok(Message::Text(text))) => {
                     heard = Instant::now();
-                    if let Ok(Up::Up { body }) = serde_json::from_str(&text) {
-                        let _ = commands.send(Command::Up { conn, body });
+                    if let Ok(Up::Up { id, body }) = serde_json::from_str(&text) {
+                        let _ = commands.send(Command::Up { conn, id, body });
                     }
                 }
                 Some(Ok(Message::Close(_)) | Err(_)) | None => break,

@@ -61,6 +61,7 @@ impl Machine {
                 phone.seen = serde_json::from_value(log).unwrap();
                 phone.last = Some(seq);
             }
+            Down::Ack { .. } => unreachable!("the feed answers no request"),
         }
     }
 }

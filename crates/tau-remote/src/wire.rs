@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The protocol's version. A host refuses a phone that speaks another.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// A phone's first frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -89,21 +89,32 @@ pub enum Down {
         seq: u64,
         body: Value,
     },
+    /// The host took every request of this phone's up to `up`
+    /// ([`crate::outbox`]). Not numbered: it is for this phone alone.
+    Ack {
+        up: u64,
+    },
 }
 
 impl Down {
-    pub fn seq(&self) -> u64 {
+    /// The number of the last message this brings the phone to; none
+    /// for an answer to the phone's own request.
+    pub fn seq(&self) -> Option<u64> {
         match self {
-            Self::Snapshot { seq, .. } | Self::Message { seq, .. } => *seq,
+            Self::Snapshot { seq, .. } | Self::Message { seq, .. } => {
+                Some(*seq)
+            }
+            Self::Ack { .. } => None,
         }
     }
 }
 
-/// Phone to host.
+/// Phone to host: a request, numbered by the phone's
+/// [`Outbox`](crate::outbox::Outbox).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Up {
-    Up { body: Value },
+    Up { id: u64, body: Value },
 }
 
 #[cfg(test)]
@@ -121,7 +132,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_value(&hello).unwrap(),
-            json!({"type": "resume", "version": 1, "token": "t", "last_seq": 3})
+            json!({"type": "resume", "version": 2, "token": "t", "last_seq": 3})
         );
         let refused = Answer::Refused {
             reason: Refusal::Version { speaks: 1 },
@@ -132,6 +143,16 @@ mod tests {
             seq: 9,
             body: json!({"a": 1}),
         };
-        assert_eq!(down.seq(), 9);
+        assert_eq!(down.seq(), Some(9));
+        // An answer to the phone's request has no number in the feed.
+        assert_eq!(Down::Ack { up: 4 }.seq(), None);
+        let up = Up::Up {
+            id: 4,
+            body: json!("go"),
+        };
+        assert_eq!(
+            serde_json::to_value(&up).unwrap(),
+            json!({"type": "up", "id": 4, "body": "go"})
+        );
     }
 }

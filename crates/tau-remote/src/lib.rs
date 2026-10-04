@@ -9,6 +9,8 @@
 //! - [`wire`]: the frames on the socket, with the app's JSON inside;
 //! - [`feed`]: the numbered messages, kept so a phone that comes back
 //!   gets what it missed, with no sockets in it;
+//! - [`outbox`]: the phone's requests, sent again until the computer
+//!   took them, and taken once;
 //! - [`server`]: the computer's side: pairing, tokens, and messages
 //!   numbered so a phone that comes back gets what it missed;
 //! - [`client`]: the phone's side.
@@ -16,6 +18,7 @@
 pub mod client;
 pub mod devices;
 pub mod feed;
+pub mod outbox;
 pub mod pairing;
 pub mod server;
 pub mod tls;
@@ -31,7 +34,7 @@ pub use pairing::{
     ParseError,
 };
 pub use server::{ConnId, Server, ServerConfig, ServerEvent, ServerHandle};
-pub use wire::{Down, Refusal};
+pub use wire::{Down, Refusal, Up};
 
 /// Fills `bytes` from the system's random source.
 fn random(bytes: &mut [u8]) {

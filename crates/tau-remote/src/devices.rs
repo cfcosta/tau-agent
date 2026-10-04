@@ -37,6 +37,9 @@ struct Stored {
     device: Device,
     /// Hexadecimal SHA-256 of the device token.
     token_sha256: String,
+    /// The number of the last request taken from it (`crate::outbox`).
+    #[serde(default)]
+    last_up: Option<u64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -121,6 +124,7 @@ impl Devices {
         self.list.push(Stored {
             device: device.clone(),
             token_sha256: digest(&token),
+            last_up: None,
         });
         self.save()?;
         Ok(Ok((device, token)))
@@ -155,6 +159,26 @@ impl Devices {
             self.save()?;
         }
         Ok(removed)
+    }
+
+    /// Whether request `up` from phone `id` is new, and so taken now: one
+    /// taken already is not taken again.
+    pub(crate) fn take(
+        &mut self,
+        id: &str,
+        up: u64,
+    ) -> Result<bool, DevicesError> {
+        let Some(stored) =
+            self.list.iter_mut().find(|stored| stored.device.id == id)
+        else {
+            return Ok(false);
+        };
+        if !crate::outbox::is_new(stored.last_up, up) {
+            return Ok(false);
+        }
+        stored.last_up = Some(up);
+        self.save()?;
+        Ok(true)
     }
 
     pub(crate) fn rename(
@@ -218,5 +242,25 @@ mod tests {
         assert_eq!(read.list()[0].name, "Pixel 9");
         assert!(read.revoke(&device.id).unwrap());
         assert_eq!(read.resume(&token).unwrap(), None);
+    }
+
+    /// A request taken stays taken across a restart of the host: sent
+    /// again, it is not taken twice.
+    #[test]
+    fn a_request_is_taken_once_across_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut devices = Devices::load(dir.path()).unwrap();
+        let secret = devices.open_secret();
+        let (device, _) =
+            devices.pair(secret.as_str(), "Pixel").unwrap().unwrap();
+        assert!(devices.take(&device.id, 7).unwrap());
+        assert!(!devices.take(&device.id, 7).unwrap());
+        let mut read = Devices::load(dir.path()).unwrap();
+        assert!(
+            !read.take(&device.id, 7).unwrap(),
+            "taken before the restart"
+        );
+        assert!(!read.take(&device.id, 6).unwrap());
+        assert!(read.take(&device.id, 8).unwrap());
     }
 }

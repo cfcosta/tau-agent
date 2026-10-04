@@ -15,6 +15,7 @@ use tau_remote::{
     ServerEvent,
     ServerHandle,
     client,
+    outbox::Outbox,
     server::REPLAY,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -92,7 +93,7 @@ async fn recv(connection: &mut client::Connection) -> Down {
 fn body(down: Down) -> Value {
     match down {
         Down::Message { body, .. } => body,
-        Down::Snapshot { .. } => panic!("a snapshot, not a message"),
+        other => panic!("{other:?}, not a message"),
     }
 }
 
@@ -109,14 +110,45 @@ async fn a_phone_pairs_and_messages_go_both_ways() {
     assert_eq!(bodies, [json!("everything")]);
     host.handle.broadcast(json!({"run": 1}));
     let message = recv(&mut phone).await;
-    assert_eq!(message.seq(), seq + 1);
+    assert_eq!(message.seq(), Some(seq + 1));
     assert_eq!(body(message), json!({"run": 1}));
-    phone.sender().send(json!({"steer": "go"})).unwrap();
+    let mut outbox = Outbox::new(0);
+    phone
+        .sender()
+        .send(outbox.push(json!({"steer": "go"})))
+        .unwrap();
     let ServerEvent::Up { device, body, .. } = host.event().await else {
         panic!("nothing came up");
     };
     assert_eq!(device.id, credentials.device);
     assert_eq!(body, json!({"steer": "go"}));
+    assert_eq!(recv(&mut phone).await, Down::Ack { up: 1 });
+}
+
+/// A request the phone sends again, its answer lost with a connection,
+/// is answered again and taken once; the
+/// next is taken.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_sent_again_is_taken_once() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    let last = recv(&mut phone).await.seq().unwrap();
+    let mut outbox = Outbox::new(0);
+    let first = outbox.push(json!("first"));
+    phone.sender().send(first.clone()).unwrap();
+    assert!(matches!(host.event().await, ServerEvent::Up { .. }));
+    assert_eq!(recv(&mut phone).await, Down::Ack { up: 1 });
+    // Its answer was lost: the phone sends it again on a new connection.
+    drop(phone);
+    let mut phone = client::resume(&credentials, Some(last)).await.unwrap();
+    phone.sender().send(first).unwrap();
+    assert_eq!(recv(&mut phone).await, Down::Ack { up: 1 });
+    phone.sender().send(outbox.push(json!("second"))).unwrap();
+    let ServerEvent::Up { body, .. } = host.event().await else {
+        panic!("nothing came up");
+    };
+    assert_eq!(body, json!("second"), "the first was not taken again");
+    assert_eq!(recv(&mut phone).await, Down::Ack { up: 2 });
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -144,7 +176,7 @@ async fn a_wrong_or_used_secret_is_refused() {
 async fn a_phone_that_comes_back_gets_what_it_missed() {
     let mut host = host().await;
     let (mut phone, credentials) = host.pair().await;
-    let last = recv(&mut phone).await.seq();
+    let last = recv(&mut phone).await.seq().unwrap();
     drop(phone);
     host.handle.broadcast(json!(1));
     host.handle.broadcast(json!(2));
@@ -152,7 +184,7 @@ async fn a_phone_that_comes_back_gets_what_it_missed() {
     assert!(phone.resumed());
     assert_eq!(body(recv(&mut phone).await), json!(1));
     let second = recv(&mut phone).await;
-    assert_eq!(second.seq(), last + 2);
+    assert_eq!(second.seq(), Some(last + 2));
     assert_eq!(body(second), json!(2));
     // New messages follow.
     host.handle.broadcast(json!(3));
@@ -163,7 +195,7 @@ async fn a_phone_that_comes_back_gets_what_it_missed() {
 async fn a_phone_away_too_long_gets_a_snapshot() {
     let mut host = host().await;
     let (mut phone, credentials) = host.pair().await;
-    let last = recv(&mut phone).await.seq();
+    let last = recv(&mut phone).await.seq().unwrap();
     drop(phone);
     for n in 0..=REPLAY {
         host.handle.broadcast(json!(n));

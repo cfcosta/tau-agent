@@ -9,7 +9,6 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::{
     net::TcpStream,
     sync::mpsc::{self, UnboundedSender},
@@ -238,11 +237,10 @@ async fn open(
 /// Sends what the app gives it, until the app or the socket closes.
 async fn write(
     mut sink: SplitSink<Socket, Message>,
-    mut outgoing: mpsc::UnboundedReceiver<Value>,
+    mut outgoing: mpsc::UnboundedReceiver<Up>,
 ) {
-    while let Some(body) = outgoing.recv().await {
-        let frame = serde_json::to_string(&Up::Up { body })
-            .expect("frames are plain JSON");
+    while let Some(up) = outgoing.recv().await {
+        let frame = serde_json::to_string(&up).expect("frames are plain JSON");
         if sink.send(Message::text(frame)).await.is_err() {
             return;
         }
@@ -306,12 +304,13 @@ impl Connection {
 /// Sends to the computer; clones send on the same connection.
 #[derive(Clone)]
 pub struct Sender {
-    sender: UnboundedSender<Value>,
+    sender: UnboundedSender<Up>,
 }
 
 impl Sender {
-    pub fn send(&self, body: Value) -> Result<(), ClientError> {
-        if self.sender.send(body).is_err() {
+    /// Sends a request from the phone's [`Outbox`](crate::outbox::Outbox).
+    pub fn send(&self, up: Up) -> Result<(), ClientError> {
+        if self.sender.send(up).is_err() {
             return Err(ClientError::Closed);
         }
         Ok(())
