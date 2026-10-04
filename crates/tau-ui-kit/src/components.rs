@@ -16,8 +16,6 @@ use gpui::{
     Stateful,
     Svg,
     div,
-    linear_color_stop,
-    linear_gradient,
     prelude::*,
     px,
     relative,
@@ -52,133 +50,79 @@ pub fn shade(x: f32, y: f32, blur: f32, color: Hsla) -> BoxShadow {
     BoxShadow::new(px(x), px(y), color).blur_radius(px(blur))
 }
 
-/// Top to bottom, from `top` to `bottom`.
-fn fall(top: Hsla, bottom: Hsla) -> gpui::Background {
-    linear_gradient(
-        180.,
-        linear_color_stop(top, 0.),
-        linear_color_stop(bottom, 1.),
-    )
-}
-
-/// The milled look (see [`crate::theme::Depth`]) for any element: how
-/// it rises out of the ground or sinks into it.
+/// How surfaces are told apart, for any element: flat fills and thin
+/// borders, as the quiet look draws them. Only what floats over the
+/// rest (menus, sheets, popovers) casts a shadow.
 pub trait Material: Styled + Sized {
-    /// A raised panel: cards, menus, notes. Lit along its top edge,
-    /// shaded along its bottom, and casting a soft shadow.
+    /// A panel: cards, menus, notes. A fill a step off the ground,
+    /// edged with a border.
     fn raised(self, t: &Theme) -> Self {
-        let d = &t.depth;
-        self.bg(fall(d.panel_top, t.card)).shadow(vec![
-            shade(0., 1., 0., d.highlight).inset(),
-            shade(0., -1., 0., d.shade).inset(),
-            shade(0., 2., 4., d.drop),
-            shade(0., 10., 24., d.drop.opacity(0.6)),
-        ])
+        self.bg(t.card).border_1().border_color(t.border)
     }
 
-    /// A well sunk into its surface: fields, meters, the terminal.
+    /// A field: text fields, meters, the terminal. The sidebar's fill,
+    /// edged a little stronger than a panel.
     fn well(self, t: &Theme) -> Self {
-        let d = &t.depth;
-        self.bg(d.well).shadow(vec![
-            shade(0., 2., 6., d.inner).inset(),
-            BoxShadow::new(px(0.), px(0.), d.shade)
-                .spread_radius(px(1.))
-                .inset(),
-            shade(0., 1., 0., d.highlight.opacity(0.8)),
-        ])
+        self.bg(t.panel).border_1().border_color(t.border_strong)
     }
 
-    /// A key: buttons, chips, the user's bubble. Rounded over from a
-    /// lit top to a darker bottom, on a small shadow.
+    /// A key: secondary buttons and chips. An outline with no fill.
     fn key(self, t: &Theme) -> Self {
-        let d = &t.depth;
-        self.bg(fall(d.key_top, d.key_bottom))
-            .border_1()
-            .border_color(d.key_border)
-            .shadow(key_shadows(t))
+        self.border_1().border_color(t.border_strong)
     }
 
-    /// The accent key: the one thing to do. Its light spills around it.
+    /// The primary key: the one thing to do, filled.
     fn accent_key(self, t: &Theme) -> Self {
-        let d = &t.depth;
-        self.bg(fall(d.accent_top, d.accent_bottom)).shadow(vec![
-            shade(0., 1., 0., gpui::white().opacity(0.45)).inset(),
-            shade(0., -2., 0., d.accent_edge).inset(),
-            shade(0., 4., 12., d.accent_glow),
-        ])
+        self.bg(t.roles.primary)
     }
 
-    /// A danger key: stopping or throwing away.
+    /// A danger key: stopping or throwing away, outlined in red.
     fn danger_key(self, t: &Theme) -> Self {
-        let d = &t.depth;
-        self.bg(fall(d.danger_top, d.danger_bottom))
-            .border_1()
-            .border_color(t.red_border)
-            .shadow(key_shadows(t))
+        self.border_1().border_color(t.red_border)
     }
 
-    /// Pressed in: the selected row of a list.
+    /// The selected row of a list.
     fn pressed(self, t: &Theme) -> Self {
-        let d = &t.depth;
-        self.bg(t.selected).shadow(vec![
-            shade(0., 2., 5., d.inner.opacity(0.85)).inset(),
-            shade(0., 1., 0., d.highlight.opacity(0.8)),
-        ])
+        self.bg(t.raised)
     }
 
-    /// Chrome on one `edge` of the window: lit from above, with a seam
-    /// and a shadow toward what it frames.
+    /// Chrome on one `edge` of the window: the sidebar's fill, and a
+    /// border toward what it frames.
     fn chrome(self, edge: Edge, t: &Theme) -> Self {
-        let d = &t.depth;
-        let (x, y) = match edge {
-            Edge::Top => (0., 1.),
-            Edge::Bottom => (0., -1.),
-            Edge::Left => (1., 0.),
-            Edge::Right => (-1., 0.),
-        };
-        self.bg(fall(d.chrome_top, t.panel)).shadow(vec![
-            shade(0., 1., 0., d.highlight.opacity(0.7)).inset(),
-            shade(x, y, 0., d.seam),
-            shade(x * 6., y * 4., 20., d.drop.opacity(0.75)),
-        ])
+        let framed = self.bg(t.panel).border_color(t.border);
+        match edge {
+            Edge::Top => framed.border_b_1(),
+            Edge::Bottom => framed.border_t_1(),
+            Edge::Left => framed.border_r_1(),
+            Edge::Right => framed.border_l_1(),
+        }
     }
 
-    /// A tinted band, `fill` at its top fading down, lit along its top
-    /// edge: a banner.
-    fn lit(self, fill: Hsla, t: &Theme) -> Self {
-        let d = &t.depth;
-        self.bg(fall(fill, fill.opacity(0.55))).shadow(vec![
-            shade(0., 1., 0., d.highlight.opacity(0.7)).inset(),
-            shade(0., 4., 12., d.drop.opacity(0.6)),
-        ])
+    /// A band tinted with `fill`: a banner.
+    fn lit(self, fill: Hsla, _t: &Theme) -> Self {
+        self.bg(fill.opacity(0.6))
     }
 
-    /// A key in any colors: falling from `top` to `bottom`, lit along
-    /// its top edge, on a small shadow. For looks with their own palette,
-    /// such as onboarding's.
-    fn bevel(self, top: Hsla, bottom: Hsla, t: &Theme) -> Self {
-        self.bg(fall(top, bottom)).shadow(key_shadows(t))
+    /// A key in its own colors, for looks with their own palette, such
+    /// as onboarding's: filled with `top`.
+    fn bevel(self, top: Hsla, _bottom: Hsla, _t: &Theme) -> Self {
+        self.bg(top)
     }
 
-    /// A well with its own `floor`.
+    /// A field with its own `floor`.
     fn sunk(self, floor: Hsla, t: &Theme) -> Self {
         self.well(t).bg(floor)
     }
 
-    /// Light and shadow only, keeping the fill: a see-through card
-    /// rises off what shows through it.
+    /// Floating over the rest, keeping its fill: one soft shadow.
     fn lifted(self, t: &Theme) -> Self {
-        let d = &t.depth;
-        self.shadow(vec![
-            shade(0., 1., 0., d.highlight).inset(),
-            shade(0., 2., 4., d.drop),
-            shade(0., 16., 40., d.drop.opacity(0.8)),
-        ])
+        self.shadow(vec![shade(0., 12., 32., t.depth.drop)])
     }
 
-    /// A light around a small shape in `color`: a live dot.
-    fn glow(self, color: Hsla) -> Self {
-        self.shadow(vec![shade(0., 0., 6., color)])
+    /// A small shape in `color`, such as a live dot. Flat: the color
+    /// alone says it is live.
+    fn glow(self, _color: Hsla) -> Self {
+        self
     }
 }
 
@@ -187,16 +131,6 @@ impl<E: Styled> Material for E {}
 /// The inner shadow of a meter's `track`.
 fn track_shade(track: Hsla) -> Hsla {
     gpui::black().opacity(0.55 * track.a.max(0.6))
-}
-
-/// The shadows under a key.
-fn key_shadows(t: &Theme) -> Vec<BoxShadow> {
-    let d = &t.depth;
-    vec![
-        shade(0., 1., 0., d.highlight.opacity(1.5)).inset(),
-        shade(0., 1., 2., d.inner.opacity(0.85)),
-        shade(0., 3., 8., d.drop.opacity(0.75)),
-    ]
 }
 
 // Text.
@@ -338,7 +272,7 @@ fn base_button(
     t: &Theme,
 ) -> Div {
     let color = match kind {
-        ButtonKind::Primary => t.bg,
+        ButtonKind::Primary => t.roles.on_primary,
         ButtonKind::Secondary => t.text_soft,
         ButtonKind::Danger => t.red,
     };
@@ -360,12 +294,8 @@ fn base_button(
         .when(!big, |button| {
             button
                 .h(control::SMALL)
-                .px(sp(if kind == ButtonKind::Primary {
-                    3.5
-                } else {
-                    2.5
-                }))
-                .rounded(radius::CONTROL)
+                .px(sp(3.))
+                .rounded(radius::BOX)
                 .typeset(Type::CAPTION)
         })
         .children(glyph.map(|glyph| {
@@ -383,8 +313,8 @@ fn base_button(
     match kind {
         ButtonKind::Primary => button
             .accent_key(t)
-            .font_weight(weight::STRONG)
-            .hover(|style| style.opacity(0.92)),
+            .font_weight(weight::EMPHASIS)
+            .hover(|style| style.opacity(0.9)),
         ButtonKind::Secondary => button
             .key(t)
             .hover(|style| style.border_color(t.border_strong)),
@@ -1163,27 +1093,23 @@ pub fn repo_mark(name: &str, size: f32, t: &Theme) -> Div {
         .chars()
         .find(|c| c.is_alphanumeric())
         .map_or("?".into(), |c| c.to_lowercase().to_string());
-    mono(
-        letter,
-        if size > 22. { Type::SMALL } else { Type::MICRO },
-        t.bg,
-    )
-    .size(px(size))
-    .flex_shrink_0()
-    .flex()
-    .items_center()
-    .justify_center()
-    .rounded(if size > 22. {
-        radius::CONTROL
-    } else {
-        radius::TAG
-    })
-    .bg(t.mark(name))
-    .shadow(vec![
-        shade(0., 1., 0., gpui::white().opacity(0.35)).inset(),
-        shade(0., 1., 2., t.depth.shade),
-    ])
-    .font_weight(weight::EMPHASIS)
+    let mark = t.mark(name);
+    div()
+        .size(px(size))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(if size > 22. {
+            radius::LARGE
+        } else {
+            radius::TAG
+        })
+        .bg(mark.opacity(0.16))
+        .text_color(mark)
+        .typeset(Type::MICRO.sized(size * 0.6))
+        .font_weight(weight::STRONG)
+        .child(letter)
 }
 
 /// What a plugin's note in a transcript says in its header.
