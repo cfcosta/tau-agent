@@ -8,11 +8,17 @@ use tau_ui_kit::{
 };
 
 /// Code that each language's grammar should color, and a part of it.
-const SAMPLES: [(Lang, &str, &str, Kind); 10] = [
+const SAMPLES: [(Lang, &str, &str, Kind); 11] = [
     (Lang::Bash, "echo \"hi\" # note", "# note", Kind::Comment),
     (Lang::Go, "func main() { return }", "func", Kind::Keyword),
     (Lang::JavaScript, "const x = 'hi';", "'hi'", Kind::String),
     (Lang::Json, "{\"a\": 12}", "12", Kind::Number),
+    (
+        Lang::Luau,
+        "local function f(n: number) return n end",
+        "function",
+        Kind::Keyword,
+    ),
     (Lang::Nix, "{ a = \"hi\"; }", "\"hi\"", Kind::String),
     (Lang::Python, "def f():\n    return 1", "def", Kind::Keyword),
     (Lang::Rust, "fn main() { let x = 1; }", "fn", Kind::Keyword),
@@ -54,6 +60,47 @@ fn languages_come_from_paths_and_tags() {
     assert_eq!(Lang::of_path("README"), None);
     assert_eq!(Lang::of_path("notes.md"), None);
     assert_eq!(Lang::of_name("Python"), Some(Lang::Python));
+    assert_eq!(Lang::of_name("luau"), Some(Lang::Luau));
+}
+
+/// Luau's names are colored by where they stand: a name is plain, its
+/// annotation a type, a field a property; only capitalized names are
+/// types and only shouting ones constants.
+#[test]
+fn luau_colors_names_by_place() {
+    let code = "local x = y\n\
+                local MAX: number = 1\n\
+                local low: Kind = 1\n\
+                local p = Point.new(a.b)\n\
+                local function f(n: Shape, m: count): Res return n :: Res end";
+    let spans = highlight(Lang::Luau, code);
+    let kind_at = |part: &str| {
+        let at = code.find(part).unwrap();
+        spans
+            .iter()
+            .find(|(range, _)| range.contains(&at))
+            .map(|(_, kind)| *kind)
+    };
+    let cases = [
+        ("x =", None),
+        ("y\n", None),
+        ("MAX", Some(Kind::Constant)),
+        ("number", Some(Kind::Type)),
+        ("low", None),
+        ("Kind =", Some(Kind::Type)),
+        ("Point", Some(Kind::Type)),
+        ("new", Some(Kind::Function)),
+        ("b)", Some(Kind::Property)),
+        ("f(", Some(Kind::Function)),
+        ("n:", Some(Kind::Property)),
+        ("count", Some(Kind::Type)),
+        ("Res return", Some(Kind::Type)),
+        ("Res end", Some(Kind::Type)),
+        ("function", Some(Kind::Keyword)),
+    ];
+    for (part, kind) in cases {
+        assert_eq!(kind_at(part), kind, "{part:?} in {spans:?}");
+    }
 }
 
 fn code() -> impl hegel::PrintableGenerator<String> {

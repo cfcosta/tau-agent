@@ -30,6 +30,7 @@ pub enum Lang {
     Go,
     JavaScript,
     Json,
+    Luau,
     Nix,
     Python,
     Rust,
@@ -40,11 +41,12 @@ pub enum Lang {
 
 impl Lang {
     /// Every language, for tests and the configurations.
-    pub const ALL: [Lang; 10] = [
+    pub const ALL: [Lang; 11] = [
         Lang::Bash,
         Lang::Go,
         Lang::JavaScript,
         Lang::Json,
+        Lang::Luau,
         Lang::Nix,
         Lang::Python,
         Lang::Rust,
@@ -72,6 +74,7 @@ impl Lang {
             "go" => Lang::Go,
             "js" | "jsx" | "mjs" | "cjs" | "javascript" => Lang::JavaScript,
             "json" | "jsonc" | "json5" => Lang::Json,
+            "luau" | "lua" => Lang::Luau,
             "nix" => Lang::Nix,
             "py" | "pyi" | "python" => Lang::Python,
             "rs" | "rust" => Lang::Rust,
@@ -101,6 +104,12 @@ impl Lang {
             Lang::Json => (
                 tree_sitter_json::LANGUAGE,
                 tree_sitter_json::HIGHLIGHTS_QUERY.into(),
+            ),
+            Lang::Luau => (
+                tree_sitter_luau::LANGUAGE,
+                // The grammar's own query is Neovim's, which reads
+                // differently; see the file.
+                include_str!("../queries/luau.scm").into(),
             ),
             Lang::Nix => (
                 tree_sitter_nix::LANGUAGE,
