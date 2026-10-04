@@ -54,6 +54,7 @@ fn format(code: &str) -> Option<String> {
         indent_width: 2,
         ..Config::default()
     };
-    let text = format_code(code, config, None, OutputVerification::None).ok()?;
+    let text =
+        format_code(code, config, None, OutputVerification::None).ok()?;
     Some(text.trim_end().to_owned())
 }

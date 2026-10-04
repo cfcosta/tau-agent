@@ -18,10 +18,7 @@ fn a_one_line_script_reads_as_code() {
 #[test]
 fn the_options_line_stays() {
     let code = "-- @options: {\"timeout\": 5}\nreturn  1";
-    assert_eq!(
-        &*formatted(code),
-        "-- @options: {\"timeout\": 5}\nreturn 1"
-    );
+    assert_eq!(&*formatted(code), "-- @options: {\"timeout\": 5}\nreturn 1");
 }
 
 /// A script still streaming in does not parse; it shows as it is.
