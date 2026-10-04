@@ -24,6 +24,16 @@ const PIDS: &str = "TAU_MCP_TEST_PIDS";
 /// Where the server writes what its launcher set, when given.
 const SEEN: &str = "TAU_MCP_TEST_SEEN";
 
+/// The tests, by name.
+const TESTS: [&str; 2] = [
+    "closing_ends_the_server_and_its_children",
+    "a_launcher_starts_the_server",
+];
+
+/// Speaks enough of libtest's command line for `cargo test` and nextest:
+/// `--list` names the tests (nextest asks with `--format terse`, and asks
+/// for ignored ones apart, of which there are none), and a name runs the
+/// tests that match it, exactly with `--exact`; none runs them all.
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -31,10 +41,35 @@ fn main() {
         .unwrap();
     if std::env::var_os(SERVE).is_some() {
         runtime.block_on(serve());
-    } else {
-        runtime.block_on(closing_ends_the_server_and_its_children());
-        runtime.block_on(a_launcher_starts_the_server());
-        println!("stdio: ok");
+        return;
+    }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let flag = |name: &str| args.iter().any(|arg| arg == name);
+    if flag("--list") {
+        if !flag("--ignored") {
+            for name in TESTS {
+                println!("{name}: test");
+            }
+        }
+        return;
+    }
+    if flag("--ignored") {
+        return;
+    }
+    let filter = args.iter().find(|arg| !arg.starts_with('-'));
+    let chosen = TESTS.into_iter().filter(|name| match filter {
+        None => true,
+        Some(filter) if flag("--exact") => name == filter,
+        Some(filter) => name.contains(filter.as_str()),
+    });
+    for name in chosen {
+        match name {
+            "closing_ends_the_server_and_its_children" => {
+                runtime.block_on(closing_ends_the_server_and_its_children())
+            }
+            _ => runtime.block_on(a_launcher_starts_the_server()),
+        }
+        println!("{name}: ok");
     }
 }
 
