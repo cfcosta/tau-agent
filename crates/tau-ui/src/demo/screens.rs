@@ -14,6 +14,7 @@ pub type Screen = fn(&mut Workspace, &DemoHost, &mut Context<Workspace>);
 /// Every screen `--open` names.
 pub static SCREENS: &[(&str, Screen)] = &[
     ("run", |ws, _, cx| ws.navigate(Route::Run(run_id()), cx)),
+    ("repo", |ws, _, cx| ws.open_repo_page("tau-agent", cx)),
     ("history", |ws, _, cx| ws.navigate(Route::History, cx)),
     ("plugins", |ws, _, cx| ws.navigate(Route::Plugins, cx)),
     ("models", |ws, _, cx| ws.navigate(Route::Models, cx)),

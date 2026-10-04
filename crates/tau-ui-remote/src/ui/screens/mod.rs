@@ -9,4 +9,5 @@ pub mod phones;
 pub mod plan;
 pub mod plugins;
 pub mod pull_request;
+pub mod repo;
 pub mod setup;

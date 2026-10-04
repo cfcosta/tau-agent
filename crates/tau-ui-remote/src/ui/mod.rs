@@ -30,7 +30,7 @@ use crate::{
 pub fn status_look(status: &RunStatus, t: &Theme) -> (Hsla, SharedString) {
     match status {
         RunStatus::Planning => (t.blue, "planning".into()),
-        RunStatus::Running => (t.accent, "running".into()),
+        RunStatus::Running => (t.roles.live, "running".into()),
         RunStatus::Finished(stop) => stop_look(stop, t),
         RunStatus::Interrupted => (t.muted, "interrupted".into()),
     }

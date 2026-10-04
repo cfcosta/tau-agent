@@ -698,20 +698,32 @@ impl Workspace {
             }
             Route::Models => screens::models::render(self, compact, t, cx),
             Route::Phones => screens::phones::render(self, compact, t, cx),
+            Route::Repo(repo) => {
+                screens::repo::render(self, repo, compact, t, cx)
+            }
             Route::Plugin {
                 plugin,
                 page,
                 params,
-            } => self.plugin_page(plugin, page, params, cx).unwrap_or_else(
-                || {
-                    ui::screen(
-                        "plugin-page",
-                        compact,
-                        ui::empty("This page's plugin is not here.", t),
-                    )
-                    .into_any_element()
-                },
-            ),
+            } => {
+                let page = self
+                    .plugin_page(plugin, page, params, cx)
+                    .unwrap_or_else(|| {
+                        ui::screen(
+                            "plugin-page",
+                            compact,
+                            ui::empty("This page's plugin is not here.", t),
+                        )
+                        .into_any_element()
+                    });
+                // A page a repository lists is one of its tabs.
+                match screens::repo::owner(self, &self.route, cx) {
+                    Some(repo) => {
+                        screens::repo::framed(self, &repo, page, compact, t, cx)
+                    }
+                    None => page,
+                }
+            }
         }
     }
 

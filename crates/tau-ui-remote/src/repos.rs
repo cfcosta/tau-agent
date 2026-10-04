@@ -323,6 +323,17 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Opens a repository's page, and its runs in the sidebar.
+    pub fn open_repo_page(&mut self, name: &str, cx: &mut Context<Self>) {
+        if self.open_repos.insert(name.to_owned()) {
+            self.emit_open_repos(cx);
+        }
+        self.repo = Some(name.to_owned());
+        self.repo_menu = None;
+        self.navigate(crate::route::Route::Repo(name.to_owned()), cx);
+        cx.notify();
+    }
+
     /// Lists all of a repository's runs, not only the newest.
     pub fn show_older_runs(&mut self, name: &str, cx: &mut Context<Self>) {
         self.all_runs.insert(name.to_owned());

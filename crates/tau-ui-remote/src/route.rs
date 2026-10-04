@@ -31,6 +31,9 @@ pub enum Route {
     Models,
     /// Allow phones, pair one, and see those paired.
     Phones,
+    /// A repository's page: its runs, with tabs for what plugins keep
+    /// for it.
+    Repo(String),
     /// A plugin's page (ADR 0017).
     Plugin {
         plugin: String,
@@ -90,6 +93,7 @@ impl Route {
             Self::Plugin { params, .. } => {
                 params.get("repo").map(String::as_str)
             }
+            Self::Repo(repo) => Some(repo),
             _ => None,
         }
     }
@@ -118,6 +122,7 @@ impl Route {
             Self::PullRequest(_) => "Pull request",
             Self::Models => "Models",
             Self::Phones => "Phones",
+            Self::Repo(_) => "Repository",
             // The page names itself; see `Workspace::route_title`.
             Self::Plugin { .. } => "",
         }

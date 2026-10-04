@@ -329,6 +329,8 @@ fn repo_group(
     let menu = ws.repo_menu.as_deref() == Some(name.as_str());
     let hovered = menu || ws.hovered_repo.as_deref() == Some(name.as_str());
     let need_you = ws.need_you(&name, cx);
+    let on_page = super::screens::repo::owner(ws, &ws.route, cx).as_deref()
+        == Some(name.as_str());
     let action = |id: &'static str, glyph: Option<Icon>, t: &Theme| {
         div()
             .id(id)
@@ -358,13 +360,29 @@ fn repo_group(
         .px(sp(2.))
         .rounded(radius::CONTROL)
         .cursor_pointer()
-        .when(hovered, |row| row.bg(t.selected))
-        .when(!hovered && rows.open, |row| row.bg(t.raised))
-        .child(icon(
-            if rows.open { Icon::Down } else { Icon::Chevron },
-            IconSize::SMALL,
-            t.muted,
-        ))
+        .when(hovered || on_page, |row| row.bg(t.selected))
+        // The chevron folds the repository; the rest of the row opens
+        // its page.
+        .child(
+            div()
+                .id(SharedString::from(format!("fold-{name}")))
+                .size(px(16.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(icon(
+                    if rows.open { Icon::Down } else { Icon::Chevron },
+                    IconSize::SMALL,
+                    t.muted,
+                ))
+                .on_click({
+                    let name = name.clone();
+                    cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.toggle_repo_open(&name, cx)
+                    })
+                }),
+        )
         .child(super::repo_mark(rows.repo, 20., t))
         .child(
             div()
@@ -400,8 +418,8 @@ fn repo_group(
                             .items_center()
                             .gap(sp(1.25))
                             .typeset(Type::MICRO)
-                            .text_color(t.accent)
-                            .child(live_dot(t.accent, 6.))
+                            .text_color(t.roles.live)
+                            .child(live_dot(t.roles.live, 6.))
                             .child(rows.live.to_string()),
                     )
                 })
@@ -420,7 +438,7 @@ fn repo_group(
         })
         .on_click({
             let name = name.clone();
-            cx.listener(move |ws, _, _, cx| ws.toggle_repo_open(&name, cx))
+            cx.listener(move |ws, _, _, cx| ws.open_repo_page(&name, cx))
         });
 
     let group = div()
@@ -446,21 +464,8 @@ fn repo_group(
         .pb(sp(1.5))
         .border_l_1()
         .border_color(t.border);
-    // What plugins list under the repository.
-    let entries = ws.contributions(
-        tau_ui_plugin::points::SIDEBAR_REPO,
-        &tau_ui_plugin::points::AtRepo { repo: name.clone() },
-        cx,
-    );
-    for (n, entry) in entries.into_iter().enumerate() {
-        body = body.child(nav_entry_row(
-            ws,
-            entry,
-            SharedString::from(format!("nav-{name}-{n}")),
-            t,
-            cx,
-        ));
-    }
+    // What plugins keep for the repository is on its page; the tree
+    // lists its runs.
     for row in ws.repo_tree(&rows) {
         body = match row {
             TreeRow::Run { run, depth } => {
