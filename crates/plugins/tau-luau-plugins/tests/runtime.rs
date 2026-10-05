@@ -382,3 +382,86 @@ return tau.plugin { name = "x", tools = { ["no good"] = { call = function() end 
     let error = load("x", taken).await.unwrap_err();
     assert!(error.contains("taken"), "{error}");
 }
+
+const FRIDAY_TESTS: &str = r#"
+local tau = require("tau")
+local ui = tau.ui
+local t = tau.test
+
+t.case("blocks deploys on Friday", function()
+  local run = t.run { now = "2026-10-09T10:00:00Z" }
+  t.equal(run:before_tool { name = "bash", args = { command = "make deploy" } },
+    tau.block("No deploys on Friday."))
+end)
+
+t.case("lets them through on Monday", function()
+  local run = t.run { now = "2026-10-05T10:00:00Z" }
+  t.equal(run:before_tool { name = "bash", args = { command = "make deploy" } }, nil)
+end)
+
+t.case("the card says when to wait", function()
+  local run = t.run { now = "2026-10-09T10:00:00Z" }
+  t.equal(run:card("deploy_window", {}, { ok = false }), ui.badge("wait", "warn"))
+end)
+
+t.case("turns are counted, and the view shows them", function()
+  local run = t.run {}
+  run:turn_end { turn = 1 }
+  run:turn_end { turn = 2 }
+  t.equal(run.state.turns, 2)
+  t.equal(run.logs, { "turn 1", "turn 2" })
+  t.equal(run:view().status.detail, "2 turns")
+  run:action("reset")
+  t.equal(run.state.turns, 0)
+end)
+
+t.case("a tool calls the fake tools it is given", function()
+  local run = t.run { tools = { bash = function(args) return "ran " .. args.command end } }
+  t.equal(run:tool("run_it", { command = "ls" }), "ran ls")
+end)
+
+t.case("this one is wrong on purpose", function()
+  local run = t.run { now = "2026-10-09T10:00:00Z" }
+  t.equal(run:tool("deploy_window"), { ok = true }, "the window")
+end)
+"#;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_tests_run_against_fake_runs() {
+    let mut with_tests = files(FRIDAY);
+    with_tests.tests = BTreeMap::from([
+        ("friday".to_owned(), FRIDAY_TESTS.to_owned()),
+        ("broken".to_owned(), "error('not even a case')".to_owned()),
+    ]);
+    let loaded = load("no-friday-deploys", with_tests).await.unwrap();
+    let results = loaded.test(CancellationToken::new()).await;
+    let summary: Vec<(&str, &str, bool)> = results
+        .iter()
+        .map(|r| (r.file.as_str(), r.name.as_str(), r.passed))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("broken", "tests/broken.luau", false),
+            ("friday", "blocks deploys on Friday", true),
+            ("friday", "lets them through on Monday", true),
+            ("friday", "the card says when to wait", true),
+            ("friday", "turns are counted, and the view shows them", true),
+            ("friday", "a tool calls the fake tools it is given", true),
+            ("friday", "this one is wrong on purpose", false),
+        ],
+        "{results:#?}"
+    );
+    let wrong = results.last().unwrap().error.clone().unwrap();
+    assert!(
+        wrong.contains(r#"the window: expected {"ok":true}, got {"ok":false}"#),
+        "{wrong}"
+    );
+    assert!(
+        results[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("not even a case")
+    );
+}

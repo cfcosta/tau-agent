@@ -423,6 +423,70 @@ impl Loaded {
     }
 }
 
+/// How long a test file may run.
+const TEST_LIMIT: Duration = Duration::from_secs(10);
+
+/// One case of a plugin's tests, as it came out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct TestResult {
+    /// Its file under `tests/`, without `.luau`.
+    pub file: String,
+    pub name: String,
+    pub passed: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl Loaded {
+    /// Runs the plugin's tests, each file in a fresh VM against fake
+    /// runs, reaching nothing. A file that fails outside its cases is one
+    /// failed result, named after the file.
+    pub async fn test(&self, cancel: CancellationToken) -> Vec<TestResult> {
+        let mut results = Vec::new();
+        for (file, source) in &self.files.tests {
+            // The file runs as a function, from the script's first line,
+            // so its errors keep their line numbers.
+            let script = format!(
+                "local __test = function() {source}\nend\n\
+                 require(\"tau\").test._plugin = require(\"plugin\")\n\
+                 __test()\n\
+                 return require(\"tau\")._run_tests()\n"
+            );
+            let (value, error) = run(
+                self.modules.clone(),
+                Arc::new(NoReach),
+                &self.declaration,
+                script,
+                TEST_LIMIT,
+                cancel.clone(),
+            )
+            .await;
+            if let Some(error) = error {
+                results.push(TestResult {
+                    file: file.clone(),
+                    name: format!("tests/{file}.luau"),
+                    passed: false,
+                    error: Some(error),
+                });
+                continue;
+            }
+            let cases: Vec<TestResult> = value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|case| TestResult {
+                    file: file.clone(),
+                    name: case["name"].as_str().unwrap_or_default().to_owned(),
+                    passed: case["passed"] == true,
+                    error: case["error"].as_str().map(str::to_owned),
+                })
+                .collect();
+            results.extend(cases);
+        }
+        results
+    }
+}
+
 /// `text` as a Luau long string, at a level `text` cannot close.
 fn long_string(text: &str) -> String {
     let mut level = 0;

@@ -179,15 +179,16 @@ function tau._describe(plugin)
 	}
 end
 
--- The `ctx` a hook gets, from what the host sends.
-function tau._ctx(data)
+-- The `ctx` a hook gets, from what the host sends; a test gives its own
+-- tools.
+function tau._ctx(data, with_tools)
 	local logs = array({})
 	local ctx = {
 		run = data.run,
 		now = data.now,
 		settings = data.settings or {},
 		state = data.state or {},
-		tools = tools,
+		tools = with_tools or tools,
 		jev = jev,
 		_logs = logs,
 	}
@@ -195,6 +196,167 @@ function tau._ctx(data)
 		table.insert(logs, tostring(text))
 	end
 	return ctx
+end
+
+-- Tests: `tests/*.luau` files of cases, each run against a fake run.
+local test = {}
+tau.test = test
+local cases = array({})
+
+-- A case: its name and what it checks.
+function test.case(name, check)
+	table.insert(cases, { name = tostring(name), check = check })
+end
+
+local function same(a, b)
+	if type(a) ~= type(b) then
+		return false
+	end
+	if type(a) ~= "table" then
+		return a == b
+	end
+	for key, value in pairs(a) do
+		if not same(value, b[key]) then
+			return false
+		end
+	end
+	for key in pairs(b) do
+		if a[key] == nil then
+			return false
+		end
+	end
+	return true
+end
+
+local function shown(value)
+	if type(value) == "table" then
+		return json.encode(value)
+	end
+	return tostring(value)
+end
+
+-- Fails the case unless `got` and `want` are the same, tables compared
+-- by what they hold.
+function test.equal(got, want, what)
+	if not same(got, want) then
+		error((what and (what .. ": ") or "") .. "expected " .. shown(want) .. ", got " .. shown(got), 2)
+	end
+end
+
+-- The plugin the tests are of: the test script hands it over, since a
+-- module may only require what it declares.
+function test.load()
+	return test._plugin or error("no plugin under test", 2)
+end
+
+local DAYS = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" }
+
+-- The weekday of an ISO date (`2026-10-09...`), by Sakamoto's method.
+local function weekday(iso)
+	local y, m, d = string.match(iso, "^(%d+)-(%d+)-(%d+)")
+	y, m, d = tonumber(y), tonumber(m), tonumber(d)
+	if not y then
+		error("not an ISO date: " .. tostring(iso), 3)
+	end
+	local t = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 }
+	if m < 3 then
+		y = y - 1
+	end
+	local w = (y + y // 4 - y // 100 + y // 400 + t[m] + d) % 7
+	return DAYS[w + 1]
+end
+
+-- A fake run: `spec` may give `now` (an ISO date), `kind`, `settings`,
+-- `state` and `tools` (a function or a value per tool name). Its hooks
+-- are methods; each keeps the state the last one left.
+function test.run(spec)
+	spec = spec or {}
+	local plugin = test.load()
+	local defaults = plugin.settings and plugin.settings.default or {}
+	local now = spec.now or "2026-01-05T09:00:00Z"
+	local fakes = {}
+	for name, fake in pairs(spec.tools or {}) do
+		fakes[name] = function(args)
+			if type(fake) == "function" then
+				return fake(args)
+			end
+			return fake
+		end
+	end
+	local run = {
+		state = spec.state or {},
+		logs = {},
+		data = {
+			run = { id = "test", kind = spec.kind or "main", repo = "test", model = "test", turn = 1 },
+			now = { unix = 0, iso = now, weekday = weekday(now) },
+			settings = spec.settings or defaults,
+		},
+	}
+	local function call(hook, ...)
+		local data = table.clone(run.data)
+		data.state = run.state
+		local ctx = tau._ctx(data, fakes)
+		local answer = hook(..., ctx)
+		run.state = ctx.state
+		for _, line in ipairs(ctx._logs) do
+			table.insert(run.logs, line)
+		end
+		return answer
+	end
+	local function need(hook, name)
+		if hook == nil then
+			error("the plugin has no " .. name, 3)
+		end
+		return hook
+	end
+	function run:before_tool(c)
+		return call(need(plugin.before_tool, "before_tool"), c)
+	end
+	function run:before_stop(stop)
+		return call(need(plugin.before_stop, "before_stop"), stop)
+	end
+	function run:turn_end(turn)
+		return call(need(plugin.turn_end, "turn_end"), turn)
+	end
+	function run:run_end(e)
+		return call(need(plugin.run_end, "run_end"), e)
+	end
+	function run:view()
+		local view = need(plugin.view, "view")
+		return call(function(_, ctx)
+			return view(ctx.state, ctx)
+		end, nil)
+	end
+	function run:action(name, args)
+		return call(need((plugin.actions or {})[name], "action " .. name), args or {})
+	end
+	function run:tool(name, args)
+		local tool = need((plugin.tools or {})[name], "tool " .. name)
+		return call(tool.call, args or {})
+	end
+	function run:card(name, c, result)
+		local tool = need((plugin.tools or {})[name], "tool " .. name)
+		local card = need(tool.card, "card for " .. name)
+		return call(function(input, ctx)
+			return card(input.call, input.result, ctx)
+		end, { call = c, result = result })
+	end
+	return run
+end
+
+-- Runs every case, each on its own: what passed, and why the rest
+-- failed.
+function tau._run_tests()
+	local results = array({})
+	for _, case in ipairs(cases) do
+		local ok, why = pcall(case.check)
+		table.insert(results, {
+			name = case.name,
+			passed = ok,
+			error = (not ok) and tostring(why) or json.null,
+		})
+	end
+	return results
 end
 
 return tau
