@@ -93,6 +93,12 @@ Agent::start(input, &store)
     parent's, before any other free one or a new one
     ([0022](decisions/0022-the-prompt-cache-follows-the-connection.md),
     `docs/reference/openai-websocket.md`, "Connection pool").
+- **Nothing blocks outside `spawn_blocking`**
+  ([0027](decisions/0027-async-all-the-way-blocking-only-in-spawn-blocking.md)).
+  GPUI's thread only draws and sends requests; the host answers on its
+  tokio runtime and pushes what changed. jj-lib runs in
+  `spawn_blocking`, one job at a time per workspace or repository,
+  under an async lock.
 - **Each run is a tokio task.** A run owns:
   - a `CancellationToken`;
   - a bounded event channel;
