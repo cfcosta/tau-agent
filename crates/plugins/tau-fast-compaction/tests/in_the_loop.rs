@@ -275,6 +275,41 @@ fn a_small_saving_declines_and_cools_down() {
     });
 }
 
+/// The cooldown is a share of the window: on a 100,000-token window,
+/// growing 9,000 tokens after a pass does not run another, and growing
+/// past 10,000 does.
+#[test]
+fn the_cooldown_grows_with_the_window() {
+    let read = |path: &str, input| {
+        let path = path.to_owned();
+        move |t: tau_testing::scripted::TurnBuilder| {
+            t.tool_call("read", json!({"path": path, "size": 10}))
+                .usage(input, 10)
+        }
+    };
+    // The first turn's one call is pinned, so nothing is asked there.
+    let model = ScriptedModel::new()
+        .turn(read("a.rs", 100))
+        .turn(read("b.rs", 61_000))
+        .turn(read("c.rs", 70_000))
+        .turn(read("d.rs", 72_000))
+        .turn(|t| t.text("done"));
+    let jev = FakeJev::nouls(|_| 0.0);
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(
+            FastCompaction::new(jev.clone()).settings(Settings {
+                context_window: Some(100_000),
+                min_reduction_ratio: 0.9,
+                ..settings()
+            }),
+        );
+        let (_, outcome) = run(&agent, &store).await;
+        assert_eq!(outcome.text, "done");
+        assert_eq!(jev.requests().len(), 2, "passes at 61k and 72k only");
+    });
+}
+
 /// An overflow runs a pass whatever the window share, and the turn is
 /// retried on the pruned transcript.
 #[test]

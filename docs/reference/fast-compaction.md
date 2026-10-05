@@ -269,8 +269,8 @@ floor, then the question's shared guidance moved into the `context`
   - the loop's token estimate has passed `compact_at_percent` (60%) of
     the context window; the window is `Settings::context_window`, or the
     model registry's;
-  - the context has grown by `cooldown_tokens` (8,000) since the last
-    pass that asked Jev.
+  - the context has grown by `cooldown_percent` (10%) of the window
+    since the last pass that asked Jev.
 - **As a run starts on a transcript it inherited** (a fork, a
   sub-agent, a resumed run), only when the estimate is within
   `start_reserve_tokens` (16,384, summarizing compaction's reserve) of
@@ -371,6 +371,10 @@ meter and the Ledger screen.
 - **Only a saving worth a resend.** pi applies any saving and leaves
   its reduction threshold to the choice between itself and summary
   compaction. tau declines below the threshold.
+- **The cooldown is a share of the window.** pi waits a fixed 8,000
+  tokens. Each rewrite costs a full resend, and on a large window a
+  long run grows 8,000 tokens in a few turns, so pi's cooldown let it
+  pay for a resend every few turns.
 - **The cooldown starts only with a pass that asked Jev.** pi starts it
   with any pass, so a pass with everything pinned held the next useful
   one back.

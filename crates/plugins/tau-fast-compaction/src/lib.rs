@@ -130,9 +130,12 @@ pub struct Settings {
     /// The smallest share of the context, as JSON, a pass must save to
     /// rewrite it. 0.25.
     pub min_reduction_ratio: f64,
-    /// Tokens the context must grow by after a pass before another runs
-    /// between turns. 8,000.
-    pub cooldown_tokens: u64,
+    /// Share of the context window, in percent, the context must grow
+    /// by after a pass before another runs between turns. 10. Each
+    /// rewrite costs a full resend, so the wait grows with the window:
+    /// pi's fixed 8,000 tokens let a long run on a large window prune
+    /// every few turns.
+    pub cooldown_percent: f64,
     /// As a run starts on a transcript it inherited, a pass runs only
     /// once the context is within this many tokens of the window:
     /// summarizing compaction's reserve, so pruning goes first wherever a
@@ -200,7 +203,7 @@ impl Default for Settings {
             head_chars: 300,
             compact_at_percent: 60.0,
             min_reduction_ratio: 0.25,
-            cooldown_tokens: 8_000,
+            cooldown_percent: 10.0,
             start_reserve_tokens: 16_384,
             context_window: None,
             archive_dir: std::env::temp_dir(),
@@ -488,9 +491,10 @@ impl FastCompactionRun {
             return false;
         };
         let percent = tokens as f64 * 100.0 / window as f64;
-        let cooled = self.last_pass.is_none_or(|last| {
-            tokens.saturating_sub(last) >= self.settings.cooldown_tokens
-        });
+        let cooldown = window as f64 * self.settings.cooldown_percent / 100.0;
+        let cooled = self
+            .last_pass
+            .is_none_or(|last| tokens.saturating_sub(last) as f64 >= cooldown);
         percent >= self.settings.compact_at_percent && cooled
     }
 
