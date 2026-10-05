@@ -92,7 +92,6 @@ use crate::{
         FileStat,
         LANDING_RECORD,
         LandingRecord,
-        Limits as ViewLimits,
         Origin,
         RunView,
         Stored,
@@ -287,8 +286,6 @@ use self::{
     repos::*,
 };
 
-const MAX_TURNS: u32 = 50;
-
 /// How many past runs history shows.
 const HISTORY: u32 = 50;
 
@@ -307,13 +304,11 @@ fn coder(
         .name("coder")
         .model(model)
         .instructions(INSTRUCTIONS)
-        // Plugins that hold a stop cap themselves: the constitution by
-        // its holds, a goal by its continuations.
-        .limits(
-            Limits::default()
-                .max_turns(MAX_TURNS)
-                .max_continuations(u32::MAX),
-        );
+        // No cap on turns, as in Codex and pi: compaction keeps a long
+        // run going, and the person stops it. Plugins that hold a stop
+        // cap themselves: the constitution by its holds, a goal by its
+        // continuations.
+        .limits(Limits::default().max_continuations(u32::MAX));
     Ok((agent, client))
 }
 
@@ -1215,10 +1210,6 @@ impl Host {
         for (plugin, body) in self.starting(&run) {
             view.fold(&plugin, &body);
         }
-        view.limits = ViewLimits {
-            max_turns: Some(MAX_TURNS),
-            ..ViewLimits::default()
-        };
         view.context = ContextWindow {
             window: find(&choice.model).map(|model| model.context_window),
             ..ContextWindow::default()
