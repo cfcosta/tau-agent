@@ -80,6 +80,11 @@ ignore = [
   { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2, via gpui (tau-ui)" },
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via gpui (tau-ui)" },
   { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via gpui (tau-ui)" },
+  # stylua formats codemode's scripts as a library, but depends on clap 3
+  # unconditionally: its command-line parsing, which tau never runs,
+  # brings these two.
+  { id = "RUSTSEC-2024-0375", reason = "atty, via clap 3 under stylua (tau-codemode)" },
+  { id = "RUSTSEC-2024-0370", reason = "proc-macro-error, a build-time macro of clap 3 under stylua (tau-codemode)" },
   #"RUSTSEC-0000-0000",
   #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
   #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
