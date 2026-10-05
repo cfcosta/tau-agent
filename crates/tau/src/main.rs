@@ -1,6 +1,6 @@
 //! Opens the interface.
 //!
-//! With a ChatGPT sign-in that allows plan use, `tau-ui` runs a real
+//! With a ChatGPT sign-in that allows plan use, `tau` runs a real
 //! coding agent in the repositories cloned from GitHub: type a task to
 //! start a run.
 //! Without one it opens onboarding to sign in. With `--demo` it
@@ -95,8 +95,8 @@ fn args() -> Args {
 }
 
 fn main() {
-    // The plugins' host halves, before the interface reads the plugins.
-    tau_ui::hosted::install();
+    // Every plugin's host half, the Luau ones included (ADR 0030).
+    tau::install();
     let args = args();
     let credentials = Credentials::default_dir();
     let account = if args.demo {
@@ -119,7 +119,7 @@ fn main() {
     let host = account.and_then(|account| match Host::new(config(account)) {
         Ok(host) => Some(host),
         Err(error) => {
-            eprintln!("tau-ui: cannot start agents: {error}");
+            eprintln!("tau: cannot start agents: {error}");
             None
         }
     });
@@ -171,7 +171,7 @@ fn main() {
             let Ok((workspace, window)) = opened.and_then(|window| {
                 Ok((window.entity(cx)?, gpui::AnyWindowHandle::from(window)))
             }) else {
-                eprintln!("tau-ui: could not open a window");
+                eprintln!("tau: could not open a window");
                 cx.quit();
                 return;
             };
@@ -236,7 +236,7 @@ fn main() {
                                 }),
                                 Err(error) => {
                                     eprintln!(
-                                        "tau-ui: cannot start agents: {error}"
+                                        "tau: cannot start agents: {error}"
                                     )
                                 }
                             })
@@ -252,9 +252,7 @@ fn main() {
                     if let Some(name) = args.open.as_deref() {
                         workspace.update(cx, |ws, cx| {
                             if !demo::open(name, ws, &host, cx) {
-                                eprintln!(
-                                    "tau-ui: the demo has no screen {name}"
-                                );
+                                eprintln!("tau: the demo has no screen {name}");
                             }
                         });
                     }

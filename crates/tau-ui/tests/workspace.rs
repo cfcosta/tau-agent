@@ -28,6 +28,8 @@ fn open(
     VisualTestContext,
     std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>,
 ) {
+    // The app's plugins, every host half included.
+    tau::install();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         // `retry-after` is tau-agent's main chat, which chats fork.
@@ -410,6 +412,8 @@ fn open_with_models(
     VisualTestContext,
     std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>,
 ) {
+    // The app's plugins, every host half included.
+    tau::install();
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         let mut catalog = ws.catalog().clone();
@@ -646,6 +650,8 @@ fn open_demo(
     VisualTestContext,
     std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>,
 ) {
+    // The app's plugins, every host half included.
+    tau::install();
     let (workspace, cx, events, _) = open_demo_host(cx);
     (workspace, cx, events)
 }
@@ -661,6 +667,8 @@ fn open_demo_host(
     Events,
     std::sync::Arc<demo::DemoHost>,
 ) {
+    // The app's plugins, every host half included.
+    tau::install();
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.add_history(demo::history(), cx);

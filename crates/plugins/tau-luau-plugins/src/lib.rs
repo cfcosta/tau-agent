@@ -14,6 +14,7 @@
 //!   says it is, as every interface shows it.
 
 pub mod pane;
+pub mod repository;
 pub mod settings;
 pub mod ui;
 

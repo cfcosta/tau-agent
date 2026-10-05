@@ -39,6 +39,11 @@ pub fn registry() -> &'static Registry {
 
 static INSTALLED: OnceLock<Registry> = OnceLock::new();
 
+/// Whether a host installed its plugins.
+pub fn installed() -> bool {
+    INSTALLED.get().is_some()
+}
+
 /// Makes `registry` the plugins this process has: a host gives the ones
 /// [`plugins`] lists their host halves (`Registry::host`) and installs
 /// them before it asks any for its host state.

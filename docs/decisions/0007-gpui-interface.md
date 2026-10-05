@@ -75,7 +75,7 @@ reach into the loop.
   that tau does not have yet. Until then onboarding starts at the
   model, and the pull request button only shows when the catalog says
   the host can open one.
-- **A demo host ships with the crate.** `cargo run -p tau-ui -- --demo`
+- **A demo host ships with the crate.** `cargo run -p tau -- --demo`
   replays a scripted session through the same `RunUpdate` path a real
   agent uses, and answers onboarding and pull requests the way a host
   would. `--open <screen>` and `--phone` start on a screen or in a

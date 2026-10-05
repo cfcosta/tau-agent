@@ -5,6 +5,8 @@
 ```
 tau-agent/
 ├── crates/
+│   ├── tau/          # the desktop app: tau-ui with every plugin's host half,
+│   │                 # the Luau ones included (ADR 0030)
 │   ├── tau-ai/       # types, events, Responses conversion, WebSocket pool, retry, cost
 │   ├── tau-agent/    # Agent, Run, loop, AgentTool + Plugin, typed results,
 │   │                 # limits, sub-agents, forks, context estimate
@@ -18,8 +20,8 @@ tau-agent/
 │   │                 # points (ADR 0017, 0030)
 │   ├── tau-ui-remote/ # the interface: workspace, screens, plugins' views, and the
 │   │                 # phone's remote that drives it from a computer (ADR 0013)
-│   ├── tau-ui/       # the desktop app: the host that runs agents, the phone
-│   │                 # server, onboarding's sign-ins, the demo
+│   ├── tau-ui/       # the computer's side: the host that runs agents, the
+│   │                 # phone server, onboarding's sign-ins, the demo
 │   ├── tau-phone/    # tau-ui-remote on Android
 │   ├── tau-terminal/ # libghostty-vt terminal, PTY command runner,
 │   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
@@ -62,6 +64,9 @@ Dependency direction:
   crates, and the `host` feature of the plugins that keep theirs),
   gives each plugin its own, and drives it; `tau-phone` depends on
   `tau-ui-remote` alone ([0030](decisions/0030-host-halves-are-crates.md)).
+- `tau`, the app, is `tau-ui` with the Luau plugins' host halves
+  (tau-codemode's and tau-luau-plugins'), which only it links: `tau-ui`
+  builds while Luau's C++ does.
 - Plugins, under `crates/plugins/`, depend on `tau-agent` (and
   `tau-ai` for message types). Core crates never depend on a plugin
   ([0006](decisions/0006-plugin-crates.md)). Each plugin brings its own

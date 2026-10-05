@@ -7,6 +7,8 @@ repository.workspace = true
 publish.workspace = true
 
 [dev-dependencies]
+# The app's plugins, every host half included, for the demo's tests.
+tau.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
 tau-testing.workspace = true
@@ -21,7 +23,6 @@ serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
 tau-codemode.workspace = true
-tau-codemode-host.workspace = true
 tau-compaction.workspace = true
 tau-constitution.workspace = true
 tau-constitution-host = { workspace = true, features = ["demo"] }
@@ -30,7 +31,6 @@ tau-skills = { workspace = true, features = ["demo"] }
 tau-direnv.workspace = true
 tau-goal = { workspace = true, features = ["demo"] }
 tau-luau-plugins.workspace = true
-tau-luau-plugins-host.workspace = true
 tau-jev.workspace = true
 tau-mcp = { workspace = true, features = ["demo"] }
 tau-mcp-host.workspace = true
@@ -64,22 +64,7 @@ libc.workspace = true
 # Where the demo's plugins keep their files.
 tempfile.workspace = true
 
-# The desktop's windows. A phone build brings its own platform
-# (gpui-pre-mobile), and this crate has none for Android.
-[target.'cfg(not(target_os = "android"))'.dependencies]
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = [
-  "wayland",
-  "x11",
-  "font-kit",
-] }
-
-# Reads whether the desktop animates, through the settings portal;
-# GPUI's Linux backend already builds it with these features.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-ashpd = { version = "0.13", default-features = false, features = [
-  "async-io",
-  "settings",
-] }
 # Desktop notifications over D-Bus, in Rust (zbus): no libdbus. GPUI's
 # Linux backend already builds it with these features.
 notify-rust = { version = "4.18", default-features = false, features = ["z"] }

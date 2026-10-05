@@ -878,7 +878,7 @@ fn codemode(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     );
     workspace.toggle_card(&run, &call, cx);
     if let Some(ui) = workspace
-        .plugin_ui::<tau_codemode::ui::InspectorUi>(tau_codemode_host::PLUGIN)
+        .plugin_ui::<tau_codemode::ui::InspectorUi>(tau_codemode::PLUGIN)
     {
         ui.update(cx, |ui, _| {
             ui.toggle(tau_codemode::outline::key(&call, 0));

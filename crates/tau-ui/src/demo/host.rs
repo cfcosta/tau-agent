@@ -45,7 +45,7 @@ const SPEND: [(&str, f64); 7] = [
     (tau_fast_compaction::NAME, 0.046),
     (tau_compaction::NAME, 0.061),
     (tau_goal::NAME, 0.009),
-    (tau_codemode_host::PLUGIN, 0.002),
+    (tau_codemode::PLUGIN, 0.002),
 ];
 
 /// Jev's scores as the demo scripts them: one per question, in the

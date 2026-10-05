@@ -66,6 +66,16 @@ gives each plugin its half and installs the result
 (`plugins::install`) before it makes any plugin's host state. Both
 draw the same; only a host asks a plugin for what its host half does.
 
+### The app links the Luau host halves
+
+The desktop binary is a crate of its own, `tau`. It gives the plugins
+tau-ui has no half for, tau-codemode and tau-luau-plugins, theirs, and
+installs the result before anything starts a host. `tau-ui` itself
+depends on neither, so it builds while Luau's C++ compiles. Without an
+installed registry, a host gives the plugins the halves tau-ui has
+(`hosted::install`), as tau-ui's own tests do unless they install the
+app's (`tau::install`).
+
 ### tau-store has no database driver
 
 `tau-store` holds the run and entry types and a `Backend` trait;

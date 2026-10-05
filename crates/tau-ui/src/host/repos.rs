@@ -242,7 +242,7 @@ impl Host {
                 Project::open_or_init(
                     dir,
                     identity(),
-                    tau_luau_plugins_host::registry::first_files(),
+                    tau_luau_plugins::repository::first_files(),
                 )
                 .await
             } else {
@@ -573,7 +573,7 @@ impl Host {
                 return;
             }
             list.repos.push(Listed {
-                name: tau_luau_plugins_host::registry::REPO.to_owned(),
+                name: tau_luau_plugins::REPO.to_owned(),
                 path,
                 hidden: false,
                 github: None,

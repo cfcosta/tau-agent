@@ -9333,6 +9333,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "876fef147edbcbddc8ac5cbbba92c7b86519e314e86638596c09673b2ed01e7f"
 
 [[package]]
+name = "tau"
+version = "0.1.0"
+dependencies = [
+ "ashpd",
+ "gpui-pre",
+ "gpui-pre-platform",
+ "tau-codemode-host",
+ "tau-luau-plugins-host",
+ "tau-ui",
+ "tau-ui-plugin",
+ "tau-ui-remote",
+]
+
+[[package]]
 name = "tau-agent"
 version = "0.1.0"
 dependencies = [
@@ -10021,12 +10035,10 @@ name = "tau-ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ashpd",
  "async-trait",
  "base64 0.23.1",
  "futures-util",
  "gpui-pre",
- "gpui-pre-platform",
  "hegeltest",
  "if-addrs",
  "libc",
@@ -10034,12 +10046,12 @@ dependencies = [
  "reqwest 0.13.5",
  "serde",
  "serde_json",
+ "tau",
  "tau-agent",
  "tau-ai",
  "tau-artifacts",
  "tau-ask",
  "tau-codemode",
- "tau-codemode-host",
  "tau-compaction",
  "tau-constitution",
  "tau-constitution-host",
@@ -10048,7 +10060,6 @@ dependencies = [
  "tau-goal",
  "tau-jev",
  "tau-luau-plugins",
- "tau-luau-plugins-host",
  "tau-mcp",
  "tau-mcp-host",
  "tau-memory",

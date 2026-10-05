@@ -1,0 +1,33 @@
+[package]
+name = "tau"
+description = "tau on the computer: the desktop app, with every plugin's host half."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+# The Luau plugins' host halves: only the app links them (ADR 0030).
+tau-codemode-host.workspace = true
+tau-luau-plugins-host.workspace = true
+tau-ui.workspace = true
+tau-ui-plugin.workspace = true
+tau-ui-remote.workspace = true
+
+# The desktop's windows. A phone build brings its own platform
+# (gpui-pre-mobile), and this crate has none for Android.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = [
+  "wayland",
+  "x11",
+  "font-kit",
+] }
+
+# Reads whether the desktop animates, through the settings portal;
+# GPUI's Linux backend already builds it with these features.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+ashpd = { version = "0.13", default-features = false, features = [
+  "async-io",
+  "settings",
+] }

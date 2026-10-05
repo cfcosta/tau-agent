@@ -82,7 +82,7 @@
                   includeSystemImages = false;
                 }).androidsdk;
 
-              # tau-ui (GPUI) links xcb and xkbcommon, and loads Vulkan,
+              # tau (GPUI) links xcb and xkbcommon, and loads Vulkan,
               # Wayland and X11 at runtime.
               guiLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (
                 with pkgs;
@@ -129,8 +129,8 @@
                 };
               };
 
-              tau-ui = rustPlatform.buildRustPackage {
-                pname = "tau-ui";
+              tau = rustPlatform.buildRustPackage {
+                pname = "tau";
                 version = "0.1.0";
 
                 src = pkgs.lib.fileset.toSource {
@@ -145,9 +145,11 @@
                 inherit cargoLock;
                 cargoBuildFlags = [
                   "--package"
-                  "tau-ui"
+                  "tau"
                 ];
                 cargoTestFlags = [
+                  "--package"
+                  "tau"
                   "--package"
                   "tau-ui"
                 ];
@@ -168,14 +170,14 @@
                 # binary needs them on its library path. jj-lib's push
                 # runs `git`, the one thing tau runs it for (ADR 0023).
                 postFixup = ''
-                  wrapProgram $out/bin/tau-ui \
+                  wrapProgram $out/bin/tau \
                     --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibs} \
                     --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
                 '';
 
                 meta = {
                   description = "A GPUI interface for tau agents";
-                  mainProgram = "tau-ui";
+                  mainProgram = "tau";
                   platforms = pkgs.lib.platforms.linux;
                 };
               };
@@ -240,7 +242,7 @@
                 pkgs
                 rust
                 system
-                tau-ui
+                tau
                 ;
             }
           )
@@ -254,12 +256,12 @@
           phone,
           pkgs,
           system,
-          tau-ui,
+          tau,
           ...
         }:
         pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
-          inherit tau-ui;
-          default = tau-ui;
+          inherit tau;
+          default = tau;
         }
         // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
           tau-phone-lib = phone.lib;
@@ -274,13 +276,13 @@
           phone,
           pkgs,
           system,
-          tau-ui,
+          tau,
           ...
         }:
         pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           default = {
             type = "app";
-            program = pkgs.lib.getExe tau-ui;
+            program = pkgs.lib.getExe tau;
           };
         }
         // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
